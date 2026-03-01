@@ -60,6 +60,24 @@ def _find_pixi_executable() -> str | None:
     return None
 
 
+def _has_installed_pixi_environment(workspace_root: Path) -> bool:
+    envs_dir = workspace_root / ".pixi" / "envs"
+    if not envs_dir.is_dir():
+        return False
+    for candidate in envs_dir.iterdir():
+        if candidate.is_dir():
+            return True
+    return False
+
+
+def _install_workspace_environments(pixi_executable: str, workspace_root: Path) -> bool:
+    install_command = [pixi_executable, "install", "-a"]
+    completed = subprocess.run(install_command, cwd=workspace_root, check=False)
+    if completed.returncode != 0:
+        return False
+    return _has_installed_pixi_environment(workspace_root)
+
+
 def _install_pixi() -> bool:
     if os.name == "nt":
         install_cmd = [
@@ -100,17 +118,30 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 2
 
-    command = [pixi_executable, "run", "f8pystudio"]
+    install_command = [pixi_executable, "install", "-a"]
+    launch_command = [pixi_executable, "run", "f8pystudio"]
+    should_install_environments = not _has_installed_pixi_environment(workspace_root)
     if args.dry_run:
         print("workspace:", workspace_root)
-        print("command:", " ".join(command))
+        print("environments_installed:", not should_install_environments)
+        if should_install_environments:
+            print("install_command:", " ".join(install_command))
+        print("launch_command:", " ".join(launch_command))
         return 0
 
-    completed = subprocess.run(command, cwd=workspace_root, check=False)
+    if should_install_environments and not _install_workspace_environments(pixi_executable, workspace_root):
+        _show_error_dialog(
+            "f8studio launcher",
+            "Pixi environments are missing and installation failed.\n"
+            f"Command: {' '.join(install_command)}",
+        )
+        return 3
+
+    completed = subprocess.run(launch_command, cwd=workspace_root, check=False)
     if completed.returncode != 0:
         _show_error_dialog(
             "f8studio launcher",
-            f"Failed to start Studio.\nCommand: {' '.join(command)}\nExit code: {completed.returncode}",
+            f"Failed to start Studio.\nCommand: {' '.join(launch_command)}\nExit code: {completed.returncode}",
         )
     return int(completed.returncode)
 

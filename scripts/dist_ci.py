@@ -118,6 +118,37 @@ def _launcher_binary_name() -> str:
     return "f8studio"
 
 
+def _env_install_script_name() -> str:
+    if os.name == "nt":
+        return "install_env.bat"
+    return "install_env.sh"
+
+
+def _env_install_script_text() -> str:
+    if os.name == "nt":
+        return (
+            "@echo off\r\n"
+            "setlocal\r\n"
+            "cd /d \"%~dp0\"\r\n"
+            "pixi install -a\r\n"
+        )
+    return (
+        "#!/usr/bin/env sh\n"
+        "set -eu\n"
+        "SCRIPT_DIR=$(CDPATH= cd -- \"$(dirname -- \"$0\")\" && pwd)\n"
+        "cd \"$SCRIPT_DIR\"\n"
+        "pixi install -a\n"
+    )
+
+
+def _write_env_install_script(dist_dir: Path) -> Path:
+    script_path = dist_dir / _env_install_script_name()
+    script_path.write_text(_env_install_script_text(), encoding="utf-8")
+    if os.name != "nt":
+        script_path.chmod(0o755)
+    return script_path
+
+
 def _is_running_inside_ci_env() -> bool:
     if os.environ.get("PIXI_ENVIRONMENT_NAME") != "ci":
         return False
@@ -229,6 +260,7 @@ def main() -> int:
 
     _run(["pixi", "lock", "--manifest-path", str(dist_manifest_path), "--no-install"])
     _bundle_studio_launcher(dist_dir)
+    env_install_script_path = _write_env_install_script(dist_dir)
 
     readme_text = (
         "# f8 Runtime Dist\n\n"
@@ -239,7 +271,7 @@ def main() -> int:
         "- Studio launcher executable at dist root\n\n"
         "Bootstrap:\n"
         "1. Install Pixi.\n"
-        "2. `pixi install --frozen -e default`\n"
+        f"2. Run `{env_install_script_path.name}` in dist root.\n"
         "3. Start Studio via launcher (`./f8studio` on Linux/macOS, `f8studio.exe` on Windows),\n"
         "   or run your service command via `pixi run ...`.\n\n"
         f"Platform runtime binaries are under `services/**/{platform_dir}`.\n"
