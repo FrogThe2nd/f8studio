@@ -19,6 +19,8 @@ pip = ">=26.0.1,<27"
 
 [feature.vision.pypi-dependencies]
 numpy = ">=2.4.2, <3"
+scipy = ">=1.17.1,<2"
+scikit-learn = ">=1.8.0,<2"
 opencv-contrib-python = ">=4.13.0.92, <5"
 
 [feature.onnx.dependencies]
