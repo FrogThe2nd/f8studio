@@ -579,7 +579,7 @@ class MediaPipePoseServiceNode(ServiceNode):
         super().__init__(
             node_id=ensure_token(node_id, label="node_id"),
             data_in_ports=[],
-            data_out_ports=["detections", "skeletons", "telemetry"],
+            data_out_ports=["detections", "skeletons"],
             state_fields=[s.name for s in (node.stateFields or [])],
         )
         self._initial_state = dict(initial_state or {})
@@ -603,7 +603,6 @@ class MediaPipePoseServiceNode(ServiceNode):
         self._last_infer_frame_id: int | None = None
         self._last_processed_frame_id: int | None = None
         self._dup_skipped_since_last_processed = 0
-        self._telemetry = _Telemetry()
 
     def attach(self, bus: Any) -> None:
         super().attach(bus)
@@ -679,30 +678,6 @@ class MediaPipePoseServiceNode(ServiceNode):
             )
             return
 
-        if name == "telemetryIntervalMs":
-            self._telemetry.set_config(
-                interval_ms=_coerce_int(
-                    await self.get_state_value("telemetryIntervalMs"),
-                    default=self._telemetry.interval_ms,
-                    minimum=0,
-                    maximum=60000,
-                ),
-                window_ms=self._telemetry.window_ms,
-            )
-            return
-
-        if name == "telemetryWindowMs":
-            self._telemetry.set_config(
-                interval_ms=self._telemetry.interval_ms,
-                window_ms=_coerce_int(
-                    await self.get_state_value("telemetryWindowMs"),
-                    default=self._telemetry.window_ms,
-                    minimum=100,
-                    maximum=60000,
-                ),
-            )
-            return
-
     async def _ensure_config_loaded(self) -> None:
         if self._config_loaded:
             return
@@ -738,20 +713,6 @@ class MediaPipePoseServiceNode(ServiceNode):
             default=float(self._initial_state.get("visibilityThreshold") or 0.5),
             minimum=0.0,
             maximum=1.0,
-        )
-        self._telemetry.set_config(
-            interval_ms=_coerce_int(
-                await self.get_state_value("telemetryIntervalMs"),
-                default=int(self._initial_state.get("telemetryIntervalMs") or 1000),
-                minimum=0,
-                maximum=60000,
-            ),
-            window_ms=_coerce_int(
-                await self.get_state_value("telemetryWindowMs"),
-                default=int(self._initial_state.get("telemetryWindowMs") or 2000),
-                minimum=100,
-                maximum=60000,
-            ),
         )
         self._config_loaded = True
 
@@ -855,7 +816,6 @@ class MediaPipePoseServiceNode(ServiceNode):
                 if self._last_processed_frame_id is not None and frame_id_seen == int(self._last_processed_frame_id):
                     self._dup_skipped_since_last_processed += 1
                     continue
-                dup_skipped = int(self._dup_skipped_since_last_processed)
                 self._dup_skipped_since_last_processed = 0
 
                 if not should_run_inference(self._last_infer_frame_id, frame_id_seen, self._infer_every_n):
@@ -911,21 +871,8 @@ class MediaPipePoseServiceNode(ServiceNode):
                 t_infer1 = time.perf_counter()
 
                 self._last_infer_frame_id = frame_id_seen
-                now_ms = int(header.ts_ms)
-                self._telemetry.observe_frame(
-                    ts_ms=now_ms,
-                    infer_ms=(t_infer1 - t_infer0) * 1000.0,
-                    total_ms=(time.perf_counter() - t0) * 1000.0,
-                    dup_skipped=dup_skipped,
-                )
-                if self._telemetry.should_emit(now_ms):
-                    telemetry_payload = self._telemetry.summary(
-                        now_ms=now_ms,
-                        node_id=self.node_id,
-                        shm_name=(self._shm_open_name or shm_name),
-                    )
-                    await self.emit("telemetry", telemetry_payload, ts_ms=now_ms)
-                    self._telemetry.mark_emitted(now_ms)
+                _ = t0
+                _ = t_infer1
             except asyncio.CancelledError:
                 raise
             except Exception as exc:

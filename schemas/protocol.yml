@@ -815,3 +815,308 @@ components:
           type: string
           description: Optional origin label for this rungraph snapshot.
       additionalProperties: true
+
+    F8MonitorCpu:
+      title: F8MonitorCpu
+      type: object
+      properties:
+        processPercent:
+          anyOf:
+            - type: number
+            - type: "null"
+          default: null
+        systemPercent:
+          anyOf:
+            - type: number
+            - type: "null"
+          default: null
+      required: [processPercent, systemPercent]
+      additionalProperties: false
+
+    F8MonitorMemory:
+      title: F8MonitorMemory
+      type: object
+      properties:
+        rssBytes:
+          type: integer
+          minimum: 0
+          default: 0
+        vmsBytes:
+          type: integer
+          minimum: 0
+          default: 0
+      required: [rssBytes, vmsBytes]
+      additionalProperties: false
+
+    F8MonitorGpu:
+      title: F8MonitorGpu
+      type: object
+      properties:
+        vendor:
+          type: string
+          default: ""
+        deviceIndex:
+          anyOf:
+            - type: integer
+            - type: "null"
+          default: null
+        utilPercent:
+          anyOf:
+            - type: number
+            - type: "null"
+          default: null
+        memoryUsedBytes:
+          anyOf:
+            - type: integer
+              minimum: 0
+            - type: "null"
+          default: null
+        memoryTotalBytes:
+          anyOf:
+            - type: integer
+              minimum: 0
+            - type: "null"
+          default: null
+        available:
+          type: boolean
+          default: false
+      required: [vendor, deviceIndex, utilPercent, memoryUsedBytes, memoryTotalBytes, available]
+      additionalProperties: false
+
+    F8MonitorFrame:
+      title: F8MonitorFrame
+      type: object
+      properties:
+        observed:
+          type: integer
+          minimum: 0
+          default: 0
+        processed:
+          type: integer
+          minimum: 0
+          default: 0
+        dropped:
+          type: integer
+          minimum: 0
+          default: 0
+      required: [observed, processed, dropped]
+      additionalProperties: false
+
+    F8MonitorTiming:
+      title: F8MonitorTiming
+      type: object
+      properties:
+        processMsAvg:
+          anyOf:
+            - type: number
+            - type: "null"
+          default: null
+        processMsP95:
+          anyOf:
+            - type: number
+            - type: "null"
+          default: null
+        waitMsAvg:
+          anyOf:
+            - type: number
+            - type: "null"
+          default: null
+        waitMsP95:
+          anyOf:
+            - type: number
+            - type: "null"
+          default: null
+      required: [processMsAvg, processMsP95, waitMsAvg, waitMsP95]
+      additionalProperties: false
+
+    F8MonitorQueue:
+      title: F8MonitorQueue
+      type: object
+      properties:
+        depth:
+          type: integer
+          minimum: 0
+          default: 0
+      required: [depth]
+      additionalProperties: false
+
+    F8MonitorError:
+      title: F8MonitorError
+      type: object
+      properties:
+        countWindow:
+          type: integer
+          minimum: 0
+          default: 0
+        lastCode:
+          type: string
+          default: ""
+        lastMessage:
+          type: string
+          default: ""
+        lastTsMs:
+          anyOf:
+            - type: integer
+            - type: "null"
+          default: null
+      required: [countWindow, lastCode, lastMessage, lastTsMs]
+      additionalProperties: false
+
+    F8MonitorSnapshot:
+      title: F8MonitorSnapshot
+      type: object
+      properties:
+        schemaVersion:
+          type: string
+          enum: [f8monitor/1]
+        serviceId:
+          type: string
+        serviceClass:
+          type: string
+        nodeId:
+          type: string
+        tsMs:
+          type: integer
+          format: int64
+        alive:
+          type: boolean
+        ready:
+          type: boolean
+        active:
+          type: boolean
+        uptimeMs:
+          type: integer
+          minimum: 0
+        cpu:
+          $ref: "#/components/schemas/F8MonitorCpu"
+        memory:
+          $ref: "#/components/schemas/F8MonitorMemory"
+        gpu:
+          $ref: "#/components/schemas/F8MonitorGpu"
+        frame:
+          $ref: "#/components/schemas/F8MonitorFrame"
+        timing:
+          $ref: "#/components/schemas/F8MonitorTiming"
+        queue:
+          $ref: "#/components/schemas/F8MonitorQueue"
+        error:
+          $ref: "#/components/schemas/F8MonitorError"
+      required:
+        - schemaVersion
+        - serviceId
+        - serviceClass
+        - nodeId
+        - tsMs
+        - alive
+        - ready
+        - active
+        - uptimeMs
+        - cpu
+        - memory
+        - gpu
+        - frame
+        - timing
+        - queue
+        - error
+      additionalProperties: false
+
+    F8MonitorHotspotEntry:
+      title: F8MonitorHotspotEntry
+      type: object
+      properties:
+        serviceId:
+          type: string
+        value:
+          type: number
+      required: [serviceId, value]
+      additionalProperties: false
+
+    F8MonitorErrorSummary:
+      title: F8MonitorErrorSummary
+      type: object
+      properties:
+        serviceId:
+          type: string
+        count:
+          type: integer
+          minimum: 0
+        lastCode:
+          type: string
+        lastMessage:
+          type: string
+        lastTsMs:
+          anyOf:
+            - type: integer
+            - type: "null"
+          default: null
+      required: [serviceId, count, lastCode, lastMessage, lastTsMs]
+      additionalProperties: false
+
+    F8MonitorServiceSummary:
+      title: F8MonitorServiceSummary
+      type: object
+      properties:
+        serviceId:
+          type: string
+        serviceClass:
+          type: string
+        alive:
+          type: boolean
+        ready:
+          type: boolean
+        active:
+          type: boolean
+        latest:
+          $ref: "#/components/schemas/F8MonitorSnapshot"
+      required: [serviceId, serviceClass, alive, ready, active, latest]
+      additionalProperties: false
+
+    F8MonitorHotspots:
+      title: F8MonitorHotspots
+      type: object
+      properties:
+        cpuTop:
+          type: array
+          items:
+            $ref: "#/components/schemas/F8MonitorHotspotEntry"
+          default: []
+        gpuTop:
+          type: array
+          items:
+            $ref: "#/components/schemas/F8MonitorHotspotEntry"
+          default: []
+        waitTop:
+          type: array
+          items:
+            $ref: "#/components/schemas/F8MonitorHotspotEntry"
+          default: []
+      required: [cpuTop, gpuTop, waitTop]
+      additionalProperties: false
+
+    F8MonitorReport:
+      title: F8MonitorReport
+      type: object
+      properties:
+        schemaVersion:
+          type: string
+          enum: [f8monitorReport/1]
+        generatedAtMs:
+          type: integer
+          format: int64
+        windowMs:
+          type: integer
+          minimum: 1
+        services:
+          type: array
+          items:
+            $ref: "#/components/schemas/F8MonitorServiceSummary"
+          default: []
+        hotspots:
+          $ref: "#/components/schemas/F8MonitorHotspots"
+        errors:
+          type: array
+          items:
+            $ref: "#/components/schemas/F8MonitorErrorSummary"
+          default: []
+      required: [schemaVersion, generatedAtMs, windowMs, services, hotspots, errors]
+      additionalProperties: false

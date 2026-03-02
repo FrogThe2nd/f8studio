@@ -28,8 +28,6 @@ pixi run f8pymppose
 | `minTrackingConfidence` | `rw` | `false` | `true` | `number / default=0.5` | Minimum confidence threshold for pose tracking. |
 | `visibilityThreshold` | `rw` | `false` | `true` | `number / default=0.5` | Landmark visibility threshold (below threshold => hidden point). |
 | `lastError` | `ro` | `false` | `false` | `string / default=` | Last runtime error string (best-effort). |
-| `telemetryIntervalMs` | `wo` | `false` | `false` | `integer / default=1000` | Emit telemetry summaries every N milliseconds (0 disables). |
-| `telemetryWindowMs` | `wo` | `false` | `false` | `integer / default=2000` | Rolling window for telemetry averages (ms). |
 | `active` | `rw` | `false` | `true` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
 | `svcId` | `ro` | `false` | `false` | `string` | Readonly: current service instance id (svcId). |
 
@@ -47,7 +45,7 @@ _None_
 | --- | --- | --- | --- | --- |
 | `detections` | `true` | `true` | `any` | Detection output in schema f8visionDetections/1. |
 | `skeletons` | `true` | `true` | `any` | List of UDP-skeleton-compatible JSON payloads for skeleton3d. |
-| `telemetry` | `true` | `true` | `any` | Periodic telemetry summaries (fps + timings). |
+| `monitor` | `false` | `true` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
 
 ## Operators
 

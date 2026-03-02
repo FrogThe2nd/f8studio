@@ -351,13 +351,13 @@ bool TrackingService::start() {
   bbox_ = cv::Rect();
   is_tracking_ = false;
   pending_init_boxes_.clear();
-  telemetry_observed_frames_ = 0;
-  telemetry_processed_frames_ = 0;
-  telemetry_window_processed_frames_ = 0;
-  telemetry_window_start_ms_ = 0;
-  telemetry_last_process_ms_ = 0.0;
-  telemetry_total_process_ms_ = 0.0;
-  telemetry_fps_ = 0.0;
+  monitor_observed_frames_ = 0;
+  monitor_processed_frames_ = 0;
+  monitor_window_processed_frames_ = 0;
+  monitor_window_start_ms_ = 0;
+  monitor_last_process_ms_ = 0.0;
+  monitor_total_process_ms_ = 0.0;
+  monitor_fps_ = 0.0;
 
   if (!cfg_.shm_name.empty()) {
     set_shm_name(cfg_.shm_name, json::object({{"init", true}}));
@@ -405,38 +405,30 @@ void TrackingService::publish_state_if_changed(const std::string& field, const j
   }
 }
 
-void TrackingService::emit_telemetry(std::int64_t ts_ms, std::uint64_t frame_id, double process_ms) {
+void TrackingService::emit_monitor_snapshot(std::int64_t ts_ms, std::uint64_t frame_id, double process_ms) {
   if (!bus_) return;
-  if (telemetry_window_start_ms_ <= 0) {
-    telemetry_window_start_ms_ = ts_ms;
+  (void)frame_id;
+  if (monitor_window_start_ms_ <= 0) {
+    monitor_window_start_ms_ = ts_ms;
   }
-  ++telemetry_processed_frames_;
-  ++telemetry_window_processed_frames_;
-  telemetry_last_process_ms_ = process_ms;
-  telemetry_total_process_ms_ += process_ms;
+  ++monitor_processed_frames_;
+  ++monitor_window_processed_frames_;
+  monitor_last_process_ms_ = process_ms;
+  monitor_total_process_ms_ += process_ms;
 
-  const std::int64_t elapsed = ts_ms - telemetry_window_start_ms_;
+  const std::int64_t elapsed = ts_ms - monitor_window_start_ms_;
   if (elapsed >= 1000) {
-    telemetry_fps_ = static_cast<double>(telemetry_window_processed_frames_) * 1000.0 / static_cast<double>(elapsed);
-    telemetry_window_start_ms_ = ts_ms;
-    telemetry_window_processed_frames_ = 0;
+    monitor_fps_ = static_cast<double>(monitor_window_processed_frames_) * 1000.0 / static_cast<double>(elapsed);
+    monitor_window_start_ms_ = ts_ms;
+    monitor_window_processed_frames_ = 0;
   }
 
   const std::uint64_t dropped_frames =
-      telemetry_observed_frames_ > telemetry_processed_frames_ ? (telemetry_observed_frames_ - telemetry_processed_frames_) : 0;
+      monitor_observed_frames_ > monitor_processed_frames_ ? (monitor_observed_frames_ - monitor_processed_frames_) : 0;
   const double avg_process_ms =
-      telemetry_processed_frames_ > 0 ? (telemetry_total_process_ms_ / static_cast<double>(telemetry_processed_frames_)) : 0.0;
-
-  json telemetry = json::object();
-  telemetry["tsMs"] = ts_ms;
-  telemetry["frameId"] = frame_id;
-  telemetry["fps"] = telemetry_fps_;
-  telemetry["processMs"] = telemetry_last_process_ms_;
-  telemetry["avgProcessMs"] = avg_process_ms;
-  telemetry["observedFrames"] = telemetry_observed_frames_;
-  telemetry["processedFrames"] = telemetry_processed_frames_;
-  telemetry["droppedFrames"] = dropped_frames;
-  (void)bus_->emit_data(cfg_.service_id, "telemetry", telemetry);
+      monitor_processed_frames_ > 0 ? (monitor_total_process_ms_ / static_cast<double>(monitor_processed_frames_)) : 0.0;
+  (void)avg_process_ms;
+  (void)dropped_frames;
 }
 
 void TrackingService::on_lifecycle(bool active, const json& meta) {
@@ -667,7 +659,7 @@ void TrackingService::process_frame_once() {
   if (hdr.frame_id == 0 || hdr.frame_id == last_frame_id_) {
     return;
   }
-  ++telemetry_observed_frames_;
+  ++monitor_observed_frames_;
   last_frame_id_ = hdr.frame_id;
   last_header_ = hdr;
 
@@ -738,7 +730,7 @@ void TrackingService::process_frame_once() {
     (void)bus_->emit_data(cfg_.service_id, "tracking", out);
   }
   const std::int64_t end_ts_ms = f8::cppsdk::now_ms();
-  emit_telemetry(end_ts_ms, hdr.frame_id, static_cast<double>(end_ts_ms - process_start_ms));
+  emit_monitor_snapshot(end_ts_ms, hdr.frame_id, static_cast<double>(end_ts_ms - process_start_ms));
 }
 
 void TrackingService::set_tracking(bool tracking, const json& meta) {
@@ -759,16 +751,6 @@ json TrackingService::describe() {
            {"status", schema_string()},
            {"bbox", schema_array(schema_integer())},
            {"tracker", schema_object(json{{"kind", schema_string()}, {"ok", schema_boolean()}})}});
-  const json telemetry_schema = schema_object(
-      json{{"tsMs", schema_integer()},
-           {"frameId", schema_integer()},
-           {"fps", schema_number()},
-           {"processMs", schema_number()},
-           {"avgProcessMs", schema_number()},
-           {"observedFrames", schema_integer()},
-           {"processedFrames", schema_integer()},
-           {"droppedFrames", schema_integer()}});
-
   json service;
   service["schemaVersion"] = "f8service/1";
   service["serviceClass"] = "f8.cvkit.tracking";
@@ -804,10 +786,6 @@ json TrackingService::describe() {
   });
   service["dataOutPorts"] = json::array({
       json{{"name", "tracking"}, {"valueSchema", tracking_schema}, {"description", "Tracking output stream."}, {"required", false}},
-      json{{"name", "telemetry"},
-           {"valueSchema", telemetry_schema},
-           {"description", "Runtime telemetry: fps/process time/dropped frames."},
-           {"required", false}},
   });
   service["editableDataInPorts"] = false;
   service["editableDataOutPorts"] = false;

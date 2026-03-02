@@ -32,8 +32,6 @@ pixi run f8pydl_tcnwave
 | `loadedModel` | `ro` | `false` | `false` | `string / default=` | Current loaded model id/task. |
 | `ortActiveProviders` | `ro` | `false` | `false` | `string / default=` | JSON list of active ONNX Runtime providers for this session. |
 | `lastError` | `ro` | `false` | `false` | `string / default=` | Last runtime error string (best-effort). |
-| `telemetryIntervalMs` | `wo` | `false` | `false` | `integer / default=1000` | Emit telemetry summaries every N milliseconds (0 disables). |
-| `telemetryWindowMs` | `wo` | `false` | `false` | `integer / default=2000` | Rolling window for telemetry averages (ms). |
 | `outputScale` | `rw` | `false` | `false` | `number / default=10.0` | Denormalization scale applied to raw model output values. |
 | `outputBias` | `rw` | `false` | `false` | `number / default=0.0` | Denormalization bias applied after outputScale. |
 | `useVrFocusCrop` | `rw` | `false` | `false` | `boolean / default=False` | Apply focus crop before inference. This assumes SHM already provides the target eye view and crops top 20% + left/right 10%. |
@@ -53,7 +51,7 @@ _None_
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
 | `predictedChange` | `true` | `true` | `number` | Temporal model output value per frame. |
-| `telemetry` | `true` | `true` | `any` | Periodic telemetry summaries (fps + timings). |
+| `monitor` | `false` | `true` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
 
 ## Operators
 

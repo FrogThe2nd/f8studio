@@ -43,6 +43,7 @@ _None_
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
 | `coreFeatures` | `true` | `true` | `any` | Core feature payload with onset envelope history. |
+| `monitor` | `false` | `true` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
 
 ## Operators
 

@@ -43,6 +43,7 @@ _None_
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
 | `out` | `true` | `true` | `any` | Default expression output value. |
+| `monitor` | `false` | `true` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
 
 ## Operators
 

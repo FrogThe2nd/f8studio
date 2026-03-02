@@ -112,7 +112,7 @@ def _parse_playback(value: Any, *, default_playing: bool) -> _PlaybackSample | N
 
 class PlaybackSyncRuntimeNode(OperatorNode):
     """
-    Extrapolates playback position from sparse IMPlayer playback telemetry.
+    Extrapolates playback position from sparse IMPlayer playback state updates.
 
     Input payload (dataIn `playback`) is expected to include:
     - position (seconds)
@@ -299,7 +299,7 @@ PlaybackSyncRuntimeNode.SPEC = F8OperatorSpec(
     operatorClass=OPERATOR_CLASS,
     version="0.0.1",
     label="Playback Sync",
-    description="Extrapolates IMPlayer playback position between sparse telemetry updates.",
+    description="Extrapolates IMPlayer playback position between sparse playback state updates.",
     tags=["playback", "estimate", "timing", "media", "sync"],
     execInPorts=[],
     execOutPorts=[],
@@ -327,7 +327,7 @@ PlaybackSyncRuntimeNode.SPEC = F8OperatorSpec(
         F8StateSpec(
             name="maxExtrapolateMs",
             label="Max Extrapolate (ms)",
-            description="Limit extrapolation horizon to avoid drift when telemetry is stale (0 = unlimited).",
+            description="Limit extrapolation horizon to avoid drift when playback state is stale (0 = unlimited).",
             valueSchema=integer_schema(default=1000, minimum=0, maximum=600_000),
             access=F8StateAccess.rw,
             showOnNode=False,

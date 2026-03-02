@@ -23,6 +23,14 @@ def log_error_once(
     if key in bus._error_once:
         return
     bus._error_once.add(key)
+    if bus._monitor_collector.enabled:
+        error_message = str(message)
+        if exc is not None:
+            error_message = f"{message}: {type(exc).__name__}: {exc}"
+        bus._monitor_collector.record_error(
+            code="SERVICE_BUS_ERROR",
+            message=error_message,
+        )
     if exc is None:
         log.error("service_bus[%s] %s", bus.service_id, message)
         return

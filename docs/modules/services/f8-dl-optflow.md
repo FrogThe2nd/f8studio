@@ -34,8 +34,6 @@ pixi run f8pydl_optflow
 | `flowShmName` | `ro` | `false` | `true` | `string / default=` | Output flow SHM name. |
 | `flowShmFormat` | `ro` | `false` | `false` | `string / default=flow2_f16` | Flow payload format. Fixed to flow2_f16. |
 | `lastError` | `ro` | `false` | `false` | `string / default=` | Last runtime error string (best-effort). |
-| `telemetryIntervalMs` | `wo` | `false` | `false` | `integer / default=1000` | Emit telemetry summaries every N milliseconds (0 disables). |
-| `telemetryWindowMs` | `wo` | `false` | `false` | `integer / default=2000` | Rolling window for telemetry averages (ms). |
 | `active` | `rw` | `false` | `true` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
 | `svcId` | `ro` | `false` | `false` | `string` | Readonly: current service instance id (svcId). |
 
@@ -51,7 +49,7 @@ _None_
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
-| `telemetry` | `true` | `true` | `any` | Periodic telemetry summaries (fps + timings). |
+| `monitor` | `false` | `true` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
 
 ## Operators
 

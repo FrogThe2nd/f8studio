@@ -17,6 +17,7 @@ import yaml
 
 from f8pysdk.generated import F8ServiceDescribe, F8ServiceEntry
 from f8pysdk.builtin_state_fields import normalize_describe_payload_dict
+from f8pysdk.monitor_schema import MonitorContractError, validate_describe_monitor_contract
 
 from .catalog import ServiceCatalog
 
@@ -395,6 +396,13 @@ def _describe_entry(service_dir: Path, entry: F8ServiceEntry) -> dict[str, Any] 
     if not isinstance(data, dict):
         return None
     data = normalize_describe_payload_dict(data)
+    try:
+        validate_describe_monitor_contract(data)
+    except MonitorContractError as exc:
+        msg = f"describe monitor contract invalid for {service_dir}: {exc}"
+        _discovery_add_error(msg)
+        logger.error(msg)
+        return None
 
     try:
         payload = F8ServiceDescribe.model_validate(data)

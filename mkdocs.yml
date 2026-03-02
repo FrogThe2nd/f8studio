@@ -17,18 +17,17 @@ nav:
   - Modules:
       - Overview: modules/index.md
       - Services:
-          - Audio Capture: modules/services/f8-audiocap.md
-          - CVKit Dense Optical Flow: modules/services/f8-cvkit-denseoptflow.md
-          - CVKit Template Match: modules/services/f8-cvkit-templatematch.md
-          - CVKit Tracking: modules/services/f8-cvkit-tracking.md
-          - CVKit Video Stabilizer: modules/services/f8-cvkit-videostab.md
+          - Audio Feature Core: modules/services/f8-audiofeat-core.md
+          - Audio Feature Rhythm: modules/services/f8-audiofeat-rhythm.md
           - DL Classifier: modules/services/f8-dl-classifier.md
           - DL Detector: modules/services/f8-dl-detector.md
           - DL Human Detector: modules/services/f8-dl-humandetector.md
+          - DL Optical Flow: modules/services/f8-dl-optflow.md
+          - DL TCN Wave: modules/services/f8-dl-tcnwave.md
           - PyEngine: modules/services/f8-pyengine.md
-          - IM Player: modules/services/f8-implayer.md
           - MediaPipe Pose: modules/services/f8-mp-pose.md
-          - Screen Capture: modules/services/f8-screencap.md
+          - Python Expr Service: modules/services/f8-pyexpr.md
+          - Python Script Service: modules/services/f8-pyscript.md
   - Scenarios:
       - Overview: scenarios/index.md
       - "Scene 01: CVKit Template Tracking": scenarios/scene-01-cvkit_template_tracking.md

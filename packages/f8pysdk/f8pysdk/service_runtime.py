@@ -41,6 +41,10 @@ class ServiceRuntimeConfig:
         state_cache_max_entries: int = 8192,
         data_input_max_buffers: int = 4096,
         data_input_default_queue_size: int = 256,
+        monitor_enabled: bool = True,
+        monitor_interval_ms: int = 1000,
+        monitor_window_ms: int = 30000,
+        monitor_gpu_enabled: bool = True,
         registry_modules: list[str] | tuple[str, ...] | None = None,
     ) -> "ServiceRuntimeConfig":
         bus = ServiceBusConfig(
@@ -57,6 +61,10 @@ class ServiceRuntimeConfig:
             state_cache_max_entries=max(0, int(state_cache_max_entries)),
             data_input_max_buffers=max(0, int(data_input_max_buffers)),
             data_input_default_queue_size=max(1, int(data_input_default_queue_size)),
+            monitor_enabled=bool(monitor_enabled),
+            monitor_interval_ms=max(200, int(monitor_interval_ms)),
+            monitor_window_ms=max(1000, int(monitor_window_ms)),
+            monitor_gpu_enabled=bool(monitor_gpu_enabled),
         )
         host = ServiceHostConfig(service_class=str(service_class))
         modules = tuple(str(m).strip() for m in (registry_modules or ()) if str(m).strip())

@@ -1,5 +1,6 @@
 #include "f8cppsdk/describe_builtins.h"
 
+#include <cstdint>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -18,6 +19,14 @@ json schema_string() {
   return json{{"type", "string"}};
 }
 
+json schema_number(const double default_value) {
+  return json{{"type", "number"}, {"default", default_value}, {"minimum", 0.0}};
+}
+
+json schema_integer(const std::int64_t default_value) {
+  return json{{"type", "integer"}, {"default", default_value}, {"minimum", 0}};
+}
+
 json state_field(const std::string& name, const json& value_schema, const std::string& access, const std::string& label,
                  const std::string& description, const bool show_on_node) {
   return json{
@@ -27,6 +36,78 @@ json state_field(const std::string& name, const json& value_schema, const std::s
       {"valueSchema", value_schema},
       {"access", access},
       {"showOnNode", show_on_node},
+  };
+}
+
+json monitor_port_schema() {
+  const json cpu = json{
+      {"type", "object"},
+      {"properties", json{{"processPercent", schema_number(0.0)}, {"systemPercent", schema_number(0.0)}}},
+  };
+  const json memory = json{
+      {"type", "object"},
+      {"properties", json{{"rssBytes", schema_integer(0)}, {"vmsBytes", schema_integer(0)}}},
+  };
+  const json gpu = json{
+      {"type", "object"},
+      {"properties", json{{"vendor", json{{"type", "string"}, {"default", ""}}},
+                           {"deviceIndex", json{{"type", "integer"}, {"default", -1}}},
+                           {"utilPercent", schema_number(0.0)},
+                           {"memoryUsedBytes", schema_integer(0)},
+                           {"memoryTotalBytes", schema_integer(0)},
+                           {"available", json{{"type", "boolean"}, {"default", false}}}}},
+  };
+  const json frame = json{
+      {"type", "object"},
+      {"properties", json{{"observed", schema_integer(0)}, {"processed", schema_integer(0)}, {"dropped", schema_integer(0)}}},
+  };
+  const json timing = json{
+      {"type", "object"},
+      {"properties", json{{"processMsAvg", schema_number(0.0)},
+                           {"processMsP95", schema_number(0.0)},
+                           {"waitMsAvg", schema_number(0.0)},
+                           {"waitMsP95", schema_number(0.0)}}},
+  };
+  const json queue = json{
+      {"type", "object"},
+      {"properties", json{{"depth", schema_integer(0)}}},
+  };
+  const json error = json{
+      {"type", "object"},
+      {"properties", json{{"countWindow", schema_integer(0)},
+                           {"lastCode", json{{"type", "string"}, {"default", ""}}},
+                           {"lastMessage", json{{"type", "string"}, {"default", ""}}},
+                           {"lastTsMs", schema_integer(0)}}},
+  };
+
+  return json{
+      {"type", "object"},
+      {"properties", json{{"schemaVersion", json{{"type", "string"}, {"default", "f8monitor/1"}, {"enum", json::array({"f8monitor/1"})}}},
+                           {"serviceId", json{{"type", "string"}, {"default", ""}}},
+                           {"serviceClass", json{{"type", "string"}, {"default", ""}}},
+                           {"nodeId", json{{"type", "string"}, {"default", ""}}},
+                           {"tsMs", schema_integer(0)},
+                           {"alive", json{{"type", "boolean"}, {"default", true}}},
+                           {"ready", json{{"type", "boolean"}, {"default", false}}},
+                           {"active", json{{"type", "boolean"}, {"default", true}}},
+                           {"uptimeMs", schema_integer(0)},
+                           {"cpu", cpu},
+                           {"memory", memory},
+                           {"gpu", gpu},
+                           {"frame", frame},
+                           {"timing", timing},
+                           {"queue", queue},
+                           {"error", error}}},
+  };
+}
+
+json monitor_port_spec() {
+  return json{
+      {"name", "monitor"},
+      {"description", "Unified runtime monitor snapshots (health/resource/perf/error)."},
+      {"valueSchema", monitor_port_schema()},
+      {"required", false},
+      {"showOnNode", true},
   };
 }
 
@@ -60,6 +141,20 @@ void upsert_builtin_state_fields(json& spec, const bool is_service) {
   spec["stateFields"] = std::move(filtered);
 }
 
+void upsert_builtin_data_out_ports(json& spec) {
+  json filtered = json::array();
+  if (spec.contains("dataOutPorts") && spec["dataOutPorts"].is_array()) {
+    for (const auto& item : spec["dataOutPorts"]) {
+      if (!item.is_object()) continue;
+      const std::string name = item.value("name", std::string());
+      if (name == "monitor" || name == "telemetry") continue;
+      filtered.push_back(item);
+    }
+  }
+  filtered.push_back(monitor_port_spec());
+  spec["dataOutPorts"] = std::move(filtered);
+}
+
 }  // namespace
 
 json normalize_describe_with_builtin_state_fields(const json& payload) {
@@ -69,6 +164,7 @@ json normalize_describe_with_builtin_state_fields(const json& payload) {
   if (out.contains("service") && out["service"].is_object()) {
     json service = out["service"];
     upsert_builtin_state_fields(service, true);
+    upsert_builtin_data_out_ports(service);
     out["service"] = std::move(service);
 
     json normalized_ops = json::array();
@@ -88,6 +184,7 @@ json normalize_describe_with_builtin_state_fields(const json& payload) {
   }
 
   upsert_builtin_state_fields(out, true);
+  upsert_builtin_data_out_ports(out);
   return out;
 }
 

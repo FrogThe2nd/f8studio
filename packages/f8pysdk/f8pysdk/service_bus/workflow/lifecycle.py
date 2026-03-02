@@ -54,6 +54,8 @@ async def start(bus: "ServiceBus") -> None:
     # Reset termination latch for a fresh run.
     bus._terminate_event = asyncio.Event()
     await bus._transport.connect()
+    if bus._monitor_collector.enabled:
+        await bus._monitor_collector.start()
     # Clear any stale ready flag from a previous run as early as possible.
     await announce_ready(bus, False, reason="starting")
     if bus._micro_endpoints is None:
@@ -117,6 +119,8 @@ async def stop(bus: "ServiceBus") -> None:
 
     bus._state_cache.clear()
 
+    if bus._monitor_collector.enabled:
+        await bus._monitor_collector.stop()
     await bus._transport.close()
     await notify_after_stop(bus)
     bus._rungraph_hooks.clear()
@@ -124,6 +128,9 @@ async def stop(bus: "ServiceBus") -> None:
 
 
 async def announce_ready(bus: "ServiceBus", ready: bool, *, reason: str) -> None:
+    bus._ready = bool(ready)
+    if bus._monitor_collector.enabled:
+        bus._monitor_collector.record_ready(bool(ready))
     payload = {
         "serviceId": bus.service_id,
         "ready": bool(ready),

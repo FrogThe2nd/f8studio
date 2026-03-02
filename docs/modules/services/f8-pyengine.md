@@ -35,7 +35,9 @@ _None_
 
 ## Service Data Output Ports
 
-_None_
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `monitor` | `false` | `true` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
 
 ## Operators
 
@@ -766,7 +768,7 @@ Outputs A by default; when A is silent for a while, crossfades to B as filler.
 | `silent` | `true` | `true` | `number` | 1 if A is considered silent else 0 |
 
 ### Playback Sync (`f8.playback_sync`)
-Extrapolates IMPlayer playback position between sparse telemetry updates.
+Extrapolates IMPlayer playback position between sparse playback state updates.
 
 - Exec in ports: none
 - Exec out ports: none
@@ -775,7 +777,7 @@ Extrapolates IMPlayer playback position between sparse telemetry updates.
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `maxExtrapolateMs` | `rw` | `false` | `false` | `integer / default=1000` | Limit extrapolation horizon to avoid drift when telemetry is stale (0 = unlimited). |
+| `maxExtrapolateMs` | `rw` | `false` | `false` | `integer / default=1000` | Limit extrapolation horizon to avoid drift when playback state is stale (0 = unlimited). |
 | `playbackRate` | `rw` | `false` | `false` | `number / default=1.0` | Rate multiplier used for extrapolation when playing. |
 | `clampToDuration` | `rw` | `false` | `false` | `boolean / default=True` | Clamp estimated position to latest duration when available. |
 | `svcId` | `ro` | `false` | `false` | `string` | Readonly: current service instance id (svcId). |

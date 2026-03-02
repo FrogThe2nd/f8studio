@@ -43,6 +43,7 @@ _None_
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
 | `rhythmFeatures` | `true` | `true` | `any` | Rhythm feature payload. |
+| `monitor` | `false` | `true` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
 
 ## Operators
 

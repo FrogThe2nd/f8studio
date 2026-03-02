@@ -38,6 +38,7 @@ from .service_process_manager import ServiceProcessConfig, ServiceProcessManager
 from .pystudio_node_registry import SERVICE_CLASS, STUDIO_SERVICE_ID
 from .remote_state_watcher import RemoteStateWatcher, WatchTarget
 from .ui_bus import UiCommand
+from .monitoring import MonitorCenter
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +91,8 @@ class PyStudioServiceBridge(QtCore.QObject):
         self._remote_state_watcher: RemoteStateWatcher | None = None
         self._remote_state_gateway: RemoteStateGatewayAdapter | None = None
         self._watch_targets_cache: tuple[WatchTarget, ...] | None = None
+        self._monitor_center = MonitorCenter(window_ms=30 * 60 * 1000)
+        self._monitor_sub: Any = None
         self._nc: Any = None
         self._last_nats_error_log_s: float = 0.0
         self._pending_remote_command_cbs: dict[str, Callable[[dict[str, Any] | None, str | None], None]] = {}
@@ -181,6 +184,9 @@ class PyStudioServiceBridge(QtCore.QObject):
     @property
     def managed_active(self) -> bool:
         return bool(self._managed_active)
+
+    def export_monitor_report(self) -> dict[str, Any]:
+        return self._monitor_center.export_report_json()
 
     @QtCore.Slot(bool)
     def set_managed_active(self, active: bool) -> None:
@@ -487,12 +493,14 @@ class PyStudioServiceBridge(QtCore.QObject):
         if not sid:
             return
         self._service_status_cache[sid] = (active, time.monotonic())
+        self._monitor_center.update_service_status(service_id=sid, active=active)
 
     def _cache_service_alive(self, service_id: str, alive: bool) -> None:
         sid = str(service_id or "").strip()
         if not sid:
             return
         self._service_alive_cache[sid] = (bool(alive), time.monotonic())
+        self._monitor_center.update_service_status(service_id=sid, alive=bool(alive))
 
     def get_cached_service_active(self, service_id: str) -> bool | None:
         """
@@ -1164,6 +1172,48 @@ class PyStudioServiceBridge(QtCore.QObject):
                 self._remote_state_watcher = None
                 self._remote_state_gateway = None
 
+        if self._nc is not None and self._monitor_sub is None:
+            async def _on_monitor_msg(msg: Any) -> None:
+                raw = self._message_data_bytes(msg)
+                if not raw:
+                    return
+                try:
+                    envelope = decode_obj(raw)
+                except ValueError:
+                    return
+                if not isinstance(envelope, dict):
+                    return
+                value = envelope.get("value")
+                if not isinstance(value, dict):
+                    return
+                try:
+                    snapshot = self._monitor_center.ingest_snapshot(value)
+                except Exception as exc:
+                    self._report_exception("ingest monitor snapshot failed", exc)
+                    return
+                self._monitor_center.update_service_status(
+                    service_id=str(snapshot.serviceId),
+                    alive=True,
+                    ready=bool(snapshot.ready),
+                    active=bool(snapshot.active),
+                )
+                try:
+                    self.ui_command.emit(
+                        UiCommand(
+                            node_id=str(snapshot.serviceId),
+                            command="monitor.update",
+                            payload=snapshot.model_dump(mode="json", by_alias=True),
+                            ts_ms=int(snapshot.tsMs),
+                        )
+                    )
+                except RuntimeError as exc:
+                    self._report_exception("emit ui monitor.update failed", exc)
+
+            try:
+                self._monitor_sub = await self._nc.subscribe("svc.*.nodes.*.data.monitor", cb=_on_monitor_msg)
+            except Exception as exc:
+                self._report_exception("subscribe monitor stream failed", exc)
+
         # Re-apply current desired lifecycle to any already-known managed services.
         try:
             await self._set_managed_active_async(bool(self._managed_active))
@@ -1171,6 +1221,12 @@ class PyStudioServiceBridge(QtCore.QObject):
             self._report_exception("re-apply managed active failed", exc)
 
     async def _stop_async(self) -> None:
+        if self._monitor_sub is not None:
+            try:
+                await self._monitor_sub.unsubscribe()
+            except Exception as exc:
+                self._report_exception("unsubscribe monitor stream failed", exc)
+        self._monitor_sub = None
         try:
             if self._remote_state_gateway is not None:
                 await self._remote_state_gateway.stop()

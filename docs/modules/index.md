@@ -18,14 +18,14 @@ Manual usage guidance is merged from `docs/modules/manual/*.md`.
 
 | Service | Label | Operators | State Fields | Link |
 | --- | --- | --- | --- | --- |
-| `f8.dl.classifier` | DL Classifier | `0` | `16` | [DL Classifier](services/f8-dl-classifier.md) |
-| `f8.dl.detector` | DL Detector | `0` | `20` | [DL Detector](services/f8-dl-detector.md) |
-| `f8.dl.humandetector` | DL Human Detector | `0` | `20` | [DL Human Detector](services/f8-dl-humandetector.md) |
-| `f8.dl.optflow` | DL Optical Flow | `0` | `17` | [DL Optical Flow](services/f8-dl-optflow.md) |
-| `f8.dl.tcnwave` | DL TCN Wave | `0` | `18` | [DL TCN Wave](services/f8-dl-tcnwave.md) |
+| `f8.dl.classifier` | DL Classifier | `0` | `14` | [DL Classifier](services/f8-dl-classifier.md) |
+| `f8.dl.detector` | DL Detector | `0` | `18` | [DL Detector](services/f8-dl-detector.md) |
+| `f8.dl.humandetector` | DL Human Detector | `0` | `18` | [DL Human Detector](services/f8-dl-humandetector.md) |
+| `f8.dl.optflow` | DL Optical Flow | `0` | `15` | [DL Optical Flow](services/f8-dl-optflow.md) |
+| `f8.dl.tcnwave` | DL TCN Wave | `0` | `16` | [DL TCN Wave](services/f8-dl-tcnwave.md) |
 
 ## MediaPipe
 
 | Service | Label | Operators | State Fields | Link |
 | --- | --- | --- | --- | --- |
-| `f8.mp.pose` | MediaPipe Pose | `0` | `11` | [MediaPipe Pose](services/f8-mp-pose.md) |
+| `f8.mp.pose` | MediaPipe Pose | `0` | `9` | [MediaPipe Pose](services/f8-mp-pose.md) |

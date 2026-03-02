@@ -8,11 +8,13 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from f8pysdk.builtin_state_fields import (  # noqa: E402
+    MONITOR_PORT_NAME,
     normalize_describe_payload_dict,
     operator_state_fields_with_builtins,
+    service_data_out_ports_with_builtins,
     service_state_fields_with_builtins,
 )
-from f8pysdk.generated import F8StateAccess, F8StateSpec  # noqa: E402
+from f8pysdk.generated import F8DataPortSpec, F8StateAccess, F8StateSpec  # noqa: E402
 from f8pysdk.nats_naming import kv_key_node_state  # noqa: E402
 from f8pysdk.service_bus.codec import decode_obj  # noqa: E402
 from f8pysdk.schema_helpers import boolean_schema, string_schema  # noqa: E402
@@ -62,6 +64,18 @@ class BuiltinStateFieldTests(unittest.TestCase):
         self.assertEqual(out[-2].access, F8StateAccess.ro)
         self.assertEqual(out[-1].access, F8StateAccess.ro)
 
+    def test_service_data_out_ports_force_monitor(self) -> None:
+        ports = [
+            F8DataPortSpec(name="telemetry", valueSchema=string_schema()),
+            F8DataPortSpec(name="out", valueSchema=string_schema()),
+            F8DataPortSpec(name="monitor", valueSchema=string_schema()),
+        ]
+        out = service_data_out_ports_with_builtins(ports)
+        names = [str(port.name) for port in out]
+        self.assertEqual(names.count(MONITOR_PORT_NAME), 1)
+        self.assertIn("out", names)
+        self.assertNotIn("telemetry", names)
+
     def test_normalize_describe_payload_dict_force_override(self) -> None:
         payload = {
             "schemaVersion": "f8describe/1",
@@ -70,6 +84,9 @@ class BuiltinStateFieldTests(unittest.TestCase):
                 "serviceClass": "f8.tests.svc",
                 "version": "0.0.1",
                 "label": "svc",
+                "dataOutPorts": [
+                    {"name": "telemetry", "valueSchema": {"type": "string"}},
+                ],
                 "stateFields": [
                     {"name": "active", "valueSchema": {"type": "boolean"}, "access": "ro", "showOnNode": False},
                     {"name": "svcId", "valueSchema": {"type": "string"}, "access": "rw", "showOnNode": True},
@@ -96,6 +113,9 @@ class BuiltinStateFieldTests(unittest.TestCase):
         operator_fields = out["operators"][0]["stateFields"]
         self.assertEqual([x["name"] for x in service_fields], ["custom", "active", "svcId"])
         self.assertEqual([x["name"] for x in operator_fields], ["threshold", "svcId", "operatorId"])
+        service_data_ports = out["service"]["dataOutPorts"]
+        self.assertTrue(any(str(x.get("name")) == MONITOR_PORT_NAME for x in service_data_ports))
+        self.assertFalse(any(str(x.get("name")) == "telemetry" for x in service_data_ports))
 
 
 class LifecycleBootstrapTests(unittest.IsolatedAsyncioTestCase):

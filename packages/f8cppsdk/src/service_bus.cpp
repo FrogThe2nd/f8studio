@@ -2,10 +2,13 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <chrono>
 #include <cctype>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
+#include <fstream>
 #include <stdexcept>
 #include <tuple>
 #include <unordered_set>
@@ -20,6 +23,10 @@
 #include "f8cppsdk/rungraph_routes.h"
 #include "f8cppsdk/state_kv.h"
 #include "f8cppsdk/time_utils.h"
+
+#if defined(__linux__)
+#include <unistd.h>
+#endif
 
 namespace f8::cppsdk {
 
@@ -84,6 +91,60 @@ std::string access_to_string(f8::cppsdk::generated::F8StateAccess a) {
       return "wo";
   }
   return "";
+}
+
+void prune_timed_values(std::deque<std::pair<std::int64_t, double>>& values, const std::int64_t now_ms,
+                        const std::int64_t window_ms) {
+  const std::int64_t cutoff = now_ms - std::max<std::int64_t>(1000, window_ms);
+  while (!values.empty() && values.front().first < cutoff) {
+    values.pop_front();
+  }
+}
+
+void prune_timed_errors(std::deque<std::int64_t>& values, const std::int64_t now_ms, const std::int64_t window_ms) {
+  const std::int64_t cutoff = now_ms - std::max<std::int64_t>(1000, window_ms);
+  while (!values.empty() && values.front() < cutoff) {
+    values.pop_front();
+  }
+}
+
+double average_values(const std::deque<std::pair<std::int64_t, double>>& values) {
+  if (values.empty()) return 0.0;
+  double total = 0.0;
+  for (const auto& item : values) {
+    total += item.second;
+  }
+  return total / static_cast<double>(values.size());
+}
+
+double percentile95_values(const std::deque<std::pair<std::int64_t, double>>& values) {
+  if (values.empty()) return 0.0;
+  std::vector<double> ordered;
+  ordered.reserve(values.size());
+  for (const auto& item : values) {
+    ordered.push_back(item.second);
+  }
+  std::sort(ordered.begin(), ordered.end());
+  std::size_t idx = static_cast<std::size_t>(std::llround(static_cast<double>(ordered.size() - 1) * 0.95));
+  if (idx >= ordered.size()) idx = ordered.size() - 1;
+  return ordered[idx];
+}
+
+std::pair<std::int64_t, std::int64_t> sample_process_memory_bytes() {
+#if defined(__linux__)
+  std::ifstream in("/proc/self/statm");
+  if (!in.is_open()) return {0, 0};
+  std::uint64_t vms_pages = 0;
+  std::uint64_t rss_pages = 0;
+  in >> vms_pages >> rss_pages;
+  const long page_size = sysconf(_SC_PAGESIZE);
+  if (page_size <= 0) return {0, 0};
+  const std::int64_t rss = static_cast<std::int64_t>(rss_pages) * static_cast<std::int64_t>(page_size);
+  const std::int64_t vms = static_cast<std::int64_t>(vms_pages) * static_cast<std::int64_t>(page_size);
+  return {std::max<std::int64_t>(0, rss), std::max<std::int64_t>(0, vms)};
+#else
+  return {0, 0};
+#endif
 }
 
 struct StateEdgeKey {
@@ -368,12 +429,20 @@ void ServiceBus::apply_data_routes_from_rungraph(const json& graph_obj) {
           }
           auto& buf = *r.buf;
           std::lock_guard<std::mutex> lock(buf.mu);
+          std::int64_t dropped = 0;
+          if (buf.strategy == EdgeStrategy::kLatest && !buf.queue.empty()) {
+            dropped = static_cast<std::int64_t>(buf.queue.size());
+          }
           buf.last_seen_value = value_ptr;
           buf.last_seen_ts_ms = ts_ms;
           if (buf.strategy == EdgeStrategy::kLatest) {
             buf.queue.clear();
           }
           buf.queue.emplace_back(value_ptr, ts_ms);
+          monitor_record_observed(r.to_port);
+          if (dropped > 0) {
+            monitor_record_dropped(dropped);
+          }
         }
 
         if (cfg_.data_delivery != DataDeliveryMode::kPush && cfg_.data_delivery != DataDeliveryMode::kBoth) {
@@ -427,6 +496,7 @@ bool ServiceBus::start() {
     cfg_.service_name = cfg_.service_id;
   }
   terminate_.store(false, std::memory_order_release);
+  ready_.store(false, std::memory_order_release);
   if (!nats_.connect(cfg_.nats_url)) {
     return false;
   }
@@ -453,6 +523,7 @@ bool ServiceBus::start() {
 
   // Clear any stale ready flag from a previous run as early as possible.
   (void)kv_set_ready(kv_, cfg_.service_id, false, "starting");
+  ready_.store(false, std::memory_order_release);
 
   // Watch node state changes and forward to stateful nodes (best-effort).
   // Key format: nodes.<node_id>.state.<field>
@@ -532,11 +603,15 @@ bool ServiceBus::start() {
 
   // Announce readiness after endpoints are up.
   (void)kv_set_ready(kv_, cfg_.service_id, true, "start");
+  ready_.store(true, std::memory_order_release);
+  start_monitor_thread();
   spdlog::info("service_bus started serviceId={} natsUrl={}", cfg_.service_id, cfg_.nats_url);
   return true;
 }
 
 void ServiceBus::stop() {
+  ready_.store(false, std::memory_order_release);
+  stop_monitor_thread();
   if (kv_.valid()) {
     (void)kv_set_ready(kv_, cfg_.service_id, false, "stop");
   }
@@ -618,6 +693,195 @@ void ServiceBus::set_active_local(bool active, const json& meta, const std::stri
     } catch (...) {
       continue;
     }
+  }
+}
+
+void ServiceBus::start_monitor_thread() {
+  stop_monitor_thread();
+  if (!cfg_.monitor_enabled) return;
+  monitor_started_ts_ms_ = now_ms();
+  {
+    std::lock_guard<std::mutex> lock(monitor_mu_);
+    monitor_observed_ = 0;
+    monitor_processed_ = 0;
+    monitor_dropped_ = 0;
+    monitor_wait_ms_.clear();
+    monitor_process_ms_.clear();
+    monitor_error_ts_ms_.clear();
+    monitor_last_error_code_.clear();
+    monitor_last_error_message_.clear();
+    monitor_last_error_ts_ms_.reset();
+  }
+  monitor_running_.store(true, std::memory_order_release);
+  monitor_thread_ = std::thread([this]() { monitor_loop(); });
+}
+
+void ServiceBus::stop_monitor_thread() {
+  monitor_running_.store(false, std::memory_order_release);
+  if (monitor_thread_.joinable()) {
+    monitor_thread_.join();
+  }
+}
+
+void ServiceBus::monitor_record_observed(const std::string& port) {
+  if (!cfg_.monitor_enabled) return;
+  if (port == "monitor") return;
+  std::lock_guard<std::mutex> lock(monitor_mu_);
+  ++monitor_observed_;
+}
+
+void ServiceBus::monitor_record_processed(const std::string& port, const std::int64_t emit_ts_ms,
+                                          const std::int64_t now_ts_ms) {
+  if (!cfg_.monitor_enabled) return;
+  if (port == "monitor") return;
+  std::lock_guard<std::mutex> lock(monitor_mu_);
+  ++monitor_processed_;
+  if (emit_ts_ms > 0 && now_ts_ms >= emit_ts_ms) {
+    monitor_process_ms_.push_back({now_ts_ms, static_cast<double>(now_ts_ms - emit_ts_ms)});
+  }
+}
+
+void ServiceBus::monitor_record_wait_ms(const double wait_ms) {
+  if (!cfg_.monitor_enabled) return;
+  if (wait_ms < 0.0) return;
+  const std::int64_t ts = now_ms();
+  std::lock_guard<std::mutex> lock(monitor_mu_);
+  monitor_wait_ms_.push_back({ts, wait_ms});
+}
+
+void ServiceBus::monitor_record_dropped(const std::int64_t dropped_count) {
+  if (!cfg_.monitor_enabled) return;
+  if (dropped_count <= 0) return;
+  std::lock_guard<std::mutex> lock(monitor_mu_);
+  monitor_dropped_ += static_cast<std::uint64_t>(dropped_count);
+}
+
+void ServiceBus::monitor_record_error(const std::string& code, const std::string& message, std::int64_t ts_ms) {
+  if (!cfg_.monitor_enabled) return;
+  if (ts_ms <= 0) ts_ms = now_ms();
+  std::lock_guard<std::mutex> lock(monitor_mu_);
+  monitor_last_error_code_ = code;
+  monitor_last_error_message_ = message;
+  monitor_last_error_ts_ms_ = ts_ms;
+  monitor_error_ts_ms_.push_back(ts_ms);
+}
+
+std::size_t ServiceBus::monitor_queue_depth() const {
+  std::size_t depth = 0;
+  std::lock_guard<std::mutex> lock(data_mu_);
+  for (const auto& kv : data_inputs_) {
+    const std::shared_ptr<_InputBuffer>& buf_ptr = kv.second;
+    if (!buf_ptr) continue;
+    std::lock_guard<std::mutex> buf_lock(buf_ptr->mu);
+    depth += buf_ptr->queue.size();
+  }
+  return depth;
+}
+
+void ServiceBus::monitor_loop() {
+  using clock = std::chrono::steady_clock;
+  const std::int64_t interval_ms = std::max<std::int64_t>(200, cfg_.monitor_interval_ms);
+  const std::int64_t window_ms = std::max<std::int64_t>(1000, cfg_.monitor_window_ms);
+  std::uint32_t cpu_count_raw = std::thread::hardware_concurrency();
+  if (cpu_count_raw == 0) {
+    cpu_count_raw = 1;
+  }
+  const double cpu_count = static_cast<double>(cpu_count_raw);
+  auto last_wall = clock::now();
+  std::clock_t last_cpu = std::clock();
+
+  while (monitor_running_.load(std::memory_order_acquire)) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(interval_ms));
+    if (!monitor_running_.load(std::memory_order_acquire)) {
+      break;
+    }
+
+    const std::int64_t ts = now_ms();
+    const auto current_wall = clock::now();
+    const std::clock_t current_cpu = std::clock();
+    const double wall_s = std::chrono::duration<double>(current_wall - last_wall).count();
+    const double cpu_s = static_cast<double>(current_cpu - last_cpu) / static_cast<double>(CLOCKS_PER_SEC);
+    last_wall = current_wall;
+    last_cpu = current_cpu;
+
+    double process_percent = 0.0;
+    if (wall_s > 0.0) {
+      process_percent = (cpu_s / wall_s) * 100.0 / cpu_count;
+      if (process_percent < 0.0) process_percent = 0.0;
+    }
+
+    const auto memory = sample_process_memory_bytes();
+    std::uint64_t observed = 0;
+    std::uint64_t processed = 0;
+    std::uint64_t dropped = 0;
+    double process_avg = 0.0;
+    double process_p95 = 0.0;
+    double wait_avg = 0.0;
+    double wait_p95 = 0.0;
+    std::size_t error_count_window = 0;
+    std::string last_error_code;
+    std::string last_error_message;
+    std::optional<std::int64_t> last_error_ts_ms;
+
+    {
+      std::lock_guard<std::mutex> lock(monitor_mu_);
+      prune_timed_values(monitor_wait_ms_, ts, window_ms);
+      prune_timed_values(monitor_process_ms_, ts, window_ms);
+      prune_timed_errors(monitor_error_ts_ms_, ts, window_ms);
+      observed = monitor_observed_;
+      processed = monitor_processed_;
+      dropped = monitor_dropped_;
+      process_avg = average_values(monitor_process_ms_);
+      process_p95 = percentile95_values(monitor_process_ms_);
+      wait_avg = average_values(monitor_wait_ms_);
+      wait_p95 = percentile95_values(monitor_wait_ms_);
+      error_count_window = monitor_error_ts_ms_.size();
+      last_error_code = monitor_last_error_code_;
+      last_error_message = monitor_last_error_message_;
+      last_error_ts_ms = monitor_last_error_ts_ms_;
+    }
+
+    const json gpu = json{
+        {"vendor", cfg_.monitor_gpu_enabled ? "nvidia" : ""},
+        {"deviceIndex", nullptr},
+        {"utilPercent", nullptr},
+        {"memoryUsedBytes", nullptr},
+        {"memoryTotalBytes", nullptr},
+        {"available", false},
+    };
+    const json snapshot = json{
+        {"schemaVersion", "f8monitor/1"},
+        {"serviceId", cfg_.service_id},
+        {"serviceClass", cfg_.service_class},
+        {"nodeId", cfg_.service_id},
+        {"tsMs", ts},
+        {"alive", true},
+        {"ready", ready_.load(std::memory_order_acquire)},
+        {"active", active_.load(std::memory_order_acquire)},
+        {"uptimeMs", std::max<std::int64_t>(0, ts - monitor_started_ts_ms_)},
+        {"cpu", json{{"processPercent", process_percent}, {"systemPercent", 0.0}}},
+        {"memory", json{{"rssBytes", memory.first}, {"vmsBytes", memory.second}}},
+        {"gpu", gpu},
+        {"frame", json{{"observed", observed}, {"processed", processed}, {"dropped", dropped}}},
+        {"timing", json{{"processMsAvg", process_avg},
+                        {"processMsP95", process_p95},
+                        {"waitMsAvg", wait_avg},
+                        {"waitMsP95", wait_p95}}},
+        {"queue", json{{"depth", monitor_queue_depth()}}},
+        {"error", json{{"countWindow", error_count_window},
+                       {"lastCode", last_error_code},
+                       {"lastMessage", last_error_message},
+                       {"lastTsMs", last_error_ts_ms.has_value() ? json(last_error_ts_ms.value()) : json(nullptr)}}},
+    };
+    {
+      f8::cppsdk::generated::F8MonitorSnapshot parsed;
+      f8::cppsdk::generated::ParseError perr;
+      if (!f8::cppsdk::generated::parse_F8MonitorSnapshot(snapshot, parsed, perr)) {
+        monitor_record_error("MONITOR_SCHEMA_INVALID", perr.message.empty() ? "invalid monitor snapshot" : perr.message, ts);
+        continue;
+      }
+    }
+    (void)publish_data(nats_, cfg_.service_id, cfg_.service_id, "monitor", snapshot, ts);
   }
 }
 
@@ -784,6 +1048,7 @@ bool ServiceBus::on_command(const std::string& call, const json& args, const jso
     } catch (...) {
       error_code = "INTERNAL_ERROR";
       error_message = "on_command threw";
+      monitor_record_error("INTERNAL_ERROR", "on_command threw");
       return false;
     }
   }
@@ -819,8 +1084,12 @@ void ServiceBus::load_active_from_kv() {
 bool ServiceBus::emit_data(const std::string& from_node_id, const std::string& port_id, const json& value,
                            std::int64_t ts_ms) {
   if (!active()) return false;
-  return publish_data(nats_, cfg_.service_id, ensure_token(from_node_id, "from_node_id"), ensure_token(port_id, "port_id"),
-                      value, ts_ms);
+  const std::string node = ensure_token(from_node_id, "from_node_id");
+  const std::string port = ensure_token(port_id, "port_id");
+  const std::int64_t now_ts = now_ms();
+  const std::int64_t emit_ts = ts_ms > 0 ? ts_ms : now_ts;
+  monitor_record_processed(port, emit_ts, now_ts);
+  return publish_data(nats_, cfg_.service_id, node, port, value, ts_ms);
 }
 
 std::optional<json> ServiceBus::pull_data(const std::string& node_id, const std::string& port_id) {
@@ -848,6 +1117,9 @@ std::optional<json> ServiceBus::pull_data(const std::string& node_id, const std:
     if (mut.queue.empty()) return std::nullopt;
     const auto& sample = mut.queue.front();
     json v = sample.first ? *sample.first : json(nullptr);
+    if (sample.second > 0) {
+      monitor_record_wait_ms(static_cast<double>(std::max<std::int64_t>(0, now - sample.second)));
+    }
     mut.queue.pop_front();
     return v;
   }
@@ -856,6 +1128,9 @@ std::optional<json> ServiceBus::pull_data(const std::string& node_id, const std:
   if (!mut.queue.empty()) {
     const auto& sample = mut.queue.back();
     json v = sample.first ? *sample.first : json(nullptr);
+    if (sample.second > 0) {
+      monitor_record_wait_ms(static_cast<double>(std::max<std::int64_t>(0, now - sample.second)));
+    }
     mut.queue.clear();
     return v;
   }

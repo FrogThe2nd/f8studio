@@ -73,6 +73,7 @@ Get runtime status.
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
 | `out` | `true` | `true` | `any` | Default data output |
+| `monitor` | `false` | `true` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
 
 ## Operators
 

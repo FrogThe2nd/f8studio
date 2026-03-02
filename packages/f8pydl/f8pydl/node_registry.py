@@ -190,22 +190,6 @@ def _common_state_fields(
                 access=F8StateAccess.ro,
                 showOnNode=False,
             ),
-            F8StateSpec(
-                name="telemetryIntervalMs",
-                label="Telemetry Interval (ms)",
-                description="Emit telemetry summaries every N milliseconds (0 disables).",
-                valueSchema=integer_schema(default=1000, minimum=0, maximum=60000),
-                access=F8StateAccess.wo,
-                showOnNode=False,
-            ),
-            F8StateSpec(
-                name="telemetryWindowMs",
-                label="Telemetry Window (ms)",
-                description="Rolling window for telemetry averages (ms).",
-                valueSchema=integer_schema(default=2000, minimum=100, maximum=60000),
-                access=F8StateAccess.wo,
-                showOnNode=False,
-            ),
         ]
     )
     return fields
@@ -318,22 +302,6 @@ def _optflow_state_fields() -> list[F8StateSpec]:
             access=F8StateAccess.ro,
             showOnNode=False,
         ),
-        F8StateSpec(
-            name="telemetryIntervalMs",
-            label="Telemetry Interval (ms)",
-            description="Emit telemetry summaries every N milliseconds (0 disables).",
-            valueSchema=integer_schema(default=1000, minimum=0, maximum=60000),
-            access=F8StateAccess.wo,
-            showOnNode=False,
-        ),
-        F8StateSpec(
-            name="telemetryWindowMs",
-            label="Telemetry Window (ms)",
-            description="Rolling window for telemetry averages (ms).",
-            valueSchema=integer_schema(default=2000, minimum=100, maximum=60000),
-            access=F8StateAccess.wo,
-            showOnNode=False,
-        ),
     ]
 
 
@@ -400,11 +368,6 @@ def _register_classifier(reg: RuntimeNodeRegistry) -> None:
                     description="Classification output in schema f8visionClassifications/1.",
                     valueSchema=any_schema(),
                 ),
-                F8DataPortSpec(
-                    name="telemetry",
-                    description="Periodic telemetry summaries (fps + timings).",
-                    valueSchema=any_schema(),
-                ),
             ],
             editableStateFields=False,
             editableDataInPorts=False,
@@ -447,11 +410,6 @@ def _register_detector(reg: RuntimeNodeRegistry) -> None:
                 F8DataPortSpec(
                     name="detections",
                     description="Detection output in schema f8visionDetections/1.",
-                    valueSchema=any_schema(),
-                ),
-                F8DataPortSpec(
-                    name="telemetry",
-                    description="Periodic telemetry summaries (fps + timings).",
                     valueSchema=any_schema(),
                 ),
             ],
@@ -498,11 +456,6 @@ def _register_human_detector(reg: RuntimeNodeRegistry) -> None:
                     description="Detection output in schema f8visionDetections/1.",
                     valueSchema=any_schema(),
                 ),
-                F8DataPortSpec(
-                    name="telemetry",
-                    description="Periodic telemetry summaries (fps + timings).",
-                    valueSchema=any_schema(),
-                ),
             ],
             editableStateFields=False,
             editableDataInPorts=False,
@@ -537,13 +490,7 @@ def _register_optflow(reg: RuntimeNodeRegistry) -> None:
             tags=["onnx", "vision", "optical_flow", "flow_shm"],
             rendererClass="default_svc",
             stateFields=_optflow_state_fields(),
-            dataOutPorts=[
-                F8DataPortSpec(
-                    name="telemetry",
-                    description="Periodic telemetry summaries (fps + timings).",
-                    valueSchema=any_schema(),
-                ),
-            ],
+            dataOutPorts=[],
             editableStateFields=False,
             editableDataInPorts=False,
             editableDataOutPorts=False,
@@ -580,11 +527,6 @@ def _register_tcn_wave(reg: RuntimeNodeRegistry) -> None:
                     name="predictedChange",
                     description="Temporal model output value per frame.",
                     valueSchema=number_schema(),
-                ),
-                F8DataPortSpec(
-                    name="telemetry",
-                    description="Periodic telemetry summaries (fps + timings).",
-                    valueSchema=any_schema(),
                 ),
             ],
             editableStateFields=False,

@@ -68,6 +68,8 @@ async def emit_data(bus: "ServiceBus", node_id: str, port: str, value: Any, *, t
     node_id = ensure_token(node_id, label="node_id")
     port = ensure_token(port, label="port_id")
     ts = int(ts_ms or now_ms())
+    if bus._monitor_collector.enabled:
+        bus._monitor_collector.record_processed(port=str(port), emit_ts_ms=int(ts), now_ts_ms=int(now_ms()))
 
     # Intra edges.
     for to_node, to_port in bus._intra_data_out.get((node_id, port), []):
@@ -116,6 +118,9 @@ async def pull_data(bus: "ServiceBus", node_id: str, port: str, *, ctx_id: str |
             if not buf.queue:
                 return None
         v, ts = buf.queue.popleft()
+        if bus._monitor_collector.enabled and ts is not None:
+            wait_ms = float(max(0, int(now_ms()) - int(ts)))
+            bus._monitor_collector.record_wait_ms(wait_ms=wait_ms)
         buf.last_pulled_value = v
         buf.last_pulled_ts = int(ts) if ts is not None else _now_ms
         buf.last_pulled_ctx_id = ctx_id
@@ -125,6 +130,9 @@ async def pull_data(bus: "ServiceBus", node_id: str, port: str, *, ctx_id: str |
     if not buf.queue and (ctx_id is None or buf.last_seen_ctx_id != ctx_id):
         await ensure_input_available(bus, node_id=node_id, port=port, ctx_id=ctx_id)
     v = buf.last_seen_value
+    if bus._monitor_collector.enabled and buf.last_seen_ts is not None:
+        wait_ms = float(max(0, int(now_ms()) - int(buf.last_seen_ts)))
+        bus._monitor_collector.record_wait_ms(wait_ms=wait_ms)
     buf.queue.clear()
     if v is not None:
         buf.last_pulled_value = v
@@ -305,6 +313,8 @@ def buffer_input(
     buf.last_seen_value = value
     buf.last_seen_ts = int(ts_ms)
     buf.last_seen_ctx_id = ctx_id
+    if bus._monitor_collector.enabled:
+        bus._monitor_collector.record_observed(port=str(to_port))
 
     buf.queue.append((value, int(ts_ms)))
     max_n = int(bus._data_input_default_queue_size)
@@ -313,9 +323,13 @@ def buffer_input(
             max_n = max(1, int(buf.edge.queueSize))
         except (AttributeError, TypeError, ValueError):
             max_n = int(bus._data_input_default_queue_size)
+    dropped_count = 0
     if len(buf.queue) > max_n:
         while len(buf.queue) > max_n:
             buf.queue.popleft()
+            dropped_count += 1
+    if dropped_count > 0 and bus._monitor_collector.enabled:
+        bus._monitor_collector.record_dropped(dropped_count=int(dropped_count))
 
     return
 

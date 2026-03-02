@@ -1813,7 +1813,7 @@ json ImPlayerService::describe() {
                                               {"duration", schema_number()},
                                               {"playing", schema_boolean()}},
                                          json::array({"videoId", "position"}))},
-           {"description", "Playback telemetry stream (position/duration/playing)."},
+           {"description", "Playback state stream (position/duration/playing)."},
            {"required", false},
            {"showOnNode", false}},
       json{{"name", "frameId"},

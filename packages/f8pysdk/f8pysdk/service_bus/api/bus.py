@@ -45,6 +45,7 @@ from ..lifecycle import (
 )
 from ..state_read import StateRead
 from .config import DataDeliveryMode, ServiceBusConfig, _debug_state_enabled
+from ..monitor_collector import MonitorCollector, MonitorCollectorConfig
 
 if TYPE_CHECKING:
     from ..micro import _ServiceBusMicroEndpoints
@@ -120,6 +121,7 @@ class ServiceBus:
         self._publish_all_data = bool(config.publish_all_data)
         self._debug_state = _debug_state_enabled()
         self._active = True
+        self._ready = False
         mode = _coerce_data_delivery_mode(config.data_delivery)
         if mode is None:
             if self._debug_state or log.isEnabledFor(logging.WARNING):
@@ -188,6 +190,15 @@ class ServiceBus:
         # Process-level termination request (set via `svc.<serviceId>.terminate`).
         # Service entrypoints may `await bus.wait_terminate()` to exit gracefully.
         self._terminate_event = asyncio.Event()
+        self._monitor_collector = MonitorCollector(
+            self,
+            MonitorCollectorConfig(
+                enabled=bool(config.monitor_enabled),
+                interval_ms=max(200, int(config.monitor_interval_ms)),
+                window_ms=max(1000, int(config.monitor_window_ms)),
+                gpu_enabled=bool(config.monitor_gpu_enabled),
+            ),
+        )
 
     async def wait_terminate(self) -> None:
         await self._terminate_event.wait()

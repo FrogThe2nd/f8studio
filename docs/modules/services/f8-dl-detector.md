@@ -37,8 +37,6 @@ pixi run f8pydl_detector
 | `loadedModel` | `ro` | `false` | `false` | `string / default=` | Current loaded model id/task. |
 | `ortActiveProviders` | `ro` | `false` | `false` | `string / default=` | JSON list of active ONNX Runtime providers for this session. |
 | `lastError` | `ro` | `false` | `false` | `string / default=` | Last runtime error string (best-effort). |
-| `telemetryIntervalMs` | `wo` | `false` | `false` | `integer / default=1000` | Emit telemetry summaries every N milliseconds (0 disables). |
-| `telemetryWindowMs` | `wo` | `false` | `false` | `integer / default=2000` | Rolling window for telemetry averages (ms). |
 | `active` | `rw` | `false` | `true` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
 | `svcId` | `ro` | `false` | `false` | `string` | Readonly: current service instance id (svcId). |
 
@@ -55,7 +53,7 @@ _None_
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
 | `detections` | `true` | `true` | `any` | Detection output in schema f8visionDetections/1. |
-| `telemetry` | `true` | `true` | `any` | Periodic telemetry summaries (fps + timings). |
+| `monitor` | `false` | `true` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
 
 ## Operators
 

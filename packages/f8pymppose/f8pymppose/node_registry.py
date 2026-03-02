@@ -80,22 +80,6 @@ def _state_fields() -> list[F8StateSpec]:
             access=F8StateAccess.ro,
             showOnNode=False,
         ),
-        F8StateSpec(
-            name="telemetryIntervalMs",
-            label="Telemetry Interval (ms)",
-            description="Emit telemetry summaries every N milliseconds (0 disables).",
-            valueSchema=integer_schema(default=1000, minimum=0, maximum=60000),
-            access=F8StateAccess.wo,
-            showOnNode=False,
-        ),
-        F8StateSpec(
-            name="telemetryWindowMs",
-            label="Telemetry Window (ms)",
-            description="Rolling window for telemetry averages (ms).",
-            valueSchema=integer_schema(default=2000, minimum=100, maximum=60000),
-            access=F8StateAccess.wo,
-            showOnNode=False,
-        ),
     ]
 
 
@@ -120,11 +104,6 @@ def register_specs(registry: RuntimeNodeRegistry | None = None) -> RuntimeNodeRe
                 F8DataPortSpec(
                     name="skeletons",
                     description="List of UDP-skeleton-compatible JSON payloads for skeleton3d.",
-                    valueSchema=any_schema(),
-                ),
-                F8DataPortSpec(
-                    name="telemetry",
-                    description="Periodic telemetry summaries (fps + timings).",
                     valueSchema=any_schema(),
                 ),
             ],
