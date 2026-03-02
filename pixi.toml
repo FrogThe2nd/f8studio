@@ -19,8 +19,6 @@ pip = ">=26.0.1,<27"
 
 [feature.vision.pypi-dependencies]
 numpy = ">=2.4.2, <3"
-scipy = ">=1.17.1,<2"
-scikit-learn = ">=1.8.0,<2"
 opencv-contrib-python = ">=4.13.0.92, <5"
 
 [feature.onnx.dependencies]
@@ -58,18 +56,24 @@ pytest = "python -m pytest"
 pytest_sdk = "python -m pytest -q packages/f8pysdk/tests"
 pytest_studio = "python -m pytest -q packages/f8pystudio/tests"
 
+[feature.audio.pypi-dependencies]
+librosa = ">=0.11.0, <0.12"
+f8pyaudiofeat = { path = "packages/f8pyaudiofeat", editable = true }
+
+[feature.audio.tasks]
+f8pyaudiofeat_core = "python -m f8pyaudiofeat.main_core"
+f8pyaudiofeat_rhythm = "python -m f8pyaudiofeat.main_rhythm"
+
 [feature.engine.pypi-dependencies]
+scipy = ">=1.17.1,<2"
+scikit-learn = ">=1.8.0,<2"
 f8pyengine = { path = "packages/f8pyengine", editable = true }
 f8pyscript = { path = "packages/f8pyscript", editable = true }
-f8pyaudiofeat = { path = "packages/f8pyaudiofeat", editable = true }
-librosa = ">=0.11.0, <0.12"
 
 [feature.engine.tasks]
 f8pyengine = "python -m f8pyengine.main"
 f8pyscript = "python -m f8pyscript.main"
 f8pyexpr = "python -m f8pyscript.main_expr"
-f8pyaudiofeat_core = "python -m f8pyaudiofeat.main_core"
-f8pyaudiofeat_rhythm = "python -m f8pyaudiofeat.main_rhythm"
 
 [feature.studio.pypi-dependencies]
 f8pystudio = { path = "packages/f8pystudio", editable = true }
@@ -127,7 +131,7 @@ build_studio_launcher = "python scripts/build_studio_launcher.py"
 dist_ci = "python scripts/dist_ci.py"
 
 [environments]
-default = { features = ["python", "sdk", "engine", "studio", "vision", "test"], solve-group = "default" }
+default = { features = ["python", "sdk", "engine", "studio", "vision", "audio", "test"], solve-group = "default" }
 onnx = { features = ["python", "sdk", "onnx", "vision"], solve-group = "onnx" }
 mediapipe = { features = ["python", "sdk", "vision", "mediapipe"], solve-group = "mediapipe" }
 doc = { features = ["doc"] }
