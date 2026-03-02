@@ -1,6 +1,6 @@
 [project]
 name = "f8pyscript"
-version = "0.1.0"
+version = "0.1.1"
 description = "Standalone python script runtime service for Feel8."
 readme = "README.md"
 requires-python = ">=3.10"

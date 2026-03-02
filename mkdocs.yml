@@ -35,12 +35,15 @@ nav:
       - "Scene 03: Audio Driven TCode": scenarios/scene-03-audio_driven.md
       - "Scene 04: Functional TCode Generation": scenarios/scene-04-functional_tcode.md
   - Deep Dives:
-      - Lovense Local API: LovenseLocalAPI.md
-      - Lovense Mock Server: LovenseMockServer.md
+      - System Architecture: deepdives/system_architecture.md
+      - Lovense Local API: deepdives/LovenseLocalAPI.md
+      - Lovense Mock Server: deepdives/LovenseMockServer.md
 
 theme:
   name: material
   language: en
+  logo: media/images/branding/logo_transparent.png
+  favicon: media/images/branding/icon.png
   features:
     - navigation.tabs
     - navigation.sections
@@ -64,3 +67,11 @@ markdown_extensions:
   - pymdownx.inlinehilite
   - pymdownx.snippets
   - pymdownx.superfences
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+
+extra_javascript:
+  - javascripts/mermaid.mjs

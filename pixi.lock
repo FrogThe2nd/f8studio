@@ -1717,8 +1717,8 @@ packages:
   requires_python: '>=3.10'
 - pypi: ./packages/f8pyengine
   name: f8pyengine
-  version: 0.1.0
-  sha256: 212f1dad8bc76b2a71ba897229fc132927f4c3254d3b5429744b7ee17070a421
+  version: 0.1.1
+  sha256: a637491c07ccc978ee175db64d4c51a516a55bb3e59f48ead2cd5e93afaf55ee
   requires_dist:
   - buttplug>=1.0.0
   - nats-py>=2.12.0
@@ -1738,8 +1738,8 @@ packages:
   requires_python: '>=3.10'
 - pypi: ./packages/f8pyscript
   name: f8pyscript
-  version: 0.1.0
-  sha256: 7128f2ac7d32306ffbda6d96f6a9296d19f30a220467660a8fca08a8ae57637c
+  version: 0.1.1
+  sha256: cbe74975493edebbf556db6656c362d4ab97e0c334d857b73986091a3ca4a78c
   requires_dist:
   - f8pysdk
   - numpy>=1.26.0
@@ -1755,8 +1755,8 @@ packages:
   requires_python: '>=3.10'
 - pypi: ./packages/f8pystudio
   name: f8pystudio
-  version: 0.1.0
-  sha256: 7386927c59c84233fc79da399dda643faf9d654a6869e630029d4c32dead2213
+  version: 0.1.1
+  sha256: fc93815d234eeaeee8ba834d94a5cd44415558eb34967ddce37475894e58de08
   requires_dist:
   - qtpy>=2.4.3
   - pyside6>=6.10.1

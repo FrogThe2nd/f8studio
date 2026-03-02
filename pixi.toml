@@ -100,6 +100,7 @@ zensical = ">=0.0.23,<0.1.0"
 pyyaml = ">=6.0.3,<7"
 
 [feature.doc.tasks]
+doc_gen = "python scripts/generate_service_docs.py"
 doc_build = "zensical build"
 doc_serve = "zensical serve"
 doc_check = "python scripts/generate_service_docs.py --check && python scripts/check_docs_nav.py && python scripts/check_docs_links.py"
