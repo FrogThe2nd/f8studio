@@ -926,7 +926,17 @@ components:
             - type: number
             - type: "null"
           default: null
-      required: [processMsAvg, processMsP95, waitMsAvg, waitMsP95]
+        latencyMsAvg:
+          anyOf:
+            - type: number
+            - type: "null"
+          default: null
+        latencyMsP95:
+          anyOf:
+            - type: number
+            - type: "null"
+          default: null
+      required: [processMsAvg, processMsP95, waitMsAvg, waitMsP95, latencyMsAvg, latencyMsP95]
       additionalProperties: false
 
     F8MonitorQueue:

@@ -19,7 +19,7 @@ class ServiceManagerWidget(QtWidgets.QWidget):
     _COL_CPU = 6
     _COL_RAM = 7
     _COL_GPU = 8
-    _COL_WAIT_P95 = 9
+    _COL_LATENCY_P95 = 9
     _COL_ERRORS = 10
 
     def __init__(
@@ -77,7 +77,7 @@ class ServiceManagerWidget(QtWidgets.QWidget):
                 "CPU%",
                 "RAM(MB)",
                 "GPU%",
-                "WaitP95(ms)",
+                "LatencyP95(ms)",
                 "Errors",
             ]
         )
@@ -166,7 +166,7 @@ class ServiceManagerWidget(QtWidgets.QWidget):
         self._table.setColumnWidth(self._COL_CPU, 78)
         self._table.setColumnWidth(self._COL_RAM, 95)
         self._table.setColumnWidth(self._COL_GPU, 78)
-        self._table.setColumnWidth(self._COL_WAIT_P95, 102)
+        self._table.setColumnWidth(self._COL_LATENCY_P95, 118)
         self._table.setColumnWidth(self._COL_ERRORS, 72)
 
     def _selected_service_id(self) -> str:
@@ -229,6 +229,7 @@ class ServiceManagerWidget(QtWidgets.QWidget):
                         cpu_process_percent=None,
                         memory_rss_bytes=None,
                         gpu_util_percent=None,
+                        latency_ms_p95=None,
                         wait_ms_p95=None,
                         error_count_window=None,
                         latest_snapshot=None,
@@ -295,7 +296,9 @@ class ServiceManagerWidget(QtWidgets.QWidget):
             self._set_item(self._table, row_index, self._COL_CPU, self._format_float(row.cpu_process_percent))
             self._set_item(self._table, row_index, self._COL_RAM, self._format_ram_mb(row.memory_rss_bytes))
             self._set_item(self._table, row_index, self._COL_GPU, self._format_float(row.gpu_util_percent))
-            self._set_item(self._table, row_index, self._COL_WAIT_P95, self._format_float(row.wait_ms_p95, digits=2))
+            self._set_item(
+                self._table, row_index, self._COL_LATENCY_P95, self._format_float(row.latency_ms_p95, digits=2)
+            )
             error_count = "-" if row.error_count_window is None else str(int(row.error_count_window))
             self._set_item(self._table, row_index, self._COL_ERRORS, error_count)
 

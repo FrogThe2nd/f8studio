@@ -215,6 +215,8 @@ class MonitorCollector:
         self._error_events: deque[int] = deque()
         self._wait_values = _TimedValues(window_ms=self._window_ms)
         self._process_values = _TimedValues(window_ms=self._window_ms)
+        self._latency_values = _TimedValues(window_ms=self._window_ms)
+        self._node_last_input_ts_ms: dict[str, int] = {}
         self._started_ts_ms = int(now_ms())
 
         self._task: asyncio.Task[object] | None = None
@@ -248,6 +250,35 @@ class MonitorCollector:
             self._processed += 1
             if int(emit_ts_ms) > 0 and int(now_ts_ms) >= int(emit_ts_ms):
                 self._process_values.add(ts_ms=int(now_ts_ms), value=float(int(now_ts_ms) - int(emit_ts_ms)))
+
+    def record_input_sample_ts(self, *, node_id: str, sample_ts_ms: int) -> None:
+        if not self._enabled:
+            return
+        sid = str(node_id or "").strip()
+        if not sid:
+            return
+        ts = int(sample_ts_ms)
+        if ts <= 0:
+            return
+        with self._lock:
+            existing = self._node_last_input_ts_ms.get(sid)
+            if existing is None or int(ts) < int(existing):
+                self._node_last_input_ts_ms[sid] = int(ts)
+
+    def record_emit_completed(self, *, node_id: str, now_ts_ms: int) -> None:
+        if not self._enabled:
+            return
+        sid = str(node_id or "").strip()
+        if not sid:
+            return
+        now_ts = int(now_ts_ms)
+        with self._lock:
+            input_ts = self._node_last_input_ts_ms.pop(sid, None)
+            if input_ts is None:
+                return
+            if now_ts < int(input_ts):
+                return
+            self._latency_values.add(ts_ms=now_ts, value=float(now_ts - int(input_ts)))
 
     def record_wait_ms(self, *, wait_ms: float) -> None:
         if not self._enabled:
@@ -316,8 +347,10 @@ class MonitorCollector:
         with self._lock:
             self._wait_values.set_window_ms(self._window_ms)
             self._process_values.set_window_ms(self._window_ms)
+            self._latency_values.set_window_ms(self._window_ms)
             wait_values = self._wait_values.values(now_ms=int(ts_ms))
             process_values = self._process_values.values(now_ms=int(ts_ms))
+            latency_values = self._latency_values.values(now_ms=int(ts_ms))
             error_cutoff = int(ts_ms) - int(self._window_ms)
             while self._error_events and int(self._error_events[0]) < error_cutoff:
                 self._error_events.popleft()
@@ -337,11 +370,14 @@ class MonitorCollector:
 
         wait_avg = (sum(wait_values) / float(len(wait_values))) if wait_values else None
         process_avg = (sum(process_values) / float(len(process_values))) if process_values else None
+        latency_avg = (sum(latency_values) / float(len(latency_values))) if latency_values else None
         timing = F8MonitorTiming(
             processMsAvg=float(process_avg) if process_avg is not None else None,
             processMsP95=_percentile95(process_values),
             waitMsAvg=float(wait_avg) if wait_avg is not None else None,
             waitMsP95=_percentile95(wait_values),
+            latencyMsAvg=float(latency_avg) if latency_avg is not None else None,
+            latencyMsP95=_percentile95(latency_values),
         )
 
         snapshot = F8MonitorSnapshot(

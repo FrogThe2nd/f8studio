@@ -52,6 +52,8 @@ def monitor_snapshot_value_schema() -> F8DataTypeSchema:
             "processMsP95": number_schema(default=0.0, minimum=0.0),
             "waitMsAvg": number_schema(default=0.0, minimum=0.0),
             "waitMsP95": number_schema(default=0.0, minimum=0.0),
+            "latencyMsAvg": number_schema(default=0.0, minimum=0.0),
+            "latencyMsP95": number_schema(default=0.0, minimum=0.0),
         }
     )
     queue = complex_object_schema(

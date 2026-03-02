@@ -60,6 +60,7 @@ class ServiceMonitorRow:
     cpu_process_percent: float | None
     memory_rss_bytes: int | None
     gpu_util_percent: float | None
+    latency_ms_p95: float | None
     wait_ms_p95: float | None
     error_count_window: int | None
     latest_snapshot: dict[str, Any] | None
@@ -242,6 +243,7 @@ class PyStudioServiceBridge(QtCore.QObject):
             cpu_process_percent: float | None = None
             memory_rss_bytes: int | None = None
             gpu_util_percent: float | None = None
+            latency_ms_p95: float | None = None
             wait_ms_p95: float | None = None
             error_count_window: int | None = None
             latest_payload: dict[str, Any] | None = None
@@ -255,6 +257,7 @@ class PyStudioServiceBridge(QtCore.QObject):
                 cpu_process_percent = latest_snapshot.cpu.processPercent
                 memory_rss_bytes = int(latest_snapshot.memory.rssBytes)
                 gpu_util_percent = latest_snapshot.gpu.utilPercent
+                latency_ms_p95 = latest_snapshot.timing.latencyMsP95
                 wait_ms_p95 = latest_snapshot.timing.waitMsP95
                 error_count_window = int(latest_snapshot.error.countWindow)
             else:
@@ -273,6 +276,7 @@ class PyStudioServiceBridge(QtCore.QObject):
                     cpu_process_percent=cpu_process_percent,
                     memory_rss_bytes=memory_rss_bytes,
                     gpu_util_percent=gpu_util_percent,
+                    latency_ms_p95=latency_ms_p95,
                     wait_ms_p95=wait_ms_p95,
                     error_count_window=error_count_window,
                     latest_snapshot=latest_payload,

@@ -69,7 +69,9 @@ async def emit_data(bus: "ServiceBus", node_id: str, port: str, value: Any, *, t
     port = ensure_token(port, label="port_id")
     ts = int(ts_ms or now_ms())
     if bus._monitor_collector.enabled:
-        bus._monitor_collector.record_processed(port=str(port), emit_ts_ms=int(ts), now_ts_ms=int(now_ms()))
+        now_ts = int(now_ms())
+        bus._monitor_collector.record_processed(port=str(port), emit_ts_ms=int(ts), now_ts_ms=now_ts)
+        bus._monitor_collector.record_emit_completed(node_id=str(node_id), now_ts_ms=now_ts)
 
     # Intra edges.
     for to_node, to_port in bus._intra_data_out.get((node_id, port), []):
@@ -315,6 +317,7 @@ def buffer_input(
     buf.last_seen_ctx_id = ctx_id
     if bus._monitor_collector.enabled:
         bus._monitor_collector.record_observed(port=str(to_port))
+        bus._monitor_collector.record_input_sample_ts(node_id=str(to_node), sample_ts_ms=int(ts_ms))
 
     buf.queue.append((value, int(ts_ms)))
     max_n = int(bus._data_input_default_queue_size)

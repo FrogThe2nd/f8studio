@@ -75,6 +75,7 @@ def _row(*, running: bool, active: bool | None, service_class: str = "") -> Serv
         cpu_process_percent=None,
         memory_rss_bytes=None,
         gpu_util_percent=None,
+        latency_ms_p95=None,
         wait_ms_p95=None,
         error_count_window=None,
         latest_snapshot=None,

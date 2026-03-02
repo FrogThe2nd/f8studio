@@ -36,7 +36,14 @@ def _snapshot(*, service_id: str, service_class: str, ts_ms: int) -> dict[str, o
             "available": True,
         },
         "frame": {"observed": 100, "processed": 99, "dropped": 1},
-        "timing": {"processMsAvg": 1.2, "processMsP95": 2.0, "waitMsAvg": 3.0, "waitMsP95": 5.5},
+        "timing": {
+            "processMsAvg": 1.2,
+            "processMsP95": 2.0,
+            "waitMsAvg": 3.0,
+            "waitMsP95": 5.5,
+            "latencyMsAvg": 7.0,
+            "latencyMsP95": 9.5,
+        },
         "queue": {"depth": 1},
         "error": {"countWindow": 2, "lastCode": "E_IO", "lastMessage": "io error", "lastTsMs": ts_ms - 10},
     }
@@ -61,6 +68,7 @@ def test_list_service_monitor_rows_includes_snapshot_and_managed_services() -> N
     assert svc_a.ready is False
     assert svc_a.cpu_process_percent == 12.5
     assert svc_a.memory_rss_bytes == 32 * 1024 * 1024
+    assert svc_a.latency_ms_p95 == 9.5
     assert svc_a.wait_ms_p95 == 5.5
     assert svc_a.error_count_window == 2
     assert isinstance(svc_a.latest_snapshot, dict)

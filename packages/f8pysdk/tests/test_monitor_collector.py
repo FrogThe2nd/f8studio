@@ -49,6 +49,8 @@ class MonitorCollectorTests(unittest.IsolatedAsyncioTestCase):
         collector.record_ready(True)
         collector.record_observed(port="in")
         collector.record_processed(port="out", emit_ts_ms=ts - 12, now_ts_ms=ts)
+        collector.record_input_sample_ts(node_id="n1", sample_ts_ms=ts - 25)
+        collector.record_emit_completed(node_id="n1", now_ts_ms=ts)
         collector.record_wait_ms(wait_ms=8.0)
         collector.record_dropped(dropped_count=2)
         collector.record_error(code="X_ERR", message="boom", ts_ms=ts)
@@ -64,6 +66,7 @@ class MonitorCollectorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(int(snapshot.queue.depth), 3)
         self.assertEqual(str(snapshot.error.lastCode), "X_ERR")
         self.assertFalse(bool(snapshot.gpu.available))
+        self.assertGreaterEqual(float(snapshot.timing.latencyMsP95 or 0.0), 0.0)
 
         await collector._publish_snapshot(snapshot)
         self.assertEqual(len(bus._transport.published), 1)
