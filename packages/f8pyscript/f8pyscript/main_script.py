@@ -12,8 +12,8 @@ from f8pysdk.service_cli import ServiceCliTemplate
 from f8pysdk.service_runtime import ServiceRuntime, ServiceRuntimeConfig
 
 from .constants import SERVICE_CLASS
-from .node_registry import register_specs
-from .service_node import PythonScriptServiceNode
+from .script_node_registry import register_specs
+from .script_service_node import PythonScriptServiceNode
 
 
 class PythonScriptServiceProgram(ServiceCliTemplate, RungraphHook):

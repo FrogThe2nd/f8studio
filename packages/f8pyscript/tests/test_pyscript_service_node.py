@@ -19,9 +19,9 @@ from f8pysdk.shm.video import VideoShmWriter  # noqa: E402
 from f8pysdk.testing import ServiceBusHarness  # noqa: E402
 
 from f8pyscript.constants import SERVICE_CLASS  # noqa: E402
-from f8pyscript.main import PythonScriptServiceProgram  # noqa: E402
-from f8pyscript.node_registry import register_specs  # noqa: E402
-from f8pyscript.service_node import PythonScriptServiceNode  # noqa: E402
+from f8pyscript.main_script import PythonScriptServiceProgram  # noqa: E402
+from f8pyscript.script_node_registry import register_specs  # noqa: E402
+from f8pyscript.script_service_node import PythonScriptServiceNode  # noqa: E402
 
 
 def _service_node(*, code: str, state_fields: list[F8StateSpec] | None = None, state_values: dict[str, object] | None = None) -> F8RuntimeNode:
