@@ -32,6 +32,8 @@ class PythonEditorAssistBridge(QtCore.QObject):
     completionReady = QtCore.Signal(str, str)
     hover_ready = QtCore.Signal(str, str)
     hoverReady = QtCore.Signal(str, str)
+    signature_help_ready = QtCore.Signal(str, str)
+    signatureHelpReady = QtCore.Signal(str, str)
     diagnostics_ready = QtCore.Signal(object)
     diagnosticsReady = QtCore.Signal(object)
 
@@ -54,11 +56,14 @@ class PythonEditorAssistBridge(QtCore.QObject):
         self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="f8-pylsp-bridge")
         self._completion_future: concurrent.futures.Future[list[dict[str, Any]]] | None = None
         self._hover_future: concurrent.futures.Future[dict[str, Any] | None] | None = None
+        self._signature_future: concurrent.futures.Future[dict[str, Any] | None] | None = None
         self._completion_generation = 0
         self._hover_generation = 0
+        self._signature_generation = 0
         self._is_shutting_down = False
         self._completion_timeout_s = _float_env("F8_PY_LSP_COMPLETION_TIMEOUT_S", 4.0, minimum=0.3)
         self._hover_timeout_s = _float_env("F8_PY_LSP_HOVER_TIMEOUT_S", 3.0, minimum=0.3)
+        self._signature_timeout_s = _float_env("F8_PY_LSP_SIGNATURE_TIMEOUT_S", 3.0, minimum=0.3)
 
         self._client = PythonLspClient(
             workspace_root=self._workspace.root_path,
@@ -76,11 +81,12 @@ class PythonEditorAssistBridge(QtCore.QObject):
                 version=self._version,
             )
             logger.info(
-                "python lsp bridge started: uri=%s lineOffset=%d completionTimeout=%.1fs hoverTimeout=%.1fs",
+                "python lsp bridge started: uri=%s lineOffset=%d completionTimeout=%.1fs hoverTimeout=%.1fs signatureTimeout=%.1fs",
                 self._workspace.document_uri,
                 self._line_offset,
                 self._completion_timeout_s,
                 self._hover_timeout_s,
+                self._signature_timeout_s,
             )
         except Exception:
             self._client.shutdown()
@@ -92,12 +98,16 @@ class PythonEditorAssistBridge(QtCore.QObject):
         with self._state_lock:
             completion_future = self._completion_future
             hover_future = self._hover_future
+            signature_future = self._signature_future
             self._completion_future = None
             self._hover_future = None
+            self._signature_future = None
         if completion_future is not None:
             completion_future.cancel()
         if hover_future is not None:
             hover_future.cancel()
+        if signature_future is not None:
+            signature_future.cancel()
         self._executor.shutdown(wait=False, cancel_futures=True)
         self._client.shutdown()
         self._workspace.close()
@@ -209,6 +219,50 @@ class PythonEditorAssistBridge(QtCore.QObject):
     def requestHover(self, request_id: str, code: str, line: int, column: int) -> None:
         self.request_hover(request_id, code, line, column)
 
+    @QtCore.Slot(str, str, int, int)
+    def request_signature_help(self, request_id: str, code: str, line: int, column: int) -> None:
+        if self._is_shutting_down:
+            return
+        request_id_txt = str(request_id or "")
+        started_at = time.perf_counter()
+        with self._state_lock:
+            self._signature_generation += 1
+            generation = int(self._signature_generation)
+            previous = self._signature_future
+            if previous is not None and not previous.done():
+                previous.cancel()
+            future = self._executor.submit(
+                self._signature_payload,
+                code=str(code or ""),
+                line=int(line),
+                column=int(column),
+            )
+            self._signature_future = future
+
+        def _on_done(done_future: concurrent.futures.Future[dict[str, Any] | None]) -> None:
+            if done_future.cancelled() or self._is_shutting_down:
+                return
+            try:
+                payload = done_future.result()
+            except Exception as exc:  # boundary: worker thread callback
+                self._log_bridge_error("signatureHelp", exc)
+                payload = None
+            with self._state_lock:
+                if generation != self._signature_generation:
+                    return
+            elapsed_ms = int((time.perf_counter() - started_at) * 1000.0)
+            has_payload = payload is not None
+            logger.debug("python lsp signatureHelp response: id=%s hasPayload=%s elapsedMs=%d", request_id_txt, has_payload, elapsed_ms)
+            payload_json = json.dumps(payload, ensure_ascii=False)
+            self.signature_help_ready.emit(request_id_txt, payload_json)
+            self.signatureHelpReady.emit(request_id_txt, payload_json)
+
+        future.add_done_callback(_on_done)
+
+    @QtCore.Slot(str, str, int, int)
+    def requestSignatureHelp(self, request_id: str, code: str, line: int, column: int) -> None:
+        self.request_signature_help(request_id, code, line, column)
+
     def _on_publish_diagnostics(self, uri: str, diagnostics: list[dict[str, Any]]) -> None:
         if str(uri) != self._workspace.document_uri:
             return
@@ -314,6 +368,21 @@ class PythonEditorAssistBridge(QtCore.QObject):
             self._log_bridge_error("hover", exc)
             return None
 
+    def _signature_payload(self, *, code: str, line: int, column: int) -> dict[str, Any] | None:
+        self.sync_document(str(code or ""))
+        logger.debug("python lsp signatureHelp request: line=%s col=%s", line, column)
+        try:
+            result = self._client.request_signature_help(
+                uri=self._workspace.document_uri,
+                line=self._lsp_line(line),
+                character=max(0, int(column)),
+                timeout_s=self._signature_timeout_s,
+            )
+            return self._normalize_signature_result(result)
+        except Exception as exc:
+            self._log_bridge_error("signatureHelp", exc)
+            return None
+
     @staticmethod
     def _completion_items_raw(result: Any) -> list[dict[str, Any]]:
         if isinstance(result, list):
@@ -393,6 +462,81 @@ class PythonEditorAssistBridge(QtCore.QObject):
         if not monaco_contents:
             return None
         return {"contents": monaco_contents}
+
+    @staticmethod
+    def _normalize_signature_result(result: Any) -> dict[str, Any] | None:
+        if not isinstance(result, dict):
+            return None
+        signatures_raw = result.get("signatures")
+        if not isinstance(signatures_raw, list):
+            return None
+        signatures_out: list[dict[str, Any]] = []
+        for signature_item in signatures_raw[:25]:
+            if not isinstance(signature_item, dict):
+                continue
+            label = str(signature_item.get("label") or "").strip()
+            if not label:
+                continue
+            signature_out: dict[str, Any] = {"label": label, "parameters": []}
+            doc = PythonEditorAssistBridge._completion_documentation(signature_item.get("documentation"))
+            if doc:
+                signature_out["documentation"] = doc
+            parameters_raw = signature_item.get("parameters")
+            parameters_out: list[dict[str, Any]] = []
+            if isinstance(parameters_raw, list):
+                for parameter_item in parameters_raw[:25]:
+                    if not isinstance(parameter_item, dict):
+                        continue
+                    label_value = parameter_item.get("label")
+                    parameter_out: dict[str, Any] = {}
+                    if isinstance(label_value, str):
+                        parameter_label = label_value.strip()
+                        if not parameter_label:
+                            continue
+                        parameter_out["label"] = parameter_label
+                    elif (
+                        isinstance(label_value, list)
+                        and len(label_value) == 2
+                        and isinstance(label_value[0], int)
+                        and isinstance(label_value[1], int)
+                    ):
+                        start = max(0, int(label_value[0]))
+                        end = max(start, int(label_value[1]))
+                        parameter_out["label"] = [start, end]
+                    else:
+                        continue
+                    parameter_doc = PythonEditorAssistBridge._completion_documentation(parameter_item.get("documentation"))
+                    if parameter_doc:
+                        parameter_out["documentation"] = parameter_doc
+                    parameters_out.append(parameter_out)
+            signature_out["parameters"] = parameters_out
+            signatures_out.append(signature_out)
+        if not signatures_out:
+            return None
+
+        active_signature = 0
+        active_parameter = 0
+        try:
+            active_signature = int(result.get("activeSignature") or 0)
+        except (TypeError, ValueError):
+            active_signature = 0
+        try:
+            active_parameter = int(result.get("activeParameter") or 0)
+        except (TypeError, ValueError):
+            active_parameter = 0
+
+        active_signature = max(0, min(active_signature, len(signatures_out) - 1))
+        selected_params = signatures_out[active_signature].get("parameters")
+        if isinstance(selected_params, list) and selected_params:
+            active_parameter = max(0, min(active_parameter, len(selected_params) - 1))
+        else:
+            active_parameter = 0
+
+        return {
+            "signatures": signatures_out,
+            "activeSignature": active_signature,
+            "activeParameter": active_parameter,
+        }
 
     @staticmethod
     def _hover_contents(contents: Any) -> list[dict[str, str]]:

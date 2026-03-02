@@ -15,7 +15,6 @@ from ..ui_icons import StudioIcon, icon_for
 
 logger = logging.getLogger(__name__)
 
-
 def _assist_context_requires_python(context: EditorAssistContext | None) -> bool:
     if context is None:
         return False
@@ -173,6 +172,7 @@ class F8MonacoEditorDialog(QtWidgets.QDialog):
       window._f8_pyAssist = null;
       window._f8_pendingCompletions = Object.create(null);
       window._f8_pendingHovers = Object.create(null);
+      window._f8_pendingSignatures = Object.create(null);
       window._f8_completionCache = null;
       window._f8_forceSuggestOnce = false;
       window._f8_lastDirty = false;
@@ -290,9 +290,11 @@ class F8MonacoEditorDialog(QtWidgets.QDialog):
           if (!assist) return;
           const completionSignal = assist.completion_ready || assist.completionReady || null;
           const hoverSignal = assist.hover_ready || assist.hoverReady || null;
+          const signatureHelpSignal = assist.signature_help_ready || assist.signatureHelpReady || null;
           const diagnosticsSignal = assist.diagnostics_ready || assist.diagnosticsReady || null;
           const requestCompletions = assist.request_completions || assist.requestCompletions || null;
           const requestHover = assist.request_hover || assist.requestHover || null;
+          const requestSignatureHelp = assist.request_signature_help || assist.requestSignatureHelp || null;
           const syncDocument = assist.sync_document || assist.syncDocument || null;
           const jsLog = (window._f8_editorUi && (window._f8_editorUi.log_js || window._f8_editorUi.logJs)) || null;
 
@@ -406,6 +408,60 @@ class F8MonacoEditorDialog(QtWidgets.QDialog):
             return out;
           }}
 
+          function _toMonacoSignatureHelp(payload) {{
+            if (!payload || typeof payload !== 'object') return null;
+            const signaturesRaw = _toArray(payload.signatures);
+            if (!signaturesRaw.length) return null;
+            const signaturesOut = [];
+            for (const signatureItem of signaturesRaw) {{
+              const signatureLabel = String((signatureItem && signatureItem.label) || '');
+              if (!signatureLabel) continue;
+              const signatureOut = {{
+                label: signatureLabel,
+                documentation: String((signatureItem && signatureItem.documentation) || ''),
+                parameters: [],
+              }};
+              const paramsRaw = _toArray(signatureItem && signatureItem.parameters);
+              for (const paramItem of paramsRaw) {{
+                const paramLabelRaw = paramItem && paramItem.label;
+                let paramLabel = '';
+                if (typeof paramLabelRaw === 'string') {{
+                  paramLabel = String(paramLabelRaw || '');
+                }} else if (Array.isArray(paramLabelRaw) && paramLabelRaw.length === 2) {{
+                  const start = Number(paramLabelRaw[0]);
+                  const end = Number(paramLabelRaw[1]);
+                  if (Number.isFinite(start) && Number.isFinite(end) && end >= start) {{
+                    paramLabel = [Math.max(0, Math.floor(start)), Math.max(0, Math.floor(end))];
+                  }}
+                }}
+                if (!paramLabel || (Array.isArray(paramLabel) && paramLabel.length !== 2)) continue;
+                signatureOut.parameters.push({{
+                  label: paramLabel,
+                  documentation: String((paramItem && paramItem.documentation) || ''),
+                }});
+              }}
+              signaturesOut.push(signatureOut);
+            }}
+            if (!signaturesOut.length) return null;
+            const activeSignatureRaw = Number(payload.activeSignature);
+            const activeParameterRaw = Number(payload.activeParameter);
+            const activeSignature = Number.isFinite(activeSignatureRaw)
+              ? Math.max(0, Math.min(Math.floor(activeSignatureRaw), signaturesOut.length - 1))
+              : 0;
+            const activeParams = signaturesOut[activeSignature].parameters || [];
+            const activeParameter = Number.isFinite(activeParameterRaw) && activeParams.length > 0
+              ? Math.max(0, Math.min(Math.floor(activeParameterRaw), activeParams.length - 1))
+              : 0;
+            return {{
+              value: {{
+                signatures: signaturesOut,
+                activeSignature: activeSignature,
+                activeParameter: activeParameter,
+              }},
+              dispose: function() {{}},
+            }};
+          }}
+
           let syncTimer = null;
           function _syncNow() {{
             if (!window._f8_editor || !syncDocument) return;
@@ -448,6 +504,17 @@ class F8MonacoEditorDialog(QtWidgets.QDialog):
             if (!resolver) return;
             delete window._f8_pendingHovers[id];
             resolver(_decodeJson(payload) || null);
+          }});
+
+          if (signatureHelpSignal && signatureHelpSignal.connect) signatureHelpSignal.connect(function(requestId, payload) {{
+            const id = String(requestId || '');
+            const resolver = window._f8_pendingSignatures[id];
+            if (!resolver) return;
+            delete window._f8_pendingSignatures[id];
+            const decoded = _decodeJson(payload);
+            const result = _toMonacoSignatureHelp(decoded);
+            _log('signatureHelp signal id=' + id + ' hasResult=' + String(Boolean(result)));
+            resolver(result);
           }});
 
           if (diagnosticsSignal && diagnosticsSignal.connect) diagnosticsSignal.connect(function(markers) {{
@@ -529,6 +596,35 @@ class F8MonacoEditorDialog(QtWidgets.QDialog):
                 }}
               }});
             }}
+          }});
+
+          monaco.languages.registerSignatureHelpProvider('python', {{
+            signatureHelpTriggerCharacters: ['(', ','],
+            signatureHelpRetriggerCharacters: [','],
+            provideSignatureHelp: function(model, position) {{
+              return new Promise(function(resolve) {{
+                try {{
+                  if (!requestSignatureHelp) {{
+                    resolve(null);
+                    return;
+                  }}
+                  const code = model.getValue();
+                  const line = Number(position.lineNumber);
+                  const col = Number(position.column - 1);
+                  const id = String(crypto.randomUUID ? crypto.randomUUID() : Math.random());
+                  window._f8_pendingSignatures[id] = resolve;
+                  requestSignatureHelp(id, code, line, col);
+                  setTimeout(function() {{
+                    if (window._f8_pendingSignatures[id]) {{
+                      delete window._f8_pendingSignatures[id];
+                      resolve(null);
+                    }}
+                  }}, 2500);
+                }} catch (e) {{
+                  resolve(null);
+                }}
+              }});
+            }},
           }});
 
           window._f8_editor.onDidChangeModelContent(function() {{
