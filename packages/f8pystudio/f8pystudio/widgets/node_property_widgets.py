@@ -28,11 +28,11 @@ from f8pysdk.schema_helpers import schema_default
 
 from ..editor_assist.protocol import editor_assist_context_for_field
 from ..editor_assist.workspace import EditorAssistContext
-from .f8_prop_value_widgets import (
+from .property_value_widgets import (
     F8CodeButtonPropWidget as _F8CodeButtonPropWidget,
     F8JsonPropTextEdit as _F8JsonPropTextEdit,
 )
-from .f8_editor_widgets import (
+from .editor_controls import (
     F8OptionCombo,
     F8PropBoolSwitch,
     F8PropMultiSelect,
@@ -40,7 +40,7 @@ from .f8_editor_widgets import (
     F8Switch,
     F8ValueBar,
 )
-from .f8_spec_ops import (
+from .spec_mutations import (
     add_command as _spec_add_command,
     add_state_field as _spec_add_state_field,
     delete_command as _spec_delete_command,
@@ -49,7 +49,7 @@ from .f8_spec_ops import (
     replace_state_field as _spec_replace_state_field,
     set_ports as _spec_set_ports,
 )
-from .f8_state_widget_builder import (
+from .state_widget_api import (
     build_state_value_widget as _build_state_value_widget,
     effective_state_fields as _effective_state_fields,
     schema_enum_items as _schema_enum_items,
@@ -59,7 +59,7 @@ from .f8_state_widget_builder import (
     state_field_ui_control as _state_field_ui_control,
     state_field_ui_language as _state_field_ui_language,
 )
-from .f8_ui_override_ops import (
+from .ui_override_mutations import (
     base_command_show_on_node as _base_command_show_on_node,
     base_data_port_show_on_node as _base_data_port_show_on_node,
     find_base_state_field as _find_base_state_field,

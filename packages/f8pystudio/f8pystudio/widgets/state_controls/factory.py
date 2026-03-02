@@ -6,14 +6,14 @@ from f8pysdk import F8StateAccess
 
 from ...editor_assist.protocol import editor_assist_context_for_field
 from ...editor_assist.workspace import EditorAssistContext
-from ..f8_editor_widgets import (
+from ..editor_controls import (
     F8PropBoolSwitch,
     F8PropImageB64,
     F8PropMultiSelect,
     F8PropOptionCombo,
     F8PropValueBar,
 )
-from ..f8_prop_value_widgets import F8CodeButtonPropWidget, F8InlineCodePropWidget, F8NumberPropLineEdit, F8WrapLinePropWidget
+from ..property_value_widgets import F8CodeButtonPropWidget, F8InlineCodePropWidget, F8NumberPropLineEdit, F8WrapLinePropWidget
 from .descriptors import ControlBuildContext
 from .pool_resolver import build_node_pool_resolver, parse_multiselect_pool, parse_select_pool
 from .schema_introspect import (

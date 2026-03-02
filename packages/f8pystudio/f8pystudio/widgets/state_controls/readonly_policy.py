@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from qtpy import QtCore, QtWidgets
 
-from ..f8_editor_widgets import F8PropBoolSwitch, F8PropMultiSelect, F8PropOptionCombo
-from ..f8_prop_value_widgets import F8CodeButtonPropWidget
+from ..editor_controls import F8PropBoolSwitch, F8PropMultiSelect, F8PropOptionCombo
+from ..property_value_widgets import F8CodeButtonPropWidget
 
 
 def set_widget_read_only(widget: QtWidgets.QWidget, *, read_only: bool) -> None:

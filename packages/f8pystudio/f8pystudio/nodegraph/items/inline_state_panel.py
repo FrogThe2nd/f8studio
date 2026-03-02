@@ -11,7 +11,7 @@ from f8pysdk.schema_helpers import schema_type
 from ...editor_assist.protocol import editor_assist_context_for_field
 from ...editor_assist.workspace import EditorAssistContext
 from ...ui_icons import StudioIcon, icon_for
-from ...widgets.f8_editor_widgets import (
+from ...widgets.editor_controls import (
     F8ImageB64Editor,
     F8MultiSelect,
     F8OptionCombo,
@@ -20,7 +20,7 @@ from ...widgets.f8_editor_widgets import (
     parse_multiselect_pool,
     parse_select_pool,
 )
-from ...widgets.f8_prop_value_widgets import F8NumberPropLineEdit, open_code_editor_window
+from ...widgets.property_value_widgets import F8NumberPropLineEdit, open_code_editor_window
 from .node_item_core import StateFieldInfo, state_field_info
 from .service_toolbar_host import F8ElideToolButton
 

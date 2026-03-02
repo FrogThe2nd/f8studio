@@ -3,7 +3,7 @@ from __future__ import annotations
 from qtpy import QtWidgets
 
 from f8pysdk import F8Command, F8ServiceSpec
-from f8pystudio.widgets.f8_spec_ops import delete_command
+from f8pystudio.widgets.spec_mutations import delete_command
 from f8pystudio.widgets.node_property_widgets import _F8EditCommandDialog, _F8SpecCommandEditor
 
 
