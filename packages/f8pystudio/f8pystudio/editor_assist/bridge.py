@@ -48,8 +48,9 @@ class PythonEditorAssistBridge(QtCore.QObject):
         parent: QtCore.QObject | None = None,
     ) -> None:
         super().__init__(parent)
-        self._workspace = EditorWorkspaceSession(language=language, context=context)
-        self._context = context or EditorAssistContext()
+        lang = str(language or "").strip().lower() or "python"
+        self._language = lang
+        self._context = context or EditorAssistContext(language="python")
         self._line_offset = 0
         self._version = 1
         self._last_user_code = str(code or "")
@@ -72,43 +73,69 @@ class PythonEditorAssistBridge(QtCore.QObject):
         self._completion_resolve_timeout_s = _float_env("F8_PY_LSP_COMPLETION_RESOLVE_TIMEOUT_S", 2.5, minimum=0.3)
         self._hover_timeout_s = _float_env("F8_PY_LSP_HOVER_TIMEOUT_S", 3.0, minimum=0.3)
         self._signature_timeout_s = _float_env("F8_PY_LSP_SIGNATURE_TIMEOUT_S", 3.0, minimum=0.3)
+        self._workspace, self._client, self._line_offset = self._build_runtime_context(
+            context=self._context,
+            code=self._last_user_code,
+            version=int(self._version),
+        )
+        self._log_context_ready(prefix="started")
 
-        self._client = PythonLspClient(
-            workspace_root=self._workspace.root_path,
+    def _build_runtime_context(
+        self,
+        *,
+        context: EditorAssistContext,
+        code: str,
+        version: int,
+    ) -> tuple[EditorWorkspaceSession, PythonLspClient, int]:
+        workspace = EditorWorkspaceSession(language=self._language, context=context)
+        client = PythonLspClient(
+            workspace_root=workspace.root_path,
             diagnostics_callback=self._on_publish_diagnostics,
             request_timeout_s=2.5,
         )
         try:
-            self._client.start()
-            snapshot = self._workspace.build_document_snapshot(user_code=self._last_user_code)
-            self._line_offset = int(snapshot.line_offset)
-            self._client.open_document(
-                uri=self._workspace.document_uri,
+            client.start()
+            snapshot = workspace.build_document_snapshot(user_code=str(code or ""))
+            line_offset = int(snapshot.line_offset)
+            client.open_document(
+                uri=workspace.document_uri,
                 language_id="python",
                 text=snapshot.text,
-                version=self._version,
+                version=int(version),
             )
-            logger.info(
-                "python lsp bridge started: uri=%s lineOffset=%d completionTimeout=%.1fs completionResolveTimeout=%.1fs hoverTimeout=%.1fs signatureTimeout=%.1fs supportFiles=%s dynamicInputs=%s",
-                self._workspace.document_uri,
-                self._line_offset,
-                self._completion_timeout_s,
-                self._completion_resolve_timeout_s,
-                self._hover_timeout_s,
-                self._signature_timeout_s,
-                [name for name, _ in self._context.support_files],
-                self._context.dynamic_inputs_binding is not None,
-            )
-            error_message = str(self._context.error_message or "").strip()
-            if error_message:
-                logger.warning("python lsp bridge context warning: %s", error_message)
         except Exception:
-            self._client.shutdown()
-            self._workspace.close()
+            try:
+                client.shutdown()
+            except Exception:
+                logger.exception("python lsp bridge failed to shutdown client after init error")
+            workspace.close()
             raise
+        return workspace, client, line_offset
 
-    def shutdown(self) -> None:
-        self._is_shutting_down = True
+    def _log_context_ready(self, *, prefix: str) -> None:
+        logger.info(
+            "python lsp bridge %s: uri=%s lineOffset=%d completionTimeout=%.1fs completionResolveTimeout=%.1fs hoverTimeout=%.1fs signatureTimeout=%.1fs supportFiles=%s dynamicInputs=%s dynamicStates=%s",
+            str(prefix or "ready"),
+            self._workspace.document_uri,
+            self._line_offset,
+            self._completion_timeout_s,
+            self._completion_resolve_timeout_s,
+            self._hover_timeout_s,
+            self._signature_timeout_s,
+            [name for name, _ in self._context.support_files],
+            self._context.dynamic_inputs_binding is not None,
+            self._context.dynamic_states_binding is not None,
+        )
+        error_message = str(self._context.error_message or "").strip()
+        if error_message:
+            logger.warning("python lsp bridge context warning: %s", error_message)
+
+    def _detach_inflight(self) -> tuple[
+        concurrent.futures.Future[list[dict[str, Any]]] | None,
+        concurrent.futures.Future[dict[str, Any] | None] | None,
+        concurrent.futures.Future[dict[str, Any] | None] | None,
+        concurrent.futures.Future[dict[str, Any] | None] | None,
+    ]:
         with self._state_lock:
             completion_future = self._completion_future
             completion_resolve_future = self._completion_resolve_future
@@ -118,15 +145,66 @@ class PythonEditorAssistBridge(QtCore.QObject):
             self._completion_resolve_future = None
             self._hover_future = None
             self._signature_future = None
+            self._completion_generation += 1
+            self._completion_resolve_generation += 1
+            self._hover_generation += 1
+            self._signature_generation += 1
             self._completion_resolve_items.clear()
-        if completion_future is not None:
-            completion_future.cancel()
-        if completion_resolve_future is not None:
-            completion_resolve_future.cancel()
-        if hover_future is not None:
-            hover_future.cancel()
-        if signature_future is not None:
-            signature_future.cancel()
+        return completion_future, completion_resolve_future, hover_future, signature_future
+
+    @staticmethod
+    def _cancel_future(future: concurrent.futures.Future[Any] | None) -> None:
+        if future is None:
+            return
+        future.cancel()
+
+    def reload_context(self, context: EditorAssistContext | None) -> bool:
+        if self._is_shutting_down:
+            return False
+        next_context = context or EditorAssistContext(language="python")
+        started_at = time.perf_counter()
+        with self._state_lock:
+            code_snapshot = str(self._last_user_code or "")
+            next_version = int(self._version) + 1
+        try:
+            new_workspace, new_client, new_line_offset = self._build_runtime_context(
+                context=next_context,
+                code=code_snapshot,
+                version=next_version,
+            )
+        except Exception as exc:
+            self._log_bridge_error("reloadContext", exc)
+            return False
+
+        completion_future, completion_resolve_future, hover_future, signature_future = self._detach_inflight()
+        with self._state_lock:
+            old_workspace = self._workspace
+            old_client = self._client
+            self._workspace = new_workspace
+            self._client = new_client
+            self._context = next_context
+            self._version = next_version
+            self._line_offset = int(new_line_offset)
+        self._cancel_future(completion_future)
+        self._cancel_future(completion_resolve_future)
+        self._cancel_future(hover_future)
+        self._cancel_future(signature_future)
+        try:
+            old_client.shutdown()
+        except Exception:
+            logger.exception("python lsp bridge reload failed to shutdown old client")
+        old_workspace.close()
+        elapsed_ms = int((time.perf_counter() - started_at) * 1000.0)
+        self._log_context_ready(prefix=f"reloaded elapsedMs={elapsed_ms}")
+        return True
+
+    def shutdown(self) -> None:
+        self._is_shutting_down = True
+        completion_future, completion_resolve_future, hover_future, signature_future = self._detach_inflight()
+        self._cancel_future(completion_future)
+        self._cancel_future(completion_resolve_future)
+        self._cancel_future(hover_future)
+        self._cancel_future(signature_future)
         self._executor.shutdown(wait=False, cancel_futures=True)
         self._client.shutdown()
         self._workspace.close()

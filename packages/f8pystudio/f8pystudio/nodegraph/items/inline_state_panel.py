@@ -510,7 +510,9 @@ def make_state_inline_control(node_item: Any, state_field: StateFieldInfo) -> Qt
 
         def _on_click() -> None:
             current = _get_node_value()
-            assist_context = _editor_assist_context(node_item, state_field_name=str(state_field.name or ""))
+            state_field_name = str(state_field.name or "")
+            assist_context = _editor_assist_context(node_item, state_field_name=state_field_name)
+            assist_context_provider = lambda: _editor_assist_context(node_item, state_field_name=state_field_name)
 
             def _on_saved(updated: str) -> None:
                 _set_node_value(updated, push_undo=True)
@@ -522,6 +524,7 @@ def make_state_inline_control(node_item: Any, state_field: StateFieldInfo) -> Qt
                 language=state_field.ui_language or "plaintext",
                 on_saved=_on_saved,
                 assist_context=assist_context,
+                assist_context_provider=assist_context_provider,
             )
             node_item._open_code_editors.append(dlg)
 

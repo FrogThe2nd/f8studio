@@ -2402,6 +2402,12 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
                         widget = _F8CodeButtonPropWidget(title=f"{node.name()} - {prop_name}", language=ui_language or "plaintext")
                         widget.set_name(prop_name)
                         widget.set_editor_assist_context(_build_editor_assist_context(node, prop_name=prop_name))
+                        widget.set_editor_assist_context_provider(
+                            lambda current_node=node, current_prop=str(prop_name): _build_editor_assist_context(
+                                current_node,
+                                prop_name=current_prop,
+                            )
+                        )
                 except Exception:
                     logger.exception("Failed to build code editor widget for property '%s'", prop_name)
                 access = _state_field_access(node, prop_name)

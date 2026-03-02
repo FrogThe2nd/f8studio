@@ -67,6 +67,12 @@ def build_state_value_widget(context: ControlBuildContext) -> Any:
         widget = F8CodeButtonPropWidget(title=title, language=ui_language or "plaintext")
         widget.set_name(prop_name)
         widget.set_editor_assist_context(_editor_assist_context_for_code_field(node, prop_name))
+        widget.set_editor_assist_context_provider(
+            lambda current_node=node, current_prop=prop_name: _editor_assist_context_for_code_field(
+                current_node,
+                current_prop,
+            )
+        )
         return widget
 
     if ui_control_l in {"wrapline"}:

@@ -4,6 +4,7 @@ import json
 import logging
 import math
 import os
+import time
 from typing import Any, Callable
 
 from qtpy import QtCore, QtGui, QtWidgets
@@ -29,6 +30,82 @@ def _python_assist_warning(context: EditorAssistContext | None) -> str:
     if context is None:
         return ""
     return str(context.error_message or "").strip()
+
+
+def _assist_context_fingerprint(context: EditorAssistContext | None) -> str:
+    if context is None:
+        return ""
+
+    def _jsonable(value: Any) -> Any:
+        if value is None or isinstance(value, (str, int, float, bool)):
+            return value
+        if isinstance(value, dict):
+            return {str(key): _jsonable(item) for key, item in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [_jsonable(item) for item in value]
+        return str(value)
+
+    payload = {
+        "language": str(context.language or ""),
+        "support_files": [[str(name), str(text)] for name, text in context.support_files],
+        "overlay_prefix": str(context.overlay_prefix or ""),
+        "dynamic_inputs_binding": (
+            {
+                "source": str(context.dynamic_inputs_binding.source or ""),
+                "type_name": str(context.dynamic_inputs_binding.type_name or ""),
+                "module_name": str(context.dynamic_inputs_binding.module_name or ""),
+                "schema_mode": str(context.dynamic_inputs_binding.schema_mode or ""),
+                "access_mode": str(context.dynamic_inputs_binding.access_mode or ""),
+            }
+            if context.dynamic_inputs_binding is not None
+            else None
+        ),
+        "data_in_ports": [
+            {
+                "name": str(port.name or ""),
+                "required": bool(port.required),
+                "value_schema": _jsonable(port.value_schema),
+            }
+            for port in context.data_in_ports
+        ],
+        "dynamic_states_binding": (
+            {
+                "source": str(context.dynamic_states_binding.source or ""),
+                "type_name": str(context.dynamic_states_binding.type_name or ""),
+                "module_name": str(context.dynamic_states_binding.module_name or ""),
+                "schema_mode": str(context.dynamic_states_binding.schema_mode or ""),
+                "access_mode": str(context.dynamic_states_binding.access_mode or ""),
+            }
+            if context.dynamic_states_binding is not None
+            else None
+        ),
+        "state_fields": [
+            {
+                "name": str(field.name or ""),
+                "required": bool(field.required),
+                "value_schema": _jsonable(field.value_schema),
+                "access": str(field.access or ""),
+            }
+            for field in context.state_fields
+        ],
+        "error_message": str(context.error_message or ""),
+    }
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _resolve_assist_context(
+    *,
+    assist_context: EditorAssistContext | None,
+    assist_context_provider: Callable[[], EditorAssistContext | None] | None,
+) -> EditorAssistContext | None:
+    provider = assist_context_provider
+    if provider is None:
+        return assist_context
+    try:
+        return provider()
+    except Exception:
+        logger.exception("Failed to build editor assist context from provider")
+        return assist_context
 
 
 def _ask_save_before_close(parent: QtWidgets.QWidget) -> QtWidgets.QMessageBox.StandardButton:
@@ -88,6 +165,7 @@ class F8MonacoEditorDialog(QtWidgets.QDialog):
         code: str,
         language: str = "python",
         assist_context: EditorAssistContext | None = None,
+        assist_context_provider: Callable[[], EditorAssistContext | None] | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle(str(title or "Edit Code"))
@@ -95,6 +173,14 @@ class F8MonacoEditorDialog(QtWidgets.QDialog):
         self._dirty: bool = False
         self._close_on_save: bool = True
         self._language: str = str(language or "plaintext").strip() or "plaintext"
+        self._assist_context_provider = assist_context_provider
+        self._assist_context_fingerprint = _assist_context_fingerprint(assist_context)
+        self._assist_pending_context: EditorAssistContext | None = None
+        self._assist_pending_fingerprint = ""
+        self._assist_reload_poll_timer: QtCore.QTimer | None = None
+        self._assist_reload_debounce_timer: QtCore.QTimer | None = None
+        self._assist_error_sig = ""
+        self._assist_error_ts = 0.0
 
         from PySide6 import QtWebChannel, QtWebEngineWidgets  # type: ignore[import-not-found]
 
@@ -138,6 +224,7 @@ class F8MonacoEditorDialog(QtWidgets.QDialog):
 
         self.resize(1020, 720)
         self._load_page()
+        self._start_assist_context_sync()
 
     def code(self) -> str:
         return str(self._code or "")
@@ -827,6 +914,88 @@ class F8MonacoEditorDialog(QtWidgets.QDialog):
 """
         self._view.setHtml(html)
 
+    def _start_assist_context_sync(self) -> None:
+        if self._assist_bridge is None:
+            return
+        if self._assist_context_provider is None:
+            return
+        poll_timer = QtCore.QTimer(self)
+        poll_timer.setInterval(320)
+        poll_timer.timeout.connect(self._poll_assist_context_change)  # type: ignore[attr-defined]
+        self._assist_reload_poll_timer = poll_timer
+
+        debounce_timer = QtCore.QTimer(self)
+        debounce_timer.setSingleShot(True)
+        debounce_timer.setInterval(480)
+        debounce_timer.timeout.connect(self._apply_assist_context_reload)  # type: ignore[attr-defined]
+        self._assist_reload_debounce_timer = debounce_timer
+
+        poll_timer.start()
+
+    def _stop_assist_context_sync(self) -> None:
+        poll_timer = self._assist_reload_poll_timer
+        if poll_timer is not None:
+            poll_timer.stop()
+            self._assist_reload_poll_timer = None
+        debounce_timer = self._assist_reload_debounce_timer
+        if debounce_timer is not None:
+            debounce_timer.stop()
+            self._assist_reload_debounce_timer = None
+        self._assist_pending_context = None
+        self._assist_pending_fingerprint = ""
+
+    def _poll_assist_context_change(self) -> None:
+        if self._assist_bridge is None:
+            return
+        provider = self._assist_context_provider
+        if provider is None:
+            return
+        try:
+            context = provider()
+        except Exception as exc:
+            self._log_assist_context_error("providerRefresh", exc)
+            return
+        fingerprint = _assist_context_fingerprint(context)
+        if fingerprint == self._assist_context_fingerprint:
+            self._assist_pending_context = None
+            self._assist_pending_fingerprint = ""
+            return
+        self._assist_pending_context = context
+        self._assist_pending_fingerprint = fingerprint
+        debounce_timer = self._assist_reload_debounce_timer
+        if debounce_timer is None:
+            self._apply_assist_context_reload()
+            return
+        debounce_timer.start()
+
+    @QtCore.Slot()
+    def _apply_assist_context_reload(self) -> None:
+        bridge = self._assist_bridge
+        if bridge is None:
+            return
+        fingerprint = str(self._assist_pending_fingerprint or "")
+        if not fingerprint:
+            return
+        if fingerprint == self._assist_context_fingerprint:
+            return
+        context = self._assist_pending_context
+        self._assist_pending_context = None
+        self._assist_pending_fingerprint = ""
+        if not bridge.reload_context(context):
+            logger.warning("Failed to reload python editor assist context")
+            return
+        self._assist_context_fingerprint = fingerprint
+        logger.debug("python editor assist context reloaded")
+
+    def _log_assist_context_error(self, operation: str, exc: Exception) -> None:
+        sig = f"{operation}:{type(exc).__name__}:{exc}"
+        now = time.monotonic()
+        if sig == self._assist_error_sig and (now - self._assist_error_ts) < 5.0:
+            return
+        self._assist_error_sig = sig
+        self._assist_error_ts = now
+        logger.exception("Failed to refresh python editor assist context; operation=%s", operation)
+
     def _on_save_clicked(self) -> None:
         if not self._dirty:
             return
@@ -859,6 +1028,7 @@ class F8MonacoEditorDialog(QtWidgets.QDialog):
             pass
 
     def _shutdown_assist(self) -> None:
+        self._stop_assist_context_sync()
         bridge = self._assist_bridge
         if bridge is None:
             return
@@ -903,14 +1073,19 @@ def open_code_editor_dialog(
     code: str,
     language: str,
     assist_context: EditorAssistContext | None = None,
+    assist_context_provider: Callable[[], EditorAssistContext | None] | None = None,
 ) -> str | None:
     """
     Open the Monaco code editor dialog and return updated code, or None if cancelled.
     """
+    resolved_context = _resolve_assist_context(
+        assist_context=assist_context,
+        assist_context_provider=assist_context_provider,
+    )
     effective_language = str(language or "plaintext").strip() or "plaintext"
-    if _assist_context_requires_python(assist_context):
+    if _assist_context_requires_python(resolved_context):
         effective_language = "python"
-    warn_text = _python_assist_warning(assist_context)
+    warn_text = _python_assist_warning(resolved_context)
     if effective_language.lower() == "python" and warn_text:
         show_warning(parent, warn_text)
     dlg = F8MonacoEditorDialog(
@@ -918,7 +1093,8 @@ def open_code_editor_dialog(
         title=title,
         code=code,
         language=effective_language,
-        assist_context=assist_context,
+        assist_context=resolved_context,
+        assist_context_provider=assist_context_provider,
     )
     if dlg.exec() != QtWidgets.QDialog.Accepted:
         return None
@@ -933,14 +1109,19 @@ def open_code_editor_window(
     language: str,
     on_saved: Callable[[str], None],
     assist_context: EditorAssistContext | None = None,
+    assist_context_provider: Callable[[], EditorAssistContext | None] | None = None,
 ) -> QtWidgets.QDialog:
     dlg: QtWidgets.QDialog
     # Always create as a top-level window (no Qt parent) so it behaves as an
     # independent editor window in the OS window manager/task switcher.
+    resolved_context = _resolve_assist_context(
+        assist_context=assist_context,
+        assist_context_provider=assist_context_provider,
+    )
     effective_language = str(language or "plaintext").strip() or "plaintext"
-    if _assist_context_requires_python(assist_context):
+    if _assist_context_requires_python(resolved_context):
         effective_language = "python"
-    warn_text = _python_assist_warning(assist_context)
+    warn_text = _python_assist_warning(resolved_context)
     if effective_language.lower() == "python" and warn_text:
         show_warning(parent, warn_text)
     dlg = F8MonacoEditorDialog(
@@ -948,7 +1129,8 @@ def open_code_editor_window(
         title=title,
         code=code,
         language=effective_language,
-        assist_context=assist_context,
+        assist_context=resolved_context,
+        assist_context_provider=assist_context_provider,
     )
 
     dlg.setModal(False)
@@ -989,6 +1171,7 @@ class F8CodePropWidget(QtWidgets.QWidget):
         self._value = ""
         self._title = str(title or "Edit Code")
         self._assist_context: EditorAssistContext | None = None
+        self._assist_context_provider: Callable[[], EditorAssistContext | None] | None = None
         self._editor_window: QtWidgets.QDialog | None = None
 
         self._preview = QtWidgets.QLineEdit()
@@ -1029,6 +1212,12 @@ class F8CodePropWidget(QtWidgets.QWidget):
         if _assist_context_requires_python(context):
             self._language = "python"
 
+    def set_editor_assist_context_provider(
+        self,
+        provider: Callable[[], EditorAssistContext | None] | None,
+    ) -> None:
+        self._assist_context_provider = provider
+
     def _on_edit_clicked(self) -> None:
         if self._editor_window is not None:
             try:
@@ -1049,6 +1238,7 @@ class F8CodePropWidget(QtWidgets.QWidget):
             language="python",
             on_saved=_on_saved,
             assist_context=self._assist_context,
+            assist_context_provider=self._assist_context_provider,
         )
         self._editor_window = dlg
         dlg.destroyed.connect(self._on_editor_destroyed)  # type: ignore[attr-defined]
@@ -1072,6 +1262,7 @@ class F8CodeButtonPropWidget(QtWidgets.QWidget):
         self._title = str(title or "Edit Code")
         self._language = str(language or "plaintext").strip() or "plaintext"
         self._assist_context: EditorAssistContext | None = None
+        self._assist_context_provider: Callable[[], EditorAssistContext | None] | None = None
         self._editor_window: QtWidgets.QDialog | None = None
 
         self._btn = QtWidgets.QPushButton("Edit...")
@@ -1102,6 +1293,12 @@ class F8CodeButtonPropWidget(QtWidgets.QWidget):
     def set_editor_assist_context(self, context: EditorAssistContext | None) -> None:
         self._assist_context = context
 
+    def set_editor_assist_context_provider(
+        self,
+        provider: Callable[[], EditorAssistContext | None] | None,
+    ) -> None:
+        self._assist_context_provider = provider
+
     def _on_edit_clicked(self) -> None:
         if self._editor_window is not None:
             try:
@@ -1122,6 +1319,7 @@ class F8CodeButtonPropWidget(QtWidgets.QWidget):
             language=self._language,
             on_saved=_on_saved,
             assist_context=self._assist_context,
+            assist_context_provider=self._assist_context_provider,
         )
         self._editor_window = dlg
         dlg.destroyed.connect(self._on_editor_destroyed)  # type: ignore[attr-defined]
