@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from f8pysdk import F8StateAccess
+from f8pysdk import F8OperatorSpec, F8ServiceSpec, F8StateAccess
 
+from ...editor_assist.workspace import EditorAssistContext
 from ..f8_editor_widgets import (
     F8PropBoolSwitch,
     F8PropImageB64,
@@ -22,6 +23,67 @@ from .schema_introspect import (
     state_field_ui_control,
     state_field_ui_language,
 )
+
+
+def _port_names(raw_ports: list[Any] | None) -> tuple[str, ...]:
+    if not raw_ports:
+        return ()
+    out: list[str] = []
+    for port in raw_ports:
+        try:
+            name = str(port.name or "").strip()
+        except (AttributeError, TypeError):
+            name = ""
+        if name:
+            out.append(name)
+    return tuple(out)
+
+
+def _state_field_names(raw_fields: list[Any] | None) -> tuple[str, ...]:
+    if not raw_fields:
+        return ()
+    out: list[str] = []
+    for field in raw_fields:
+        try:
+            name = str(field.name or "").strip()
+        except (AttributeError, TypeError):
+            name = ""
+        if name:
+            out.append(name)
+    return tuple(out)
+
+
+def _editor_assist_context_for_code_field(node: Any, prop_name: str) -> EditorAssistContext | None:
+    if str(prop_name or "").strip() != "code":
+        return None
+    try:
+        spec = node.spec
+    except Exception:
+        return None
+
+    if isinstance(spec, F8ServiceSpec):
+        service_class = str(spec.serviceClass or "").strip()
+        if service_class == "f8.pyscript":
+            return EditorAssistContext(
+                mode="f8.pyscript_service",
+                service_class=service_class,
+                state_field_name="code",
+                data_in_ports=_port_names(list(spec.dataInPorts or [])),
+                data_out_ports=_port_names(list(spec.dataOutPorts or [])),
+                state_fields=_state_field_names(list(spec.stateFields or [])),
+            )
+    if isinstance(spec, F8OperatorSpec):
+        operator_class = str(spec.operatorClass or "").strip()
+        if operator_class == "f8.python_script":
+            return EditorAssistContext(
+                mode="f8.pyengine_operator",
+                operator_class=operator_class,
+                state_field_name="code",
+                data_in_ports=_port_names(list(spec.dataInPorts or [])),
+                data_out_ports=_port_names(list(spec.dataOutPorts or [])),
+                state_fields=_state_field_names(list(spec.stateFields or [])),
+            )
+    return None
 
 
 def build_state_value_widget(context: ControlBuildContext) -> Any:
@@ -54,6 +116,7 @@ def build_state_value_widget(context: ControlBuildContext) -> Any:
             title = f"Edit {prop_name}"
         widget = F8CodeButtonPropWidget(title=title, language=ui_language or "plaintext")
         widget.set_name(prop_name)
+        widget.set_editor_assist_context(_editor_assist_context_for_code_field(node, prop_name))
         return widget
 
     if ui_control_l in {"wrapline"}:
@@ -120,3 +183,4 @@ def state_field_is_readonly(access: F8StateAccess | None) -> bool:
     if access is None:
         return False
     return bool(access == F8StateAccess.ro)
+

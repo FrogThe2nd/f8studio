@@ -26,8 +26,8 @@ from f8pysdk import (
 )
 from f8pysdk.schema_helpers import schema_default
 
+from ..editor_assist.workspace import EditorAssistContext
 from .f8_prop_value_widgets import (
-    F8CodePropWidget as _F8CodePropWidget,
     F8CodeButtonPropWidget as _F8CodeButtonPropWidget,
     F8JsonPropTextEdit as _F8JsonPropTextEdit,
 )
@@ -55,7 +55,6 @@ from .f8_state_widget_builder import (
     schema_numeric_range as _schema_numeric_range,
     schema_type_any as _schema_type,
     state_field_access as _state_field_access,
-    state_field_schema as _state_field_schema,
     state_field_ui_control as _state_field_ui_control,
     state_field_ui_language as _state_field_ui_language,
 )
@@ -116,6 +115,61 @@ def _get_node_spec(node: Any) -> Any | None:
         return node.spec
     except Exception:
         return None
+
+
+def _port_names(ports: list[F8DataPortSpec] | None) -> tuple[str, ...]:
+    if not ports:
+        return ()
+    out: list[str] = []
+    for port in ports:
+        name = str(port.name or "").strip()
+        if name:
+            out.append(name)
+    return tuple(out)
+
+
+def _state_field_names(fields: list[F8StateSpec] | None) -> tuple[str, ...]:
+    if not fields:
+        return ()
+    out: list[str] = []
+    for field in fields:
+        name = str(field.name or "").strip()
+        if name:
+            out.append(name)
+    return tuple(out)
+
+
+def _build_editor_assist_context(node: Any, *, prop_name: str) -> EditorAssistContext | None:
+    field_name = str(prop_name or "").strip()
+    if field_name != "code":
+        return None
+
+    spec = _get_node_spec(node)
+    if isinstance(spec, F8ServiceSpec):
+        service_class = str(spec.serviceClass or "").strip()
+        if service_class == "f8.pyscript":
+            return EditorAssistContext(
+                mode="f8.pyscript_service",
+                service_class=service_class,
+                state_field_name=field_name,
+                data_in_ports=_port_names(list(spec.dataInPorts or [])),
+                data_out_ports=_port_names(list(spec.dataOutPorts or [])),
+                state_fields=_state_field_names(list(spec.stateFields or [])),
+            )
+
+    if isinstance(spec, F8OperatorSpec):
+        operator_class = str(spec.operatorClass or "").strip()
+        if operator_class == "f8.python_script":
+            return EditorAssistContext(
+                mode="f8.pyengine_operator",
+                operator_class=operator_class,
+                state_field_name=field_name,
+                data_in_ports=_port_names(list(spec.dataInPorts or [])),
+                data_out_ports=_port_names(list(spec.dataOutPorts or [])),
+                state_fields=_state_field_names(list(spec.stateFields or [])),
+            )
+
+    return None
 
 
 def _node_missing_lock_info(node: Any) -> tuple[bool, str]:
@@ -423,7 +477,7 @@ class _F8StateStackContainer(QtWidgets.QWidget):
 
         edit_btn = QtWidgets.QToolButton()
         edit_btn.setAutoRaise(True)
-        edit_btn.setToolTip("Edit stateField…")
+        edit_btn.setToolTip("Edit stateField...")
         edit_btn.setIcon(_icon_from_style(edit_btn, QtWidgets.QStyle.SP_FileDialogDetailedView, "document-edit"))
         edit_btn.setProperty("_state_field_name", str(name or "").strip())
         edit_btn.clicked.connect(self._on_edit_clicked)
@@ -454,7 +508,7 @@ class _F8StateStackContainer(QtWidgets.QWidget):
         if tooltip:
             tip = "{}\n{}".format(name, tooltip)
             label_widget.setToolTip(tip)
-            edit_btn.setToolTip("Edit stateField…\n" + tip)
+            edit_btn.setToolTip("Edit stateField...\n" + tip)
             del_btn.setToolTip("Delete stateField\n" + tip)
             widget.setToolTip(tip)
         else:
@@ -693,7 +747,7 @@ class _F8EditDataPortDialog(QtWidgets.QDialog):
         self._schema_summary.setStyleSheet("color: #888;")
         self._refresh_schema_summary()
 
-        schema_btn = QtWidgets.QPushButton("Edit Schema…")
+        schema_btn = QtWidgets.QPushButton("Edit Schema...")
         schema_btn.clicked.connect(self._edit_schema)
 
         form = QtWidgets.QFormLayout()
@@ -785,7 +839,7 @@ class _F8EditStateFieldDialog(QtWidgets.QDialog):
         self._schema_summary.setStyleSheet("color: #888;")
         self._refresh_schema_summary()
 
-        schema_btn = QtWidgets.QPushButton("Edit Schema…")
+        schema_btn = QtWidgets.QPushButton("Edit Schema...")
         schema_btn.clicked.connect(self._edit_schema)
 
         form = QtWidgets.QFormLayout()
@@ -1181,7 +1235,7 @@ class _F8EditCommandParamDialog(QtWidgets.QDialog):
         self._schema_summary.setStyleSheet("color: #888;")
         self._refresh_schema_summary()
 
-        schema_btn = QtWidgets.QPushButton("Edit Schema…")
+        schema_btn = QtWidgets.QPushButton("Edit Schema...")
         schema_btn.clicked.connect(self._edit_schema)
 
         form = QtWidgets.QFormLayout()
@@ -1258,8 +1312,8 @@ class _F8EditCommandDialog(QtWidgets.QDialog):
         self._params_list.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
         self._refresh_params_list()
 
-        btn_add = QtWidgets.QPushButton("Add Param…")
-        btn_edit = QtWidgets.QPushButton("Edit Param…")
+        btn_add = QtWidgets.QPushButton("Add Param...")
+        btn_edit = QtWidgets.QPushButton("Edit Param...")
         btn_del = QtWidgets.QPushButton("Delete Param")
         btn_add.clicked.connect(self._add_param)
         btn_edit.clicked.connect(self._edit_param)
@@ -1374,7 +1428,7 @@ class _F8CommandRow(QtWidgets.QWidget):
 
         self._btn_edit = QtWidgets.QToolButton()
         self._btn_edit.setAutoRaise(True)
-        self._btn_edit.setToolTip("Edit command…")
+        self._btn_edit.setToolTip("Edit command...")
         self._btn_edit.setIcon(_icon_from_style(self._btn_edit, QtWidgets.QStyle.SP_FileDialogDetailedView, "document-edit"))
         self._btn_edit.setEnabled(bool(allow_edit))
         self._btn_edit.setVisible(True)
@@ -1398,7 +1452,7 @@ class _F8CommandRow(QtWidgets.QWidget):
 
         if self._base_tooltip:
             self._btn_invoke.setToolTip(self._base_tooltip)
-            self._btn_edit.setToolTip("Edit command…\n" + self._base_tooltip)
+            self._btn_edit.setToolTip("Edit command...\n" + self._base_tooltip)
 
         self.set_show_on_node(bool(show_on_node))
 
@@ -2390,8 +2444,9 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
                     ui_control = str(ui_control_raw or "").strip().lower()
                     if ui_control == "code":
                         ui_language = _state_field_ui_language(node, prop_name)
-                        widget = _F8CodeButtonPropWidget(title=f"{node.name()} — {prop_name}", language=ui_language or "plaintext")
+                        widget = _F8CodeButtonPropWidget(title=f"{node.name()} - {prop_name}", language=ui_language or "plaintext")
                         widget.set_name(prop_name)
+                        widget.set_editor_assist_context(_build_editor_assist_context(node, prop_name=prop_name))
                 except Exception:
                     logger.exception("Failed to build code editor widget for property '%s'", prop_name)
                 access = _state_field_access(node, prop_name)
@@ -3094,3 +3149,4 @@ def _reorder_tabs(tab_widget: QtWidgets.QTabWidget, preferred: list[str]) -> Non
                 if src != dst:
                     bar.moveTab(src, dst)
                 break
+

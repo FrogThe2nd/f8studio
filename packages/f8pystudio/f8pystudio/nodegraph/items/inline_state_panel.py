@@ -6,8 +6,10 @@ from typing import Any
 
 from qtpy import QtCore, QtGui, QtWidgets
 
+from f8pysdk import F8OperatorSpec, F8ServiceSpec
 from f8pysdk.schema_helpers import schema_type
 
+from ...editor_assist.workspace import EditorAssistContext
 from ...ui_icons import StudioIcon, icon_for
 from ...widgets.f8_editor_widgets import (
     F8ImageB64Editor,
@@ -18,11 +20,79 @@ from ...widgets.f8_editor_widgets import (
     parse_multiselect_pool,
     parse_select_pool,
 )
-from ...widgets.f8_prop_value_widgets import F8NumberPropLineEdit, open_code_editor_dialog, open_code_editor_window
+from ...widgets.f8_prop_value_widgets import F8NumberPropLineEdit, open_code_editor_window
 from .node_item_core import StateFieldInfo, state_field_info
 from .service_toolbar_host import F8ElideToolButton
 
 logger = logging.getLogger(__name__)
+
+
+def _port_names(raw_ports: list[Any] | None) -> tuple[str, ...]:
+    if not raw_ports:
+        return ()
+    out: list[str] = []
+    for port in raw_ports:
+        try:
+            name = str(port.name or "").strip()
+        except (AttributeError, TypeError):
+            name = ""
+        if name:
+            out.append(name)
+    return tuple(out)
+
+
+def _state_field_names(raw_fields: list[Any] | None) -> tuple[str, ...]:
+    if not raw_fields:
+        return ()
+    out: list[str] = []
+    for field in raw_fields:
+        try:
+            name = str(field.name or "").strip()
+        except (AttributeError, TypeError):
+            name = ""
+        if name:
+            out.append(name)
+    return tuple(out)
+
+
+def _editor_assist_context(node_item: Any, *, state_field_name: str) -> EditorAssistContext | None:
+    if str(state_field_name or "").strip() != "code":
+        return None
+
+    node = node_item._backend_node()
+    if node is None:
+        return None
+
+    try:
+        spec = node.spec
+    except Exception:
+        return None
+
+    if isinstance(spec, F8ServiceSpec):
+        service_class = str(spec.serviceClass or "").strip()
+        if service_class == "f8.pyscript":
+            return EditorAssistContext(
+                mode="f8.pyscript_service",
+                service_class=service_class,
+                state_field_name="code",
+                data_in_ports=_port_names(list(spec.dataInPorts or [])),
+                data_out_ports=_port_names(list(spec.dataOutPorts or [])),
+                state_fields=_state_field_names(list(spec.stateFields or [])),
+            )
+
+    if isinstance(spec, F8OperatorSpec):
+        operator_class = str(spec.operatorClass or "").strip()
+        if operator_class == "f8.python_script":
+            return EditorAssistContext(
+                mode="f8.pyengine_operator",
+                operator_class=operator_class,
+                state_field_name="code",
+                data_in_ports=_port_names(list(spec.dataInPorts or [])),
+                data_out_ports=_port_names(list(spec.dataOutPorts or [])),
+                state_fields=_state_field_names(list(spec.stateFields or [])),
+            )
+
+    return None
 
 
 def inline_state_input_is_connected(node_item: Any, field_name: str) -> bool:
@@ -492,43 +562,34 @@ def make_state_inline_control(node_item: Any, state_field: StateFieldInfo) -> Qt
 
         def _on_click() -> None:
             current = _get_node_value()
+            assist_context = _editor_assist_context(node_item, state_field_name=str(state_field.name or ""))
 
             def _on_saved(updated: str) -> None:
                 _set_node_value(updated, push_undo=True)
 
-            try:
-                dlg = open_code_editor_window(
-                    None,
-                    title=f"{node_item.name} - {state_field.label}",
-                    code="" if current is None else str(current),
-                    language=state_field.ui_language or "plaintext",
-                    on_saved=_on_saved,
-                )
-                node_item._open_code_editors.append(dlg)
+            dlg = open_code_editor_window(
+                None,
+                title=f"{node_item.name} - {state_field.label}",
+                code="" if current is None else str(current),
+                language=state_field.ui_language or "plaintext",
+                on_saved=_on_saved,
+                assist_context=assist_context,
+            )
+            node_item._open_code_editors.append(dlg)
 
-                def _cleanup() -> None:
-                    alive: list[QtWidgets.QDialog] = []
-                    for widget in node_item._open_code_editors:
-                        if widget is None:
-                            continue
-                        try:
-                            _ = widget.isVisible()
-                            alive.append(widget)
-                        except RuntimeError:
-                            continue
-                    node_item._open_code_editors = alive
+            def _cleanup() -> None:
+                alive: list[QtWidgets.QDialog] = []
+                for widget in node_item._open_code_editors:
+                    if widget is None:
+                        continue
+                    try:
+                        _ = widget.isVisible()
+                        alive.append(widget)
+                    except RuntimeError:
+                        continue
+                node_item._open_code_editors = alive
 
-                dlg.destroyed.connect(_cleanup)  # type: ignore[attr-defined]
-            except Exception:
-                updated = open_code_editor_dialog(
-                    None,
-                    title=f"{node_item.name} - {state_field.label}",
-                    code="" if current is None else str(current),
-                    language=state_field.ui_language or "plaintext",
-                )
-                if updated is None:
-                    return
-                _set_node_value(updated, push_undo=True)
+            dlg.destroyed.connect(_cleanup)  # type: ignore[attr-defined]
 
         btn.clicked.connect(_on_click)  # type: ignore[attr-defined]
         _apply_value(_get_node_value())
