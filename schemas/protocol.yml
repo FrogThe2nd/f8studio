@@ -26,6 +26,69 @@ components:
         - type: array
           items: {}
         - type: "null"
+    F8DynamicBindingsInputsSpec:
+      title: F8DynamicBindingsInputsSpec
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        source:
+          type: string
+          enum:
+            - data_in_ports
+        type_name:
+          type: string
+        module_name:
+          type: string
+        schema_mode:
+          type: string
+          enum:
+            - basic_recursive
+        access_mode:
+          type: string
+          enum:
+            - object_and_mapping
+      required:
+        - enabled
+        - source
+      additionalProperties: false
+    F8DynamicBindingsSpec:
+      title: F8DynamicBindingsSpec
+      type: object
+      properties:
+        inputs:
+          $ref: "#/components/schemas/F8DynamicBindingsInputsSpec"
+      additionalProperties: false
+    F8PythonEditorAssistSpec:
+      title: F8PythonEditorAssistSpec
+      type: object
+      properties:
+        support_files:
+          type: object
+          additionalProperties:
+            type: string
+        overlay_prefix:
+          type: string
+        dynamic_bindings:
+          $ref: "#/components/schemas/F8DynamicBindingsSpec"
+      required:
+        - support_files
+        - overlay_prefix
+      additionalProperties: false
+    F8EditorAssistSpec:
+      title: F8EditorAssistSpec
+      type: object
+      properties:
+        version:
+          type: integer
+        language:
+          type: string
+        python:
+          $ref: "#/components/schemas/F8PythonEditorAssistSpec"
+      required:
+        - version
+        - language
+      additionalProperties: false
     F8StateSpec:
       title: F8StateSpec
       type: object
@@ -60,6 +123,8 @@ components:
           type: boolean
           default: false
           description: If true, render this control inline on the node body; otherwise only in the inspector
+        editorAssist:
+          $ref: "#/components/schemas/F8EditorAssistSpec"
       required:
         - name
         - valueSchema

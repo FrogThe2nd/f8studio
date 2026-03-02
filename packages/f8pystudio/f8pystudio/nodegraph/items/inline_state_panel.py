@@ -6,9 +6,9 @@ from typing import Any
 
 from qtpy import QtCore, QtGui, QtWidgets
 
-from f8pysdk import F8OperatorSpec, F8ServiceSpec
 from f8pysdk.schema_helpers import schema_type
 
+from ...editor_assist.protocol import editor_assist_context_for_field
 from ...editor_assist.workspace import EditorAssistContext
 from ...ui_icons import StudioIcon, icon_for
 from ...widgets.f8_editor_widgets import (
@@ -27,34 +27,6 @@ from .service_toolbar_host import F8ElideToolButton
 logger = logging.getLogger(__name__)
 
 
-def _port_names(raw_ports: list[Any] | None) -> tuple[str, ...]:
-    if not raw_ports:
-        return ()
-    out: list[str] = []
-    for port in raw_ports:
-        try:
-            name = str(port.name or "").strip()
-        except (AttributeError, TypeError):
-            name = ""
-        if name:
-            out.append(name)
-    return tuple(out)
-
-
-def _state_field_names(raw_fields: list[Any] | None) -> tuple[str, ...]:
-    if not raw_fields:
-        return ()
-    out: list[str] = []
-    for field in raw_fields:
-        try:
-            name = str(field.name or "").strip()
-        except (AttributeError, TypeError):
-            name = ""
-        if name:
-            out.append(name)
-    return tuple(out)
-
-
 def _editor_assist_context(node_item: Any, *, state_field_name: str) -> EditorAssistContext | None:
     if str(state_field_name or "").strip() != "code":
         return None
@@ -68,31 +40,7 @@ def _editor_assist_context(node_item: Any, *, state_field_name: str) -> EditorAs
     except Exception:
         return None
 
-    if isinstance(spec, F8ServiceSpec):
-        service_class = str(spec.serviceClass or "").strip()
-        if service_class == "f8.pyscript":
-            return EditorAssistContext(
-                mode="f8.pyscript_service",
-                service_class=service_class,
-                state_field_name="code",
-                data_in_ports=_port_names(list(spec.dataInPorts or [])),
-                data_out_ports=_port_names(list(spec.dataOutPorts or [])),
-                state_fields=_state_field_names(list(spec.stateFields or [])),
-            )
-
-    if isinstance(spec, F8OperatorSpec):
-        operator_class = str(spec.operatorClass or "").strip()
-        if operator_class == "f8.python_script":
-            return EditorAssistContext(
-                mode="f8.pyengine_operator",
-                operator_class=operator_class,
-                state_field_name="code",
-                data_in_ports=_port_names(list(spec.dataInPorts or [])),
-                data_out_ports=_port_names(list(spec.dataOutPorts or [])),
-                state_fields=_state_field_names(list(spec.stateFields or [])),
-            )
-
-    return None
+    return editor_assist_context_for_field(spec, field_kind="state", field_key="code", language="python")
 
 
 def inline_state_input_is_connected(node_item: Any, field_name: str) -> bool:

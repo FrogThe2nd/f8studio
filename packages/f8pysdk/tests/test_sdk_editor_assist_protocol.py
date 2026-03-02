@@ -1,0 +1,68 @@
+from __future__ import annotations
+
+import pytest
+
+from f8pysdk import F8DataPortSpec, F8StateAccess, F8StateSpec, any_schema, string_schema
+from f8pysdk.editor_assist_protocol import validate_editor_assist_spec
+
+
+def _editor_assist_payload() -> dict[str, object]:
+    return {
+        "version": 1,
+        "language": "python",
+        "python": {
+            "support_files": {"f8_script_api.pyi": "class F8Ctx:\n    ...\n"},
+            "overlay_prefix": "from f8_script_api import *\n",
+            "dynamic_bindings": {
+                "inputs": {
+                    "enabled": True,
+                    "source": "data_in_ports",
+                    "type_name": "F8Inputs",
+                    "module_name": "f8_dynamic_inputs",
+                    "schema_mode": "basic_recursive",
+                    "access_mode": "object_and_mapping",
+                }
+            },
+        },
+    }
+
+
+def test_validate_editor_assist_spec_accepts_valid_payload() -> None:
+    spec = validate_editor_assist_spec(_editor_assist_payload())
+    assert int(spec.version) == 1
+    assert str(spec.language or "") == "python"
+    assert str(spec.python.overlay_prefix or "").startswith("from f8_script_api import")
+
+
+def test_state_spec_accepts_editor_assist_field() -> None:
+    state = F8StateSpec(
+        name="code",
+        label="Code",
+        description="",
+        valueSchema=string_schema(default=""),
+        access=F8StateAccess.rw,
+        editorAssist=validate_editor_assist_spec(_editor_assist_payload()),
+    )
+    assert state.editorAssist is not None
+    assert int(state.editorAssist.version) == 1
+
+
+def test_state_spec_still_forbids_unknown_fields() -> None:
+    with pytest.raises(Exception):
+        _ = F8StateSpec(
+            name="code",
+            label="Code",
+            description="",
+            valueSchema=string_schema(default=""),
+            access=F8StateAccess.rw,
+            unknownX=1,  # type: ignore[call-arg]
+        )
+
+
+def test_data_port_spec_rejects_editor_assist_field() -> None:
+    with pytest.raises(Exception):
+        _ = F8DataPortSpec(
+            name="x",
+            valueSchema=any_schema(),
+            editorAssist=validate_editor_assist_spec(_editor_assist_payload()),  # type: ignore[call-arg]
+        )

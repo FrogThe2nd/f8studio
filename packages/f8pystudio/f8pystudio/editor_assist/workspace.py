@@ -7,21 +7,38 @@ import tempfile
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
+from .python_dynamic_types import build_dynamic_inputs_stub
 from .pyscript_stubs import write_support_files
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
+class EditorAssistDataInPort:
+    name: str
+    required: bool = True
+    value_schema: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class EditorAssistInputsBinding:
+    source: str = "data_in_ports"
+    type_name: str = "F8Inputs"
+    module_name: str = "f8_dynamic_inputs"
+    schema_mode: str = "basic_recursive"
+    access_mode: str = "object_and_mapping"
+
+
+@dataclass(frozen=True)
 class EditorAssistContext:
-    mode: str = "python"
-    service_class: str = ""
-    operator_class: str = ""
-    state_field_name: str = ""
-    data_in_ports: tuple[str, ...] = ()
-    data_out_ports: tuple[str, ...] = ()
-    state_fields: tuple[str, ...] = ()
+    language: str = "plaintext"
+    support_files: tuple[tuple[str, str], ...] = ()
+    overlay_prefix: str = ""
+    dynamic_inputs_binding: EditorAssistInputsBinding | None = None
+    data_in_ports: tuple[EditorAssistDataInPort, ...] = ()
+    error_message: str = ""
 
 
 @dataclass(frozen=True)
@@ -46,15 +63,38 @@ class EditorWorkspaceSession:
         self._root.mkdir(parents=True, exist_ok=True)
 
         self._source_path = self._root / "session_script.py"
-        self._line_overlay_prefix = write_support_files(
+        support_files = list(self._context.support_files)
+        if self._context.dynamic_inputs_binding is not None:
+            binding = self._context.dynamic_inputs_binding
+            module_path = str(binding.module_name or "").strip().replace(".", "/")
+            if module_path:
+                support_files.append(
+                    (
+                        f"{module_path}.pyi",
+                        build_dynamic_inputs_stub(
+                            type_name=str(binding.type_name or "F8Inputs"),
+                            data_in_ports=tuple(self._context.data_in_ports),
+                        ),
+                    )
+                )
+
+        overlay = write_support_files(
             self._root,
-            mode=str(self._context.mode or "python"),
-            data_in_ports=tuple(self._context.data_in_ports),
-            data_out_ports=tuple(self._context.data_out_ports),
-            state_fields=tuple(self._context.state_fields),
+            support_files=tuple(support_files),
+            overlay_prefix=str(self._context.overlay_prefix or ""),
         )
+        if overlay and not overlay.endswith("\n"):
+            overlay = f"{overlay}\n"
+        self._line_overlay_prefix = overlay
         self._line_offset = self._line_overlay_prefix.count("\n")
         self._write_pyright_config()
+        logger.debug(
+            "editor assist workspace prepared: root=%s supportFiles=%s dynamicInputs=%s overlayLines=%d",
+            self._root,
+            [name for name, _ in support_files],
+            self._context.dynamic_inputs_binding is not None,
+            self._line_offset,
+        )
 
     @property
     def root_path(self) -> Path:

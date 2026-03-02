@@ -1,0 +1,191 @@
+from __future__ import annotations
+
+from f8pysdk import F8OperatorSchemaVersion, F8OperatorSpec
+
+from f8pystudio.editor_assist.protocol import editor_assist_context_for_field
+
+
+def _operator_spec_with_field_editor_assist(
+    editor_assist: dict | None,
+    *,
+    state_key: str = "code",
+    port_key: str = "x",
+    with_top_level: bool = False,
+    attach_to_state: bool = True,
+) -> F8OperatorSpec:
+    state_fields = [
+        {
+            "name": state_key,
+            "valueSchema": {"type": "string"},
+            "access": "rw",
+        }
+    ]
+    data_in_ports = [
+        {"name": port_key, "required": True, "valueSchema": {"type": "number"}},
+        {"name": "y", "required": False, "valueSchema": {"type": "array", "items": {"type": "integer"}}},
+        {
+            "name": "z",
+            "required": True,
+            "valueSchema": {"type": "object", "properties": {"name": {"type": "string"}}},
+        },
+    ]
+    if editor_assist is not None and attach_to_state:
+        state_fields[0]["editorAssist"] = editor_assist
+
+    base = {
+        "schemaVersion": F8OperatorSchemaVersion.f8operator_1,
+        "serviceClass": "f8.pyengine",
+        "operatorClass": "f8.python_script",
+        "label": "Python Script",
+        "stateFields": state_fields,
+        "dataInPorts": data_in_ports,
+    }
+    if with_top_level and editor_assist is not None:
+        base["editorAssist"] = editor_assist
+    return F8OperatorSpec.model_validate(base)
+
+
+def test_editor_assist_context_for_field_accepts_valid_python_payload() -> None:
+    spec = _operator_spec_with_field_editor_assist(
+        {
+            "version": 1,
+            "language": "python",
+            "python": {
+                "support_files": {"f8_script_api.pyi": "class F8PyEngineContext:\n    ...\n"},
+                "overlay_prefix": "from f8_script_api import *\n",
+            },
+        },
+    )
+    context = editor_assist_context_for_field(spec, field_kind="state", field_key="code", language="python")
+    assert context is not None
+    assert context.error_message == ""
+    assert context.language == "python"
+    assert context.overlay_prefix == "from f8_script_api import *\n"
+    assert context.support_files == (("f8_script_api.pyi", "class F8PyEngineContext:\n    ...\n"),)
+    assert context.dynamic_inputs_binding is None
+
+
+def test_editor_assist_context_for_field_returns_error_when_protocol_missing() -> None:
+    spec = _operator_spec_with_field_editor_assist(None)
+    context = editor_assist_context_for_field(spec, field_kind="state", field_key="code", language="python")
+    assert context is not None
+    assert context.support_files == ()
+    assert "field-level editorAssist missing for state:code" in context.error_message
+
+
+def test_editor_assist_context_for_field_returns_error_when_field_missing() -> None:
+    spec = _operator_spec_with_field_editor_assist(
+        {
+            "version": 1,
+            "language": "python",
+            "python": {
+                "support_files": {"f8_script_api.pyi": "class F8PyEngineContext:\n    ...\n"},
+                "overlay_prefix": "",
+            },
+        },
+        state_key="other",
+    )
+    context = editor_assist_context_for_field(spec, field_kind="state", field_key="code", language="python")
+    assert context is not None
+    assert "state field not found: code" in context.error_message
+
+
+def test_editor_assist_context_for_field_returns_none_for_non_python_language() -> None:
+    spec = _operator_spec_with_field_editor_assist(None)
+    context = editor_assist_context_for_field(spec, field_kind="state", field_key="code", language="json")
+    assert context is None
+
+
+def test_editor_assist_context_for_field_accepts_dynamic_inputs_binding() -> None:
+    spec = _operator_spec_with_field_editor_assist(
+        {
+            "version": 1,
+            "language": "python",
+            "python": {
+                "support_files": {"f8_script_api.pyi": "class F8PyEngineContext:\n    ...\n"},
+                "overlay_prefix": "from f8_script_api import *\n",
+                "dynamic_bindings": {
+                    "inputs": {
+                        "enabled": True,
+                        "source": "data_in_ports",
+                        "type_name": "F8Inputs",
+                        "module_name": "f8_dynamic_inputs",
+                        "schema_mode": "basic_recursive",
+                        "access_mode": "object_and_mapping",
+                    }
+                },
+            },
+        }
+    )
+    context = editor_assist_context_for_field(spec, field_kind="state", field_key="code", language="python")
+    assert context is not None
+    assert context.dynamic_inputs_binding is not None
+    assert context.dynamic_inputs_binding.type_name == "F8Inputs"
+    assert context.dynamic_inputs_binding.module_name == "f8_dynamic_inputs"
+    assert tuple(port.name for port in context.data_in_ports) == ("x", "y", "z")
+
+
+def test_invalid_dynamic_inputs_source_is_rejected_by_schema() -> None:
+    with_top_level = {
+        "version": 1,
+        "language": "python",
+        "python": {
+            "support_files": {"f8_script_api.pyi": "class F8PyEngineContext:\n    ...\n"},
+            "overlay_prefix": "",
+            "dynamic_bindings": {"inputs": {"enabled": True, "source": "state_fields"}},
+        },
+    }
+    try:
+        _ = _operator_spec_with_field_editor_assist(with_top_level)
+    except Exception as exc:
+        assert "data_in_ports" in str(exc)
+    else:
+        raise AssertionError("invalid dynamic input source must fail schema validation")
+
+
+def test_editor_assist_context_for_port_field_is_not_supported() -> None:
+    spec = _operator_spec_with_field_editor_assist(
+        {
+            "version": 1,
+            "language": "python",
+            "python": {
+                "support_files": {"f8_script_api.pyi": "class F8PyEngineContext:\n    ...\n"},
+                "overlay_prefix": "from f8_script_api import *\n",
+            },
+        }
+    )
+    context = editor_assist_context_for_field(spec, field_kind="port", field_key="x", language="python")
+    assert context is not None
+    assert "field_kind 'port' is not supported by editorAssist" in context.error_message
+
+
+def test_editor_assist_context_for_field_ignores_top_level_payload() -> None:
+    payload = {
+        "version": 1,
+        "language": "python",
+        "python": {
+            "support_files": {"f8_script_api.pyi": "class F8PyEngineContext:\n    ...\n"},
+            "overlay_prefix": "from f8_script_api import *\n",
+        },
+    }
+    spec = _operator_spec_with_field_editor_assist(payload, with_top_level=True, attach_to_state=False)
+    context = editor_assist_context_for_field(spec, field_kind="state", field_key="code", language="python")
+    assert context is not None
+    assert "field-level editorAssist missing for state:code" in context.error_message
+
+
+def test_editor_assist_context_rejects_when_state_ui_language_mismatches() -> None:
+    spec = _operator_spec_with_field_editor_assist(
+        {
+            "version": 1,
+            "language": "python",
+            "python": {
+                "support_files": {"f8_script_api.pyi": "class F8PyEngineContext:\n    ...\n"},
+                "overlay_prefix": "from f8_script_api import *\n",
+            },
+        }
+    )
+    spec.stateFields[0].uiLanguage = "lua"
+    context = editor_assist_context_for_field(spec, field_kind="state", field_key="code", language="python")
+    assert context is not None
+    assert "uiLanguage='lua' does not match requested language='python'" in context.error_message

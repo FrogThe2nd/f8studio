@@ -15,11 +15,21 @@ from ..ui_icons import StudioIcon, icon_for
 
 logger = logging.getLogger(__name__)
 
+
 def _assist_context_requires_python(context: EditorAssistContext | None) -> bool:
     if context is None:
         return False
-    mode = str(context.mode or "").strip().lower()
-    return mode in {"f8.pyscript_service", "f8.pyengine_operator"}
+    language = str(context.language or "").strip().lower()
+    if language != "python":
+        return False
+    return bool(tuple(context.support_files))
+
+
+def _python_assist_warning(context: EditorAssistContext | None) -> str:
+    if context is None:
+        return ""
+    return str(context.error_message or "").strip()
+
 
 def _ask_save_before_close(parent: QtWidgets.QWidget) -> QtWidgets.QMessageBox.StandardButton:
     return QtWidgets.QMessageBox.question(
@@ -31,6 +41,7 @@ def _ask_save_before_close(parent: QtWidgets.QWidget) -> QtWidgets.QMessageBox.S
         | QtWidgets.QMessageBox.StandardButton.Cancel,
         QtWidgets.QMessageBox.StandardButton.Yes,
     )
+
 
 class _EditorUiBridge(QtCore.QObject):
     dirty_changed = QtCore.Signal(bool)
@@ -93,7 +104,8 @@ class F8MonacoEditorDialog(QtWidgets.QDialog):
         self._assist_bridge: PythonEditorAssistBridge | None = None
         self._web_channel: Any = QtWebChannel.QWebChannel(self._view.page())
         self._web_channel.registerObject("f8EditorUi", self._ui_bridge)
-        if self._language.lower() == "python":
+        python_assist_enabled = self._language.lower() == "python" and _assist_context_requires_python(assist_context)
+        if python_assist_enabled:
             self._assist_bridge = PythonEditorAssistBridge(
                 code=self._code,
                 language="python",
@@ -898,6 +910,9 @@ def open_code_editor_dialog(
     effective_language = str(language or "plaintext").strip() or "plaintext"
     if _assist_context_requires_python(assist_context):
         effective_language = "python"
+    warn_text = _python_assist_warning(assist_context)
+    if effective_language.lower() == "python" and warn_text:
+        show_warning(parent, warn_text)
     dlg = F8MonacoEditorDialog(
         parent,
         title=title,
@@ -925,6 +940,9 @@ def open_code_editor_window(
     effective_language = str(language or "plaintext").strip() or "plaintext"
     if _assist_context_requires_python(assist_context):
         effective_language = "python"
+    warn_text = _python_assist_warning(assist_context)
+    if effective_language.lower() == "python" and warn_text:
+        show_warning(parent, warn_text)
     dlg = F8MonacoEditorDialog(
         None,
         title=title,
@@ -1555,4 +1573,3 @@ class F8NumberPropLineEdit(QtWidgets.QLineEdit):
         else:
             text = hint
         super().setToolTip(text)
-

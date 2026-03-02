@@ -43,6 +43,20 @@ def _service_node(*, code: str, state_fields: list[F8StateSpec] | None = None, s
 
 
 class PyScriptServiceNodeTests(unittest.IsolatedAsyncioTestCase):
+    def test_service_spec_contains_editor_assist_protocol(self) -> None:
+        reg = RuntimeNodeRegistry.instance()
+        register_specs(reg)
+        spec = reg.service_spec(SERVICE_CLASS)
+        self.assertIsNotNone(spec)
+        assert spec is not None
+        code_field = next((f for f in list(spec.stateFields or []) if str(f.name or "").strip() == "code"), None)
+        self.assertIsNotNone(code_field)
+        assert code_field is not None
+        editor_assist = code_field.editorAssist
+        self.assertIsNotNone(editor_assist)
+        python_payload = editor_assist.python.model_dump(mode="json") if editor_assist is not None else None
+        self.assertIsInstance(python_payload, dict)
+
     def test_program_defaults_data_delivery_to_both(self) -> None:
         program = PythonScriptServiceProgram()
         cfg = program.build_runtime_config(service_id="svcA", nats_url="mem://")
@@ -71,17 +85,17 @@ class PyScriptServiceNodeTests(unittest.IsolatedAsyncioTestCase):
 
         code = (
             "def onStart(ctx):\n"
-            "    ctx['set_state']('startedCount', 1)\n"
+            "    ctx.set_state('startedCount', 1)\n"
             "\n"
             "def onPause(ctx, meta=None):\n"
-            "    c = int(ctx['locals'].get('pauseCount') or 0) + 1\n"
-            "    ctx['locals']['pauseCount'] = c\n"
-            "    ctx['set_state']('pauseCount', c)\n"
+            "    c = int(ctx.locals.get('pauseCount') or 0) + 1\n"
+            "    ctx.locals['pauseCount'] = c\n"
+            "    ctx.set_state('pauseCount', c)\n"
             "\n"
             "def onResume(ctx, meta=None):\n"
-            "    c = int(ctx['locals'].get('resumeCount') or 0) + 1\n"
-            "    ctx['locals']['resumeCount'] = c\n"
-            "    ctx['set_state']('resumeCount', c)\n"
+            "    c = int(ctx.locals.get('resumeCount') or 0) + 1\n"
+            "    ctx.locals['resumeCount'] = c\n"
+            "    ctx.set_state('resumeCount', c)\n"
         )
 
         fields = list(RuntimeNodeRegistry.instance().service_spec(SERVICE_CLASS).stateFields or [])  # type: ignore[union-attr]
@@ -115,9 +129,9 @@ class PyScriptServiceNodeTests(unittest.IsolatedAsyncioTestCase):
 
         code = (
             "def onTick(ctx, tick):\n"
-            "    c = int(ctx['locals'].get('tickCount') or 0) + 1\n"
-            "    ctx['locals']['tickCount'] = c\n"
-            "    ctx['set_state']('tickCount', c)\n"
+            "    c = int(ctx.locals.get('tickCount') or 0) + 1\n"
+            "    ctx.locals['tickCount'] = c\n"
+            "    ctx.set_state('tickCount', c)\n"
         )
 
         fields = list(RuntimeNodeRegistry.instance().service_spec(SERVICE_CLASS).stateFields or [])  # type: ignore[union-attr]
@@ -165,7 +179,7 @@ class PyScriptServiceNodeTests(unittest.IsolatedAsyncioTestCase):
             "async def onCommand(ctx, name, args, meta=None):\n"
             "    if name == 'run_echo':\n"
             "        import sys\n"
-            "        return await ctx['exec_local'](sys.executable, ['-c', \"print('hello')\"])\n"
+            "        return await ctx.exec_local(sys.executable, ['-c', \"print('hello')\"])\n"
             "    return {'name': name}\n"
         )
 
@@ -206,12 +220,12 @@ class PyScriptServiceNodeTests(unittest.IsolatedAsyncioTestCase):
         try:
             code = (
                 f"def onStart(ctx):\n"
-                f"    ctx['subscribe_video_shm']('v', '{shm_name}', decode='none')\n"
+                f"    ctx.subscribe_video_shm('v', '{shm_name}', decode='none')\n"
                 "\n"
                 "def onCommand(ctx, name, args, meta=None):\n"
                 "    if name != 'video':\n"
                 "        return {'ok': False}\n"
-                "    pkt = ctx['get_video_shm']('v')\n"
+                "    pkt = ctx.get_video_shm('v')\n"
                 "    if pkt is None:\n"
                 "        return {'frameId': 0}\n"
                 "    header = pkt.get('header') or {}\n"
@@ -250,7 +264,7 @@ class PyScriptServiceNodeTests(unittest.IsolatedAsyncioTestCase):
             "def onCommand(ctx, name, args, meta=None):\n"
             "    if name != 'cached':\n"
             "        return {'ok': False}\n"
-            "    return {'value': ctx['get_state_cached']('myState', 99)}\n"
+            "    return {'value': ctx.get_state_cached('myState', 99)}\n"
         )
 
         graph = F8RuntimeGraph(graphId="g6", revision="r1", nodes=[_service_node(code="", state_fields=fields)], edges=[])
@@ -300,6 +314,26 @@ class PyScriptServiceNodeTests(unittest.IsolatedAsyncioTestCase):
         await node.on_state("commands", {"name": "ping"}, ts_ms=4)
         self.assertEqual(len(node._declared_commands), 1)
         self.assertEqual(str(node._declared_commands[0].get("name") or ""), "ping")
+
+    async def test_legacy_ctx_dict_access_sets_last_error(self) -> None:
+        harness = ServiceBusHarness()
+        bus = harness.create_bus("svcA")
+        reg = RuntimeNodeRegistry.instance()
+        register_specs(reg)
+        _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
+
+        graph = F8RuntimeGraph(graphId="g8", revision="r1", nodes=[_service_node(code="")], edges=[])
+        await bus.set_rungraph(graph)
+        node = bus.get_node("svcA")
+        assert isinstance(node, PythonScriptServiceNode)
+
+        code = (
+            "def onStart(ctx):\n"
+            "    ctx['log']('legacy syntax')\n"
+        )
+        await node.on_state("code", code, ts_ms=1)
+        await asyncio.sleep(0.05)
+        self.assertIn("not subscriptable", str(await node.get_state_value("lastError") or ""))
 
 
 if __name__ == "__main__":

@@ -26,6 +26,7 @@ from f8pysdk import (
 )
 from f8pysdk.schema_helpers import schema_default
 
+from ..editor_assist.protocol import editor_assist_context_for_field
 from ..editor_assist.workspace import EditorAssistContext
 from .f8_prop_value_widgets import (
     F8CodeButtonPropWidget as _F8CodeButtonPropWidget,
@@ -117,59 +118,13 @@ def _get_node_spec(node: Any) -> Any | None:
         return None
 
 
-def _port_names(ports: list[F8DataPortSpec] | None) -> tuple[str, ...]:
-    if not ports:
-        return ()
-    out: list[str] = []
-    for port in ports:
-        name = str(port.name or "").strip()
-        if name:
-            out.append(name)
-    return tuple(out)
-
-
-def _state_field_names(fields: list[F8StateSpec] | None) -> tuple[str, ...]:
-    if not fields:
-        return ()
-    out: list[str] = []
-    for field in fields:
-        name = str(field.name or "").strip()
-        if name:
-            out.append(name)
-    return tuple(out)
-
-
 def _build_editor_assist_context(node: Any, *, prop_name: str) -> EditorAssistContext | None:
     field_name = str(prop_name or "").strip()
     if field_name != "code":
         return None
 
     spec = _get_node_spec(node)
-    if isinstance(spec, F8ServiceSpec):
-        service_class = str(spec.serviceClass or "").strip()
-        if service_class == "f8.pyscript":
-            return EditorAssistContext(
-                mode="f8.pyscript_service",
-                service_class=service_class,
-                state_field_name=field_name,
-                data_in_ports=_port_names(list(spec.dataInPorts or [])),
-                data_out_ports=_port_names(list(spec.dataOutPorts or [])),
-                state_fields=_state_field_names(list(spec.stateFields or [])),
-            )
-
-    if isinstance(spec, F8OperatorSpec):
-        operator_class = str(spec.operatorClass or "").strip()
-        if operator_class == "f8.python_script":
-            return EditorAssistContext(
-                mode="f8.pyengine_operator",
-                operator_class=operator_class,
-                state_field_name=field_name,
-                data_in_ports=_port_names(list(spec.dataInPorts or [])),
-                data_out_ports=_port_names(list(spec.dataOutPorts or [])),
-                state_fields=_state_field_names(list(spec.stateFields or [])),
-            )
-
-    return None
+    return editor_assist_context_for_field(spec, field_kind="state", field_key=field_name, language="python")
 
 
 def _node_missing_lock_info(node: Any) -> tuple[bool, str]:
@@ -3149,4 +3104,3 @@ def _reorder_tabs(tab_widget: QtWidgets.QTabWidget, preferred: list[str]) -> Non
                 if src != dst:
                     bar.moveTab(src, dst)
                 break
-

@@ -7,7 +7,7 @@ import json
 import logging
 import os
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Callable
 
 from f8pysdk.capabilities import ClosableNode, CommandableNode
@@ -25,27 +25,68 @@ except ModuleNotFoundError:
 
 
 DEFAULT_CODE = (
-    "# Hooks (all optional):\n"
+    "# Hooks template (uncomment what you need):\n"
     "# - onStart(ctx)\n"
     "# - onStop(ctx)\n"
     "# - onPause(ctx, meta=None)\n"
     "# - onResume(ctx, meta=None)\n"
-    "# - onState(ctx, field, value, tsMs=None)\n"
-    "# - onData(ctx, port, value, tsMs=None)\n"
+    "# - onState(ctx, field, value, ts_ms=None)\n"
+    "# - onData(ctx, port, value, ts_ms=None)\n"
     "# - onTick(ctx, tick)\n"
     "# - onCommand(ctx, name, args, meta=None)\n"
     "#\n"
-    "# Tick payload: {'seq': int, 'tsMs': int, 'deltaMs': int}\n"
-    "# State read:\n"
-    "# - await ctx['get_state'](field)                # freshest path\n"
-    "# - ctx['get_state_cached'](field, default=None) # sync cached snapshot, may be stale\n"
-    "# Permission: ctx['permission'] -> {'localExecGranted', 'expiresTsMs'}\n"
+    "# Useful context helpers:\n"
+    "# - await ctx.get_state(field)\n"
+    "# - ctx.get_state_cached(field, default=None)\n"
+    "# - ctx.set_state(field, value)\n"
+    "# - await ctx.set_state_async(field, value)\n"
+    "# - ctx.emit(port, value)\n"
+    "# - ctx.permission.local_exec_granted / ctx.permission.expires_ts_ms\n"
     "#\n"
-    "def onStart(ctx):\n"
-    "    ctx['log']('pyscript started')\n"
+    "from typing import TYPE_CHECKING, Any\n"
+    "if TYPE_CHECKING:\n"
+    "    from f8_script_api import F8PyScriptContext, F8Tick\n"
+    "#\n"
+    "def onStart(ctx: 'F8PyScriptContext') -> None:\n"
+    "    ctx.log('pyscript started')\n"
     "\n"
-    "def onStop(ctx):\n"
-    "    ctx['log']('pyscript stopped')\n"
+    "# def onStop(ctx: 'F8PyScriptContext') -> None:\n"
+    "#     ctx.log('pyscript stopped')\n"
+    "#\n"
+    "# def onPause(ctx: 'F8PyScriptContext', meta: dict[str, Any] | None = None) -> None:\n"
+    "#     ctx.log(f'paused: {meta}')\n"
+    "#\n"
+    "# def onResume(ctx: 'F8PyScriptContext', meta: dict[str, Any] | None = None) -> None:\n"
+    "#     ctx.log(f'resumed: {meta}')\n"
+    "#\n"
+    "# def onState(\n"
+    "#     ctx: 'F8PyScriptContext',\n"
+    "#     field: str,\n"
+    "#     value: Any,\n"
+    "#     ts_ms: int | None = None,\n"
+    "# ) -> None:\n"
+    "#     ctx.log(f'state {field}={value} ts_ms={ts_ms}')\n"
+    "#\n"
+    "# def onData(\n"
+    "#     ctx: 'F8PyScriptContext',\n"
+    "#     port: str,\n"
+    "#     value: Any,\n"
+    "#     ts_ms: int | None = None,\n"
+    "# ) -> None:\n"
+    "#     ctx.log(f'data {port}={value} ts_ms={ts_ms}')\n"
+    "#\n"
+    "# def onTick(ctx: 'F8PyScriptContext', tick: 'F8Tick') -> None:\n"
+    "#     ctx.log(f'tick seq={tick.seq} tsMs={tick.tsMs} deltaMs={tick.deltaMs}')\n"
+    "#\n"
+    "# def onCommand(\n"
+    "#     ctx: 'F8PyScriptContext',\n"
+    "#     name: str,\n"
+    "#     args: dict[str, Any],\n"
+    "#     meta: dict[str, Any] | None = None,\n"
+    "# ) -> dict[str, Any]:\n"
+    "#     if name == 'ping':\n"
+    "#         return {'ok': True, 'result': {'pong': True}}\n"
+    "#     return {'ok': False, 'error': f'unknown command: {name}'}\n"
 )
 
 _SAFE_MODULES: set[str] = {
@@ -77,6 +118,129 @@ class _VideoShmSubscription:
     error_count: int = 0
 
 
+@dataclass(slots=True)
+class PyScriptPermissionContext:
+    local_exec_granted: bool
+    expires_ts_ms: int | None
+    grant_ts_ms: int
+    session_id: str
+
+
+@dataclass(slots=True)
+class PyScriptServiceContext:
+    _node: "PythonScriptServiceNode"
+    service_id: str
+    locals: dict[str, Any]
+    permission: PyScriptPermissionContext
+
+    def with_permission(self, permission: PyScriptPermissionContext) -> "PyScriptServiceContext":
+        return replace(self, permission=permission)
+
+    def log(self, message: object) -> None:
+        logger.info("[%s:pyscript] %s", self.service_id, str(message))
+
+    async def emit_async(self, port: str, value: Any) -> None:
+        await self._node.emit(str(port), value)
+
+    def emit(self, port: str, value: Any) -> None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError as exc:
+            logger.error("[%s:pyscript] emit without running loop", self.service_id, exc_info=exc)
+            return
+        loop.create_task(self.emit_async(str(port), value), name=f"pyscript:emit:{self.service_id}:{port}")
+
+    async def set_state_async(self, field: str, value: Any) -> None:
+        await self._node._set_runtime_state(str(field), value)
+
+    def set_state(self, field: str, value: Any) -> None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError as exc:
+            logger.error("[%s:pyscript] set_state without running loop", self.service_id, exc_info=exc)
+            return
+        loop.create_task(
+            self.set_state_async(str(field), value),
+            name=f"pyscript:set_state:{self.service_id}:{field}",
+        )
+
+    async def get_state(self, field: str) -> Any:
+        return await self._node.get_state_value(str(field))
+
+    def get_state_cached(self, field: str, default: Any = None) -> Any:
+        return self._node.get_state_cached(str(field), default)
+
+    def subscribe_video_shm(self, key: str, shm_name: str, *, decode: str = "auto", use_event: bool = False) -> None:
+        key_name = str(key or "").strip()
+        shm = str(shm_name or "").strip()
+        if not key_name or not shm:
+            return
+        self._node._unsubscribe_video_shm_sync(key_name)
+        sub = _VideoShmSubscription(
+            key=key_name,
+            shm_name=shm,
+            decode_mode=self._node._normalize_decode_mode(decode),
+            use_event=bool(use_event),
+        )
+        self._node._video_subscriptions[key_name] = sub
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError as exc:
+            logger.error("[%s:pyscript] subscribe_video_shm without loop", self.service_id, exc_info=exc)
+            return
+        sub.task = loop.create_task(
+            self._node._run_video_shm_subscription(key_name),
+            name=f"pyscript:video_sub:{self.service_id}:{key_name}",
+        )
+
+    def get_video_shm(self, key: str) -> dict[str, Any] | None:
+        key_name = str(key or "").strip()
+        if not key_name:
+            return None
+        sub = self._node._video_subscriptions.get(key_name)
+        if sub is None:
+            return None
+        return self._node._copy_packet_for_script(sub.latest_packet)
+
+    def unsubscribe_video_shm(self, key: str) -> None:
+        self._node._unsubscribe_video_shm_sync(str(key or "").strip())
+
+    def list_video_shm_subscriptions(self) -> list[dict[str, Any]]:
+        items: list[dict[str, Any]] = []
+        for key_name in sorted(self._node._video_subscriptions.keys()):
+            sub = self._node._video_subscriptions.get(key_name)
+            if sub is None:
+                continue
+            items.append(
+                {
+                    "key": sub.key,
+                    "shmName": sub.shm_name,
+                    "decodeMode": sub.decode_mode,
+                    "hasPacket": sub.latest_packet is not None,
+                    "lastFrameId": int(sub.last_frame_id),
+                    "errorCount": int(sub.error_count),
+                }
+            )
+        return items
+
+    async def exec_local(
+        self,
+        command: str,
+        args: list[str] | tuple[str, ...] | None = None,
+        *,
+        timeout_ms: int | None = None,
+        cwd: str | None = None,
+        env: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return await self._node._exec_local(
+            command,
+            args,
+            timeoutMs=timeout_ms,
+            cwd=cwd,
+            env=env,
+        )
+
+
 class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
     def __init__(self, *, node_id: str, node: Any, initial_state: dict[str, Any] | None = None) -> None:
         super().__init__(
@@ -89,7 +253,6 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
 
         self._code = str(self._initial_state.get("code") or DEFAULT_CODE)
         self._locals: dict[str, Any] = {}
-        self._ctx: dict[str, Any] = {}
 
         self._hook_on_start: Callable[..., Any] | None = None
         self._hook_on_stop: Callable[..., Any] | None = None
@@ -125,6 +288,7 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
         self._last_exec_ts_ms = 0
 
         self._declared_commands: list[dict[str, Any]] = []
+        self._ctx: PyScriptServiceContext = self._build_ctx()
 
         self._compile_and_start()
 
@@ -277,13 +441,22 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
         self._self_state_writes[str(field)] = value
         await self.set_state(str(field), value)
 
-    def _permission_view(self) -> dict[str, Any]:
+    def _permission_context(self) -> PyScriptPermissionContext:
         allowed = self._is_local_exec_allowed()
+        return PyScriptPermissionContext(
+            local_exec_granted=bool(allowed),
+            expires_ts_ms=int(self._grant_expires_ts_ms) if self._grant_expires_ts_ms is not None else None,
+            grant_ts_ms=int(self._grant_ts_ms or 0),
+            session_id=str(self._grant_session_id or ""),
+        )
+
+    def _permission_view(self) -> dict[str, Any]:
+        permission = self._permission_context()
         return {
-            "localExecGranted": bool(allowed),
-            "expiresTsMs": int(self._grant_expires_ts_ms) if self._grant_expires_ts_ms is not None else None,
-            "grantTsMs": int(self._grant_ts_ms or 0),
-            "sessionId": str(self._grant_session_id or ""),
+            "localExecGranted": bool(permission.local_exec_granted),
+            "expiresTsMs": permission.expires_ts_ms,
+            "grantTsMs": int(permission.grant_ts_ms),
+            "sessionId": str(permission.session_id),
         }
 
     def _is_local_exec_allowed(self) -> bool:
@@ -422,112 +595,16 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
             "args": argv[1:],
         }
 
-    def _build_ctx(self) -> dict[str, Any]:
-        async def _emit_async(port: str, value: Any) -> None:
-            await self.emit(str(port), value)
+    def _build_ctx(self) -> PyScriptServiceContext:
+        return PyScriptServiceContext(
+            _node=self,
+            service_id=self.node_id,
+            locals=self._locals,
+            permission=self._permission_context(),
+        )
 
-        def _emit(port: str, value: Any) -> None:
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError as exc:
-                logger.error("[%s:pyscript] emit without running loop", self.node_id, exc_info=exc)
-                return
-            loop.create_task(_emit_async(str(port), value), name=f"pyscript:emit:{self.node_id}:{port}")
-
-        async def _set_state_async(field: str, value: Any) -> None:
-            await self._set_runtime_state(str(field), value)
-
-        def _set_state(field: str, value: Any) -> None:
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError as exc:
-                logger.error("[%s:pyscript] set_state without running loop", self.node_id, exc_info=exc)
-                return
-            loop.create_task(
-                _set_state_async(str(field), value),
-                name=f"pyscript:set_state:{self.node_id}:{field}",
-            )
-
-        async def _get_state(field: str) -> Any:
-            return await self.get_state_value(str(field))
-
-        def _get_state_cached(field: str, default: Any = None) -> Any:
-            return self.get_state_cached(str(field), default)
-
-        def _subscribe_video_shm(key: str, shm_name: str, *, decode: str = "auto", use_event: bool = False) -> None:
-            key_name = str(key or "").strip()
-            shm = str(shm_name or "").strip()
-            if not key_name or not shm:
-                return
-            self._unsubscribe_video_shm_sync(key_name)
-            sub = _VideoShmSubscription(
-                key=key_name,
-                shm_name=shm,
-                decode_mode=self._normalize_decode_mode(decode),
-                use_event=bool(use_event),
-            )
-            self._video_subscriptions[key_name] = sub
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError as exc:
-                logger.error("[%s:pyscript] subscribe_video_shm without loop", self.node_id, exc_info=exc)
-                return
-            sub.task = loop.create_task(
-                self._run_video_shm_subscription(key_name),
-                name=f"pyscript:video_sub:{self.node_id}:{key_name}",
-            )
-
-        def _get_video_shm(key: str) -> dict[str, Any] | None:
-            key_name = str(key or "").strip()
-            if not key_name:
-                return None
-            sub = self._video_subscriptions.get(key_name)
-            if sub is None:
-                return None
-            return self._copy_packet_for_script(sub.latest_packet)
-
-        def _unsubscribe_video_shm(key: str) -> None:
-            self._unsubscribe_video_shm_sync(str(key or "").strip())
-
-        def _list_video_shm_subscriptions() -> list[dict[str, Any]]:
-            items: list[dict[str, Any]] = []
-            for key_name in sorted(self._video_subscriptions.keys()):
-                sub = self._video_subscriptions.get(key_name)
-                if sub is None:
-                    continue
-                items.append(
-                    {
-                        "key": sub.key,
-                        "shmName": sub.shm_name,
-                        "decodeMode": sub.decode_mode,
-                        "hasPacket": sub.latest_packet is not None,
-                        "lastFrameId": int(sub.last_frame_id),
-                        "errorCount": int(sub.error_count),
-                    }
-                )
-            return items
-
-        return {
-            "serviceId": self.node_id,
-            "locals": self._locals,
-            "log": lambda msg: logger.info("[%s:pyscript] %s", self.node_id, str(msg)),
-            "emit": _emit,
-            "emit_async": _emit_async,
-            "set_state": _set_state,
-            "set_state_async": _set_state_async,
-            "get_state": _get_state,
-            "get_state_cached": _get_state_cached,
-            "subscribe_video_shm": _subscribe_video_shm,
-            "get_video_shm": _get_video_shm,
-            "unsubscribe_video_shm": _unsubscribe_video_shm,
-            "list_video_shm_subscriptions": _list_video_shm_subscriptions,
-            "exec_local": self._exec_local,
-        }
-
-    def _build_invoke_ctx(self) -> dict[str, Any]:
-        invoke_ctx = dict(self._ctx)
-        invoke_ctx["permission"] = self._permission_view()
-        return invoke_ctx
+    def _build_invoke_ctx(self) -> PyScriptServiceContext:
+        return self._ctx.with_permission(self._permission_context())
 
     def _compile_script(self, code: str) -> None:
         env: dict[str, Any] = {"__builtins__": self._build_script_builtins()}
@@ -1005,7 +1082,7 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
                             "hasPacket": item["hasPacket"],
                             "errorCount": item["errorCount"],
                         }
-                        for item in self._ctx["list_video_shm_subscriptions"]()
+                        for item in self._ctx.list_video_shm_subscriptions()
                     ],
                     "declaredCommands": list(self._declared_commands),
                 },

@@ -49,6 +49,7 @@ class PythonEditorAssistBridge(QtCore.QObject):
     ) -> None:
         super().__init__(parent)
         self._workspace = EditorWorkspaceSession(language=language, context=context)
+        self._context = context or EditorAssistContext()
         self._line_offset = 0
         self._version = 1
         self._last_user_code = str(code or "")
@@ -88,14 +89,19 @@ class PythonEditorAssistBridge(QtCore.QObject):
                 version=self._version,
             )
             logger.info(
-                "python lsp bridge started: uri=%s lineOffset=%d completionTimeout=%.1fs completionResolveTimeout=%.1fs hoverTimeout=%.1fs signatureTimeout=%.1fs",
+                "python lsp bridge started: uri=%s lineOffset=%d completionTimeout=%.1fs completionResolveTimeout=%.1fs hoverTimeout=%.1fs signatureTimeout=%.1fs supportFiles=%s dynamicInputs=%s",
                 self._workspace.document_uri,
                 self._line_offset,
                 self._completion_timeout_s,
                 self._completion_resolve_timeout_s,
                 self._hover_timeout_s,
                 self._signature_timeout_s,
+                [name for name, _ in self._context.support_files],
+                self._context.dynamic_inputs_binding is not None,
             )
+            error_message = str(self._context.error_message or "").strip()
+            if error_message:
+                logger.warning("python lsp bridge context warning: %s", error_message)
         except Exception:
             self._client.shutdown()
             self._workspace.close()

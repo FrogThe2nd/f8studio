@@ -21,6 +21,7 @@ from f8pysdk.runtime_node import RuntimeNode
 from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
 
 from .constants import SERVICE_CLASS
+from .editor_assist_payload import pyscript_code_field_editor_assist_payload
 from .service_node import DEFAULT_CODE, PythonScriptServiceNode
 
 
@@ -46,6 +47,7 @@ def register_specs(registry: RuntimeNodeRegistry | None = None) -> RuntimeNodeRe
                     uiControl="code",
                     uiLanguage="python",
                     showOnNode=False,
+                    editorAssist=pyscript_code_field_editor_assist_payload(),
                 ),
                 F8StateSpec(
                     name="lastError",

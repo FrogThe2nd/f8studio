@@ -42,6 +42,25 @@ def _runtime_python_script_node(
 
 
 class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
+    def test_spec_contains_editor_assist_protocol(self) -> None:
+        spec = PythonScriptRuntimeNode.SPEC
+        code_field = next((f for f in list(spec.stateFields or []) if str(f.name or "").strip() == "code"), None)
+        self.assertIsNotNone(code_field)
+        assert code_field is not None
+        editor_assist = code_field.editorAssist
+        self.assertIsNotNone(editor_assist)
+        python_payload = editor_assist.python.model_dump(mode="json") if editor_assist is not None else None
+        self.assertIsInstance(python_payload, dict)
+        support_files = (python_payload or {}).get("support_files") if isinstance(python_payload, dict) else None
+        self.assertIsInstance(support_files, dict)
+        api_stub = str((support_files or {}).get("f8_script_api.pyi") or "")
+        self.assertIn("from f8_dynamic_inputs import F8Inputs as F8Inputs", api_stub)
+        dynamic_bindings = (python_payload or {}).get("dynamic_bindings") if isinstance(python_payload, dict) else None
+        self.assertIsInstance(dynamic_bindings, dict)
+        inputs_binding = (dynamic_bindings or {}).get("inputs") if isinstance(dynamic_bindings, dict) else None
+        self.assertIsInstance(inputs_binding, dict)
+        self.assertTrue(bool((inputs_binding or {}).get("enabled")))
+
     async def test_on_state_runs_and_can_write_state(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
@@ -52,7 +71,7 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
         code = (
             "def onState(ctx, field, value, tsMs=None):\n"
             "    if field == 'foo':\n"
-            "        ctx['set_state']('bar', int(value) * 2)\n"
+            "        ctx.set_state('bar', int(value) * 2)\n"
         )
 
         state_fields = list(PythonScriptRuntimeNode.SPEC.stateFields or [])
@@ -84,7 +103,7 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
         )
         op = _runtime_python_script_node(
             node_id="ps2",
-            code="def onStart(ctx):\n    ctx['set_state']('booted', True)\n",
+            code="def onStart(ctx):\n    ctx.set_state('booted', True)\n",
             state_fields=state_fields,
         )
         graph = F8RuntimeGraph(graphId="g2", revision="r1", nodes=[op], edges=[])
@@ -105,7 +124,7 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
         code = (
-            "def onExec(ctx, execIn, inputs):\n"
+            "def onExec(ctx, exec_in, inputs):\n"
             "    return {'outputs': {'out': 123}}\n"
         )
         op = _runtime_python_script_node(node_id="ps3", code=code)
@@ -150,9 +169,9 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
 
         code = (
             "def onMsg(ctx, inputs):\n"
-            "    c = int(ctx['locals'].get('count') or 0)\n"
+            "    c = int(ctx.locals.get('count') or 0)\n"
             "    c += 1\n"
-            "    ctx['locals']['count'] = c\n"
+            "    ctx.locals['count'] = c\n"
             "    return {'outputs': {'out': c}}\n"
         )
         op = _runtime_python_script_node(node_id="ps5", code=code)
@@ -178,10 +197,10 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
         state_fields = list(PythonScriptRuntimeNode.SPEC.stateFields or [])
         state_fields.append(F8StateSpec(name="x", label="x", description="", valueSchema=any_schema(), access=F8StateAccess.rw))
         code = (
-            "async def onExec(ctx, execIn, inputs):\n"
-            "    ctx['locals']['x'] = 1\n"
-            "    await ctx['set_state_async']('x', 2)\n"
-            "    v = await ctx['get_state']('x')\n"
+            "async def onExec(ctx, exec_in, inputs):\n"
+            "    ctx.locals['x'] = 1\n"
+            "    await ctx.set_state_async('x', 2)\n"
+            "    v = await ctx.get_state('x')\n"
             "    return {'outputs': {'out': v}}\n"
         )
         op = _runtime_python_script_node(node_id="ps6", code=code, state_fields=state_fields)
@@ -208,8 +227,8 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
         state_fields = list(PythonScriptRuntimeNode.SPEC.stateFields or [])
         state_fields.append(F8StateSpec(name="x", label="x", description="", valueSchema=any_schema(), access=F8StateAccess.rw))
         code = (
-            "def onExec(ctx, execIn, inputs):\n"
-            "    v = ctx['get_state_cached']('x', 7)\n"
+            "def onExec(ctx, exec_in, inputs):\n"
+            "    v = ctx.get_state_cached('x', 7)\n"
             "    return {'outputs': {'out': v}}\n"
         )
         op = _runtime_python_script_node(node_id="ps7", code=code, state_fields=state_fields)
@@ -227,6 +246,77 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(0.05)
         out2 = await node.compute_output("out", ctx_id="ctx-7b")
         self.assertEqual(out2, 33)
+
+    async def test_inputs_supports_object_and_mapping_access(self) -> None:
+        harness = ServiceBusHarness()
+        bus = harness.create_bus("svcA")
+        reg = RuntimeNodeRegistry.instance()
+        register_operator(reg)
+        _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
+
+        code = (
+            "def onMsg(ctx, inputs):\n"
+            "    dot_v = inputs.msg if 'msg' in inputs else None\n"
+            "    idx_v = inputs['msg'] if 'msg' in inputs else None\n"
+            "    get_v = inputs.get('msg')\n"
+            "    return {'outputs': {'out': [dot_v, idx_v, get_v]}}\n"
+        )
+        op = _runtime_python_script_node(node_id="ps9", code=code)
+        graph = F8RuntimeGraph(graphId="g9", revision="r1", nodes=[op], edges=[])
+        await bus.set_rungraph(graph)
+
+        node = bus.get_node("ps9")
+        self.assertIsInstance(node, PythonScriptRuntimeNode)
+        assert isinstance(node, PythonScriptRuntimeNode)
+        out = await node._compute_outputs_for_pull({"msg": 123}, exec_in=None)
+        self.assertEqual(out.get("out"), [123, 123, 123])
+
+    async def test_inputs_nested_object_supports_dot_access(self) -> None:
+        harness = ServiceBusHarness()
+        bus = harness.create_bus("svcA")
+        reg = RuntimeNodeRegistry.instance()
+        register_operator(reg)
+        _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
+
+        code = (
+            "def onMsg(ctx, inputs):\n"
+            "    val_dot = inputs.payload.user.name\n"
+            "    val_map = inputs['payload']['user']['name']\n"
+            "    val_get = inputs.get('payload').get('user').get('name')\n"
+            "    return {'outputs': {'out': [val_dot, val_map, val_get]}}\n"
+        )
+        op = _runtime_python_script_node(node_id="ps10", code=code)
+        graph = F8RuntimeGraph(graphId="g10", revision="r1", nodes=[op], edges=[])
+        await bus.set_rungraph(graph)
+
+        node = bus.get_node("ps10")
+        self.assertIsInstance(node, PythonScriptRuntimeNode)
+        assert isinstance(node, PythonScriptRuntimeNode)
+        out = await node._compute_outputs_for_pull({"payload": {"user": {"name": "alice"}}}, exec_in=None)
+        self.assertEqual(out.get("out"), ["alice", "alice", "alice"])
+
+    async def test_legacy_ctx_dict_access_sets_last_error(self) -> None:
+        harness = ServiceBusHarness()
+        bus = harness.create_bus("svcA")
+        reg = RuntimeNodeRegistry.instance()
+        register_operator(reg)
+        _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
+
+        code = (
+            "def onStart(ctx):\n"
+            "    ctx['log']('legacy syntax')\n"
+        )
+        op = _runtime_python_script_node(node_id="ps8", code=code)
+        graph = F8RuntimeGraph(graphId="g8", revision="r1", nodes=[op], edges=[])
+        await bus.set_rungraph(graph)
+        await asyncio.sleep(0.05)
+
+        node = bus.get_node("ps8")
+        self.assertIsInstance(node, PythonScriptRuntimeNode)
+        assert isinstance(node, PythonScriptRuntimeNode)
+        last_error = await node.get_state_value("lastError")
+        error_text = str(last_error or node._last_error or "")
+        self.assertIn("not subscriptable", error_text)
 
 if __name__ == "__main__":
     unittest.main()
