@@ -8,6 +8,7 @@ _PYENGINE_STUB = """from __future__ import annotations
 from typing import Any, Protocol
 
 from f8_dynamic_inputs import F8Inputs as F8Inputs
+from f8_dynamic_states import F8States as F8States
 
 class F8PyEngineContext:
     \"\"\"Runtime context passed to f8.python_script hooks.\"\"\"
@@ -15,6 +16,8 @@ class F8PyEngineContext:
     \"\"\"Current runtime node id.\"\"\"
     locals: dict[str, Any]
     \"\"\"Script-local mutable memory persisted between hook calls.\"\"\"
+    states: F8States
+    \"\"\"Readonly cached state snapshot view (rw/ro fields only).\"\"\"
     exec_in: str | None
     \"\"\"Current exec trigger input name for onExec, else None.\"\"\"
     def log(self, message: object) -> None:
@@ -32,11 +35,8 @@ class F8PyEngineContext:
     async def set_state_async(self, field: str, value: Any) -> None:
         \"\"\"Set a state value and await the write completion.\"\"\"
         ...
-    async def get_state(self, field: str) -> Any:
+    async def read_state(self, field: str) -> Any:
         \"\"\"Read a fresh state value via runtime/state service path.\"\"\"
-        ...
-    def get_state_cached(self, field: str, default: Any = None) -> Any:
-        \"\"\"Read cached state snapshot (fast path, may be stale).\"\"\"
         ...
     def subscribe_video_shm(self, key: str, shm_name: str, *, decode: str = 'auto', use_event: bool = False) -> None:
         \"\"\"Subscribe to a video shared-memory stream by key.\"\"\"
@@ -102,6 +102,14 @@ def python_script_field_editor_assist_payload() -> F8EditorAssistSpec:
                         "source": "data_in_ports",
                         "type_name": "F8Inputs",
                         "module_name": "f8_dynamic_inputs",
+                        "schema_mode": "basic_recursive",
+                        "access_mode": "object_and_mapping",
+                    },
+                    "states": {
+                        "enabled": True,
+                        "source": "state_fields",
+                        "type_name": "F8States",
+                        "module_name": "f8_dynamic_states",
                         "schema_mode": "basic_recursive",
                         "access_mode": "object_and_mapping",
                     }

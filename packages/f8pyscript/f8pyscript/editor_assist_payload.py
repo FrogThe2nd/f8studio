@@ -7,6 +7,8 @@ _PYSCRIPT_STUB = """from __future__ import annotations
 
 from typing import Any, Protocol
 
+from f8_dynamic_states import F8States as F8States
+
 class F8Tick:
     \"\"\"Payload for `onTick(ctx, tick)`.\"\"\"
     seq: int
@@ -30,6 +32,8 @@ class F8PyScriptContext:
     \"\"\"Current service id.\"\"\"
     locals: dict[str, Any]
     \"\"\"Script-local mutable memory persisted between hook calls.\"\"\"
+    states: F8States
+    \"\"\"Readonly cached state snapshot view (rw/ro fields only).\"\"\"
     permission: F8Permission
     \"\"\"Permission snapshot for local execution and imports.\"\"\"
     def log(self, message: object) -> None:
@@ -47,11 +51,8 @@ class F8PyScriptContext:
     async def set_state_async(self, field: str, value: Any) -> None:
         \"\"\"Set a state value and await the write completion.\"\"\"
         ...
-    async def get_state(self, field: str) -> Any:
+    async def read_state(self, field: str) -> Any:
         \"\"\"Read a fresh state value via runtime/state service path.\"\"\"
-        ...
-    def get_state_cached(self, field: str, default: Any = None) -> Any:
-        \"\"\"Read cached state snapshot (fast path, may be stale).\"\"\"
         ...
     def subscribe_video_shm(self, key: str, shm_name: str, *, decode: str = 'auto', use_event: bool = False) -> None:
         \"\"\"Subscribe to a video shared-memory stream by key.\"\"\"
@@ -132,6 +133,16 @@ def pyscript_code_field_editor_assist_payload() -> F8EditorAssistSpec:
             "python": {
                 "support_files": {"f8_script_api.pyi": _PYSCRIPT_STUB},
                 "overlay_prefix": _PYSCRIPT_OVERLAY,
+                "dynamic_bindings": {
+                    "states": {
+                        "enabled": True,
+                        "source": "state_fields",
+                        "type_name": "F8States",
+                        "module_name": "f8_dynamic_states",
+                        "schema_mode": "basic_recursive",
+                        "access_mode": "object_and_mapping",
+                    }
+                },
             },
         }
     )

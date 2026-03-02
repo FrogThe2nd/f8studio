@@ -6,7 +6,13 @@ from typing import Any, Literal
 
 from f8pysdk import F8OperatorSpec, F8ServiceSpec
 
-from .workspace import EditorAssistContext, EditorAssistDataInPort, EditorAssistInputsBinding
+from .workspace import (
+    EditorAssistContext,
+    EditorAssistDataInPort,
+    EditorAssistInputsBinding,
+    EditorAssistStateField,
+    EditorAssistStatesBinding,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -121,6 +127,40 @@ def _spec_data_in_ports(spec: F8ServiceSpec | F8OperatorSpec) -> tuple[EditorAss
     return tuple(out)
 
 
+def _spec_readable_state_fields(spec: F8ServiceSpec | F8OperatorSpec) -> tuple[EditorAssistStateField, ...]:
+    raw_fields = getattr(spec, "stateFields", None)
+    if not isinstance(raw_fields, list):
+        return ()
+    out: list[EditorAssistStateField] = []
+    for field in raw_fields:
+        name = str(getattr(field, "name", "") or "").strip()
+        if not name:
+            continue
+        access_raw = getattr(field, "access", None)
+        access = str(getattr(access_raw, "value", access_raw) or "").strip().lower()
+        if access not in ("rw", "ro"):
+            continue
+        required = bool(getattr(field, "required", False))
+        value_schema: dict[str, Any] | None = None
+        schema_obj = getattr(field, "valueSchema", None)
+        if schema_obj is not None:
+            try:
+                dumped = schema_obj.model_dump(mode="json")
+                if isinstance(dumped, dict):
+                    value_schema = dumped
+            except (AttributeError, TypeError, ValueError):
+                value_schema = None
+        out.append(
+            EditorAssistStateField(
+                name=name,
+                required=required,
+                value_schema=value_schema,
+                access=access,
+            )
+        )
+    return tuple(out)
+
+
 def editor_assist_context_for_field(
     spec: F8ServiceSpec | F8OperatorSpec | None,
     *,
@@ -184,6 +224,7 @@ def editor_assist_context_for_field(
         return _error_context(spec, "editorAssist.python.overlay_prefix must be str")
 
     dynamic_inputs_binding: EditorAssistInputsBinding | None = None
+    dynamic_states_binding: EditorAssistStatesBinding | None = None
     dynamic_bindings = python_payload.get("dynamic_bindings")
     if dynamic_bindings is not None:
         if not isinstance(dynamic_bindings, dict):
@@ -233,6 +274,51 @@ def editor_assist_context_for_field(
                     schema_mode=schema_mode,
                     access_mode=access_mode,
                 )
+        states_binding = dynamic_bindings.get("states")
+        if states_binding is not None:
+            if not isinstance(states_binding, dict):
+                return _error_context(spec, "editorAssist.python.dynamic_bindings.states must be an object")
+            enabled = states_binding.get("enabled")
+            if not isinstance(enabled, bool):
+                return _error_context(spec, "editorAssist.python.dynamic_bindings.states.enabled must be bool")
+            source = str(states_binding.get("source") or "state_fields").strip()
+            if source != "state_fields":
+                return _error_context(
+                    spec,
+                    "editorAssist.python.dynamic_bindings.states.source must be 'state_fields'",
+                )
+            type_name = str(states_binding.get("type_name") or "F8States").strip()
+            module_name = str(states_binding.get("module_name") or "f8_dynamic_states").strip()
+            schema_mode = str(states_binding.get("schema_mode") or "basic_recursive").strip()
+            access_mode = str(states_binding.get("access_mode") or "object_and_mapping").strip()
+            if not _is_valid_type_name(type_name):
+                return _error_context(
+                    spec,
+                    "editorAssist.python.dynamic_bindings.states.type_name must be a valid identifier",
+                )
+            if not _is_valid_module_name(module_name):
+                return _error_context(
+                    spec,
+                    "editorAssist.python.dynamic_bindings.states.module_name must be a valid module path",
+                )
+            if schema_mode != "basic_recursive":
+                return _error_context(
+                    spec,
+                    "editorAssist.python.dynamic_bindings.states.schema_mode must be 'basic_recursive'",
+                )
+            if access_mode != "object_and_mapping":
+                return _error_context(
+                    spec,
+                    "editorAssist.python.dynamic_bindings.states.access_mode must be 'object_and_mapping'",
+                )
+            if enabled:
+                dynamic_states_binding = EditorAssistStatesBinding(
+                    source=source,
+                    type_name=type_name,
+                    module_name=module_name,
+                    schema_mode=schema_mode,
+                    access_mode=access_mode,
+                )
 
     sorted_files = tuple(sorted(support_files, key=lambda item: item[0]))
     return EditorAssistContext(
@@ -241,4 +327,6 @@ def editor_assist_context_for_field(
         overlay_prefix=overlay_prefix,
         dynamic_inputs_binding=dynamic_inputs_binding,
         data_in_ports=_spec_data_in_ports(spec) if dynamic_inputs_binding is not None else (),
+        dynamic_states_binding=dynamic_states_binding,
+        state_fields=_spec_readable_state_fields(spec) if dynamic_states_binding is not None else (),
     )

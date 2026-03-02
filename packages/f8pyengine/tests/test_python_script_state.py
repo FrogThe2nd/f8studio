@@ -25,8 +25,12 @@ def _runtime_python_script_node(
     node_id: str,
     code: str,
     state_fields: list[F8StateSpec] | None = None,
+    state_values: dict[str, object] | None = None,
 ) -> F8RuntimeNode:
     spec = PythonScriptRuntimeNode.SPEC
+    merged_state_values: dict[str, object] = {"code": code}
+    if state_values is not None:
+        merged_state_values.update(state_values)
     return F8RuntimeNode(
         nodeId=node_id,
         serviceId="svcA",
@@ -37,7 +41,7 @@ def _runtime_python_script_node(
         dataInPorts=list(spec.dataInPorts or []),
         dataOutPorts=list(spec.dataOutPorts or []),
         stateFields=list(state_fields if state_fields is not None else (spec.stateFields or [])),
-        stateValues={"code": code},
+        stateValues=merged_state_values,
     )
 
 
@@ -60,6 +64,9 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
         inputs_binding = (dynamic_bindings or {}).get("inputs") if isinstance(dynamic_bindings, dict) else None
         self.assertIsInstance(inputs_binding, dict)
         self.assertTrue(bool((inputs_binding or {}).get("enabled")))
+        states_binding = (dynamic_bindings or {}).get("states") if isinstance(dynamic_bindings, dict) else None
+        self.assertIsInstance(states_binding, dict)
+        self.assertTrue(bool((states_binding or {}).get("enabled")))
 
     async def test_on_state_runs_and_can_write_state(self) -> None:
         harness = ServiceBusHarness()
@@ -200,7 +207,7 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
             "async def onExec(ctx, exec_in, inputs):\n"
             "    ctx.locals['x'] = 1\n"
             "    await ctx.set_state_async('x', 2)\n"
-            "    v = await ctx.get_state('x')\n"
+            "    v = await ctx.read_state('x')\n"
             "    return {'outputs': {'out': v}}\n"
         )
         op = _runtime_python_script_node(node_id="ps6", code=code, state_fields=state_fields)
@@ -228,7 +235,9 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
         state_fields.append(F8StateSpec(name="x", label="x", description="", valueSchema=any_schema(), access=F8StateAccess.rw))
         code = (
             "def onExec(ctx, exec_in, inputs):\n"
-            "    v = ctx.get_state_cached('x', 7)\n"
+            "    v = ctx.states.get('x')\n"
+            "    if v is None:\n"
+            "        v = 7\n"
             "    return {'outputs': {'out': v}}\n"
         )
         op = _runtime_python_script_node(node_id="ps7", code=code, state_fields=state_fields)
@@ -246,6 +255,48 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(0.05)
         out2 = await node.compute_output("out", ctx_id="ctx-7b")
         self.assertEqual(out2, 33)
+
+    async def test_states_view_supports_object_and_mapping_access_and_hides_wo(self) -> None:
+        harness = ServiceBusHarness()
+        bus = harness.create_bus("svcA")
+        reg = RuntimeNodeRegistry.instance()
+        register_operator(reg)
+        _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
+
+        state_fields = list(PythonScriptRuntimeNode.SPEC.stateFields or [])
+        state_fields.append(
+            F8StateSpec(name="rw_state", label="rw_state", description="", valueSchema=any_schema(), access=F8StateAccess.rw)
+        )
+        state_fields.append(
+            F8StateSpec(name="ro_state", label="ro_state", description="", valueSchema=any_schema(), access=F8StateAccess.ro)
+        )
+        state_fields.append(
+            F8StateSpec(name="wo_state", label="wo_state", description="", valueSchema=any_schema(), access=F8StateAccess.wo)
+        )
+        code = (
+            "def onStart(ctx):\n"
+            "    ctx.set_state('ro_state', 8)\n"
+            "\n"
+            "def onExec(ctx, exec_in, inputs):\n"
+            "    dot_v = ctx.states.rw_state\n"
+            "    map_v = ctx.states['ro_state']\n"
+            "    get_v = ctx.states.get('ro_state')\n"
+            "    has_wo = 'wo_state' in ctx.states\n"
+            "    return {'outputs': {'out': [dot_v, map_v, get_v, has_wo]}}\n"
+        )
+        op = _runtime_python_script_node(node_id="ps11", code=code, state_fields=state_fields)
+        graph = F8RuntimeGraph(graphId="g11", revision="r1", nodes=[op], edges=[])
+        await bus.set_rungraph(graph)
+
+        await asyncio.sleep(0.05)
+        await bus.publish_state_external("ps11", "rw_state", 7, source="test")
+        await asyncio.sleep(0.05)
+
+        node = bus.get_node("ps11")
+        self.assertIsInstance(node, PythonScriptRuntimeNode)
+        assert isinstance(node, PythonScriptRuntimeNode)
+        out = await node.compute_output("out", ctx_id="ctx-11")
+        self.assertEqual(out, [7, 8, 8, False])
 
     async def test_inputs_supports_object_and_mapping_access(self) -> None:
         harness = ServiceBusHarness()

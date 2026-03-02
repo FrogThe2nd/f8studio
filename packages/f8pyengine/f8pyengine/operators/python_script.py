@@ -52,7 +52,7 @@ class _VideoShmSubscription:
     error_count: int = 0
 
 
-class PyEngineInputsView:
+class _PyEngineObjectView:
     __slots__ = ("_data", "_attr_to_key")
 
     def __init__(self, data: dict[str, Any]) -> None:
@@ -94,7 +94,7 @@ class PyEngineInputsView:
     def __getattr__(self, name: str) -> Any:
         key = self._attr_to_key.get(str(name or ""))
         if key is None:
-            raise AttributeError(f"Unknown input attribute: {name}")
+            raise AttributeError(f"Unknown attribute: {name}")
         return self._wrap_value(self._data.get(key))
 
     def to_dict(self) -> dict[str, Any]:
@@ -102,10 +102,10 @@ class PyEngineInputsView:
 
     @classmethod
     def _wrap_value(cls, value: Any) -> Any:
-        if isinstance(value, PyEngineInputsView):
+        if isinstance(value, _PyEngineObjectView):
             return value
         if isinstance(value, dict):
-            return PyEngineInputsView(value)
+            return cls(value)
         if isinstance(value, list):
             return [cls._wrap_value(item) for item in value]
         if isinstance(value, tuple):
@@ -114,7 +114,7 @@ class PyEngineInputsView:
 
     @classmethod
     def _unwrap_value(cls, value: Any) -> Any:
-        if isinstance(value, PyEngineInputsView):
+        if isinstance(value, _PyEngineObjectView):
             return {k: cls._unwrap_value(v) for k, v in value._data.items()}
         if isinstance(value, dict):
             return {str(k): cls._unwrap_value(v) for k, v in value.items()}
@@ -125,15 +125,28 @@ class PyEngineInputsView:
         return value
 
 
+class PyEngineInputsView(_PyEngineObjectView):
+    pass
+
+
+class PyEngineStatesView(_PyEngineObjectView):
+    pass
+
+
 @dataclass(slots=True)
 class PyEngineContext:
     _node: "PythonScriptRuntimeNode"
     node_id: str
     locals: dict[str, Any]
+    _state_keys: tuple[str, ...]
     exec_in: str | None = None
 
     def with_exec_in(self, exec_in: str | None) -> "PyEngineContext":
         return replace(self, exec_in=exec_in)
+
+    @property
+    def states(self) -> PyEngineStatesView:
+        return self._node._build_states_view(self._state_keys)
 
     def log(self, message: object) -> None:
         self._node._log(str(message))
@@ -165,11 +178,8 @@ class PyEngineContext:
             name=f"python_script:set_state:{self.node_id}:{field}",
         )
 
-    async def get_state(self, field: str) -> Any:
+    async def read_state(self, field: str) -> Any:
         return await self._node.get_state_value(str(field))
-
-    def get_state_cached(self, field: str, default: Any = None) -> Any:
-        return self._node.get_state_cached(str(field), default)
 
     def subscribe_video_shm(self, key: str, shm_name: str, *, decode: str = "auto", use_event: bool = False) -> None:
         key_name = str(key or "").strip()
@@ -237,8 +247,10 @@ DEFAULT_CODE = (
     "# Notes:\n"
     "# - ctx.locals is preserved between calls (script-local memory)\n"
     "# - ctx.exec_in is set only for exec-triggered calls\n"
-    "# - await ctx.get_state(field)\n"
-    "# - ctx.get_state_cached(field, default=None)\n"
+    "# - ctx.states.<field> reads cached rw/ro state snapshot\n"
+    "#   - example: ctx.states.foo / ctx.states.pose.x\n"
+    "# - await ctx.read_state(field)  # fresh runtime read\n"
+    "# - ctx.states.get(field)  # cached snapshot\n"
     "# - ctx.set_state(field, value)\n"
     "#   - await ctx.set_state_async(field, value)\n"
     "# - inputs supports both dot-style and dict-style access\n"
@@ -254,7 +266,7 @@ DEFAULT_CODE = (
     "\n"
     "from typing import TYPE_CHECKING, Any\n"
     "if TYPE_CHECKING:\n"
-    "    from f8_script_api import F8Inputs, F8PyEngineContext\n\n"
+    "    from f8_script_api import F8Inputs, F8PyEngineContext, F8States\n\n"
     "def onStart(ctx: 'F8PyEngineContext') -> None:\n"
     "    ctx.log('python_script started')\n\n"
     "# def onState(\n"
@@ -296,6 +308,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
             data_out_ports=[p.name for p in (node.dataOutPorts or [])],
             state_fields=[s.name for s in (node.stateFields or [])],
         )
+        self._readable_state_names = self._collect_readable_state_names(node)
         self._initial_state = dict(initial_state or {})
         self._exec_out_ports = exec_out_ports(node, default=["exec"])
         self._locals: dict[str, Any] = {}
@@ -359,6 +372,31 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
     @staticmethod
     def _now_ms() -> int:
         return int(time.time() * 1000.0)
+
+    @staticmethod
+    def _collect_readable_state_names(node: F8RuntimeNode) -> tuple[str, ...]:
+        raw_states = getattr(node, "stateFields", None)
+        if not isinstance(raw_states, list):
+            raw_states = getattr(node, "state_fields", None)
+        if not isinstance(raw_states, list):
+            return ()
+        out: list[str] = []
+        seen: set[str] = set()
+        for state in raw_states:
+            if isinstance(state, dict):
+                name = str(state.get("name") or "").strip()
+                access_raw = state.get("access")
+            else:
+                name = str(getattr(state, "name", "") or "").strip()
+                access_raw = getattr(state, "access", None)
+            if not name or name in seen:
+                continue
+            access = str(getattr(access_raw, "value", access_raw) or "").strip().lower()
+            if access not in ("rw", "ro"):
+                continue
+            seen.add(name)
+            out.append(name)
+        return tuple(out)
 
     @staticmethod
     def _normalize_decode_mode(decode: Any) -> str:
@@ -598,8 +636,30 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
             _node=self,
             node_id=self.node_id,
             locals=self._locals,
+            _state_keys=self._readable_state_names,
             exec_in=None,
         )
+
+    def _build_states_view(self, state_keys: tuple[str, ...]) -> PyEngineStatesView:
+        resolved_keys = [str(key) for key in state_keys if str(key)]
+        if not resolved_keys:
+            bus = self._bus
+            state_access_map = getattr(bus, "_state_access_by_node_field", {}) if bus is not None else {}
+            for raw_key, raw_access in dict(state_access_map).items():
+                if not isinstance(raw_key, tuple) or len(raw_key) != 2:
+                    continue
+                node_id, field = raw_key
+                if str(node_id) != self.node_id:
+                    continue
+                access = str(getattr(raw_access, "value", raw_access) or "").strip().lower()
+                if access not in ("rw", "ro"):
+                    continue
+                resolved_keys.append(str(field))
+        unique_keys = tuple(sorted({key for key in resolved_keys if key}))
+        snapshot: dict[str, Any] = {}
+        for key in unique_keys:
+            snapshot[str(key)] = self.get_state_cached(str(key), None)
+        return PyEngineStatesView(snapshot)
 
     def _compile_script(self, code: str) -> dict[str, Callable[..., Any]]:
         env: dict[str, Any] = {"__builtins__": __builtins__}

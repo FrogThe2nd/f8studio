@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .python_dynamic_types import build_dynamic_inputs_stub
+from .python_dynamic_types import build_dynamic_inputs_stub, build_dynamic_states_stub
 from .pyscript_stubs import write_support_files
 
 logger = logging.getLogger(__name__)
@@ -32,12 +32,31 @@ class EditorAssistInputsBinding:
 
 
 @dataclass(frozen=True)
+class EditorAssistStateField:
+    name: str
+    required: bool = False
+    value_schema: dict[str, Any] | None = None
+    access: str = "rw"
+
+
+@dataclass(frozen=True)
+class EditorAssistStatesBinding:
+    source: str = "state_fields"
+    type_name: str = "F8States"
+    module_name: str = "f8_dynamic_states"
+    schema_mode: str = "basic_recursive"
+    access_mode: str = "object_and_mapping"
+
+
+@dataclass(frozen=True)
 class EditorAssistContext:
     language: str = "plaintext"
     support_files: tuple[tuple[str, str], ...] = ()
     overlay_prefix: str = ""
     dynamic_inputs_binding: EditorAssistInputsBinding | None = None
     data_in_ports: tuple[EditorAssistDataInPort, ...] = ()
+    dynamic_states_binding: EditorAssistStatesBinding | None = None
+    state_fields: tuple[EditorAssistStateField, ...] = ()
     error_message: str = ""
 
 
@@ -77,6 +96,19 @@ class EditorWorkspaceSession:
                         ),
                     )
                 )
+        if self._context.dynamic_states_binding is not None:
+            binding = self._context.dynamic_states_binding
+            module_path = str(binding.module_name or "").strip().replace(".", "/")
+            if module_path:
+                support_files.append(
+                    (
+                        f"{module_path}.pyi",
+                        build_dynamic_states_stub(
+                            type_name=str(binding.type_name or "F8States"),
+                            state_fields=tuple(self._context.state_fields),
+                        ),
+                    )
+                )
 
         overlay = write_support_files(
             self._root,
@@ -89,10 +121,11 @@ class EditorWorkspaceSession:
         self._line_offset = self._line_overlay_prefix.count("\n")
         self._write_pyright_config()
         logger.debug(
-            "editor assist workspace prepared: root=%s supportFiles=%s dynamicInputs=%s overlayLines=%d",
+            "editor assist workspace prepared: root=%s supportFiles=%s dynamicInputs=%s dynamicStates=%s overlayLines=%d",
             self._root,
             [name for name, _ in support_files],
             self._context.dynamic_inputs_binding is not None,
+            self._context.dynamic_states_binding is not None,
             self._line_offset,
         )
 

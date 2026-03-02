@@ -4,6 +4,7 @@ import asyncio
 import builtins
 import inspect
 import json
+import keyword
 import logging
 import os
 import time
@@ -36,8 +37,10 @@ DEFAULT_CODE = (
     "# - onCommand(ctx, name, args, meta=None)\n"
     "#\n"
     "# Useful context helpers:\n"
-    "# - await ctx.get_state(field)\n"
-    "# - ctx.get_state_cached(field, default=None)\n"
+    "# - ctx.states.<field> reads cached rw/ro state snapshot\n"
+    "#   - example: ctx.states.tickEnabled / ctx.states.permission.meta.user\n"
+    "# - await ctx.read_state(field)  # fresh runtime read\n"
+    "# - ctx.states.get(field)  # cached snapshot\n"
     "# - ctx.set_state(field, value)\n"
     "# - await ctx.set_state_async(field, value)\n"
     "# - ctx.emit(port, value)\n"
@@ -45,7 +48,7 @@ DEFAULT_CODE = (
     "#\n"
     "from typing import TYPE_CHECKING, Any\n"
     "if TYPE_CHECKING:\n"
-    "    from f8_script_api import F8PyScriptContext, F8Tick\n"
+    "    from f8_script_api import F8PyScriptContext, F8States, F8Tick\n"
     "#\n"
     "def onStart(ctx: 'F8PyScriptContext') -> None:\n"
     "    ctx.log('pyscript started')\n"
@@ -101,6 +104,7 @@ _SAFE_MODULES: set[str] = {
     "re",
     "statistics",
     "time",
+    "typing",
 }
 
 @dataclass
@@ -118,6 +122,79 @@ class _VideoShmSubscription:
     error_count: int = 0
 
 
+class PyScriptStatesView:
+    __slots__ = ("_data", "_attr_to_key")
+
+    def __init__(self, data: dict[str, Any]) -> None:
+        self._data: dict[str, Any] = dict(data)
+        attr_to_key: dict[str, str] = {}
+        for raw_key in self._data.keys():
+            key = str(raw_key or "")
+            if key.isidentifier() and not keyword.iskeyword(key):
+                attr_to_key[key] = key
+        self._attr_to_key = attr_to_key
+
+    def __getitem__(self, key: str) -> Any:
+        return self._wrap_value(self._data[str(key)])
+
+    def get(self, key: str, default: Any = None) -> Any:
+        key_s = str(key)
+        if key_s not in self._data:
+            return default
+        return self._wrap_value(self._data.get(key_s))
+
+    def keys(self):
+        return self._data.keys()
+
+    def items(self):
+        return ((k, self._wrap_value(v)) for k, v in self._data.items())
+
+    def values(self):
+        return (self._wrap_value(v) for v in self._data.values())
+
+    def __contains__(self, key: object) -> bool:
+        return str(key or "") in self._data
+
+    def __iter__(self):
+        return iter(self._data)
+
+    def __len__(self) -> int:
+        return len(self._data)
+
+    def __getattr__(self, name: str) -> Any:
+        key = self._attr_to_key.get(str(name or ""))
+        if key is None:
+            raise AttributeError(f"Unknown attribute: {name}")
+        return self._wrap_value(self._data.get(key))
+
+    def to_dict(self) -> dict[str, Any]:
+        return self._unwrap_value(self._data)
+
+    @classmethod
+    def _wrap_value(cls, value: Any) -> Any:
+        if isinstance(value, PyScriptStatesView):
+            return value
+        if isinstance(value, dict):
+            return cls(value)
+        if isinstance(value, list):
+            return [cls._wrap_value(item) for item in value]
+        if isinstance(value, tuple):
+            return tuple(cls._wrap_value(item) for item in value)
+        return value
+
+    @classmethod
+    def _unwrap_value(cls, value: Any) -> Any:
+        if isinstance(value, PyScriptStatesView):
+            return {k: cls._unwrap_value(v) for k, v in value._data.items()}
+        if isinstance(value, dict):
+            return {str(k): cls._unwrap_value(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [cls._unwrap_value(item) for item in value]
+        if isinstance(value, tuple):
+            return tuple(cls._unwrap_value(item) for item in value)
+        return value
+
+
 @dataclass(slots=True)
 class PyScriptPermissionContext:
     local_exec_granted: bool
@@ -131,10 +208,15 @@ class PyScriptServiceContext:
     _node: "PythonScriptServiceNode"
     service_id: str
     locals: dict[str, Any]
+    _state_keys: tuple[str, ...]
     permission: PyScriptPermissionContext
 
     def with_permission(self, permission: PyScriptPermissionContext) -> "PyScriptServiceContext":
         return replace(self, permission=permission)
+
+    @property
+    def states(self) -> PyScriptStatesView:
+        return self._node._build_states_view(self._state_keys)
 
     def log(self, message: object) -> None:
         logger.info("[%s:pyscript] %s", self.service_id, str(message))
@@ -164,11 +246,8 @@ class PyScriptServiceContext:
             name=f"pyscript:set_state:{self.service_id}:{field}",
         )
 
-    async def get_state(self, field: str) -> Any:
+    async def read_state(self, field: str) -> Any:
         return await self._node.get_state_value(str(field))
-
-    def get_state_cached(self, field: str, default: Any = None) -> Any:
-        return self._node.get_state_cached(str(field), default)
 
     def subscribe_video_shm(self, key: str, shm_name: str, *, decode: str = "auto", use_event: bool = False) -> None:
         key_name = str(key or "").strip()
@@ -249,6 +328,7 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
             data_out_ports=[str(p.name) for p in list(node.dataOutPorts or [])],
             state_fields=[str(s.name) for s in list(node.stateFields or [])],
         )
+        self._readable_state_names = self._collect_readable_state_names(node)
         self._initial_state = dict(initial_state or {})
 
         self._code = str(self._initial_state.get("code") or DEFAULT_CODE)
@@ -306,6 +386,31 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
     @staticmethod
     def _now_ms() -> int:
         return int(time.time() * 1000.0)
+
+    @staticmethod
+    def _collect_readable_state_names(node: Any) -> tuple[str, ...]:
+        raw_states = getattr(node, "stateFields", None)
+        if not isinstance(raw_states, list):
+            raw_states = getattr(node, "state_fields", None)
+        if not isinstance(raw_states, list):
+            return ()
+        out: list[str] = []
+        seen: set[str] = set()
+        for state in raw_states:
+            if isinstance(state, dict):
+                name = str(state.get("name") or "").strip()
+                access_raw = state.get("access")
+            else:
+                name = str(getattr(state, "name", "") or "").strip()
+                access_raw = getattr(state, "access", None)
+            if not name or name in seen:
+                continue
+            access = str(getattr(access_raw, "value", access_raw) or "").strip().lower()
+            if access not in ("rw", "ro"):
+                continue
+            seen.add(name)
+            out.append(name)
+        return tuple(out)
 
     @staticmethod
     def _coerce_tick_ms(value: Any, *, default: int) -> int:
@@ -600,11 +705,33 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
             _node=self,
             service_id=self.node_id,
             locals=self._locals,
+            _state_keys=self._readable_state_names,
             permission=self._permission_context(),
         )
 
     def _build_invoke_ctx(self) -> PyScriptServiceContext:
         return self._ctx.with_permission(self._permission_context())
+
+    def _build_states_view(self, state_keys: tuple[str, ...]) -> PyScriptStatesView:
+        resolved_keys = [str(key) for key in state_keys if str(key)]
+        if not resolved_keys:
+            bus = self._bus
+            state_access_map = getattr(bus, "_state_access_by_node_field", {}) if bus is not None else {}
+            for raw_key, raw_access in dict(state_access_map).items():
+                if not isinstance(raw_key, tuple) or len(raw_key) != 2:
+                    continue
+                node_id, field = raw_key
+                if str(node_id) != self.node_id:
+                    continue
+                access = str(getattr(raw_access, "value", raw_access) or "").strip().lower()
+                if access not in ("rw", "ro"):
+                    continue
+                resolved_keys.append(str(field))
+        unique_keys = tuple(sorted({key for key in resolved_keys if key}))
+        snapshot: dict[str, Any] = {}
+        for key in unique_keys:
+            snapshot[str(key)] = self.get_state_cached(str(key), None)
+        return PyScriptStatesView(snapshot)
 
     def _compile_script(self, code: str) -> None:
         env: dict[str, Any] = {"__builtins__": self._build_script_builtins()}

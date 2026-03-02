@@ -52,12 +52,40 @@ components:
         - enabled
         - source
       additionalProperties: false
+    F8DynamicBindingsStatesSpec:
+      title: F8DynamicBindingsStatesSpec
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        source:
+          type: string
+          enum:
+            - state_fields
+        type_name:
+          type: string
+        module_name:
+          type: string
+        schema_mode:
+          type: string
+          enum:
+            - basic_recursive
+        access_mode:
+          type: string
+          enum:
+            - object_and_mapping
+      required:
+        - enabled
+        - source
+      additionalProperties: false
     F8DynamicBindingsSpec:
       title: F8DynamicBindingsSpec
       type: object
       properties:
         inputs:
           $ref: "#/components/schemas/F8DynamicBindingsInputsSpec"
+        states:
+          $ref: "#/components/schemas/F8DynamicBindingsStatesSpec"
       additionalProperties: false
     F8PythonEditorAssistSpec:
       title: F8PythonEditorAssistSpec

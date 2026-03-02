@@ -126,19 +126,56 @@ def build_dynamic_inputs_stub(
 ) -> str:
     """Build a per-node `F8Inputs` stub module for pyright/monaco."""
 
-    root_type_name = _normalize_type_name(type_name, fallback="F8Inputs")
+    return _build_dynamic_mapping_stub(
+        type_name=type_name,
+        fallback_type_name="F8Inputs",
+        root_doc="Dynamic input payload view for python_script hooks.",
+        skipped_doc="Non-identifier input names are accessible only via mapping methods.",
+        fields=data_in_ports,
+        required_default=True,
+    )
+
+
+def build_dynamic_states_stub(
+    *,
+    type_name: str,
+    state_fields: tuple[Any, ...],
+) -> str:
+    """Build a per-node `F8States` stub module for pyright/monaco."""
+
+    return _build_dynamic_mapping_stub(
+        type_name=type_name,
+        fallback_type_name="F8States",
+        root_doc="Dynamic state snapshot view for script contexts.",
+        skipped_doc="Non-identifier state names are accessible only via mapping methods.",
+        fields=state_fields,
+        required_default=False,
+    )
+
+
+def _build_dynamic_mapping_stub(
+    *,
+    type_name: str,
+    fallback_type_name: str,
+    root_doc: str,
+    skipped_doc: str,
+    fields: tuple[Any, ...],
+    required_default: bool,
+) -> str:
+    root_type_name = _normalize_type_name(type_name, fallback=fallback_type_name)
+
     class_blocks: list[str] = []
     attribute_lines: list[str] = []
     skipped_names: list[str] = []
     used_names: set[str] = set()
     in_progress: set[int] = set()
 
-    for raw_port in data_in_ports:
-        name = str(getattr(raw_port, "name", "") or "").strip()
+    for raw_field in fields:
+        name = str(getattr(raw_field, "name", "") or "").strip()
         if not name:
             continue
-        required = bool(getattr(raw_port, "required", True))
-        value_schema = getattr(raw_port, "value_schema", None)
+        required = bool(getattr(raw_field, "required", required_default))
+        value_schema = getattr(raw_field, "value_schema", None)
         value_type = _schema_type_name(
             value_schema,
             base_name=f"{root_type_name}_{name}",
@@ -179,7 +216,7 @@ def build_dynamic_inputs_stub(
     lines.extend(
         [
             f"class {root_type_name}(_F8ObjectView):",
-            '    """Dynamic input payload view for python_script hooks."""',
+            f'    """{root_doc}"""',
             "    pass",
         ]
     )
@@ -190,7 +227,7 @@ def build_dynamic_inputs_stub(
 
     if skipped_names:
         lines.append("")
-        lines.append("    # Non-identifier input names are accessible only via mapping methods.")
+        lines.append(f"    # {skipped_doc}")
         for skipped in skipped_names:
             lines.append(f"    # - {skipped!r}")
 

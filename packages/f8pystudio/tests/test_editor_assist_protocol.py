@@ -12,6 +12,7 @@ def _operator_spec_with_field_editor_assist(
     port_key: str = "x",
     with_top_level: bool = False,
     attach_to_state: bool = True,
+    extra_state_fields: list[dict] | None = None,
 ) -> F8OperatorSpec:
     state_fields = [
         {
@@ -20,6 +21,8 @@ def _operator_spec_with_field_editor_assist(
             "access": "rw",
         }
     ]
+    if extra_state_fields:
+        state_fields.extend(extra_state_fields)
     data_in_ports = [
         {"name": port_key, "required": True, "valueSchema": {"type": "number"}},
         {"name": "y", "required": False, "valueSchema": {"type": "array", "items": {"type": "integer"}}},
@@ -125,6 +128,44 @@ def test_editor_assist_context_for_field_accepts_dynamic_inputs_binding() -> Non
     assert tuple(port.name for port in context.data_in_ports) == ("x", "y", "z")
 
 
+def test_editor_assist_context_for_field_accepts_dynamic_states_binding() -> None:
+    spec = _operator_spec_with_field_editor_assist(
+        {
+            "version": 1,
+            "language": "python",
+            "python": {
+                "support_files": {"f8_script_api.pyi": "class F8PyEngineContext:\n    ...\n"},
+                "overlay_prefix": "from f8_script_api import *\n",
+                "dynamic_bindings": {
+                    "states": {
+                        "enabled": True,
+                        "source": "state_fields",
+                        "type_name": "F8States",
+                        "module_name": "f8_dynamic_states",
+                        "schema_mode": "basic_recursive",
+                        "access_mode": "object_and_mapping",
+                    }
+                },
+            },
+        },
+        extra_state_fields=[
+            {"name": "visible_rw", "valueSchema": {"type": "number"}, "access": "rw"},
+            {"name": "visible_ro", "valueSchema": {"type": "string"}, "access": "ro"},
+            {"name": "hidden_wo", "valueSchema": {"type": "string"}, "access": "wo"},
+        ],
+    )
+    context = editor_assist_context_for_field(spec, field_kind="state", field_key="code", language="python")
+    assert context is not None
+    assert context.dynamic_states_binding is not None
+    assert context.dynamic_states_binding.type_name == "F8States"
+    assert context.dynamic_states_binding.module_name == "f8_dynamic_states"
+    state_names = tuple(field.name for field in context.state_fields)
+    assert "code" in state_names
+    assert "visible_rw" in state_names
+    assert "visible_ro" in state_names
+    assert "hidden_wo" not in state_names
+
+
 def test_invalid_dynamic_inputs_source_is_rejected_by_schema() -> None:
     with_top_level = {
         "version": 1,
@@ -141,6 +182,24 @@ def test_invalid_dynamic_inputs_source_is_rejected_by_schema() -> None:
         assert "data_in_ports" in str(exc)
     else:
         raise AssertionError("invalid dynamic input source must fail schema validation")
+
+
+def test_invalid_dynamic_states_source_is_rejected_by_schema() -> None:
+    payload = {
+        "version": 1,
+        "language": "python",
+        "python": {
+            "support_files": {"f8_script_api.pyi": "class F8PyEngineContext:\n    ...\n"},
+            "overlay_prefix": "",
+            "dynamic_bindings": {"states": {"enabled": True, "source": "data_in_ports"}},
+        },
+    }
+    try:
+        _ = _operator_spec_with_field_editor_assist(payload)
+    except Exception as exc:
+        assert "state_fields" in str(exc)
+    else:
+        raise AssertionError("invalid dynamic states source must fail schema validation")
 
 
 def test_editor_assist_context_for_port_field_is_not_supported() -> None:

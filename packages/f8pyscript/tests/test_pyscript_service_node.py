@@ -56,6 +56,11 @@ class PyScriptServiceNodeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(editor_assist)
         python_payload = editor_assist.python.model_dump(mode="json") if editor_assist is not None else None
         self.assertIsInstance(python_payload, dict)
+        dynamic_bindings = (python_payload or {}).get("dynamic_bindings") if isinstance(python_payload, dict) else None
+        self.assertIsInstance(dynamic_bindings, dict)
+        states_binding = (dynamic_bindings or {}).get("states") if isinstance(dynamic_bindings, dict) else None
+        self.assertIsInstance(states_binding, dict)
+        self.assertTrue(bool((states_binding or {}).get("enabled")))
 
     def test_program_defaults_data_delivery_to_both(self) -> None:
         program = PythonScriptServiceProgram()
@@ -264,7 +269,10 @@ class PyScriptServiceNodeTests(unittest.IsolatedAsyncioTestCase):
             "def onCommand(ctx, name, args, meta=None):\n"
             "    if name != 'cached':\n"
             "        return {'ok': False}\n"
-            "    return {'value': ctx.get_state_cached('myState', 99)}\n"
+            "    v = ctx.states.get('myState')\n"
+            "    if v is None:\n"
+            "        v = 99\n"
+            "    return {'value': v}\n"
         )
 
         graph = F8RuntimeGraph(graphId="g6", revision="r1", nodes=[_service_node(code="", state_fields=fields)], edges=[])
@@ -284,6 +292,51 @@ class PyScriptServiceNodeTests(unittest.IsolatedAsyncioTestCase):
         out2_result = (out2 or {}).get("result") if isinstance(out2, dict) else {}
         self.assertIsInstance(out2_result, dict)
         self.assertEqual(int((out2_result or {}).get("value") or 0), 123)
+
+    async def test_states_view_supports_object_and_mapping_access_and_hides_wo(self) -> None:
+        harness = ServiceBusHarness()
+        bus = harness.create_bus("svcA")
+        reg = RuntimeNodeRegistry.instance()
+        register_specs(reg)
+        _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
+
+        fields = list(RuntimeNodeRegistry.instance().service_spec(SERVICE_CLASS).stateFields or [])  # type: ignore[union-attr]
+        fields.append(F8StateSpec(name="my_rw", label="", description="", valueSchema=any_schema(), access=F8StateAccess.rw))
+        fields.append(F8StateSpec(name="my_ro", label="", description="", valueSchema=any_schema(), access=F8StateAccess.ro))
+        fields.append(F8StateSpec(name="my_wo", label="", description="", valueSchema=any_schema(), access=F8StateAccess.wo))
+
+        graph = F8RuntimeGraph(
+            graphId="g9",
+            revision="r1",
+            nodes=[_service_node(code="", state_fields=fields)],
+            edges=[],
+        )
+        await bus.set_rungraph(graph)
+        node = bus.get_node("svcA")
+        assert isinstance(node, PythonScriptServiceNode)
+
+        code = (
+            "def onStart(ctx):\n"
+            "    ctx.set_state('my_ro', 42)\n"
+            "\n"
+            "def onCommand(ctx, name, args, meta=None):\n"
+            "    if name != 'state_view':\n"
+            "        return {'ok': False}\n"
+            "    dot_v = ctx.states.my_rw\n"
+            "    map_v = ctx.states['my_ro']\n"
+            "    get_v = ctx.states.get('my_ro')\n"
+            "    has_wo = 'my_wo' in ctx.states\n"
+            "    return {'values': [dot_v, map_v, get_v, has_wo]}\n"
+        )
+        await node.on_state("code", code, ts_ms=1)
+        await asyncio.sleep(0.05)
+        await bus.publish_state_external("svcA", "my_rw", 41, source="test")
+        await asyncio.sleep(0.05)
+
+        out = await node.on_command("state_view", {})
+        out_result = (out or {}).get("result") if isinstance(out, dict) else {}
+        self.assertIsInstance(out_result, dict)
+        self.assertEqual((out_result or {}).get("values"), [41, 42, 42, False])
 
     async def test_commands_state_normalization_tolerates_empty_values(self) -> None:
         harness = ServiceBusHarness()

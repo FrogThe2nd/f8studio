@@ -72,7 +72,7 @@ f8pyscript = { path = "packages/f8pyscript", editable = true }
 
 [feature.engine.tasks]
 f8pyengine = "python -m f8pyengine.main"
-f8pyscript = "python -m f8pyscript.main"
+f8pyscript = "python -m f8pyscript.main_script"
 f8pyexpr = "python -m f8pyscript.main_expr"
 
 [feature.studio.pypi-dependencies]

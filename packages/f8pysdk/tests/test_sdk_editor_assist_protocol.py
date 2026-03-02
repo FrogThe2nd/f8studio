@@ -21,6 +21,14 @@ def _editor_assist_payload() -> dict[str, object]:
                     "module_name": "f8_dynamic_inputs",
                     "schema_mode": "basic_recursive",
                     "access_mode": "object_and_mapping",
+                },
+                "states": {
+                    "enabled": True,
+                    "source": "state_fields",
+                    "type_name": "F8States",
+                    "module_name": "f8_dynamic_states",
+                    "schema_mode": "basic_recursive",
+                    "access_mode": "object_and_mapping",
                 }
             },
         },
@@ -66,3 +74,17 @@ def test_data_port_spec_rejects_editor_assist_field() -> None:
             valueSchema=any_schema(),
             editorAssist=validate_editor_assist_spec(_editor_assist_payload()),  # type: ignore[call-arg]
         )
+
+
+def test_validate_editor_assist_spec_rejects_invalid_states_source() -> None:
+    payload = _editor_assist_payload()
+    python_payload = payload.get("python")
+    assert isinstance(python_payload, dict)
+    dynamic_bindings = python_payload.get("dynamic_bindings")
+    assert isinstance(dynamic_bindings, dict)
+    states_binding = dynamic_bindings.get("states")
+    assert isinstance(states_binding, dict)
+    states_binding["source"] = "data_in_ports"
+
+    with pytest.raises(Exception):
+        _ = validate_editor_assist_spec(payload)
