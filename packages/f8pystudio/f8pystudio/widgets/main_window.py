@@ -20,6 +20,7 @@ from ..ui_bus import UiCommand, UiCommandApplier
 from ..ui_icons import StudioIcon, icon_for
 from .node_property_widgets import F8StudioSingleNodePropertiesWidget
 from .node_library_widget import F8StudioNodeLibraryWidget
+from .service_manager_widget import ServiceManagerWidget
 from .service_log_widget import ServiceLogDock
 
 logger = logging.getLogger(__name__)
@@ -55,12 +56,14 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         self._setup_menu()
         self._setup_toolbar()
         self._applying_runtime_state = False
+        self._service_manager: ServiceManagerWidget | None = None
 
         self._bridge = PyStudioServiceBridge(PyStudioServiceBridgeConfig(), parent=self)
         self._bridge.ui_command.connect(self._on_ui_command)  # type: ignore[attr-defined]
         self._bridge.service_output.connect(self._on_service_output)  # type: ignore[attr-defined]
         self._bridge.service_process_state.connect(self._on_service_process_state)  # type: ignore[attr-defined]
         self._bridge.log.connect(lambda s: self._log_dock.append("studio", str(s) + "\n"))  # type: ignore[attr-defined]
+        self._setup_service_manager_dock()
         self._bridge.start()
         try:
             self.studio_graph.set_service_bridge(self._bridge)
@@ -86,12 +89,17 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
 
     @QtCore.Slot(str, bool)
     def _on_service_process_state(self, service_id: str, running: bool) -> None:
+        manager = self._service_manager
         if bool(running):
+            if manager is not None:
+                manager.queue_refresh()
             return
         try:
             self._log_dock.close_service_tab(service_id)
         except (AttributeError, RuntimeError, TypeError):
             pass
+        if manager is not None:
+            manager.queue_refresh()
 
     def _setup_docks(self) -> None:
         prop_editor = F8StudioSingleNodePropertiesWidget(node_graph=self.studio_graph)
@@ -107,6 +115,38 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         node_library_dock = QtWidgets.QDockWidget("Node Library", self)
         node_library_dock.setWidget(node_library)
         self.addDockWidget(QtCore.Qt.RightDockWidgetArea, node_library_dock)
+
+    def _setup_service_manager_dock(self) -> None:
+        manager = ServiceManagerWidget(
+            bridge=self._bridge,
+            get_declared_services=self._declared_graph_services,
+            parent=self,
+        )
+        self._service_manager = manager
+        manager_dock = QtWidgets.QDockWidget("Service Manager", self)
+        manager_dock.setWidget(manager)
+        self.addDockWidget(QtCore.Qt.BottomDockWidgetArea, manager_dock)
+        self.tabifyDockWidget(self._log_dock, manager_dock)
+
+    def _declared_graph_services(self) -> dict[str, str]:
+        rows: dict[str, str] = {}
+        for node in list(self.studio_graph.all_nodes() or []):
+            try:
+                spec = node.spec
+            except Exception:
+                continue
+            if not isinstance(spec, F8ServiceSpec):
+                continue
+            service_class = str(spec.serviceClass or "").strip()
+            if not service_class or service_class == STUDIO_SERVICE_CLASS:
+                continue
+            try:
+                service_id = str(node.id or "").strip()
+            except Exception:
+                service_id = ""
+            if service_id:
+                rows[service_id] = service_class
+        return rows
 
     def _setup_menu(self) -> None:
         menu = self.menuBar().addMenu("Graph")
@@ -489,6 +529,10 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
             return
 
     def _on_ui_command(self, cmd: UiCommand) -> None:
+        if str(cmd.command) == "monitor.update":
+            manager = self._service_manager
+            if manager is not None:
+                manager.queue_refresh()
         if str(cmd.command) == "state.update":
             payload = dict(cmd.payload or {})
             field = str(payload.get("field") or "")

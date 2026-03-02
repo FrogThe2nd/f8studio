@@ -130,6 +130,31 @@ class MonitorCenter:
     def export_report_json(self) -> dict[str, Any]:
         return self.build_report().model_dump(mode="json", by_alias=True)
 
+    def latest_snapshot(self, *, service_id: str) -> F8MonitorSnapshot | None:
+        sid = str(service_id or "").strip()
+        if not sid:
+            return None
+        series = self._by_service.get(sid)
+        if series is None or not series:
+            return None
+        return series[-1]
+
+    def latest_snapshots(self) -> dict[str, F8MonitorSnapshot]:
+        self._prune_all(now_ts_ms=int(now_ms()))
+        out: dict[str, F8MonitorSnapshot] = {}
+        for service_id, series in self._by_service.items():
+            if not series:
+                continue
+            out[str(service_id)] = series[-1]
+        return out
+
+    def drop_service(self, *, service_id: str) -> None:
+        sid = str(service_id or "").strip()
+        if not sid:
+            return
+        self._by_service.pop(sid, None)
+        self._overrides.pop(sid, None)
+
     def _prune_service(self, *, service_id: str, now_ts_ms: int) -> None:
         series = self._by_service.get(service_id)
         if series is None:

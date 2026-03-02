@@ -45,8 +45,8 @@ class ServiceProcessToolbar(QtWidgets.QWidget):
         self._play_icon = icon_for(self, StudioIcon.PLAY)
         self._pause_icon = icon_for(self, StudioIcon.PAUSE)
         self._stop_icon = icon_for(self, StudioIcon.STOP)
-        self._sync_icon = icon_for(self, StudioIcon.REFRESH)
-        self._restart_icon = icon_for(self, StudioIcon.REDO)
+        self._sync_icon = icon_for(self, StudioIcon.TRANSFER)
+        self._restart_icon = icon_for(self, StudioIcon.RESTART)
 
         self._btn_disable.setAutoRaise(True)
         self._btn_toggle.setAutoRaise(True)
