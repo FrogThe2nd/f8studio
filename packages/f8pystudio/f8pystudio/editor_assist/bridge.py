@@ -30,6 +30,8 @@ def _float_env(name: str, default: float, *, minimum: float) -> float:
 class PythonEditorAssistBridge(QtCore.QObject):
     completion_ready = QtCore.Signal(str, str)
     completionReady = QtCore.Signal(str, str)
+    completion_item_resolved = QtCore.Signal(str, str)
+    completionItemResolved = QtCore.Signal(str, str)
     hover_ready = QtCore.Signal(str, str)
     hoverReady = QtCore.Signal(str, str)
     signature_help_ready = QtCore.Signal(str, str)
@@ -55,13 +57,18 @@ class PythonEditorAssistBridge(QtCore.QObject):
         self._state_lock = threading.Lock()
         self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="f8-pylsp-bridge")
         self._completion_future: concurrent.futures.Future[list[dict[str, Any]]] | None = None
+        self._completion_resolve_future: concurrent.futures.Future[dict[str, Any] | None] | None = None
         self._hover_future: concurrent.futures.Future[dict[str, Any] | None] | None = None
         self._signature_future: concurrent.futures.Future[dict[str, Any] | None] | None = None
         self._completion_generation = 0
+        self._completion_resolve_generation = 0
         self._hover_generation = 0
         self._signature_generation = 0
+        self._completion_resolve_seq = 0
+        self._completion_resolve_items: dict[str, dict[str, Any]] = {}
         self._is_shutting_down = False
         self._completion_timeout_s = _float_env("F8_PY_LSP_COMPLETION_TIMEOUT_S", 4.0, minimum=0.3)
+        self._completion_resolve_timeout_s = _float_env("F8_PY_LSP_COMPLETION_RESOLVE_TIMEOUT_S", 2.5, minimum=0.3)
         self._hover_timeout_s = _float_env("F8_PY_LSP_HOVER_TIMEOUT_S", 3.0, minimum=0.3)
         self._signature_timeout_s = _float_env("F8_PY_LSP_SIGNATURE_TIMEOUT_S", 3.0, minimum=0.3)
 
@@ -81,10 +88,11 @@ class PythonEditorAssistBridge(QtCore.QObject):
                 version=self._version,
             )
             logger.info(
-                "python lsp bridge started: uri=%s lineOffset=%d completionTimeout=%.1fs hoverTimeout=%.1fs signatureTimeout=%.1fs",
+                "python lsp bridge started: uri=%s lineOffset=%d completionTimeout=%.1fs completionResolveTimeout=%.1fs hoverTimeout=%.1fs signatureTimeout=%.1fs",
                 self._workspace.document_uri,
                 self._line_offset,
                 self._completion_timeout_s,
+                self._completion_resolve_timeout_s,
                 self._hover_timeout_s,
                 self._signature_timeout_s,
             )
@@ -97,13 +105,18 @@ class PythonEditorAssistBridge(QtCore.QObject):
         self._is_shutting_down = True
         with self._state_lock:
             completion_future = self._completion_future
+            completion_resolve_future = self._completion_resolve_future
             hover_future = self._hover_future
             signature_future = self._signature_future
             self._completion_future = None
+            self._completion_resolve_future = None
             self._hover_future = None
             self._signature_future = None
+            self._completion_resolve_items.clear()
         if completion_future is not None:
             completion_future.cancel()
+        if completion_resolve_future is not None:
+            completion_resolve_future.cancel()
         if hover_future is not None:
             hover_future.cancel()
         if signature_future is not None:
@@ -178,6 +191,56 @@ class PythonEditorAssistBridge(QtCore.QObject):
     @QtCore.Slot(str, str, int, int)
     def requestCompletions(self, request_id: str, code: str, line: int, column: int) -> None:
         self.request_completions(request_id, code, line, column)
+
+    @QtCore.Slot(str, str)
+    def request_completion_item_resolve(self, request_id: str, resolve_key: str) -> None:
+        if self._is_shutting_down:
+            return
+        request_id_txt = str(request_id or "")
+        resolve_key_txt = str(resolve_key or "").strip()
+        if not resolve_key_txt:
+            payload_empty = json.dumps(None, ensure_ascii=False)
+            self.completion_item_resolved.emit(request_id_txt, payload_empty)
+            self.completionItemResolved.emit(request_id_txt, payload_empty)
+            return
+        started_at = time.perf_counter()
+        with self._state_lock:
+            self._completion_resolve_generation += 1
+            generation = int(self._completion_resolve_generation)
+            previous = self._completion_resolve_future
+            if previous is not None and not previous.done():
+                previous.cancel()
+            future = self._executor.submit(self._completion_item_resolve_payload, resolve_key_txt)
+            self._completion_resolve_future = future
+
+        def _on_done(done_future: concurrent.futures.Future[dict[str, Any] | None]) -> None:
+            if done_future.cancelled() or self._is_shutting_down:
+                return
+            try:
+                payload = done_future.result()
+            except Exception as exc:  # boundary: worker thread callback
+                self._log_bridge_error("completionResolve", exc)
+                payload = None
+            with self._state_lock:
+                if generation != self._completion_resolve_generation:
+                    return
+            elapsed_ms = int((time.perf_counter() - started_at) * 1000.0)
+            has_payload = payload is not None
+            logger.debug(
+                "python lsp completion resolve response: id=%s hasPayload=%s elapsedMs=%d",
+                request_id_txt,
+                has_payload,
+                elapsed_ms,
+            )
+            payload_json = json.dumps(payload, ensure_ascii=False)
+            self.completion_item_resolved.emit(request_id_txt, payload_json)
+            self.completionItemResolved.emit(request_id_txt, payload_json)
+
+        future.add_done_callback(_on_done)
+
+    @QtCore.Slot(str, str)
+    def requestCompletionItemResolve(self, request_id: str, resolve_key: str) -> None:
+        self.request_completion_item_resolve(request_id, resolve_key)
 
     @QtCore.Slot(str, str, int, int)
     def request_hover(self, request_id: str, code: str, line: int, column: int) -> None:
@@ -334,6 +397,7 @@ class PythonEditorAssistBridge(QtCore.QObject):
                 character=max(0, int(column)),
                 timeout_s=self._completion_timeout_s,
             )
+            self._clear_completion_resolve_items()
             return self._normalize_completion_result(result)
         except LspClientError as exc:
             if "timeout" not in str(exc).lower():
@@ -346,6 +410,7 @@ class PythonEditorAssistBridge(QtCore.QObject):
                     character=max(0, int(column)),
                     timeout_s=(self._completion_timeout_s * 1.5),
                 )
+                self._clear_completion_resolve_items()
                 return self._normalize_completion_result(result_retry)
             except Exception as retry_exc:
                 self._log_bridge_error("completion", retry_exc)
@@ -353,6 +418,43 @@ class PythonEditorAssistBridge(QtCore.QObject):
         except Exception as exc:
             self._log_bridge_error("completion", exc)
             return []
+
+    def _clear_completion_resolve_items(self) -> None:
+        with self._state_lock:
+            self._completion_resolve_items.clear()
+            self._completion_resolve_seq = 0
+
+    def _register_completion_resolve_item(self, item: dict[str, Any]) -> str:
+        with self._state_lock:
+            self._completion_resolve_seq += 1
+            key = f"c{self._completion_resolve_seq}"
+            self._completion_resolve_items[key] = dict(item)
+            if len(self._completion_resolve_items) > 500:
+                sorted_keys = sorted(
+                    self._completion_resolve_items.keys(),
+                    key=lambda entry_key: int(str(entry_key)[1:]) if str(entry_key).startswith("c") else 0,
+                )
+                trim_count = len(self._completion_resolve_items) - 500
+                for stale_key in sorted_keys[:trim_count]:
+                    self._completion_resolve_items.pop(stale_key, None)
+            return key
+
+    def _completion_item_resolve_payload(self, resolve_key: str) -> dict[str, Any] | None:
+        with self._state_lock:
+            item = self._completion_resolve_items.get(str(resolve_key or ""))
+            if item is None:
+                return None
+            request_item = dict(item)
+        logger.debug("python lsp completion resolve request: key=%s", resolve_key)
+        try:
+            result = self._client.request_completion_item_resolve(
+                item=request_item,
+                timeout_s=self._completion_resolve_timeout_s,
+            )
+            return self._normalize_resolved_completion_item(result)
+        except Exception as exc:
+            self._log_bridge_error("completionResolve", exc)
+            return None
 
     def _hover_payload(self, *, code: str, line: int, column: int) -> dict[str, Any] | None:
         self.sync_document(str(code or ""))
@@ -393,24 +495,25 @@ class PythonEditorAssistBridge(QtCore.QObject):
                 return [item for item in items if isinstance(item, dict)]
         return []
 
-    @classmethod
-    def _normalize_completion_result(cls, result: Any) -> list[dict[str, Any]]:
-        items_raw = cls._completion_items_raw(result)
+    def _normalize_completion_result(self, result: Any) -> list[dict[str, Any]]:
+        items_raw = self._completion_items_raw(result)
         out: list[dict[str, Any]] = []
         for item in items_raw[:300]:
             label = str(item.get("label") or "").strip()
             if not label:
                 continue
-            insert_text = cls._completion_insert_text(item, fallback=label)
-            kind = cls._normalize_completion_kind(item.get("kind"))
+            insert_text = self._completion_insert_text(item, fallback=label)
+            kind = self._normalize_completion_kind(item.get("kind"))
             detail = str(item.get("detail") or "")
-            documentation = cls._completion_documentation(item.get("documentation"))
+            documentation = self._completion_documentation(item.get("documentation"))
+            resolve_key = self._register_completion_resolve_item(item)
 
             entry: dict[str, Any] = {
                 "label": label,
                 "insertText": insert_text,
                 "kind": kind,
                 "detail": detail,
+                "resolveKey": resolve_key,
             }
             sort_text = item.get("sortText")
             if isinstance(sort_text, str) and sort_text:
@@ -422,6 +525,25 @@ class PythonEditorAssistBridge(QtCore.QObject):
                 entry["documentation"] = documentation
             out.append(entry)
         return out
+
+    @classmethod
+    def _normalize_resolved_completion_item(cls, result: Any) -> dict[str, Any] | None:
+        if not isinstance(result, dict):
+            return None
+        label = str(result.get("label") or "").strip()
+        detail = str(result.get("detail") or "")
+        documentation = cls._completion_documentation(result.get("documentation"))
+        insert_text = cls._completion_insert_text(result, fallback=label)
+        payload: dict[str, Any] = {}
+        if label:
+            payload["label"] = label
+        if detail:
+            payload["detail"] = detail
+        if documentation:
+            payload["documentation"] = documentation
+        if insert_text:
+            payload["insertText"] = insert_text
+        return payload if payload else None
 
     @staticmethod
     def _completion_insert_text(item: dict[str, Any], *, fallback: str) -> str:

@@ -116,7 +116,7 @@ class F8MonacoEditorDialog(QtWidgets.QDialog):
         self._save_shortcut = QtGui.QShortcut(QtGui.QKeySequence("Ctrl+S"), self)
         self._save_shortcut.setContext(QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut)
         self._save_shortcut.activated.connect(self._on_save_clicked)
-        self._close_shortcut = QtGui.QShortcut(QtGui.QKeySequence("Esc"), self)
+        self._close_shortcut = QtGui.QShortcut(QtGui.QKeySequence("Ctrl+Q"), self)
         self._close_shortcut.setContext(QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut)
         self._close_shortcut.activated.connect(self.close)
 
@@ -171,6 +171,7 @@ class F8MonacoEditorDialog(QtWidgets.QDialog):
       window._f8_editorUi = null;
       window._f8_pyAssist = null;
       window._f8_pendingCompletions = Object.create(null);
+      window._f8_pendingCompletionResolves = Object.create(null);
       window._f8_pendingHovers = Object.create(null);
       window._f8_pendingSignatures = Object.create(null);
       window._f8_completionCache = null;
@@ -225,6 +226,8 @@ class F8MonacoEditorDialog(QtWidgets.QDialog):
           automaticLayout: true,
           quickSuggestions: {{ other: true, comments: false, strings: true }},
           quickSuggestionsDelay: 160,
+          parameterHints: {{ enabled: true, cycle: true }},
+          suggest: {{ showInlineDetails: true, showStatusBar: true }},
           suggestOnTriggerCharacters: true,
           minimap: {{ enabled: false }},
           fontLigatures: true,
@@ -244,7 +247,7 @@ class F8MonacoEditorDialog(QtWidgets.QDialog):
             window._f8_editorUi.request_save();
           }}
         }});
-        window._f8_editor.addCommand(monaco.KeyCode.Escape, function() {{
+        window._f8_editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyQ, function() {{
           if (window._f8_editorUi && window._f8_editorUi.request_close) {{
             window._f8_editorUi.request_close();
           }}
@@ -289,10 +292,12 @@ class F8MonacoEditorDialog(QtWidgets.QDialog):
           window._f8_pyAssist = assist || null;
           if (!assist) return;
           const completionSignal = assist.completion_ready || assist.completionReady || null;
+          const completionResolveSignal = assist.completion_item_resolved || assist.completionItemResolved || null;
           const hoverSignal = assist.hover_ready || assist.hoverReady || null;
           const signatureHelpSignal = assist.signature_help_ready || assist.signatureHelpReady || null;
           const diagnosticsSignal = assist.diagnostics_ready || assist.diagnosticsReady || null;
           const requestCompletions = assist.request_completions || assist.requestCompletions || null;
+          const requestCompletionResolve = assist.request_completion_item_resolve || assist.requestCompletionItemResolve || null;
           const requestHover = assist.request_hover || assist.requestHover || null;
           const requestSignatureHelp = assist.request_signature_help || assist.requestSignatureHelp || null;
           const syncDocument = assist.sync_document || assist.syncDocument || null;
@@ -327,6 +332,12 @@ class F8MonacoEditorDialog(QtWidgets.QDialog):
             }} catch (e) {{
               return value;
             }}
+          }}
+
+          function _asMarkdownDoc(value) {{
+            const text = String(value || '').trim();
+            if (!text) return null;
+            return {{ value: text }};
           }}
 
           function _currentPrefix(model, position) {{
@@ -386,14 +397,18 @@ class F8MonacoEditorDialog(QtWidgets.QDialog):
               const entry = {{ label, insertText, detail, kind }};
               const sourceSortText = String((item && item.sortText) || label);
               const sourceFilterText = String((item && item.filterText) || label);
+              const resolveKey = String((item && item.resolveKey) || '');
               const privacyRank = !allowPrivate && label.startsWith('_') ? 1 : 0;
               const prefixRank = _completionPrefixRank(label, sourceFilterText, typedPrefixLower);
               const kindRank = _completionKindRank(kind);
               const rankText = _sortWeightText(privacyRank) + _sortWeightText(prefixRank) + _sortWeightText(kindRank);
               entry.sortText = rankText + ':' + sourceSortText;
               entry.filterText = sourceFilterText;
+              if (resolveKey) {{
+                entry._f8ResolveKey = resolveKey;
+              }}
               if (documentation) {{
-                entry.documentation = documentation;
+                entry.documentation = _asMarkdownDoc(documentation);
               }}
               out.push(entry);
             }}
@@ -412,13 +427,13 @@ class F8MonacoEditorDialog(QtWidgets.QDialog):
             if (!payload || typeof payload !== 'object') return null;
             const signaturesRaw = _toArray(payload.signatures);
             if (!signaturesRaw.length) return null;
-            const signaturesOut = [];
+            const parsedSignatures = [];
             for (const signatureItem of signaturesRaw) {{
               const signatureLabel = String((signatureItem && signatureItem.label) || '');
               if (!signatureLabel) continue;
-              const signatureOut = {{
+              const parsed = {{
                 label: signatureLabel,
-                documentation: String((signatureItem && signatureItem.documentation) || ''),
+                documentation: String((signatureItem && signatureItem.documentation) || '').trim(),
                 parameters: [],
               }};
               const paramsRaw = _toArray(signatureItem && signatureItem.parameters);
@@ -426,7 +441,7 @@ class F8MonacoEditorDialog(QtWidgets.QDialog):
                 const paramLabelRaw = paramItem && paramItem.label;
                 let paramLabel = '';
                 if (typeof paramLabelRaw === 'string') {{
-                  paramLabel = String(paramLabelRaw || '');
+                  paramLabel = String(paramLabelRaw || '').trim();
                 }} else if (Array.isArray(paramLabelRaw) && paramLabelRaw.length === 2) {{
                   const start = Number(paramLabelRaw[0]);
                   const end = Number(paramLabelRaw[1]);
@@ -435,28 +450,102 @@ class F8MonacoEditorDialog(QtWidgets.QDialog):
                   }}
                 }}
                 if (!paramLabel || (Array.isArray(paramLabel) && paramLabel.length !== 2)) continue;
-                signatureOut.parameters.push({{
+                parsed.parameters.push({{
                   label: paramLabel,
-                  documentation: String((paramItem && paramItem.documentation) || ''),
+                  documentation: String((paramItem && paramItem.documentation) || '').trim(),
                 }});
               }}
-              signaturesOut.push(signatureOut);
+              parsedSignatures.push(parsed);
             }}
-            if (!signaturesOut.length) return null;
+            if (!parsedSignatures.length) return null;
+
             const activeSignatureRaw = Number(payload.activeSignature);
             const activeParameterRaw = Number(payload.activeParameter);
-            const activeSignature = Number.isFinite(activeSignatureRaw)
-              ? Math.max(0, Math.min(Math.floor(activeSignatureRaw), signaturesOut.length - 1))
+            const activeSignatureInitial = Number.isFinite(activeSignatureRaw)
+              ? Math.max(0, Math.min(Math.floor(activeSignatureRaw), parsedSignatures.length - 1))
               : 0;
-            const activeParams = signaturesOut[activeSignature].parameters || [];
-            const activeParameter = Number.isFinite(activeParameterRaw) && activeParams.length > 0
-              ? Math.max(0, Math.min(Math.floor(activeParameterRaw), activeParams.length - 1))
+            const activeParamsInitial = parsedSignatures[activeSignatureInitial].parameters || [];
+            const activeParameterInitial = Number.isFinite(activeParameterRaw) && activeParamsInitial.length > 0
+              ? Math.max(0, Math.min(Math.floor(activeParameterRaw), activeParamsInitial.length - 1))
               : 0;
+
+            const ordered = [];
+            ordered.push({{ signature: parsedSignatures[activeSignatureInitial], sourceIndex: activeSignatureInitial }});
+            for (let i = 0; i < parsedSignatures.length; i += 1) {{
+              if (i === activeSignatureInitial) continue;
+              ordered.push({{ signature: parsedSignatures[i], sourceIndex: i }});
+            }}
+
+            function _paramLabelText(signatureLabel, paramLabel) {{
+              if (typeof paramLabel === 'string') {{
+                return String(paramLabel || '').trim();
+              }}
+              if (!Array.isArray(paramLabel) || paramLabel.length !== 2) {{
+                return '';
+              }}
+              const start = Math.max(0, Number(paramLabel[0]) || 0);
+              const end = Math.max(start, Number(paramLabel[1]) || start);
+              const extracted = String(signatureLabel || '').slice(start, end).trim();
+              return extracted;
+            }}
+
+            function _signatureDocMarkdown(signatureObj, options) {{
+              const overloadIdx = Number((options && options.overloadIdx) || 0);
+              const overloadTotal = Number((options && options.overloadTotal) || 0);
+              const activeParamIdx = Number((options && options.activeParamIdx) || -1);
+              const blocks = [];
+              if (overloadTotal > 1) {{
+                blocks.push('**Overload ' + String(overloadIdx + 1) + '/' + String(overloadTotal) + '**');
+              }}
+              if (signatureObj.documentation) {{
+                blocks.push(signatureObj.documentation);
+              }}
+              const paramRows = [];
+              const signatureParams = _toArray(signatureObj.parameters);
+              for (let i = 0; i < signatureParams.length; i += 1) {{
+                const p = signatureParams[i];
+                const labelText = _paramLabelText(signatureObj.label, p.label);
+                if (!labelText) continue;
+                const nameMd = '`' + labelText.replace(/`/g, '\\`') + '`';
+                const isActive = activeParamIdx >= 0 && i === activeParamIdx;
+                const head = isActive ? '- **' + nameMd + '**' : '- ' + nameMd;
+                const pdoc = String((p && p.documentation) || '').trim();
+                paramRows.push(pdoc ? head + ': ' + pdoc : head);
+              }}
+              if (paramRows.length) {{
+                blocks.push('**Parameters**\\n' + paramRows.join('\\n'));
+              }}
+              return blocks.join('\\n\\n').trim();
+            }}
+
+            const signaturesOut = [];
+            for (let i = 0; i < ordered.length; i += 1) {{
+              const orderedItem = ordered[i];
+              const sig = orderedItem.signature;
+              const isActiveSig = i === 0;
+              const activeParamForDoc = isActiveSig ? activeParameterInitial : -1;
+              const docMarkdown = _signatureDocMarkdown(
+                sig,
+                {{
+                  overloadIdx: Number(orderedItem.sourceIndex || 0),
+                  overloadTotal: parsedSignatures.length,
+                  activeParamIdx: activeParamForDoc,
+                }},
+              );
+              const outSig = {{
+                label: sig.label,
+                parameters: sig.parameters,
+              }};
+              if (docMarkdown) {{
+                outSig.documentation = {{ value: docMarkdown }};
+              }}
+              signaturesOut.push(outSig);
+            }}
             return {{
               value: {{
                 signatures: signaturesOut,
-                activeSignature: activeSignature,
-                activeParameter: activeParameter,
+                activeSignature: 0,
+                activeParameter: activeParameterInitial,
               }},
               dispose: function() {{}},
             }};
@@ -496,6 +585,16 @@ class F8MonacoEditorDialog(QtWidgets.QDialog):
             const out = _toMonacoSuggestions(rawItems, prefix);
             _log('completion signal id=' + id + ' raw=' + String(rawItems.length) + ' items=' + String(out.length));
             resolver({{ suggestions: out }});
+          }});
+
+          if (completionResolveSignal && completionResolveSignal.connect) completionResolveSignal.connect(function(requestId, payload) {{
+            const id = String(requestId || '');
+            const resolver = window._f8_pendingCompletionResolves[id];
+            if (!resolver) return;
+            delete window._f8_pendingCompletionResolves[id];
+            const decoded = _decodeJson(payload);
+            _log('completion resolve signal id=' + id + ' hasResult=' + String(Boolean(decoded)));
+            resolver(decoded);
           }});
 
           if (hoverSignal && hoverSignal.connect) hoverSignal.connect(function(requestId, payload) {{
@@ -568,7 +667,47 @@ class F8MonacoEditorDialog(QtWidgets.QDialog):
                   resolve({{ suggestions: [] }});
                 }}
               }});
-            }}
+            }},
+            resolveCompletionItem: function(item) {{
+              return new Promise(function(resolve) {{
+                try {{
+                  if (!requestCompletionResolve) {{
+                    resolve(item);
+                    return;
+                  }}
+                  const resolveKey = String((item && item._f8ResolveKey) || '');
+                  if (!resolveKey) {{
+                    resolve(item);
+                    return;
+                  }}
+                  const id = String(crypto.randomUUID ? crypto.randomUUID() : Math.random());
+                  window._f8_pendingCompletionResolves[id] = function(payload) {{
+                    try {{
+                      if (payload && typeof payload === 'object') {{
+                        const detail = String(payload.detail || '');
+                        const documentation = String(payload.documentation || '');
+                        const insertText = String(payload.insertText || '');
+                        if (detail) item.detail = detail;
+                        if (documentation) item.documentation = _asMarkdownDoc(documentation);
+                        if (insertText) item.insertText = insertText;
+                        _log('completion resolve apply key=' + resolveKey + ' detailLen=' + String(detail.length) + ' docLen=' + String(documentation.length));
+                      }}
+                    }} catch (e) {{
+                    }}
+                    resolve(item);
+                  }};
+                  requestCompletionResolve(id, resolveKey);
+                  setTimeout(function() {{
+                    if (window._f8_pendingCompletionResolves[id]) {{
+                      delete window._f8_pendingCompletionResolves[id];
+                      resolve(item);
+                    }}
+                  }}, 1800);
+                }} catch (e) {{
+                  resolve(item);
+                }}
+              }});
+            }},
           }});
 
           monaco.languages.registerHoverProvider('python', {{
@@ -635,6 +774,25 @@ class F8MonacoEditorDialog(QtWidgets.QDialog):
             try {{
               window._f8_forceSuggestOnce = true;
               window._f8_editor.trigger('keyboard', 'editor.action.triggerSuggest', {{}});
+            }} catch (e) {{
+            }}
+          }});
+          window._f8_editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyJ, function() {{
+            try {{
+              window._f8_forceSuggestOnce = true;
+              window._f8_editor.trigger('keyboard', 'editor.action.triggerSuggest', {{}});
+            }} catch (e) {{
+            }}
+          }});
+          window._f8_editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.Space, function() {{
+            try {{
+              window._f8_editor.trigger('keyboard', 'editor.action.triggerParameterHints', {{}});
+            }} catch (e) {{
+            }}
+          }});
+          window._f8_editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyJ, function() {{
+            try {{
+              window._f8_editor.trigger('keyboard', 'editor.action.triggerParameterHints', {{}});
             }} catch (e) {{
             }}
           }});

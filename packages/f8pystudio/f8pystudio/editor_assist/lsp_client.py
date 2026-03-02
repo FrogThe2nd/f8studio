@@ -24,7 +24,7 @@ class PythonLspClient:
     Minimal stdio JSON-RPC client for Python LSP servers.
 
     This client is intentionally small and only implements what Studio needs:
-    initialize/open/change/completion/hover/signatureHelp and publishDiagnostics notifications.
+    initialize/open/change/completion/resolve/hover/signatureHelp and publishDiagnostics notifications.
     """
 
     def __init__(
@@ -201,6 +201,9 @@ class PythonLspClient:
             },
         }
         return self._request("textDocument/completion", params, timeout_s=timeout_s)
+
+    def request_completion_item_resolve(self, *, item: dict[str, Any], timeout_s: float | None = None) -> Any:
+        return self._request("completionItem/resolve", dict(item), timeout_s=timeout_s)
 
     def request_hover(self, *, uri: str, line: int, character: int, timeout_s: float | None = None) -> Any:
         params = {
