@@ -39,6 +39,11 @@ from .items.node_item_core import (
     port_name as _port_name,
     state_field_info as _state_field_info,
 )
+from .items.embedded_resize_contract import (
+    ResizableEmbeddedWidget,
+    clamp_content_size,
+    content_rect_with_minimum,
+)
 from .items.inline_command_panel import (
     ensure_inline_command_widget as _ensure_inline_command_widget_impl,
     invoke_command as _invoke_command_impl,
@@ -138,7 +143,7 @@ class F8StudioServiceBaseNode(F8StudioBaseNode):
                 continue
             try:
                 default_value = schema_default(info.value_schema)
-            except Exception:
+            except (AttributeError, RuntimeError, TypeError, ValueError, KeyError, ImportError, OSError):
                 default_value = None
             widget_type, items, prop_range = self._state_widget_for_schema(info.value_schema)
             tooltip = info.tooltip or None
@@ -193,7 +198,7 @@ class F8StudioServiceBaseNode(F8StudioBaseNode):
             attrs[self.type_][name]["tooltip"] = tooltip
         try:
             graph_model.set_node_common_properties(attrs)
-        except Exception:
+        except (AttributeError, RuntimeError, TypeError, ValueError, KeyError, ImportError, OSError):
             logger.exception("Failed to ensure service state property metadata: node=%s field=%s", self.type_, name)
 
     @staticmethod
@@ -209,7 +214,7 @@ class F8StudioServiceBaseNode(F8StudioBaseNode):
         try:
             root = value_schema.root
             enum_items = list(root.enum or [])
-        except Exception:
+        except (AttributeError, RuntimeError, TypeError, ValueError, KeyError, ImportError, OSError):
             enum_items = []
         if enum_items:
             return NodePropWidgetEnum.QCOMBO_BOX.value, [str(x) for x in enum_items], None
@@ -250,16 +255,16 @@ class F8StudioServiceBaseNode(F8StudioBaseNode):
                 return False
             try:
                 return bool(port.connected_ports())
-            except Exception:
+            except (AttributeError, RuntimeError, TypeError, ValueError, KeyError, ImportError, OSError):
                 try:
                     return bool(port.connected_ports)
-                except Exception:
+                except (AttributeError, RuntimeError, TypeError, ValueError, KeyError, ImportError, OSError):
                     return False
 
         for p in list(self.spec.dataInPorts or []):
             try:
                 n = str(p.name or "").strip()
-            except Exception:
+            except (AttributeError, RuntimeError, TypeError, ValueError, KeyError, ImportError, OSError):
                 n = ""
             if not n:
                 continue
@@ -277,7 +282,7 @@ class F8StudioServiceBaseNode(F8StudioBaseNode):
         for p in list(self.spec.dataOutPorts or []):
             try:
                 n = str(p.name or "").strip()
-            except Exception:
+            except (AttributeError, RuntimeError, TypeError, ValueError, KeyError, ImportError, OSError):
                 n = ""
             if not n:
                 continue
@@ -324,7 +329,7 @@ class F8StudioServiceBaseNode(F8StudioBaseNode):
                     except (AttributeError, RuntimeError, TypeError):
                         pass
                 self.delete_input(name)
-            except Exception as e:
+            except (AttributeError, RuntimeError, TypeError, ValueError, KeyError, ImportError, OSError) as e:
                 logger.warning("Failed to delete input port %r: %s", name, e)
 
         for name in sorted(current_output_names - desired_output_names):
@@ -336,7 +341,7 @@ class F8StudioServiceBaseNode(F8StudioBaseNode):
                     except (AttributeError, RuntimeError, TypeError):
                         pass
                 self.delete_output(name)
-            except Exception as e:
+            except (AttributeError, RuntimeError, TypeError, ValueError, KeyError, ImportError, OSError) as e:
                 logger.warning("Failed to delete output port %r: %s", name, e)
 
         # Add new ports from spec.
@@ -352,7 +357,7 @@ class F8StudioServiceBaseNode(F8StudioBaseNode):
                     color=meta.get("color"),
                     painter_func=meta.get("painter_func"),
                 )
-            except Exception as e:
+            except (AttributeError, RuntimeError, TypeError, ValueError, KeyError, ImportError, OSError) as e:
                 logger.warning("Failed to add input port %r: %s", name, e)
 
         for name in sorted(desired_output_names - current_output_names):
@@ -364,7 +369,7 @@ class F8StudioServiceBaseNode(F8StudioBaseNode):
                     color=meta.get("color"),
                     painter_func=meta.get("painter_func"),
                 )
-            except Exception as e:
+            except (AttributeError, RuntimeError, TypeError, ValueError, KeyError, ImportError, OSError) as e:
                 logger.warning("Failed to add output port %r: %s", name, e)
 
         # Best-effort cleanup for any orphaned port items left on the QGraphics node.
@@ -375,7 +380,7 @@ class F8StudioServiceBaseNode(F8StudioBaseNode):
 
             try:
                 input_items = view._input_items
-            except Exception:
+            except (AttributeError, RuntimeError, TypeError, ValueError, KeyError, ImportError, OSError):
                 input_items = None
             if isinstance(input_items, dict):
                 for port_item in list(input_items.keys()):
@@ -395,7 +400,7 @@ class F8StudioServiceBaseNode(F8StudioBaseNode):
 
             try:
                 output_items = view._output_items
-            except Exception:
+            except (AttributeError, RuntimeError, TypeError, ValueError, KeyError, ImportError, OSError):
                 output_items = None
             if isinstance(output_items, dict):
                 for port_item in list(output_items.keys()):
@@ -412,14 +417,14 @@ class F8StudioServiceBaseNode(F8StudioBaseNode):
                             view.scene().removeItem(text_item)
                     except RuntimeError:
                         pass
-        except Exception:
+        except (AttributeError, RuntimeError, TypeError, ValueError, KeyError, ImportError, OSError):
             logger.debug("sync_from_spec orphan port-item cleanup failed", exc_info=True)
 
         self._build_state_properties()
 
         try:
             self.view.draw_node()
-        except Exception:
+        except (AttributeError, RuntimeError, TypeError, ValueError, KeyError, ImportError, OSError):
             logger.debug("sync_from_spec draw_node failed", exc_info=True)
 
 
@@ -480,7 +485,7 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
             return None
         try:
             node_id = str(self.id or "").strip()
-        except Exception:
+        except (AttributeError, RuntimeError, TypeError, ValueError, KeyError, ImportError, OSError):
             node_id = ""
         if not node_id:
             return None
@@ -541,12 +546,12 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         scene = None
         try:
             scene = self.scene()
-        except Exception:
+        except (AttributeError, RuntimeError, TypeError, ValueError, KeyError, ImportError, OSError):
             scene = None
 
         try:
             mods = QtWidgets.QApplication.keyboardModifiers()
-        except Exception:
+        except (AttributeError, RuntimeError, TypeError, ValueError, KeyError, ImportError, OSError):
             mods = QtCore.Qt.NoModifier
         multi = bool(mods & (QtCore.Qt.ControlModifier | QtCore.Qt.ShiftModifier))
 
@@ -574,7 +579,7 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         g = self._graph()
         try:
             return g.service_bridge if g is not None else None
-        except Exception:
+        except (AttributeError, RuntimeError, TypeError, ValueError, KeyError, ImportError, OSError):
             return None
 
     def _ensure_bridge_process_hook(self) -> None:
@@ -585,7 +590,7 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
             return
         try:
             bridge.service_process_state.connect(self._on_bridge_service_process_state)  # type: ignore[attr-defined]
-        except Exception:
+        except (AttributeError, RuntimeError, TypeError, ValueError, KeyError, ImportError, OSError):
             self._bridge_proc_hooked = False
             return
         self._bridge_proc_hooked = True
@@ -597,7 +602,7 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
             return False
         try:
             return bool(bridge.is_service_running(sid))
-        except Exception:
+        except (AttributeError, RuntimeError, TypeError, ValueError, KeyError, ImportError, OSError):
             return False
 
     def _on_bridge_service_process_state(self, service_id: str, running: bool) -> None:
@@ -623,7 +628,7 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         # For service nodes, nodeId == serviceId.
         try:
             return str(self.id or "").strip()
-        except Exception:
+        except (AttributeError, RuntimeError, TypeError, ValueError, KeyError, ImportError, OSError):
             return ""
 
     def _invoke_command(self, cmd: Any) -> None:
@@ -766,7 +771,7 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         zoom = None
         try:
             zoom = float(v.get_zoom()) if v is not None else None
-        except Exception:
+        except (AttributeError, RuntimeError, TypeError, ValueError, KeyError, ImportError, OSError):
             zoom = None
         pen.setCosmetic(bool(zoom is not None and zoom < 0.0))
         path = QtGui.QPainterPath()
@@ -822,7 +827,7 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         zoom = None
         try:
             zoom = float(v.get_zoom()) if v is not None else None
-        except Exception:
+        except (AttributeError, RuntimeError, TypeError, ValueError, KeyError, ImportError, OSError):
             zoom = None
         pen.setCosmetic(bool(zoom is not None and zoom < 0.0))
         painter.setBrush(QtCore.Qt.NoBrush)
@@ -925,7 +930,7 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         old_rect = None
         try:
             old_rect = self.boundingRect()
-        except Exception:
+        except (AttributeError, RuntimeError, TypeError, ValueError, KeyError, ImportError, OSError):
             old_rect = None
 
         w, h = self.calc_size(add_w, add_h)
@@ -937,7 +942,7 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         changed = True
         try:
             changed = bool(abs(float(w) - float(self._width)) > 0.01 or abs(float(h) - float(self._height)) > 0.01)
-        except Exception:
+        except (AttributeError, RuntimeError, TypeError, ValueError, KeyError, ImportError, OSError):
             changed = True
 
         if changed:    
@@ -1010,7 +1015,7 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         for port in ports:
             try:
                 connected_pipes = list(port.connected_pipes)
-            except Exception:
+            except (AttributeError, RuntimeError, TypeError, ValueError, KeyError, ImportError, OSError):
                 continue
             for pipe in connected_pipes:
                 pipe_key = id(pipe)
@@ -1019,20 +1024,20 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
                 seen_pipe_ids.add(pipe_key)
                 try:
                     pipe.update()
-                except Exception:
+                except (AttributeError, RuntimeError, TypeError, ValueError, KeyError, ImportError, OSError):
                     continue
 
         scene = self.scene()
         if scene is not None:
             try:
                 scene.update()
-            except Exception:
+            except (AttributeError, RuntimeError, TypeError, ValueError, KeyError, ImportError, OSError):
                 pass
         viewer = self._viewer_safe()
         if viewer is not None:
             try:
                 viewer.viewport().update()
-            except Exception:
+            except (AttributeError, RuntimeError, TypeError, ValueError, KeyError, ImportError, OSError):
                 pass
 
     def _calc_size_horizontal(self):
@@ -1141,7 +1146,7 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
                         header = self._state_inline_headers.get(sname)
                         if header is not None:
                             header_h = float(max(port_height, header.sizeHint().height()))
-                    except Exception:
+                    except (AttributeError, RuntimeError, TypeError, ValueError, KeyError, ImportError, OSError):
                         header_h = port_height
                     # Size hint for the expanded body depends on width (options wrap).
                     # Use the proxy widget bounding rect after forcing a best-effort width.
@@ -1159,9 +1164,9 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
                                 pass
                             try:
                                 panel_h = float(max(header_h, proxy.boundingRect().height()))
-                            except Exception:
+                            except (AttributeError, RuntimeError, TypeError, ValueError, KeyError, ImportError, OSError):
                                 panel_h = header_h
-                    except Exception:
+                    except (AttributeError, RuntimeError, TypeError, ValueError, KeyError, ImportError, OSError):
                         panel_h = header_h
                     ports_h += panel_h + spacing
                 ports_h = max(0.0, ports_h - spacing)  # remove trailing row spacing
@@ -1339,6 +1344,61 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         else:
             raise RuntimeError("Node graph layout direction not valid!")
 
+    def _content_rect_for_widgets(self, *, top_y: float) -> tuple[float, float, float, float]:
+        """
+        Compute available node-inner content rect for embedded widgets.
+        """
+        rect = self.boundingRect()
+        return content_rect_with_minimum(
+            x=rect.left() + 4.0,
+            y=top_y,
+            width=rect.width() - 8.0,
+            height=rect.bottom() - top_y - 4.0,
+            minimum=(10, 10),
+        )
+
+    def _apply_widget_resize_policy(
+        self,
+        widget_proxy: Any,
+        *,
+        content_rect: tuple[float, float, float, float],
+    ) -> bool:
+        """
+        Apply optional node->widget resize contract.
+
+        Returns:
+            bool: True when resize was applied via `ResizableEmbeddedWidget`.
+        """
+        if not isinstance(widget_proxy, ResizableEmbeddedWidget):
+            return False
+
+        try:
+            min_size = widget_proxy.minimum_content_size()
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return False
+        target_w, target_h = clamp_content_size(
+            width=float(content_rect[2]),
+            height=float(content_rect[3]),
+            minimum=min_size,
+        )
+        try:
+            widget_proxy.apply_content_rect(target_w, target_h)
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return False
+
+        try:
+            widget_proxy.prepareGeometryChange()
+        except (AttributeError, RuntimeError, TypeError):
+            pass
+        try:
+            qwidget = widget_proxy.widget()
+            if qwidget is None:
+                return True
+            qwidget.adjustSize()
+        except (AttributeError, RuntimeError, TypeError):
+            return True
+        return True
+
     def _align_widgets_horizontal(self, v_offset):
         rect = self.boundingRect()
         inputs = [p for p in self.inputs if p.isVisible()]
@@ -1348,7 +1408,6 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         cmd_bottom = None
         if self._cmd_proxy is not None and self._cmd_proxy.isVisible():
             try:
-                rect = self.boundingRect()
                 y = float(self._ports_end_y or (rect.y() + v_offset))
                 # Force the underlying QWidget to take the full available width.
                 try:
@@ -1361,7 +1420,7 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
                 x = rect.left() + 4.0
                 self._cmd_proxy.setPos(x, y + 6.0)
                 cmd_bottom = y + 6.0 + w_rect.height()
-            except Exception:
+            except (AttributeError, RuntimeError, TypeError, ValueError):
                 cmd_bottom = None
 
         if not self._widgets:
@@ -1377,8 +1436,13 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         for widget in self._widgets.values():
             if not widget.isVisible():
                 continue
+            content_rect = self._content_rect_for_widgets(top_y=y)
+            resized = self._apply_widget_resize_policy(widget, content_rect=content_rect)
             widget_rect = widget.boundingRect()
-            if not inputs:
+            if resized:
+                x = float(content_rect[0])
+                widget.widget().setTitleAlign("center")
+            elif not inputs:
                 x = rect.left() + 10
                 widget.widget().setTitleAlign("left")
             elif not outputs:
@@ -1406,9 +1470,15 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         for widget in self._widgets.values():
             if not widget.isVisible():
                 continue
+            content_rect = self._content_rect_for_widgets(top_y=y)
+            resized = self._apply_widget_resize_policy(widget, content_rect=content_rect)
             widget_rect = widget.boundingRect()
-            x = rect.center().x() - (widget_rect.width() / 2)
-            widget.widget().setTitleAlign("center")
+            if resized:
+                x = float(content_rect[0])
+                widget.widget().setTitleAlign("center")
+            else:
+                x = rect.center().x() - (widget_rect.width() / 2)
+                widget.widget().setTitleAlign("center")
             widget.setPos(x, y)
             y += widget_rect.height()
 
@@ -1444,17 +1514,17 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         else:
             try:
                 spec = node.spec
-            except Exception:
+            except (AttributeError, RuntimeError, TypeError):
                 spec = None
         try:
             eff_states = list(node.effective_state_fields() or []) if node is not None else []
-        except Exception:
+        except (AttributeError, RuntimeError, TypeError, ValueError):
             if spec is None:
                 eff_states = []
             else:
                 try:
                     eff_states = list(spec.stateFields or [])
-                except Exception:
+                except (AttributeError, RuntimeError, TypeError, ValueError):
                     eff_states = []
 
         # Build ordered port name lists per group.
@@ -1475,7 +1545,7 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
                     port_name = f"{p.name}[D]"
                     if node.data_port_show_on_node(str(p.name or ""), is_in=False) or port_name in existing_out:
                         data_out_names.append(port_name)
-            except Exception:
+            except (AttributeError, RuntimeError, TypeError, ValueError):
                 data_in_names = []
                 data_out_names = []
 
@@ -1598,13 +1668,13 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
                             header_h = float(
                                 max(port_height, self._state_inline_headers[state_key].sizeHint().height())
                             )
-                    except Exception:
+                    except (AttributeError, RuntimeError, TypeError, ValueError):
                         header_h = port_height
                     try:
                         body_w = self._state_inline_bodies.get(state_key)
                         if body_w is not None and body_w.isVisible():
                             body_h = float(max(0.0, body_w.sizeHint().height()))
-                    except Exception:
+                    except (AttributeError, RuntimeError, TypeError, ValueError):
                         body_h = 0.0
                     try:
                         # Center panels using their *actual* width. Some controls
@@ -1833,7 +1903,7 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
             g = _resolve_graph()
             try:
                 return g.service_bridge if g is not None else None
-            except Exception:
+            except (AttributeError, RuntimeError, TypeError):
                 return None
 
         def _get_node() -> Any | None:
@@ -1842,7 +1912,7 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
                 return None
             try:
                 return g.get_node_by_id(self._current_service_id())
-            except Exception:
+            except (AttributeError, RuntimeError, TypeError, ValueError):
                 return None
 
         def _get_service_class() -> str:
@@ -1852,7 +1922,7 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
                     return ""
                 spec = n.spec
                 return str(spec.serviceClass or "")
-            except Exception:
+            except (AttributeError, RuntimeError, TypeError, ValueError):
                 return ""
 
         def _get_compiled_graphs() -> Any | None:
@@ -1863,7 +1933,7 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
                 from .runtime_compiler import compile_runtime_graphs_from_studio
 
                 return compile_runtime_graphs_from_studio(g)
-            except Exception:
+            except (AttributeError, RuntimeError, TypeError, ImportError):
                 return None
 
         try:
@@ -1879,7 +1949,7 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
             proxy.setZValue(10_000)
             proxy.setCacheMode(QtWidgets.QGraphicsItem.DeviceCoordinateCache)
             self._svc_toolbar_proxy = proxy
-        except Exception:
+        except (AttributeError, RuntimeError, TypeError, ValueError):
             self._svc_toolbar_proxy = None
 
     def _current_service_id(self) -> str:
@@ -1977,7 +2047,7 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         for port, text in self._input_items.items():
             try:
                 is_state = self._port_group(_port_name(port)) == "state"
-            except Exception:
+            except (AttributeError, RuntimeError, TypeError, ValueError):
                 is_state = False
             should_show = bool(port_text_visible and port.display_name and not is_state)
             text.setVisible(should_show)
@@ -1986,7 +2056,7 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         for port, text in self._output_items.items():
             try:
                 is_state = self._port_group(_port_name(port)) == "state"
-            except Exception:
+            except (AttributeError, RuntimeError, TypeError, ValueError):
                 is_state = False
             should_show = bool(port_text_visible and port.display_name and not is_state)
             text.setVisible(should_show)

@@ -6,6 +6,7 @@ from .template_match_capture import TemplateMatchCaptureRenderNode
 from .viz_wave import VizWaveRenderNode
 from .viz_track import VizTrackRenderNode
 from .viz_video import VizVideoRenderNode
+from .note import NoteRenderNode
 from .registry import RenderNodeRegistry
 
 __all__ = [
@@ -17,5 +18,6 @@ __all__ = [
     "VizWaveRenderNode",
     "VizTrackRenderNode",
     "VizVideoRenderNode",
+    "NoteRenderNode",
     "RenderNodeRegistry",
 ]

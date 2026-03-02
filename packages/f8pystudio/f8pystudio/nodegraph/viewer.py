@@ -19,6 +19,12 @@ from .edge_rules import (
 from .pipe_item import F8StudioPipeItem
 
 logger = logging.getLogger(__name__)
+_TEXT_INPUT_TYPES: tuple[type[QtWidgets.QWidget], ...] = (
+    QtWidgets.QLineEdit,
+    QtWidgets.QTextEdit,
+    QtWidgets.QPlainTextEdit,
+    QtWidgets.QAbstractSpinBox,
+)
 
 
 class F8StudioNodeViewer(NodeViewer):
@@ -299,15 +305,47 @@ class F8StudioNodeViewer(NodeViewer):
     def _is_text_input_focus(widget: QtWidgets.QWidget | None) -> bool:
         if widget is None:
             return False
-        return isinstance(
-            widget,
-            (
-                QtWidgets.QLineEdit,
-                QtWidgets.QTextEdit,
-                QtWidgets.QPlainTextEdit,
-                QtWidgets.QAbstractSpinBox,
-            ),
-        )
+        return isinstance(widget, _TEXT_INPUT_TYPES)
+
+    @staticmethod
+    def _is_or_contains_text_input(widget: QtWidgets.QWidget | None) -> bool:
+        current = widget
+        while current is not None:
+            if isinstance(current, _TEXT_INPUT_TYPES):
+                return True
+            current = current.parentWidget()
+        if widget is None:
+            return False
+        return any(widget.findChild(widget_type) is not None for widget_type in _TEXT_INPUT_TYPES)
+
+    def _event_pos_point(self, event: QtGui.QWheelEvent) -> QtCore.QPoint:
+        try:
+            return event.position().toPoint()
+        except AttributeError:
+            return event.pos()
+
+    def _wheel_over_text_input_proxy(self, event: QtGui.QWheelEvent) -> bool:
+        view_pos = self._event_pos_point(event)
+
+        global_pos = self.mapToGlobal(view_pos)
+        hovered_widget = QtWidgets.QApplication.widgetAt(global_pos)
+        if self._is_or_contains_text_input(hovered_widget):
+            return True
+
+        item = self.itemAt(view_pos)
+        while item is not None:
+            if isinstance(item, QtWidgets.QGraphicsProxyWidget):
+                proxy_widget = item.widget()
+                if self._is_or_contains_text_input(proxy_widget):
+                    return True
+            item = item.parentItem()
+        return False
+
+    def wheelEvent(self, event):  # type: ignore[override]
+        if self._wheel_over_text_input_proxy(event):
+            QtWidgets.QGraphicsView.wheelEvent(self, event)
+            return
+        super().wheelEvent(event)
 
     def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
         if event.key() == QtCore.Qt.Key_Escape:
