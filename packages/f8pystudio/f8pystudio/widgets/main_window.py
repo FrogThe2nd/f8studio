@@ -200,9 +200,10 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         return action
 
     def _setup_toolbar(self) -> None:
-        tb = self.addToolBar("Run")
+        tb = QtWidgets.QToolBar("Run", self)
         tb.setMovable(False)
         tb.setToolButtonStyle(QtCore.Qt.ToolButtonIconOnly)
+        self.addToolBar(QtCore.Qt.TopToolBarArea, tb)
 
         # Graph file management.
         self._open_icon = icon_for(self, StudioIcon.FOLDER_OPEN)
@@ -238,31 +239,47 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         self._stop_all_services_action.setToolTip("Stop all service processes in graph")
         tb.addAction(self._stop_all_services_action)
 
-        tb.addSeparator()
+        # Push the edge-visibility toolbar to the far-right in the same top toolbar row.
+        toolbar_spacer = QtWidgets.QWidget(tb)
+        toolbar_spacer.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred)
+        tb.addWidget(toolbar_spacer)
+
+        edge_tb = QtWidgets.QToolBar("Pipe Visibility", self)
+        edge_tb.setMovable(False)
+        edge_tb.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
+        self.addToolBar(QtCore.Qt.TopToolBarArea, edge_tb)
+
+        edge_left_spacer = QtWidgets.QWidget(edge_tb)
+        edge_left_spacer.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred)
+        edge_tb.addWidget(edge_left_spacer)
+
+        edge_label = QtWidgets.QLabel("Pipe Visibility:", edge_tb)
+        edge_tb.addWidget(edge_label)
+        edge_tb.addSeparator()
 
         self._exec_lines_action = QtGui.QAction("EXEC", self)
         self._exec_lines_action.setCheckable(True)
         self._exec_lines_action.setChecked(True)
         self._exec_lines_action.toggled.connect(self._on_exec_lines_toggled)  # type: ignore[attr-defined]
         self._set_edge_visibility_action_icon(self._exec_lines_action, True)
-        tb.addAction(self._exec_lines_action)
-        self._set_action_text_beside_icon(tb, self._exec_lines_action, italic=True)
+        edge_tb.addAction(self._exec_lines_action)
+        self._set_action_text_beside_icon(edge_tb, self._exec_lines_action, italic=True)
 
         self._data_lines_action = QtGui.QAction("DATA", self)
         self._data_lines_action.setCheckable(True)
         self._data_lines_action.setChecked(True)
         self._data_lines_action.toggled.connect(self._on_data_lines_toggled)  # type: ignore[attr-defined]
         self._set_edge_visibility_action_icon(self._data_lines_action, True)
-        tb.addAction(self._data_lines_action)
-        self._set_action_text_beside_icon(tb, self._data_lines_action, italic=True)
+        edge_tb.addAction(self._data_lines_action)
+        self._set_action_text_beside_icon(edge_tb, self._data_lines_action, italic=True)
 
         self._state_lines_action = QtGui.QAction("STATE", self)
         self._state_lines_action.setCheckable(True)
         self._state_lines_action.setChecked(True)
         self._state_lines_action.toggled.connect(self._on_state_lines_toggled)  # type: ignore[attr-defined]
         self._set_edge_visibility_action_icon(self._state_lines_action, True)
-        tb.addAction(self._state_lines_action)
-        self._set_action_text_beside_icon(tb, self._state_lines_action, italic=True)
+        edge_tb.addAction(self._state_lines_action)
+        self._set_action_text_beside_icon(edge_tb, self._state_lines_action, italic=True)
 
     def _set_action_text_beside_icon(
         self, toolbar: QtWidgets.QToolBar, action: QtGui.QAction, italic: bool = False
