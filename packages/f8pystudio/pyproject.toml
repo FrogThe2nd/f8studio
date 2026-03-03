@@ -32,6 +32,10 @@ include = [
     "f8pystudio/render_nodes/web_assets/**/*.html",
     "f8pystudio/render_nodes/web_assets/**/*.js",
     "f8pystudio/render_nodes/web_assets/**/*.css",
+    "f8pystudio/assets/**/*.svg",
+    "f8pystudio/assets/**/*.png",
+    "f8pystudio/assets/**/*.ico",
+    "f8pystudio/assets/**/*.txt",
 ]
 
 [tool.uv]

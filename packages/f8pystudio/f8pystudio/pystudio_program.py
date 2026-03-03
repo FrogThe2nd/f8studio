@@ -31,9 +31,9 @@ class PyStudioProgram:
             if candidate.exists():
                 return candidate
 
-        repo_icon = Path(__file__).resolve().parents[3] / "assets" / "icon.png"
-        if repo_icon.exists():
-            return repo_icon
+        package_icon = Path(__file__).resolve().parent / "assets" / "logo.png"
+        if package_icon.exists():
+            return package_icon
 
         return None
 
