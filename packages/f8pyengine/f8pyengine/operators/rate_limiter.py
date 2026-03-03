@@ -213,6 +213,7 @@ RateLimiterRuntimeNode.SPEC = F8OperatorSpec(
             description="Input/output clamp minimum (typical 0).",
             valueSchema=number_schema(default=0.0),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -221,6 +222,7 @@ RateLimiterRuntimeNode.SPEC = F8OperatorSpec(
             description="Input/output clamp maximum (typical 1).",
             valueSchema=number_schema(default=1.0),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -229,6 +231,7 @@ RateLimiterRuntimeNode.SPEC = F8OperatorSpec(
             description="Maximum rising rate (units/sec).",
             valueSchema=number_schema(default=2.0, minimum=0.0),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=True,
         ),
         F8StateSpec(
@@ -237,6 +240,7 @@ RateLimiterRuntimeNode.SPEC = F8OperatorSpec(
             description="Maximum falling rate (units/sec).",
             valueSchema=number_schema(default=2.0, minimum=0.0),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=True,
         ),
         F8StateSpec(
@@ -245,6 +249,7 @@ RateLimiterRuntimeNode.SPEC = F8OperatorSpec(
             description="Maximum acceleration (units/sec^2). 0 disables acceleration limiting.",
             valueSchema=number_schema(default=0.0, minimum=0.0),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=False,
         ),
     ],

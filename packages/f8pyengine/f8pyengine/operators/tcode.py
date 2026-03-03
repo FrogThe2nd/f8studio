@@ -141,6 +141,7 @@ TCodeRuntimeNode.SPEC = F8OperatorSpec(
             description="Default interval appended as `I###` when `intervalMs` input is not provided.",
             valueSchema=number_schema(default=20, minimum=1, maximum=50000),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=True,
         )
     ],

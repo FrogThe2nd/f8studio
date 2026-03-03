@@ -1061,10 +1061,15 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
         row.setToolTip(self._data_tooltip(port))
         row.setProperty("_port_dir", "data_in" if is_in else "data_out")
         editable = bool(self._editable_data_in if is_in else self._editable_data_out)
+        try:
+            required = bool(port.required)
+        except (AttributeError, TypeError, ValueError):
+            required = False
+        allow_mutate = bool(editable and not self._missing_locked and not required)
         # Even when spec ports are not editable, allow opening the dialog to edit UI-only fields (showOnNode).
         row.set_row_editable(
-            allow_rename=bool(editable and not self._missing_locked),
-            allow_delete=bool(editable and not self._missing_locked),
+            allow_rename=allow_mutate,
+            allow_delete=allow_mutate,
             allow_edit=True,
         )
         show = bool(self._node.data_port_show_on_node(str(port.name or ""), is_in=bool(is_in)))  # type: ignore[attr-defined]
@@ -1095,6 +1100,15 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
             parts.append(desc)
         return "\n".join(parts)
 
+    def _row_is_required_data_port(self, row: QtWidgets.QWidget) -> bool:
+        port = row.property("_port")
+        if not isinstance(port, F8DataPortSpec):
+            return False
+        try:
+            return bool(port.required)
+        except (AttributeError, TypeError, ValueError):
+            return False
+
     def _edit_exec(self, row: _F8SpecNameRow) -> None:
         if self._missing_locked:
             return
@@ -1109,7 +1123,12 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
 
     def _edit_data(self, row: _F8SpecNameRow) -> None:
         dir_s = str(row.property("_port_dir") or "")
-        ui_only = bool((dir_s == "data_in" and not self._editable_data_in) or (dir_s == "data_out" and not self._editable_data_out))
+        required = self._row_is_required_data_port(row)
+        ui_only = bool(
+            (dir_s == "data_in" and not self._editable_data_in)
+            or (dir_s == "data_out" and not self._editable_data_out)
+            or required
+        )
         read_only = bool(self._missing_locked)
         port = row.property("_port")
         if not isinstance(port, F8DataPortSpec):
@@ -1153,6 +1172,8 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
     def _rename_data(self, row: _F8SpecNameRow, name: str) -> None:
         if self._missing_locked:
             return
+        if self._row_is_required_data_port(row):
+            return
         dir_s = str(row.property("_port_dir") or "")
         if (dir_s == "data_in" and not self._editable_data_in) or (dir_s == "data_out" and not self._editable_data_out):
             return
@@ -1177,6 +1198,8 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
         if dir_s == "data_in" and not self._editable_data_in:
             return
         if dir_s == "data_out" and not self._editable_data_out:
+            return
+        if (dir_s == "data_in" or dir_s == "data_out") and self._row_is_required_data_port(row):
             return
         row.setParent(None)
         row.deleteLater()

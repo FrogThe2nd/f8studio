@@ -179,6 +179,7 @@ PhaseRuntimeNode.SPEC = F8OperatorSpec(
             description="Frequency in Hz.",
             valueSchema=number_schema(default=1.0, minimum=0.0, maximum=100.0),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=True,
         ),
     ],
@@ -295,6 +296,7 @@ CosineRuntimeNode.SPEC = F8OperatorSpec(
             description="Default DC offset (used when `dc` input is not provided).",
             valueSchema=number_schema(default=0.5),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -303,6 +305,7 @@ CosineRuntimeNode.SPEC = F8OperatorSpec(
             description="Amplitude.",
             valueSchema=number_schema(default=0.5),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -311,6 +314,7 @@ CosineRuntimeNode.SPEC = F8OperatorSpec(
             description="Normalized phase offset (0.0 to 1.0).",
             valueSchema=number_schema(default=0.0, minimum=0, maximum=1),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=False,
         ),
     ],
@@ -444,6 +448,7 @@ TempestRuntimeNode.SPEC = F8OperatorSpec(
             description="Default DC offset (used when `dc` input is not provided).",
             valueSchema=number_schema(default=0.5),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -452,6 +457,7 @@ TempestRuntimeNode.SPEC = F8OperatorSpec(
             description="Default amplitude (used when `amp`/`amplitude` input is not provided).",
             valueSchema=number_schema(default=0.5),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -460,6 +466,7 @@ TempestRuntimeNode.SPEC = F8OperatorSpec(
             description="Fraction of a full cycle added to the phase (0..1).",
             valueSchema=number_schema(default=0.0, minimum=0.0, maximum=1.0),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -468,6 +475,7 @@ TempestRuntimeNode.SPEC = F8OperatorSpec(
             description="Controls curvature of the inner sine.",
             valueSchema=number_schema(default=0.0),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=False,
         ),
     ],

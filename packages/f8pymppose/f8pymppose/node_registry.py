@@ -29,6 +29,7 @@ def _state_fields() -> list[F8StateSpec]:
             description="Video SHM mapping name (e.g. shm.implayer.video).",
             valueSchema=string_schema(default=""),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=True,
         ),
         F8StateSpec(
@@ -37,6 +38,7 @@ def _state_fields() -> list[F8StateSpec]:
             description="Run pose inference every N frames (>=1).",
             valueSchema=integer_schema(default=1, minimum=1, maximum=10000),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=True,
         ),
         F8StateSpec(
@@ -45,6 +47,7 @@ def _state_fields() -> list[F8StateSpec]:
             description="MediaPipe pose model variant.",
             valueSchema=string_schema(default="full", enum=["lite", "full", "heavy"]),
             access=F8StateAccess.rw,
+            required=True,
             uiControl="select",
             showOnNode=True,
         ),
@@ -54,6 +57,7 @@ def _state_fields() -> list[F8StateSpec]:
             description="Minimum confidence threshold for pose detection.",
             valueSchema=number_schema(default=0.5, minimum=0.0, maximum=1.0),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=True,
         ),
         F8StateSpec(
@@ -62,6 +66,7 @@ def _state_fields() -> list[F8StateSpec]:
             description="Minimum confidence threshold for pose tracking.",
             valueSchema=number_schema(default=0.5, minimum=0.0, maximum=1.0),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=True,
         ),
         F8StateSpec(
@@ -70,6 +75,7 @@ def _state_fields() -> list[F8StateSpec]:
             description="Landmark visibility threshold (below threshold => hidden point).",
             valueSchema=number_schema(default=0.5, minimum=0.0, maximum=1.0),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=True,
         ),
         F8StateSpec(
@@ -78,6 +84,7 @@ def _state_fields() -> list[F8StateSpec]:
             description="Last runtime error string (best-effort).",
             valueSchema=string_schema(default=""),
             access=F8StateAccess.ro,
+            required=True,
             showOnNode=False,
         ),
     ]

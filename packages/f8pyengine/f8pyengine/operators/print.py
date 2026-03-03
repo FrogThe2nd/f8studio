@@ -101,6 +101,7 @@ PrintRuntimeNode.SPEC = F8OperatorSpec(
             description="If true, strip whitespace/newlines from the start/end of string values before printing.",
             valueSchema=boolean_schema(default=True),
             access=F8StateAccess.wo,
+            required=True,
             showOnNode=False,
         ),
     ],

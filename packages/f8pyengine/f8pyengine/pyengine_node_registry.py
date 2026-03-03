@@ -64,6 +64,7 @@ def register_pyengine_specs(registry: RuntimeNodeRegistry | None = None) -> Runt
                     description="How data inputs are delivered to nodes: pull (default), push, or both.",
                     valueSchema=string_schema(default="pull", enum=["pull", "push", "both"]),
                     access=F8StateAccess.rw,
+                    required=True,
                     showOnNode=True,
                 ),
             ],

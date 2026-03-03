@@ -719,6 +719,7 @@ UdpSkeletonRuntimeNode.SPEC = F8OperatorSpec(
             description="Local address to bind (loopback by default).",
             valueSchema=string_schema(default="127.0.0.1"),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -727,6 +728,7 @@ UdpSkeletonRuntimeNode.SPEC = F8OperatorSpec(
             description="When true, allow bindAddress values other than loopback.",
             valueSchema=boolean_schema(default=False),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -735,6 +737,7 @@ UdpSkeletonRuntimeNode.SPEC = F8OperatorSpec(
             description="UDP listen port.",
             valueSchema=integer_schema(default=39540, minimum=1, maximum=65535),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=True,
         ),
         F8StateSpec(
@@ -743,6 +746,7 @@ UdpSkeletonRuntimeNode.SPEC = F8OperatorSpec(
             description="Max queued packets before dropping (1..4096).",
             valueSchema=integer_schema(default=512, minimum=1, maximum=4096),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -751,6 +755,7 @@ UdpSkeletonRuntimeNode.SPEC = F8OperatorSpec(
             description="Best-effort: allow multiple listeners on same (address, port) if OS supports.",
             valueSchema=boolean_schema(default=False),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -759,6 +764,7 @@ UdpSkeletonRuntimeNode.SPEC = F8OperatorSpec(
             description="Remove models that haven't updated for this many ms (<=0 disables cleanup).",
             valueSchema=integer_schema(default=10000, minimum=0, maximum=60_000_000),
             access=F8StateAccess.wo,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -767,6 +773,7 @@ UdpSkeletonRuntimeNode.SPEC = F8OperatorSpec(
             description="If set and matches an available key, outputs `selectedSkeleton`; otherwise None.",
             valueSchema=string_schema(default=""),
             access=F8StateAccess.rw,
+            required=True,
             uiControl="options:[availableKeys]",
             showOnNode=True,
         ),
@@ -776,6 +783,7 @@ UdpSkeletonRuntimeNode.SPEC = F8OperatorSpec(
             description="Read-only list of current keys (updated only on changes).",
             valueSchema=array_schema(items=string_schema()),
             access=F8StateAccess.ro,
+            required=True,
             showOnNode=True,
         ),
     ],

@@ -58,6 +58,7 @@ class VizAudioRuntimeNode(OperatorNode):
                 description="Pause/resume embedded viewer updates in the editor.",
                 valueSchema=boolean_schema(default=True),
                 access=F8StateAccess.rw,
+                required=True,
                 showOnNode=False,
             ),
             F8StateSpec(
@@ -66,6 +67,7 @@ class VizAudioRuntimeNode(OperatorNode):
                 description="If set and shmName is empty, uses shm.<serviceId>.audio",
                 valueSchema=string_schema(default=""),
                 access=F8StateAccess.rw,
+                required=True,
                 showOnNode=False,
             ),
             F8StateSpec(
@@ -74,6 +76,7 @@ class VizAudioRuntimeNode(OperatorNode):
                 description="Audio SHM mapping name (e.g. shm.audiocap.audio). Overrides serviceId.",
                 valueSchema=string_schema(default=""),
                 access=F8StateAccess.rw,
+                required=True,
                 showOnNode=True,
             ),
             F8StateSpec(
@@ -82,6 +85,7 @@ class VizAudioRuntimeNode(OperatorNode):
                 description="UI refresh interval in milliseconds (0 = as fast as possible).",
                 valueSchema=integer_schema(default=20, minimum=0, maximum=60000),
                 access=F8StateAccess.rw,
+                required=True,
                 showOnNode=False,
             ),
             F8StateSpec(
@@ -90,6 +94,7 @@ class VizAudioRuntimeNode(OperatorNode):
                 description="Waveform window length in milliseconds.",
                 valueSchema=integer_schema(default=250, minimum=20, maximum=60000),
                 access=F8StateAccess.rw,
+                required=True,
                 showOnNode=False,
             ),
             F8StateSpec(
@@ -98,6 +103,7 @@ class VizAudioRuntimeNode(OperatorNode):
                 description="Channel to display (0..N-1).",
                 valueSchema=integer_schema(default=0, minimum=0, maximum=16),
                 access=F8StateAccess.rw,
+                required=True,
                 showOnNode=False,
             ),
         ],

@@ -50,6 +50,7 @@ class NoteRuntimeNode(OperatorNode):
                 description="Markdown note content shown in the node.",
                 valueSchema=string_schema(default=_DEFAULT_NOTE_CONTENT),
                 access=F8StateAccess.rw,
+                required=True,
                 showOnNode=False,
             ),
         ],

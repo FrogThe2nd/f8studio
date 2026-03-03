@@ -251,6 +251,7 @@ SerialOutRuntimeNode.SPEC = F8OperatorSpec(
             description="Enable/disable serial output.",
             valueSchema=boolean_schema(default=True),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=True,
         ),
         F8StateSpec(
@@ -259,6 +260,7 @@ SerialOutRuntimeNode.SPEC = F8OperatorSpec(
             description="Serial port name (e.g., COM3).",
             valueSchema=string_schema(default="COM4"),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=True,
         ),
         F8StateSpec(
@@ -267,6 +269,7 @@ SerialOutRuntimeNode.SPEC = F8OperatorSpec(
             description="Serial baud rate.",
             valueSchema=integer_schema(default=115200, minimum=300, maximum=4000000),
             access=F8StateAccess.wo,
+            required=True,
             showOnNode=False,
         ),
         # Back-compat for saved sessions: these fields used to exist and may appear
@@ -277,6 +280,7 @@ SerialOutRuntimeNode.SPEC = F8OperatorSpec(
             description="Deprecated. Serial Out always encodes as ASCII for TCode devices.",
             valueSchema=string_schema(default="ascii"),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -285,6 +289,7 @@ SerialOutRuntimeNode.SPEC = F8OperatorSpec(
             description="Deprecated. Provide newline in the input payload if needed.",
             valueSchema=string_schema(default=""),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=False,
         ),
     ],

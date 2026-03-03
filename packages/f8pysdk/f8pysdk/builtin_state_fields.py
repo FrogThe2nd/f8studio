@@ -23,7 +23,8 @@ def _service_active_state_spec() -> F8StateSpec:
         description="Service lifecycle state (activate/deactivate).",
         valueSchema=boolean_schema(default=True),
         access=F8StateAccess.rw,
-        showOnNode=True,
+        required=True,
+        showOnNode=False,
     )
 
 
@@ -34,6 +35,7 @@ def _svc_id_state_spec() -> F8StateSpec:
         description="Readonly: current service instance id (svcId).",
         valueSchema=string_schema(),
         access=F8StateAccess.ro,
+        required=True,
         showOnNode=False,
     )
 
@@ -45,6 +47,7 @@ def _operator_id_state_spec() -> F8StateSpec:
         description="Readonly: current operator/node id (operatorId).",
         valueSchema=string_schema(),
         access=F8StateAccess.ro,
+        required=True,
         showOnNode=False,
     )
 
@@ -118,7 +121,8 @@ def _service_active_field_dict() -> dict[str, Any]:
         "description": "Service lifecycle state (activate/deactivate).",
         "valueSchema": {"type": "boolean", "default": True},
         "access": "rw",
-        "showOnNode": True,
+        "required": True,
+        "showOnNode": False,
     }
 
 
@@ -129,6 +133,7 @@ def _svc_id_field_dict() -> dict[str, Any]:
         "description": "Readonly: current service instance id (svcId).",
         "valueSchema": {"type": "string"},
         "access": "ro",
+        "required": True,
         "showOnNode": False,
     }
 
@@ -140,6 +145,7 @@ def _operator_id_field_dict() -> dict[str, Any]:
         "description": "Readonly: current operator/node id (operatorId).",
         "valueSchema": {"type": "string"},
         "access": "ro",
+        "required": True,
         "showOnNode": False,
     }
 
@@ -148,8 +154,8 @@ def _monitor_port_dict() -> dict[str, Any]:
     return {
         "name": MONITOR_PORT_NAME,
         "description": "Unified runtime monitor snapshots (health/resource/perf/error).",
-        "required": False,
-        "showOnNode": True,
+        "required": True,
+        "showOnNode": False,
         "valueSchema": monitor_snapshot_schema_dict(),
     }
 

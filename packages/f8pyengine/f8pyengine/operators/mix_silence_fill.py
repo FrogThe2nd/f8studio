@@ -231,6 +231,7 @@ MixSilenceFillRuntimeNode.SPEC = F8OperatorSpec(
             description="If A changes less than deltaThreshold for this long, fade to B.",
             valueSchema=integer_schema(default=500, minimum=0, maximum=60_000),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=True,
         ),
         F8StateSpec(
@@ -239,6 +240,7 @@ MixSilenceFillRuntimeNode.SPEC = F8OperatorSpec(
             description="Absolute change threshold to treat A as active.",
             valueSchema=number_schema(default=0.001, minimum=0.0),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=True,
         ),
         F8StateSpec(
@@ -247,6 +249,7 @@ MixSilenceFillRuntimeNode.SPEC = F8OperatorSpec(
             description="Crossfade time (0=instant).",
             valueSchema=integer_schema(default=200, minimum=0, maximum=60_000),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=True,
         ),
     ],

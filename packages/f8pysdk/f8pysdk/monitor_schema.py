@@ -107,8 +107,8 @@ def monitor_snapshot_data_port() -> F8DataPortSpec:
         name=MONITOR_PORT_NAME,
         description="Unified runtime monitor snapshots (health/resource/perf/error).",
         valueSchema=monitor_snapshot_value_schema(),
-        required=False,
-        showOnNode=True,
+        required=True,
+        showOnNode=False,
     )
 
 
@@ -163,6 +163,10 @@ def validate_describe_monitor_contract(
 
     if monitor_port is None:
         raise MonitorContractError("service.dataOutPorts must contain `monitor`")
+
+    required_raw = monitor_port.get("required")
+    if required_raw is not None and not bool(required_raw):
+        raise MonitorContractError("`monitor` dataOutPort must set required=true")
 
     monitor_schema_obj = monitor_port.get("valueSchema")
     if not isinstance(monitor_schema_obj, dict):

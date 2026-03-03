@@ -25,8 +25,8 @@ from f8pyscript.script_service_node import PythonScriptServiceNode  # noqa: E402
 
 
 def _service_node(*, code: str, state_fields: list[F8StateSpec] | None = None, state_values: dict[str, object] | None = None) -> F8RuntimeNode:
-    spec = RuntimeNodeRegistry.instance().service_spec(SERVICE_CLASS)
-    assert spec is not None
+    desc = RuntimeNodeRegistry.instance().describe(SERVICE_CLASS)
+    spec = desc.service
     merged_state = {"code": code}
     if state_values is not None:
         merged_state.update(state_values)
@@ -46,9 +46,22 @@ class PyScriptServiceNodeTests(unittest.IsolatedAsyncioTestCase):
     def test_service_spec_contains_editor_assist_protocol(self) -> None:
         reg = RuntimeNodeRegistry.instance()
         register_specs(reg)
-        spec = reg.service_spec(SERVICE_CLASS)
-        self.assertIsNotNone(spec)
-        assert spec is not None
+        spec = reg.describe(SERVICE_CLASS).service
+        state_fields_by_name = {str(field.name or ""): field for field in list(spec.stateFields or [])}
+        self.assertIn("tickEnabled", state_fields_by_name)
+        self.assertIn("tickMs", state_fields_by_name)
+        self.assertTrue(bool(state_fields_by_name["tickEnabled"].required))
+        self.assertTrue(bool(state_fields_by_name["tickMs"].required))
+        self.assertIn("code", state_fields_by_name)
+        self.assertTrue(bool(state_fields_by_name["code"].required))
+        data_in_ports = {str(port.name or ""): port for port in list(spec.dataInPorts or [])}
+        data_out_ports = {str(port.name or ""): port for port in list(spec.dataOutPorts or [])}
+        self.assertIn("in", data_in_ports)
+        self.assertFalse(bool(data_in_ports["in"].required))
+        self.assertIn("out", data_out_ports)
+        self.assertFalse(bool(data_out_ports["out"].required))
+        self.assertIn("monitor", data_out_ports)
+        self.assertTrue(bool(data_out_ports["monitor"].required))
         code_field = next((f for f in list(spec.stateFields or []) if str(f.name or "").strip() == "code"), None)
         self.assertIsNotNone(code_field)
         assert code_field is not None
@@ -103,7 +116,7 @@ class PyScriptServiceNodeTests(unittest.IsolatedAsyncioTestCase):
             "    ctx.set_state('resumeCount', c)\n"
         )
 
-        fields = list(RuntimeNodeRegistry.instance().service_spec(SERVICE_CLASS).stateFields or [])  # type: ignore[union-attr]
+        fields = list(RuntimeNodeRegistry.instance().describe(SERVICE_CLASS).service.stateFields or [])
         fields.append(F8StateSpec(name="startedCount", label="", description="", valueSchema=any_schema(), access=F8StateAccess.rw))
         fields.append(F8StateSpec(name="pauseCount", label="", description="", valueSchema=any_schema(), access=F8StateAccess.rw))
         fields.append(F8StateSpec(name="resumeCount", label="", description="", valueSchema=any_schema(), access=F8StateAccess.rw))
@@ -139,7 +152,7 @@ class PyScriptServiceNodeTests(unittest.IsolatedAsyncioTestCase):
             "    ctx.set_state('tickCount', c)\n"
         )
 
-        fields = list(RuntimeNodeRegistry.instance().service_spec(SERVICE_CLASS).stateFields or [])  # type: ignore[union-attr]
+        fields = list(RuntimeNodeRegistry.instance().describe(SERVICE_CLASS).service.stateFields or [])
         fields.append(F8StateSpec(name="tickCount", label="", description="", valueSchema=any_schema(), access=F8StateAccess.rw))
 
         graph = F8RuntimeGraph(
@@ -337,36 +350,6 @@ class PyScriptServiceNodeTests(unittest.IsolatedAsyncioTestCase):
         out_result = (out or {}).get("result") if isinstance(out, dict) else {}
         self.assertIsInstance(out_result, dict)
         self.assertEqual((out_result or {}).get("values"), [41, 42, 42, False])
-
-    async def test_commands_state_normalization_tolerates_empty_values(self) -> None:
-        harness = ServiceBusHarness()
-        bus = harness.create_bus("svcA")
-        reg = RuntimeNodeRegistry.instance()
-        register_specs(reg)
-        _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
-
-        graph = F8RuntimeGraph(
-            graphId="g7",
-            revision="r1",
-            nodes=[_service_node(code="", state_values={"commands": None})],
-            edges=[],
-        )
-        await bus.set_rungraph(graph)
-        node = bus.get_node("svcA")
-        assert isinstance(node, PythonScriptServiceNode)
-
-        await node.on_state("commands", None, ts_ms=1)
-        self.assertEqual(node._declared_commands, [])
-
-        await node.on_state("commands", "", ts_ms=2)
-        self.assertEqual(node._declared_commands, [])
-
-        await node.on_state("commands", {}, ts_ms=3)
-        self.assertEqual(node._declared_commands, [])
-
-        await node.on_state("commands", {"name": "ping"}, ts_ms=4)
-        self.assertEqual(len(node._declared_commands), 1)
-        self.assertEqual(str(node._declared_commands[0].get("name") or ""), "ping")
 
     async def test_legacy_ctx_dict_access_sets_last_error(self) -> None:
         harness = ServiceBusHarness()

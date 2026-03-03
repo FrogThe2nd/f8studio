@@ -33,6 +33,7 @@ def register_pystudio_specs(registry: RuntimeNodeRegistry | None = None) -> Runt
                     description="Interval in milliseconds for refreshing the UI nodes in the editor.",
                     valueSchema=integer_schema(default=100, minimum=16, maximum=5000),
                     access=F8StateAccess.rw,
+                    required=True,
                     showOnNode=True,
                 ),
             ],

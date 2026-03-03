@@ -330,6 +330,7 @@ PlaybackSyncRuntimeNode.SPEC = F8OperatorSpec(
             description="Limit extrapolation horizon to avoid drift when playback state is stale (0 = unlimited).",
             valueSchema=integer_schema(default=1000, minimum=0, maximum=600_000),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -338,6 +339,7 @@ PlaybackSyncRuntimeNode.SPEC = F8OperatorSpec(
             description="Rate multiplier used for extrapolation when playing.",
             valueSchema=number_schema(default=1.0, minimum=0.0, maximum=16.0),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -346,6 +348,7 @@ PlaybackSyncRuntimeNode.SPEC = F8OperatorSpec(
             description="Clamp estimated position to latest duration when available.",
             valueSchema=boolean_schema(default=True),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=False,
         ),
     ],

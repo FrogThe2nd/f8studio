@@ -689,6 +689,7 @@ HandyOutRuntimeNode.SPEC = F8OperatorSpec(
             description="Enable/disable Handy output.",
             valueSchema=boolean_schema(default=True),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=True,
         ),
         F8StateSpec(
@@ -697,6 +698,7 @@ HandyOutRuntimeNode.SPEC = F8OperatorSpec(
             description="The Handy X-Connection-Key value.",
             valueSchema=string_schema(default=""),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=True,
         ),
         F8StateSpec(
@@ -705,6 +707,7 @@ HandyOutRuntimeNode.SPEC = F8OperatorSpec(
             description="Handy API base URL.",
             valueSchema=string_schema(default="https://www.handyfeeling.com/api/handy/v2"),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=True,
         ),
         F8StateSpec(
@@ -713,6 +716,7 @@ HandyOutRuntimeNode.SPEC = F8OperatorSpec(
             description="Automatically set mode=HDSP before sending position commands.",
             valueSchema=boolean_schema(default=True),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=True,
         ),
         F8StateSpec(
@@ -721,6 +725,7 @@ HandyOutRuntimeNode.SPEC = F8OperatorSpec(
             description="Invert 0..1 input mapping before percent conversion.",
             valueSchema=boolean_schema(default=False),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=True,
         ),
         F8StateSpec(
@@ -729,6 +734,7 @@ HandyOutRuntimeNode.SPEC = F8OperatorSpec(
             description="Mapped output minimum in percent.",
             valueSchema=number_schema(default=0.0, minimum=0.0, maximum=100.0),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=True,
         ),
         F8StateSpec(
@@ -737,6 +743,7 @@ HandyOutRuntimeNode.SPEC = F8OperatorSpec(
             description="Mapped output maximum in percent.",
             valueSchema=number_schema(default=100.0, minimum=0.0, maximum=100.0),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=True,
         ),
         F8StateSpec(
@@ -745,6 +752,7 @@ HandyOutRuntimeNode.SPEC = F8OperatorSpec(
             description="Default /hdsp/xpt duration when durationMs input is not provided.",
             valueSchema=integer_schema(default=100, minimum=0, maximum=120000),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=True,
         ),
         F8StateSpec(
@@ -753,6 +761,7 @@ HandyOutRuntimeNode.SPEC = F8OperatorSpec(
             description="HTTP request timeout for Handy API calls.",
             valueSchema=integer_schema(default=5000, minimum=100, maximum=120000),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -761,6 +770,7 @@ HandyOutRuntimeNode.SPEC = F8OperatorSpec(
             description="Minimum interval between sent commands (0 means follow tick rate).",
             valueSchema=integer_schema(default=0, minimum=0, maximum=120000),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=True,
         ),
         F8StateSpec(
@@ -769,6 +779,7 @@ HandyOutRuntimeNode.SPEC = F8OperatorSpec(
             description="Default immediateResponse value for /hdsp/xpt.",
             valueSchema=boolean_schema(default=False),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -777,6 +788,7 @@ HandyOutRuntimeNode.SPEC = F8OperatorSpec(
             description="Default stopOnTarget value for /hdsp/xpt.",
             valueSchema=boolean_schema(default=False),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(

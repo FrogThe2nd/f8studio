@@ -465,6 +465,7 @@ AxisEnvelopeRuntimeNode.SPEC = F8OperatorSpec(
             description="EMA smoothing for center/covariance tracking.",
             valueSchema=number_schema(default=0.2, minimum=0.0, maximum=1.0),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=True,
         ),
         F8StateSpec(
@@ -473,6 +474,7 @@ AxisEnvelopeRuntimeNode.SPEC = F8OperatorSpec(
             description="Envelope filter method.",
             valueSchema=string_schema(default="EMA", enum=["EMA", "DEMA", "SMA"]),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=True,
         ),
         F8StateSpec(
@@ -481,6 +483,7 @@ AxisEnvelopeRuntimeNode.SPEC = F8OperatorSpec(
             description="Smoothing factor when moving toward the envelope.",
             valueSchema=number_schema(default=0.4, minimum=0.0, maximum=1.0),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=True,
         ),
         F8StateSpec(
@@ -489,6 +492,7 @@ AxisEnvelopeRuntimeNode.SPEC = F8OperatorSpec(
             description="Smoothing factor when moving away from the envelope.",
             valueSchema=number_schema(default=0.05, minimum=0.0, maximum=1.0),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=True,
         ),
         F8StateSpec(
@@ -497,6 +501,7 @@ AxisEnvelopeRuntimeNode.SPEC = F8OperatorSpec(
             description="Minimum enforced envelope span.",
             valueSchema=number_schema(default=0.25, minimum=0.0),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=True,
         ),
         F8StateSpec(
@@ -505,6 +510,7 @@ AxisEnvelopeRuntimeNode.SPEC = F8OperatorSpec(
             description="Window size for SMA mode.",
             valueSchema=number_schema(default=10, minimum=1.0),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=True,
         ),
         F8StateSpec(
@@ -513,6 +519,7 @@ AxisEnvelopeRuntimeNode.SPEC = F8OperatorSpec(
             description="Extra margin added to the envelopes before normalization.",
             valueSchema=number_schema(default=0.0, minimum=0.0),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -521,6 +528,7 @@ AxisEnvelopeRuntimeNode.SPEC = F8OperatorSpec(
             description="Proportional outlier threshold. If a sample is >= this many sigma (2D) or spans (1D) away, reset and ignore it (0 disables).",
             valueSchema=number_schema(default=8.0, minimum=0.0),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -529,6 +537,7 @@ AxisEnvelopeRuntimeNode.SPEC = F8OperatorSpec(
             description="Legacy absolute outlier threshold; if abs(x) or abs(y) exceeds this value, reset and ignore the sample (0 disables).",
             valueSchema=number_schema(default=0.0, minimum=0.0),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=False,
         ),
     ],
