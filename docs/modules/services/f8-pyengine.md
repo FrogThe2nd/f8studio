@@ -588,17 +588,17 @@ Evaluate a small expression using input values (math/logic/extraction).
 | --- | --- | --- | --- | --- |
 | `out` | `false` | `true` | `any` | Expression result. |
 
-### Buttplug Bridge (`f8.buttplug_bridge`)
+### Buttplug Out (`f8.buttplug_out`)
 Connect to Intiface/Buttplug, publish device capabilities, and drive selected device outputs.
 
-- Exec in ports: `exec`
+- Exec in ports: `sendPositionCmd`, `sendFunctionCmd`
 - Exec out ports: none
 
 #### State Fields
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `enabled` | `rw` | `false` | `true` | `boolean / default=True` | Enable bridge connection and output control. |
+| `enabled` | `rw` | `false` | `true` | `boolean / default=True` | Enable connection and output control. |
 | `wsUrl` | `rw` | `false` | `true` | `string / default=ws://127.0.0.1:12345` | Buttplug server websocket URL. |
 | `autoConnect` | `rw` | `false` | `true` | `boolean / default=True` | Automatically connect while enabled. |
 | `autoScanOnConnect` | `rw` | `false` | `false` | `boolean / default=True` | Start and stop scan once after connect. |
@@ -611,6 +611,10 @@ Connect to Intiface/Buttplug, publish device capabilities, and drive selected de
 | `oscillateFeatureIndex` | `rw` | `false` | `false` | `integer / default=-1` | Feature index for oscillate (-1 = all). |
 | `positionFeatureIndex` | `rw` | `false` | `false` | `integer / default=-1` | Feature index for position (-1 = all). |
 | `defaultPositionDurationMs` | `rw` | `false` | `false` | `integer / default=500` | Default duration for position output. |
+| `vibrate` | `rw` | `false` | `true` | `number` | Function-channel vibrate intensity (0..1). |
+| `rotate` | `rw` | `false` | `true` | `number` | Function-channel rotate speed (-1..1). |
+| `oscillate` | `rw` | `false` | `true` | `number` | Function-channel oscillate intensity (0..1). |
+| `stop` | `rw` | `false` | `true` | `boolean / default=False` | When true, `sendFunctionCmd` stops output on selected device. |
 | `stopOnDeactivate` | `rw` | `false` | `false` | `boolean / default=True` | Send stop command when service deactivates. |
 | `connected` | `ro` | `false` | `true` | `boolean / default=False` | True when websocket is connected. |
 | `scanning` | `ro` | `false` | `false` | `boolean / default=False` | True while scanning is active. |
@@ -627,12 +631,7 @@ Connect to Intiface/Buttplug, publish device capabilities, and drive selected de
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
-| `vibrate` | `true` | `true` | `number` | Vibrate intensity (0..1). |
-| `rotate` | `true` | `true` | `number` | Rotate speed (-1..1). |
-| `oscillate` | `true` | `true` | `number` | Oscillate intensity (0..1). |
-| `position` | `true` | `true` | `number` | Position target (0..1). |
-| `positionDurationMs` | `false` | `true` | `number / default=500` | Optional position duration in milliseconds. |
-| `stop` | `false` | `true` | `boolean / default=False` | When true on exec, stop output on selected device. |
+| `position` | `false` | `true` | `number` | Position target (0..1). On `sendPositionCmd`, node sends position output. |
 
 #### Data Output Ports
 
@@ -641,6 +640,70 @@ Connect to Intiface/Buttplug, publish device capabilities, and drive selected de
 | `connected` | `true` | `true` | `boolean / default=False` | Current connection status. |
 | `selectedDeviceInfo` | `true` | `true` | `any` | Selected device info object. |
 | `error` | `true` | `true` | `string / default=` | Last error string. |
+
+### Lovense Out (`f8.lovense_out`)
+Send Lovense Local API commands with split channels: `sendPositionCmd -> Position`, `sendFunctionCmd -> Function`.
+
+- Exec in ports: `sendPositionCmd`, `sendFunctionCmd`
+- Exec out ports: none
+
+Migration note: this is a breaking change. Old graphs using Lovense convenience data ports must migrate those fields to state writes and trigger `sendFunctionCmd`.
+Toy discovery note: node auto-sends one `GetToys` on activation and updates `availableToys`.
+
+#### State Fields
+
+| Name | Access | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- | --- |
+| `enabled` | `rw` | `true` | `true` | `boolean / default=True` | Enable/disable Lovense output. |
+| `commandUrl` | `rw` | `true` | `true` | `string / default=https://127.0.0.1.lovense.club:30010/command` | Lovense Local API /command URL. |
+| `platformName` | `rw` | `true` | `true` | `string / default=Feel8 Studio` | Value for X-platform request header. |
+| `requestTimeoutMs` | `rw` | `true` | `false` | `integer / default=5000` | HTTP timeout for Lovense requests. |
+| `verifyTls` | `rw` | `true` | `false` | `boolean / default=True` | Verify HTTPS certificate when using https commandUrl. |
+| `minSendIntervalMs` | `rw` | `true` | `true` | `integer / default=100` | Minimum interval between Position commands sent by `sendPositionCmd` (0 disables throttling). |
+| `vibrate` | `rw` | `false` | `true` | `number` | Normalized Function Vibrate level (0..1). |
+| `rotate` | `rw` | `false` | `true` | `number` | Normalized Function Rotate level (0..1). |
+| `pump` | `rw` | `false` | `false` | `number` | Normalized Function Pump level (0..1). |
+| `thrusting` | `rw` | `false` | `false` | `number` | Normalized Function Thrusting level (0..1). |
+| `fingering` | `rw` | `false` | `false` | `number` | Normalized Function Fingering level (0..1). |
+| `suction` | `rw` | `false` | `false` | `number` | Normalized Function Suction level (0..1). |
+| `depth` | `rw` | `false` | `false` | `number` | Normalized Function Depth level (0..1). |
+| `oscillate` | `rw` | `false` | `false` | `number` | Normalized Function Oscillate level (0..1). |
+| `all` | `rw` | `false` | `false` | `number` | Normalized Function All level (0..1). |
+| `strokeMin` | `rw` | `false` | `false` | `number` | Normalized Function Stroke min (0..1); requires strokeMax. |
+| `strokeMax` | `rw` | `false` | `false` | `number` | Normalized Function Stroke max (0..1); requires strokeMin. |
+| `stop` | `rw` | `true` | `true` | `boolean / default=False` | When true, `sendFunctionCmd` sends Function Stop with highest priority. |
+| `timeSec` | `rw` | `true` | `true` | `number / default=0.0` | Function timeSec. |
+| `loopRunningSec` | `rw` | `false` | `false` | `number` | Optional Function loopRunningSec (omitted when empty or <=0). |
+| `loopPauseSec` | `rw` | `false` | `false` | `number` | Optional Function loopPauseSec (omitted when empty or <=0). |
+| `stopPrevious` | `rw` | `true` | `true` | `boolean / default=True` | Function stopPrevious (`true->1`, `false->0`). |
+| `toy` | `rw` | `true` | `true` | `string / default=` | Optional target toy id. UI options come from `availableToys`. Empty uses defaultToy. |
+| `defaultToy` | `rw` | `true` | `true` | `string / default=` | Fallback toy id when toy is empty. |
+| `lastError` | `ro` | `false` | `true` | `string / default=` | Last runtime error message. |
+| `lastHttpStatus` | `ro` | `false` | `true` | `integer / default=0` | Last HTTP status code from Lovense endpoint. |
+| `lastResultCode` | `ro` | `false` | `true` | `integer / default=0` | Last Lovense response code field. |
+| `lastResponse` | `ro` | `false` | `false` | `any` | Last parsed Lovense response payload. |
+| `lastRequest` | `ro` | `false` | `false` | `any` | Last sent Lovense request payload. |
+| `availableToys` | `ro` | `false` | `true` | `array<string>` | Discovered toy IDs from GetToys response. |
+| `sentCommands` | `ro` | `false` | `false` | `integer / default=0` | Total successfully sent Lovense commands. |
+| `droppedCommands` | `ro` | `false` | `false` | `integer / default=0` | Commands dropped by minSendInterval throttling. |
+| `lastSentTsMs` | `ro` | `false` | `false` | `integer / default=0` | Timestamp of the last successful request. |
+| `svcId` | `ro` | `false` | `false` | `string` | Readonly: current service instance id (svcId). |
+| `operatorId` | `ro` | `false` | `false` | `string` | Readonly: current operator/node id (operatorId). |
+
+#### Data Input Ports
+
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `position` | `false` | `true` | `number` | Normalized position (0..1). On `sendPositionCmd`, node sends Lovense Position command. |
+
+#### Data Output Ports
+
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `httpStatus` | `true` | `true` | `integer / default=0` | Last HTTP status code. |
+| `resultCode` | `true` | `true` | `integer / default=0` | Last Lovense API code. |
+| `response` | `true` | `true` | `any` | Last parsed response object. |
+| `error` | `true` | `true` | `string / default=` | Last runtime error. |
 
 ### Lovense Mock Server (`f8.lovense_mock_server`)
 Event-driven input node that mocks the Lovense Local API and publishes received commands as state.
@@ -866,7 +929,7 @@ pixi run -e default engine
 ### Operator Composition Notes
 
 - Keep time-base generation (`tick`, `phase`, `program_wave`) separated from mapping stages (`range_map`, `smooth_filter`, `rate_limiter`).
-- Use dedicated adapter operators (`lovense_program_adapter`, `buttplug_bridge`) to isolate protocol translation from signal logic.
+- Use dedicated protocol operators (`lovense_program_adapter`, `lovense_out`, `buttplug_out`) to isolate protocol translation from signal logic.
 - `f8.expr` is an operator inside `f8.pyengine`; if you need a standalone service-level expression runtime, use `f8.pyexpr`.
 - For reusable chains, keep clear input/output contracts and avoid hidden side effects.
 

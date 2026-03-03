@@ -18,9 +18,9 @@ from f8pysdk.service_host import ServiceHost, ServiceHostConfig  # noqa: E402
 from f8pysdk.testing import ServiceBusHarness  # noqa: E402
 
 from f8pyengine.constants import SERVICE_CLASS  # noqa: E402
-from f8pyengine.operators import buttplug_bridge as bridge_mod  # noqa: E402
-from f8pyengine.operators.buttplug_bridge import (  # noqa: E402
-    ButtplugBridgeRuntimeNode,
+from f8pyengine.operators import buttplug_out as out_mod  # noqa: E402
+from f8pyengine.operators.buttplug_out import (  # noqa: E402
+    ButtplugOutRuntimeNode,
     register_operator,
 )
 
@@ -186,12 +186,12 @@ class _FakeClient:
 
 class _SlowConnectClient(_FakeClient):
     async def connect(self, url: str) -> None:
-        await bridge_mod.asyncio.sleep(0.05)
+        await out_mod.asyncio.sleep(0.05)
         await super().connect(url)
 
 
-class ButtplugBridgeTests(unittest.IsolatedAsyncioTestCase):
-    async def _build_node(self, *, state_values: dict[str, Any]) -> tuple[Any, ButtplugBridgeRuntimeNode]:
+class ButtplugOutTests(unittest.IsolatedAsyncioTestCase):
+    async def _build_node(self, *, state_values: dict[str, Any]) -> tuple[Any, ButtplugOutRuntimeNode]:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
         reg = RuntimeNodeRegistry.instance()
@@ -201,15 +201,15 @@ class ButtplugBridgeTests(unittest.IsolatedAsyncioTestCase):
             nodeId="bp1",
             serviceId="svcA",
             serviceClass=SERVICE_CLASS,
-            operatorClass=ButtplugBridgeRuntimeNode.SPEC.operatorClass,
-            stateFields=list(ButtplugBridgeRuntimeNode.SPEC.stateFields or []),
+            operatorClass=ButtplugOutRuntimeNode.SPEC.operatorClass,
+            stateFields=list(ButtplugOutRuntimeNode.SPEC.stateFields or []),
             stateValues=dict(state_values),
         )
         graph = F8RuntimeGraph(graphId="g1", revision="r1", nodes=[op], edges=[])
         await bus.set_rungraph(graph)
         node = bus.get_node("bp1")
-        self.assertIsInstance(node, ButtplugBridgeRuntimeNode)
-        assert isinstance(node, ButtplugBridgeRuntimeNode)
+        self.assertIsInstance(node, ButtplugOutRuntimeNode)
+        assert isinstance(node, ButtplugOutRuntimeNode)
         return bus, node
 
     async def test_connect_and_publish_device_infos_with_ranges(self) -> None:
@@ -221,14 +221,14 @@ class ButtplugBridgeTests(unittest.IsolatedAsyncioTestCase):
         )
         device = _FakeDevice(index=3, name="ToyA", features={0: feature}, display_name="Toy A")
         client = _FakeClient(devices={3: device})
-        symbols = bridge_mod._ButtplugSymbols(  # type: ignore[attr-defined]
+        symbols = out_mod._ButtplugSymbols(  # type: ignore[attr-defined]
             buttplug_client_cls=object,
             device_output_command_cls=_FakeCommand,
             output_type_enum=_FakeOutputType,
         )
 
-        with patch.object(ButtplugBridgeRuntimeNode, "_create_client", return_value=client), patch.object(
-            ButtplugBridgeRuntimeNode, "_load_buttplug_symbols", return_value=symbols
+        with patch.object(ButtplugOutRuntimeNode, "_create_client", return_value=client), patch.object(
+            ButtplugOutRuntimeNode, "_load_buttplug_symbols", return_value=symbols
         ):
             bus, node = await self._build_node(
                 state_values={"enabled": True, "autoConnect": True, "autoScanOnConnect": False, "scanDurationMs": 100}
@@ -250,36 +250,34 @@ class ButtplugBridgeTests(unittest.IsolatedAsyncioTestCase):
         f1 = _FakeFeature(index=1, outputs={"Vibrate": _FakeOutputDef((0, 20))}, description="B")
         device = _FakeDevice(index=5, name="ToyB", features={0: f0, 1: f1})
         client = _FakeClient(devices={5: device})
-        symbols = bridge_mod._ButtplugSymbols(  # type: ignore[attr-defined]
+        symbols = out_mod._ButtplugSymbols(  # type: ignore[attr-defined]
             buttplug_client_cls=object,
             device_output_command_cls=_FakeCommand,
             output_type_enum=_FakeOutputType,
         )
 
-        with patch.object(ButtplugBridgeRuntimeNode, "_load_buttplug_symbols", return_value=symbols):
+        with patch.object(ButtplugOutRuntimeNode, "_load_buttplug_symbols", return_value=symbols):
             bus, node = await self._build_node(
-                state_values={"enabled": True, "autoConnect": False, "selectedDevice": "999|missing", "vibrateFeatureIndex": -1}
+                state_values={
+                    "enabled": True,
+                    "autoConnect": False,
+                    "selectedDevice": "999|missing",
+                    "vibrateFeatureIndex": -1,
+                    "vibrate": 0.5,
+                }
             )
             node._client = client
             node._bind_client_callbacks(client)
             client._connected = True
             node._client_url = "ws://127.0.0.1:12345"
-
-            async def _pull_all(port: str, *, ctx_id: str | int | None = None) -> Any:
-                del ctx_id
-                if port == "vibrate":
-                    return 0.5
-                return None
-
-            node.pull = _pull_all  # type: ignore[method-assign]
-            await node.on_exec("e1")
+            await node.on_exec("e1", "sendFunctionCmd")
             selected_info = (await bus.get_state("bp1", "selectedDeviceInfo")).value
             self.assertEqual(selected_info["index"], 5)
             self.assertEqual(len(f0.commands), 1)
             self.assertEqual(len(f1.commands), 1)
 
             await bus.publish_state_external("bp1", "vibrateFeatureIndex", 1, source="test")
-            await node.on_exec("e2")
+            await node.on_exec("e2", "sendFunctionCmd")
             self.assertEqual(len(f0.commands), 1)
             self.assertEqual(len(f1.commands), 2)
             await node.close()
@@ -288,14 +286,14 @@ class ButtplugBridgeTests(unittest.IsolatedAsyncioTestCase):
         feature = _FakeFeature(index=0, outputs={"HwPositionWithDuration": _FakeOutputDef((0, 20), (100, 10000))})
         device = _FakeDevice(index=7, name="ToyPos", features={0: feature})
         client = _FakeClient(devices={7: device})
-        symbols = bridge_mod._ButtplugSymbols(  # type: ignore[attr-defined]
+        symbols = out_mod._ButtplugSymbols(  # type: ignore[attr-defined]
             buttplug_client_cls=object,
             device_output_command_cls=_FakeCommand,
             output_type_enum=_FakeOutputType,
         )
 
-        with patch.object(ButtplugBridgeRuntimeNode, "_load_buttplug_symbols", return_value=symbols):
-            _bus, node = await self._build_node(
+        with patch.object(ButtplugOutRuntimeNode, "_load_buttplug_symbols", return_value=symbols):
+            bus, node = await self._build_node(
                 state_values={
                     "enabled": True,
                     "autoConnect": False,
@@ -312,12 +310,11 @@ class ButtplugBridgeTests(unittest.IsolatedAsyncioTestCase):
                 del ctx_id
                 if port == "position":
                     return 1.0
-                if port == "positionDurationMs":
-                    return 800
                 return None
 
             node.pull = _pull_hi  # type: ignore[method-assign]
-            await node.on_exec("e_hi")
+            await bus.publish_state_external("bp1", "defaultPositionDurationMs", 800, source="test")
+            await node.on_exec("e_hi", "sendPositionCmd")
             self.assertEqual(len(feature.commands), 1)
             self.assertAlmostEqual(feature.commands[-1].value, 0.9999, places=6)
             self.assertEqual(feature.commands[-1].duration, 800)
@@ -329,7 +326,7 @@ class ButtplugBridgeTests(unittest.IsolatedAsyncioTestCase):
                 return None
 
             node.pull = _pull_lo  # type: ignore[method-assign]
-            await node.on_exec("e_lo")
+            await node.on_exec("e_lo", "sendPositionCmd")
             self.assertEqual(len(feature.commands), 2)
             self.assertAlmostEqual(feature.commands[-1].value, 0.0001, places=6)
             await node.close()
@@ -354,7 +351,7 @@ class ButtplugBridgeTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_reconnect_is_throttled_after_failure(self) -> None:
         client = _FakeClient(devices={}, fail_connect=True)
-        with patch.object(ButtplugBridgeRuntimeNode, "_create_client", return_value=client):
+        with patch.object(ButtplugOutRuntimeNode, "_create_client", return_value=client):
             _bus, node = await self._build_node(
                 state_values={"enabled": True, "autoConnect": True, "autoScanOnConnect": False, "reconnectIntervalMs": 60000}
             )
@@ -383,12 +380,34 @@ class ButtplugBridgeTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_tick_once_is_mutex_guarded(self) -> None:
         client = _SlowConnectClient(devices={})
-        with patch.object(ButtplugBridgeRuntimeNode, "_create_client", return_value=client):
+        with patch.object(ButtplugOutRuntimeNode, "_create_client", return_value=client):
             _bus, node = await self._build_node(
                 state_values={"enabled": True, "autoConnect": True, "autoScanOnConnect": False, "reconnectIntervalMs": 0}
             )
-            await bridge_mod.asyncio.gather(node._tick_once(), node._tick_once())
+            await out_mod.asyncio.gather(node._tick_once(), node._tick_once())
             self.assertEqual(client.connect_calls, 1)
+            await node.close()
+
+    async def test_legacy_exec_port_name_is_rejected(self) -> None:
+        feature = _FakeFeature(index=0, outputs={"Vibrate": _FakeOutputDef((0, 20))}, description="A")
+        device = _FakeDevice(index=5, name="ToyB", features={0: feature})
+        client = _FakeClient(devices={5: device})
+        symbols = out_mod._ButtplugSymbols(  # type: ignore[attr-defined]
+            buttplug_client_cls=object,
+            device_output_command_cls=_FakeCommand,
+            output_type_enum=_FakeOutputType,
+        )
+        with patch.object(ButtplugOutRuntimeNode, "_load_buttplug_symbols", return_value=symbols):
+            bus, node = await self._build_node(state_values={"enabled": True, "autoConnect": False, "vibrate": 0.5})
+            node._client = client
+            node._bind_client_callbacks(client)
+            client._connected = True
+            node._client_url = "ws://127.0.0.1:12345"
+
+            await node.on_exec("e1", "exec")
+            self.assertEqual(len(feature.commands), 0)
+            last_error = (await bus.get_state("bp1", "lastError")).value
+            self.assertIn("unsupported exec in port", str(last_error))
             await node.close()
 
 

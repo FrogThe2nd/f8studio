@@ -10,6 +10,23 @@ Entry wiring lives in `f8pyengine/pyengine_service.py` and is exposed via `f8pye
 
 `Lovense Mock Server` (`operatorClass=f8.lovense_mock_server`) starts an in-process HTTP server (`POST /command`) compatible with Lovense Local API "Mobile" mode, and publishes each received command to the runtime-owned `event` state field (no exec flow required).
 
+### Lovense local output
+
+`Lovense Out` (`operatorClass=f8.lovense_out`) sends `POST /command` requests to Lovense Local API:
+
+- Two-channel model:
+  - `sendPositionCmd` + data port `position(0..1)` -> sends Lovense `Position` command (`apiVer=1`)
+  - `sendFunctionCmd` + state fields (`vibrate/rotate/.../stop/timeSec/...`) -> sends Lovense `Function` command (`apiVer=1`)
+- Recommended wiring:
+  - realtime position: `tick.exec -> lovense_out.sendPositionCmd`
+  - transactional function apply: `ui_or_logic.exec -> lovense_out.sendFunctionCmd`
+- Toy inventory:
+  - node auto-sends one `GetToys` on activation and updates `availableToys`
+- `minSendIntervalMs` throttles `Position` sends (default `100ms`, ~10Hz)
+- Optional `Function` fields (`loopRunningSec`, `loopPauseSec`, `toy`) are omitted when empty
+- `toy` uses option pool from `availableToys`
+- Header: `X-platform = platformName`
+
 ### Lovense waveforms
 
 Prefer composition over monolithic Lovense wave nodes:
@@ -35,19 +52,17 @@ Pattern->phase wiring example (reusable):
 
 ### Buttplug / Intiface bridge
 
-`Buttplug Bridge` (`operatorClass=f8.buttplug_bridge`) provides a single-node integration to Intiface/Buttplug:
+`Buttplug Out` (`operatorClass=f8.buttplug_out`) provides a single-node integration to Intiface/Buttplug:
 
 - Connects to `wsUrl` (default `ws://127.0.0.1:12345`)
 - Publishes discovered devices into:
   - `availableDevices` (`["index|name", ...]`)
   - `deviceInfos` (full per-device capability map with `stepRange`/`durationRange`)
 - Uses `selectedDevice` to choose the active target device (falls back to first available device)
-- Accepts parallel control inputs:
-  - `vibrate` (0..1)
-  - `rotate` (-1..1)
-  - `oscillate` (0..1)
-  - `position` (0..1) with optional `positionDurationMs`
-  - `stop` (boolean)
+- Split command channels:
+  - `sendPositionCmd` + data `position` (0..1)
+  - `sendFunctionCmd` + state fields `vibrate` / `rotate` / `oscillate` / `stop`
+- `defaultPositionDurationMs` controls position duration for `sendPositionCmd`
 
 Feature-index state fields (`*FeatureIndex`) allow selecting a specific feature per output type; `-1` broadcasts to all matching features.
 

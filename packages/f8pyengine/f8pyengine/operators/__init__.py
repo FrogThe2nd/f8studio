@@ -14,7 +14,8 @@ from .range_map import RangeMapRuntimeNode
 from .rate_limiter import RateLimiterRuntimeNode
 from .lovense_mock_server import LovenseMockServerRuntimeNode
 from .lovense_program_adapter import LovenseProgramAdapterRuntimeNode
-from .buttplug_bridge import ButtplugBridgeRuntimeNode
+from .lovense_out import LovenseOutRuntimeNode
+from .buttplug_out import ButtplugOutRuntimeNode
 from .mix_silence_fill import MixSilenceFillRuntimeNode
 from .pull import PullRuntimeNode
 from .program_wave import ProgramWaveRuntimeNode
@@ -40,7 +41,8 @@ __all__ = [
     "RateLimiterRuntimeNode",
     "LovenseMockServerRuntimeNode",
     "LovenseProgramAdapterRuntimeNode",
-    "ButtplugBridgeRuntimeNode",
+    "LovenseOutRuntimeNode",
+    "ButtplugOutRuntimeNode",
     "MixSilenceFillRuntimeNode",
     "PlaybackSyncRuntimeNode",
     "HandyOutRuntimeNode",

@@ -29,7 +29,7 @@ from ..constants import SERVICE_CLASS
 
 logger = logging.getLogger(__name__)
 
-OPERATOR_CLASS = "f8.buttplug_bridge"
+OPERATOR_CLASS = "f8.buttplug_out"
 
 _OUTPUT_VIBRATE = "Vibrate"
 _OUTPUT_ROTATE = "Rotate"
@@ -135,7 +135,9 @@ class _ButtplugClientLike(Protocol):
     def on_error(self) -> Callable[[Exception], None] | Callable[[Exception], Awaitable[None]] | None: ...
 
     @on_error.setter
-    def on_error(self, callback: Callable[[Exception], None] | Callable[[Exception], Awaitable[None]] | None) -> None: ...
+    def on_error(
+        self, callback: Callable[[Exception], None] | Callable[[Exception], Awaitable[None]] | None
+    ) -> None: ...
 
     async def connect(self, url: str) -> None: ...
 
@@ -154,7 +156,7 @@ class _ButtplugSymbols:
 
 
 @dataclass(frozen=True)
-class _BridgeConfig:
+class _OutConfig:
     enabled: bool
     ws_url: str
     auto_connect: bool
@@ -243,7 +245,7 @@ def _device_index_from_token(token: str) -> int | None:
         return None
 
 
-class ButtplugBridgeRuntimeNode(OperatorNode):
+class ButtplugOutRuntimeNode(OperatorNode):
     def __init__(self, *, node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any] | None = None) -> None:
         super().__init__(
             node_id=ensure_token(node_id, label="node_id"),
@@ -335,6 +337,21 @@ class ButtplugBridgeRuntimeNode(OperatorNode):
                 return _coerce_int(value, default=500, minimum=0, maximum=120000)
             return _coerce_int(value, default=-1, minimum=-1, maximum=4096)
 
+        if name in ("vibrate", "oscillate"):
+            v = _unwrap_json_value(value)
+            if v is None or (isinstance(v, str) and not v.strip()):
+                return None
+            return _coerce_float(v, default=0.0, minimum=0.0, maximum=1.0)
+
+        if name in ("rotate",):
+            v = _unwrap_json_value(value)
+            if v is None or (isinstance(v, str) and not v.strip()):
+                return None
+            return _coerce_float(v, default=0.0, minimum=-1.0, maximum=1.0)
+
+        if name in ("stop",):
+            return _coerce_bool(value, default=False)
+
         return value
 
     async def on_state(self, field: str, value: Any, *, ts_ms: int | None = None) -> None:
@@ -361,7 +378,6 @@ class ButtplugBridgeRuntimeNode(OperatorNode):
             return
 
     async def on_exec(self, exec_id: str | int, in_port: str | None = None) -> list[str]:
-        del in_port
         if not self._active:
             await self._emit_status_ports()
             return []
@@ -372,58 +388,19 @@ class ButtplugBridgeRuntimeNode(OperatorNode):
             await self._emit_status_ports()
             return []
 
-        stop_raw = await self.pull("stop", ctx_id=exec_id)
-        stop_flag = _coerce_bool(stop_raw, default=False)
-        if stop_flag:
-            try:
-                await target.stop(inputs=False, outputs=True)
-                await self._mark_command_sent()
-            except Exception as exc:
-                await self._set_last_error_once("device_stop_failed", exc)
+        trigger_port = str(in_port or "sendPositionCmd").strip().lower()
+        if trigger_port == "sendfunctioncmd":
+            await self._handle_send_function_cmd(target=target)
             await self._emit_status_ports()
             return []
-        await self._dispatch_single_output(
-            device=target,
-            port_name="vibrate",
-            output_name=_OUTPUT_VIBRATE,
-            feature_state_name="vibrateFeatureIndex",
-            minimum=0.0,
-            maximum=1.0,
-            ctx_id=exec_id,
-            duration_ms=None,
-        )
-        await self._dispatch_single_output(
-            device=target,
-            port_name="rotate",
-            output_name=_OUTPUT_ROTATE,
-            feature_state_name="rotateFeatureIndex",
-            minimum=-1.0,
-            maximum=1.0,
-            ctx_id=exec_id,
-            duration_ms=None,
-        )
-        await self._dispatch_single_output(
-            device=target,
-            port_name="oscillate",
-            output_name=_OUTPUT_OSCILLATE,
-            feature_state_name="oscillateFeatureIndex",
-            minimum=0.0,
-            maximum=1.0,
-            ctx_id=exec_id,
-            duration_ms=None,
-        )
 
-        position_duration = await self._read_position_duration_ms(ctx_id=exec_id)
-        await self._dispatch_single_output(
-            device=target,
-            port_name="position",
-            output_name=_OUTPUT_POSITION_WITH_DURATION,
-            feature_state_name="positionFeatureIndex",
-            minimum=_POSITION_CLAMP_MIN,
-            maximum=_POSITION_CLAMP_MAX,
-            ctx_id=exec_id,
-            duration_ms=position_duration,
-            fallback_output_name=_OUTPUT_POSITION,
+        if trigger_port == "sendpositioncmd":
+            await self._handle_send_position_cmd(target=target, exec_id=exec_id)
+            await self._emit_status_ports()
+            return []
+
+        await self._set_last_error_message(
+            f"unsupported exec in port: {in_port!r}; expected sendPositionCmd or sendFunctionCmd"
         )
 
         await self._emit_status_ports()
@@ -435,7 +412,7 @@ class ButtplugBridgeRuntimeNode(OperatorNode):
             return
         self._stop_event.clear()
         loop = asyncio.get_running_loop()
-        self._worker_task = loop.create_task(self._worker_loop(), name=f"buttplug_bridge:{self.node_id}")
+        self._worker_task = loop.create_task(self._worker_loop(), name=f"buttplug_out:{self.node_id}")
 
     async def _worker_loop(self) -> None:
         while not self._stop_event.is_set():
@@ -451,7 +428,7 @@ class ButtplugBridgeRuntimeNode(OperatorNode):
                 await self._publish_runtime_status()
                 await self._publish_device_snapshot()
                 return
-            cfg = await self._read_bridge_config()
+            cfg = await self._read_out_config()
             await self._reconcile_connection(cfg)
             if self._rescan_requested:
                 self._rescan_requested = False
@@ -459,7 +436,7 @@ class ButtplugBridgeRuntimeNode(OperatorNode):
             await self._publish_runtime_status()
             await self._publish_device_snapshot()
 
-    async def _read_bridge_config(self) -> _BridgeConfig:
+    async def _read_out_config(self) -> _OutConfig:
         enabled = await self._read_bool_state("enabled", default=True)
         ws_url = await self._read_str_state("wsUrl", default="ws://127.0.0.1:12345")
         auto_connect = await self._read_bool_state("autoConnect", default=True)
@@ -471,7 +448,7 @@ class ButtplugBridgeRuntimeNode(OperatorNode):
             minimum=100,
             maximum=120000,
         )
-        return _BridgeConfig(
+        return _OutConfig(
             enabled=enabled,
             ws_url=ws_url,
             auto_connect=auto_connect,
@@ -496,7 +473,7 @@ class ButtplugBridgeRuntimeNode(OperatorNode):
 
     def _create_client(self) -> _ButtplugClientLike:
         symbols = self._load_buttplug_symbols()
-        client_obj = symbols.buttplug_client_cls("Feel8 Buttplug Bridge")
+        client_obj = symbols.buttplug_client_cls("Feel8 Buttplug Out")
         return cast(_ButtplugClientLike, client_obj)
 
     def _build_output_command(self, *, output_name: str, value: float, duration_ms: int | None) -> Any:
@@ -520,7 +497,7 @@ class ButtplugBridgeRuntimeNode(OperatorNode):
             return symbols.device_output_command_cls(output_type, float(value))
         return symbols.device_output_command_cls(output_type, float(value), duration=int(duration_ms))
 
-    async def _reconcile_connection(self, cfg: _BridgeConfig) -> None:
+    async def _reconcile_connection(self, cfg: _OutConfig) -> None:
         client = self._client
 
         if not cfg.enabled:
@@ -595,7 +572,7 @@ class ButtplugBridgeRuntimeNode(OperatorNode):
     async def _on_client_error(self, exc: Exception) -> None:
         await self._set_last_error_once("client_error", exc)
 
-    async def _run_scan_cycle(self, cfg: _BridgeConfig) -> None:
+    async def _run_scan_cycle(self, cfg: _OutConfig) -> None:
         client = self._client
         if client is None or not client.connected:
             return
@@ -611,6 +588,7 @@ class ButtplugBridgeRuntimeNode(OperatorNode):
             await self._publish_device_snapshot()
         except Exception as exc:
             await self._set_last_error_once("scan_failed", exc)
+
     async def _resolve_target_device(self, *, update_selection: bool) -> _DeviceLike | None:
         client = self._client
         if client is None or not client.connected:
@@ -641,29 +619,24 @@ class ButtplugBridgeRuntimeNode(OperatorNode):
 
         return target
 
-    async def _dispatch_single_output(
+    async def _dispatch_output_value(
         self,
         *,
         device: _DeviceLike,
-        port_name: str,
         output_name: str,
         feature_state_name: str,
-        minimum: float,
-        maximum: float,
-        ctx_id: str | int,
+        value: float,
         duration_ms: int | None,
         fallback_output_name: str | None = None,
     ) -> None:
-        raw = await self.pull(port_name, ctx_id=ctx_id)
-        raw_unwrapped = _unwrap_json_value(raw)
-        if raw_unwrapped is None:
-            return
-
-        value = _coerce_float(raw_unwrapped, default=0.0, minimum=minimum, maximum=maximum)
         feature_index = await self._read_int_state(feature_state_name, default=-1, minimum=-1, maximum=4096)
 
         selected_output_name = output_name
-        if not device.has_output(output_name) and fallback_output_name is not None and device.has_output(fallback_output_name):
+        if (
+            not device.has_output(output_name)
+            and fallback_output_name is not None
+            and device.has_output(fallback_output_name)
+        ):
             selected_output_name = fallback_output_name
 
         if selected_output_name == output_name and not device.has_output(output_name):
@@ -692,9 +665,7 @@ class ButtplugBridgeRuntimeNode(OperatorNode):
                 )
                 return
             if not feature.has_output(selected_output_name):
-                await self._set_last_error_message(
-                    f"feature {feature_index} does not support {selected_output_name}"
-                )
+                await self._set_last_error_message(f"feature {feature_index} does not support {selected_output_name}")
                 return
 
             await feature.run_output(command)
@@ -702,12 +673,74 @@ class ButtplugBridgeRuntimeNode(OperatorNode):
         except Exception as exc:
             await self._set_last_error_once(f"send_{selected_output_name}_failed", exc)
 
-    async def _read_position_duration_ms(self, *, ctx_id: str | int) -> int:
-        raw = await self.pull("positionDurationMs", ctx_id=ctx_id)
+    async def _handle_send_position_cmd(self, *, target: _DeviceLike, exec_id: str | int) -> None:
+        raw = await self.pull("position", ctx_id=exec_id)
         raw_unwrapped = _unwrap_json_value(raw)
-        if raw_unwrapped is not None:
-            return _coerce_int(raw_unwrapped, default=500, minimum=0, maximum=120000)
+        if raw_unwrapped is None:
+            return
+
+        value = _coerce_float(raw_unwrapped, default=0.0, minimum=_POSITION_CLAMP_MIN, maximum=_POSITION_CLAMP_MAX)
+        position_duration = await self._read_position_duration_ms()
+        await self._dispatch_output_value(
+            device=target,
+            output_name=_OUTPUT_POSITION_WITH_DURATION,
+            feature_state_name="positionFeatureIndex",
+            value=float(value),
+            duration_ms=position_duration,
+            fallback_output_name=_OUTPUT_POSITION,
+        )
+
+    async def _handle_send_function_cmd(self, *, target: _DeviceLike) -> None:
+        stop_raw = await self._read_raw_state("stop")
+        stop_flag = _coerce_bool(stop_raw, default=False)
+        if stop_flag:
+            try:
+                await target.stop(inputs=False, outputs=True)
+                await self._mark_command_sent()
+            except Exception as exc:
+                await self._set_last_error_once("device_stop_failed", exc)
+            return
+
+        vibrate = await self._read_optional_level_state("vibrate", minimum=0.0, maximum=1.0)
+        if vibrate is not None:
+            await self._dispatch_output_value(
+                device=target,
+                output_name=_OUTPUT_VIBRATE,
+                feature_state_name="vibrateFeatureIndex",
+                value=vibrate,
+                duration_ms=None,
+            )
+
+        rotate = await self._read_optional_level_state("rotate", minimum=-1.0, maximum=1.0)
+        if rotate is not None:
+            await self._dispatch_output_value(
+                device=target,
+                output_name=_OUTPUT_ROTATE,
+                feature_state_name="rotateFeatureIndex",
+                value=rotate,
+                duration_ms=None,
+            )
+
+        oscillate = await self._read_optional_level_state("oscillate", minimum=0.0, maximum=1.0)
+        if oscillate is not None:
+            await self._dispatch_output_value(
+                device=target,
+                output_name=_OUTPUT_OSCILLATE,
+                feature_state_name="oscillateFeatureIndex",
+                value=oscillate,
+                duration_ms=None,
+            )
+
+    async def _read_position_duration_ms(self) -> int:
         return await self._read_int_state("defaultPositionDurationMs", default=500, minimum=0, maximum=120000)
+
+    async def _read_optional_level_state(self, name: str, *, minimum: float, maximum: float) -> float | None:
+        raw = await self._read_raw_state(name)
+        if raw is None:
+            return None
+        if isinstance(raw, str) and not raw.strip():
+            return None
+        return _coerce_float(raw, default=0.0, minimum=minimum, maximum=maximum)
 
     async def _stop_target_device_outputs(self) -> None:
         target = await self._resolve_target_device(update_selection=False)
@@ -846,7 +879,7 @@ class ButtplugBridgeRuntimeNode(OperatorNode):
 
         await self._set_last_error_message(message)
         if should_log:
-            logger.exception("[%s:buttplug_bridge] %s", self.node_id, message, exc_info=exc)
+            logger.exception("[%s:buttplug_out] %s", self.node_id, message, exc_info=exc)
 
     async def _set_last_error_message(self, message: str) -> None:
         self._last_error_message = str(message or "")
@@ -872,67 +905,278 @@ class ButtplugBridgeRuntimeNode(OperatorNode):
     async def _read_bool_state(self, name: str, *, default: bool) -> bool:
         return _coerce_bool(await self._read_raw_state(name), default=default)
 
-    async def _read_int_state(self, name: str, *, default: int, minimum: int | None = None, maximum: int | None = None) -> int:
+    async def _read_int_state(
+        self, name: str, *, default: int, minimum: int | None = None, maximum: int | None = None
+    ) -> int:
         return _coerce_int(await self._read_raw_state(name), default=default, minimum=minimum, maximum=maximum)
 
     async def _read_str_state(self, name: str, *, default: str) -> str:
         return _coerce_str(await self._read_raw_state(name), default=default)
 
-ButtplugBridgeRuntimeNode.SPEC = F8OperatorSpec(
+
+ButtplugOutRuntimeNode.SPEC = F8OperatorSpec(
     schemaVersion=F8OperatorSchemaVersion.f8operator_1,
     serviceClass=SERVICE_CLASS,
     operatorClass=OPERATOR_CLASS,
     version="0.0.1",
-    label="Buttplug Bridge",
-    description="Connect to Intiface/Buttplug, publish device capabilities, and drive selected device outputs.",
+    label="Buttplug Out",
+    description="Connect to Intiface/Buttplug with split channels: sendPositionCmd->position, sendFunctionCmd->state.",
     tags=["io", "buttplug", "intiface", "haptics", "device"],
-    execInPorts=["exec"],
+    execInPorts=["sendPositionCmd", "sendFunctionCmd"],
     dataInPorts=[
-        F8DataPortSpec(name="vibrate", description="Vibrate intensity (0..1).", valueSchema=number_schema()),
-        F8DataPortSpec(name="rotate", description="Rotate speed (-1..1).", valueSchema=number_schema()),
-        F8DataPortSpec(name="oscillate", description="Oscillate intensity (0..1).", valueSchema=number_schema()),
-        F8DataPortSpec(name="position", description="Position target (0..1).", valueSchema=number_schema()),
         F8DataPortSpec(
-            name="positionDurationMs",
-            description="Optional position duration in milliseconds.",
-            valueSchema=number_schema(default=500, minimum=0),
+            name="position",
+            description="Position target (0..1).",
+            valueSchema=number_schema(),
             required=False,
-        ),
-        F8DataPortSpec(
-            name="stop",
-            description="When true on exec, stop output on selected device.",
-            valueSchema=boolean_schema(default=False),
-            required=False,
+            showOnNode=True,
         ),
     ],
     dataOutPorts=[
-        F8DataPortSpec(name="connected", description="Current connection status.", valueSchema=boolean_schema(default=False)),
-        F8DataPortSpec(name="selectedDeviceInfo", description="Selected device info object.", valueSchema=any_schema()),
+        F8DataPortSpec(
+            name="connected", description="Current connection status.", valueSchema=boolean_schema(default=False)
+        ),
+        F8DataPortSpec(
+            name="selectedDeviceInfo", description="Selected device info object.", valueSchema=any_schema()
+        ),
         F8DataPortSpec(name="error", description="Last error string.", valueSchema=string_schema(default="")),
     ],
     stateFields=[
-        F8StateSpec(name="enabled", label="Enabled", description="Enable bridge connection and output control.", valueSchema=boolean_schema(default=True), access=F8StateAccess.rw, required=True, showOnNode=True),
-        F8StateSpec(name="wsUrl", label="WebSocket URL", description="Buttplug server websocket URL.", valueSchema=string_schema(default="ws://127.0.0.1:12345"), access=F8StateAccess.rw, required=True, showOnNode=True),
-        F8StateSpec(name="autoConnect", label="Auto Connect", description="Automatically connect while enabled.", valueSchema=boolean_schema(default=True), access=F8StateAccess.rw, required=True, showOnNode=True),
-        F8StateSpec(name="autoScanOnConnect", label="Auto Scan On Connect", description="Start and stop scan once after connect.", valueSchema=boolean_schema(default=True), access=F8StateAccess.rw, required=True, showOnNode=False),
-        F8StateSpec(name="scanDurationMs", label="Scan Duration (ms)", description="Scan duration before stop when scan is triggered.", valueSchema=integer_schema(default=5000, minimum=100, maximum=120000), access=F8StateAccess.rw, required=True, showOnNode=False),
-        F8StateSpec(name="reconnectIntervalMs", label="Reconnect Interval (ms)", description="Reconnect throttle interval.", valueSchema=integer_schema(default=2000, minimum=100, maximum=120000), access=F8StateAccess.rw, required=True, showOnNode=False),
-        F8StateSpec(name="selectedDevice", label="Selected Device", description="Target token: \"index|name\".", valueSchema=string_schema(default=""), access=F8StateAccess.rw, required=True, uiControl="select:[availableDevices]", showOnNode=True),
-        F8StateSpec(name="rescan", label="Rescan", description="Set true to trigger one scan cycle; runtime resets it to false.", valueSchema=boolean_schema(default=False), access=F8StateAccess.rw, required=True, showOnNode=True),
-        F8StateSpec(name="vibrateFeatureIndex", label="Vibrate Feature Index", description="Feature index for vibrate (-1 = all).", valueSchema=integer_schema(default=-1, minimum=-1, maximum=4096), access=F8StateAccess.rw, required=True, showOnNode=False),
-        F8StateSpec(name="rotateFeatureIndex", label="Rotate Feature Index", description="Feature index for rotate (-1 = all).", valueSchema=integer_schema(default=-1, minimum=-1, maximum=4096), access=F8StateAccess.rw, required=True, showOnNode=False),
-        F8StateSpec(name="oscillateFeatureIndex", label="Oscillate Feature Index", description="Feature index for oscillate (-1 = all).", valueSchema=integer_schema(default=-1, minimum=-1, maximum=4096), access=F8StateAccess.rw, required=True, showOnNode=False),
-        F8StateSpec(name="positionFeatureIndex", label="Position Feature Index", description="Feature index for position (-1 = all).", valueSchema=integer_schema(default=-1, minimum=-1, maximum=4096), access=F8StateAccess.rw, required=True, showOnNode=False),
-        F8StateSpec(name="defaultPositionDurationMs", label="Default Position Duration (ms)", description="Default duration for position output.", valueSchema=integer_schema(default=500, minimum=0, maximum=120000), access=F8StateAccess.rw, required=True, showOnNode=False),
-        F8StateSpec(name="stopOnDeactivate", label="Stop On Deactivate", description="Send stop command when service deactivates.", valueSchema=boolean_schema(default=True), access=F8StateAccess.rw, required=True, showOnNode=False),
-        F8StateSpec(name="connected", label="Connected", description="True when websocket is connected.", valueSchema=boolean_schema(default=False), access=F8StateAccess.ro, showOnNode=True, required=False),
-        F8StateSpec(name="scanning", label="Scanning", description="True while scanning is active.", valueSchema=boolean_schema(default=False), access=F8StateAccess.ro, showOnNode=False, required=False),
-        F8StateSpec(name="availableDevices", label="Available Devices", description="Device tokens for selection UI.", valueSchema=array_schema(items=string_schema()), access=F8StateAccess.ro, showOnNode=False, required=False),
-        F8StateSpec(name="deviceInfos", label="Device Infos", description="Full discovered device infos.", valueSchema=any_schema(), access=F8StateAccess.ro, showOnNode=False, required=False),
-        F8StateSpec(name="selectedDeviceInfo", label="Selected Device Info", description="Current selected device info object.", valueSchema=any_schema(), access=F8StateAccess.ro, showOnNode=True, required=False),
-        F8StateSpec(name="lastError", label="Last Error", description="Last runtime error.", valueSchema=string_schema(default=""), access=F8StateAccess.ro, showOnNode=True, required=False),
-        F8StateSpec(name="sentCommands", label="Sent Commands", description="Total sent output/stop commands.", valueSchema=integer_schema(default=0, minimum=0), access=F8StateAccess.ro, showOnNode=False, required=False),
-        F8StateSpec(name="lastCommandTsMs", label="Last Command Ts (ms)", description="Timestamp of last sent command.", valueSchema=integer_schema(default=0, minimum=0), access=F8StateAccess.ro, showOnNode=False, required=False),
+        F8StateSpec(
+            name="enabled",
+            label="Enabled",
+            description="Enable connection and output control.",
+            valueSchema=boolean_schema(default=True),
+            access=F8StateAccess.rw,
+            required=True,
+            showOnNode=False,
+        ),
+        F8StateSpec(
+            name="wsUrl",
+            label="WebSocket URL",
+            description="Buttplug server websocket URL.",
+            valueSchema=string_schema(default="ws://127.0.0.1:12345"),
+            access=F8StateAccess.rw,
+            required=True,
+            showOnNode=False,
+        ),
+        F8StateSpec(
+            name="autoConnect",
+            label="Auto Connect",
+            description="Automatically connect while enabled.",
+            valueSchema=boolean_schema(default=True),
+            access=F8StateAccess.rw,
+            required=True,
+            showOnNode=False,
+        ),
+        F8StateSpec(
+            name="autoScanOnConnect",
+            label="Auto Scan On Connect",
+            description="Start and stop scan once after connect.",
+            valueSchema=boolean_schema(default=True),
+            access=F8StateAccess.rw,
+            required=True,
+            showOnNode=False,
+        ),
+        F8StateSpec(
+            name="scanDurationMs",
+            label="Scan Duration (ms)",
+            description="Scan duration before stop when scan is triggered.",
+            valueSchema=integer_schema(default=5000, minimum=100, maximum=120000),
+            access=F8StateAccess.rw,
+            required=True,
+            showOnNode=False,
+        ),
+        F8StateSpec(
+            name="reconnectIntervalMs",
+            label="Reconnect Interval (ms)",
+            description="Reconnect throttle interval.",
+            valueSchema=integer_schema(default=2000, minimum=100, maximum=120000),
+            access=F8StateAccess.rw,
+            required=True,
+            showOnNode=False,
+        ),
+        F8StateSpec(
+            name="selectedDevice",
+            label="Selected Device",
+            description='Target token: "index|name".',
+            valueSchema=string_schema(default=""),
+            access=F8StateAccess.rw,
+            required=True,
+            uiControl="select:[availableDevices]",
+            showOnNode=True,
+        ),
+        F8StateSpec(
+            name="rescan",
+            label="Rescan",
+            description="Set true to trigger one scan cycle; runtime resets it to false.",
+            valueSchema=boolean_schema(default=False),
+            access=F8StateAccess.rw,
+            required=True,
+            showOnNode=False,
+        ),
+        F8StateSpec(
+            name="vibrateFeatureIndex",
+            label="Vibrate Feature Index",
+            description="Feature index for vibrate (-1 = all).",
+            valueSchema=integer_schema(default=-1, minimum=-1, maximum=4096),
+            access=F8StateAccess.rw,
+            required=True,
+            showOnNode=False,
+        ),
+        F8StateSpec(
+            name="rotateFeatureIndex",
+            label="Rotate Feature Index",
+            description="Feature index for rotate (-1 = all).",
+            valueSchema=integer_schema(default=-1, minimum=-1, maximum=4096),
+            access=F8StateAccess.rw,
+            required=True,
+            showOnNode=False,
+        ),
+        F8StateSpec(
+            name="oscillateFeatureIndex",
+            label="Oscillate Feature Index",
+            description="Feature index for oscillate (-1 = all).",
+            valueSchema=integer_schema(default=-1, minimum=-1, maximum=4096),
+            access=F8StateAccess.rw,
+            required=True,
+            showOnNode=False,
+        ),
+        F8StateSpec(
+            name="positionFeatureIndex",
+            label="Position Feature Index",
+            description="Feature index for position (-1 = all).",
+            valueSchema=integer_schema(default=-1, minimum=-1, maximum=4096),
+            access=F8StateAccess.rw,
+            required=True,
+            showOnNode=False,
+        ),
+        F8StateSpec(
+            name="defaultPositionDurationMs",
+            label="Default Position Duration (ms)",
+            description="Default duration for position output.",
+            valueSchema=integer_schema(default=500, minimum=0, maximum=120000),
+            access=F8StateAccess.rw,
+            required=True,
+            showOnNode=True,
+        ),
+        F8StateSpec(
+            name="vibrate",
+            label="Vibrate",
+            description="Function-channel vibrate intensity (0..1).",
+            valueSchema=number_schema(minimum=0.0, maximum=1.0),
+            access=F8StateAccess.rw,
+            required=False,
+            showOnNode=True,
+        ),
+        F8StateSpec(
+            name="rotate",
+            label="Rotate",
+            description="Function-channel rotate speed (-1..1).",
+            valueSchema=number_schema(minimum=-1.0, maximum=1.0),
+            access=F8StateAccess.rw,
+            required=False,
+            showOnNode=True,
+        ),
+        F8StateSpec(
+            name="oscillate",
+            label="Oscillate",
+            description="Function-channel oscillate intensity (0..1).",
+            valueSchema=number_schema(minimum=0.0, maximum=1.0),
+            access=F8StateAccess.rw,
+            required=False,
+            showOnNode=True,
+        ),
+        F8StateSpec(
+            name="stop",
+            label="Stop",
+            description="When true, sendFunctionCmd stops output on selected device.",
+            valueSchema=boolean_schema(default=False),
+            access=F8StateAccess.rw,
+            required=True,
+            showOnNode=True,
+        ),
+        F8StateSpec(
+            name="stopOnDeactivate",
+            label="Stop On Deactivate",
+            description="Send stop command when service deactivates.",
+            valueSchema=boolean_schema(default=True),
+            access=F8StateAccess.rw,
+            required=True,
+            showOnNode=False,
+        ),
+        F8StateSpec(
+            name="connected",
+            label="Connected",
+            description="True when websocket is connected.",
+            valueSchema=boolean_schema(default=False),
+            access=F8StateAccess.ro,
+            required=True,
+            showOnNode=True,
+        ),
+        F8StateSpec(
+            name="scanning",
+            label="Scanning",
+            description="True while scanning is active.",
+            valueSchema=boolean_schema(default=False),
+            access=F8StateAccess.ro,
+            required=True,
+            showOnNode=False,
+        ),
+        F8StateSpec(
+            name="availableDevices",
+            label="Available Devices",
+            description="Device tokens for selection UI.",
+            valueSchema=array_schema(items=string_schema()),
+            access=F8StateAccess.ro,
+            required=True,
+            showOnNode=False,
+        ),
+        F8StateSpec(
+            name="deviceInfos",
+            label="Device Infos",
+            description="Full discovered device infos.",
+            valueSchema=any_schema(),
+            access=F8StateAccess.ro,
+            showOnNode=True,
+            required=False,
+        ),
+        F8StateSpec(
+            name="selectedDeviceInfo",
+            label="Selected Device Info",
+            description="Current selected device info object.",
+            valueSchema=any_schema(),
+            access=F8StateAccess.ro,
+            required=True,
+            showOnNode=False,
+        ),
+        F8StateSpec(
+            name="lastError",
+            label="Last Error",
+            description="Last runtime error.",
+            valueSchema=string_schema(default=""),
+            access=F8StateAccess.ro,
+            required=True,
+            showOnNode=False,
+        ),
+        F8StateSpec(
+            name="sentCommands",
+            label="Sent Commands",
+            description="Total sent output/stop commands.",
+            valueSchema=integer_schema(default=0, minimum=0),
+            access=F8StateAccess.ro,
+            required=True,
+            showOnNode=False,
+        ),
+        F8StateSpec(
+            name="lastCommandTsMs",
+            label="Last Command Ts (ms)",
+            description="Timestamp of last sent command.",
+            valueSchema=integer_schema(default=0, minimum=0),
+            access=F8StateAccess.ro,
+            required=True,
+            showOnNode=False,
+        ),
     ],
     editableStateFields=False,
     editableDataInPorts=False,
@@ -946,8 +1190,8 @@ def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNod
     reg = registry or RuntimeNodeRegistry.instance()
 
     def _factory(node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any]) -> OperatorNode:
-        return ButtplugBridgeRuntimeNode(node_id=node_id, node=node, initial_state=initial_state)
+        return ButtplugOutRuntimeNode(node_id=node_id, node=node, initial_state=initial_state)
 
     reg.register(SERVICE_CLASS, OPERATOR_CLASS, _factory, overwrite=True)
-    reg.register_operator_spec(ButtplugBridgeRuntimeNode.SPEC, overwrite=True)
+    reg.register_operator_spec(ButtplugOutRuntimeNode.SPEC, overwrite=True)
     return reg
