@@ -107,6 +107,9 @@ class NatsTransport:
             if bool(self._config.delete_bucket_on_connect) and self._js is not None:
                 try:
                     await self._js.delete_key_value(str(self._config.kv_bucket))
+                except (BucketNotFoundError, JsNotFoundError) as exc:
+                    # First boot / already-clean state: nothing to delete.
+                    log.debug("delete_key_value skipped during connect bucket=%s", self._config.kv_bucket, exc_info=exc)
                 except Exception as exc:
                     log.debug("delete_key_value failed during connect bucket=%s", self._config.kv_bucket, exc_info=exc)
             self._kv = await self._open_kv(self._config.kv_bucket)
@@ -118,7 +121,7 @@ class NatsTransport:
             raise RuntimeError("JetStream not initialized")
         try:
             return await self._js.key_value(str(bucket))
-        except BucketNotFoundError:
+        except (BucketNotFoundError, JsNotFoundError):
             cfg = KeyValueConfig(
                 bucket=str(bucket),
                 history=int(self._config.kv_history),
@@ -139,6 +142,9 @@ class NatsTransport:
             if bool(self._config.delete_bucket_on_close) and self._js is not None:
                 try:
                     await self._js.delete_key_value(str(self._config.kv_bucket))
+                except (BucketNotFoundError, JsNotFoundError) as exc:
+                    # Closing an already-removed bucket is fine.
+                    log.debug("delete_key_value skipped during close bucket=%s", self._config.kv_bucket, exc_info=exc)
                 except Exception as exc:
                     log.debug("delete_key_value failed during close bucket=%s", self._config.kv_bucket, exc_info=exc)
 
