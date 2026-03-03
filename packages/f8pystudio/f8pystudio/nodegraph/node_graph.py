@@ -712,6 +712,12 @@ class F8StudioGraph(NodeGraph):
         if isinstance(viewer, F8StudioNodeViewer):
             viewer.cancel_node_placement()
 
+    def pending_node_placement_type(self) -> str | None:
+        viewer = self._viewer
+        if not isinstance(viewer, F8StudioNodeViewer):
+            return None
+        return viewer.pending_node_type()
+
     def begin_graph_placement(self, request: GraphInsertRequest, *, label: str = "") -> None:
         viewer = self._viewer
         if isinstance(viewer, F8StudioNodeViewer):

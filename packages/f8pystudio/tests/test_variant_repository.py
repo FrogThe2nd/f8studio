@@ -6,7 +6,13 @@ from pathlib import Path
 import pytest
 
 from f8pystudio.variants.variant_models import F8NodeVariantRecord, F8VariantKind
-from f8pystudio.variants.variant_repository import import_from_json, is_variant_name_conflict, list_variants_for_base, upsert_variant
+from f8pystudio.variants.variant_repository import (
+    import_from_json,
+    is_variant_name_conflict,
+    list_variants_for_base,
+    upsert_variant,
+    variant_exists,
+)
 
 
 def _make_variant_record(*, variant_id: str, base_node_type: str, name: str) -> F8NodeVariantRecord:
@@ -77,3 +83,11 @@ def test_import_auto_renames_duplicates(monkeypatch: pytest.MonkeyPatch, tmp_pat
     assert "name" in names
     assert "name (2)" in names
     assert "name (3)" in names
+
+
+def test_variant_exists_returns_expected(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _patch_variants_file(monkeypatch, tmp_path)
+    upsert_variant(_make_variant_record(variant_id="v1", base_node_type="svc.a.op", name="name"))
+
+    assert variant_exists("v1") is True
+    assert variant_exists("missing") is False

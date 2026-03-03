@@ -161,6 +161,12 @@ class PyScriptStatesView:
     def __len__(self) -> int:
         return len(self._data)
 
+    def __repr__(self) -> str:
+        return repr(self.to_dict())
+
+    def __str__(self) -> str:
+        return str(self.to_dict())
+
     def __getattr__(self, name: str) -> Any:
         key = self._attr_to_key.get(str(name or ""))
         if key is None:

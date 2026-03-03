@@ -1087,7 +1087,7 @@ def open_code_editor_dialog(
         effective_language = "python"
     warn_text = _python_assist_warning(resolved_context)
     if effective_language.lower() == "python" and warn_text:
-        show_warning(parent, warn_text)
+        show_warning(parent, "Python Assist Warning", warn_text)
     dlg = F8MonacoEditorDialog(
         parent,
         title=title,
@@ -1123,7 +1123,7 @@ def open_code_editor_window(
         effective_language = "python"
     warn_text = _python_assist_warning(resolved_context)
     if effective_language.lower() == "python" and warn_text:
-        show_warning(parent, warn_text)
+        show_warning(parent, "Python Assist Warning", warn_text)
     dlg = F8MonacoEditorDialog(
         None,
         title=title,

@@ -112,6 +112,17 @@ def list_variants_for_base(base_node_type: str) -> list[F8NodeVariantRecord]:
     return sorted(out, key=lambda v: (str(v.name or "").lower(), str(v.variantId or "")))
 
 
+def variant_exists(variant_id: str) -> bool:
+    vid = str(variant_id or "").strip()
+    if not vid:
+        return False
+    lib = load_library()
+    for variant in lib.variants:
+        if str(variant.variantId or "").strip() == vid:
+            return True
+    return False
+
+
 def upsert_variant(record: F8NodeVariantRecord) -> F8NodeVariantRecord:
     lib = load_library()
     if _records_name_conflict(

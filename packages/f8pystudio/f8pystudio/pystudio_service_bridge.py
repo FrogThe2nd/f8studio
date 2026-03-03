@@ -31,7 +31,7 @@ from .bridge.rungraph_deployer import (
     RungraphDeployRequest,
 )
 from .error_reporting import ExceptionLogOnce, report_exception
-from f8pysdk.nats_server_bootstrap import ensure_nats_server
+from f8pysdk.nats_server_bootstrap import ensure_nats_server_with_result, stop_nats_server_process
 from .nodegraph.runtime_compiler import CompiledRuntimeGraphs
 from .pystudio_service import PyStudioService, PyStudioServiceConfig
 from .service_process_manager import ServiceProcessConfig, ServiceProcessManager
@@ -111,6 +111,7 @@ class PyStudioServiceBridge(QtCore.QObject):
         self._monitor_center = MonitorCenter(window_ms=30 * 60 * 1000)
         self._monitor_sub: Any = None
         self._nc: Any = None
+        self._owned_nats_server_pid: int | None = None
         self._last_nats_error_log_s: float = 0.0
         self._pending_remote_command_cbs: dict[str, Callable[[dict[str, Any] | None, str | None], None]] = {}
 
@@ -1199,7 +1200,9 @@ class PyStudioServiceBridge(QtCore.QObject):
     async def _start_async(self) -> None:
         nats_url = str(self._cfg.nats_url).strip() or "nats://127.0.0.1:4222"
         try:
-            await asyncio.to_thread(ensure_nats_server, nats_url, log_cb=self._emit_log_line)
+            bootstrap_result = await asyncio.to_thread(ensure_nats_server_with_result, nats_url, log_cb=self._emit_log_line)
+            if bootstrap_result.started_by_current_process and bootstrap_result.started_pid is not None:
+                self._owned_nats_server_pid = int(bootstrap_result.started_pid)
         except Exception as exc:
             self._report_exception("ensure nats server failed", exc)
 
@@ -1356,6 +1359,20 @@ class PyStudioServiceBridge(QtCore.QObject):
         except Exception as exc:
             self._report_exception("close nats connection failed", exc)
         self._nc = None
+
+        owned_nats_pid = self._owned_nats_server_pid
+        self._owned_nats_server_pid = None
+        if owned_nats_pid is not None:
+            try:
+                stopped = await asyncio.to_thread(
+                    stop_nats_server_process,
+                    int(owned_nats_pid),
+                    log_cb=self._emit_log_line,
+                )
+                if not stopped:
+                    self._emit_log_line(f"failed to stop studio-owned nats-server pid={owned_nats_pid}")
+            except Exception as exc:
+                self._report_exception("stop studio-owned nats server failed", exc)
 
     async def _deploy_and_monitor_async(self, compiled: CompiledRuntimeGraphs) -> None:
         # Deploy per-service rungraphs.
