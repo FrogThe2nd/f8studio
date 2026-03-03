@@ -347,6 +347,52 @@ class F8StudioNodeViewer(NodeViewer):
             return
         super().wheelEvent(event)
 
+    @staticmethod
+    def _proxy_ancestor(
+        item: QtWidgets.QGraphicsItem | None,
+    ) -> QtWidgets.QGraphicsProxyWidget | None:
+        current = item
+        while current is not None:
+            if isinstance(current, QtWidgets.QGraphicsProxyWidget):
+                return current
+            current = current.parentItem()
+        return None
+
+    def _is_proxy_widget_item(self, item: QtWidgets.QGraphicsItem | None) -> bool:
+        proxy = self._proxy_ancestor(item)
+        if proxy is None:
+            return False
+        widget = proxy.widget()
+        if widget is None:
+            return False
+        if not proxy.isVisible():
+            return False
+        if not widget.isVisible():
+            return False
+        if widget.testAttribute(QtCore.Qt.WA_TransparentForMouseEvents):
+            return False
+        return True
+
+    def _is_proxy_widget_hit(self, scene_pos: QtCore.QPointF) -> bool:
+        view_pos = self.mapFromScene(scene_pos)
+        if self._is_proxy_widget_item(self.itemAt(view_pos)):
+            return True
+
+        scene = self.scene()
+        if scene is None:
+            return False
+        for item in scene.items(scene_pos):
+            if self._is_proxy_widget_item(item):
+                return True
+        return False
+
+    def sceneMousePressEvent(self, event):  # type: ignore[override]
+        if self._is_proxy_widget_hit(event.scenePos()):
+            if self._LIVE_PIPE.isVisible():
+                self.end_live_connection()
+            return
+        super().sceneMousePressEvent(event)
+
     def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
         if event.key() == QtCore.Qt.Key_Escape:
             if self.is_graph_placement_active():
