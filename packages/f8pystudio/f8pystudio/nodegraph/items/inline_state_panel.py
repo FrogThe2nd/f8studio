@@ -22,7 +22,7 @@ from ...widgets.editor_controls import (
 )
 from ...widgets.property_value_widgets import F8NumberPropLineEdit, open_code_editor_window
 from .node_item_core import StateFieldInfo, state_field_info
-from .service_toolbar_host import F8ElideToolButton
+from .service_toolbar_host import F8ElideToolButton, F8ForceGlobalToolTipFilter
 
 logger = logging.getLogger(__name__)
 
@@ -491,12 +491,40 @@ def make_state_inline_control(node_item: Any, state_field: StateFieldInfo) -> Qt
         return edit
 
     if ui in {"code"}:
-        btn = QtWidgets.QToolButton()
-        btn.setAutoRaise(True)
-        btn.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
+        btn = QtWidgets.QPushButton()
         btn.setText("Edit...")
         btn.setIcon(icon_for(btn, StudioIcon.CODE))
         btn.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred)
+        btn.setMinimumHeight(24)
+        btn.setStyleSheet(
+            """
+            QPushButton {
+                color: rgb(235, 235, 235);
+                background: rgba(0, 0, 0, 35);
+                border: 1px solid rgba(120, 200, 255, 85);
+                border-radius: 6px;
+                padding: 6px 10px;
+                text-align: center;
+                font-weight: 600;
+            }
+            QPushButton:hover {
+                background: rgba(120, 200, 255, 22);
+                border-color: rgba(120, 200, 255, 140);
+            }
+            QPushButton:pressed {
+                background: rgba(120, 200, 255, 35);
+                border-color: rgba(120, 200, 255, 160);
+            }
+            QPushButton:disabled {
+                color: rgba(235, 235, 235, 110);
+                background: rgba(0, 0, 0, 20);
+                border-color: rgba(255, 255, 255, 18);
+            }
+            """
+        )
+        tooltip_filter = F8ForceGlobalToolTipFilter(btn)
+        btn.installEventFilter(tooltip_filter)
+        node_item._tooltip_filters.append(tooltip_filter)
         if field_tooltip:
             btn.setToolTip(field_tooltip)
 
