@@ -20,6 +20,7 @@ from ...widgets.editor_controls import (
     parse_multiselect_pool,
     parse_select_pool,
 )
+from ...widgets.state_controls.pool_resolver import resolve_pool_items
 from ...widgets.property_value_widgets import F8NumberPropLineEdit, open_code_editor_window
 from .node_item_core import StateFieldInfo, state_field_info
 from .service_toolbar_host import F8ElideToolButton
@@ -164,10 +165,7 @@ def refresh_option_pool_for_changed_field(node_item: Any, changed_field: str) ->
         pool_value = node.get_property(pool)
     except Exception:
         pool_value = None
-    if isinstance(pool_value, (list, tuple)):
-        items = [str(item) for item in pool_value]
-    else:
-        items = []
+    items = resolve_pool_items(pool_value)
     for field, pool_name in list(node_item._state_inline_option_pools.items()):
         if pool_name != pool:
             continue
@@ -175,9 +173,12 @@ def refresh_option_pool_for_changed_field(node_item: Any, changed_field: str) ->
         if not isinstance(ctrl, (F8OptionCombo, F8MultiSelect)):
             continue
         try:
-            cur = ctrl.value()
+            try:
+                selected_value = node.get_property(field)
+            except Exception:
+                selected_value = ctrl.value()
             ctrl.set_options(items, labels=items)
-            ctrl.set_value(cur)
+            ctrl.set_value(selected_value)
         except (AttributeError, RuntimeError, TypeError):
             continue
 
@@ -310,32 +311,7 @@ def make_state_inline_control(node_item: Any, state_field: StateFieldInfo) -> Qt
             value = node.get_property(pool_field)
         except Exception:
             return []
-        if isinstance(value, (list, tuple)):
-            return [str(item) for item in value]
-        # Allow pools stored as JSON strings (eg. "[]", ["a","b"]).
-        if isinstance(value, str):
-            try:
-                parsed = json.loads(value)
-            except Exception:
-                return []
-            if isinstance(parsed, (list, tuple)):
-                out: list[str] = []
-                for item in parsed:
-                    if isinstance(item, str):
-                        token = item.strip()
-                        if token:
-                            out.append(token)
-                        continue
-                    if isinstance(item, dict):
-                        token = str(item.get("id") or "").strip()
-                        if token:
-                            out.append(token)
-                        continue
-                    token = str(item).strip()
-                    if token:
-                        out.append(token)
-                return out
-        return []
+        return resolve_pool_items(value)
 
     # Create control.
     read_only = access_s == "ro" or node_item._inline_state_input_is_connected(name)

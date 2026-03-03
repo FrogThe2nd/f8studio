@@ -18,7 +18,8 @@ Output schema:
   - `skeletonProtocol` is `mediapipe_pose_33` (payload level and detection level).
 
 - `skeletons` (UDP-skeleton-compatible list)
-  - Prefers MediaPipe `pose_world_landmarks` for 3D output.
-  - World coordinates are emitted as **Y-up** (`y = -world_y`).
-  - If world landmarks are unavailable, falls back to normalized image-space coordinates.
+  - Controlled by state `skeletonSource`:
+    - `world` (default): use MediaPipe `pose_world_landmarks` directly and convert to **Y-up** (`y = -world_y`).
+    - `camera`: use MediaPipe `pose_landmarks` in pixel space (`x_px`, `y_px`), and scale depth as `z * sqrt(width * height)`.
+  - In `world` mode, if world landmarks are unavailable, it falls back to the `camera` mapping above.
   - Bone `rot` is estimated from neighbor links defined by the `mediapipe_pose_33` skeleton graph.

@@ -10,7 +10,7 @@ import urllib.request
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from f8pysdk.nats_naming import ensure_token
 from f8pysdk.runtime_node import ServiceNode
@@ -46,6 +46,7 @@ def _build_neighbors_by_index() -> tuple[tuple[int, ...], ...]:
 
 
 _MEDIAPIPE_POSE_NEIGHBORS: tuple[tuple[int, ...], ...] = _build_neighbors_by_index()
+SkeletonSource = Literal["camera", "world"]
 
 
 def _coerce_int(v: Any, *, default: int, minimum: int, maximum: int) -> int:
@@ -79,6 +80,15 @@ def _coerce_str(v: Any, *, default: str) -> str:
     if not text:
         return str(default)
     return text
+
+
+def _coerce_skeleton_source(v: Any, *, default: SkeletonSource) -> SkeletonSource:
+    text = _coerce_str(v, default=default).lower()
+    if text == "camera":
+        return "camera"
+    if text == "world":
+        return "world"
+    return default
 
 
 def _clamp(v: float, lo: float, hi: float) -> float:
@@ -287,13 +297,15 @@ def build_pose_skeleton_payload(
     world_keypoints: list[dict[str, float | None]] | None,
     width: int,
     height: int,
+    skeleton_source: SkeletonSource = "world",
 ) -> dict[str, Any]:
-    norm_w = float(width) if int(width) > 0 else 1.0
-    norm_h = float(height) if int(height) > 0 else 1.0
+    z_camera_scale = math.sqrt(float(max(1, int(width))) * float(max(1, int(height))))
+    world_source = str(skeleton_source or "").strip().lower() == "world"
     positions: list[tuple[float, float, float] | None] = [None for _ in MEDIAPIPE_POSE_33_LANDMARK_NAMES]
+
     for index, _name in enumerate(MEDIAPIPE_POSE_33_LANDMARK_NAMES):
         world_position: tuple[float, float, float] | None = None
-        if world_keypoints is not None and index < len(world_keypoints):
+        if world_source and world_keypoints is not None and index < len(world_keypoints):
             world_keypoint = world_keypoints[index]
             world_x = world_keypoint["x"]
             world_y = world_keypoint["y"]
@@ -312,7 +324,7 @@ def build_pose_skeleton_payload(
         image_z = image_keypoint["z"]
         if image_x is None or image_y is None or image_z is None:
             continue
-        positions[index] = (float(image_x) / norm_w, float(image_y) / norm_h, float(image_z))
+        positions[index] = (float(image_x), float(image_y), float(image_z) * z_camera_scale)
 
     bones: list[dict[str, Any]] = []
     for index, name in enumerate(MEDIAPIPE_POSE_33_LANDMARK_NAMES):
@@ -593,6 +605,7 @@ class MediaPipePoseServiceNode(ServiceNode):
         self._min_detection_confidence = 0.5
         self._min_tracking_confidence = 0.5
         self._visibility_threshold = 0.5
+        self._skeleton_source: SkeletonSource = "world"
 
         self._shm: VideoShmReader | None = None
         self._shm_open_name = ""
@@ -678,6 +691,13 @@ class MediaPipePoseServiceNode(ServiceNode):
             )
             return
 
+        if name == "skeletonSource":
+            self._skeleton_source = _coerce_skeleton_source(
+                await self.get_state_value("skeletonSource"),
+                default=self._skeleton_source,
+            )
+            return
+
     async def _ensure_config_loaded(self) -> None:
         if self._config_loaded:
             return
@@ -713,6 +733,10 @@ class MediaPipePoseServiceNode(ServiceNode):
             default=float(self._initial_state.get("visibilityThreshold") or 0.5),
             minimum=0.0,
             maximum=1.0,
+        )
+        self._skeleton_source = _coerce_skeleton_source(
+            await self.get_state_value("skeletonSource"),
+            default=_coerce_skeleton_source(self._initial_state.get("skeletonSource"), default="world"),
         )
         self._config_loaded = True
 
@@ -865,6 +889,7 @@ class MediaPipePoseServiceNode(ServiceNode):
                     world_keypoints=world_keypoints,
                     width=width,
                     height=height,
+                    skeleton_source=self._skeleton_source,
                 )
                 await self.emit("detections", payload_out, ts_ms=int(header.ts_ms))
                 await self.emit("skeletons", [skeleton_payload], ts_ms=int(header.ts_ms))

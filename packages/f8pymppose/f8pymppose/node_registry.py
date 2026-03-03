@@ -37,7 +37,7 @@ def _state_fields() -> list[F8StateSpec]:
             description="Run pose inference every N frames (>=1).",
             valueSchema=integer_schema(default=1, minimum=1, maximum=10000),
             access=F8StateAccess.rw,
-            showOnNode=True,
+            showOnNode=False,
         ),
         F8StateSpec(
             name="modelComplexity",
@@ -46,7 +46,7 @@ def _state_fields() -> list[F8StateSpec]:
             valueSchema=string_schema(default="full", enum=["lite", "full", "heavy"]),
             access=F8StateAccess.rw,
             uiControl="select",
-            showOnNode=True,
+            showOnNode=False,
         ),
         F8StateSpec(
             name="minDetectionConfidence",
@@ -54,7 +54,7 @@ def _state_fields() -> list[F8StateSpec]:
             description="Minimum confidence threshold for pose detection.",
             valueSchema=number_schema(default=0.5, minimum=0.0, maximum=1.0),
             access=F8StateAccess.rw,
-            showOnNode=True,
+            showOnNode=False,
         ),
         F8StateSpec(
             name="minTrackingConfidence",
@@ -62,7 +62,7 @@ def _state_fields() -> list[F8StateSpec]:
             description="Minimum confidence threshold for pose tracking.",
             valueSchema=number_schema(default=0.5, minimum=0.0, maximum=1.0),
             access=F8StateAccess.rw,
-            showOnNode=True,
+            showOnNode=False,
         ),
         F8StateSpec(
             name="visibilityThreshold",
@@ -70,7 +70,16 @@ def _state_fields() -> list[F8StateSpec]:
             description="Landmark visibility threshold (below threshold => hidden point).",
             valueSchema=number_schema(default=0.5, minimum=0.0, maximum=1.0),
             access=F8StateAccess.rw,
-            showOnNode=True,
+            showOnNode=False,
+        ),
+        F8StateSpec(
+            name="skeletonSource",
+            label="Skeleton Source",
+            description="Skeleton output source: camera landmarks or world landmarks (pelvis-centered).",
+            valueSchema=string_schema(default="world", enum=["camera", "world"]),
+            access=F8StateAccess.rw,
+            uiControl="select",
+            showOnNode=False,
         ),
         F8StateSpec(
             name="lastError",
