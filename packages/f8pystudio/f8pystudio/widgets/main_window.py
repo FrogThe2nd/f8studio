@@ -2,12 +2,9 @@ from __future__ import annotations
 
 import json
 import logging
-from pathlib import Path
 from typing import Any, Iterable
 
 from qtpy import QtCore, QtGui, QtWidgets
-
-from f8pysdk import F8OperatorSpec, F8ServiceSpec
 
 from ..nodegraph import F8StudioGraph
 from ..nodegraph.edge_rules import EDGE_KIND_DATA, EDGE_KIND_EXEC, EDGE_KIND_STATE
@@ -21,7 +18,28 @@ from ..ui_icons import StudioIcon, icon_for
 from .node_property_widgets import F8StudioSingleNodePropertiesWidget
 from .node_library_widget import F8StudioNodeLibraryWidget
 from .service_manager_widget import ServiceManagerWidget
+from .service_inventory import collect_declared_service_ids, collect_declared_services
 from .service_log_widget import ServiceLogDock
+from .runtime_state_sync import RuntimeStateSyncController
+from .session_actions import (
+    auto_load_session as session_auto_load_session,
+    auto_save_session as session_auto_save_session,
+    insert_graph_from_dialog as session_insert_graph_from_dialog,
+    load_last_session as session_load_last_session,
+    load_session_from_dialog as session_load_session_from_dialog,
+    save_session as session_save_session,
+    save_session_as_dialog as session_save_session_as_dialog,
+)
+from .main_window_prefs import (
+    as_qbytearray as prefs_as_qbytearray,
+    log_level_name_for_value as prefs_log_level_name_for_value,
+    log_level_value_from_name as prefs_log_level_value_from_name,
+    normalize_supported_log_level as prefs_normalize_supported_log_level,
+    read_layout_bytes as prefs_read_layout_bytes,
+    read_saved_log_level_name as prefs_read_saved_log_level_name,
+    write_layout_bytes as prefs_write_layout_bytes,
+    write_saved_log_level_name as prefs_write_saved_log_level_name,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +99,6 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         self._stop_all_services_action = self._create_stop_all_services_action()
         self._setup_menu()
         self._setup_toolbar()
-        self._applying_runtime_state = False
         self._service_manager: ServiceManagerWidget | None = None
 
         self._bridge = PyStudioServiceBridge(PyStudioServiceBridgeConfig(), parent=self)
@@ -103,6 +120,12 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
             self.studio_graph.set_service_bridge(self._bridge)
         except Exception as exc:
             self._log_dock.report_exception("studio", "studio_graph.set_service_bridge failed", exc)
+        self._runtime_state_sync = RuntimeStateSyncController(
+            studio_graph=self.studio_graph,
+            property_editor=self._prop_editor,
+            bridge=self._bridge,
+            studio_service_class=STUDIO_SERVICE_CLASS,
+        )
         self.studio_graph.property_changed.connect(self._on_ui_property_changed)  # type: ignore[attr-defined]
 
         QtCore.QTimer.singleShot(0, self._auto_load_session)
@@ -169,24 +192,10 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         self._dock_widgets.append(self._service_manager_dock)
 
     def _declared_graph_services(self) -> dict[str, str]:
-        rows: dict[str, str] = {}
-        for node in list(self.studio_graph.all_nodes() or []):
-            try:
-                spec = node.spec
-            except Exception:
-                continue
-            if not isinstance(spec, F8ServiceSpec):
-                continue
-            service_class = str(spec.serviceClass or "").strip()
-            if not service_class or service_class == STUDIO_SERVICE_CLASS:
-                continue
-            try:
-                service_id = str(node.id or "").strip()
-            except Exception:
-                service_id = ""
-            if service_id:
-                rows[service_id] = service_class
-        return rows
+        return collect_declared_services(
+            nodes=list(self.studio_graph.all_nodes() or []),
+            studio_service_class=STUDIO_SERVICE_CLASS,
+        )
 
     def _setup_menu(self) -> None:
         menu = self.menuBar().addMenu("Graph")
@@ -261,76 +270,49 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
 
     @staticmethod
     def _as_qbytearray(value: Any) -> QtCore.QByteArray | None:
-        if isinstance(value, QtCore.QByteArray):
-            return value
-        if isinstance(value, (bytes, bytearray)):
-            return QtCore.QByteArray(bytes(value))
-        return None
+        return prefs_as_qbytearray(value)
 
     def _read_layout_bytes(self, *, key: str) -> QtCore.QByteArray | None:
-        settings = self._layout_settings()
-        settings.beginGroup(self._WINDOW_LAYOUT_SETTINGS_GROUP)
-        try:
-            raw = settings.value(key)
-        finally:
-            settings.endGroup()
-        return self._as_qbytearray(raw)
+        return prefs_read_layout_bytes(
+            settings=self._layout_settings(),
+            group=self._WINDOW_LAYOUT_SETTINGS_GROUP,
+            key=key,
+        )
 
     def _write_layout_bytes(self, *, key: str, value: QtCore.QByteArray) -> None:
-        settings = self._layout_settings()
-        settings.beginGroup(self._WINDOW_LAYOUT_SETTINGS_GROUP)
-        try:
-            settings.setValue(key, value)
-            settings.sync()
-        finally:
-            settings.endGroup()
+        prefs_write_layout_bytes(
+            settings=self._layout_settings(),
+            group=self._WINDOW_LAYOUT_SETTINGS_GROUP,
+            key=key,
+            value=value,
+        )
 
     @classmethod
     def _normalize_supported_log_level(cls, level: int) -> int:
-        normalized = int(level)
-        if normalized <= logging.DEBUG:
-            return logging.DEBUG
-        if normalized <= logging.INFO:
-            return logging.INFO
-        if normalized <= logging.WARNING:
-            return logging.WARNING
-        if normalized <= logging.ERROR:
-            return logging.ERROR
-        return logging.CRITICAL
+        return prefs_normalize_supported_log_level(level)
 
     @classmethod
     def _log_level_name_for_value(cls, level: int) -> str:
-        normalized_level = cls._normalize_supported_log_level(level)
-        for name, value in cls._LOG_LEVEL_CHOICES:
-            if value == normalized_level:
-                return name
-        return "WARNING"
+        return prefs_log_level_name_for_value(level=level, choices=cls._LOG_LEVEL_CHOICES)
 
     @classmethod
     def _log_level_value_from_name(cls, level_name: str) -> int | None:
-        name = str(level_name or "").strip().upper()
-        for candidate_name, candidate_value in cls._LOG_LEVEL_CHOICES:
-            if candidate_name == name:
-                return candidate_value
-        return None
+        return prefs_log_level_value_from_name(level_name=level_name, choices=cls._LOG_LEVEL_CHOICES)
 
     def _read_saved_log_level_name(self) -> str:
-        settings = self._layout_settings()
-        settings.beginGroup(self._LOG_LEVEL_SETTINGS_GROUP)
-        try:
-            raw = settings.value(self._LOG_LEVEL_SETTINGS_KEY, "")
-        finally:
-            settings.endGroup()
-        return str(raw or "").strip().upper()
+        return prefs_read_saved_log_level_name(
+            settings=self._layout_settings(),
+            group=self._LOG_LEVEL_SETTINGS_GROUP,
+            key=self._LOG_LEVEL_SETTINGS_KEY,
+        )
 
     def _write_saved_log_level_name(self, *, level_name: str) -> None:
-        settings = self._layout_settings()
-        settings.beginGroup(self._LOG_LEVEL_SETTINGS_GROUP)
-        try:
-            settings.setValue(self._LOG_LEVEL_SETTINGS_KEY, str(level_name or "").strip().upper())
-            settings.sync()
-        finally:
-            settings.endGroup()
+        prefs_write_saved_log_level_name(
+            settings=self._layout_settings(),
+            group=self._LOG_LEVEL_SETTINGS_GROUP,
+            key=self._LOG_LEVEL_SETTINGS_KEY,
+            level_name=level_name,
+        )
 
     def _apply_log_level(self, *, level: int, persist: bool) -> None:
         normalized_level = self._normalize_supported_log_level(level)
@@ -522,119 +504,53 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         super().closeEvent(event)
 
     def _auto_load_session(self) -> None:
-        try:
-            loaded = self.studio_graph.load_last_session()
-            if loaded:
-                logger.info("Loaded session from %s", loaded)
-        except Exception as exc:
-            self._log_dock.report_exception("studio", "session auto-load failed", exc)
-            logger.exception("Auto-load session failed")
+        session_auto_load_session(studio_graph=self.studio_graph, log_dock=self._log_dock)
 
     def _auto_save_session(self) -> None:
         # Called from both `closeEvent` and `QApplication.aboutToQuit`; guard to avoid double-save on exit.
-        if self._exit_autosaved:
-            return
-        try:
-            saved = self.studio_graph.save_last_session()
-            self._exit_autosaved = True
-            logger.info("Saved session to %s", saved)
-        except Exception:
-            try:
-                self._log_dock.append("studio", "[session] auto-save failed\n")
-            except (AttributeError, RuntimeError, TypeError):
-                pass
-            logger.exception("Auto-save session failed")
+        self._exit_autosaved = session_auto_save_session(
+            studio_graph=self.studio_graph,
+            log_dock=self._log_dock,
+            already_saved=self._exit_autosaved,
+        )
 
     def _save_session_action(self) -> None:
-        path = self.studio_graph.save_last_session()
-        show_info(self, "Session saved", f"Saved to:\n{path}")
+        session_save_session(parent=self, studio_graph=self.studio_graph, show_info=show_info)
 
     def _load_session_action(self) -> None:
-        path = self.studio_graph.load_last_session()
-        if not path:
-            show_info(self, "No session", f"No session file found at:\n{self._session_file}")
-            return
-        show_info(self, "Session loaded", f"Loaded:\n{path}")
+        session_load_last_session(
+            parent=self,
+            studio_graph=self.studio_graph,
+            session_file=self._session_file,
+            show_info=show_info,
+        )
 
     def _load_session_from_action(self) -> None:
-        try:
-            start_dir = str(self._session_dialog_dir or "")
-        except Exception:
-            start_dir = ""
-        path, _ = QtWidgets.QFileDialog.getOpenFileName(
-            self,
-            "Load Session",
-            start_dir,
-            "F8 Studio Session (*.json);;JSON (*.json);;All Files (*)",
+        self._session_dialog_dir = session_load_session_from_dialog(
+            parent=self,
+            studio_graph=self.studio_graph,
+            log_dock=self._log_dock,
+            start_dir=str(self._session_dialog_dir or ""),
+            show_warning=show_warning,
         )
-        p = str(path or "").strip()
-        if not p:
-            return
-        try:
-            self.studio_graph.load_session(p)
-            self._session_dialog_dir = str(Path(p).resolve().parent)
-            self._log_dock.append("studio", f"[session] loaded: {p}\n")
-        except Exception as exc:
-            self._log_dock.append("studio", f"[session] load failed: {exc}\n")
-            self._log_dock.report_exception("studio", f"session load failed ({p})", exc)
-            show_warning(self, "Load failed", f"Failed to load:\n{p}\n\n{exc}")
 
     def _save_session_as_action(self) -> None:
-        try:
-            start_dir = str(self._session_dialog_dir or "")
-        except Exception:
-            start_dir = ""
-        path, _ = QtWidgets.QFileDialog.getSaveFileName(
-            self,
-            "Save Session As",
-            start_dir,
-            "F8 Studio Session (*.json);;JSON (*.json);;All Files (*)",
+        self._session_dialog_dir = session_save_session_as_dialog(
+            parent=self,
+            studio_graph=self.studio_graph,
+            log_dock=self._log_dock,
+            start_dir=str(self._session_dialog_dir or ""),
+            show_warning=show_warning,
         )
-        p = str(path or "").strip()
-        if not p:
-            return
-        if not p.lower().endswith(".json"):
-            p = p + ".json"
-        try:
-            self.studio_graph.save_session(p)
-            self._session_dialog_dir = str(Path(p).resolve().parent)
-            self._log_dock.append("studio", f"[session] saved: {p}\n")
-        except Exception as exc:
-            self._log_dock.append("studio", f"[session] save failed: {exc}\n")
-            self._log_dock.report_exception("studio", f"session save failed ({p})", exc)
-            show_warning(self, "Save failed", f"Failed to save:\n{p}\n\n{exc}")
 
     def _insert_graph_from_action(self) -> None:
-        try:
-            start_dir = str(self._session_dialog_dir or "")
-        except Exception:
-            start_dir = ""
-        path, _ = QtWidgets.QFileDialog.getOpenFileName(
-            self,
-            "Insert Graph",
-            start_dir,
-            "F8 Studio Session (*.json);;JSON (*.json);;All Files (*)",
+        self._session_dialog_dir = session_insert_graph_from_dialog(
+            parent=self,
+            studio_graph=self.studio_graph,
+            log_dock=self._log_dock,
+            start_dir=str(self._session_dialog_dir or ""),
+            show_warning=show_warning,
         )
-        p = str(path or "").strip()
-        if not p:
-            return
-        try:
-            request = self.studio_graph.prepare_insert_graph_from_file(p)
-        except Exception as exc:
-            self._log_dock.append("studio", f"[insert] prepare failed: {exc}\n")
-            self._log_dock.report_exception("studio", f"insert graph prepare failed ({p})", exc)
-            show_warning(self, "Insert failed", f"Failed to prepare insert:\n{p}\n\n{exc}")
-            return
-
-        self._session_dialog_dir = str(Path(p).resolve().parent)
-        if request.node_count <= 0:
-            show_warning(self, "Insert blocked", f"Graph has no nodes:\n{p}")
-            return
-
-        graph_name = Path(p).name
-        placement_label = f"Insert: {graph_name}\n{request.node_count} nodes"
-        self.studio_graph.begin_graph_placement(request, label=placement_label)
-        self._log_dock.append("studio", f"[insert] click canvas to place: {graph_name} ({request.node_count} nodes)\n")
 
     def _compile_runtime_action(self) -> None:
         try:
@@ -678,22 +594,10 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         self._bridge.deploy(compiled)
 
     def _on_stop_all_services_triggered(self) -> None:
-        service_ids: set[str] = set()
-        for node in list(self.studio_graph.all_nodes() or []):
-            try:
-                spec = node.spec
-            except Exception:
-                continue
-            if not isinstance(spec, F8ServiceSpec):
-                continue
-            if str(spec.serviceClass or "") == STUDIO_SERVICE_CLASS:
-                continue
-            try:
-                service_id = str(node.id or "").strip()
-            except Exception:
-                service_id = ""
-            if service_id:
-                service_ids.add(service_id)
+        service_ids = collect_declared_service_ids(
+            nodes=list(self.studio_graph.all_nodes() or []),
+            studio_service_class=STUDIO_SERVICE_CLASS,
+        )
 
         if not service_ids:
             self._log_dock.append("studio", "[service] no graph service instances to stop\n")
@@ -725,42 +629,7 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
             return
 
     def _on_runtime_state_updated(self, service_id: str, node_id: str, field: str, value: Any, ts_ms: Any) -> None:
-        """
-        Apply live state updates to the corresponding UI node property (best-effort).
-        """
-        try:
-            node = self.studio_graph.get_node_by_id(str(node_id))
-        except Exception:
-            node = None
-        if node is None:
-            return
-        try:
-            if field in node.model.properties or field in node.model.custom_properties:
-                self._applying_runtime_state = True
-                try:
-                    node.set_property(field, value, push_undo=False)
-                    # If this node is currently shown in the Properties dock, also refresh the widget value.
-                    try:
-                        editor = self._prop_editor.get_property_editor_widget(node)
-                        w = editor.get_widget(field) if editor is not None else None
-                        if w is not None:
-                            try:
-                                w.blockSignals(True)
-                            except (AttributeError, RuntimeError, TypeError):
-                                pass
-                            try:
-                                w.set_value(value)
-                            finally:
-                                try:
-                                    w.blockSignals(False)
-                                except (AttributeError, RuntimeError, TypeError):
-                                    pass
-                    except (AttributeError, RuntimeError, TypeError, ValueError):
-                        pass
-                finally:
-                    self._applying_runtime_state = False
-        except (AttributeError, RuntimeError, TypeError):
-            return
+        self._runtime_state_sync.on_runtime_state_updated(service_id, node_id, field, value, ts_ms)
 
     def _on_ui_command(self, cmd: UiCommand) -> None:
         if str(cmd.command) == "monitor.update":
@@ -793,44 +662,4 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
             return
 
     def _on_ui_property_changed(self, node: Any, name: str, value: Any) -> None:
-        """
-        Propagate UI state edits into the corresponding runtime.
-        """
-        if self._applying_runtime_state:
-            return
-        try:
-            spec = node.spec
-        except Exception:
-            spec = None
-        if not isinstance(spec, (F8OperatorSpec, F8ServiceSpec)):
-            return
-        service_class = str(spec.serviceClass or "")
-        # Only state fields are propagated.
-        try:
-            state_names = {str(s.name or "") for s in (spec.stateFields or [])}
-        except Exception:
-            state_names = set()
-        if str(name) not in state_names:
-            return
-        try:
-            node_id = str(node.id or "")
-        except Exception:
-            node_id = ""
-        if not node_id:
-            return
-        if service_class == STUDIO_SERVICE_CLASS:
-            self._bridge.set_local_state(node_id, str(name), value)
-            return
-
-        # Non-studio services: push state to the runtime via `set_state` endpoint.
-        # Service nodes represent service instances themselves: node_id == service_id.
-        if isinstance(spec, F8ServiceSpec):
-            service_id = node_id
-        else:
-            try:
-                service_id = str(node.svcId or "")
-            except Exception:
-                service_id = ""
-        if not service_id:
-            return
-        self._bridge.set_remote_state(service_id, node_id, str(name), value)
+        self._runtime_state_sync.on_ui_property_changed(node, name, value)

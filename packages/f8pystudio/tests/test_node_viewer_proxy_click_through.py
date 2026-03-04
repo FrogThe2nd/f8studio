@@ -8,11 +8,19 @@ from f8pystudio.nodegraph.viewer import F8StudioNodeViewer
 
 
 class _FakeSceneMouseEvent:
-    def __init__(self, scene_pos: QtCore.QPointF) -> None:
+    def __init__(self, scene_pos: QtCore.QPointF, *, button: QtCore.Qt.MouseButton = QtCore.Qt.LeftButton) -> None:
         self._scene_pos = scene_pos
+        self._button = button
+        self.accepted = False
 
     def scenePos(self) -> QtCore.QPointF:
         return self._scene_pos
+
+    def button(self) -> QtCore.Qt.MouseButton:
+        return self._button
+
+    def accept(self) -> None:
+        self.accepted = True
 
 
 def _ensure_app() -> QtWidgets.QApplication:
