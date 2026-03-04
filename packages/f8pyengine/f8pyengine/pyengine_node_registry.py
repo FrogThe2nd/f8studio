@@ -38,6 +38,7 @@ from .operators.mix_silence_fill import register_operator as register_mix_silenc
 from .operators.sequence_player import register_operator as register_sequence_player_operator
 from .operators.playback_sync import register_operator as register_playback_sync_operator
 from .operators.handy_out import register_operator as register_handy_out_operator
+from .operators.state_trigger import register_operator as register_state_trigger_operator
 from .pyengine_service_node import PyEngineServiceNode
 
 
@@ -106,4 +107,5 @@ def register_pyengine_specs(registry: RuntimeNodeRegistry | None = None) -> Runt
     register_mix_silence_fill_operator(reg)
     register_playback_sync_operator(reg)
     register_handy_out_operator(reg)
+    register_state_trigger_operator(reg)
     return reg

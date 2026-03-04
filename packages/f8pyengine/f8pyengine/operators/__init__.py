@@ -22,6 +22,7 @@ from .program_wave import ProgramWaveRuntimeNode
 from .sequence_player import SequencePlayerRuntimeNode
 from .playback_sync import PlaybackSyncRuntimeNode
 from .handy_out import HandyOutRuntimeNode
+from .state_trigger import StateTriggerRuntimeNode
 
 __all__ = [
     "PrintRuntimeNode",
@@ -46,4 +47,5 @@ __all__ = [
     "MixSilenceFillRuntimeNode",
     "PlaybackSyncRuntimeNode",
     "HandyOutRuntimeNode",
+    "StateTriggerRuntimeNode",
 ]

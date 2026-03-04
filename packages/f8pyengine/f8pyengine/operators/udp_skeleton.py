@@ -23,7 +23,8 @@ from f8pysdk import (
     number_schema,
     string_schema,
 )
-from f8pysdk.capabilities import NodeBus
+from f8pysdk.capabilities import EntrypointNode, NodeBus
+from f8pysdk.executors.exec_flow import EntrypointContext
 from f8pysdk.nats_naming import ensure_token
 from f8pysdk.runtime_node import OperatorNode
 from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
@@ -142,7 +143,7 @@ def _is_loopback_bind_address(value: str) -> bool:
         return False
 
 
-class UdpSkeletonRuntimeNode(OperatorNode):
+class UdpSkeletonRuntimeNode(OperatorNode, EntrypointNode):
     """
     UDP skeleton receiver.
 
@@ -152,6 +153,7 @@ class UdpSkeletonRuntimeNode(OperatorNode):
     - Removes stale models older than `cleanupAfterMs`
     - Synchronizes `availableKeys` state for Studio option pools
     - Outputs are pull-based via `compute_output(...)`
+    - Emits exec on `packet` after packet/frame commit
     """
 
     def __init__(self, *, node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any] | None = None) -> None:
@@ -187,6 +189,11 @@ class UdpSkeletonRuntimeNode(OperatorNode):
         self._output_version = 0
         self._last_synced_keys: list[str] = []
         self._ctx_output_cache: dict[tuple[str, str | int | None], tuple[int, Any]] = {}
+        self._entrypoint_ctx: EntrypointContext | None = None
+        self._pending_exec_id: str | int | None = None
+        self._emit_wakeup = asyncio.Event()
+        self._emit_task: asyncio.Task[None] | None = None
+        self._emit_seq = 0
 
     def attach(self, bus: Any) -> None:
         super().attach(bus)
@@ -194,9 +201,11 @@ class UdpSkeletonRuntimeNode(OperatorNode):
         bus_like = bus if isinstance(bus, NodeBus) else None
         if bus_like is not None:
             try:
+                loop = asyncio.get_running_loop()
                 if not bool(bus_like.active):
-                    loop = asyncio.get_running_loop()
                     loop.create_task(self._stop_receiver(), name=f"udp_skeleton:deactivate:{self.node_id}")
+                    return
+                loop.create_task(self._ensure_receiver(), name=f"udp_skeleton:attach_start:{self.node_id}")
             except RuntimeError:
                 logger.exception("udp_skeleton attach failed: no running loop nodeId=%s", self.node_id)
 
@@ -205,6 +214,13 @@ class UdpSkeletonRuntimeNode(OperatorNode):
             await self._ensure_receiver()
         else:
             await self._stop_receiver()
+
+    async def start_entrypoint(self, ctx: EntrypointContext) -> None:
+        self._entrypoint_ctx = ctx
+
+    async def stop_entrypoint(self) -> None:
+        self._entrypoint_ctx = None
+        await self._cancel_emit_task()
 
     def _bus_active(self) -> bool:
         bus = self._bus
@@ -274,6 +290,7 @@ class UdpSkeletonRuntimeNode(OperatorNode):
             return
 
     async def close(self) -> None:
+        await self.stop_entrypoint()
         await self._stop_receiver()
 
     @staticmethod
@@ -475,10 +492,65 @@ class UdpSkeletonRuntimeNode(OperatorNode):
 
                 if keys_changed:
                     await self._sync_available_keys_and_selection()
+                self._emit_seq += 1
+                self._request_exec_emit(exec_id=int(self._emit_seq))
             except asyncio.CancelledError:
                 raise
             except Exception:
                 logger.exception("udp_skeleton drain loop failed nodeId=%s", self.node_id)
+
+    def _request_exec_emit(self, *, exec_id: str | int) -> None:
+        if self._entrypoint_ctx is None:
+            return
+        self._pending_exec_id = exec_id
+        self._emit_wakeup.set()
+        task = self._emit_task
+        if task is not None and not task.done():
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        self._emit_task = loop.create_task(
+            self._emit_exec_loop(),
+            name=f"udp_skeleton:emit_exec:{self.node_id}",
+        )
+
+    async def _emit_exec_loop(self) -> None:
+        try:
+            while True:
+                await self._emit_wakeup.wait()
+                self._emit_wakeup.clear()
+                exec_id = self._pending_exec_id
+                self._pending_exec_id = None
+                if exec_id is None:
+                    continue
+                ctx = self._entrypoint_ctx
+                if ctx is None:
+                    continue
+                try:
+                    await ctx.emit_exec("packet", exec_id=exec_id)
+                except Exception as exc:
+                    logger.exception("[%s:udp_skeleton] emit exec failed", self.node_id, exc_info=exc)
+        except asyncio.CancelledError:
+            raise
+        finally:
+            self._emit_task = None
+
+    async def _cancel_emit_task(self) -> None:
+        task = self._emit_task
+        self._emit_task = None
+        self._pending_exec_id = None
+        self._emit_wakeup.clear()
+        if task is None:
+            return
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            return
+        except Exception as exc:
+            logger.exception("[%s:udp_skeleton] stop emit task failed", self.node_id, exc_info=exc)
 
     def _bump_output_version(self) -> None:
         self._output_version += 1
@@ -750,10 +822,10 @@ UdpSkeletonRuntimeNode.SPEC = F8OperatorSpec(
     operatorClass=OPERATOR_CLASS,
     version="0.0.1",
     label="UDP Skeleton",
-    description="Receives UDP packets and keeps latest skeleton per model key, with TTL cleanup and selection.",
+    description="Receives UDP packets, keeps latest skeleton per model key, and emits exec triggers per committed packet/frame.",
     tags=["io", "udp", "network", "skeleton", "mocap"],
     execInPorts=[],
-    execOutPorts=[],
+    execOutPorts=["packet"],
     dataOutPorts=[
         F8DataPortSpec(
             name="skeletons",
