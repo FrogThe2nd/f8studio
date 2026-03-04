@@ -12,8 +12,8 @@ from NodeGraphQt.custom_widgets.nodes_tree import _BaseNodeTreeItem, TYPE_CATEGO
 from ..nodegraph.spec_visibility import is_hidden_spec_node_class, typed_spec_template_or_none
 from f8pysdk import F8OperatorSpec, F8ServiceSpec
 from ..ui_notifications import show_warning
-from ..variants.variant_ids import build_variant_node_type
-from ..variants.variant_repository import delete_variant, list_variants_for_base
+from ..variants.variant_ids import build_variant_node_type, is_variant_node_type, parse_variant_node_type
+from ..variants.variant_repository import delete_variant, list_variants_for_base, variant_exists
 from ..variants.variant_events import subscribe_variants_changed
 
 
@@ -542,6 +542,32 @@ class F8StudioNodeLibraryWidget(QtWidgets.QWidget):
 
     def _on_variants_changed(self) -> None:
         self._tree.update()
+        self._cancel_invalid_variant_placement_if_needed()
+
+    def _cancel_invalid_variant_placement_if_needed(self) -> None:
+        graph = self._node_graph
+        if graph is None:
+            return
+        try:
+            pending_node_type = graph.pending_node_placement_type()
+        except (AttributeError, RuntimeError, TypeError):
+            return
+        if pending_node_type is None:
+            return
+        pending_value = str(pending_node_type).strip()
+        if not pending_value:
+            return
+        if not is_variant_node_type(pending_value):
+            return
+        variant_id = parse_variant_node_type(pending_value)
+        if variant_id is None:
+            return
+        if variant_exists(variant_id):
+            return
+        try:
+            graph.cancel_node_placement()
+        except (AttributeError, RuntimeError, TypeError):
+            return
 
     def _on_destroyed(self, _obj: Any) -> None:
         unsubscribe = self._unsubscribe_variants_changed

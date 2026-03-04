@@ -64,6 +64,9 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         self._bridge.service_process_state.connect(self._on_service_process_state)  # type: ignore[attr-defined]
         self._bridge.log.connect(lambda s: self._log_dock.append("studio", str(s) + "\n"))  # type: ignore[attr-defined]
         self._setup_service_manager_dock()
+        self._shortcut_escape_cancel = QtGui.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key_Escape), self)
+        self._shortcut_escape_cancel.setContext(QtCore.Qt.ShortcutContext.WindowShortcut)
+        self._shortcut_escape_cancel.activated.connect(self._on_escape_cancel_placement)  # type: ignore[attr-defined]
         self._bridge.start()
         try:
             self.studio_graph.set_service_bridge(self._bridge)
@@ -506,6 +509,24 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
                 self._log_dock.append("studio", f"[service] stop requested: {service_id}\n")
             except Exception as exc:
                 self._log_dock.report_exception("studio", f"stop service failed ({service_id})", exc)
+
+    @QtCore.Slot()
+    def _on_escape_cancel_placement(self) -> None:
+        app = QtWidgets.QApplication.instance()
+        if app is not None and app.activePopupWidget() is not None:
+            return
+        viewer = self.studio_graph.viewer()
+        if viewer is None:
+            return
+        try:
+            if viewer.is_graph_placement_active():
+                self.studio_graph.cancel_graph_placement()
+                return
+            if viewer.is_node_placement_active():
+                self.studio_graph.cancel_node_placement()
+                return
+        except (AttributeError, RuntimeError, TypeError):
+            return
 
     def _on_runtime_state_updated(self, service_id: str, node_id: str, field: str, value: Any, ts_ms: Any) -> None:
         """

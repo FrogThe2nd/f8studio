@@ -81,7 +81,7 @@ class VizThreeDRuntimeNode(StudioVizRuntimeNodeBase):
         self._last_input_ts_ms: int = 0
 
         self._throttle_ms = 33
-        self._world_up = "y"
+        self._world_up = "+y"
         self._show_person_boxes = True
         self._show_person_names = False
         self._show_bone_points = True
@@ -166,7 +166,7 @@ class VizThreeDRuntimeNode(StudioVizRuntimeNodeBase):
             self._ui_fps_cap = self._coerce_int(value, default=self._ui_fps_cap, minimum=1, maximum=120)
             updated = True
         elif name == "markerScale":
-            self._marker_scale = self._coerce_float(value, default=self._marker_scale, minimum=0.1, maximum=20.0)
+            self._marker_scale = self._coerce_float(value, default=self._marker_scale, minimum=0.1, maximum=100000.0)
             updated = True
 
         if not updated:
@@ -181,7 +181,7 @@ class VizThreeDRuntimeNode(StudioVizRuntimeNodeBase):
         self._throttle_ms = self._coerce_int(
             await self._get_state_or_initial("throttleMs", 33), default=33, minimum=0, maximum=60000
         )
-        self._world_up = self._coerce_world_up(await self._get_state_or_initial("worldUp", "y"), default="y")
+        self._world_up = self._coerce_world_up(await self._get_state_or_initial("worldUp", "+y"), default="+y")
         self._show_person_boxes = self._coerce_bool(
             await self._get_state_or_initial("showPersonBoxes", True), default=True
         )
@@ -209,7 +209,7 @@ class VizThreeDRuntimeNode(StudioVizRuntimeNodeBase):
             await self._get_state_or_initial("uiFpsCap", 60), default=60, minimum=1, maximum=120
         )
         self._marker_scale = self._coerce_float(
-            await self._get_state_or_initial("markerScale", 1.0), default=1.0, minimum=0.1, maximum=20.0
+            await self._get_state_or_initial("markerScale", 1.0), default=1.0, minimum=0.1, maximum=100000.0
         )
         self._config_loaded = True
 
@@ -504,9 +504,18 @@ class VizThreeDRuntimeNode(StudioVizRuntimeNodeBase):
     @staticmethod
     def _coerce_world_up(value: Any, *, default: str) -> str:
         text = str(value or "").strip().lower()
-        if text in ("y", "z"):
+        if text in ("+x", "-x", "+y", "-y", "+z", "-z"):
             return text
-        return str(default or "y")
+        if text == "x":
+            return "+x"
+        if text == "y":
+            return "+y"
+        if text == "z":
+            return "+z"
+        fallback = str(default or "+y").strip().lower()
+        if fallback in ("+x", "-x", "+y", "-y", "+z", "-z"):
+            return fallback
+        return "+y"
 
     def _log_bad_input_once(self, value: Any) -> None:
         sig = f"{type(value).__name__}"
@@ -555,7 +564,7 @@ def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNod
                     name="worldUp",
                     label="World Up",
                     description="World up axis for viewer transform.",
-                    valueSchema=string_schema(default="y", enum=["y", "z"]),
+                    valueSchema=string_schema(default="+y", enum=["+x", "-x", "+y", "-y", "+z", "-z"]),
                     access=F8StateAccess.rw,
                     required=True,
                     showOnNode=True,
@@ -654,7 +663,7 @@ def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNod
                     name="markerScale",
                     label="Marker Scale",
                     description="Global scale for bone point size and bone axis size.",
-                    valueSchema=number_schema(default=1.0, minimum=0.0),
+                    valueSchema=number_schema(default=1.0, minimum=0.0, maximum=100000.0),
                     access=F8StateAccess.rw,
                     required=True,
                     showOnNode=False,

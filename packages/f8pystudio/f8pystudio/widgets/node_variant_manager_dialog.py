@@ -95,7 +95,9 @@ class NodeVariantManagerDialog(QtWidgets.QDialog):
         self._base_node_name = str(base_node_name or "").strip() or self._base_node_type
         self._graph = node_graph
         self._variants: list[F8NodeVariantRecord] = []
-        self._unsubscribe_variants_changed: Any | None = subscribe_variants_changed(self._on_variants_changed)
+        self._variants_changed_unsubscribe: Callable[[], None] | None = subscribe_variants_changed(
+            self._on_variants_changed
+        )
         self.setWindowTitle(f"Variants - {self._base_node_name}")
         self.resize(980, 620)
 
@@ -146,14 +148,24 @@ class NodeVariantManagerDialog(QtWidgets.QDialog):
         self.destroyed.connect(self._on_destroyed)  # type: ignore[attr-defined]
         self._reload()
 
-    def _on_destroyed(self, _obj: Any) -> None:
-        unsubscribe = self._unsubscribe_variants_changed
-        self._unsubscribe_variants_changed = None
+    def _clear_variants_changed_subscription(self) -> None:
+        unsubscribe = self._variants_changed_unsubscribe
+        self._variants_changed_unsubscribe = None
         if unsubscribe is not None:
             unsubscribe()
 
+    def _on_destroyed(self, _obj: Any) -> None:
+        self._clear_variants_changed_subscription()
+
     def _on_variants_changed(self) -> None:
-        self._reload()
+        try:
+            self._reload()
+        except RuntimeError as exc:
+            # The dialog may have been deleted while a stale subscriber callback remains.
+            if "already deleted" in str(exc):
+                self._clear_variants_changed_subscription()
+                return
+            raise
 
     def _reload(self) -> None:
         self._variants = list_variants_for_base(self._base_node_type)

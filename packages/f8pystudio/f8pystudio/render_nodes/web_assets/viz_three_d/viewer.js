@@ -10,7 +10,7 @@
   const statusEl = document.getElementById('status');
 
   const state = {
-    worldUp: 'y',
+    worldUp: '+y',
     liveUpdate: true,
     fpsCap: 60,
     pendingPayload: null,
@@ -79,12 +79,33 @@
   }
 
   function upVectorForWorld() {
-    return state.worldUp === 'z' ? new THREE.Vector3(0, 0, 1) : new THREE.Vector3(0, 1, 0);
+    switch (state.worldUp) {
+      case '+x':
+        return new THREE.Vector3(1, 0, 0);
+      case '-x':
+        return new THREE.Vector3(-1, 0, 0);
+      case '-y':
+        return new THREE.Vector3(0, -1, 0);
+      case '+z':
+        return new THREE.Vector3(0, 0, 1);
+      case '-z':
+        return new THREE.Vector3(0, 0, -1);
+      case '+y':
+      default:
+        return new THREE.Vector3(0, 1, 0);
+    }
   }
 
   function setWorldUp(up) {
     const n = String(up || '').toLowerCase();
-    state.worldUp = n === 'z' ? 'z' : 'y';
+    if (n === 'x' || n === '+x' || n === '-x' || n === 'y' || n === '+y' || n === '-y' || n === 'z' || n === '+z' || n === '-z') {
+      if (n === 'x') state.worldUp = '+x';
+      else if (n === 'y') state.worldUp = '+y';
+      else if (n === 'z') state.worldUp = '+z';
+      else state.worldUp = n;
+    } else {
+      state.worldUp = '+y';
+    }
     camera.up.copy(upVectorForWorld());
     controls.update();
   }
@@ -421,9 +442,7 @@
 
     const nodes = Array.isArray(person.nodes) ? person.nodes : [];
     const markerScaleRaw = Number(renderFlags.markerScale);
-    const markerScale = Number.isFinite(markerScaleRaw)
-      ? Math.max(0.1, Math.min(20.0, markerScaleRaw))
-      : 1.0;
+    const markerScale = Number.isFinite(markerScaleRaw) ? markerScaleRaw : 1.0;
     const pointPositions = [];
     const posByIndex = new Map();
 
@@ -625,11 +644,7 @@
     const up = upVectorForWorld();
     const forward = tmpVecA;
     camera.getWorldDirection(forward);
-    if (state.worldUp === 'z') {
-      forward.z = 0.0;
-    } else {
-      forward.y = 0.0;
-    }
+    forward.addScaledVector(up, -forward.dot(up));
     if (forward.lengthSq() < 1e-8) return;
     forward.normalize();
 

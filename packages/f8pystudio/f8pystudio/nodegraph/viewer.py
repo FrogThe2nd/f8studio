@@ -155,6 +155,15 @@ class F8StudioNodeViewer(NodeViewer):
     def is_node_placement_active(self) -> bool:
         return self._pending_node_type is not None
 
+    def pending_node_type(self) -> str | None:
+        pending = self._pending_node_type
+        if pending is None:
+            return None
+        value = str(pending).strip()
+        if not value:
+            return None
+        return value
+
     def begin_graph_placement(self, request: Any, label: str) -> None:
         if request is None:
             self.cancel_graph_placement()
