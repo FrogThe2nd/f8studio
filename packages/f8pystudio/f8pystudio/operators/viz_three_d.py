@@ -557,6 +557,7 @@ def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNod
                     description="Runtime push interval to UI command channel.",
                     valueSchema=integer_schema(default=33, minimum=0, maximum=60000),
                     access=F8StateAccess.rw,
+                    required=True,
                     showOnNode=False,
                 ),
                 F8StateSpec(
@@ -565,6 +566,7 @@ def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNod
                     description="World up axis for viewer transform.",
                     valueSchema=string_schema(default="+y", enum=["+x", "-x", "+y", "-y", "+z", "-z"]),
                     access=F8StateAccess.rw,
+                    required=True,
                     showOnNode=True,
                 ),
                 F8StateSpec(
@@ -573,6 +575,7 @@ def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNod
                     description="Display per-person 3D bounding boxes.",
                     valueSchema=boolean_schema(default=True),
                     access=F8StateAccess.rw,
+                    required=True,
                     showOnNode=False,
                 ),
                 F8StateSpec(
@@ -581,6 +584,7 @@ def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNod
                     description="Display per-person labels.",
                     valueSchema=boolean_schema(default=False),
                     access=F8StateAccess.rw,
+                    required=True,
                     showOnNode=False,
                 ),
                 F8StateSpec(
@@ -589,6 +593,7 @@ def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNod
                     description="Display bone node points.",
                     valueSchema=boolean_schema(default=False),
                     access=F8StateAccess.rw,
+                    required=True,
                     showOnNode=False,
                 ),
                 F8StateSpec(
@@ -597,6 +602,7 @@ def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNod
                     description="Display protocol-based links for known skeleton protocols.",
                     valueSchema=boolean_schema(default=True),
                     access=F8StateAccess.rw,
+                    required=True,
                     showOnNode=False,
                 ),
                 F8StateSpec(
@@ -605,6 +611,7 @@ def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNod
                     description="Display RGB axes per bone node.",
                     valueSchema=boolean_schema(default=True),
                     access=F8StateAccess.rw,
+                    required=True,
                     showOnNode=False,
                 ),
                 F8StateSpec(
@@ -613,6 +620,7 @@ def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNod
                     description="Display labels per bone node.",
                     valueSchema=boolean_schema(default=False),
                     access=F8StateAccess.rw,
+                    required=True,
                     showOnNode=True,
                 ),
                 F8StateSpec(
@@ -621,6 +629,7 @@ def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNod
                     description="Maximum people rendered from each frame.",
                     valueSchema=integer_schema(default=64, minimum=1, maximum=4096),
                     access=F8StateAccess.rw,
+                    required=True,
                     showOnNode=False,
                 ),
                 F8StateSpec(
@@ -629,6 +638,7 @@ def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNod
                     description="Maximum bones rendered for each person.",
                     valueSchema=integer_schema(default=256, minimum=1, maximum=8192),
                     access=F8StateAccess.rw,
+                    required=True,
                     showOnNode=False,
                 ),
                 F8StateSpec(
@@ -637,6 +647,7 @@ def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNod
                     description="Auto fit view when the person set changes.",
                     valueSchema=boolean_schema(default=True),
                     access=F8StateAccess.rw,
+                    required=True,
                     showOnNode=False,
                 ),
                 F8StateSpec(
@@ -645,6 +656,7 @@ def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNod
                     description="Front-end render FPS cap.",
                     valueSchema=integer_schema(default=60, minimum=1, maximum=120),
                     access=F8StateAccess.rw,
+                    required=True,
                     showOnNode=False,
                 ),
                 F8StateSpec(
@@ -653,6 +665,7 @@ def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNod
                     description="Global scale for bone point size and bone axis size.",
                     valueSchema=number_schema(default=1.0, minimum=0.0, maximum=100000.0),
                     access=F8StateAccess.rw,
+                    required=True,
                     showOnNode=False,
                 ),
                 *viz_sampling_state_fields(show_on_node=False),

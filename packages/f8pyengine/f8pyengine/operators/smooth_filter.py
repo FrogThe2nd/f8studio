@@ -320,6 +320,7 @@ SmoothFilterRuntimeNode.SPEC = F8OperatorSpec(
             description="Filter type.",
             valueSchema=string_schema(default="EMA", enum=list(FILTER_CHOICES)),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=True,
         ),
         F8StateSpec(
@@ -328,6 +329,7 @@ SmoothFilterRuntimeNode.SPEC = F8OperatorSpec(
             description="EMA smoothing factor (0..1).",
             valueSchema=number_schema(default=0.4, minimum=0.0, maximum=1.0),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=True,
         ),
         F8StateSpec(
@@ -336,6 +338,7 @@ SmoothFilterRuntimeNode.SPEC = F8OperatorSpec(
             description="DEMA smoothing factor (0..1).",
             valueSchema=number_schema(default=0.4, minimum=0.0, maximum=1.0),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=True,
         ),
         F8StateSpec(
@@ -344,6 +347,7 @@ SmoothFilterRuntimeNode.SPEC = F8OperatorSpec(
             description="Minimum cutoff frequency.",
             valueSchema=number_schema(default=1.5, minimum=0.01, maximum=10.0),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=True,
         ),
         F8StateSpec(
@@ -352,6 +356,7 @@ SmoothFilterRuntimeNode.SPEC = F8OperatorSpec(
             description="Speed coefficient for dynamic cutoff.",
             valueSchema=number_schema(default=0.0, minimum=0.0, maximum=5.0),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=True,
         ),
         F8StateSpec(
@@ -360,6 +365,7 @@ SmoothFilterRuntimeNode.SPEC = F8OperatorSpec(
             description="Cutoff frequency for the derivative filter.",
             valueSchema=number_schema(default=1.0, minimum=0.01, maximum=10.0),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=True,
         ),
         F8StateSpec(
@@ -368,6 +374,7 @@ SmoothFilterRuntimeNode.SPEC = F8OperatorSpec(
             description="Default sampling frequency (Hz).",
             valueSchema=number_schema(default=90.0, minimum=1.0, maximum=240.0),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=True,
         ),
     ],

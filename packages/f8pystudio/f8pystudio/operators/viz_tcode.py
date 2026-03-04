@@ -247,6 +247,7 @@ def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNod
                     description="OSR model type in viewer.",
                     valueSchema=string_schema(default="SR6", enum=list(MODEL_VALUES)),
                     access=F8StateAccess.rw,
+                    required=True,
                     showOnNode=True,
                 ),
                 F8StateSpec(
@@ -255,6 +256,7 @@ def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNod
                     description="UI command throttling interval in milliseconds (0 = no throttle).",
                     valueSchema=integer_schema(default=0, minimum=0, maximum=60000),
                     access=F8StateAccess.rw,
+                    required=True,
                     showOnNode=False,
                 ),
                 F8StateSpec(
@@ -263,6 +265,7 @@ def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNod
                     description="Maximum allowed length of each incoming line.",
                     valueSchema=integer_schema(default=4096, minimum=32, maximum=65536),
                     access=F8StateAccess.rw,
+                    required=True,
                     showOnNode=False,
                 ),
                 *viz_sampling_state_fields(show_on_node=False),

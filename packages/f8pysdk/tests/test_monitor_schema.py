@@ -37,7 +37,7 @@ class MonitorSchemaTests(unittest.TestCase):
                 {
                     "name": "monitor",
                     "valueSchema": monitor_snapshot_schema_dict(),
-                    "required": False,
+                    "required": True,
                     "showOnNode": True,
                     "description": "Unified runtime monitor snapshots (health/resource/perf/error).",
                 }
@@ -66,7 +66,7 @@ class MonitorSchemaTests(unittest.TestCase):
                 {
                     "name": "monitor",
                     "valueSchema": monitor_snapshot_schema_dict(),
-                    "required": False,
+                    "required": True,
                     "showOnNode": True,
                     "description": "Unified runtime monitor snapshots (health/resource/perf/error).",
                 },
@@ -77,6 +77,21 @@ class MonitorSchemaTests(unittest.TestCase):
                     "showOnNode": True,
                     "description": "legacy stream",
                 },
+            ]
+        )
+        with self.assertRaises(MonitorContractError):
+            validate_describe_monitor_contract(payload)
+
+    def test_validate_describe_monitor_contract_rejects_monitor_required_false(self) -> None:
+        payload = _describe_payload_with_ports(
+            [
+                {
+                    "name": "monitor",
+                    "valueSchema": monitor_snapshot_schema_dict(),
+                    "required": False,
+                    "showOnNode": True,
+                    "description": "Unified runtime monitor snapshots (health/resource/perf/error).",
+                }
             ]
         )
         with self.assertRaises(MonitorContractError):

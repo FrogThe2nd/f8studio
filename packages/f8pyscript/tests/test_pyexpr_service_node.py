@@ -29,8 +29,8 @@ def _expr_node(
     data_in_ports: list[F8DataPortSpec] | None = None,
     data_out_ports: list[F8DataPortSpec] | None = None,
 ) -> F8RuntimeNode:
-    spec = RuntimeNodeRegistry.instance().service_spec(EXPR_SERVICE_CLASS)
-    assert spec is not None
+    desc = RuntimeNodeRegistry.instance().describe(EXPR_SERVICE_CLASS)
+    spec = desc.service
     state = {"code": "inputs['in']"}
     if state_values is not None:
         state.update(state_values)
@@ -60,6 +60,28 @@ class PyExprServiceNodeTests(unittest.IsolatedAsyncioTestCase):
         program = PythonExprServiceProgram()
         cfg = program.build_runtime_config(service_id="svcExpr", nats_url="mem://")
         self.assertEqual(str(cfg.bus.data_delivery), "both")
+
+    def test_expr_spec_placeholder_ports_not_required(self) -> None:
+        reg = RuntimeNodeRegistry.instance()
+        register_expr_specs(reg)
+        spec = reg.describe(EXPR_SERVICE_CLASS).service
+        state_fields = {str(field.name or ""): field for field in list(spec.stateFields or [])}
+        self.assertIn("code", state_fields)
+        self.assertTrue(bool(state_fields["code"].required))
+        self.assertIn("allowNumpy", state_fields)
+        self.assertTrue(bool(state_fields["allowNumpy"].required))
+        self.assertIn("unpackDictOutputs", state_fields)
+        self.assertTrue(bool(state_fields["unpackDictOutputs"].required))
+        self.assertIn("lastError", state_fields)
+        self.assertTrue(bool(state_fields["lastError"].required))
+        data_in_ports = {str(port.name or ""): port for port in list(spec.dataInPorts or [])}
+        data_out_ports = {str(port.name or ""): port for port in list(spec.dataOutPorts or [])}
+        self.assertIn("msg", data_in_ports)
+        self.assertFalse(bool(data_in_ports["msg"].required))
+        self.assertIn("out", data_out_ports)
+        self.assertFalse(bool(data_out_ports["out"].required))
+        self.assertIn("monitor", data_out_ports)
+        self.assertTrue(bool(data_out_ports["monitor"].required))
 
     async def test_core_expression_evaluation_on_data(self) -> None:
         harness = ServiceBusHarness()

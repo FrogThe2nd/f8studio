@@ -45,8 +45,16 @@ class RuntimeNodeRegistryBuiltinTests(unittest.TestCase):
         self.assertEqual([str(x.name) for x in service_fields], ["custom", "active", "svcId"])
         self.assertEqual([str(x.name) for x in operator_fields], ["threshold", "svcId", "operatorId"])
         self.assertEqual(service_fields[-2].access, F8StateAccess.rw)
-        self.assertTrue(bool(service_fields[-2].showOnNode))
+        self.assertTrue(bool(service_fields[-2].required))
+        self.assertFalse(bool(service_fields[-2].showOnNode))
         self.assertEqual(service_fields[-1].access, F8StateAccess.ro)
+        self.assertTrue(bool(service_fields[-1].required))
+        self.assertTrue(bool(operator_fields[-2].required))
+        self.assertTrue(bool(operator_fields[-1].required))
+        service_out_ports = list(desc.service.dataOutPorts or [])
+        monitor_ports = [port for port in service_out_ports if str(port.name or "") == "monitor"]
+        self.assertEqual(len(monitor_ports), 1)
+        self.assertTrue(bool(monitor_ports[0].required))
 
 
 if __name__ == "__main__":

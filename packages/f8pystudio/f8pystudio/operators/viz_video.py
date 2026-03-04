@@ -59,6 +59,7 @@ class VizVideoRuntimeNode(OperatorNode):
                 description="Pause/resume embedded viewer updates in the editor.",
                 valueSchema=boolean_schema(default=True),
                 access=F8StateAccess.rw,
+                required=True,
                 showOnNode=False,
             ),
             F8StateSpec(
@@ -67,6 +68,7 @@ class VizVideoRuntimeNode(OperatorNode):
                 description="If set and shmName is empty, uses shm.<serviceId>.video",
                 valueSchema=string_schema(default=""),
                 access=F8StateAccess.rw,
+                required=True,
                 showOnNode=False,
             ),
             F8StateSpec(
@@ -75,6 +77,7 @@ class VizVideoRuntimeNode(OperatorNode):
                 description="Video SHM mapping name (e.g. shm.implayer.video). Overrides serviceId.",
                 valueSchema=string_schema(default=""),
                 access=F8StateAccess.rw,
+                required=True,
                 showOnNode=True,
             ),
             F8StateSpec(
@@ -83,6 +86,7 @@ class VizVideoRuntimeNode(OperatorNode):
                 description="UI refresh interval in milliseconds (0 = as fast as possible).",
                 valueSchema=integer_schema(default=33, minimum=0, maximum=60000),
                 access=F8StateAccess.rw,
+                required=True,
                 showOnNode=False,
             ),
             F8StateSpec(
@@ -91,6 +95,7 @@ class VizVideoRuntimeNode(OperatorNode):
                 description="Optional flow SHM mapping name (format flow2_f16).",
                 valueSchema=string_schema(default=""),
                 access=F8StateAccess.rw,
+                required=True,
                 showOnNode=True,
             ),
             F8StateSpec(
@@ -99,6 +104,7 @@ class VizVideoRuntimeNode(OperatorNode):
                 description="Flow rendering mode: off, hsv, or arrows.",
                 valueSchema=string_schema(default="off", enum=["off", "hsv", "arrows"]),
                 access=F8StateAccess.rw,
+                required=True,
                 showOnNode=False,
             ),
             F8StateSpec(
@@ -107,6 +113,7 @@ class VizVideoRuntimeNode(OperatorNode):
                 description="Reference max magnitude for HSV/value and arrow scaling.",
                 valueSchema=number_schema(default=20.0, minimum=0.1, maximum=500.0),
                 access=F8StateAccess.rw,
+                required=True,
                 showOnNode=False,
             ),
             F8StateSpec(
@@ -115,6 +122,7 @@ class VizVideoRuntimeNode(OperatorNode):
                 description="Sampling stride for arrow rendering.",
                 valueSchema=integer_schema(default=12, minimum=2, maximum=128),
                 access=F8StateAccess.rw,
+                required=True,
                 showOnNode=False,
             ),
             F8StateSpec(
@@ -123,6 +131,7 @@ class VizVideoRuntimeNode(OperatorNode):
                 description="Video scaling mode: native (1:1) or fit.",
                 valueSchema=string_schema(default="native", enum=["native", "fit"]),
                 access=F8StateAccess.rw,
+                required=True,
                 showOnNode=False,
             ),
         ],

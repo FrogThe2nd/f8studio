@@ -122,6 +122,56 @@ def set_ports(
     exec_in_l = list(exec_in or [])
     exec_out_l = list(exec_out or [])
 
+    def _port_name(port: F8DataPortSpec) -> str:
+        return str(port.name or "").strip()
+
+    def _merge_with_required(
+        *,
+        existing: list[F8DataPortSpec],
+        requested: list[F8DataPortSpec],
+    ) -> list[F8DataPortSpec]:
+        requested_by_name: dict[str, F8DataPortSpec] = {}
+        requested_order: list[str] = []
+        out: list[F8DataPortSpec] = []
+        consumed: set[str] = set()
+
+        for port in requested:
+            name = _port_name(port)
+            if not name:
+                continue
+            if name not in requested_by_name:
+                requested_order.append(name)
+            requested_by_name[name] = port
+
+        for port in existing:
+            name = _port_name(port)
+            if not name:
+                continue
+            requested_port = requested_by_name.get(name)
+            if requested_port is not None:
+                out.append(requested_port)
+                consumed.add(name)
+                continue
+            if bool(port.required):
+                out.append(port)
+                consumed.add(name)
+
+        for name in requested_order:
+            if name in consumed:
+                continue
+            requested_port = requested_by_name.get(name)
+            if requested_port is None:
+                continue
+            out.append(requested_port)
+            consumed.add(name)
+
+        return out
+
+    existing_data_in = list(spec.dataInPorts or [])
+    existing_data_out = list(spec.dataOutPorts or [])
+    data_in_l = _merge_with_required(existing=existing_data_in, requested=data_in_l)
+    data_out_l = _merge_with_required(existing=existing_data_out, requested=data_out_l)
+
     def _mutate(s: Any) -> None:
         s.dataInPorts = data_in_l
         s.dataOutPorts = data_out_l

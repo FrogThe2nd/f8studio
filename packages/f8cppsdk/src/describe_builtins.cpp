@@ -28,13 +28,14 @@ json schema_integer(const std::int64_t default_value) {
 }
 
 json state_field(const std::string& name, const json& value_schema, const std::string& access, const std::string& label,
-                 const std::string& description, const bool show_on_node) {
+                 const std::string& description, const bool required, const bool show_on_node) {
   return json{
       {"name", name},
       {"label", label},
       {"description", description},
       {"valueSchema", value_schema},
       {"access", access},
+      {"required", required},
       {"showOnNode", show_on_node},
   };
 }
@@ -106,8 +107,8 @@ json monitor_port_spec() {
       {"name", "monitor"},
       {"description", "Unified runtime monitor snapshots (health/resource/perf/error)."},
       {"valueSchema", monitor_port_schema()},
-      {"required", false},
-      {"showOnNode", true},
+      {"required", true},
+      {"showOnNode", false},
   };
 }
 
@@ -129,13 +130,13 @@ void upsert_builtin_state_fields(json& spec, const bool is_service) {
 
   if (is_service) {
     filtered.push_back(state_field("active", schema_boolean_with_default(true), "rw", "Active",
-                                   "Service lifecycle state (activate/deactivate).", true));
+                                   "Service lifecycle state (activate/deactivate).", true, false));
   }
-  filtered.push_back(
-      state_field("svcId", schema_string(), "ro", "Service Id", "Readonly: current service instance id (svcId).", false));
+  filtered.push_back(state_field("svcId", schema_string(), "ro", "Service Id",
+                                 "Readonly: current service instance id (svcId).", true, false));
   if (!is_service) {
     filtered.push_back(state_field("operatorId", schema_string(), "ro", "Operator Id",
-                                   "Readonly: current operator/node id (operatorId).", false));
+                                   "Readonly: current operator/node id (operatorId).", true, false));
   }
 
   spec["stateFields"] = std::move(filtered);

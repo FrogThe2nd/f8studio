@@ -32,6 +32,11 @@ from .property_value_widgets import (
     F8CodeButtonPropWidget as _F8CodeButtonPropWidget,
     F8JsonPropTextEdit as _F8JsonPropTextEdit,
 )
+from .schema_builder import (
+    SchemaBuilderDialog,
+    schema_from_json_obj as _schema_from_json_obj_strict,
+    schema_to_json_obj as _schema_to_json_obj_strict,
+)
 from .editor_controls import (
     F8OptionCombo,
     F8PropBoolSwitch,
@@ -184,8 +189,28 @@ def _to_jsonable(value: Any) -> Any:
 def _schema_to_json_obj(schema: Any) -> Any:
     if schema is None:
         return None
-    if isinstance(schema, (dict, list, str, int, float, bool)) or schema is None:
+    if isinstance(schema, dict):
+        return dict(schema)
+    if isinstance(schema, list):
+        return list(schema)
+    if isinstance(schema, (str, int, float, bool)) or schema is None:
         return schema
+    if isinstance(schema, F8DataTypeSchema):
+        try:
+            return _schema_to_json_obj_strict(schema)
+        except Exception:
+            logger.exception("strict schema_to_json_obj failed for F8DataTypeSchema")
+            return None
+    try:
+        schema_typed = _schema_from_json_obj_strict(schema)
+    except Exception:
+        schema_typed = None
+    if schema_typed is not None:
+        try:
+            return _schema_to_json_obj_strict(schema_typed)
+        except Exception:
+            logger.exception("strict schema_to_json_obj failed after coercion")
+            return None
     try:
         return schema.model_dump(mode="json")
     except (AttributeError, TypeError, ValueError):
@@ -205,7 +230,7 @@ def _schema_to_json_obj(schema: Any) -> Any:
 def _schema_from_json_obj(obj: Any) -> F8DataTypeSchema:
     if isinstance(obj, F8DataTypeSchema):
         return obj
-    return F8DataTypeSchema.model_validate(obj)
+    return _schema_from_json_obj_strict(obj)
 
 
 class _F8JsonEditorDialog(QtWidgets.QDialog):
@@ -684,10 +709,19 @@ class _F8EditExecPortDialog(QtWidgets.QDialog):
 
 
 class _F8EditDataPortDialog(QtWidgets.QDialog):
-    def __init__(self, parent=None, *, title: str, port: F8DataPortSpec, ui_only: bool = False):
+    def __init__(
+        self,
+        parent=None,
+        *,
+        title: str,
+        port: F8DataPortSpec,
+        ui_only: bool = False,
+        read_only: bool = False,
+    ):
         super().__init__(parent)
         self.setWindowTitle(title)
         self._ui_only = bool(ui_only)
+        self._read_only = bool(read_only)
         self._schema = port.valueSchema or _schema_from_json_obj({"type": "any"})
 
         self._name = QtWidgets.QLineEdit(str(port.name or ""))
@@ -702,8 +736,8 @@ class _F8EditDataPortDialog(QtWidgets.QDialog):
         self._schema_summary.setStyleSheet("color: #888;")
         self._refresh_schema_summary()
 
-        schema_btn = QtWidgets.QPushButton("Edit Schema...")
-        schema_btn.clicked.connect(self._edit_schema)
+        self._schema_btn = QtWidgets.QPushButton("Edit Schema...")
+        self._schema_btn.clicked.connect(self._edit_schema)
 
         form = QtWidgets.QFormLayout()
         form.addRow("Name", self._name)
@@ -713,32 +747,42 @@ class _F8EditDataPortDialog(QtWidgets.QDialog):
 
         schema_row = QtWidgets.QHBoxLayout()
         schema_row.addWidget(self._schema_summary, 1)
-        schema_row.addWidget(schema_btn)
+        schema_row.addWidget(self._schema_btn)
         form.addRow("valueSchema", schema_row)
 
-        buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
+        self._buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+        self._buttons.accepted.connect(self.accept)
+        self._buttons.rejected.connect(self.reject)
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.addLayout(form)
-        layout.addWidget(buttons)
+        layout.addWidget(self._buttons)
 
         if self._ui_only:
-            for w in (self._name, self._required, schema_btn):
+            for w in (self._name, self._required):
                 w.setEnabled(False)
+        if self._read_only:
+            for w in (self._name, self._required, self._show_on_node, self._desc, self._schema_btn):
+                w.setEnabled(False)
+            ok_btn = self._buttons.button(QtWidgets.QDialogButtonBox.Ok)
+            if ok_btn is not None:
+                ok_btn.setEnabled(False)
 
     def _refresh_schema_summary(self) -> None:
         t = _schema_type(self._schema)
         self._schema_summary.setText(t or "unknown")
 
     def _edit_schema(self) -> None:
-        init = _schema_to_json_obj(self._schema) or {"type": "any"}
-        dlg = _F8JsonEditorDialog(self, title="Edit valueSchema", value=init)
+        dlg = SchemaBuilderDialog(
+            self,
+            title="Edit valueSchema",
+            schema=self._schema,
+            read_only=bool(self._ui_only or self._read_only),
+        )
         if dlg.exec_() != QtWidgets.QDialog.Accepted:
             return
         try:
-            self._schema = _schema_from_json_obj(dlg.value() or {"type": "any"})
+            self._schema = dlg.schema()
         except Exception as e:
             show_warning(self, "Invalid schema", str(e))
             return
@@ -757,7 +801,15 @@ class _F8EditDataPortDialog(QtWidgets.QDialog):
 
 
 class _F8EditStateFieldDialog(QtWidgets.QDialog):
-    def __init__(self, parent=None, *, title: str, field: F8StateSpec, ui_only: bool = False):
+    def __init__(
+        self,
+        parent=None,
+        *,
+        title: str,
+        field: F8StateSpec,
+        ui_only: bool = False,
+        read_only: bool = False,
+    ):
         super().__init__(parent)
         self.setWindowTitle(title)
         try:
@@ -765,6 +817,7 @@ class _F8EditStateFieldDialog(QtWidgets.QDialog):
         except Exception:
             self._schema = _schema_from_json_obj({"type": "any"})
         self._ui_only = bool(ui_only)
+        self._read_only = bool(read_only)
 
         self._name = QtWidgets.QLineEdit(str(field.name or ""))
         self._name.setClearButtonEnabled(True)
@@ -794,8 +847,8 @@ class _F8EditStateFieldDialog(QtWidgets.QDialog):
         self._schema_summary.setStyleSheet("color: #888;")
         self._refresh_schema_summary()
 
-        schema_btn = QtWidgets.QPushButton("Edit Schema...")
-        schema_btn.clicked.connect(self._edit_schema)
+        self._schema_btn = QtWidgets.QPushButton("Edit Schema...")
+        self._schema_btn.clicked.connect(self._edit_schema)
 
         form = QtWidgets.QFormLayout()
         form.addRow("Name", self._name)
@@ -809,33 +862,53 @@ class _F8EditStateFieldDialog(QtWidgets.QDialog):
 
         schema_row = QtWidgets.QHBoxLayout()
         schema_row.addWidget(self._schema_summary, 1)
-        schema_row.addWidget(schema_btn)
+        schema_row.addWidget(self._schema_btn)
         form.addRow("valueSchema", schema_row)
 
-        buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
+        self._buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+        self._buttons.accepted.connect(self.accept)
+        self._buttons.rejected.connect(self.reject)
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.addLayout(form)
-        layout.addWidget(buttons)
+        layout.addWidget(self._buttons)
 
         if self._ui_only:
-            for w in (self._name, self._access, self._required, schema_btn, self._schema_summary):
+            for w in (self._name, self._access, self._required, self._schema_summary):
                 w.setEnabled(False)
             self._name.setToolTip("Locked by spec (required/non-editable).")
+        if self._read_only:
+            for w in (
+                self._name,
+                self._access,
+                self._required,
+                self._show_on_node,
+                self._label,
+                self._desc,
+                self._ui_control,
+                self._ui_lang,
+                self._schema_btn,
+            ):
+                w.setEnabled(False)
+            ok_btn = self._buttons.button(QtWidgets.QDialogButtonBox.Ok)
+            if ok_btn is not None:
+                ok_btn.setEnabled(False)
 
     def _refresh_schema_summary(self) -> None:
         t = _schema_type(self._schema)
         self._schema_summary.setText(t or "unknown")
 
     def _edit_schema(self) -> None:
-        init = _schema_to_json_obj(self._schema) or {"type": "any"}
-        dlg = _F8JsonEditorDialog(self, title="Edit valueSchema", value=init)
+        dlg = SchemaBuilderDialog(
+            self,
+            title="Edit valueSchema",
+            schema=self._schema,
+            read_only=bool(self._ui_only or self._read_only),
+        )
         if dlg.exec_() != QtWidgets.QDialog.Accepted:
             return
         try:
-            self._schema = _schema_from_json_obj(dlg.value() or {"type": "any"})
+            self._schema = dlg.schema()
         except Exception as e:
             show_warning(self, "Invalid schema", str(e))
             return
@@ -988,11 +1061,16 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
         row.setToolTip(self._data_tooltip(port))
         row.setProperty("_port_dir", "data_in" if is_in else "data_out")
         editable = bool(self._editable_data_in if is_in else self._editable_data_out)
+        try:
+            required = bool(port.required)
+        except (AttributeError, TypeError, ValueError):
+            required = False
+        allow_mutate = bool(editable and not self._missing_locked and not required)
         # Even when spec ports are not editable, allow opening the dialog to edit UI-only fields (showOnNode).
         row.set_row_editable(
-            allow_rename=bool(editable and not self._missing_locked),
-            allow_delete=bool(editable and not self._missing_locked),
-            allow_edit=not self._missing_locked,
+            allow_rename=allow_mutate,
+            allow_delete=allow_mutate,
+            allow_edit=True,
         )
         show = bool(self._node.data_port_show_on_node(str(port.name or ""), is_in=bool(is_in)))  # type: ignore[attr-defined]
         row.set_show_on_node(bool(show))
@@ -1022,6 +1100,15 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
             parts.append(desc)
         return "\n".join(parts)
 
+    def _row_is_required_data_port(self, row: QtWidgets.QWidget) -> bool:
+        port = row.property("_port")
+        if not isinstance(port, F8DataPortSpec):
+            return False
+        try:
+            return bool(port.required)
+        except (AttributeError, TypeError, ValueError):
+            return False
+
     def _edit_exec(self, row: _F8SpecNameRow) -> None:
         if self._missing_locked:
             return
@@ -1035,20 +1122,30 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
         self._commit()
 
     def _edit_data(self, row: _F8SpecNameRow) -> None:
-        if self._missing_locked:
-            return
         dir_s = str(row.property("_port_dir") or "")
-        ui_only = bool((dir_s == "data_in" and not self._editable_data_in) or (dir_s == "data_out" and not self._editable_data_out))
+        required = self._row_is_required_data_port(row)
+        ui_only = bool(
+            (dir_s == "data_in" and not self._editable_data_in)
+            or (dir_s == "data_out" and not self._editable_data_out)
+            or required
+        )
+        read_only = bool(self._missing_locked)
         port = row.property("_port")
         if not isinstance(port, F8DataPortSpec):
             port = F8DataPortSpec(
                 name=row.name_edit.text(), required=True, valueSchema=_schema_from_json_obj({"type": "any"})
             )
-        dlg = _F8EditDataPortDialog(self, title="Edit data port", port=port, ui_only=ui_only)
+        dlg = _F8EditDataPortDialog(
+            self,
+            title="Edit data port",
+            port=port,
+            ui_only=ui_only,
+            read_only=read_only,
+        )
         if dlg.exec_() != QtWidgets.QDialog.Accepted:
             return
         new_port = dlg.port()
-        if ui_only:
+        if ui_only and not read_only:
             show_on_node = bool(new_port.showOnNode)
             self._apply_data_port_ui_override(str(port.name or ""), bool(show_on_node), is_in=(dir_s == "data_in"))
             self._load_from_spec()
@@ -1075,6 +1172,8 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
     def _rename_data(self, row: _F8SpecNameRow, name: str) -> None:
         if self._missing_locked:
             return
+        if self._row_is_required_data_port(row):
+            return
         dir_s = str(row.property("_port_dir") or "")
         if (dir_s == "data_in" and not self._editable_data_in) or (dir_s == "data_out" and not self._editable_data_out):
             return
@@ -1099,6 +1198,8 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
         if dir_s == "data_in" and not self._editable_data_in:
             return
         if dir_s == "data_out" and not self._editable_data_out:
+            return
+        if (dir_s == "data_in" or dir_s == "data_out") and self._row_is_required_data_port(row):
             return
         row.setParent(None)
         row.deleteLater()
@@ -1165,7 +1266,15 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
 
 
 class _F8EditCommandParamDialog(QtWidgets.QDialog):
-    def __init__(self, parent=None, *, title: str, param: F8CommandParam, ui_only: bool = False):
+    def __init__(
+        self,
+        parent=None,
+        *,
+        title: str,
+        param: F8CommandParam,
+        ui_only: bool = False,
+        read_only: bool = False,
+    ):
         super().__init__(parent)
         self.setWindowTitle(title)
         try:
@@ -1173,6 +1282,7 @@ class _F8EditCommandParamDialog(QtWidgets.QDialog):
         except Exception:
             self._schema = _schema_from_json_obj({"type": "any"})
         self._ui_only = bool(ui_only)
+        self._read_only = bool(read_only)
 
         self._name = QtWidgets.QLineEdit(str(param.name or ""))
         self._name.setClearButtonEnabled(True)
@@ -1180,8 +1290,6 @@ class _F8EditCommandParamDialog(QtWidgets.QDialog):
         self._required = QtWidgets.QCheckBox()
         self._required.setChecked(bool(param.required))
 
-        self._label = QtWidgets.QLineEdit(str(param.label or ""))
-        self._label.setClearButtonEnabled(True)
         self._desc = QtWidgets.QPlainTextEdit(str(param.description or ""))
         self._ui_control = QtWidgets.QLineEdit(str(param.uiControl or ""))
         self._ui_control.setClearButtonEnabled(True)
@@ -1190,44 +1298,53 @@ class _F8EditCommandParamDialog(QtWidgets.QDialog):
         self._schema_summary.setStyleSheet("color: #888;")
         self._refresh_schema_summary()
 
-        schema_btn = QtWidgets.QPushButton("Edit Schema...")
-        schema_btn.clicked.connect(self._edit_schema)
+        self._schema_btn = QtWidgets.QPushButton("Edit Schema...")
+        self._schema_btn.clicked.connect(self._edit_schema)
 
         form = QtWidgets.QFormLayout()
         form.addRow("Name", self._name)
         form.addRow("Required", self._required)
-        form.addRow("Label", self._label)
         form.addRow("Description", self._desc)
         form.addRow("uiControl", self._ui_control)
 
         schema_row = QtWidgets.QHBoxLayout()
         schema_row.addWidget(self._schema_summary, 1)
-        schema_row.addWidget(schema_btn)
+        schema_row.addWidget(self._schema_btn)
         form.addRow("valueSchema", schema_row)
 
-        buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
+        self._buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+        self._buttons.accepted.connect(self.accept)
+        self._buttons.rejected.connect(self.reject)
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.addLayout(form)
-        layout.addWidget(buttons)
+        layout.addWidget(self._buttons)
 
         if self._ui_only:
-            for w in (self._name, self._required, schema_btn):
+            for w in (self._name, self._required):
                 w.setEnabled(False)
+        if self._read_only:
+            for w in (self._name, self._required, self._desc, self._ui_control, self._schema_btn):
+                w.setEnabled(False)
+            ok_btn = self._buttons.button(QtWidgets.QDialogButtonBox.Ok)
+            if ok_btn is not None:
+                ok_btn.setEnabled(False)
 
     def _refresh_schema_summary(self) -> None:
         t = _schema_type(self._schema)
         self._schema_summary.setText(t or "unknown")
 
     def _edit_schema(self) -> None:
-        init = _schema_to_json_obj(self._schema) or {"type": "any"}
-        dlg = _F8JsonEditorDialog(self, title="Edit valueSchema", value=init)
+        dlg = SchemaBuilderDialog(
+            self,
+            title="Edit valueSchema",
+            schema=self._schema,
+            read_only=bool(self._ui_only or self._read_only),
+        )
         if dlg.exec_() != QtWidgets.QDialog.Accepted:
             return
         try:
-            self._schema = _schema_from_json_obj(dlg.value() or {"type": "any"})
+            self._schema = dlg.schema()
         except Exception as e:
             show_warning(self, "Invalid schema", str(e))
             return
@@ -1236,17 +1353,25 @@ class _F8EditCommandParamDialog(QtWidgets.QDialog):
     def param(self) -> F8CommandParam:
         name = str(self._name.text() or "").strip()
         required = bool(self._required.isChecked())
-        label = str(self._label.text() or "").strip() or None
         desc = str(self._desc.toPlainText() or "").strip() or None
         ui_control = str(self._ui_control.text() or "").strip() or None
-        return F8CommandParam(name=name, required=required, label=label, description=desc, uiControl=ui_control, valueSchema=self._schema)
+        return F8CommandParam(name=name, required=required, description=desc, uiControl=ui_control, valueSchema=self._schema)
 
 
 class _F8EditCommandDialog(QtWidgets.QDialog):
-    def __init__(self, parent=None, *, title: str, cmd: F8Command, ui_only: bool = False):
+    def __init__(
+        self,
+        parent=None,
+        *,
+        title: str,
+        cmd: F8Command,
+        ui_only: bool = False,
+        read_only: bool = False,
+    ):
         super().__init__(parent)
         self.setWindowTitle(title)
         self._ui_only = bool(ui_only)
+        self._read_only = bool(read_only)
         self._params: list[F8CommandParam] = list(cmd.params or [])
 
         self._name = QtWidgets.QLineEdit(str(cmd.name or ""))
@@ -1267,33 +1392,48 @@ class _F8EditCommandDialog(QtWidgets.QDialog):
         self._params_list.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
         self._refresh_params_list()
 
-        btn_add = QtWidgets.QPushButton("Add Param...")
-        btn_edit = QtWidgets.QPushButton("Edit Param...")
-        btn_del = QtWidgets.QPushButton("Delete Param")
-        btn_add.clicked.connect(self._add_param)
-        btn_edit.clicked.connect(self._edit_param)
-        btn_del.clicked.connect(self._delete_param)
+        self._btn_add = QtWidgets.QPushButton("Add Param...")
+        self._btn_edit = QtWidgets.QPushButton("Edit Param...")
+        self._btn_del = QtWidgets.QPushButton("Delete Param")
+        self._btn_add.clicked.connect(self._add_param)
+        self._btn_edit.clicked.connect(self._edit_param)
+        self._btn_del.clicked.connect(self._delete_param)
 
         row = QtWidgets.QHBoxLayout()
-        row.addWidget(btn_add)
-        row.addWidget(btn_edit)
-        row.addWidget(btn_del)
+        row.addWidget(self._btn_add)
+        row.addWidget(self._btn_edit)
+        row.addWidget(self._btn_del)
         row.addStretch(1)
 
-        buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
+        self._buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+        self._buttons.accepted.connect(self.accept)
+        self._buttons.rejected.connect(self.reject)
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.addLayout(form)
         layout.addWidget(QtWidgets.QLabel("Params"))
         layout.addWidget(self._params_list, 1)
         layout.addLayout(row)
-        layout.addWidget(buttons)
+        layout.addWidget(self._buttons)
 
         if self._ui_only:
-            for w in (self._name, self._required, self._desc, btn_add, btn_edit, btn_del):
+            for w in (self._name, self._required, self._desc, self._btn_add, self._btn_edit, self._btn_del):
                 w.setEnabled(False)
+        if self._read_only:
+            for w in (
+                self._name,
+                self._required,
+                self._show_on_node,
+                self._desc,
+                self._btn_add,
+                self._btn_edit,
+                self._btn_del,
+                self._params_list,
+            ):
+                w.setEnabled(False)
+            ok_btn = self._buttons.button(QtWidgets.QDialogButtonBox.Ok)
+            if ok_btn is not None:
+                ok_btn.setEnabled(False)
 
     def _refresh_params_list(self) -> None:
         self._params_list.clear()
@@ -1311,9 +1451,14 @@ class _F8EditCommandDialog(QtWidgets.QDialog):
         return row
 
     def _add_param(self) -> None:
-        if self._ui_only:
+        if self._ui_only or self._read_only:
             return
-        dlg = _F8EditCommandParamDialog(self, title="Add command param", param=F8CommandParam(name="", valueSchema=_schema_from_json_obj({"type": "any"})))
+        dlg = _F8EditCommandParamDialog(
+            self,
+            title="Add command param",
+            param=F8CommandParam(name="", valueSchema=_schema_from_json_obj({"type": "any"})),
+            read_only=self._read_only,
+        )
         if dlg.exec_() != QtWidgets.QDialog.Accepted:
             return
         p = dlg.param()
@@ -1323,19 +1468,24 @@ class _F8EditCommandDialog(QtWidgets.QDialog):
         self._refresh_params_list()
 
     def _edit_param(self) -> None:
-        if self._ui_only:
+        if self._ui_only or self._read_only:
             return
         idx = self._selected_index()
         if idx < 0:
             return
-        dlg = _F8EditCommandParamDialog(self, title="Edit command param", param=self._params[idx])
+        dlg = _F8EditCommandParamDialog(
+            self,
+            title="Edit command param",
+            param=self._params[idx],
+            read_only=self._read_only,
+        )
         if dlg.exec_() != QtWidgets.QDialog.Accepted:
             return
         self._params[idx] = dlg.param()
         self._refresh_params_list()
 
     def _delete_param(self) -> None:
-        if self._ui_only:
+        if self._ui_only or self._read_only:
             return
         idx = self._selected_index()
         if idx < 0:
@@ -1580,7 +1730,7 @@ class _F8SpecCommandEditor(QtWidgets.QWidget):
             row = _F8CommandRow(
                 name=name,
                 description=desc,
-                allow_edit=not self._missing_locked,
+                allow_edit=True,
                 allow_delete=bool(editable) and not self._missing_locked and not required,
                 show_on_node=bool(show_on_node),
             )
@@ -1798,14 +1948,13 @@ class _F8SpecCommandEditor(QtWidgets.QWidget):
         self._load()
 
     def _edit_command(self, name: str) -> None:
-        if self._missing_locked:
-            return
         try:
             spec = self._node.spec
         except Exception:
             spec = None
         if not isinstance(spec, F8ServiceSpec):
             return
+        read_only = bool(self._missing_locked)
         editable = bool(spec.editableCommands)
         cmds = list(spec.commands or [])
         idx = -1
@@ -1833,17 +1982,23 @@ class _F8SpecCommandEditor(QtWidgets.QWidget):
                         continue
             except (AttributeError, RuntimeError, TypeError):
                 logger.exception("Failed to read effective commands for non-editable command dialog")
-        dlg = _F8EditCommandDialog(self, title="Edit command", cmd=init_cmd, ui_only=not editable)
+        dlg = _F8EditCommandDialog(
+            self,
+            title="Edit command",
+            cmd=init_cmd,
+            ui_only=not editable,
+            read_only=read_only,
+        )
         if dlg.exec_() != QtWidgets.QDialog.Accepted:
             return
         edited = dlg.command()
-        if editable:
+        if editable and not read_only:
             spec2 = _spec_replace_command(spec, name=str(name or "").strip(), cmd=edited)
             if spec2 is not spec:
                 self._node.spec = spec2
             if self._on_apply:
                 self._on_apply()
-        else:
+        elif not read_only:
             self._apply_command_ui_override(str(init_cmd.name or ""), bool(edited.showOnNode))
         self._load()
 
@@ -2045,8 +2200,6 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
         Open the edit dialog for a state field and apply changes.
         """
         missing_locked, _missing_type = _node_missing_lock_info(self._node)
-        if missing_locked:
-            return
         name = str(field_name or "").strip()
         if not name:
             return
@@ -2083,7 +2236,13 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
         ui_only = (not editable) or required
 
         # If UI-only, we still want to allow editing UI fields (showOnNode/uiControl/etc).
-        dlg = _F8EditStateFieldDialog(self, title="Edit state field", field=current, ui_only=ui_only)
+        dlg = _F8EditStateFieldDialog(
+            self,
+            title="Edit state field",
+            field=current,
+            ui_only=ui_only,
+            read_only=bool(missing_locked),
+        )
         if dlg.exec_() != QtWidgets.QDialog.Accepted:
             return
         new_field = dlg.field()

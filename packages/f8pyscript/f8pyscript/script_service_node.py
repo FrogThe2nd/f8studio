@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import builtins
 import inspect
-import json
 import keyword
 import logging
 import os
@@ -38,7 +37,7 @@ DEFAULT_CODE = (
     "#\n"
     "# Useful context helpers:\n"
     "# - ctx.states.<field> reads cached rw/ro state snapshot\n"
-    "#   - example: ctx.states.tickEnabled / ctx.states.permission.meta.user\n"
+    "#   - example: ctx.states.tickEnabled / ctx.states.lastError\n"
     "# - await ctx.read_state(field)  # fresh runtime read\n"
     "# - ctx.states.get(field)  # cached snapshot\n"
     "# - ctx.set_state(field, value)\n"
@@ -367,13 +366,9 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
 
         self._local_exec_granted = False
         self._grant_session_id = ""
-        self._grant_meta: dict[str, Any] = {}
         self._grant_ts_ms = 0
         self._grant_expires_ts_ms: int | None = None
-        self._exec_count = 0
-        self._last_exec_ts_ms = 0
 
-        self._declared_commands: list[dict[str, Any]] = []
         self._ctx: PyScriptServiceContext = self._build_ctx()
 
         self._compile_and_start()
@@ -580,12 +575,6 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
             return False
         return True
 
-    async def _publish_permission_state(self) -> None:
-        await self._set_runtime_state("localExecGranted", bool(self._is_local_exec_allowed()))
-        await self._set_runtime_state("localExecGrantTsMs", int(self._grant_ts_ms))
-        await self._set_runtime_state("execCount", int(self._exec_count))
-        await self._set_runtime_state("lastExecTsMs", int(self._last_exec_ts_ms))
-
     def _build_script_builtins(self) -> dict[str, Any]:
         out: dict[str, Any] = {
             "abs": builtins.abs,
@@ -686,17 +675,10 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
         except asyncio.TimeoutError as exc:
             proc.kill()
             await proc.wait()
-            self._last_exec_ts_ms = self._now_ms()
-            await self._set_runtime_state("lastExecTsMs", int(self._last_exec_ts_ms))
             raise TimeoutError(f"exec_local timeout command={cmd}") from exc
 
         stdout_text = (stdout_raw or b"").decode("utf-8", errors="replace")
         stderr_text = (stderr_raw or b"").decode("utf-8", errors="replace")
-
-        self._exec_count += 1
-        self._last_exec_ts_ms = self._now_ms()
-        await self._set_runtime_state("execCount", int(self._exec_count))
-        await self._set_runtime_state("lastExecTsMs", int(self._last_exec_ts_ms))
         return {
             "ok": bool(proc.returncode == 0),
             "returncode": int(proc.returncode or 0),
@@ -844,44 +826,6 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
                 await self.emit(str(out_port), out_value)
             except Exception as exc:
                 self._log_error_deduped("emit_output", f"emit failed port={out_port}", exc)
-
-    def _normalize_commands_state(self, value: Any) -> list[dict[str, Any]]:
-        if value is None:
-            return []
-
-        payload = value
-        if isinstance(value, str):
-            text = value.strip()
-            if not text:
-                return []
-            payload = json.loads(text)
-
-        if payload is None:
-            return []
-
-        if isinstance(payload, dict):
-            if not payload:
-                return []
-            commands_any = payload.get("commands")
-            if isinstance(commands_any, list):
-                payload = commands_any
-            elif "name" in payload:
-                payload = [payload]
-            else:
-                raise ValueError("commands must be a list")
-
-        if not isinstance(payload, list):
-            raise ValueError("commands must be a list")
-
-        out: list[dict[str, Any]] = []
-        for index, item in enumerate(payload):
-            if not isinstance(item, dict):
-                raise ValueError(f"commands[{index}] must be an object")
-            name = str(item.get("name") or "").strip()
-            if not name:
-                raise ValueError(f"commands[{index}].name is required")
-            out.append(dict(item))
-        return out
 
     def _unsubscribe_video_shm_sync(self, key: str) -> bool:
         sub = self._video_subscriptions.pop(str(key), None)
@@ -1120,8 +1064,6 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
             return bool(value_unwrapped)
         if name == "tickMs":
             return self._coerce_tick_ms(value_unwrapped, default=self._tick_ms)
-        if name == "commands":
-            return self._normalize_commands_state(value_unwrapped)
         return value_unwrapped
 
     async def on_state(self, field: str, value: Any, *, ts_ms: int | None = None) -> None:
@@ -1138,12 +1080,6 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
             return
         if name == "tickMs":
             self._tick_ms = self._coerce_tick_ms(value_unwrapped, default=self._tick_ms)
-            return
-        if name == "commands":
-            try:
-                self._declared_commands = self._normalize_commands_state(value_unwrapped)
-            except Exception as exc:
-                self._set_error("commands", exc)
             return
 
         if name in self._self_state_writes and self._self_state_writes.get(name) == value_unwrapped:
@@ -1181,45 +1117,13 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
             self._local_exec_granted = True
             self._grant_ts_ms = self._now_ms()
             self._grant_session_id = str(call_meta.get("reqId") or call_meta.get("sessionId") or self._grant_ts_ms)
-            self._grant_meta = dict(call_meta)
             self._grant_expires_ts_ms = (self._grant_ts_ms + ttl_ms) if ttl_ms is not None else None
-            await self._publish_permission_state()
             return {"ok": True, "result": self._permission_view()}
 
         if call == "revoke_local_exec":
             self._local_exec_granted = False
             self._grant_expires_ts_ms = None
-            await self._publish_permission_state()
             return {"ok": True, "result": self._permission_view()}
-
-        if call == "restart_script":
-            self._compile_and_start()
-            return {"ok": True, "result": {"restarted": True}}
-
-        if call == "status":
-            return {
-                "ok": True,
-                "result": {
-                    "started": bool(self._started),
-                    "paused": bool(self._paused),
-                    "active": bool(self._active),
-                    "tickEnabled": bool(self._tick_enabled),
-                    "tickMs": int(self._tick_ms),
-                    "tickSeq": int(self._tick_seq),
-                    "lastError": str(self._last_error or ""),
-                    "permission": self._permission_view(),
-                    "videoSubscriptions": [
-                        {
-                            "key": item["key"],
-                            "shmName": item["shmName"],
-                            "hasPacket": item["hasPacket"],
-                            "errorCount": item["errorCount"],
-                        }
-                        for item in self._ctx.list_video_shm_subscriptions()
-                    ],
-                    "declaredCommands": list(self._declared_commands),
-                },
-            }
 
         if self._hook_on_command is None:
             raise ValueError(f"unknown command: {call}")

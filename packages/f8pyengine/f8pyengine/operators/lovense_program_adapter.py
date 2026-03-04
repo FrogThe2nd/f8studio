@@ -435,6 +435,7 @@ LovenseProgramAdapterRuntimeNode.SPEC = F8OperatorSpec(
             description="State-edge input from Lovense Mock Server: the latest event dict.",
             valueSchema=any_schema(),
             access=F8StateAccess.wo,
+            required=True,
             showOnNode=True,
         ),
         F8StateSpec(
@@ -479,6 +480,7 @@ LovenseProgramAdapterRuntimeNode.SPEC = F8OperatorSpec(
             description="Frequency at thrusting=0.",
             valueSchema=number_schema(default=0.0, minimum=0.0, maximum=100.0),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -487,6 +489,7 @@ LovenseProgramAdapterRuntimeNode.SPEC = F8OperatorSpec(
             description="Frequency at thrusting=thrustingMax.",
             valueSchema=number_schema(default=3.0, minimum=0.0, maximum=100.0),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -495,6 +498,7 @@ LovenseProgramAdapterRuntimeNode.SPEC = F8OperatorSpec(
             description="Normalize thrusting value by this maximum.",
             valueSchema=number_schema(default=20.0, minimum=1.0, maximum=100.0),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -503,6 +507,7 @@ LovenseProgramAdapterRuntimeNode.SPEC = F8OperatorSpec(
             description="Normalize depth value by this maximum (amplitude).",
             valueSchema=number_schema(default=3.0, minimum=1.0, maximum=100.0),
             access=F8StateAccess.wo,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -511,6 +516,7 @@ LovenseProgramAdapterRuntimeNode.SPEC = F8OperatorSpec(
             description="Nonlinear curve for thrusting->speed (>=0.01).",
             valueSchema=number_schema(default=1.0, minimum=0.01, maximum=10.0),
             access=F8StateAccess.wo,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -519,6 +525,7 @@ LovenseProgramAdapterRuntimeNode.SPEC = F8OperatorSpec(
             description="Default program frequency for All: vibration events.",
             valueSchema=number_schema(default=2.0, minimum=0.0, maximum=100.0),
             access=F8StateAccess.wo,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -527,6 +534,7 @@ LovenseProgramAdapterRuntimeNode.SPEC = F8OperatorSpec(
             description="Normalize All: vibration strength by this maximum.",
             valueSchema=number_schema(default=20.0, minimum=1.0, maximum=100.0),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -535,6 +543,7 @@ LovenseProgramAdapterRuntimeNode.SPEC = F8OperatorSpec(
             description="Pattern strength=0 mapped Hz minimum.",
             valueSchema=number_schema(default=0.0, minimum=0.0, maximum=100.0),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -543,6 +552,7 @@ LovenseProgramAdapterRuntimeNode.SPEC = F8OperatorSpec(
             description="Pattern strength=patternStrengthMax mapped Hz maximum.",
             valueSchema=number_schema(default=5.0, minimum=0.0, maximum=100.0),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -551,6 +561,7 @@ LovenseProgramAdapterRuntimeNode.SPEC = F8OperatorSpec(
             description="Normalize Pattern strength values by this maximum before mapping to Hz.",
             valueSchema=number_schema(default=20.0, minimum=1.0, maximum=100.0),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=False,
         ),
     ],

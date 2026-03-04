@@ -214,6 +214,7 @@ PullRuntimeNode.SPEC = F8OperatorSpec(
             description="When enabled, periodically pull all data inputs without exec.",
             valueSchema=boolean_schema(default=False),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=True,
         ),
         F8StateSpec(
@@ -222,6 +223,7 @@ PullRuntimeNode.SPEC = F8OperatorSpec(
             description="Periodic pull frequency in Hz when Auto Trigger is enabled.",
             valueSchema=integer_schema(default=10, minimum=1, maximum=120),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=True,
         ),
     ],

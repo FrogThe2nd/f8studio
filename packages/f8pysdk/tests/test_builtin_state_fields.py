@@ -49,8 +49,10 @@ class BuiltinStateFieldTests(unittest.TestCase):
         out = service_state_fields_with_builtins(fields)
         self.assertEqual([str(x.name) for x in out], ["custom", "active", "svcId"])
         self.assertEqual(out[-2].access, F8StateAccess.rw)
-        self.assertTrue(bool(out[-2].showOnNode))
+        self.assertTrue(bool(out[-2].required))
+        self.assertFalse(bool(out[-2].showOnNode))
         self.assertEqual(out[-1].access, F8StateAccess.ro)
+        self.assertTrue(bool(out[-1].required))
         self.assertFalse(bool(out[-1].showOnNode))
 
     def test_operator_state_fields_force_override(self) -> None:
@@ -62,7 +64,9 @@ class BuiltinStateFieldTests(unittest.TestCase):
         out = operator_state_fields_with_builtins(fields)
         self.assertEqual([str(x.name) for x in out], ["mode", "svcId", "operatorId"])
         self.assertEqual(out[-2].access, F8StateAccess.ro)
+        self.assertTrue(bool(out[-2].required))
         self.assertEqual(out[-1].access, F8StateAccess.ro)
+        self.assertTrue(bool(out[-1].required))
 
     def test_service_data_out_ports_force_monitor(self) -> None:
         ports = [
@@ -75,6 +79,10 @@ class BuiltinStateFieldTests(unittest.TestCase):
         self.assertEqual(names.count(MONITOR_PORT_NAME), 1)
         self.assertIn("out", names)
         self.assertNotIn("telemetry", names)
+        monitor_ports = [port for port in out if str(port.name) == MONITOR_PORT_NAME]
+        self.assertEqual(len(monitor_ports), 1)
+        self.assertTrue(bool(monitor_ports[0].required))
+        self.assertFalse(bool(monitor_ports[0].showOnNode))
 
     def test_normalize_describe_payload_dict_force_override(self) -> None:
         payload = {
@@ -112,10 +120,27 @@ class BuiltinStateFieldTests(unittest.TestCase):
         service_fields = out["service"]["stateFields"]
         operator_fields = out["operators"][0]["stateFields"]
         self.assertEqual([x["name"] for x in service_fields], ["custom", "active", "svcId"])
+        active_fields = [x for x in service_fields if str(x.get("name")) == "active"]
+        self.assertEqual(len(active_fields), 1)
+        self.assertTrue(bool(active_fields[0].get("required")))
+        self.assertFalse(bool(active_fields[0].get("showOnNode")))
         self.assertEqual([x["name"] for x in operator_fields], ["threshold", "svcId", "operatorId"])
+        svc_id_fields = [x for x in service_fields if str(x.get("name")) == "svcId"]
+        self.assertEqual(len(svc_id_fields), 1)
+        self.assertTrue(bool(svc_id_fields[0].get("required")))
+        operator_svc_id_fields = [x for x in operator_fields if str(x.get("name")) == "svcId"]
+        self.assertEqual(len(operator_svc_id_fields), 1)
+        self.assertTrue(bool(operator_svc_id_fields[0].get("required")))
+        operator_id_fields = [x for x in operator_fields if str(x.get("name")) == "operatorId"]
+        self.assertEqual(len(operator_id_fields), 1)
+        self.assertTrue(bool(operator_id_fields[0].get("required")))
         service_data_ports = out["service"]["dataOutPorts"]
         self.assertTrue(any(str(x.get("name")) == MONITOR_PORT_NAME for x in service_data_ports))
         self.assertFalse(any(str(x.get("name")) == "telemetry" for x in service_data_ports))
+        monitor_ports = [x for x in service_data_ports if str(x.get("name")) == MONITOR_PORT_NAME]
+        self.assertEqual(len(monitor_ports), 1)
+        self.assertTrue(bool(monitor_ports[0].get("required")))
+        self.assertFalse(bool(monitor_ports[0].get("showOnNode")))
 
 
 class LifecycleBootstrapTests(unittest.IsolatedAsyncioTestCase):

@@ -587,6 +587,7 @@ def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNod
                     description="Pause/resume embedded TrackViz updates in the editor.",
                     valueSchema=boolean_schema(default=True),
                     access=F8StateAccess.rw,
+                    required=True,
                     showOnNode=False,
                 ),
                 F8StateSpec(
@@ -595,6 +596,7 @@ def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNod
                     description="UI refresh interval in milliseconds.",
                     valueSchema=integer_schema(default=50, minimum=0, maximum=60000),
                     access=F8StateAccess.rw,
+                    required=True,
                     showOnNode=False,
                 ),
                 F8StateSpec(
@@ -603,6 +605,7 @@ def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNod
                     description="Keep history within this time window.",
                     valueSchema=integer_schema(default=500, minimum=0, maximum=60000),
                     access=F8StateAccess.rw,
+                    required=True,
                     showOnNode=False,
                 ),
                 F8StateSpec(
@@ -611,6 +614,7 @@ def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNod
                     description="Also keep up to this many recent samples per track.",
                     valueSchema=integer_schema(default=10, minimum=1, maximum=200),
                     access=F8StateAccess.rw,
+                    required=True,
                     showOnNode=False,
                 ),
                 F8StateSpec(
@@ -619,6 +623,7 @@ def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNod
                     description="Optional BGRA Video SHM mapping name used as TrackViz background.",
                     valueSchema=string_schema(default=""),
                     access=F8StateAccess.rw,
+                    required=True,
                     showOnNode=True,
                 ),
                 F8StateSpec(
@@ -627,6 +632,7 @@ def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNod
                     description="Scale factor applied to optical-flow arrow vectors.",
                     valueSchema=number_schema(default=1.0, minimum=0.1, maximum=20.0),
                     access=F8StateAccess.rw,
+                    required=True,
                     showOnNode=False,
                 ),
                 F8StateSpec(
@@ -635,6 +641,7 @@ def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNod
                     description="Hide optical-flow arrows whose magnitude is below this value.",
                     valueSchema=number_schema(default=0.0, minimum=0.0, maximum=100.0),
                     access=F8StateAccess.rw,
+                    required=True,
                     showOnNode=False,
                 ),
                 F8StateSpec(
@@ -643,6 +650,7 @@ def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNod
                     description="Maximum number of optical-flow arrows rendered per frame.",
                     valueSchema=integer_schema(default=2000, minimum=100, maximum=20000),
                     access=F8StateAccess.rw,
+                    required=True,
                     showOnNode=False,
                 ),
                 F8StateSpec(
@@ -651,6 +659,7 @@ def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNod
                     description="Enable dense optical-flow rendering from flow SHM.",
                     valueSchema=boolean_schema(default=True),
                     access=F8StateAccess.rw,
+                    required=True,
                     showOnNode=False,
                 ),
                 F8StateSpec(
@@ -659,6 +668,7 @@ def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNod
                     description="Enable sparse optical-flow vector rendering from JSON flow input.",
                     valueSchema=boolean_schema(default=True),
                     access=F8StateAccess.rw,
+                    required=True,
                     showOnNode=False,
                 ),
                 F8StateSpec(
@@ -667,6 +677,7 @@ def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNod
                     description="Flow SHM mapping name (format flow2_f16).",
                     valueSchema=string_schema(default=""),
                     access=F8StateAccess.rw,
+                    required=True,
                     showOnNode=True,
                 ),
                 F8StateSpec(
@@ -675,6 +686,7 @@ def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNod
                     description="Dense flow rendering mode: hsv or arrows.",
                     valueSchema=string_schema(default="hsv", enum=["hsv", "arrows"]),
                     access=F8StateAccess.rw,
+                    required=True,
                     showOnNode=False,
                 ),
                 *viz_sampling_state_fields(show_on_node=False),
