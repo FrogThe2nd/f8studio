@@ -63,8 +63,42 @@ from ..widgets.state_controls.schema_introspect import (
     schema_enum_items as _shared_schema_enum_items,
     schema_numeric_range as _shared_schema_numeric_range,
 )
+from ..widgets.schema_builder import SchemaBuilderDialog, schema_from_json_obj as _schema_from_json_obj
 
 logger = logging.getLogger(__name__)
+
+
+class _F8PortMouseMixin:
+    """
+    Shared right-click behavior for node ports.
+
+    - Right click on a port should never start live pipe creation.
+    - Data ports may show a schema-focused context menu handled by the node item.
+    """
+
+    def _on_right_click(self, screen_pos: QtCore.QPoint) -> None:
+        node_item = self.parentItem()
+        if isinstance(node_item, F8StudioServiceNodeItem):
+            node_item._on_port_right_click(self, screen_pos)
+
+    def mousePressEvent(self, event):  # type: ignore[override]
+        if event.button() == QtCore.Qt.RightButton:
+            self._on_right_click(event.screenPos())
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def contextMenuEvent(self, event):  # type: ignore[override]
+        self._on_right_click(event.screenPos())
+        event.accept()
+
+
+class F8StudioPortItem(_F8PortMouseMixin, PortItem):
+    pass
+
+
+class F8StudioCustomPortItem(_F8PortMouseMixin, CustomPortItem):
+    pass
 
 
 class F8StudioServiceBaseNode(F8StudioBaseNode):
@@ -693,6 +727,381 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
     @staticmethod
     def _schema_numeric_range(value_schema: Any) -> tuple[float | None, float | None]:
         return _shared_schema_numeric_range(value_schema)
+
+    @staticmethod
+    def _parse_schema_port_view_name(view_name: str) -> tuple[str, bool, str] | None:
+        raw = str(view_name or "").strip()
+        if raw.startswith("[D]"):
+            port_name = str(raw[3:] or "").strip()
+            if not port_name:
+                return None
+            return "data", True, port_name
+        if raw.endswith("[D]"):
+            port_name = str(raw[:-3] or "").strip()
+            if not port_name:
+                return None
+            return "data", False, port_name
+        if raw.startswith("[S]"):
+            port_name = str(raw[3:] or "").strip()
+            if not port_name:
+                return None
+            return "state", True, port_name
+        if raw.endswith("[S]"):
+            port_name = str(raw[:-3] or "").strip()
+            if not port_name:
+                return None
+            return "state", False, port_name
+        return None
+
+    @staticmethod
+    def _schema_brief(value_schema: Any) -> str:
+        if value_schema is None:
+            return "unknown"
+        try:
+            top = str(schema_type(value_schema) or "").strip().lower()
+        except (AttributeError, RuntimeError, TypeError, ValueError, KeyError, ImportError, OSError):
+            top = ""
+        if not top:
+            return "unknown"
+        if top == "array":
+            item_type = ""
+            try:
+                root = value_schema.root
+                items = root.items
+                if items is not None:
+                    item_type = str(schema_type(items) or "").strip().lower()
+            except (AttributeError, RuntimeError, TypeError, ValueError, KeyError, ImportError, OSError):
+                item_type = ""
+            if item_type:
+                return f"array<{item_type}>"
+            return "array"
+        if top == "object":
+            prop_count = 0
+            try:
+                root = value_schema.root
+                properties = root.properties
+                if isinstance(properties, dict):
+                    prop_count = len(properties)
+            except (AttributeError, RuntimeError, TypeError, ValueError, KeyError, ImportError, OSError):
+                prop_count = 0
+            if prop_count > 0:
+                return f"object[{prop_count}]"
+            return "object"
+        return top
+
+    def _find_data_port_spec(self, *, is_in: bool, port_name: str) -> tuple[Any, int] | None:
+        node = self._backend_node()
+        if node is None:
+            return None
+        spec = node.spec
+        ports = list(spec.dataInPorts or []) if bool(is_in) else list(spec.dataOutPorts or [])
+        target_name = str(port_name or "").strip()
+        for index, port in enumerate(ports):
+            if str(port.name or "").strip() == target_name:
+                return port, int(index)
+        return None
+
+    def _data_port_tooltip(self, *, is_in: bool, port_name: str) -> str:
+        direction_text = "input" if bool(is_in) else "output"
+        found = self._find_data_port_spec(is_in=bool(is_in), port_name=port_name)
+        if found is None:
+            return f"{port_name} ({direction_text})\nschema: unknown"
+        port, _index = found
+        schema_text = self._schema_brief(port.valueSchema)
+        desc = str(port.description or "").strip()
+        lines = [f"{port_name} ({direction_text})", f"schema: {schema_text}"]
+        if desc:
+            lines.append(desc)
+        return "\n".join(lines)
+
+    def _find_state_field_spec(self, *, field_name: str) -> tuple[Any, int] | None:
+        node = self._backend_node()
+        if node is None:
+            return None
+        spec = node.spec
+        fields = list(spec.stateFields or [])
+        target_name = str(field_name or "").strip()
+        for index, field in enumerate(fields):
+            if str(field.name or "").strip() == target_name:
+                return field, int(index)
+        return None
+
+    def _state_port_tooltip(self, *, is_in: bool, field_name: str) -> str:
+        direction_text = "state input" if bool(is_in) else "state output"
+        found = self._find_state_field_spec(field_name=field_name)
+        if found is None:
+            return f"{field_name} ({direction_text})\nschema: unknown"
+        field, _index = found
+        schema_text = self._schema_brief(field.valueSchema)
+        desc = str(field.description or "").strip()
+        lines = [f"{field_name} ({direction_text})", f"schema: {schema_text}"]
+        if desc:
+            lines.append(desc)
+        return "\n".join(lines)
+
+    def _port_tooltip_text(self, view_name: str) -> str:
+        parsed = self._parse_schema_port_view_name(view_name)
+        if parsed is None:
+            return str(view_name or "")
+        kind, is_in, port_name = parsed
+        if kind == "data":
+            return self._data_port_tooltip(is_in=bool(is_in), port_name=port_name)
+        if kind == "state":
+            return self._state_port_tooltip(is_in=bool(is_in), field_name=port_name)
+        return str(view_name or "")
+
+    def _refresh_port_tooltips(self) -> None:
+        for port, text_item in self._input_items.items():
+            full_name = str(port.name or "")
+            tooltip = self._port_tooltip_text(full_name)
+            try:
+                port.setToolTip(tooltip)
+            except (AttributeError, RuntimeError, TypeError):
+                pass
+            try:
+                text_item.setToolTip(tooltip)
+            except (AttributeError, RuntimeError, TypeError):
+                pass
+        for port, text_item in self._output_items.items():
+            full_name = str(port.name or "")
+            tooltip = self._port_tooltip_text(full_name)
+            try:
+                port.setToolTip(tooltip)
+            except (AttributeError, RuntimeError, TypeError):
+                pass
+            try:
+                text_item.setToolTip(tooltip)
+            except (AttributeError, RuntimeError, TypeError):
+                pass
+
+    def _open_data_port_schema_dialog(self, *, is_in: bool, port_name: str) -> None:
+        node = self._backend_node()
+        if node is None:
+            return
+        found = self._find_data_port_spec(is_in=bool(is_in), port_name=port_name)
+        if found is None:
+            return
+        port, index = found
+        spec = node.spec
+        editable = bool(spec.editableDataInPorts) if bool(is_in) else bool(spec.editableDataOutPorts)
+        required = bool(port.required)
+        missing_locked = bool(node.is_missing_locked())
+        read_only = bool((not editable) or required or missing_locked)
+        schema_value = port.valueSchema
+        if schema_value is None:
+            schema_value = _schema_from_json_obj({"type": "any"})
+        title = f"Edit valueSchema ({port_name})"
+        dlg = SchemaBuilderDialog(self._viewer_safe(), title=title, schema=schema_value, read_only=read_only)
+        if dlg.exec_() != QtWidgets.QDialog.Accepted:
+            return
+        if read_only:
+            return
+        new_schema = dlg.schema()
+        ports = list(spec.dataInPorts or []) if bool(is_in) else list(spec.dataOutPorts or [])
+        if int(index) < 0 or int(index) >= len(ports):
+            return
+        updated = ports[int(index)].model_copy(update={"valueSchema": new_schema})
+        ports[int(index)] = updated
+        if bool(is_in):
+            updated_spec = spec.model_copy(update={"dataInPorts": ports})
+        else:
+            updated_spec = spec.model_copy(update={"dataOutPorts": ports})
+        node.set_spec(updated_spec, rebuild=True)
+
+    def _open_state_field_schema_dialog(self, *, field_name: str) -> None:
+        node = self._backend_node()
+        if node is None:
+            return
+        found = self._find_state_field_spec(field_name=field_name)
+        if found is None:
+            return
+        field, index = found
+        spec = node.spec
+        editable = bool(spec.editableStateFields)
+        required = bool(field.required)
+        missing_locked = bool(node.is_missing_locked())
+        read_only = bool((not editable) or required or missing_locked)
+        schema_value = field.valueSchema
+        if schema_value is None:
+            schema_value = _schema_from_json_obj({"type": "any"})
+        title = f"Edit valueSchema ({field_name})"
+        dlg = SchemaBuilderDialog(self._viewer_safe(), title=title, schema=schema_value, read_only=read_only)
+        if dlg.exec_() != QtWidgets.QDialog.Accepted:
+            return
+        if read_only:
+            return
+        new_schema = dlg.schema()
+        fields = list(spec.stateFields or [])
+        if int(index) < 0 or int(index) >= len(fields):
+            return
+        updated = fields[int(index)].model_copy(update={"valueSchema": new_schema})
+        fields[int(index)] = updated
+        updated_spec = spec.model_copy(update={"stateFields": fields})
+        node.set_spec(updated_spec, rebuild=True)
+
+    def _open_data_port_editor_dialog(self, *, is_in: bool, port_name: str) -> None:
+        node = self._backend_node()
+        if node is None:
+            return
+        found = self._find_data_port_spec(is_in=bool(is_in), port_name=port_name)
+        if found is None:
+            return
+        port, index = found
+        spec = node.spec
+        editable = bool(spec.editableDataInPorts) if bool(is_in) else bool(spec.editableDataOutPorts)
+        required = bool(port.required)
+        missing_locked = bool(node.is_missing_locked())
+        ui_only = bool((not editable) or required)
+        read_only = bool(missing_locked)
+
+        from ..widgets.node_property_widgets import _F8EditDataPortDialog
+        from ..widgets.ui_override_mutations import (
+            base_data_port_show_on_node as _base_data_port_show_on_node,
+            set_data_port_show_on_node_override as _set_data_port_show_on_node_override,
+        )
+
+        dlg = _F8EditDataPortDialog(
+            self._viewer_safe(),
+            title="Edit data port",
+            port=port,
+            ui_only=ui_only,
+            read_only=read_only,
+        )
+        if dlg.exec_() != QtWidgets.QDialog.Accepted:
+            return
+        new_port = dlg.port()
+        if ui_only and not read_only:
+            base_show = _base_data_port_show_on_node(spec, name=str(port.name or "").strip(), is_in=bool(is_in))
+            _set_data_port_show_on_node_override(
+                node,
+                name=str(port_name or "").strip(),
+                is_in=bool(is_in),
+                show_on_node=bool(new_port.showOnNode),
+                base_show_on_node=bool(base_show),
+            )
+            node.sync_from_spec()
+            return
+        if read_only:
+            return
+
+        ports = list(spec.dataInPorts or []) if bool(is_in) else list(spec.dataOutPorts or [])
+        if int(index) < 0 or int(index) >= len(ports):
+            return
+        ports[int(index)] = new_port
+        if bool(is_in):
+            updated_spec = spec.model_copy(update={"dataInPorts": ports})
+        else:
+            updated_spec = spec.model_copy(update={"dataOutPorts": ports})
+        node.set_spec(updated_spec, rebuild=True)
+
+    def _find_effective_state_field(self, *, field_name: str) -> Any | None:
+        node = self._backend_node()
+        if node is None:
+            return None
+        try:
+            effective_fields = list(node.effective_state_fields() or [])
+        except (AttributeError, RuntimeError, TypeError, ValueError, KeyError, ImportError, OSError):
+            effective_fields = []
+        target_name = str(field_name or "").strip()
+        for field in effective_fields:
+            if str(field.name or "").strip() == target_name:
+                return field
+        return None
+
+    def _open_state_field_editor_dialog(self, *, field_name: str) -> None:
+        node = self._backend_node()
+        if node is None:
+            return
+        spec = node.spec
+        current = self._find_effective_state_field(field_name=field_name)
+        if current is None:
+            found = self._find_state_field_spec(field_name=field_name)
+            if found is None:
+                return
+            current, _index = found
+
+        editable = bool(spec.editableStateFields)
+        required = bool(current.required)
+        missing_locked = bool(node.is_missing_locked())
+        ui_only = bool((not editable) or required)
+        read_only = bool(missing_locked)
+
+        from ..widgets.node_property_widgets import _F8EditStateFieldDialog
+        from ..widgets.spec_mutations import replace_state_field as _spec_replace_state_field
+        from ..widgets.ui_override_mutations import (
+            find_base_state_field as _find_base_state_field,
+            set_state_field_ui_override as _set_state_field_ui_override,
+        )
+
+        dlg = _F8EditStateFieldDialog(
+            self._viewer_safe(),
+            title="Edit state field",
+            field=current,
+            ui_only=ui_only,
+            read_only=read_only,
+        )
+        if dlg.exec_() != QtWidgets.QDialog.Accepted:
+            return
+        new_field = dlg.field()
+        if ui_only:
+            base_field = _find_base_state_field(spec, name=field_name)
+            if base_field is None:
+                base_field = new_field
+            _set_state_field_ui_override(node, field_name=field_name, base=base_field, edited=new_field)
+            node.sync_from_spec()
+            return
+        if read_only:
+            return
+
+        updated_spec = _spec_replace_state_field(spec, old_name=field_name, new_field=new_field)
+        node.spec = updated_spec
+
+    def _on_port_right_click(self, port: Any, screen_pos: QtCore.QPoint) -> None:
+        full_name = str(port.name or "")
+        parsed = self._parse_schema_port_view_name(full_name)
+        if parsed is None:
+            return
+        node = self._backend_node()
+        if node is None:
+            return
+        kind, is_in, port_name = parsed
+        can_edit = False
+        if kind == "data":
+            found_data = self._find_data_port_spec(is_in=bool(is_in), port_name=port_name)
+            if found_data is None:
+                return
+            data_port, _index = found_data
+            editable = bool(node.spec.editableDataInPorts) if bool(is_in) else bool(node.spec.editableDataOutPorts)
+            can_edit = bool(editable and (not bool(data_port.required)) and (not bool(node.is_missing_locked())))
+        elif kind == "state":
+            found_field = self._find_state_field_spec(field_name=port_name)
+            if found_field is None:
+                return
+            field, _index = found_field
+            editable = bool(node.spec.editableStateFields)
+            can_edit = bool(editable and (not bool(field.required)) and (not bool(node.is_missing_locked())))
+        else:
+            return
+        menu = QtWidgets.QMenu()
+        if can_edit:
+            schema_action = menu.addAction("Edit valueSchema...")
+        else:
+            schema_action = menu.addAction("View valueSchema...")
+        if kind == "data":
+            port_action = menu.addAction("Edit data port...")
+        else:
+            port_action = menu.addAction("Edit state field...")
+        chosen = menu.exec_(screen_pos)
+        if chosen is schema_action:
+            if kind == "data":
+                self._open_data_port_schema_dialog(is_in=bool(is_in), port_name=port_name)
+            elif kind == "state":
+                self._open_state_field_schema_dialog(field_name=port_name)
+        elif chosen is port_action:
+            if kind == "data":
+                self._open_data_port_editor_dialog(is_in=bool(is_in), port_name=port_name)
+            elif kind == "state":
+                self._open_state_field_editor_dialog(field_name=port_name)
 
     def _make_state_inline_control(self, state_field: _StateFieldInfo) -> QtWidgets.QWidget:
         return _make_state_inline_control_impl(self, state_field)
@@ -1863,6 +2272,7 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
             self._draw_node_vertical()
         else:
             raise RuntimeError("Node graph layout direction not valid!")
+        self._refresh_port_tooltips()
         self._position_service_toolbar()
 
     def post_init(self, viewer=None, pos=None):
@@ -2202,8 +2612,10 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         text.setFont(text.font())
         text.setVisible(port.display_name)
         text.setCacheMode(ITEM_CACHE_MODE)
+        tooltip = self._port_tooltip_text(full_name)
         try:
-            text.setToolTip(full_name)
+            text.setToolTip(tooltip)
+            port.setToolTip(tooltip)
         except (AttributeError, RuntimeError, TypeError):
             pass
         if port.port_type == PortTypeEnum.IN.value:
@@ -2230,9 +2642,9 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
             PortItem: input port qgraphics item.
         """
         if painter_func:
-            port = CustomPortItem(self, painter_func)
+            port = F8StudioCustomPortItem(self, painter_func)
         else:
-            port = PortItem(self)
+            port = F8StudioPortItem(self)
         port.name = name
         port.port_type = PortTypeEnum.IN.value
         port.multi_connection = multi_port
@@ -2256,9 +2668,9 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
             PortItem: output port qgraphics item.
         """
         if painter_func:
-            port = CustomPortItem(self, painter_func)
+            port = F8StudioCustomPortItem(self, painter_func)
         else:
-            port = PortItem(self)
+            port = F8StudioPortItem(self)
         port.name = name
         port.port_type = PortTypeEnum.OUT.value
         port.multi_connection = multi_port

@@ -5,6 +5,7 @@ from typing import Any
 
 from Qt import QtCore, QtGui, QtWidgets
 from NodeGraphQt.constants import PortTypeEnum
+from NodeGraphQt.qgraphics.port import PortItem
 from NodeGraphQt.widgets.viewer import NodeViewer
 
 from .edge_rules import (
@@ -395,7 +396,25 @@ class F8StudioNodeViewer(NodeViewer):
                 return True
         return False
 
+    def _is_port_hit(self, scene_pos: QtCore.QPointF) -> bool:
+        view_pos = self.mapFromScene(scene_pos)
+        item = self.itemAt(view_pos)
+        if isinstance(item, PortItem):
+            return True
+        scene = self.scene()
+        if scene is None:
+            return False
+        for hit_item in scene.items(scene_pos):
+            if isinstance(hit_item, PortItem):
+                return True
+        return False
+
     def sceneMousePressEvent(self, event):  # type: ignore[override]
+        if event.button() == QtCore.Qt.RightButton and self._is_port_hit(event.scenePos()):
+            if self._LIVE_PIPE.isVisible():
+                self.end_live_connection()
+            event.accept()
+            return
         if self._is_proxy_widget_hit(event.scenePos()):
             if self._LIVE_PIPE.isVisible():
                 self.end_live_connection()
