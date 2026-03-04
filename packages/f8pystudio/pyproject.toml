@@ -53,7 +53,8 @@ follow_imports = "skip"
 ignore_missing_imports = true
 files = [
     "f8pystudio/bridge",
-    "f8pystudio/extensions",
+    "f8pystudio/plugin_api.py",
+    "f8pystudio/plugin_loader.py",
     "f8pystudio/session_migration.py",
     "f8pystudio/widgets/state_controls",
 ]

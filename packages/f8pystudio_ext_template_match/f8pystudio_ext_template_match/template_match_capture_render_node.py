@@ -5,9 +5,10 @@ from typing import Any
 
 from qtpy import QtWidgets
 
-from ..command_ui_protocol import CommandUiHandler, CommandUiSource
-from ..nodegraph.service_basenode import F8StudioServiceBaseNode
-from ..widgets.template_match_capture_dialog import TemplateCaptureFrame, TemplateMatchCaptureDialog
+from f8pystudio.command_ui_protocol import CommandUiHandler, CommandUiSource
+from f8pystudio.nodegraph.service_basenode import F8StudioServiceBaseNode
+
+from .template_match_capture_dialog import TemplateCaptureFrame, TemplateMatchCaptureDialog
 
 
 class TemplateMatchCaptureRenderNode(F8StudioServiceBaseNode, CommandUiHandler):
@@ -18,7 +19,7 @@ class TemplateMatchCaptureRenderNode(F8StudioServiceBaseNode, CommandUiHandler):
         parent: QtWidgets.QWidget | None,
         source: CommandUiSource,
     ) -> bool:
-        del source
+        _ = source
         if isinstance(cmd, dict):
             call = str(cmd.get("name") or "").strip()
         else:
@@ -32,14 +33,14 @@ class TemplateMatchCaptureRenderNode(F8StudioServiceBaseNode, CommandUiHandler):
         return True
 
     def _open_template_match_capture_dialog(self, *, parent: QtWidgets.QWidget | None) -> None:
-        g = None
+        graph = None
         try:
-            g = self.graph  # NodeGraphQt node graph reference.
+            graph = self.graph
         except Exception:
-            g = None
+            graph = None
         bridge = None
         try:
-            bridge = g.service_bridge if g is not None else None
+            bridge = graph.service_bridge if graph is not None else None
         except Exception:
             bridge = None
 
@@ -47,7 +48,6 @@ class TemplateMatchCaptureRenderNode(F8StudioServiceBaseNode, CommandUiHandler):
             sid = str(self.id or "").strip()
         except Exception:
             sid = ""
-
         if bridge is None or not sid:
             return
 
@@ -60,16 +60,16 @@ class TemplateMatchCaptureRenderNode(F8StudioServiceBaseNode, CommandUiHandler):
                     done(None, "invalid response")
                     return
                 try:
-                    img = result.get("image") if isinstance(result.get("image"), dict) else {}
-                    b64 = str(img.get("b64") or "")
+                    image_obj = result.get("image") if isinstance(result.get("image"), dict) else {}
+                    b64 = str(image_obj.get("b64") or "")
                     raw = base64.b64decode(b64.encode("ascii"), validate=False) if b64 else b""
                     cap = TemplateCaptureFrame(
                         frame_id=int(result.get("frameId") or 0),
                         ts_ms=int(result.get("tsMs") or 0),
                         image_bytes=raw,
-                        image_format=str(img.get("format") or ""),
-                        width=int(img.get("width") or 0),
-                        height=int(img.get("height") or 0),
+                        image_format=str(image_obj.get("format") or ""),
+                        width=int(image_obj.get("width") or 0),
+                        height=int(image_obj.get("height") or 0),
                     )
                 except Exception as exc:
                     done(None, str(exc))
@@ -77,8 +77,6 @@ class TemplateMatchCaptureRenderNode(F8StudioServiceBaseNode, CommandUiHandler):
                 done(cap, None)
 
             try:
-                # Use defaults from the service implementation (params exist in spec, but the
-                # custom UI doesn't currently expose them).
                 bridge.request_remote_command(sid, "captureTemplateFrame", {}, _cb)
             except Exception as exc:
                 done(None, str(exc))
@@ -86,11 +84,12 @@ class TemplateMatchCaptureRenderNode(F8StudioServiceBaseNode, CommandUiHandler):
         def _set_template_image_b64(b64: str) -> None:
             bridge.set_remote_state(sid, sid, "templateImagePngB64", str(b64 or ""))
 
-        dlg = TemplateMatchCaptureDialog(
+        dialog = TemplateMatchCaptureDialog(
             parent=parent,
             bridge=bridge,
             service_id=sid,
             request_capture=_request_capture,
             set_template_b64=_set_template_image_b64,
         )
-        dlg.exec()
+        dialog.exec()
+

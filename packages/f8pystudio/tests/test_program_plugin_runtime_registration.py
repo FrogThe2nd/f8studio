@@ -1,0 +1,46 @@
+from __future__ import annotations
+
+import logging
+
+from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
+
+from f8pystudio.plugin_api import PluginOperatorRegistration, StudioPluginManifest
+from f8pystudio.pystudio_program import PyStudioProgram
+
+
+def test_program_plugin_runtime_registration_is_applied() -> None:
+    called = {"count": 0}
+
+    def _register(registry: RuntimeNodeRegistry | None) -> RuntimeNodeRegistry:
+        assert isinstance(registry, RuntimeNodeRegistry)
+        called["count"] += 1
+        return registry
+
+    manifest = StudioPluginManifest(
+        plugin_id="plugin_runtime",
+        plugin_name="Plugin Runtime",
+        plugin_version="1.0.0",
+        operators=(PluginOperatorRegistration(register=_register),),
+    )
+
+    registry = RuntimeNodeRegistry.instance()
+    PyStudioProgram._apply_plugin_manifests_to_runtime_registry([manifest], registry=registry)
+    assert called["count"] == 1
+
+
+def test_program_plugin_runtime_registration_failure_is_isolated(caplog) -> None:
+    caplog.set_level(logging.ERROR)
+
+    def _raise(_registry: RuntimeNodeRegistry | None) -> RuntimeNodeRegistry:
+        raise RuntimeError("boom")
+
+    manifest = StudioPluginManifest(
+        plugin_id="plugin_bad",
+        plugin_name="Plugin Bad",
+        plugin_version="1.0.0",
+        operators=(PluginOperatorRegistration(register=_raise),),
+    )
+
+    registry = RuntimeNodeRegistry.instance()
+    PyStudioProgram._apply_plugin_manifests_to_runtime_registry([manifest], registry=registry)
+    assert "Operator registration failed in plugin" in caplog.text

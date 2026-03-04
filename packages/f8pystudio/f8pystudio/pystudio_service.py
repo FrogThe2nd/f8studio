@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 from typing import Any, Callable
 
 from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
 from f8pysdk.service_runtime import ServiceRuntime, ServiceRuntimeConfig
 
+from .plugin_loader import load_entrypoint_plugins
 from .operators import register_operator
 from .ui_bus import set_ui_command_sink, UiCommand
 from .pystudio_node_registry import SERVICE_CLASS, STUDIO_SERVICE_ID
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -55,6 +59,18 @@ class PyStudioService:
     ) -> None:
         # Register studio operators into the shared registry.
         register_operator(self._registry)
+        for manifest in load_entrypoint_plugins():
+            for op_reg in manifest.operators:
+                try:
+                    out_registry = op_reg.register(self._registry)
+                except Exception:
+                    logger.exception("Plugin operator registration failed plugin_id=%s", manifest.plugin_id)
+                    continue
+                if out_registry is not self._registry:
+                    logger.warning(
+                        "Plugin '%s' returned a different RuntimeNodeRegistry; keeping current instance.",
+                        manifest.plugin_id,
+                    )
 
         cfg = ServiceRuntimeConfig.from_values(
             service_id=str(self._cfg.studio_service_id),

@@ -77,6 +77,8 @@ f8pyexpr = "python -m f8pyscript.main_expr"
 
 [feature.studio.pypi-dependencies]
 f8pystudio = { path = "packages/f8pystudio", editable = true }
+f8pystudio-ext-template-match = { path = "packages/f8pystudio_ext_template_match", editable = true }
+f8pystudio-ext-viz-tcode = { path = "packages/f8pystudio_ext_viz_tcode", editable = true }
 pyside6 = ">=6.10.2, <7"
 qtpy = ">=2.4.3, <3"
 pyqt-toast-notification = ">=1.3.3, <2"

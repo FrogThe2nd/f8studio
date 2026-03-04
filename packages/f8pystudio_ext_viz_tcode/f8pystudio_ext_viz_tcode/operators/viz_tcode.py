@@ -19,9 +19,9 @@ from f8pysdk.nats_naming import ensure_token
 from f8pysdk.runtime_node import RuntimeNode
 from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
 
-from ..constants import SERVICE_CLASS
-from ..ui_bus import emit_ui_command
-from ._viz_base import StudioVizRuntimeNodeBase, viz_sampling_state_fields
+from f8pystudio.constants import SERVICE_CLASS
+from f8pystudio.ui_bus import emit_ui_command
+from f8pystudio.operators._viz_base import StudioVizRuntimeNodeBase, viz_sampling_state_fields
 
 logger = logging.getLogger(__name__)
 

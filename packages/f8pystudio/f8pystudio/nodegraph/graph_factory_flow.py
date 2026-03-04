@@ -7,6 +7,8 @@ from NodeGraphQt.errors import NodeCreationError
 
 from f8pysdk import F8OperatorSpec, F8ServiceSpec, F8StateAccess
 
+from ..constants import SERVICE_CLASS as _CANVAS_SERVICE_CLASS_
+from ..constants import STUDIO_SERVICE_ID
 from ..ui_notifications import show_warning
 from ..variants.variant_ids import parse_variant_node_type
 
@@ -273,4 +275,3 @@ class GraphFactoryFlowMixin:
         while self.get_node_by_id(uuid) is not None:
             uuid = self.uuid_generator.random(self.uuid_length)
         return uuid
-

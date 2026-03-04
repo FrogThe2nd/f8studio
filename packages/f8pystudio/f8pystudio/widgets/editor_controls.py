@@ -169,8 +169,12 @@ class F8OptionCombo(QtWidgets.QComboBox):
         view.setUniformItemSizes(True)
         self.setView(view)
         self.currentIndexChanged.connect(self._emit)  # type: ignore[attr-defined]
-        self._popup = _F8ComboPopup(self)
+        self._popup: _F8ComboPopup | None = _F8ComboPopup(self)
         self._popup.valueSelected.connect(self._on_popup_selected)  # type: ignore[attr-defined]
+        self._popup.destroyed.connect(self._on_popup_destroyed)  # type: ignore[attr-defined]
+
+    def _on_popup_destroyed(self, _obj: Any) -> None:
+        self._popup = None
 
     def _block_popup_for(self, seconds: float) -> None:
         until = time.monotonic() + max(0.0, float(seconds))
@@ -251,7 +255,10 @@ class F8OptionCombo(QtWidgets.QComboBox):
             return
         if time.monotonic() < self._popup_block_until_s:
             return
-        if self._popup.isVisible():
+        popup = self._popup
+        if popup is None:
+            return
+        if popup.isVisible():
             # Toggle behavior: clicking the combobox again collapses the popup.
             self.hidePopup()
             return
@@ -260,19 +267,28 @@ class F8OptionCombo(QtWidgets.QComboBox):
         model = self.model()
         if model is None or model.rowCount() == 0:
             return
-        self._popup.set_model(model)
-        self._popup.set_current_index(self.currentIndex())
-        self._popup.resize(self._popup_size())
-        pos = self._popup_pos(self._popup.height())
-        self._popup.move(pos)
-        self._popup.raise_()
-        self._popup.show()
-        self._popup.activateWindow()
+        popup.set_model(model)
+        popup.set_current_index(self.currentIndex())
+        popup.resize(self._popup_size())
+        pos = self._popup_pos(popup.height())
+        popup.move(pos)
+        popup.raise_()
+        popup.show()
+        popup.activateWindow()
 
     def hidePopup(self) -> None:  # type: ignore[override]
-        if self._popup.isVisible():
+        popup = self._popup
+        if popup is None:
+            return
+        try:
+            visible = popup.isVisible()
+        except RuntimeError:
+            # Qt shutdown can delete popup before QComboBox hidePopup callback runs.
+            self._popup = None
+            return
+        if visible:
             self._block_popup_for(_COMBO_REOPEN_GUARD_S)
-            self._popup.hide()
+            popup.hide()
 
     def wheelEvent(self, event: QtGui.QWheelEvent) -> None:  # type: ignore[override]
         if self._read_only:

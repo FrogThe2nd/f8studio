@@ -11,10 +11,6 @@ def _b64encode(data: bytes) -> str:
     return base64.b64encode(data).decode("ascii")
 
 
-def _b64decode(s: str) -> bytes:
-    return base64.b64decode(s.encode("ascii"), validate=False)
-
-
 @dataclass(frozen=True)
 class TemplateCaptureFrame:
     frame_id: int
@@ -123,7 +119,7 @@ class TemplateRoiSelectLabel(QtWidgets.QLabel):
         ow = int(self._orig_pix.width())
         self._scale = float(sw) / float(max(1, ow))
 
-    def _widget_rect_to_image_rect(self, r: QtCore.QRect) -> QtCore.QRect | None:
+    def _widget_rect_to_image_rect(self, rect: QtCore.QRect) -> QtCore.QRect | None:
         if self._orig_pix is None or self._scaled_pix is None:
             return None
         off = self._scaled_off
@@ -132,11 +128,11 @@ class TemplateRoiSelectLabel(QtWidgets.QLabel):
         src_w = int(self._orig_pix.width())
         src_h = int(self._orig_pix.height())
 
-        # clamp to scaled image region
-        x1 = max(off.x(), min(off.x() + sw, r.left()))
-        y1 = max(off.y(), min(off.y() + sh, r.top()))
-        x2 = max(off.x(), min(off.x() + sw, r.right()))
-        y2 = max(off.y(), min(off.y() + sh, r.bottom()))
+        # Clamp to scaled image region.
+        x1 = max(off.x(), min(off.x() + sw, rect.left()))
+        y1 = max(off.y(), min(off.y() + sh, rect.top()))
+        x2 = max(off.x(), min(off.x() + sw, rect.right()))
+        y2 = max(off.y(), min(off.y() + sh, rect.bottom()))
         if x2 <= x1 or y2 <= y1:
             return None
 
@@ -156,7 +152,7 @@ class TemplateRoiSelectLabel(QtWidgets.QLabel):
 
 def _encode_png_b64(img: QtGui.QImage, *, max_b64_bytes: int = 900_000) -> tuple[str, dict[str, Any]]:
     """
-    Encode a QImage as PNG base64, resizing down if needed for NATS payload size.
+    Encode a QImage as PNG base64, resizing down if needed for payload size.
     """
     if img.isNull():
         raise ValueError("empty image")
@@ -171,13 +167,24 @@ def _encode_png_b64(img: QtGui.QImage, *, max_b64_bytes: int = 900_000) -> tuple
         raw = bytes(buf.data())
         b64 = _b64encode(raw)
         if len(b64) <= int(max_b64_bytes):
-            return b64, {"format": "png", "width": int(cur.width()), "height": int(cur.height()), "bytes": int(len(raw)), "b64Bytes": int(len(b64))}
+            return b64, {
+                "format": "png",
+                "width": int(cur.width()),
+                "height": int(cur.height()),
+                "bytes": int(len(raw)),
+                "b64Bytes": int(len(b64)),
+            }
 
         w = int(cur.width())
         h = int(cur.height())
         if w <= 32 or h <= 32:
             break
-        cur = cur.scaled(max(32, int(w * 0.85)), max(32, int(h * 0.85)), QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
+        cur = cur.scaled(
+            max(32, int(w * 0.85)),
+            max(32, int(h * 0.85)),
+            QtCore.Qt.KeepAspectRatio,
+            QtCore.Qt.SmoothTransformation,
+        )
 
     raise ValueError("encoded template too large for max_b64_bytes")
 
@@ -233,7 +240,6 @@ class TemplateMatchCaptureDialog(QtWidgets.QDialog):
         layout.addWidget(self._status)
 
         self._update_buttons()
-        # Auto-capture once on open to reduce friction.
         try:
             QtCore.QTimer.singleShot(0, self._do_capture)
         except (AttributeError, RuntimeError, TypeError):
@@ -302,5 +308,8 @@ class TemplateMatchCaptureDialog(QtWidgets.QDialog):
             self._set_status(f"set_state failed: {exc}")
             return
 
-        self._set_status(f"Template applied ({meta.get('width')}x{meta.get('height')}, b64Bytes={meta.get('b64Bytes')})")
+        self._set_status(
+            f"Template applied ({meta.get('width')}x{meta.get('height')}, b64Bytes={meta.get('b64Bytes')})"
+        )
         self.accept()
+

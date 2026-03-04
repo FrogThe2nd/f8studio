@@ -386,6 +386,8 @@ environments:
       - pypi: ./packages/f8pyscript
       - pypi: ./packages/f8pysdk
       - pypi: ./packages/f8pystudio
+      - pypi: ./packages/f8pystudio_ext_template_match
+      - pypi: ./packages/f8pystudio_ext_viz_tcode
       win-64:
       - conda: https://conda.anaconda.org/conda-forge/win-64/bzip2-1.0.8-h0ad9c76_9.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/ca-certificates-2026.2.25-h4c7d964_0.conda
@@ -496,6 +498,8 @@ environments:
       - pypi: ./packages/f8pyscript
       - pypi: ./packages/f8pysdk
       - pypi: ./packages/f8pystudio
+      - pypi: ./packages/f8pystudio_ext_template_match
+      - pypi: ./packages/f8pystudio_ext_viz_tcode
   doc:
     channels:
     - url: https://conda.anaconda.org/conda-forge/
@@ -1734,7 +1738,7 @@ packages:
 - pypi: ./packages/f8pystudio
   name: f8pystudio
   version: 0.1.1
-  sha256: 6b0b94ccd70ecd0ad5ed1dcf5fe81f416bf57211885dce2088b7817d17e82f43
+  sha256: ab9b76ce048fd79d911b736dcdee22cda88b625a29bdcef3c45d11d70c6802e1
   requires_dist:
   - qtpy>=2.4.3
   - pyside6>=6.10.1
@@ -1747,6 +1751,24 @@ packages:
   - shortuuid>=1.0.13
   - basedpyright>=1.31.0
   - mypy>=1.11.2 ; extra == 'dev'
+  requires_python: '>=3.10'
+- pypi: ./packages/f8pystudio_ext_template_match
+  name: f8pystudio-ext-template-match
+  version: 0.1.0
+  sha256: 8a54f1ed5176b76e4f15cb91da1b35db1efad415fd0d85b3bc70d8e9a85f09d9
+  requires_dist:
+  - f8pystudio
+  - qtpy>=2.4.3
+  requires_python: '>=3.10'
+- pypi: ./packages/f8pystudio_ext_viz_tcode
+  name: f8pystudio-ext-viz-tcode
+  version: 0.1.0
+  sha256: d0a7f4039f93eb1960ab058d0c7569d0c0f37c26bb444e9e6ed9d5f8aabce62d
+  requires_dist:
+  - f8pystudio
+  - qtpy>=2.4.3
+  - pyside6>=6.10.1
+  - nodegraphqt>=0.6.43
   requires_python: '>=3.10'
 - conda: https://conda.anaconda.org/conda-forge/noarch/fasteners-0.19-pyhd8ed1ab_1.conda
   sha256: 42fb170778b47303e82eddfea9a6d1e1b8af00c927cd5a34595eaa882b903a16

@@ -8,9 +8,9 @@ from typing import Callable, Protocol
 from NodeGraphQt.nodes.base_node import NodeBaseWidget
 from qtpy import QtCore, QtWidgets
 
-from ..nodegraph.operator_basenode import F8StudioOperatorBaseNode
-from ..nodegraph.viz_operator_nodeitem import F8StudioVizOperatorNodeItem
-from ..ui_bus import UiCommand
+from f8pystudio.nodegraph.operator_basenode import F8StudioOperatorBaseNode
+from f8pystudio.nodegraph.viz_operator_nodeitem import F8StudioVizOperatorNodeItem
+from f8pystudio.ui_bus import UiCommand
 
 logger = logging.getLogger(__name__)
 _WEBENGINE_PROFILE_CONFIGURED = False

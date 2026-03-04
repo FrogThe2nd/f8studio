@@ -14,6 +14,8 @@ from f8pysdk.service_runtime_tools.discovery import (
     load_discovery_into_catalog,
 )
 
+from .plugin_api import StudioPluginManifest
+from .plugin_loader import load_entrypoint_plugins
 from .pystudio_node_registry import SERVICE_CLASS, register_pystudio_specs
 
 logger = logging.getLogger(__name__)
@@ -37,7 +39,9 @@ class PyStudioProgram:
         return None
 
     def describe_json(self) -> dict[str, Any]:
-        register_pystudio_specs()
+        registry = register_pystudio_specs()
+        manifests = self._load_plugin_manifests()
+        self._apply_plugin_manifests_to_runtime_registry(manifests, registry=registry)
         return RuntimeNodeRegistry.instance().describe(SERVICE_CLASS).model_dump(mode="json")
 
     @staticmethod
@@ -50,6 +54,65 @@ class PyStudioProgram:
         for operator_spec in registry.operator_specs(SERVICE_CLASS):
             catalog.register_operator(operator_spec)
         return str(service_spec.serviceClass)
+
+    @staticmethod
+    def _load_plugin_manifests() -> list[StudioPluginManifest]:
+        manifests = load_entrypoint_plugins()
+        for manifest in manifests:
+            logger.info(
+                "Loaded plugin manifest: id=%s name=%s version=%s",
+                manifest.plugin_id,
+                manifest.plugin_name,
+                manifest.plugin_version,
+            )
+        return manifests
+
+    @staticmethod
+    def _apply_plugin_manifests_to_runtime_registry(
+        manifests: list[StudioPluginManifest], *, registry: RuntimeNodeRegistry
+    ) -> None:
+        if not manifests:
+            return
+        for manifest in manifests:
+            for op_reg in manifest.operators:
+                try:
+                    out_reg = op_reg.register(registry)
+                except Exception:
+                    logger.exception("Operator registration failed in plugin '%s'", manifest.plugin_id)
+                    continue
+                if out_reg is not registry:
+                    logger.warning(
+                        "Plugin '%s' returned a different RuntimeNodeRegistry instance; ignoring replacement.",
+                        manifest.plugin_id,
+                    )
+
+    @staticmethod
+    def _apply_plugin_manifests_to_renderers(manifests: list[StudioPluginManifest]) -> None:
+        if not manifests:
+            return
+        from .render_nodes import RenderNodeRegistry
+
+        render_registry = RenderNodeRegistry.instance()
+        for manifest in manifests:
+            for renderer in manifest.renderers:
+                key = str(renderer.renderer_class).strip()
+                if not key:
+                    logger.warning("Skip empty renderer key in plugin '%s'", manifest.plugin_id)
+                    continue
+                try:
+                    render_registry.register(key, renderer.node_class)
+                except ValueError:
+                    logger.warning(
+                        "Renderer already registered (skip): key=%s plugin_id=%s",
+                        key,
+                        manifest.plugin_id,
+                    )
+                except TypeError:
+                    logger.exception(
+                        "Invalid renderer class in plugin '%s' for key '%s'",
+                        manifest.plugin_id,
+                        key,
+                    )
 
     @staticmethod
     def build_node_classes() -> list[type]:
@@ -102,10 +165,14 @@ class PyStudioProgram:
 
         from .widgets.main_window import F8StudioMainWin
 
+        manifests = self._load_plugin_manifests()
+        self._apply_plugin_manifests_to_runtime_registry(manifests, registry=RuntimeNodeRegistry.instance())
+
         load_discovery_into_catalog(
             catalog=ServiceCatalog.instance(),
             builtin_injectors=(self._inject_builtin_pystudio_specs,),
         )
+        self._apply_plugin_manifests_to_renderers(manifests)
 
         node_classes = self.build_node_classes()
 
