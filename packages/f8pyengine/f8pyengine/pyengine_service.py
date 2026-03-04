@@ -25,7 +25,7 @@ class PyEngineService(ServiceCliTemplate, ServiceHookBase):
     This is the canonical entry wiring:
     - register pyengine runtime node specs
     - attach ExecFlowExecutor (exec runtime)
-    - bind exec-capable nodes from the rungraph
+    - bind exec-capable nodes (including entrypoints) from the rungraph
     - pause/resume executor via ServiceBus lifecycle events
     """
 
@@ -62,9 +62,13 @@ class PyEngineService(ServiceCliTemplate, ServiceHookBase):
         if executor is None:
             return
         try:
-            await executor.stop_entrypoint()
+            await executor.set_active(False)
         except Exception:
-            logger.exception("stop_entrypoint failed during teardown")
+            logger.exception("set_active(False) failed during teardown")
+        try:
+            await executor.stop_all_entrypoints()
+        except Exception:
+            logger.exception("stop_all_entrypoints failed during teardown")
 
     async def _sync_exec_nodes(self, runtime: ServiceRuntime, graph: F8RuntimeGraph) -> None:
         want: set[str] = set()
@@ -84,25 +88,6 @@ class PyEngineService(ServiceCliTemplate, ServiceHookBase):
         executor = self._executor
         if executor is None:
             return
-
-        # If the current entrypoint node instance is being hot-replaced (same nodeId, new object),
-        # stop it first so `apply_rungraph()` can restart it cleanly.
-        try:
-            entry_id = executor.current_entrypoint_node_id()
-        except Exception:
-            logger.exception("read current_entrypoint_node_id failed")
-            entry_id = None
-        if entry_id and entry_id in want:
-            try:
-                current_obj = executor.get_registered_node(entry_id)
-                new_obj = runtime.bus.get_node(entry_id)
-                if current_obj is not None and new_obj is not None and current_obj is not new_obj:
-                    try:
-                        await executor.stop_entrypoint()
-                    except Exception:
-                        logger.exception("stop_entrypoint failed for hot-replaced node")
-            except Exception:
-                logger.exception("compare hot-replaced entrypoint failed")
 
         for node_id in sorted(self._exec_node_ids - want):
             try:

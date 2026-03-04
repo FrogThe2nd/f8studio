@@ -1,7 +1,9 @@
+import asyncio
 import os
 import sys
 import unittest
 from dataclasses import dataclass
+from typing import Any
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 SDK_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "f8pysdk"))
@@ -18,6 +20,7 @@ from f8pysdk.generated import (  # noqa: E402
     F8RuntimeNode,
 )
 from f8pysdk.runtime_node_registry import RuntimeNodeRegistry  # noqa: E402
+from f8pysdk.runtime_node import OperatorNode  # noqa: E402
 from f8pysdk.service_host import ServiceHost, ServiceHostConfig  # noqa: E402
 from f8pysdk.testing import ServiceBusHarness  # noqa: E402
 
@@ -29,6 +32,35 @@ from f8pyengine.pyengine_node_registry import register_pyengine_specs  # noqa: E
 @dataclass
 class _RuntimeStub:
     bus: object
+
+
+class _ProbeRuntimeNode(OperatorNode):
+    def __init__(self, *, node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any] | None = None) -> None:
+        del initial_state
+        super().__init__(
+            node_id=node_id,
+            data_in_ports=[p.name for p in (node.dataInPorts or [])],
+            data_out_ports=[p.name for p in (node.dataOutPorts or [])],
+            state_fields=[s.name for s in (node.stateFields or [])],
+            exec_in_ports=list(node.execInPorts or []),
+            exec_out_ports=list(node.execOutPorts or []),
+        )
+        self.calls = 0
+        self.inflight = 0
+        self.max_inflight = 0
+
+    async def on_exec(self, exec_id: str | int, in_port: str | None = None) -> list[str]:
+        _ = exec_id
+        _ = in_port
+        self.calls += 1
+        self.inflight += 1
+        if self.inflight > self.max_inflight:
+            self.max_inflight = self.inflight
+        try:
+            await asyncio.sleep(0.01)
+        finally:
+            self.inflight -= 1
+        return []
 
 
 def _node(*, node_id: str, operator_class: str, exec_in: list[str], exec_out: list[str]) -> F8RuntimeNode:
@@ -73,14 +105,13 @@ class ExecValidationTests(unittest.IsolatedAsyncioTestCase):
     async def _teardown_service(self, service: PyEngineService, runtime: _RuntimeStub) -> None:
         await service.teardown(runtime)  # type: ignore[arg-type]
 
-    async def test_rejects_multiple_exec_entrypoints(self) -> None:
+    async def test_allows_multiple_exec_entrypoints(self) -> None:
         bus, service, runtime = await self._setup_service()
         try:
             n1 = _node(node_id="tick1", operator_class="f8.tick", exec_in=[], exec_out=["exec"])
             n2 = _node(node_id="tick2", operator_class="f8.tick", exec_in=[], exec_out=["exec"])
             graph = F8RuntimeGraph(graphId="g1", revision="r1", nodes=[n1, n2], edges=[])
-            with self.assertRaises(RuntimeError):
-                await bus.set_rungraph(graph)  # type: ignore[attr-defined]
+            await bus.set_rungraph(graph)  # type: ignore[attr-defined]
         finally:
             await self._teardown_service(service, runtime)
 
@@ -114,6 +145,39 @@ class ExecValidationTests(unittest.IsolatedAsyncioTestCase):
             graph = F8RuntimeGraph(graphId="g3", revision="r1", nodes=[tick, seq, a, b], edges=edges)
             with self.assertRaises(RuntimeError):
                 await bus.set_rungraph(graph)  # type: ignore[attr-defined]
+        finally:
+            await self._teardown_service(service, runtime)
+
+    async def test_multiple_ticks_share_single_serial_exec_worker(self) -> None:
+        bus, service, runtime = await self._setup_service()
+        try:
+            reg = RuntimeNodeRegistry.instance()
+            reg.register(
+                SERVICE_CLASS,
+                "f8.test_probe",
+                lambda node_id, node, initial_state: _ProbeRuntimeNode(
+                    node_id=node_id, node=node, initial_state=initial_state
+                ),
+                overwrite=True,
+            )
+
+            tick1 = _node(node_id="tick1", operator_class="f8.tick", exec_in=[], exec_out=["exec"])
+            tick2 = _node(node_id="tick2", operator_class="f8.tick", exec_in=[], exec_out=["exec"])
+            probe = _node(node_id="probe", operator_class="f8.test_probe", exec_in=["fromA", "fromB"], exec_out=[])
+
+            edges = [
+                _exec_edge(edge_id="e1", from_node="tick1", from_port="exec", to_node="probe", to_port="fromA"),
+                _exec_edge(edge_id="e2", from_node="tick2", from_port="exec", to_node="probe", to_port="fromB"),
+            ]
+            graph = F8RuntimeGraph(graphId="g4", revision="r1", nodes=[tick1, tick2, probe], edges=edges)
+            await bus.set_rungraph(graph)  # type: ignore[attr-defined]
+
+            await asyncio.sleep(0.2)
+            node = bus.get_node("probe")
+            self.assertIsInstance(node, _ProbeRuntimeNode)
+            assert isinstance(node, _ProbeRuntimeNode)
+            self.assertGreater(node.calls, 0)
+            self.assertEqual(node.max_inflight, 1)
         finally:
             await self._teardown_service(service, runtime)
 
