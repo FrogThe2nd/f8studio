@@ -189,3 +189,30 @@ def test_deploy_button_deploys_current_rungraph_for_running_service() -> None:
 
     widget._on_deploy_clicked()
     assert bridge.deploy_calls == ["svcA"]
+
+
+def test_adaptive_column_widths_return_defaults_when_space_is_enough() -> None:
+    available_width = sum(ServiceManagerWidget._DEFAULT_COLUMN_WIDTHS)
+    widths = ServiceManagerWidget._target_column_widths_for_available_width(available_width)
+    assert widths == ServiceManagerWidget._DEFAULT_COLUMN_WIDTHS
+
+
+def test_adaptive_column_widths_return_minimums_when_space_is_too_small() -> None:
+    available_width = sum(ServiceManagerWidget._MIN_COLUMN_WIDTHS) - 1
+    widths = ServiceManagerWidget._target_column_widths_for_available_width(available_width)
+    assert widths == ServiceManagerWidget._MIN_COLUMN_WIDTHS
+
+
+def test_adaptive_column_widths_shrink_proportionally_between_limits() -> None:
+    default_total = sum(ServiceManagerWidget._DEFAULT_COLUMN_WIDTHS)
+    minimum_total = sum(ServiceManagerWidget._MIN_COLUMN_WIDTHS)
+    available_width = (default_total + minimum_total) // 2
+    widths = ServiceManagerWidget._target_column_widths_for_available_width(available_width)
+
+    assert sum(widths) == available_width
+    assert widths != ServiceManagerWidget._DEFAULT_COLUMN_WIDTHS
+    assert widths != ServiceManagerWidget._MIN_COLUMN_WIDTHS
+
+    for index, width in enumerate(widths):
+        assert width <= ServiceManagerWidget._DEFAULT_COLUMN_WIDTHS[index]
+        assert width >= ServiceManagerWidget._MIN_COLUMN_WIDTHS[index]

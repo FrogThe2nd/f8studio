@@ -27,10 +27,33 @@ logger = logging.getLogger(__name__)
 
 
 class F8StudioMainWin(QtWidgets.QMainWindow):
+    _WINDOW_LAYOUT_SETTINGS_ORGANIZATION = "Feel8"
+    _WINDOW_LAYOUT_SETTINGS_APPLICATION = "F8PyStudio"
+    _WINDOW_LAYOUT_SETTINGS_GROUP = "main_window/layout/v1"
+    _WINDOW_LAYOUT_STATE_KEY = "state"
+    _WINDOW_LAYOUT_GEOMETRY_KEY = "geometry"
+    _WINDOW_LAYOUT_STATE_VERSION = 1
+    _LOG_LEVEL_SETTINGS_GROUP = "main_window/logging/v1"
+    _LOG_LEVEL_SETTINGS_KEY = "level_name"
+    _LOG_LEVEL_CHOICES: tuple[tuple[str, int], ...] = (
+        ("DEBUG", logging.DEBUG),
+        ("INFO", logging.INFO),
+        ("WARNING", logging.WARNING),
+        ("ERROR", logging.ERROR),
+        ("CRITICAL", logging.CRITICAL),
+    )
+
     studio_graph: F8StudioGraph
     _exec_lines_action: QtGui.QAction
     _data_lines_action: QtGui.QAction
     _state_lines_action: QtGui.QAction
+    _view_menu: QtWidgets.QMenu
+    _reset_layout_action: QtGui.QAction
+    _log_level_menu: QtWidgets.QMenu
+    _log_level_action_group: QtGui.QActionGroup
+    _log_level_actions: dict[int, QtGui.QAction]
+    _dock_widgets: list[QtWidgets.QDockWidget]
+    _default_dock_layout_state: QtCore.QByteArray
 
     def __init__(self, node_classes: Iterable[type], parent=None):
         super().__init__(parent)
@@ -40,6 +63,9 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         self._session_file = last_session_path()
         self._session_dialog_dir = str(self._session_file.parent)
         self._exit_autosaved: bool = False
+        self._dock_widgets = []
+        self._log_level_actions = {}
+        self._default_dock_layout_state = QtCore.QByteArray()
 
         self.studio_graph = F8StudioGraph()
         self.studio_graph.node_factory.clear_registered_nodes()
@@ -64,6 +90,11 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         self._bridge.service_process_state.connect(self._on_service_process_state)  # type: ignore[attr-defined]
         self._bridge.log.connect(lambda s: self._log_dock.append("studio", str(s) + "\n"))  # type: ignore[attr-defined]
         self._setup_service_manager_dock()
+        self._capture_default_dock_layout_state()
+        self._restore_saved_window_layout()
+        self._restore_saved_log_level()
+        self._setup_view_menu()
+        self._setup_log_level_menu()
         self._shortcut_escape_cancel = QtGui.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key_Escape), self)
         self._shortcut_escape_cancel.setContext(QtCore.Qt.ShortcutContext.WindowShortcut)
         self._shortcut_escape_cancel.activated.connect(self._on_escape_cancel_placement)  # type: ignore[attr-defined]
@@ -107,17 +138,21 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
     def _setup_docks(self) -> None:
         prop_editor = F8StudioSingleNodePropertiesWidget(node_graph=self.studio_graph)
         self._prop_editor = prop_editor
-        prop_dock = QtWidgets.QDockWidget("Properties", self)
-        prop_dock.setWidget(prop_editor)
-        self.addDockWidget(QtCore.Qt.LeftDockWidgetArea, prop_dock)
+        self._properties_dock = QtWidgets.QDockWidget("Properties", self)
+        self._properties_dock.setObjectName("PropertiesDock")
+        self._properties_dock.setWidget(prop_editor)
+        self.addDockWidget(QtCore.Qt.LeftDockWidgetArea, self._properties_dock)
 
         self._log_dock = ServiceLogDock(self)
         self.addDockWidget(QtCore.Qt.BottomDockWidgetArea, self._log_dock)
 
         node_library = F8StudioNodeLibraryWidget(node_graph=self.studio_graph)
-        node_library_dock = QtWidgets.QDockWidget("Node Library", self)
-        node_library_dock.setWidget(node_library)
-        self.addDockWidget(QtCore.Qt.RightDockWidgetArea, node_library_dock)
+        self._node_library_dock = QtWidgets.QDockWidget("Node Library", self)
+        self._node_library_dock.setObjectName("NodeLibraryDock")
+        self._node_library_dock.setWidget(node_library)
+        self.addDockWidget(QtCore.Qt.RightDockWidgetArea, self._node_library_dock)
+
+        self._dock_widgets = [self._properties_dock, self._log_dock, self._node_library_dock]
 
     def _setup_service_manager_dock(self) -> None:
         manager = ServiceManagerWidget(
@@ -126,10 +161,12 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
             parent=self,
         )
         self._service_manager = manager
-        manager_dock = QtWidgets.QDockWidget("Service Manager", self)
-        manager_dock.setWidget(manager)
-        self.addDockWidget(QtCore.Qt.BottomDockWidgetArea, manager_dock)
-        self.tabifyDockWidget(self._log_dock, manager_dock)
+        self._service_manager_dock = QtWidgets.QDockWidget("Service Manager", self)
+        self._service_manager_dock.setObjectName("ServiceManagerDock")
+        self._service_manager_dock.setWidget(manager)
+        self.addDockWidget(QtCore.Qt.BottomDockWidgetArea, self._service_manager_dock)
+        self.tabifyDockWidget(self._log_dock, self._service_manager_dock)
+        self._dock_widgets.append(self._service_manager_dock)
 
     def _declared_graph_services(self) -> dict[str, str]:
         rows: dict[str, str] = {}
@@ -191,6 +228,162 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         menu.addAction(self._deploy_action)
         menu.addAction(self._stop_all_services_action)
 
+    def _setup_view_menu(self) -> None:
+        self._view_menu = self.menuBar().addMenu("View")
+        for dock in self._dock_widgets:
+            action = dock.toggleViewAction()
+            action.setCheckable(True)
+            self._view_menu.addAction(action)
+        self._view_menu.addSeparator()
+        self._reset_layout_action = QtGui.QAction("Reset Layout", self)
+        self._reset_layout_action.triggered.connect(self._on_reset_layout_triggered)  # type: ignore[attr-defined]
+        self._view_menu.addAction(self._reset_layout_action)
+
+    def _setup_log_level_menu(self) -> None:
+        self._log_level_menu = self.menuBar().addMenu("Logs")
+        self._log_level_action_group = QtGui.QActionGroup(self)
+        self._log_level_action_group.setExclusive(True)
+
+        current_level = self._normalize_supported_log_level(logging.getLogger().getEffectiveLevel())
+        for level_name, level_value in self._LOG_LEVEL_CHOICES:
+            action = QtGui.QAction(level_name, self)
+            action.setCheckable(True)
+            action.setChecked(level_value == current_level)
+            action.toggled.connect(  # type: ignore[attr-defined]
+                lambda checked, selected_level=level_value: self._on_log_level_toggled(checked, selected_level)
+            )
+            self._log_level_action_group.addAction(action)
+            self._log_level_menu.addAction(action)
+            self._log_level_actions[level_value] = action
+
+    def _layout_settings(self) -> QtCore.QSettings:
+        return QtCore.QSettings(self._WINDOW_LAYOUT_SETTINGS_ORGANIZATION, self._WINDOW_LAYOUT_SETTINGS_APPLICATION)
+
+    @staticmethod
+    def _as_qbytearray(value: Any) -> QtCore.QByteArray | None:
+        if isinstance(value, QtCore.QByteArray):
+            return value
+        if isinstance(value, (bytes, bytearray)):
+            return QtCore.QByteArray(bytes(value))
+        return None
+
+    def _read_layout_bytes(self, *, key: str) -> QtCore.QByteArray | None:
+        settings = self._layout_settings()
+        settings.beginGroup(self._WINDOW_LAYOUT_SETTINGS_GROUP)
+        try:
+            raw = settings.value(key)
+        finally:
+            settings.endGroup()
+        return self._as_qbytearray(raw)
+
+    def _write_layout_bytes(self, *, key: str, value: QtCore.QByteArray) -> None:
+        settings = self._layout_settings()
+        settings.beginGroup(self._WINDOW_LAYOUT_SETTINGS_GROUP)
+        try:
+            settings.setValue(key, value)
+            settings.sync()
+        finally:
+            settings.endGroup()
+
+    @classmethod
+    def _normalize_supported_log_level(cls, level: int) -> int:
+        normalized = int(level)
+        if normalized <= logging.DEBUG:
+            return logging.DEBUG
+        if normalized <= logging.INFO:
+            return logging.INFO
+        if normalized <= logging.WARNING:
+            return logging.WARNING
+        if normalized <= logging.ERROR:
+            return logging.ERROR
+        return logging.CRITICAL
+
+    @classmethod
+    def _log_level_name_for_value(cls, level: int) -> str:
+        normalized_level = cls._normalize_supported_log_level(level)
+        for name, value in cls._LOG_LEVEL_CHOICES:
+            if value == normalized_level:
+                return name
+        return "WARNING"
+
+    @classmethod
+    def _log_level_value_from_name(cls, level_name: str) -> int | None:
+        name = str(level_name or "").strip().upper()
+        for candidate_name, candidate_value in cls._LOG_LEVEL_CHOICES:
+            if candidate_name == name:
+                return candidate_value
+        return None
+
+    def _read_saved_log_level_name(self) -> str:
+        settings = self._layout_settings()
+        settings.beginGroup(self._LOG_LEVEL_SETTINGS_GROUP)
+        try:
+            raw = settings.value(self._LOG_LEVEL_SETTINGS_KEY, "")
+        finally:
+            settings.endGroup()
+        return str(raw or "").strip().upper()
+
+    def _write_saved_log_level_name(self, *, level_name: str) -> None:
+        settings = self._layout_settings()
+        settings.beginGroup(self._LOG_LEVEL_SETTINGS_GROUP)
+        try:
+            settings.setValue(self._LOG_LEVEL_SETTINGS_KEY, str(level_name or "").strip().upper())
+            settings.sync()
+        finally:
+            settings.endGroup()
+
+    def _apply_log_level(self, *, level: int, persist: bool) -> None:
+        normalized_level = self._normalize_supported_log_level(level)
+        logging.getLogger().setLevel(normalized_level)
+        if persist:
+            self._write_saved_log_level_name(level_name=self._log_level_name_for_value(normalized_level))
+
+    def _restore_saved_log_level(self) -> None:
+        saved_level_name = self._read_saved_log_level_name()
+        if not saved_level_name:
+            return
+        saved_level_value = self._log_level_value_from_name(saved_level_name)
+        if saved_level_value is None:
+            logger.warning("Invalid saved log level ignored: %s", saved_level_name)
+            return
+        self._apply_log_level(level=saved_level_value, persist=False)
+
+    def _on_log_level_toggled(self, checked: bool, level: int) -> None:
+        if not bool(checked):
+            return
+        self._apply_log_level(level=level, persist=True)
+
+    def _capture_default_dock_layout_state(self) -> None:
+        self._default_dock_layout_state = self.saveState(self._WINDOW_LAYOUT_STATE_VERSION)
+
+    def _restore_saved_window_layout(self) -> None:
+        geometry_state = self._read_layout_bytes(key=self._WINDOW_LAYOUT_GEOMETRY_KEY)
+        if geometry_state is not None and not geometry_state.isEmpty():
+            self.restoreGeometry(geometry_state)
+        dock_state = self._read_layout_bytes(key=self._WINDOW_LAYOUT_STATE_KEY)
+        if dock_state is None or dock_state.isEmpty():
+            return
+        restored = self.restoreState(dock_state, self._WINDOW_LAYOUT_STATE_VERSION)
+        if not restored:
+            logger.warning("Failed to restore dock layout from QSettings")
+
+    def _save_window_layout(self) -> None:
+        self._write_layout_bytes(
+            key=self._WINDOW_LAYOUT_STATE_KEY,
+            value=self.saveState(self._WINDOW_LAYOUT_STATE_VERSION),
+        )
+        self._write_layout_bytes(key=self._WINDOW_LAYOUT_GEOMETRY_KEY, value=self.saveGeometry())
+
+    @QtCore.Slot()
+    def _on_reset_layout_triggered(self) -> None:
+        if self._default_dock_layout_state.isEmpty():
+            return
+        restored = self.restoreState(self._default_dock_layout_state, self._WINDOW_LAYOUT_STATE_VERSION)
+        if not restored:
+            logger.warning("Failed to reset dock layout to defaults")
+            return
+        self._save_window_layout()
+
     def _create_deploy_action(self) -> QtGui.QAction:
         deploy_action = QtGui.QAction("Send Graph", self)
         deploy_action.setShortcut("F5")
@@ -204,6 +397,7 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
 
     def _setup_toolbar(self) -> None:
         tb = QtWidgets.QToolBar("Run", self)
+        tb.setObjectName("RunToolBar")
         tb.setMovable(False)
         tb.setToolButtonStyle(QtCore.Qt.ToolButtonIconOnly)
         self.addToolBar(QtCore.Qt.TopToolBarArea, tb)
@@ -248,6 +442,7 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         tb.addWidget(toolbar_spacer)
 
         edge_tb = QtWidgets.QToolBar("Pipe Visibility", self)
+        edge_tb.setObjectName("PipeVisibilityToolBar")
         edge_tb.setMovable(False)
         edge_tb.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
         self.addToolBar(QtCore.Qt.TopToolBarArea, edge_tb)
@@ -318,6 +513,7 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         self._set_edge_visibility_action_icon(self._state_lines_action, visible)
 
     def closeEvent(self, event):
+        self._save_window_layout()
         self._auto_save_session()
         try:
             self._bridge.stop()

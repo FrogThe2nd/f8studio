@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Callable
 
-from qtpy import QtCore, QtWidgets
+from qtpy import QtCore, QtGui, QtWidgets
 
 from ..pystudio_service_bridge import PyStudioServiceBridge, ServiceMonitorRow
 from ..ui_icons import StudioIcon, icon_for
@@ -21,6 +21,8 @@ class ServiceManagerWidget(QtWidgets.QWidget):
     _COL_GPU = 8
     _COL_LATENCY_P95 = 9
     _COL_ERRORS = 10
+    _DEFAULT_COLUMN_WIDTHS = (180, 190, 70, 70, 70, 70, 78, 95, 78, 118, 72)
+    _MIN_COLUMN_WIDTHS = (120, 130, 56, 56, 56, 56, 62, 72, 62, 84, 56)
 
     def __init__(
         self,
@@ -157,17 +159,67 @@ class ServiceManagerWidget(QtWidgets.QWidget):
         table.setItem(row, column, item)
 
     def _apply_default_column_widths(self) -> None:
-        self._table.setColumnWidth(self._COL_SERVICE_ID, 180)
-        self._table.setColumnWidth(self._COL_SERVICE_CLASS, 190)
-        self._table.setColumnWidth(self._COL_RUNNING, 70)
-        self._table.setColumnWidth(self._COL_ALIVE, 70)
-        self._table.setColumnWidth(self._COL_READY, 70)
-        self._table.setColumnWidth(self._COL_ACTIVE, 70)
-        self._table.setColumnWidth(self._COL_CPU, 78)
-        self._table.setColumnWidth(self._COL_RAM, 95)
-        self._table.setColumnWidth(self._COL_GPU, 78)
-        self._table.setColumnWidth(self._COL_LATENCY_P95, 118)
-        self._table.setColumnWidth(self._COL_ERRORS, 72)
+        for index, width in enumerate(self._DEFAULT_COLUMN_WIDTHS):
+            self._table.setColumnWidth(index, width)
+
+    @classmethod
+    def _target_column_widths_for_available_width(cls, available_width: int) -> tuple[int, ...]:
+        target_width = max(int(available_width), 0)
+        defaults = cls._DEFAULT_COLUMN_WIDTHS
+        minimums = cls._MIN_COLUMN_WIDTHS
+        total_default = sum(defaults)
+        if target_width >= total_default:
+            return defaults
+        total_minimum = sum(minimums)
+        if target_width <= total_minimum:
+            return minimums
+
+        shrink_target = total_default - target_width
+        capacities = [defaults[index] - minimums[index] for index in range(len(defaults))]
+        total_capacity = sum(capacities)
+        if total_capacity <= 0:
+            return minimums
+
+        shrink_values: list[int] = [0] * len(defaults)
+        remainders_with_index: list[tuple[int, int]] = []
+        assigned_shrink = 0
+        for index, capacity in enumerate(capacities):
+            scaled = shrink_target * capacity
+            shrink = scaled // total_capacity
+            remainder = scaled % total_capacity
+            shrink_values[index] = int(shrink)
+            assigned_shrink += int(shrink)
+            remainders_with_index.append((int(remainder), index))
+
+        remainders_with_index.sort(key=lambda item: item[0], reverse=True)
+        remaining = shrink_target - assigned_shrink
+        ranked_index = 0
+        while remaining > 0:
+            if ranked_index >= len(remainders_with_index):
+                ranked_index = 0
+            _, column_index = remainders_with_index[ranked_index]
+            ranked_index += 1
+            if shrink_values[column_index] >= capacities[column_index]:
+                continue
+            shrink_values[column_index] += 1
+            remaining -= 1
+
+        out: list[int] = []
+        for index, default_width in enumerate(defaults):
+            out.append(default_width - shrink_values[index])
+        return tuple(out)
+
+    def _apply_adaptive_column_widths(self) -> None:
+        available_width = self._table.viewport().width()
+        target_widths = self._target_column_widths_for_available_width(available_width)
+        for index, width in enumerate(target_widths):
+            if self._table.columnWidth(index) == width:
+                continue
+            self._table.setColumnWidth(index, width)
+
+    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
+        super().resizeEvent(event)
+        self._apply_adaptive_column_widths()
 
     def _selected_service_id(self) -> str:
         selected = self._table.selectionModel().selectedRows()
@@ -313,6 +365,7 @@ class ServiceManagerWidget(QtWidgets.QWidget):
         elif self._table.rowCount() > 0:
             self._table.selectRow(0)
 
+        self._apply_adaptive_column_widths()
         self._update_action_state()
 
     @QtCore.Slot()
