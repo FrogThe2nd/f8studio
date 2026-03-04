@@ -1,10 +1,8 @@
 #include "dense_optflow_service.h"
 
 #include <algorithm>
-#include <cctype>
 #include <cmath>
 #include <cstring>
-#include <limits>
 #include <utility>
 
 #include <nlohmann/json.hpp>
@@ -16,6 +14,7 @@
 #include "f8cppsdk/shm/sizing.h"
 #include "f8cppsdk/state_kv.h"
 #include "f8cppsdk/time_utils.h"
+#include "../common/service_runtime_utils.h"
 
 namespace f8::cvkit::dense_optflow {
 
@@ -64,45 +63,6 @@ json state_field(std::string name, const json& value_schema, std::string access,
   if (show_on_node) sf["showOnNode"] = true;
   if (!ui_control.empty()) sf["uiControl"] = std::move(ui_control);
   return sf;
-}
-
-std::string trim_copy(const std::string& value) {
-  std::string out = value;
-  while (!out.empty() && std::isspace(static_cast<unsigned char>(out.front()))) out.erase(out.begin());
-  while (!out.empty() && std::isspace(static_cast<unsigned char>(out.back()))) out.pop_back();
-  return out;
-}
-
-bool parse_int_value(const json& value, int& out) {
-  if (value.is_number_integer()) {
-    out = value.get<int>();
-    return true;
-  }
-  if (value.is_number_unsigned()) {
-    out = static_cast<int>(value.get<unsigned int>());
-    return true;
-  }
-  if (value.is_number_float()) {
-    out = static_cast<int>(std::lround(value.get<double>()));
-    return true;
-  }
-  return false;
-}
-
-bool parse_double_value(const json& value, double& out) {
-  if (value.is_number_float()) {
-    out = value.get<double>();
-    return true;
-  }
-  if (value.is_number_integer()) {
-    out = static_cast<double>(value.get<int>());
-    return true;
-  }
-  if (value.is_number_unsigned()) {
-    out = static_cast<double>(value.get<unsigned int>());
-    return true;
-  }
-  return false;
 }
 
 std::uint16_t float32_to_half(float value) {
@@ -252,13 +212,8 @@ void DenseOptflowService::tick() {
 
 void DenseOptflowService::publish_state_if_changed(const std::string& field, const json& value, const std::string& source,
                                                    const json& meta) {
-  std::lock_guard<std::mutex> lock(state_mu_);
-  auto it = published_state_.find(field);
-  if (it != published_state_.end() && it->second == value) return;
-  published_state_[field] = value;
-  if (bus_) {
-    (void)f8::cppsdk::kv_set_node_state(bus_->kv(), cfg_.service_id, cfg_.service_id, field, value, source, meta);
-  }
+  service_runtime::publish_state_if_changed(state_mu_, published_state_, bus_.get(), cfg_.service_id, field, value,
+                                            source, meta);
 }
 
 void DenseOptflowService::emit_monitor_snapshot(std::int64_t ts_ms, std::uint64_t frame_id, double process_ms,
@@ -302,7 +257,7 @@ void DenseOptflowService::on_state(const std::string& node_id, const std::string
   if (node_id != cfg_.service_id) return;
 
   if (field == "inputShmName" && value.is_string()) {
-    const std::string next = trim_copy(value.get<std::string>());
+    const std::string next = service_runtime::trim_copy(value.get<std::string>());
     {
       std::lock_guard<std::mutex> lock(flow_mu_);
       if (next == input_shm_name_) {
@@ -327,7 +282,7 @@ void DenseOptflowService::on_state(const std::string& node_id, const std::string
 
   if (field == "computeEveryNFrames") {
     int v = 0;
-    if (!parse_int_value(value, v)) {
+    if (!service_runtime::parse_json_int(value, v)) {
       publish_state_if_changed("lastError", "invalid computeEveryNFrames", "state", meta);
       return;
     }
@@ -340,7 +295,7 @@ void DenseOptflowService::on_state(const std::string& node_id, const std::string
 
   if (field == "computeScale") {
     double v = 0.0;
-    if (!parse_double_value(value, v)) {
+    if (!service_runtime::parse_json_double(value, v)) {
       publish_state_if_changed("lastError", "invalid computeScale", "state", meta);
       return;
     }
@@ -501,7 +456,7 @@ void DenseOptflowService::process_frame_once() {
     }
   }
 
-  std::string shm_name = trim_copy(flow_shm_name_);
+  std::string shm_name = service_runtime::trim_copy(flow_shm_name_);
   if (shm_name.empty()) {
     shm_name = "shm." + cfg_.service_id + ".flow";
     flow_shm_name_ = shm_name;

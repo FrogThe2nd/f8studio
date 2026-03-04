@@ -2,9 +2,7 @@
 
 #include <algorithm>
 #include <array>
-#include <cctype>
 #include <cmath>
-#include <exception>
 #include <utility>
 #include <vector>
 
@@ -18,6 +16,7 @@
 #include "f8cppsdk/shm/sizing.h"
 #include "f8cppsdk/state_kv.h"
 #include "f8cppsdk/time_utils.h"
+#include "../common/service_runtime_utils.h"
 
 namespace f8::cvkit::video_stab {
 
@@ -87,22 +86,6 @@ json state_field(std::string name, const json& value_schema, std::string access,
   if (!ui_control.empty())
     sf["uiControl"] = std::move(ui_control);
   return sf;
-}
-
-std::string trim_copy(const std::string& s) {
-  std::string out = s;
-  while (!out.empty() && std::isspace(static_cast<unsigned char>(out.front())))
-    out.erase(out.begin());
-  while (!out.empty() && std::isspace(static_cast<unsigned char>(out.back())))
-    out.pop_back();
-  return out;
-}
-
-std::string to_lower_copy(std::string s) {
-  for (char& c : s) {
-    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-  }
-  return s;
 }
 
 int count_inliers(const cv::Mat& inlier_mask) {
@@ -303,14 +286,8 @@ void VideoStabService::tick() {
 
 void VideoStabService::publish_state_if_changed(const std::string& field, const json& value, const std::string& source,
                                                 const json& meta) {
-  std::lock_guard<std::mutex> lock(state_mu_);
-  auto it = published_state_.find(field);
-  if (it != published_state_.end() && it->second == value)
-    return;
-  published_state_[field] = value;
-  if (bus_) {
-    (void)f8::cppsdk::kv_set_node_state(bus_->kv(), cfg_.service_id, cfg_.service_id, field, value, source, meta);
-  }
+  service_runtime::publish_state_if_changed(state_mu_, published_state_, bus_.get(), cfg_.service_id, field, value,
+                                            source, meta);
 }
 
 void VideoStabService::emit_monitor_snapshot(std::int64_t ts_ms, std::uint64_t frame_id, double process_ms) {
@@ -347,39 +324,15 @@ void VideoStabService::on_lifecycle(bool active, const json& meta) {
 }
 
 bool VideoStabService::parse_double_field(const json& value, double& out) const {
-  if (value.is_number_float()) {
-    out = value.get<double>();
-    return true;
-  }
-  if (value.is_number_integer()) {
-    out = static_cast<double>(value.get<int>());
-    return true;
-  }
-  if (value.is_number_unsigned()) {
-    out = static_cast<double>(value.get<unsigned int>());
-    return true;
-  }
-  return false;
+  return service_runtime::parse_json_double(value, out);
 }
 
 bool VideoStabService::parse_int_field(const json& value, int& out) const {
-  if (value.is_number_integer()) {
-    out = value.get<int>();
-    return true;
-  }
-  if (value.is_number_unsigned()) {
-    out = static_cast<int>(value.get<unsigned int>());
-    return true;
-  }
-  if (value.is_number_float()) {
-    out = static_cast<int>(std::lround(value.get<double>()));
-    return true;
-  }
-  return false;
+  return service_runtime::parse_json_int(value, out);
 }
 
 void VideoStabService::set_input_shm_name(const std::string& shm_name, const json& meta) {
-  const std::string trimmed = trim_copy(shm_name);
+  const std::string trimmed = service_runtime::trim_copy(shm_name);
   if (trimmed == input_shm_name_) {
     publish_state_if_changed("inputShmName", input_shm_name_, "state", meta);
     return;
@@ -399,7 +352,7 @@ void VideoStabService::set_input_shm_name(const std::string& shm_name, const jso
 }
 
 void VideoStabService::set_motion_model(const std::string& model, const json& meta) {
-  const std::string normalized = to_lower_copy(trim_copy(model));
+  const std::string normalized = service_runtime::to_lower_ascii_copy(service_runtime::trim_copy(model));
   if (normalized == "affine") {
     motion_model_ = MotionModel::Affine;
     motion_model_state_ = "affine";
@@ -416,7 +369,7 @@ void VideoStabService::set_motion_model(const std::string& model, const json& me
 }
 
 void VideoStabService::set_stabilization_mode(const std::string& mode, const json& meta) {
-  const std::string normalized = to_lower_copy(trim_copy(mode));
+  const std::string normalized = service_runtime::to_lower_ascii_copy(service_runtime::trim_copy(mode));
   if (normalized == "trajectory") {
     stabilization_mode_ = StabilizationMode::Trajectory;
     stabilization_mode_state_ = "trajectory";

@@ -1,9 +1,7 @@
 #include "template_match_service.h"
 
 #include <algorithm>
-#include <cctype>
 #include <cmath>
-#include <exception>
 #include <utility>
 
 #include <spdlog/spdlog.h>
@@ -15,6 +13,7 @@
 #include "f8cppsdk/state_kv.h"
 #include "f8cppsdk/time_utils.h"
 #include "f8cvkit/base64.h"
+#include "../common/service_runtime_utils.h"
 
 namespace f8::cvkit::template_match {
 
@@ -81,15 +80,6 @@ json state_field(std::string name, const json& value_schema, std::string access,
   return sf;
 }
 
-std::string to_lower_copy(std::string s) {
-  for (char& ch : s) {
-    if (ch >= 'A' && ch <= 'Z') {
-      ch = static_cast<char>(ch - 'A' + 'a');
-    }
-  }
-  return s;
-}
-
 int clamp_int(int v, int lo, int hi) {
   if (v < lo)
     return lo;
@@ -141,7 +131,7 @@ EncodedImage encode_image_b64(const cv::Mat& bgr, std::string format, int qualit
     }
   }
 
-  std::string fmt = to_lower_copy(std::move(format));
+  std::string fmt = service_runtime::to_lower_ascii_copy(std::move(format));
   if (fmt != "jpg" && fmt != "png") {
     out.error = "invalid format (expected jpg|png)";
     return out;
@@ -293,14 +283,8 @@ void TemplateMatchService::tick() {
 
 void TemplateMatchService::publish_state_if_changed(const std::string& field, const json& value,
                                                     const std::string& source, const json& meta) {
-  std::lock_guard<std::mutex> lock(state_mu_);
-  auto it = published_state_.find(field);
-  if (it != published_state_.end() && it->second == value)
-    return;
-  published_state_[field] = value;
-  if (bus_) {
-    (void)f8::cppsdk::kv_set_node_state(bus_->kv(), cfg_.service_id, cfg_.service_id, field, value, source, meta);
-  }
+  service_runtime::publish_state_if_changed(state_mu_, published_state_, bus_.get(), cfg_.service_id, field, value,
+                                            source, meta);
 }
 
 void TemplateMatchService::on_lifecycle(bool active, const json& meta) {
@@ -329,35 +313,25 @@ void TemplateMatchService::on_state(const std::string& node_id, const std::strin
     return;
   }
   if (field == "matchThreshold") {
-    try {
-      const double v = value.is_number() ? value.get<double>() : std::stod(value.dump());
-      match_threshold_ = std::min(1.0, std::max(0.0, v));
-      publish_state_if_changed("matchThreshold", match_threshold_, "state", meta);
-    } catch (const std::exception& ex) {
-      const std::string msg = std::string("invalid matchThreshold: ") + ex.what();
-      spdlog::warn("{}", msg);
-      publish_state_if_changed("lastError", msg, "state", meta);
-    } catch (...) {
-      const std::string msg = "invalid matchThreshold: unknown exception";
-      spdlog::warn("{}", msg);
-      publish_state_if_changed("lastError", msg, "state", meta);
+    double v = 0.0;
+    if (!service_runtime::parse_json_double(value, v)) {
+      publish_state_if_changed("lastError", "invalid matchThreshold", "state", meta);
+      return;
     }
+    match_threshold_ = std::clamp(v, 0.0, 1.0);
+    publish_state_if_changed("matchThreshold", match_threshold_, "state", meta);
+    publish_state_if_changed("lastError", "", "state", meta);
     return;
   }
   if (field == "matchingIntervalMs") {
-    try {
-      const std::int64_t v = value.is_number_integer() ? value.get<std::int64_t>() : std::stoll(value.dump());
-      matching_interval_ms_ = std::max<std::int64_t>(0, std::min<std::int64_t>(60000, v));
-      publish_state_if_changed("matchingIntervalMs", matching_interval_ms_, "state", meta);
-    } catch (const std::exception& ex) {
-      const std::string msg = std::string("invalid matchingIntervalMs: ") + ex.what();
-      spdlog::warn("{}", msg);
-      publish_state_if_changed("lastError", msg, "state", meta);
-    } catch (...) {
-      const std::string msg = "invalid matchingIntervalMs: unknown exception";
-      spdlog::warn("{}", msg);
-      publish_state_if_changed("lastError", msg, "state", meta);
+    int v = 0;
+    if (!service_runtime::parse_json_int(value, v)) {
+      publish_state_if_changed("lastError", "invalid matchingIntervalMs", "state", meta);
+      return;
     }
+    matching_interval_ms_ = std::clamp<std::int64_t>(static_cast<std::int64_t>(v), 0, 60000);
+    publish_state_if_changed("matchingIntervalMs", matching_interval_ms_, "state", meta);
+    publish_state_if_changed("lastError", "", "state", meta);
     return;
   }
 }
@@ -373,11 +347,7 @@ void TemplateMatchService::on_data(const std::string& node_id, const std::string
 }
 
 void TemplateMatchService::set_template_png_b64(const std::string& b64, const json& meta) {
-  std::string s = b64;
-  while (!s.empty() && std::isspace(static_cast<unsigned char>(s.front())))
-    s.erase(s.begin());
-  while (!s.empty() && std::isspace(static_cast<unsigned char>(s.back())))
-    s.pop_back();
+  std::string s = service_runtime::trim_copy(b64);
 
   if (s == template_png_b64_) {
     publish_state_if_changed("templateImagePngB64", template_png_b64_, "state", meta);

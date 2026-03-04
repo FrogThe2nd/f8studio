@@ -1,9 +1,6 @@
 #include "tracking_service.h"
 
-#include <algorithm>
 #include <array>
-#include <cctype>
-#include <cmath>
 #include <limits>
 #include <utility>
 #include <vector>
@@ -17,6 +14,7 @@
 #include "f8cppsdk/shm/sizing.h"
 #include "f8cppsdk/state_kv.h"
 #include "f8cppsdk/time_utils.h"
+#include "../common/service_runtime_utils.h"
 
 namespace f8::cvkit::tracking {
 
@@ -82,39 +80,11 @@ json state_field(std::string name, const json& value_schema, std::string access,
 }
 
 bool json_number_to_int(const json& v, int& out) {
-  if (!v.is_number())
-    return false;
-  if (v.is_number_integer()) {
-    out = v.get<int>();
-    return true;
-  }
-  if (v.is_number_unsigned()) {
-    out = static_cast<int>(v.get<unsigned int>());
-    return true;
-  }
-  if (v.is_number_float()) {
-    out = static_cast<int>(std::lround(v.get<double>()));
-    return true;
-  }
-  return false;
+  return service_runtime::parse_json_int(v, out);
 }
 
 bool json_number_to_double(const json& v, double& out) {
-  if (!v.is_number())
-    return false;
-  if (v.is_number_float()) {
-    out = v.get<double>();
-    return true;
-  }
-  if (v.is_number_integer()) {
-    out = static_cast<double>(v.get<int>());
-    return true;
-  }
-  if (v.is_number_unsigned()) {
-    out = static_cast<double>(v.get<unsigned int>());
-    return true;
-  }
-  return false;
+  return service_runtime::parse_json_double(v, out);
 }
 
 std::optional<double> extract_score_from_object(const json& obj) {
@@ -239,12 +209,7 @@ void collect_bbox_candidates(const json& root, std::vector<TrackingInitCandidate
 }
 
 TrackingInitSelectMode parse_init_select_mode(const std::string& raw, std::string& normalized, bool& ok) {
-  std::string s = raw;
-  std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-  while (!s.empty() && std::isspace(static_cast<unsigned char>(s.front())))
-    s.erase(s.begin());
-  while (!s.empty() && std::isspace(static_cast<unsigned char>(s.back())))
-    s.pop_back();
+  const std::string s = service_runtime::to_lower_ascii_copy(service_runtime::trim_copy(raw));
   if (s.empty() || s == "closest_center" || s == "closest" || s == "center") {
     normalized = "closest_center";
     ok = true;
@@ -430,14 +395,8 @@ void TrackingService::tick() {
 
 void TrackingService::publish_state_if_changed(const std::string& field, const json& value, const std::string& source,
                                                const json& meta) {
-  std::lock_guard<std::mutex> lock(state_mu_);
-  auto it = published_state_.find(field);
-  if (it != published_state_.end() && it->second == value)
-    return;
-  published_state_[field] = value;
-  if (bus_) {
-    (void)f8::cppsdk::kv_set_node_state(bus_->kv(), cfg_.service_id, cfg_.service_id, field, value, source, meta);
-  }
+  service_runtime::publish_state_if_changed(state_mu_, published_state_, bus_.get(), cfg_.service_id, field, value,
+                                            source, meta);
 }
 
 void TrackingService::emit_monitor_snapshot(std::int64_t ts_ms, std::uint64_t frame_id, double process_ms) {
@@ -552,11 +511,7 @@ void TrackingService::stop_tracking_internal(const json& meta) {
 }
 
 void TrackingService::set_shm_name(const std::string& shm_name, const json& meta) {
-  std::string s = shm_name;
-  while (!s.empty() && std::isspace(static_cast<unsigned char>(s.front())))
-    s.erase(s.begin());
-  while (!s.empty() && std::isspace(static_cast<unsigned char>(s.back())))
-    s.pop_back();
+  const std::string s = service_runtime::trim_copy(shm_name);
 
   if (s == shm_name_override_) {
     publish_state_if_changed("shmName", shm_name_override_, "state", meta);
