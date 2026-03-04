@@ -1,18 +1,18 @@
 #include "template_match_service.h"
 
-#include <cmath>
-#include <cctype>
 #include <algorithm>
+#include <cctype>
+#include <cmath>
 #include <exception>
 #include <utility>
 
+#include <spdlog/spdlog.h>
 #include <nlohmann/json.hpp>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
-#include <spdlog/spdlog.h>
 
-#include "f8cppsdk/state_kv.h"
 #include "f8cppsdk/shm/sizing.h"
+#include "f8cppsdk/state_kv.h"
 #include "f8cppsdk/time_utils.h"
 #include "f8cvkit/base64.h"
 
@@ -22,8 +22,12 @@ using json = nlohmann::json;
 
 namespace {
 
-json schema_string() { return json{{"type", "string"}}; }
-json schema_number() { return json{{"type", "number"}}; }
+json schema_string() {
+  return json{{"type", "string"}};
+}
+json schema_number() {
+  return json{{"type", "number"}};
+}
 json schema_number(double default_value, double minimum, double maximum) {
   json s{{"type", "number"}};
   s["default"] = default_value;
@@ -31,7 +35,9 @@ json schema_number(double default_value, double minimum, double maximum) {
   s["maximum"] = maximum;
   return s;
 }
-json schema_integer() { return json{{"type", "integer"}}; }
+json schema_integer() {
+  return json{{"type", "integer"}};
+}
 json schema_integer(std::int64_t default_value, std::int64_t minimum, std::int64_t maximum) {
   json s{{"type", "integer"}};
   s["default"] = default_value;
@@ -44,7 +50,8 @@ json schema_object(const json& props, const json& required = json::array()) {
   json obj;
   obj["type"] = "object";
   obj["properties"] = props;
-  if (required.is_array()) obj["required"] = required;
+  if (required.is_array())
+    obj["required"] = required;
   obj["additionalProperties"] = false;
   return obj;
 }
@@ -62,10 +69,15 @@ json state_field(std::string name, const json& value_schema, std::string access,
   sf["name"] = std::move(name);
   sf["valueSchema"] = value_schema;
   sf["access"] = std::move(access);
-  if (!label.empty()) sf["label"] = std::move(label);
-  if (!description.empty()) sf["description"] = std::move(description);
-  if (show_on_node) sf["showOnNode"] = true;
-  if (!ui_control.empty()) sf["uiControl"] = std::move(ui_control);
+  sf["required"] = true;
+  if (!label.empty())
+    sf["label"] = std::move(label);
+  if (!description.empty())
+    sf["description"] = std::move(description);
+  if (show_on_node)
+    sf["showOnNode"] = true;
+  if (!ui_control.empty())
+    sf["uiControl"] = std::move(ui_control);
   return sf;
 }
 
@@ -79,8 +91,10 @@ std::string to_lower_copy(std::string s) {
 }
 
 int clamp_int(int v, int lo, int hi) {
-  if (v < lo) return lo;
-  if (v > hi) return hi;
+  if (v < lo)
+    return lo;
+  if (v > hi)
+    return hi;
   return v;
 }
 
@@ -181,8 +195,8 @@ EncodedImage encode_image_b64(const cv::Mat& bgr, std::string format, int qualit
     img = std::move(resized);
   }
 
-  out.error = "encoded image exceeds maxBytes=" + std::to_string(max_b64_bytes) + " (b64 len=" +
-              std::to_string(last_b64.size()) + " raw=" + std::to_string(last_raw) + ")";
+  out.error = "encoded image exceeds maxBytes=" + std::to_string(max_b64_bytes) +
+              " (b64 len=" + std::to_string(last_b64.size()) + " raw=" + std::to_string(last_raw) + ")";
   return out;
 }
 
@@ -190,10 +204,13 @@ EncodedImage encode_image_b64(const cv::Mat& bgr, std::string format, int qualit
 
 TemplateMatchService::TemplateMatchService(Config cfg) : cfg_(std::move(cfg)) {}
 
-TemplateMatchService::~TemplateMatchService() { stop(); }
+TemplateMatchService::~TemplateMatchService() {
+  stop();
+}
 
 bool TemplateMatchService::start() {
-  if (running_.load(std::memory_order_acquire)) return true;
+  if (running_.load(std::memory_order_acquire))
+    return true;
 
   f8::cppsdk::ServiceBus::Config bus_cfg;
   bus_cfg.service_id = cfg_.service_id;
@@ -250,7 +267,8 @@ bool TemplateMatchService::start() {
 
 void TemplateMatchService::stop() {
   stop_requested_.store(true, std::memory_order_release);
-  if (!running_.exchange(false, std::memory_order_acq_rel)) return;
+  if (!running_.exchange(false, std::memory_order_acq_rel))
+    return;
   if (bus_) {
     bus_->stop();
   }
@@ -258,7 +276,8 @@ void TemplateMatchService::stop() {
 }
 
 void TemplateMatchService::tick() {
-  if (!running()) return;
+  if (!running())
+    return;
   if (bus_) {
     (void)bus_->drain_main_thread();
     if (bus_->terminate_requested()) {
@@ -272,11 +291,12 @@ void TemplateMatchService::tick() {
   detect_once();
 }
 
-void TemplateMatchService::publish_state_if_changed(const std::string& field, const json& value, const std::string& source,
-                                                    const json& meta) {
+void TemplateMatchService::publish_state_if_changed(const std::string& field, const json& value,
+                                                    const std::string& source, const json& meta) {
   std::lock_guard<std::mutex> lock(state_mu_);
   auto it = published_state_.find(field);
-  if (it != published_state_.end() && it->second == value) return;
+  if (it != published_state_.end() && it->second == value)
+    return;
   published_state_[field] = value;
   if (bus_) {
     (void)f8::cppsdk::kv_set_node_state(bus_->kv(), cfg_.service_id, cfg_.service_id, field, value, source, meta);
@@ -291,7 +311,8 @@ void TemplateMatchService::on_lifecycle(bool active, const json& meta) {
 void TemplateMatchService::on_state(const std::string& node_id, const std::string& field, const json& value,
                                     std::int64_t ts_ms, const json& meta) {
   (void)ts_ms;
-  if (node_id != cfg_.service_id) return;
+  if (node_id != cfg_.service_id)
+    return;
   if (field == "templateImagePngB64" && value.is_string()) {
     set_template_png_b64(value.get<std::string>(), meta);
     return;
@@ -353,8 +374,10 @@ void TemplateMatchService::on_data(const std::string& node_id, const std::string
 
 void TemplateMatchService::set_template_png_b64(const std::string& b64, const json& meta) {
   std::string s = b64;
-  while (!s.empty() && std::isspace(static_cast<unsigned char>(s.front()))) s.erase(s.begin());
-  while (!s.empty() && std::isspace(static_cast<unsigned char>(s.back()))) s.pop_back();
+  while (!s.empty() && std::isspace(static_cast<unsigned char>(s.front())))
+    s.erase(s.begin());
+  while (!s.empty() && std::isspace(static_cast<unsigned char>(s.back())))
+    s.pop_back();
 
   if (s == template_png_b64_) {
     publish_state_if_changed("templateImagePngB64", template_png_b64_, "state", meta);
@@ -423,7 +446,8 @@ bool TemplateMatchService::ensure_video_open() {
 }
 
 void TemplateMatchService::detect_once() {
-  if (!bus_) return;
+  if (!bus_)
+    return;
   if (!template_loaded_) {
     if (!template_error_.empty()) {
       publish_state_if_changed("lastError", template_error_, "runtime", json::object());
@@ -492,7 +516,8 @@ void TemplateMatchService::detect_once() {
     try {
       cv::cvtColor(bgra_mat, bgr, cv::COLOR_BGRA2BGR);
     } catch (const cv::Exception& ex) {
-      publish_state_if_changed("lastError", std::string("opencv cvtColor failed: ") + ex.what(), "runtime", json::object());
+      publish_state_if_changed("lastError", std::string("opencv cvtColor failed: ") + ex.what(), "runtime",
+                               json::object());
       return;
     }
 
@@ -552,7 +577,8 @@ void TemplateMatchService::detect_once() {
 }
 
 void TemplateMatchService::emit_monitor_snapshot(std::int64_t ts_ms, std::uint64_t frame_id, double process_ms) {
-  if (!bus_) return;
+  if (!bus_)
+    return;
   (void)frame_id;
   if (monitor_window_start_ms_ <= 0) {
     monitor_window_start_ms_ = ts_ms;
@@ -571,8 +597,9 @@ void TemplateMatchService::emit_monitor_snapshot(std::int64_t ts_ms, std::uint64
 
   const std::uint64_t dropped_frames =
       monitor_observed_frames_ > monitor_processed_frames_ ? (monitor_observed_frames_ - monitor_processed_frames_) : 0;
-  const double avg_process_ms =
-      monitor_processed_frames_ > 0 ? (monitor_total_process_ms_ / static_cast<double>(monitor_processed_frames_)) : 0.0;
+  const double avg_process_ms = monitor_processed_frames_ > 0
+                                    ? (monitor_total_process_ms_ / static_cast<double>(monitor_processed_frames_))
+                                    : 0.0;
   (void)avg_process_ms;
   (void)dropped_frames;
 }
@@ -688,25 +715,23 @@ bool TemplateMatchService::on_command(const std::string& call, const json& args,
 }
 
 json TemplateMatchService::describe() {
-  const json keypoint_schema = schema_object(
-      json{{"x", schema_number()}, {"y", schema_number()}, {"score", schema_number()}});
-  const json detection_schema = schema_object(
-      json{{"cls", schema_string()},
-           {"score", schema_number()},
-           {"bbox", schema_array(schema_integer())},
-           {"keypoints", schema_array(keypoint_schema)},
-           {"obb", schema_array(schema_array(schema_number()))},
-           {"skeletonProtocol", schema_string()}});
-  const json detections_schema = schema_object(
-      json{{"schemaVersion", schema_string()},
-           {"frameId", schema_integer()},
-           {"tsMs", schema_integer()},
-           {"width", schema_integer()},
-           {"height", schema_integer()},
-           {"model", schema_string()},
-           {"task", schema_string()},
-           {"skeletonProtocol", schema_string()},
-           {"detections", schema_array(detection_schema)}});
+  const json keypoint_schema =
+      schema_object(json{{"x", schema_number()}, {"y", schema_number()}, {"score", schema_number()}});
+  const json detection_schema = schema_object(json{{"cls", schema_string()},
+                                                   {"score", schema_number()},
+                                                   {"bbox", schema_array(schema_integer())},
+                                                   {"keypoints", schema_array(keypoint_schema)},
+                                                   {"obb", schema_array(schema_array(schema_number()))},
+                                                   {"skeletonProtocol", schema_string()}});
+  const json detections_schema = schema_object(json{{"schemaVersion", schema_string()},
+                                                    {"frameId", schema_integer()},
+                                                    {"tsMs", schema_integer()},
+                                                    {"width", schema_integer()},
+                                                    {"height", schema_integer()},
+                                                    {"model", schema_string()},
+                                                    {"task", schema_string()},
+                                                    {"skeletonProtocol", schema_string()},
+                                                    {"detections", schema_array(detection_schema)}});
   json service;
   service["schemaVersion"] = "f8service/1";
   service["serviceClass"] = "f8.cvkit.templatematch";
@@ -715,12 +740,14 @@ json TemplateMatchService::describe() {
   service["rendererClass"] = "template_match_capture";
   service["tags"] = json::array({"cv", "template_match"});
   service["stateFields"] = json::array({
-      state_field("templateImagePngB64", schema_string(), "rw", "Template PNG (Base64)", "PNG bytes encoded as base64.", false),
+      state_field("templateImagePngB64", schema_string(), "rw", "Template PNG (Base64)", "PNG bytes encoded as base64.",
+                  false),
       state_field("matchThreshold", schema_number(0.5, 0.0, 1.0), "rw", "Match Threshold",
                   "0..1 score threshold used to emit detections.", true, "slider"),
       state_field("matchingIntervalMs", schema_integer(200, 0, 60000), "rw", "Matching Interval (ms)",
                   "Minimum milliseconds between template matching passes.", false),
-      state_field("shmName", schema_string(), "rw", "Video SHM", "Optional SHM name override (e.g. shm.xxx.video).", true),
+      state_field("shmName", schema_string(), "rw", "Video SHM", "Optional SHM name override (e.g. shm.xxx.video).",
+                  true),
       state_field("lastError", schema_string(), "ro", "Last Error", "Last error message.", false),
   });
   service["editableStateFields"] = false;
@@ -729,14 +756,13 @@ json TemplateMatchService::describe() {
            {"description", "Capture current SHM frame as an encoded image (base64)."},
            {"required", true},
            {"showOnNode", true},
-           {"params",
-            json::array({
-                json{{"name", "format"}, {"valueSchema", schema_string()}, {"required", false}},
-                json{{"name", "quality"}, {"valueSchema", schema_integer()}, {"required", false}},
-                json{{"name", "maxBytes"}, {"valueSchema", schema_integer()}, {"required", false}},
-                json{{"name", "maxWidth"}, {"valueSchema", schema_integer()}, {"required", false}},
-                json{{"name", "maxHeight"}, {"valueSchema", schema_integer()}, {"required", false}},
-            })}},
+           {"params", json::array({
+                          json{{"name", "format"}, {"valueSchema", schema_string()}, {"required", true}},
+                          json{{"name", "quality"}, {"valueSchema", schema_integer()}, {"required", true}},
+                          json{{"name", "maxBytes"}, {"valueSchema", schema_integer()}, {"required", true}},
+                          json{{"name", "maxWidth"}, {"valueSchema", schema_integer()}, {"required", true}},
+                          json{{"name", "maxHeight"}, {"valueSchema", schema_integer()}, {"required", true}},
+                      })}},
       json{{"name", "ping"}, {"description", "Health check."}, {"required", true}, {"showOnNode", false}},
   });
   service["editableCommands"] = false;
@@ -745,7 +771,8 @@ json TemplateMatchService::describe() {
       json{{"name", "detections"},
            {"valueSchema", detections_schema},
            {"description", "Detection output in schema f8visionDetections/1 (single best match as 0/1 detection)."},
-           {"required", false}},
+           {"required", true},
+           {"showOnNode", true}},
   });
   service["editableDataInPorts"] = false;
   service["editableDataOutPorts"] = false;

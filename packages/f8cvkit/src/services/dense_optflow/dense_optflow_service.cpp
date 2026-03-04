@@ -58,6 +58,7 @@ json state_field(std::string name, const json& value_schema, std::string access,
   sf["name"] = std::move(name);
   sf["valueSchema"] = value_schema;
   sf["access"] = std::move(access);
+  sf["required"] = true;
   if (!label.empty()) sf["label"] = std::move(label);
   if (!description.empty()) sf["description"] = std::move(description);
   if (show_on_node) sf["showOnNode"] = true;
