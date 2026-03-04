@@ -12,8 +12,8 @@ from f8pysdk import (
     F8RuntimeNode,
     F8StateAccess,
     F8StateSpec,
-    any_schema,
     boolean_schema,
+    complex_object_schema,
     integer_schema,
     number_schema,
     string_schema,
@@ -26,6 +26,17 @@ from ..constants import SERVICE_CLASS
 from ._ports import exec_out_ports
 
 OPERATOR_CLASS: Final[str] = "f8.playback_sync"
+
+
+def _playback_input_schema():
+    return complex_object_schema(
+        properties={
+            "position": number_schema(),
+            "duration": number_schema(),
+            "playing": boolean_schema(),
+            "videoId": string_schema(),
+        }
+    )
 
 
 def _coerce_number(value: Any) -> float | None:
@@ -307,7 +318,7 @@ PlaybackSyncRuntimeNode.SPEC = F8OperatorSpec(
         F8DataPortSpec(
             name="playback",
             description="Playback payload from f8.implayer/playback (position/duration/playing/videoId).",
-            valueSchema=any_schema(),
+            valueSchema=_playback_input_schema(),
             required=False,
         ),
     ],

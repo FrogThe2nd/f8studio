@@ -306,30 +306,33 @@ class ButtplugOutTests(unittest.IsolatedAsyncioTestCase):
             client._connected = True
             node._client_url = "ws://127.0.0.1:12345"
 
-            async def _pull_hi(port: str, *, ctx_id: str | int | None = None) -> Any:
+            value_ref = {"value": 1.0}
+
+            async def _pull(port: str, *, ctx_id: str | int | None = None) -> Any:
                 del ctx_id
                 if port == "position":
-                    return 1.0
+                    return value_ref["value"]
                 return None
 
-            node.pull = _pull_hi  # type: ignore[method-assign]
+            node.pull = _pull  # type: ignore[method-assign]
             await bus.publish_state_external("bp1", "defaultPositionDurationMs", 800, source="test")
             await node.on_exec("e_hi", "sendPositionCmd")
             self.assertEqual(len(feature.commands), 1)
             self.assertAlmostEqual(feature.commands[-1].value, 0.9999, places=6)
             self.assertEqual(feature.commands[-1].duration, 800)
 
-            async def _pull_lo(port: str, *, ctx_id: str | int | None = None) -> Any:
-                del ctx_id
-                if port == "position":
-                    return 0.0
-                return None
-
-            node.pull = _pull_lo  # type: ignore[method-assign]
+            value_ref["value"] = 0.0
             await node.on_exec("e_lo", "sendPositionCmd")
             self.assertEqual(len(feature.commands), 2)
             self.assertAlmostEqual(feature.commands[-1].value, 0.0001, places=6)
             await node.close()
+
+    async def test_position_contract_is_data_in_port_not_state(self) -> None:
+        spec = ButtplugOutRuntimeNode.SPEC
+        data_in_names = [p.name for p in (spec.dataInPorts or [])]
+        state_names = [s.name for s in (spec.stateFields or [])]
+        self.assertEqual(data_in_names, ["position"])
+        self.assertNotIn("position", state_names)
 
     async def test_rescan_resets_state_and_calls_scan(self) -> None:
         device = _FakeDevice(index=1, name="ToyC", features={})
@@ -364,7 +367,7 @@ class ButtplugOutTests(unittest.IsolatedAsyncioTestCase):
         feature = _FakeFeature(index=0, outputs={"Vibrate": _FakeOutputDef((0, 20))})
         device = _FakeDevice(index=1, name="ToyD", features={0: feature})
         client = _FakeClient(devices={1: device})
-        bus, node = await self._build_node(
+        _bus, node = await self._build_node(
             state_values={"enabled": True, "autoConnect": False, "selectedDevice": "1|ToyD", "stopOnDeactivate": True}
         )
         node._client = client
@@ -376,7 +379,7 @@ class ButtplugOutTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(device.stop_calls, 1)
         await node.close()
         self.assertEqual(client.disconnect_calls, 1)
-        self.assertEqual((await bus.get_state("bp1", "lastCommandTsMs")).value > 0, True)
+        self.assertEqual(int(node._last_command_ts_ms) > 0, True)
 
     async def test_tick_once_is_mutex_guarded(self) -> None:
         client = _SlowConnectClient(devices={})
@@ -398,7 +401,7 @@ class ButtplugOutTests(unittest.IsolatedAsyncioTestCase):
             output_type_enum=_FakeOutputType,
         )
         with patch.object(ButtplugOutRuntimeNode, "_load_buttplug_symbols", return_value=symbols):
-            bus, node = await self._build_node(state_values={"enabled": True, "autoConnect": False, "vibrate": 0.5})
+            _bus, node = await self._build_node(state_values={"enabled": True, "autoConnect": False, "vibrate": 0.5})
             node._client = client
             node._bind_client_callbacks(client)
             client._connected = True
@@ -406,8 +409,7 @@ class ButtplugOutTests(unittest.IsolatedAsyncioTestCase):
 
             await node.on_exec("e1", "exec")
             self.assertEqual(len(feature.commands), 0)
-            last_error = (await bus.get_state("bp1", "lastError")).value
-            self.assertIn("unsupported exec in port", str(last_error))
+            self.assertIn("unsupported exec in port", str(node._last_error_message))
             await node.close()
 
 

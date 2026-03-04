@@ -19,7 +19,6 @@ from f8pysdk import (
     F8StateAccess,
     F8StateSpec,
     array_schema,
-    any_schema,
     boolean_schema,
     integer_schema,
     number_schema,
@@ -168,7 +167,6 @@ class LovenseOutRuntimeNode(OperatorNode):
         except ValueError as exc:
             await self._set_last_error_once(context="config", message=str(exc))
             await self._publish_runtime_states()
-            await self._emit_data_ports()
             return
 
         if not cfg.enabled:
@@ -258,7 +256,6 @@ class LovenseOutRuntimeNode(OperatorNode):
 
     async def on_exec(self, exec_id: str | int, in_port: str | None = None) -> list[str]:
         if not self._active:
-            await self._emit_data_ports()
             return []
 
         try:
@@ -266,11 +263,9 @@ class LovenseOutRuntimeNode(OperatorNode):
         except ValueError as exc:
             await self._set_last_error_once(context="config", message=str(exc))
             await self._publish_runtime_states()
-            await self._emit_data_ports()
             return []
 
         if not cfg.enabled:
-            await self._emit_data_ports()
             return []
 
         trigger_port = str(in_port or "sendPositionCmd").strip().lower()
@@ -288,14 +283,12 @@ class LovenseOutRuntimeNode(OperatorNode):
             message=f"unsupported exec in port: {in_port!r}; expected sendPositionCmd or sendFunctionCmd",
         )
         await self._publish_runtime_states()
-        await self._emit_data_ports()
         return []
 
     async def _handle_position_exec(self, *, exec_id: str | int, cfg: _LovenseOutConfig) -> None:
         raw_position = await self.pull("position", ctx_id=exec_id)
         position = _coerce_float(raw_position)
         if position is None:
-            await self._emit_data_ports()
             return
 
         async with self._lock:
@@ -305,7 +298,6 @@ class LovenseOutRuntimeNode(OperatorNode):
                 if elapsed < int(cfg.min_send_interval_ms):
                     self._dropped_commands = int(self._dropped_commands) + 1
                     await self._publish_runtime_states()
-                    await self._emit_data_ports()
                     return
 
             position_clamped = _clamp(position, 0.0, 1.0)
@@ -327,11 +319,9 @@ class LovenseOutRuntimeNode(OperatorNode):
         except ValueError as exc:
             await self._set_last_error_once(context="sendFunctionCmd", message=str(exc))
             await self._publish_runtime_states()
-            await self._emit_data_ports()
             return
 
         if payload is None:
-            await self._emit_data_ports()
             return
 
         async with self._lock:
@@ -352,13 +342,11 @@ class LovenseOutRuntimeNode(OperatorNode):
             if not self._is_success_response(response):
                 await self._set_last_error_once(context=error_context, message=self._response_error_message(response))
                 await self._publish_runtime_states()
-                await self._emit_data_ports()
                 return False
 
             await self._clear_last_error()
             self._available_toys = self._parse_available_toy_ids(response.body)
             await self._publish_runtime_states()
-            await self._emit_data_ports()
             return True
 
     async def _build_apply_payload(self, *, default_toy: str) -> dict[str, Any] | None:
@@ -462,31 +450,15 @@ class LovenseOutRuntimeNode(OperatorNode):
         if not self._is_success_response(response):
             await self._set_last_error_once(context="request", message=self._response_error_message(response))
             await self._publish_runtime_states()
-            await self._emit_data_ports()
             return
 
         await self._clear_last_error()
         self._sent_commands = int(self._sent_commands) + 1
         self._last_sent_ts_ms = _now_ms()
         await self._publish_runtime_states()
-        await self._emit_data_ports()
 
     async def _publish_runtime_states(self) -> None:
-        await self._publish_state_if_changed("lastError", str(self._last_error_message))
-        await self._publish_state_if_changed("lastHttpStatus", int(self._last_http_status))
-        await self._publish_state_if_changed("lastResultCode", int(self._last_result_code))
-        await self._publish_state_if_changed("lastResponse", self._last_response)
-        await self._publish_state_if_changed("lastRequest", dict(self._last_request))
         await self._publish_state_if_changed("availableToys", list(self._available_toys))
-        await self._publish_state_if_changed("sentCommands", int(self._sent_commands))
-        await self._publish_state_if_changed("droppedCommands", int(self._dropped_commands))
-        await self._publish_state_if_changed("lastSentTsMs", int(self._last_sent_ts_ms))
-
-    async def _emit_data_ports(self) -> None:
-        await self.emit("httpStatus", int(self._last_http_status))
-        await self.emit("resultCode", int(self._last_result_code))
-        await self.emit("response", self._last_response)
-        await self.emit("error", str(self._last_error_message))
 
     async def _publish_state_if_changed(self, field: str, value: Any) -> None:
         prev = self._published_state_cache.get(field)
@@ -796,17 +768,10 @@ LovenseOutRuntimeNode.SPEC = F8OperatorSpec(
             name="position",
             description="Normalized position input (0..1). Sent on sendPositionCmd as Lovense Position command.",
             valueSchema=number_schema(minimum=0.0, maximum=1.0),
-            required=False,
+            required=True,
         ),
     ],
-    dataOutPorts=[
-        F8DataPortSpec(
-            name="httpStatus", description="Last HTTP status code.", valueSchema=integer_schema(default=0, minimum=0)
-        ),
-        F8DataPortSpec(name="resultCode", description="Last Lovense API code.", valueSchema=integer_schema(default=0)),
-        F8DataPortSpec(name="response", description="Last parsed response object.", valueSchema=any_schema()),
-        F8DataPortSpec(name="error", description="Last runtime error.", valueSchema=string_schema(default="")),
-    ],
+    dataOutPorts=[],
     stateFields=[
         F8StateSpec(
             name="enabled",
@@ -824,7 +789,7 @@ LovenseOutRuntimeNode.SPEC = F8OperatorSpec(
             valueSchema=string_schema(default="https://127-0-0-1.lovense.club:30010/command"),
             access=F8StateAccess.rw,
             required=True,
-            showOnNode=True,
+            showOnNode=False,
         ),
         F8StateSpec(
             name="platformName",
@@ -833,7 +798,7 @@ LovenseOutRuntimeNode.SPEC = F8OperatorSpec(
             valueSchema=string_schema(default="Feel8 Studio"),
             access=F8StateAccess.rw,
             required=True,
-            showOnNode=True,
+            showOnNode=False,
         ),
         F8StateSpec(
             name="requestTimeoutMs",
@@ -860,7 +825,7 @@ LovenseOutRuntimeNode.SPEC = F8OperatorSpec(
             valueSchema=integer_schema(default=100, minimum=0, maximum=120000),
             access=F8StateAccess.rw,
             required=True,
-            showOnNode=True,
+            showOnNode=False,
         ),
         F8StateSpec(
             name="vibrate",
@@ -868,8 +833,8 @@ LovenseOutRuntimeNode.SPEC = F8OperatorSpec(
             description="Normalized Function Vibrate level (0..1).",
             valueSchema=number_schema(minimum=0.0, maximum=1.0),
             access=F8StateAccess.rw,
-            required=False,
-            showOnNode=True,
+            required=True,
+            showOnNode=False,
         ),
         F8StateSpec(
             name="rotate",
@@ -877,8 +842,8 @@ LovenseOutRuntimeNode.SPEC = F8OperatorSpec(
             description="Normalized Function Rotate level (0..1).",
             valueSchema=number_schema(minimum=0.0, maximum=1.0),
             access=F8StateAccess.rw,
-            required=False,
-            showOnNode=True,
+            required=True,
+            showOnNode=False,
         ),
         F8StateSpec(
             name="pump",
@@ -886,7 +851,7 @@ LovenseOutRuntimeNode.SPEC = F8OperatorSpec(
             description="Normalized Function Pump level (0..1).",
             valueSchema=number_schema(minimum=0.0, maximum=1.0),
             access=F8StateAccess.rw,
-            required=False,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -895,7 +860,7 @@ LovenseOutRuntimeNode.SPEC = F8OperatorSpec(
             description="Normalized Function Thrusting level (0..1).",
             valueSchema=number_schema(minimum=0.0, maximum=1.0),
             access=F8StateAccess.rw,
-            required=False,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -904,7 +869,7 @@ LovenseOutRuntimeNode.SPEC = F8OperatorSpec(
             description="Normalized Function Fingering level (0..1).",
             valueSchema=number_schema(minimum=0.0, maximum=1.0),
             access=F8StateAccess.rw,
-            required=False,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -913,7 +878,7 @@ LovenseOutRuntimeNode.SPEC = F8OperatorSpec(
             description="Normalized Function Suction level (0..1).",
             valueSchema=number_schema(minimum=0.0, maximum=1.0),
             access=F8StateAccess.rw,
-            required=False,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -922,7 +887,7 @@ LovenseOutRuntimeNode.SPEC = F8OperatorSpec(
             description="Normalized Function Depth level (0..1).",
             valueSchema=number_schema(minimum=0.0, maximum=1.0),
             access=F8StateAccess.rw,
-            required=False,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -931,7 +896,7 @@ LovenseOutRuntimeNode.SPEC = F8OperatorSpec(
             description="Normalized Function Oscillate level (0..1).",
             valueSchema=number_schema(minimum=0.0, maximum=1.0),
             access=F8StateAccess.rw,
-            required=False,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -940,7 +905,7 @@ LovenseOutRuntimeNode.SPEC = F8OperatorSpec(
             description="Normalized Function All level (0..1).",
             valueSchema=number_schema(minimum=0.0, maximum=1.0),
             access=F8StateAccess.rw,
-            required=False,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -949,7 +914,7 @@ LovenseOutRuntimeNode.SPEC = F8OperatorSpec(
             description="Normalized Function Stroke min (0..1). Requires strokeMax.",
             valueSchema=number_schema(minimum=0.0, maximum=1.0),
             access=F8StateAccess.rw,
-            required=False,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -958,7 +923,7 @@ LovenseOutRuntimeNode.SPEC = F8OperatorSpec(
             description="Normalized Function Stroke max (0..1). Requires strokeMin.",
             valueSchema=number_schema(minimum=0.0, maximum=1.0),
             access=F8StateAccess.rw,
-            required=False,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -968,7 +933,7 @@ LovenseOutRuntimeNode.SPEC = F8OperatorSpec(
             valueSchema=boolean_schema(default=False),
             access=F8StateAccess.rw,
             required=True,
-            showOnNode=True,
+            showOnNode=False,
         ),
         F8StateSpec(
             name="timeSec",
@@ -977,7 +942,7 @@ LovenseOutRuntimeNode.SPEC = F8OperatorSpec(
             valueSchema=number_schema(default=0.0, minimum=0.0, maximum=86400.0),
             access=F8StateAccess.rw,
             required=True,
-            showOnNode=True,
+            showOnNode=False,
         ),
         F8StateSpec(
             name="loopRunningSec",
@@ -985,7 +950,7 @@ LovenseOutRuntimeNode.SPEC = F8OperatorSpec(
             description="Optional Function loopRunningSec (omit when empty or <=0).",
             valueSchema=number_schema(minimum=0.0, maximum=86400.0),
             access=F8StateAccess.rw,
-            required=False,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -994,7 +959,7 @@ LovenseOutRuntimeNode.SPEC = F8OperatorSpec(
             description="Optional Function loopPauseSec (omit when empty or <=0).",
             valueSchema=number_schema(minimum=0.0, maximum=86400.0),
             access=F8StateAccess.rw,
-            required=False,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -1004,7 +969,7 @@ LovenseOutRuntimeNode.SPEC = F8OperatorSpec(
             valueSchema=boolean_schema(default=True),
             access=F8StateAccess.rw,
             required=True,
-            showOnNode=True,
+            showOnNode=False,
         ),
         F8StateSpec(
             name="toy",
@@ -1023,52 +988,7 @@ LovenseOutRuntimeNode.SPEC = F8OperatorSpec(
             valueSchema=string_schema(default=""),
             access=F8StateAccess.rw,
             required=True,
-            showOnNode=True,
-        ),
-        F8StateSpec(
-            name="lastError",
-            label="Last Error",
-            description="Last runtime error message.",
-            valueSchema=string_schema(default=""),
-            access=F8StateAccess.ro,
-            showOnNode=True,
-            required=False,
-        ),
-        F8StateSpec(
-            name="lastHttpStatus",
-            label="Last HTTP Status",
-            description="Last HTTP status code from Lovense endpoint.",
-            valueSchema=integer_schema(default=0, minimum=0),
-            access=F8StateAccess.ro,
-            showOnNode=True,
-            required=False,
-        ),
-        F8StateSpec(
-            name="lastResultCode",
-            label="Last Result Code",
-            description="Last Lovense response code field.",
-            valueSchema=integer_schema(default=0),
-            access=F8StateAccess.ro,
-            showOnNode=True,
-            required=False,
-        ),
-        F8StateSpec(
-            name="lastResponse",
-            label="Last Response",
-            description="Last parsed Lovense response payload.",
-            valueSchema=any_schema(),
-            access=F8StateAccess.ro,
             showOnNode=False,
-            required=False,
-        ),
-        F8StateSpec(
-            name="lastRequest",
-            label="Last Request",
-            description="Last sent Lovense request payload.",
-            valueSchema=any_schema(),
-            access=F8StateAccess.ro,
-            showOnNode=False,
-            required=False,
         ),
         F8StateSpec(
             name="availableToys",
@@ -1076,35 +996,8 @@ LovenseOutRuntimeNode.SPEC = F8OperatorSpec(
             description="Discovered toy IDs from GetToys response.",
             valueSchema=array_schema(items=string_schema()),
             access=F8StateAccess.ro,
-            showOnNode=True,
-            required=False,
-        ),
-        F8StateSpec(
-            name="sentCommands",
-            label="Sent Commands",
-            description="Total successfully sent Lovense commands.",
-            valueSchema=integer_schema(default=0, minimum=0),
-            access=F8StateAccess.ro,
+            required=True,
             showOnNode=False,
-            required=False,
-        ),
-        F8StateSpec(
-            name="droppedCommands",
-            label="Dropped Commands",
-            description="Commands dropped by minSendIntervalMs throttling.",
-            valueSchema=integer_schema(default=0, minimum=0),
-            access=F8StateAccess.ro,
-            showOnNode=False,
-            required=False,
-        ),
-        F8StateSpec(
-            name="lastSentTsMs",
-            label="Last Sent Timestamp (ms)",
-            description="Timestamp of the last successful request.",
-            valueSchema=integer_schema(default=0, minimum=0),
-            access=F8StateAccess.ro,
-            showOnNode=False,
-            required=False,
         ),
     ],
     editableStateFields=False,

@@ -60,7 +60,7 @@ Pattern->phase wiring example (reusable):
   - `deviceInfos` (full per-device capability map with `stepRange`/`durationRange`)
 - Uses `selectedDevice` to choose the active target device (falls back to first available device)
 - Split command channels:
-  - `sendPositionCmd` + data `position` (0..1)
+  - `sendPositionCmd` + data port `position` (0..1)
   - `sendFunctionCmd` + state fields `vibrate` / `rotate` / `oscillate` / `stop`
 - `defaultPositionDurationMs` controls position duration for `sendPositionCmd`
 

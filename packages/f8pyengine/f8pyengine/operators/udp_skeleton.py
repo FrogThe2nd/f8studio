@@ -17,9 +17,10 @@ from f8pysdk import (
     F8StateAccess,
     F8StateSpec,
     array_schema,
-    any_schema,
     boolean_schema,
+    complex_object_schema,
     integer_schema,
+    number_schema,
     string_schema,
 )
 from f8pysdk.capabilities import NodeBus
@@ -55,6 +56,57 @@ class _ChunkFrameBuffer:
     started_rx_ts_ms: int
     last_rx_ts_ms: int
     chunks: dict[int, list[dict[str, Any]]]
+
+
+def _skeleton_anim_schema():
+    return complex_object_schema(
+        properties={
+            "normalizedTime": number_schema(),
+            "layerIndex": integer_schema(),
+            "clipName": string_schema(),
+            "poseKey": string_schema(),
+        }
+    )
+
+
+def _skeleton_trailer_schema():
+    return complex_object_schema(
+        properties={
+            "magic": string_schema(),
+            "extVersion": integer_schema(),
+            "frameId": integer_schema(),
+            "chunkIndex": integer_schema(),
+            "chunkCount": integer_schema(),
+            "totalBoneCount": integer_schema(),
+            "characterId": integer_schema(),
+            "assembledChunkCount": integer_schema(),
+            "anim": _skeleton_anim_schema(),
+        }
+    )
+
+
+def _skeleton_bone_schema():
+    return complex_object_schema(
+        properties={
+            "name": string_schema(),
+            "pos": array_schema(items=number_schema()),
+            "rot": array_schema(items=number_schema()),
+        }
+    )
+
+
+def _skeleton_payload_schema():
+    return complex_object_schema(
+        properties={
+            "type": string_schema(),
+            "modelName": string_schema(),
+            "timestampMs": integer_schema(),
+            "schema": string_schema(),
+            "boneCount": integer_schema(),
+            "bones": array_schema(items=_skeleton_bone_schema()),
+            "trailer": _skeleton_trailer_schema(),
+        }
+    )
 
 
 class _UdpProtocol(asyncio.DatagramProtocol):
@@ -704,12 +756,14 @@ UdpSkeletonRuntimeNode.SPEC = F8OperatorSpec(
     execOutPorts=[],
     dataOutPorts=[
         F8DataPortSpec(
-            name="skeletons", description="List of latest payloads (ordered by key).", valueSchema=any_schema()
+            name="skeletons",
+            description="List of latest payloads (ordered by key).",
+            valueSchema=array_schema(items=_skeleton_payload_schema()),
         ),
         F8DataPortSpec(
             name="selectedSkeleton",
             description="Latest payload matching `selectedKey` (or None).",
-            valueSchema=any_schema(),
+            valueSchema=_skeleton_payload_schema(),
         ),
     ],
     stateFields=[

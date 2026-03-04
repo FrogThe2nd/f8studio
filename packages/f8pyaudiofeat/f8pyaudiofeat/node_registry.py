@@ -3,13 +3,14 @@ from __future__ import annotations
 from typing import Any
 
 from f8pysdk import (
+    array_schema,
     F8DataPortSpec,
     F8RuntimeNode,
     F8ServiceSchemaVersion,
     F8ServiceSpec,
     F8StateAccess,
     F8StateSpec,
-    any_schema,
+    complex_object_schema,
     integer_schema,
     number_schema,
     string_schema,
@@ -20,6 +21,38 @@ from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
 from .constants import CORE_SERVICE_CLASS, RHYTHM_SERVICE_CLASS
 from .core_service_node import AudioCoreFeatureServiceNode
 from .rhythm_service_node import AudioRhythmFeatureServiceNode
+
+
+def _core_features_schema():
+    return complex_object_schema(
+        properties={
+            "schemaVersion": string_schema(),
+            "tsMs": integer_schema(),
+            "seq": integer_schema(),
+            "sampleRate": integer_schema(),
+            "hopLength": integer_schema(),
+            "windowLength": integer_schema(),
+            "rms": number_schema(),
+            "spectralCentroidHz": number_schema(),
+            "onsetStrength": number_schema(),
+            "onsetEnvelope": array_schema(items=number_schema()),
+        }
+    )
+
+
+def _rhythm_features_schema():
+    return complex_object_schema(
+        properties={
+            "schemaVersion": string_schema(),
+            "tsMs": integer_schema(),
+            "seq": integer_schema(),
+            "tempoBpm": number_schema(),
+            "beatPeriodMs": number_schema(),
+            "pulseClarity": number_schema(),
+            "onsetStrengthMean": number_schema(),
+            "onsetStrengthStd": number_schema(),
+        }
+    )
 
 
 def _core_state_fields() -> list[F8StateSpec]:
@@ -137,7 +170,7 @@ def _register_core(reg: RuntimeNodeRegistry) -> None:
                 F8DataPortSpec(
                     name="coreFeatures",
                     description="Core feature payload with onset envelope history.",
-                    valueSchema=any_schema(),
+                    valueSchema=_core_features_schema(),
                 )
             ],
             editableStateFields=False,
@@ -169,14 +202,14 @@ def _register_rhythm(reg: RuntimeNodeRegistry) -> None:
                 F8DataPortSpec(
                     name="coreFeatures",
                     description="Input core feature payload from f8.audiofeat.core.",
-                    valueSchema=any_schema(),
+                    valueSchema=_core_features_schema(),
                 )
             ],
             dataOutPorts=[
                 F8DataPortSpec(
                     name="rhythmFeatures",
                     description="Rhythm feature payload.",
-                    valueSchema=any_schema(),
+                    valueSchema=_rhythm_features_schema(),
                 )
             ],
             editableStateFields=False,

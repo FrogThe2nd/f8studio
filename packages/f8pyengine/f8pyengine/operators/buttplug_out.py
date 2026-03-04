@@ -13,9 +13,9 @@ from f8pysdk import (
     F8RuntimeNode,
     F8StateAccess,
     F8StateSpec,
-    any_schema,
     array_schema,
     boolean_schema,
+    complex_object_schema,
     integer_schema,
     number_schema,
     string_schema,
@@ -38,6 +38,59 @@ _OUTPUT_POSITION = "Position"
 _OUTPUT_POSITION_WITH_DURATION = "HwPositionWithDuration"
 _POSITION_CLAMP_MIN = 0.0001
 _POSITION_CLAMP_MAX = 0.9999
+
+
+def _range2_schema():
+    return array_schema(items=integer_schema())
+
+
+def _feature_output_info_schema():
+    return complex_object_schema(
+        properties={
+            "featureIndex": integer_schema(),
+            "description": string_schema(),
+            "stepRange": _range2_schema(),
+            "durationRange": _range2_schema(),
+        }
+    )
+
+
+def _feature_input_info_schema():
+    return complex_object_schema(
+        properties={
+            "featureIndex": integer_schema(),
+            "description": string_schema(),
+            "valueRanges": array_schema(items=_range2_schema()),
+            "commands": array_schema(items=string_schema()),
+        }
+    )
+
+
+def _device_info_schema():
+    return complex_object_schema(
+        properties={
+            "index": integer_schema(),
+            "name": string_schema(),
+            "displayName": string_schema(),
+            "messageTimingGapMs": integer_schema(),
+            "outputs": complex_object_schema(
+                properties={
+                    "Vibrate": array_schema(items=_feature_output_info_schema()),
+                    "Rotate": array_schema(items=_feature_output_info_schema()),
+                    "Oscillate": array_schema(items=_feature_output_info_schema()),
+                    "Position": array_schema(items=_feature_output_info_schema()),
+                    "HwPositionWithDuration": array_schema(items=_feature_output_info_schema()),
+                }
+            ),
+            "inputs": complex_object_schema(
+                properties={
+                    "Battery": array_schema(items=_feature_input_info_schema()),
+                    "RSSI": array_schema(items=_feature_input_info_schema()),
+                    "Button": array_schema(items=_feature_input_info_schema()),
+                }
+            ),
+        }
+    )
 
 
 class _FeatureOutputDefinitionLike(Protocol):
@@ -379,31 +432,25 @@ class ButtplugOutRuntimeNode(OperatorNode):
 
     async def on_exec(self, exec_id: str | int, in_port: str | None = None) -> list[str]:
         if not self._active:
-            await self._emit_status_ports()
             return []
         await self._tick_once()
 
         target = await self._resolve_target_device(update_selection=True)
         if target is None:
-            await self._emit_status_ports()
             return []
 
         trigger_port = str(in_port or "sendPositionCmd").strip().lower()
         if trigger_port == "sendfunctioncmd":
             await self._handle_send_function_cmd(target=target)
-            await self._emit_status_ports()
             return []
 
         if trigger_port == "sendpositioncmd":
             await self._handle_send_position_cmd(target=target, exec_id=exec_id)
-            await self._emit_status_ports()
             return []
 
         await self._set_last_error_message(
             f"unsupported exec in port: {in_port!r}; expected sendPositionCmd or sendFunctionCmd"
         )
-
-        await self._emit_status_ports()
         return []
 
     def _start_worker(self) -> None:
@@ -674,18 +721,36 @@ class ButtplugOutRuntimeNode(OperatorNode):
             await self._set_last_error_once(f"send_{selected_output_name}_failed", exc)
 
     async def _handle_send_position_cmd(self, *, target: _DeviceLike, exec_id: str | int) -> None:
-        raw = await self.pull("position", ctx_id=exec_id)
-        raw_unwrapped = _unwrap_json_value(raw)
-        if raw_unwrapped is None:
+        raw_position = _unwrap_json_value(await self.pull("position", ctx_id=exec_id))
+        if raw_position is None:
+            return
+        if isinstance(raw_position, str) and not raw_position.strip():
+            return
+        if isinstance(raw_position, bool):
+            return
+        try:
+            value_raw = float(raw_position)
+        except (TypeError, ValueError):
+            return
+        if value_raw != value_raw:
+            return
+        if value_raw in (float("inf"), float("-inf")):
+            return
+        value = _coerce_float(
+            value_raw,
+            default=_POSITION_CLAMP_MIN,
+            minimum=_POSITION_CLAMP_MIN,
+            maximum=_POSITION_CLAMP_MAX,
+        )
+        if value is None:
             return
 
-        value = _coerce_float(raw_unwrapped, default=0.0, minimum=_POSITION_CLAMP_MIN, maximum=_POSITION_CLAMP_MAX)
         position_duration = await self._read_position_duration_ms()
         await self._dispatch_output_value(
             device=target,
             output_name=_OUTPUT_POSITION_WITH_DURATION,
             feature_state_name="positionFeatureIndex",
-            value=float(value),
+            value=value,
             duration_ms=position_duration,
             fallback_output_name=_OUTPUT_POSITION,
         )
@@ -755,8 +820,6 @@ class ButtplugOutRuntimeNode(OperatorNode):
     async def _mark_command_sent(self) -> None:
         self._sent_commands = int(self._sent_commands) + 1
         self._last_command_ts_ms = _now_ms()
-        await self._publish_state_if_changed("sentCommands", int(self._sent_commands))
-        await self._publish_state_if_changed("lastCommandTsMs", int(self._last_command_ts_ms))
 
     async def _publish_runtime_status(self) -> None:
         client = self._client
@@ -802,7 +865,7 @@ class ButtplugOutRuntimeNode(OperatorNode):
                     if output_name not in outputs:
                         outputs[output_name] = []
                     step_range = [int(output_def.value[0]), int(output_def.value[1])]
-                    duration_range: list[int] | None = None
+                    duration_range: list[int] = []
                     if output_def.duration is not None:
                         duration_range = [int(output_def.duration[0]), int(output_def.duration[1])]
                     outputs[output_name].append(
@@ -847,17 +910,6 @@ class ButtplugOutRuntimeNode(OperatorNode):
             return
         await self._publish_state_if_changed("selectedDeviceInfo", self._build_device_info(device))
 
-    async def _emit_status_ports(self) -> None:
-        client = self._client
-        connected = bool(client.connected) if client is not None else False
-        await self.emit("connected", connected)
-
-        selected_info = self._published_state_cache.get("selectedDeviceInfo")
-        await self.emit("selectedDeviceInfo", selected_info)
-
-        error_s = str(self._last_error_message or "")
-        await self.emit("error", error_s)
-
     async def _publish_state_if_changed(self, field: str, value: Any) -> None:
         prev = self._published_state_cache.get(field)
         if prev == value:
@@ -883,13 +935,11 @@ class ButtplugOutRuntimeNode(OperatorNode):
 
     async def _set_last_error_message(self, message: str) -> None:
         self._last_error_message = str(message or "")
-        await self._publish_state_if_changed("lastError", str(self._last_error_message))
 
     async def _clear_last_error(self) -> None:
         if not self._last_error_message:
             return
         self._last_error_message = ""
-        await self._publish_state_if_changed("lastError", "")
 
     async def _read_raw_state(self, name: str) -> Any:
         live: Any
@@ -926,21 +976,12 @@ ButtplugOutRuntimeNode.SPEC = F8OperatorSpec(
     dataInPorts=[
         F8DataPortSpec(
             name="position",
-            description="Position target (0..1).",
-            valueSchema=number_schema(),
-            required=False,
-            showOnNode=True,
+            description="Position-channel target (0.0001..0.9999) used by sendPositionCmd.",
+            valueSchema=number_schema(minimum=_POSITION_CLAMP_MIN, maximum=_POSITION_CLAMP_MAX),
+            required=True,
         ),
     ],
-    dataOutPorts=[
-        F8DataPortSpec(
-            name="connected", description="Current connection status.", valueSchema=boolean_schema(default=False)
-        ),
-        F8DataPortSpec(
-            name="selectedDeviceInfo", description="Selected device info object.", valueSchema=any_schema()
-        ),
-        F8DataPortSpec(name="error", description="Last error string.", valueSchema=string_schema(default="")),
-    ],
+    dataOutPorts=[],
     stateFields=[
         F8StateSpec(
             name="enabled",
@@ -949,7 +990,7 @@ ButtplugOutRuntimeNode.SPEC = F8OperatorSpec(
             valueSchema=boolean_schema(default=True),
             access=F8StateAccess.rw,
             required=True,
-            showOnNode=False,
+            showOnNode=True,
         ),
         F8StateSpec(
             name="wsUrl",
@@ -1066,8 +1107,8 @@ ButtplugOutRuntimeNode.SPEC = F8OperatorSpec(
             description="Function-channel vibrate intensity (0..1).",
             valueSchema=number_schema(minimum=0.0, maximum=1.0),
             access=F8StateAccess.rw,
-            required=False,
-            showOnNode=True,
+            required=True,
+            showOnNode=False,
         ),
         F8StateSpec(
             name="rotate",
@@ -1075,8 +1116,8 @@ ButtplugOutRuntimeNode.SPEC = F8OperatorSpec(
             description="Function-channel rotate speed (-1..1).",
             valueSchema=number_schema(minimum=-1.0, maximum=1.0),
             access=F8StateAccess.rw,
-            required=False,
-            showOnNode=True,
+            required=True,
+            showOnNode=False,
         ),
         F8StateSpec(
             name="oscillate",
@@ -1084,8 +1125,8 @@ ButtplugOutRuntimeNode.SPEC = F8OperatorSpec(
             description="Function-channel oscillate intensity (0..1).",
             valueSchema=number_schema(minimum=0.0, maximum=1.0),
             access=F8StateAccess.rw,
-            required=False,
-            showOnNode=True,
+            required=True,
+            showOnNode=False,
         ),
         F8StateSpec(
             name="stop",
@@ -1094,7 +1135,7 @@ ButtplugOutRuntimeNode.SPEC = F8OperatorSpec(
             valueSchema=boolean_schema(default=False),
             access=F8StateAccess.rw,
             required=True,
-            showOnNode=True,
+            showOnNode=False,
         ),
         F8StateSpec(
             name="stopOnDeactivate",
@@ -1112,7 +1153,7 @@ ButtplugOutRuntimeNode.SPEC = F8OperatorSpec(
             valueSchema=boolean_schema(default=False),
             access=F8StateAccess.ro,
             required=True,
-            showOnNode=True,
+            showOnNode=False,
         ),
         F8StateSpec(
             name="scanning",
@@ -1136,43 +1177,16 @@ ButtplugOutRuntimeNode.SPEC = F8OperatorSpec(
             name="deviceInfos",
             label="Device Infos",
             description="Full discovered device infos.",
-            valueSchema=any_schema(),
+            valueSchema=array_schema(items=_device_info_schema()),
             access=F8StateAccess.ro,
-            showOnNode=True,
-            required=False,
+            required=True,
+            showOnNode=False,
         ),
         F8StateSpec(
             name="selectedDeviceInfo",
             label="Selected Device Info",
             description="Current selected device info object.",
-            valueSchema=any_schema(),
-            access=F8StateAccess.ro,
-            required=True,
-            showOnNode=False,
-        ),
-        F8StateSpec(
-            name="lastError",
-            label="Last Error",
-            description="Last runtime error.",
-            valueSchema=string_schema(default=""),
-            access=F8StateAccess.ro,
-            required=True,
-            showOnNode=False,
-        ),
-        F8StateSpec(
-            name="sentCommands",
-            label="Sent Commands",
-            description="Total sent output/stop commands.",
-            valueSchema=integer_schema(default=0, minimum=0),
-            access=F8StateAccess.ro,
-            required=True,
-            showOnNode=False,
-        ),
-        F8StateSpec(
-            name="lastCommandTsMs",
-            label="Last Command Ts (ms)",
-            description="Timestamp of last sent command.",
-            valueSchema=integer_schema(default=0, minimum=0),
+            valueSchema=_device_info_schema(),
             access=F8StateAccess.ro,
             required=True,
             showOnNode=False,

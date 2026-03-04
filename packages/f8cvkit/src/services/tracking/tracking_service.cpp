@@ -54,8 +54,6 @@ json schema_array(const json& item_schema) {
   return arr;
 }
 
-json schema_any() { return json{{"type", "any"}}; }
-
 json state_field(std::string name, const json& value_schema, std::string access, std::string label = {},
                  std::string description = {}, bool show_on_node = false, std::string ui_control = {}) {
   json sf;
@@ -741,7 +739,47 @@ void TrackingService::set_tracking(bool tracking, const json& meta) {
 }
 
 json TrackingService::describe() {
-  const json init_box_schema = schema_any();
+  const json init_candidate_schema = schema_object(
+      json{{"bbox", schema_array(schema_integer())},
+           {"x", schema_integer()},
+           {"y", schema_integer()},
+           {"w", schema_integer()},
+           {"h", schema_integer()},
+           {"x1", schema_integer()},
+           {"y1", schema_integer()},
+           {"x2", schema_integer()},
+           {"y2", schema_integer()},
+           {"left", schema_integer()},
+           {"top", schema_integer()},
+           {"right", schema_integer()},
+           {"bottom", schema_integer()},
+           {"score", schema_number()},
+           {"confidence", schema_number()},
+           {"probability", schema_number()},
+           {"prob", schema_number()},
+           {"conf", schema_number()},
+           {"cls", schema_string()}});
+  const json init_box_schema = schema_object(
+      json{{"bbox", schema_array(schema_integer())},
+           {"x", schema_integer()},
+           {"y", schema_integer()},
+           {"w", schema_integer()},
+           {"h", schema_integer()},
+           {"x1", schema_integer()},
+           {"y1", schema_integer()},
+           {"x2", schema_integer()},
+           {"y2", schema_integer()},
+           {"left", schema_integer()},
+           {"top", schema_integer()},
+           {"right", schema_integer()},
+           {"bottom", schema_integer()},
+           {"score", schema_number()},
+           {"confidence", schema_number()},
+           {"probability", schema_number()},
+           {"prob", schema_number()},
+           {"conf", schema_number()},
+           {"detections", schema_array(init_candidate_schema)},
+           {"items", schema_array(init_candidate_schema)}});
 
   const json tracking_schema = schema_object(
       json{{"frameId", schema_integer()},

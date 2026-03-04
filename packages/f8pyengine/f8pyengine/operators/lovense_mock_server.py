@@ -17,9 +17,10 @@ from f8pysdk import (
     F8RuntimeNode,
     F8StateAccess,
     F8StateSpec,
-    any_schema,
     boolean_schema,
+    complex_object_schema,
     integer_schema,
+    number_schema,
     string_schema,
 )
 from f8pysdk.capabilities import ClosableNode, NodeBus
@@ -34,6 +35,36 @@ from ..constants import SERVICE_CLASS
 OPERATOR_CLASS = "f8.lovense_mock_server"
 
 logger = logging.getLogger(__name__)
+
+
+def _event_schema():
+    return complex_object_schema(
+        properties={
+            "seq": integer_schema(),
+            "eventId": string_schema(),
+            "tsMs": integer_schema(),
+            "isoTime": string_schema(),
+            "peer": string_schema(),
+            "method": string_schema(),
+            "path": string_schema(),
+            "summary": complex_object_schema(
+                properties={
+                    "type": string_schema(),
+                    "toy": string_schema(),
+                    "timeSec": number_schema(),
+                    "action": string_schema(),
+                    "thrusting": integer_schema(),
+                    "depth": integer_schema(),
+                    "all": integer_schema(),
+                    "loopRunningSec": number_schema(),
+                    "loopPauseSec": number_schema(),
+                    "apiVer": integer_schema(),
+                }
+            ),
+            "payload": complex_object_schema(properties={}),
+            "request": complex_object_schema(properties={}),
+        }
+    )
 
 _MAX_BODY_BYTES = 1024 * 1024
 _MAX_HEADER_BYTES = 32 * 1024
@@ -1382,7 +1413,7 @@ LovenseMockServerRuntimeNode.SPEC = F8OperatorSpec(
             name="event",
             label="Event",
             description="Latest received Lovense command (dict with seq/eventId/summary/raw).",
-            valueSchema=any_schema(),
+            valueSchema=_event_schema(),
             access=F8StateAccess.ro,
             required=True,
             showOnNode=True,

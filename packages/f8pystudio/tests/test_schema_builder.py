@@ -159,7 +159,8 @@ def test_schema_builder_read_only_disables_edits_and_preserves_schema() -> None:
     dlg = SchemaBuilderDialog(None, title="Schema", schema=base, read_only=True)
 
     assert dlg._json_edit.isReadOnly() is True
-    assert dlg._tree.isEnabled() is False
+    assert dlg._tree.isEnabled() is True
+    assert dlg._form_host.isEnabled() is False
     assert dlg.schema().model_dump(mode="json") == base.model_dump(mode="json")
 
 

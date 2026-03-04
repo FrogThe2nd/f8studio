@@ -13,7 +13,9 @@ from f8pysdk import (
     F8RuntimeNode,
     F8StateAccess,
     F8StateSpec,
-    any_schema,
+    array_schema,
+    complex_object_schema,
+    integer_schema,
     number_schema,
     string_schema,
 )
@@ -27,6 +29,55 @@ from ..constants import SERVICE_CLASS
 OPERATOR_CLASS: Final[str] = "f8.lovense_program_adapter"
 
 logger = logging.getLogger(__name__)
+
+
+def _program_schema():
+    return complex_object_schema(
+        properties={
+            "tsMs": integer_schema(),
+            "timeSec": number_schema(),
+            "hz": number_schema(),
+            "loopRunningSec": number_schema(),
+            "loopPauseSec": number_schema(),
+        }
+    )
+
+
+def _sequence_schema():
+    return complex_object_schema(
+        properties={
+            "tsMs": integer_schema(),
+            "stepMs": number_schema(),
+            "values": array_schema(items=number_schema()),
+            "timeSec": number_schema(),
+        }
+    )
+
+
+def _lovense_event_schema():
+    return complex_object_schema(
+        properties={
+            "seq": integer_schema(),
+            "eventId": string_schema(),
+            "tsMs": integer_schema(),
+            "summary": complex_object_schema(
+                properties={
+                    "type": string_schema(),
+                    "toy": string_schema(),
+                    "timeSec": number_schema(),
+                    "action": string_schema(),
+                    "thrusting": integer_schema(),
+                    "depth": integer_schema(),
+                    "all": integer_schema(),
+                    "loopRunningSec": number_schema(),
+                    "loopPauseSec": number_schema(),
+                    "apiVer": integer_schema(),
+                }
+            ),
+            "payload": complex_object_schema(properties={}),
+            "request": complex_object_schema(properties={}),
+        }
+    )
 
 
 def _coerce_number(value: Any) -> float | None:
@@ -433,7 +484,7 @@ LovenseProgramAdapterRuntimeNode.SPEC = F8OperatorSpec(
             name="lovenseEvent",
             label="Lovense Event",
             description="State-edge input from Lovense Mock Server: the latest event dict.",
-            valueSchema=any_schema(),
+            valueSchema=_lovense_event_schema(),
             access=F8StateAccess.wo,
             required=True,
             showOnNode=True,
@@ -442,7 +493,7 @@ LovenseProgramAdapterRuntimeNode.SPEC = F8OperatorSpec(
             name="program",
             label="Program",
             description="Readonly output: ProgramWave-compatible dict (tsMs/timeSec/hz/loopRunningSec/loopPauseSec).",
-            valueSchema=any_schema(),
+            valueSchema=_program_schema(),
             access=F8StateAccess.ro,
             showOnNode=True,
             required=False,
@@ -469,7 +520,7 @@ LovenseProgramAdapterRuntimeNode.SPEC = F8OperatorSpec(
             name="sequence",
             label="Sequence",
             description="Readonly output: sequence dict for Sequence Player (typically pattern -> hz sequence).",
-            valueSchema=any_schema(),
+            valueSchema=_sequence_schema(),
             access=F8StateAccess.ro,
             showOnNode=False,
             required=False,

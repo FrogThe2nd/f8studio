@@ -182,7 +182,7 @@ class LovenseOutTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls[0]["toy"], "toy-default")
 
     async def test_apply_stroke_pair_validation_error(self) -> None:
-        bus, node = await self._build_node(state_values={"enabled": True, "strokeMin": 0.2, "timeSec": 0})
+        _bus, node = await self._build_node(state_values={"enabled": True, "strokeMin": 0.2, "timeSec": 0})
         calls: list[dict[str, Any]] = []
 
         async def _fake_http(*, cfg: Any, payload: dict[str, Any]) -> _HttpResult:
@@ -194,11 +194,10 @@ class LovenseOutTests(unittest.IsolatedAsyncioTestCase):
         await node.on_exec("a1", "sendFunctionCmd")
 
         self.assertEqual(calls, [])
-        last_error = (await bus.get_state("lovense1", "lastError")).value
-        self.assertIn("strokeMin and strokeMax", str(last_error))
+        self.assertIn("strokeMin and strokeMax", str(node._last_error_message))
 
     async def test_position_min_send_interval_throttles(self) -> None:
-        bus, node = await self._build_node(state_values={"enabled": True, "minSendIntervalMs": 1000})
+        _bus, node = await self._build_node(state_values={"enabled": True, "minSendIntervalMs": 1000})
         calls: list[dict[str, Any]] = []
 
         async def _fake_http(*, cfg: Any, payload: dict[str, Any]) -> _HttpResult:
@@ -218,14 +217,15 @@ class LovenseOutTests(unittest.IsolatedAsyncioTestCase):
         await node.on_exec("e1", "sendPositionCmd")
         await node.on_exec("e2", "sendPositionCmd")
 
-        dropped = (await bus.get_state("lovense1", "droppedCommands")).value
         self.assertEqual(len(calls), 1)
-        self.assertGreaterEqual(int(dropped), 1)
+        self.assertGreaterEqual(int(node._dropped_commands), 1)
 
     async def test_spec_ports_match_new_contract(self) -> None:
         spec = LovenseOutRuntimeNode.SPEC
         data_in_names = [p.name for p in (spec.dataInPorts or [])]
+        data_out_names = [p.name for p in (spec.dataOutPorts or [])]
         self.assertEqual(data_in_names, ["position"])
+        self.assertEqual(data_out_names, [])
         self.assertEqual(list(spec.execInPorts or []), ["sendPositionCmd", "sendFunctionCmd"])
         toy_state = None
         for state_spec in list(spec.stateFields or []):
@@ -237,7 +237,7 @@ class LovenseOutTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(str(toy_state.uiControl or ""), "options:[availableToys]")
 
     async def test_api_error_updates_last_error(self) -> None:
-        bus, node = await self._build_node(state_values={"enabled": True, "timeSec": 0, "vibrate": 0.2})
+        _bus, node = await self._build_node(state_values={"enabled": True, "timeSec": 0, "vibrate": 0.2})
 
         async def _fake_http(*, cfg: Any, payload: dict[str, Any]) -> _HttpResult:
             del cfg, payload
@@ -252,8 +252,7 @@ class LovenseOutTests(unittest.IsolatedAsyncioTestCase):
         node._http_post_json = _fake_http  # type: ignore[method-assign]
         await node.on_exec("a1", "sendFunctionCmd")
 
-        last_error = (await bus.get_state("lovense1", "lastError")).value
-        self.assertIn("404", str(last_error))
+        self.assertIn("404", str(node._last_error_message))
 
     async def test_validate_state_rejects_invalid_values(self) -> None:
         _bus, node = await self._build_node(state_values={"enabled": True})
@@ -269,7 +268,7 @@ class LovenseOutTests(unittest.IsolatedAsyncioTestCase):
             await node.validate_state("timeSec", -1, ts_ms=5, meta={})
 
     async def test_legacy_exec_port_names_are_rejected(self) -> None:
-        bus, node = await self._build_node(state_values={"enabled": True, "minSendIntervalMs": 0, "vibrate": 0.5})
+        _bus, node = await self._build_node(state_values={"enabled": True, "minSendIntervalMs": 0, "vibrate": 0.5})
         calls: list[dict[str, Any]] = []
 
         async def _fake_http(*, cfg: Any, payload: dict[str, Any]) -> _HttpResult:
@@ -290,8 +289,7 @@ class LovenseOutTests(unittest.IsolatedAsyncioTestCase):
         await node.on_exec("a1", "apply")
 
         self.assertEqual(calls, [])
-        last_error = (await bus.get_state("lovense1", "lastError")).value
-        self.assertIn("unsupported exec in port", str(last_error))
+        self.assertIn("unsupported exec in port", str(node._last_error_message))
 
     async def test_active_lifecycle_auto_refreshes_available_toys_once(self) -> None:
         bus, node = await self._build_node(state_values={"enabled": True})

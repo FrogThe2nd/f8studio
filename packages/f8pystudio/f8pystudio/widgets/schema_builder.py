@@ -197,7 +197,6 @@ class SchemaBuilderDialog(QtWidgets.QDialog):
         self._set_status_valid("Valid schema")
 
         if self._read_only:
-            self._tree.setEnabled(False)
             self._form_host.setEnabled(False)
             self._json_edit.setReadOnly(True)
 

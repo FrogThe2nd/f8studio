@@ -9,9 +9,9 @@ from f8pysdk import (
     F8ServiceSpec,
     F8StateAccess,
     F8StateSpec,
-    any_schema,
     array_schema,
     boolean_schema,
+    complex_object_schema,
     integer_schema,
     number_schema,
     string_schema,
@@ -24,6 +24,71 @@ from .constants import OPTFLOW_SERVICE_CLASS, TCNWAVE_SERVICE_CLASS
 from .optflow_service_node import OnnxOptflowServiceNode
 from .service_node import OnnxVisionServiceNode
 from .tcnwave_service_node import OnnxTcnWaveServiceNode
+
+
+def _classification_item_schema():
+    return complex_object_schema(
+        properties={
+            "cls": string_schema(),
+            "score": number_schema(),
+        }
+    )
+
+
+def _classifications_payload_schema():
+    return complex_object_schema(
+        properties={
+            "schemaVersion": string_schema(),
+            "frameId": integer_schema(),
+            "tsMs": integer_schema(),
+            "model": string_schema(),
+            "top1": _classification_item_schema(),
+            "topk": array_schema(items=_classification_item_schema()),
+        }
+    )
+
+
+def _keypoint_schema():
+    return complex_object_schema(
+        properties={
+            "x": number_schema(),
+            "y": number_schema(),
+            "score": number_schema(),
+        }
+    )
+
+
+def _obb_point_schema():
+    return array_schema(items=number_schema())
+
+
+def _detection_item_schema():
+    return complex_object_schema(
+        properties={
+            "cls": string_schema(),
+            "score": number_schema(),
+            "bbox": array_schema(items=integer_schema()),
+            "keypoints": array_schema(items=_keypoint_schema()),
+            "obb": array_schema(items=_obb_point_schema()),
+            "skeletonProtocol": string_schema(),
+        }
+    )
+
+
+def _detections_payload_schema():
+    return complex_object_schema(
+        properties={
+            "schemaVersion": string_schema(),
+            "frameId": integer_schema(),
+            "tsMs": integer_schema(),
+            "width": integer_schema(),
+            "height": integer_schema(),
+            "model": string_schema(),
+            "task": string_schema(),
+            "skeletonProtocol": string_schema(),
+            "detections": array_schema(items=_detection_item_schema()),
+        }
+    )
 
 
 def _common_state_fields(
@@ -399,7 +464,7 @@ def _register_classifier(reg: RuntimeNodeRegistry) -> None:
                 F8DataPortSpec(
                     name="classifications",
                     description="Classification output in schema f8visionClassifications/1.",
-                    valueSchema=any_schema(),
+                    valueSchema=_classifications_payload_schema(),
                 ),
             ],
             editableStateFields=False,
@@ -443,7 +508,7 @@ def _register_detector(reg: RuntimeNodeRegistry) -> None:
                 F8DataPortSpec(
                     name="detections",
                     description="Detection output in schema f8visionDetections/1.",
-                    valueSchema=any_schema(),
+                    valueSchema=_detections_payload_schema(),
                 ),
             ],
             editableStateFields=False,
@@ -487,7 +552,7 @@ def _register_human_detector(reg: RuntimeNodeRegistry) -> None:
                 F8DataPortSpec(
                     name="detections",
                     description="Detection output in schema f8visionDetections/1.",
-                    valueSchema=any_schema(),
+                    valueSchema=_detections_payload_schema(),
                 ),
             ],
             editableStateFields=False,

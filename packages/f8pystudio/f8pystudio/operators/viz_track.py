@@ -7,14 +7,15 @@ from dataclasses import dataclass
 from typing import Any
 
 from f8pysdk import (
+    array_schema,
     F8DataPortSpec,
     F8OperatorSchemaVersion,
     F8OperatorSpec,
     F8RuntimeNode,
     F8StateAccess,
     F8StateSpec,
-    any_schema,
     boolean_schema,
+    complex_object_schema,
     integer_schema,
     number_schema,
     string_schema,
@@ -30,6 +31,57 @@ from ._viz_base import StudioVizRuntimeNodeBase, viz_sampling_state_fields
 
 OPERATOR_CLASS = "f8.viz.track"
 RENDERER_CLASS = "viz_track"
+
+
+def _track_keypoint_schema():
+    return complex_object_schema(
+        properties={
+            "x": number_schema(),
+            "y": number_schema(),
+            "score": number_schema(),
+        }
+    )
+
+
+def _track_item_schema():
+    return complex_object_schema(
+        properties={
+            "id": integer_schema(),
+            "bbox": array_schema(items=number_schema()),
+            "keypoints": array_schema(items=_track_keypoint_schema()),
+            "kind": string_schema(),
+            "skeletonProtocol": string_schema(),
+        }
+    )
+
+
+def _viz_track_input_schema():
+    return complex_object_schema(
+        properties={
+            "schemaVersion": string_schema(),
+            "tsMs": integer_schema(),
+            "width": integer_schema(),
+            "height": integer_schema(),
+            "skeletonProtocol": string_schema(),
+            "bbox": array_schema(items=number_schema()),
+            "keypoints": array_schema(items=_track_keypoint_schema()),
+            "tracks": array_schema(items=_track_item_schema()),
+            "detections": array_schema(items=_track_item_schema()),
+            "match": complex_object_schema(properties={"bbox": array_schema(items=number_schema())}),
+            "vectors": array_schema(
+                items=complex_object_schema(
+                    properties={
+                        "x": number_schema(),
+                        "y": number_schema(),
+                        "dx": number_schema(),
+                        "dy": number_schema(),
+                        "mag": number_schema(),
+                    }
+                )
+            ),
+            "shmName": string_schema(),
+        }
+    )
 
 
 @dataclass
@@ -575,7 +627,7 @@ def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNod
                 F8DataPortSpec(
                     name="detections",
                     description="Tracking/detection payload (f8.detecttracker or f8visionDetections/1).",
-                    valueSchema=any_schema(),
+                    valueSchema=_viz_track_input_schema(),
                 ),
             ],
             dataOutPorts=[],

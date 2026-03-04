@@ -7,14 +7,15 @@ from dataclasses import dataclass
 from typing import Any
 
 from f8pysdk import (
+    array_schema,
     F8DataPortSpec,
     F8OperatorSchemaVersion,
     F8OperatorSpec,
     F8RuntimeNode,
     F8StateAccess,
     F8StateSpec,
-    any_schema,
     boolean_schema,
+    complex_object_schema,
     integer_schema,
     number_schema,
     string_schema,
@@ -32,6 +33,32 @@ logger = logging.getLogger(__name__)
 
 OPERATOR_CLASS = "f8.viz.three_d"
 RENDERER_CLASS = "viz_three_d"
+
+
+def _viz_bone_schema():
+    return complex_object_schema(
+        properties={
+            "name": string_schema(),
+            "pos": array_schema(items=number_schema()),
+            "rot": array_schema(items=number_schema()),
+        }
+    )
+
+
+def _viz_skeleton_input_schema():
+    return complex_object_schema(
+        properties={
+            "type": string_schema(),
+            "schema": string_schema(),
+            "modelName": string_schema(),
+            "name": string_schema(),
+            "timestampMs": integer_schema(),
+            "frameId": integer_schema(),
+            "boneCount": integer_schema(),
+            "skeletonProtocol": string_schema(),
+            "bones": array_schema(items=_viz_bone_schema()),
+        }
+    )
 
 
 @dataclass(frozen=True)
@@ -545,7 +572,7 @@ def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNod
                 F8DataPortSpec(
                     name="skeletons",
                     description="List of skeleton payloads (or single skeleton dict).",
-                    valueSchema=any_schema(),
+                    valueSchema=_viz_skeleton_input_schema(),
                 ),
             ],
             dataOutPorts=[],
