@@ -55,6 +55,19 @@ theme:
 
 plugins:
   - search
+  - i18n:
+      docs_structure: folder
+      fallback_to_default: true
+      reconfigure_material: true
+      reconfigure_search: true
+      languages:
+        - locale: en
+          name: English
+          default: true
+          build: true
+        - locale: zh
+          name: Chinese (Simplified)
+          build: true
 
 markdown_extensions:
   - admonition
@@ -75,3 +88,13 @@ markdown_extensions:
 
 extra_javascript:
   - javascripts/mermaid.mjs
+  - javascripts/i18n-switcher.mjs
+
+extra:
+  alternate:
+    - name: English
+      lang: en
+      link: /
+    - name: Chinese (Simplified)
+      lang: zh
+      link: /zh/

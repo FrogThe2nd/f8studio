@@ -95,9 +95,10 @@ mediapipe = ">=0.10.32, <0.11"
 [feature.mediapipe.tasks]
 f8pymppose = "python -m f8pymppose.main_pose"
 
-[feature.doc.dependencies]
+[feature.doc.pypi-dependencies]
 zensical = ">=0.0.23,<0.1.0"
 pyyaml = ">=6.0.3,<7"
+mkdocs-static-i18n = ">=1.2.3,<2"
 
 [feature.doc.tasks]
 doc_gen = "python scripts/generate_service_docs.py"
@@ -135,6 +136,6 @@ dist_ci = "python scripts/dist_ci.py"
 default = { features = ["python", "sdk", "engine", "studio", "vision", "audio", "test"], solve-group = "default" }
 onnx = { features = ["python", "sdk", "onnx", "vision"], solve-group = "onnx" }
 mediapipe = { features = ["python", "sdk", "vision", "mediapipe"], solve-group = "mediapipe" }
-doc = { features = ["doc"] }
+doc = { features = ["python", "doc"] }
 cpp = { features = ["cpp"], solve-group = "cpp" }
 ci = { features = ["ci"], solve-group = "ci" }

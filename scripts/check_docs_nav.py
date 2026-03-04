@@ -8,6 +8,28 @@ from typing import Any
 import yaml
 
 
+class _MkdocsConfigLoader(yaml.SafeLoader):
+    """
+    Safe YAML loader that tolerates MkDocs python-name tags without importing modules.
+    """
+
+
+def _construct_python_name(
+    loader: _MkdocsConfigLoader,
+    suffix: str,
+    node: yaml.nodes.Node,
+) -> str:
+    _ = loader
+    _ = node
+    return f"python_name:{suffix}"
+
+
+_MkdocsConfigLoader.add_multi_constructor(
+    "tag:yaml.org,2002:python/name:",
+    _construct_python_name,
+)
+
+
 @dataclass(frozen=True)
 class NavTarget:
     title_path: tuple[str, ...]
@@ -25,7 +47,7 @@ def _load_config(config_path: Path) -> dict[str, Any]:
     if not config_path.exists():
         raise ValueError(f"config file does not exist: {config_path}")
 
-    raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    raw = yaml.load(config_path.read_text(encoding="utf-8"), Loader=_MkdocsConfigLoader)
     if not isinstance(raw, dict):
         raise ValueError(f"invalid config root type in {config_path}: expected mapping")
     return raw
