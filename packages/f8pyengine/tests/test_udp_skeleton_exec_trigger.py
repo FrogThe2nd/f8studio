@@ -213,7 +213,20 @@ class UdpSkeletonExecTriggerTests(unittest.IsolatedAsyncioTestCase):
             for frame_id in range(1, 41):
                 _send_udp_json(port=port, payload=_skeleton_payload(frame_id=frame_id))
 
-            await asyncio.sleep(2.0)
+            # Wait until call count settles, instead of sleeping a fixed long window.
+            end = asyncio.get_running_loop().time() + 2.0
+            last_calls = -1
+            stable_ticks = 0
+            while asyncio.get_running_loop().time() < end:
+                current = probe.calls
+                if current > 0 and current == last_calls:
+                    stable_ticks += 1
+                    if stable_ticks >= 5:
+                        break
+                else:
+                    stable_ticks = 0
+                    last_calls = current
+                await asyncio.sleep(0.02)
             self.assertGreater(probe.calls, 0)
             self.assertLess(probe.calls, 40)
         finally:

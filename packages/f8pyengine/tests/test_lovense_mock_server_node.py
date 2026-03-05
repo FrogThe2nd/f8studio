@@ -387,7 +387,20 @@ class LovenseMockServerExecTriggerTests(unittest.IsolatedAsyncioTestCase):
             probe_node = bus.get_node("probe_exec")
             self.assertIsInstance(probe_node, _ProbeExecRuntimeNode)
             assert isinstance(probe_node, _ProbeExecRuntimeNode)
-            await asyncio.sleep(1.2)
+            # Wait until call count settles, instead of sleeping a fixed long window.
+            end = asyncio.get_running_loop().time() + 1.2
+            last_calls = -1
+            stable_ticks = 0
+            while asyncio.get_running_loop().time() < end:
+                current = probe_node.calls
+                if current > 0 and current == last_calls:
+                    stable_ticks += 1
+                    if stable_ticks >= 5:
+                        break
+                else:
+                    stable_ticks = 0
+                    last_calls = current
+                await asyncio.sleep(0.02)
             self.assertGreater(probe_node.calls, 0)
             self.assertLess(probe_node.calls, 20)
             self.assertTrue(probe_node.exec_ids[-1].endswith(":20"))

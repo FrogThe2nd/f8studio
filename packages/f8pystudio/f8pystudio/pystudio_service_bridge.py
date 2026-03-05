@@ -31,8 +31,6 @@ from .bridge.runtime_graph_projection import (
 )
 from .bridge.rungraph_deploy_flow import RungraphDeployFlow, pick_compiled
 from .bridge.service_endpoint_client import (
-    decode_json_object,
-    message_data_bytes,
     request_service_status,
     request_service_terminate,
     request_set_remote_state,
@@ -204,15 +202,6 @@ class PyStudioServiceBridge(RuntimeSessionControllerMixin, ServiceLifecycleContr
             self._report_exception(context, exc)
             return False
 
-    @staticmethod
-    def _message_data_bytes(message: Any) -> bytes:
-        return message_data_bytes(message)
-
-    @staticmethod
-    def _decode_json_object(raw: bytes) -> dict[str, Any] | None:
-        return decode_json_object(raw)
-
-
     @property
     def studio_service_id(self) -> str:
         return ensure_token(self._cfg.studio_service_id, label="studio_service_id")
@@ -278,8 +267,6 @@ class PyStudioServiceBridge(RuntimeSessionControllerMixin, ServiceLifecycleContr
                 self._process_gateway.stop(StopServiceRequest(service_id=sid))
             except Exception as exc:
                 self._report_exception(f"stop service process failed serviceId={sid}", exc)
-
-
 
 
 

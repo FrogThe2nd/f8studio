@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from f8pysdk.msgspec_codec import dump_json
+from f8pysdk.service_bus.codec import decode_obj
 from typing import Any
 
 from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
@@ -100,11 +101,15 @@ class RuntimeSessionControllerMixin:
 
         if self._nc is not None and self._monitor_sub is None:
             async def _on_monitor_msg(msg: Any) -> None:
-                raw = self._message_data_bytes(msg)
+                try:
+                    raw = bytes(msg.data or b"")
+                except (AttributeError, TypeError, ValueError):
+                    return
                 if not raw:
                     return
-                envelope = self._decode_json_object(raw)
-                if envelope is None:
+                try:
+                    envelope = decode_obj(raw)
+                except ValueError:
                     return
                 value = envelope.get("value")
                 if not isinstance(value, dict):
@@ -194,4 +199,3 @@ class RuntimeSessionControllerMixin:
             return self._nc
         self._nc = await self._nats_connection_manager.connect(context="ensure nats connection failed")
         return self._nc
-

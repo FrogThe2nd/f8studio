@@ -69,7 +69,7 @@ class _F8ComboPopup(QtWidgets.QFrame):
 
     def __init__(self, parent_combo: "F8OptionCombo") -> None:
         super().__init__(
-            None,
+            parent_combo,
             QtCore.Qt.Popup | QtCore.Qt.FramelessWindowHint | QtCore.Qt.NoDropShadowWindowHint,
         )
         self._combo = parent_combo
