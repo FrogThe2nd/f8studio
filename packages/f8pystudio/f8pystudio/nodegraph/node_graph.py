@@ -8,6 +8,7 @@ from NodeGraphQt import NodeGraph
 
 from .graph_connection_rules import GraphConnectionRulesMixin
 from .graph_container_binding import GraphContainerBindingMixin
+from .graph_duplicate_actions import GraphDuplicateActionsMixin
 from .graph_factory_flow import GraphFactoryFlowMixin
 from .graph_identity_actions import GraphIdentityActionsMixin
 from .graph_insert_flow import GraphInsertFlowMixin, GraphInsertRequest, InsertResult
@@ -27,6 +28,7 @@ MISSING_OPERATOR_NODE_TYPE = "svc.f8.missing.operator"
 class F8StudioGraph(
     GraphVariantActionsMixin,
     GraphIdentityActionsMixin,
+    GraphDuplicateActionsMixin,
     GraphConnectionRulesMixin,
     GraphInsertFlowMixin,
     SessionLayoutCodecMixin,
@@ -61,6 +63,7 @@ class F8StudioGraph(
         self._tab_search_node_type_aliases: dict[str, str] = {}
         self._variant_menu_node_types: set[str] = set()
         self._identity_menu_node_types: set[str] = set()
+        self._duplicate_menu_node_types: set[str] = set()
 
         self.property_changed.connect(self._on_property_changed)  # type: ignore[attr-defined]
 
