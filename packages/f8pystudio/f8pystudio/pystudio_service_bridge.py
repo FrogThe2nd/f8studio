@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from f8pysdk.msgspec_codec import dump_json
 import asyncio
 import concurrent.futures
 import logging
@@ -227,7 +228,7 @@ class PyStudioServiceBridge(RuntimeSessionControllerMixin, ServiceLifecycleContr
         snapshot = self._monitor_center.latest_snapshot(service_id=str(service_id))
         if snapshot is None:
             return None
-        return snapshot.model_dump(mode="json", by_alias=True)
+        return dump_json(snapshot, mode="json", by_alias=True)
 
     def _collect_known_service_ids(self) -> list[str]:
         return collect_known_service_ids(

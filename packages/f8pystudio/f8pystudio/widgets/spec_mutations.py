@@ -1,13 +1,14 @@
 from __future__ import annotations
 
-from typing import Any, Iterable
+from f8pysdk.msgspec_codec import copy_model
+from typing import Any, Callable, Iterable
 
 from f8pysdk import F8Command, F8DataPortSpec, F8OperatorSpec, F8ServiceSpec, F8StateSpec
 
 
-def _mutate_or_copy(model: Any, *, mutate: callable, update: dict[str, Any] | None = None) -> Any:
+def _mutate_or_copy(model: Any, *, mutate: Callable[[Any], None], update: dict[str, Any] | None = None) -> Any:
     """
-    Apply mutation to a pydantic model instance.
+    Apply mutation to a msgspec struct instance.
 
     Some specs in the project appear mutable, others effectively behave as immutable.
     This helper writes in-place when possible, otherwise deep-copies and returns the copy.
@@ -18,10 +19,10 @@ def _mutate_or_copy(model: Any, *, mutate: callable, update: dict[str, Any] | No
     except (AttributeError, RuntimeError, TypeError, ValueError):
         try:
             if update is not None:
-                return model.model_copy(deep=True, update=update)
+                return copy_model(model, deep=True, update=update)
         except (AttributeError, RuntimeError, TypeError, ValueError):
             pass
-        m2 = model.model_copy(deep=True)
+        m2 = copy_model(model, deep=True)
         mutate(m2)
         return m2
 

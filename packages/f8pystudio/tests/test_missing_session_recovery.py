@@ -5,6 +5,7 @@ from typing import Any
 from unittest.mock import patch
 
 from NodeGraphQt import NodeGraph
+from f8pysdk.msgspec_codec import dump_json
 from f8pysdk.generated import (
     F8DataPortSpec,
     F8OperatorSchemaVersion,
@@ -31,12 +32,15 @@ def _new_graph_with_registry(registered_types: dict[str, Any]) -> F8StudioGraph:
 
 
 def _service_spec_payload(service_class: str) -> dict[str, Any]:
-    return F8ServiceSpec(
+    return dump_json(
+        F8ServiceSpec(
         schemaVersion=F8ServiceSchemaVersion.f8service_1,
         serviceClass=service_class,
         version="0.0.1",
         label="Service",
-    ).model_dump(mode="json")
+        ),
+        mode="json",
+    )
 
 
 def _operator_spec_payload(
@@ -48,17 +52,20 @@ def _operator_spec_payload(
     data_in: list[str] | None = None,
     data_out: list[str] | None = None,
 ) -> dict[str, Any]:
-    return F8OperatorSpec(
-        schemaVersion=F8OperatorSchemaVersion.f8operator_1,
-        serviceClass=service_class,
-        operatorClass=operator_class,
-        version="0.0.1",
-        label="Operator",
-        execInPorts=list(exec_in or []),
-        execOutPorts=list(exec_out or []),
-        dataInPorts=[F8DataPortSpec(name=n, valueSchema=any_schema()) for n in list(data_in or [])],
-        dataOutPorts=[F8DataPortSpec(name=n, valueSchema=any_schema()) for n in list(data_out or [])],
-    ).model_dump(mode="json")
+    return dump_json(
+        F8OperatorSpec(
+            schemaVersion=F8OperatorSchemaVersion.f8operator_1,
+            serviceClass=service_class,
+            operatorClass=operator_class,
+            version="0.0.1",
+            label="Operator",
+            execInPorts=list(exec_in or []),
+            execOutPorts=list(exec_out or []),
+            dataInPorts=[F8DataPortSpec(name=n, valueSchema=any_schema()) for n in list(data_in or [])],
+            dataOutPorts=[F8DataPortSpec(name=n, valueSchema=any_schema()) for n in list(data_out or [])],
+        ),
+        mode="json",
+    )
 
 
 def test_coerce_missing_session_nodes_recovers_unknown_type() -> None:

@@ -37,7 +37,9 @@ class _FakeRequester:
 
 
 def test_request_service_status_success() -> None:
-    requester = _FakeRequester([encode_obj({"ok": True, "result": {"active": False}})])
+    requester = _FakeRequester(
+        [encode_obj({"reqId": "r1", "ok": True, "result": {"serviceId": "svc_demo", "active": False}, "error": None})]
+    )
 
     result = asyncio.run(request_service_status(requester, service_id="svc_demo", timeout_s=0.4))
 
@@ -49,7 +51,7 @@ def test_request_set_service_active_retries_after_exception() -> None:
     requester = _FakeRequester(
         [
             RuntimeError("transient"),
-            encode_obj({"ok": True, "result": {}}),
+            encode_obj({"reqId": "r1", "ok": True, "result": {"active": True}, "error": None}),
         ]
     )
 
@@ -72,8 +74,10 @@ def test_request_set_service_active_retries_after_exception() -> None:
 def test_request_service_terminate_reject_stops_retry() -> None:
     requester = _FakeRequester(
         [
-            encode_obj({"ok": False, "error": {"message": "rejected"}}),
-            encode_obj({"ok": True, "result": {}}),
+            encode_obj(
+                {"reqId": "r1", "ok": False, "result": None, "error": {"code": "INTERNAL", "message": "rejected"}}
+            ),
+            encode_obj({"reqId": "r2", "ok": True, "result": {"terminating": True}, "error": None}),
         ]
     )
 
@@ -95,7 +99,14 @@ def test_request_service_terminate_reject_stops_retry() -> None:
 def test_request_set_remote_state_returns_reject_details() -> None:
     requester = _FakeRequester(
         [
-            encode_obj({"ok": False, "error": {"code": "bad_field", "message": "invalid field"}}),
+            encode_obj(
+                {
+                    "reqId": "r1",
+                    "ok": False,
+                    "result": None,
+                    "error": {"code": "INVALID_ARGS", "message": "invalid field"},
+                }
+            ),
         ]
     )
 
@@ -114,6 +125,6 @@ def test_request_set_remote_state_returns_reject_details() -> None:
 
     assert result.accepted is False
     assert result.rejected is True
-    assert result.reject_code == "bad_field"
+    assert result.reject_code == "INVALID_ARGS"
     assert result.reject_message == "invalid field"
     assert requester.calls[0][0] == svc_endpoint_subject("svc_demo", "set_state")

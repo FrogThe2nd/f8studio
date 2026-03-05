@@ -3,10 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+import msgspec
+from f8pysdk.generated import F8CommandInvokeReply, F8CommandInvokeRequest
 from f8pysdk.nats_naming import cmd_channel_subject, ensure_token, new_id
 
 from .json_codec import coerce_json_dict
-from .nats_request import OkEnvelope, RequestJsonInput, request_json
+from .nats_request import request_typed
 
 
 class CommandGateway(Protocol):
@@ -29,15 +31,6 @@ class CommandResponse:
     result: dict[str, Any]
     error_message: str
     payload: dict[str, Any]
-
-    @staticmethod
-    def from_envelope(envelope: OkEnvelope) -> "CommandResponse":
-        return CommandResponse(
-            ok=bool(envelope.ok),
-            result=dict(envelope.result),
-            error_message=str(envelope.error_message),
-            payload=dict(envelope.payload),
-        )
 
 
 @dataclass
@@ -66,25 +59,37 @@ class NatsCommandGateway:
             raise ValueError("call is empty")
 
         nc = await self.ensure_connected()
-        payload: dict[str, Any] = {
-            "reqId": new_id(),
-            "call": call_name,
-            "args": coerce_json_dict(req.args or {}),
-            "meta": {"actor": str(req.actor), "source": str(req.source)},
-        }
-        raw_payload = await request_json(
-            nc,
-            RequestJsonInput(
-                subject=cmd_channel_subject(sid),
-                payload=payload,
-                timeout_s=float(req.timeout_s),
-            ),
+        payload = F8CommandInvokeRequest(
+            reqId=new_id(),
+            call=call_name,
+            args=coerce_json_dict(req.args or {}),
+            meta={"actor": str(req.actor), "source": str(req.source)},
         )
-        result = raw_payload.get("result")
+        response_payload = await request_typed(
+            nc,
+            subject=cmd_channel_subject(sid),
+            payload=payload,
+            timeout_s=float(req.timeout_s),
+            response_type=F8CommandInvokeReply,
+        )
+        result = response_payload.result
         result_obj = result if isinstance(result, dict) else {"value": result}
-        err_obj = raw_payload.get("error")
-        err_message = str(err_obj.get("message") or "").strip() if isinstance(err_obj, dict) else ""
-        ok = bool(raw_payload.get("ok") is True)
+        err = response_payload.error
+        if err is None or isinstance(err, msgspec.UnsetType):
+            err_message = ""
+        else:
+            err_message = str(err.message or "").strip()
+        ok = bool(response_payload.ok)
         if ok:
             err_message = ""
-        return CommandResponse(ok=ok, result=result_obj, error_message=err_message, payload=raw_payload)
+        payload_obj: dict[str, Any] = {
+            "reqId": str(response_payload.reqId or ""),
+            "ok": ok,
+            "result": result,
+            "error": (
+                None
+                if err is None or isinstance(err, msgspec.UnsetType)
+                else {"code": err.code.value, "message": err.message, "details": err.details}
+            ),
+        }
+        return CommandResponse(ok=ok, result=result_obj, error_message=err_message, payload=payload_obj)

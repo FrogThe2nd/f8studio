@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from f8pysdk.msgspec_codec import copy_model
 from typing import Any
 
 from qtpy import QtCore, QtWidgets
@@ -85,10 +86,7 @@ def parse_schema_port_view_name(view_name: str) -> tuple[str, bool, str] | None:
 def schema_brief(value_schema: Any) -> str:
     if value_schema is None:
         return "unknown"
-    try:
-        schema_obj = value_schema.root
-    except (AttributeError, RuntimeError, TypeError, ValueError, KeyError, ImportError, OSError):
-        schema_obj = value_schema
+    schema_obj = value_schema
     try:
         top = str(schema_type(value_schema) or "").strip().lower()
     except (AttributeError, RuntimeError, TypeError, ValueError, KeyError, ImportError, OSError):
@@ -262,12 +260,12 @@ def open_data_port_schema_dialog(node_item: Any, *, is_in: bool, port_name: str)
     ports = list(spec.dataInPorts or []) if bool(is_in) else list(spec.dataOutPorts or [])
     if int(index) < 0 or int(index) >= len(ports):
         return
-    updated = ports[int(index)].model_copy(update={"valueSchema": new_schema})
+    updated = copy_model(ports[int(index)], update={"valueSchema": new_schema})
     ports[int(index)] = updated
     if bool(is_in):
-        updated_spec = spec.model_copy(update={"dataInPorts": ports})
+        updated_spec = copy_model(spec, update={"dataInPorts": ports})
     else:
-        updated_spec = spec.model_copy(update={"dataOutPorts": ports})
+        updated_spec = copy_model(spec, update={"dataOutPorts": ports})
     node.set_spec(updated_spec, rebuild=True)
 
 
@@ -297,9 +295,9 @@ def open_state_field_schema_dialog(node_item: Any, *, field_name: str) -> None:
     fields = list(spec.stateFields or [])
     if int(index) < 0 or int(index) >= len(fields):
         return
-    updated = fields[int(index)].model_copy(update={"valueSchema": new_schema})
+    updated = copy_model(fields[int(index)], update={"valueSchema": new_schema})
     fields[int(index)] = updated
-    updated_spec = spec.model_copy(update={"stateFields": fields})
+    updated_spec = copy_model(spec, update={"stateFields": fields})
     node.set_spec(updated_spec, rebuild=True)
 
 
@@ -353,9 +351,9 @@ def open_data_port_editor_dialog(node_item: Any, *, is_in: bool, port_name: str)
         return
     ports[int(index)] = new_port
     if bool(is_in):
-        updated_spec = spec.model_copy(update={"dataInPorts": ports})
+        updated_spec = copy_model(spec, update={"dataInPorts": ports})
     else:
-        updated_spec = spec.model_copy(update={"dataOutPorts": ports})
+        updated_spec = copy_model(spec, update={"dataOutPorts": ports})
     node.set_spec(updated_spec, rebuild=True)
 
 

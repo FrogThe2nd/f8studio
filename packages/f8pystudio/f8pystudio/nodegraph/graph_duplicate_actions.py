@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from f8pysdk.msgspec_codec import dump_json
 import copy
 import logging
 from typing import Any
@@ -80,7 +81,7 @@ class GraphDuplicateActionsMixin:
 
         if isinstance(source_spec, (F8OperatorSpec, F8ServiceSpec)):
             try:
-                target.set_spec(source_spec.model_dump(mode="json"), rebuild=True)  # type: ignore[attr-defined]
+                target.set_spec(dump_json(source_spec, mode="json"), rebuild=True)  # type: ignore[attr-defined]
             except (AttributeError, RuntimeError, TypeError, ValueError):
                 logger.exception("Failed to copy spec for duplicate node: type=%s", str(source.type_ or ""))
 

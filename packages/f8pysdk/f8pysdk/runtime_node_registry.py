@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from f8pysdk.msgspec_codec import copy_model
 import importlib
 from collections.abc import Callable
 from typing import Any, ClassVar
@@ -110,8 +111,8 @@ class RuntimeNodeRegistry:
         service = self._service_specs.get(service_class)
         if service is None:
             raise ServiceNotRegistered(service_class)
-        service = service.model_copy(deep=True)
-        operators = [op.model_copy(deep=True) for op in list((self._operator_specs.get(service_class) or {}).values())]
+        service = copy_model(service, deep=True)
+        operators = [copy_model(op, deep=True) for op in list((self._operator_specs.get(service_class) or {}).values())]
         self._inject_builtin_state_fields(service, operators)
         return F8ServiceDescribe(service=service, operators=operators)
 

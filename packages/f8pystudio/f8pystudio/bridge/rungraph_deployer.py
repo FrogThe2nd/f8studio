@@ -3,13 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
+import msgspec
 from f8pysdk import F8RuntimeGraph
+from f8pysdk.generated import F8SetRungraphArgs, F8SetRungraphReply, F8SetRungraphRequest
 from f8pysdk.nats_naming import kv_bucket_for_service, new_id, svc_endpoint_subject
 from f8pysdk.nats_transport import NatsTransport, NatsTransportConfig
 from f8pysdk.service_ready import wait_service_ready
-from f8pysdk.service_bus.codec import decode_obj, encode_obj
-
-from .nats_request import parse_ok_envelope
+from f8pysdk.service_bus.codec import decode_as, encode_obj
 
 
 class RungraphGateway(Protocol):
@@ -48,17 +48,11 @@ class NatsRungraphGateway:
         await transport.connect()
         try:
             await wait_service_ready(transport, timeout_s=float(self.config.ready_timeout_s))
-            payload = req.graph.model_dump(mode="json", by_alias=True)
-            meta = dict(payload.get("meta") or {})
-            if not str(meta.get("source") or "").strip():
-                meta["source"] = str(req.source or "studio")
-            payload["meta"] = meta
-
-            request_payload = {
-                "reqId": new_id(),
-                "args": {"graph": payload},
-                "meta": {"source": str(req.source or "studio")},
-            }
+            request_payload = F8SetRungraphRequest(
+                reqId=new_id(),
+                args=F8SetRungraphArgs(graph=req.graph),
+                meta={"source": str(req.source or "studio")},
+            )
             request_bytes = encode_obj(request_payload)
             response_bytes = await transport.request(
                 svc_endpoint_subject(service_id, "set_rungraph"),
@@ -69,14 +63,17 @@ class NatsRungraphGateway:
             if not response_bytes:
                 return RungraphDeployResult(service_id=service_id, success=False, error_message="empty response")
             try:
-                response_payload = decode_obj(response_bytes)
+                response_payload = decode_as(response_bytes, F8SetRungraphReply)
             except ValueError:
                 return RungraphDeployResult(service_id=service_id, success=False, error_message="invalid response")
-            parsed = parse_ok_envelope(response_payload)
+            if response_payload.error is None or isinstance(response_payload.error, msgspec.UnsetType):
+                error_message = ""
+            else:
+                error_message = str(response_payload.error.message or "")
             return RungraphDeployResult(
                 service_id=service_id,
-                success=bool(parsed.ok),
-                error_message=str(parsed.error_message),
+                success=bool(response_payload.ok),
+                error_message=("" if response_payload.ok else error_message),
             )
         finally:
             await transport.close()

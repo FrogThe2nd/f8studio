@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from f8pysdk.msgspec_codec import dump_json
 from copy import deepcopy
 
 from f8pysdk.generated import F8DataPortSpec, F8ServiceSpec
@@ -19,7 +20,7 @@ def _service_spec_payload(
         dataInPorts=[F8DataPortSpec(name=name, valueSchema=number_schema()) for name in list(data_in or [])],
         dataOutPorts=[F8DataPortSpec(name=name, valueSchema=any_schema()) for name in list(data_out or [])],
     )
-    return spec.model_dump(mode="json")
+    return dump_json(spec, mode="json")
 
 
 def test_strip_port_restore_data_removes_port_restore_keys() -> None:

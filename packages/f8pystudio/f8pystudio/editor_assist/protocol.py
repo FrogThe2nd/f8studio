@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from f8pysdk.msgspec_codec import dump_json
 import keyword
 import logging
 from typing import Any, Literal
+
+import msgspec
 
 from f8pysdk import F8OperatorSpec, F8ServiceSpec
 
@@ -67,12 +70,12 @@ def _field_editor_assist_payload(
             if ui_language and ui_language != language:
                 return None, f"state:{key} uiLanguage={ui_language!r} does not match requested language={language!r}"
             payload_obj = getattr(field, "editorAssist", None)
-            if payload_obj is None:
+            if payload_obj is None or isinstance(payload_obj, msgspec.UnsetType):
                 return None, f"field-level editorAssist missing for state:{key}"
             if isinstance(payload_obj, dict):
                 return dict(payload_obj), None
             try:
-                dumped = payload_obj.model_dump(mode="json")
+                dumped = dump_json(payload_obj, mode="json")
             except (AttributeError, TypeError, ValueError):
                 return None, f"state:{key} editorAssist must be an object"
             if not isinstance(dumped, dict):
@@ -118,7 +121,7 @@ def _spec_data_in_ports(spec: F8ServiceSpec | F8OperatorSpec) -> tuple[EditorAss
         schema_obj = getattr(port, "valueSchema", None)
         if schema_obj is not None:
             try:
-                dumped = schema_obj.model_dump(mode="json")
+                dumped = dump_json(schema_obj, mode="json")
                 if isinstance(dumped, dict):
                     value_schema = dumped
             except (AttributeError, TypeError, ValueError):
@@ -145,7 +148,7 @@ def _spec_readable_state_fields(spec: F8ServiceSpec | F8OperatorSpec) -> tuple[E
         schema_obj = getattr(field, "valueSchema", None)
         if schema_obj is not None:
             try:
-                dumped = schema_obj.model_dump(mode="json")
+                dumped = dump_json(schema_obj, mode="json")
                 if isinstance(dumped, dict):
                     value_schema = dumped
             except (AttributeError, TypeError, ValueError):

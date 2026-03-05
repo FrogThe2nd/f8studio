@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from f8pysdk.msgspec_codec import copy_model, dump_json, validate_as
 import json
 import logging
 from pathlib import Path
@@ -88,7 +89,7 @@ def load_library() -> F8NodeVariantLibraryFile:
         return F8NodeVariantLibraryFile()
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-        return F8NodeVariantLibraryFile.model_validate(data)
+        return validate_as(F8NodeVariantLibraryFile, data)
     except Exception:
         logger.exception("Failed to load variants library from %s", path)
         return F8NodeVariantLibraryFile()
@@ -98,7 +99,7 @@ def save_library(file_model: F8NodeVariantLibraryFile) -> None:
     path = variants_file_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
-    payload = file_model.model_dump(mode="json")
+    payload = dump_json(file_model, mode="json")
     tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
     tmp.replace(path)
 
@@ -171,7 +172,7 @@ def import_from_json(path: str, mode: Literal["merge", "replace"] = "merge") -> 
     if not in_path.is_file():
         raise FileNotFoundError(f"Variants file not found: {in_path}")
     raw = json.loads(in_path.read_text(encoding="utf-8"))
-    imported = F8NodeVariantLibraryFile.model_validate(raw)
+    imported = validate_as(F8NodeVariantLibraryFile, raw)
 
     if mode == "replace":
         current = F8NodeVariantLibraryFile(schemaVersion=imported.schemaVersion, variants=[])
@@ -196,7 +197,7 @@ def import_from_json(path: str, mode: Literal["merge", "replace"] = "merge") -> 
                 variant.name,
                 unique_name,
             )
-            target_variants.append(variant.model_copy(update={"name": unique_name}))
+            target_variants.append(copy_model(variant, update={"name": unique_name}))
         else:
             target_variants.append(variant)
 
@@ -215,7 +216,7 @@ def export_to_json(path: str) -> Path:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     lib = load_library()
     out_path.write_text(
-        json.dumps(lib.model_dump(mode="json"), ensure_ascii=False, indent=2, default=str),
+        json.dumps(dump_json(lib, mode="json"), ensure_ascii=False, indent=2, default=str),
         encoding="utf-8",
     )
     return out_path

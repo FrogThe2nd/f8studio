@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from f8pysdk.msgspec_codec import copy_model, dump_json
 import json
 import logging
 import time
@@ -166,23 +167,16 @@ def _to_jsonable(value: Any) -> Any:
             return _to_jsonable(value.value)
         except AttributeError:
             pass
-    # Pydantic models (BaseModel / RootModel).
+    # msgspec structs.
     try:
-        dump = value.model_dump(mode="json")
+        dump = dump_json(value, mode="json")
     except Exception:
         try:
-            dump = value.model_dump()
+            dump = dump_json(value, )
         except Exception:
             dump = None
     if dump is not None:
         return _to_jsonable(dump)
-    # RootModel inner `.root`.
-    try:
-        root = value.root
-    except Exception:
-        root = None
-    if root is not None:
-        return _to_jsonable(root)
     return str(value)
 
 
@@ -195,7 +189,8 @@ def _schema_to_json_obj(schema: Any) -> Any:
         return list(schema)
     if isinstance(schema, (str, int, float, bool)) or schema is None:
         return schema
-    if isinstance(schema, F8DataTypeSchema):
+    schema_type = _schema_type(schema)
+    if schema_type in {"string", "number", "integer", "boolean", "null", "object", "array", "any"}:
         try:
             return _schema_to_json_obj_strict(schema)
         except Exception:
@@ -212,23 +207,18 @@ def _schema_to_json_obj(schema: Any) -> Any:
             logger.exception("strict schema_to_json_obj failed after coercion")
             return None
     try:
-        return schema.model_dump(mode="json")
+        return dump_json(schema, mode="json")
     except (AttributeError, TypeError, ValueError):
         pass
-    try:
-        root = schema.root
-    except Exception:
-        root = None
-    if root is not None:
-        try:
-            return root.model_dump(mode="json")
-        except Exception:
-            return root
     return str(schema)
 
 
 def _schema_from_json_obj(obj: Any) -> F8DataTypeSchema:
-    if isinstance(obj, F8DataTypeSchema):
+    try:
+        schema_kind = _schema_type(obj)
+    except Exception:
+        schema_kind = ""
+    if schema_kind in {"string", "number", "integer", "boolean", "null", "object", "array", "any"}:
         return obj
     return _schema_from_json_obj_strict(obj)
 
@@ -795,7 +785,7 @@ class _F8EditDataPortDialog(QtWidgets.QDialog):
         desc = str(self._desc.toPlainText() or "").strip() or None
         port = F8DataPortSpec(name=name, required=required, description=desc, valueSchema=self._schema)
         try:
-            return port.model_copy(update={"showOnNode": bool(show_on_node)})
+            return copy_model(port, update={"showOnNode": bool(show_on_node)})
         except Exception:
             return port
 
@@ -1181,7 +1171,7 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
         if not isinstance(port, F8DataPortSpec):
             port = F8DataPortSpec(name=name, required=True, valueSchema=_schema_from_json_obj({"type": "any"}))
         else:
-            port = port.model_copy(deep=True)
+            port = copy_model(port, deep=True)
             port.name = name
         row.setProperty("_port", port)
         row.setToolTip(self._data_tooltip(port))
@@ -1779,13 +1769,10 @@ class _F8SpecCommandEditor(QtWidgets.QWidget):
             t = _schema_type(schema) if schema is not None else ""
             enum_items = _schema_enum_items(schema) if schema is not None else []
             lo, hi = _schema_numeric_range(schema) if schema is not None else (None, None)
-            if isinstance(schema, F8DataTypeSchema):
+            if t in {"string", "number", "integer", "boolean", "null", "object", "array", "any"}:
                 default_value = schema_default(schema)
             else:
-                try:
-                    default_value = schema.root.default
-                except Exception:
-                    default_value = None
+                default_value = None
 
             label = f"{pname} *" if required else pname
             tooltip = str(p.description or "").strip()
@@ -2369,7 +2356,7 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
         base = _find_base_state_field(spec, name=name) if spec is not None else None
         if base is None:
             base = F8StateSpec(name=name, valueSchema=_schema_from_json_obj({"type": "any"}), access=F8StateAccess.rw)
-        edited = base.model_copy(deep=True)
+        edited = copy_model(base, deep=True)
         edited.showOnNode = bool(show_on_node)
         self._apply_state_field_ui_override(name, edited)
 

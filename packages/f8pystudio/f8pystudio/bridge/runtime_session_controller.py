@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from f8pysdk.msgspec_codec import dump_json
 from typing import Any
 
 from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
@@ -124,7 +125,7 @@ class RuntimeSessionControllerMixin:
                         UiCommand(
                             node_id=str(snapshot.serviceId),
                             command="monitor.update",
-                            payload=snapshot.model_dump(mode="json", by_alias=True),
+                            payload=dump_json(snapshot, mode="json", by_alias=True),
                             ts_ms=int(snapshot.tsMs),
                         )
                     )

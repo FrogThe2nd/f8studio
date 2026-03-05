@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from f8pysdk.msgspec_codec import dump_json
 import os
 import sys
 import unittest
@@ -56,7 +57,7 @@ class MonitorCollectorTests(unittest.IsolatedAsyncioTestCase):
         collector.record_error(code="X_ERR", message="boom", ts_ms=ts)
 
         snapshot = collector._build_snapshot(ts_ms=ts)
-        payload = snapshot.model_dump(mode="json", by_alias=True)
+        payload = dump_json(snapshot, mode="json", by_alias=True)
         self.assertEqual(payload.get("schemaVersion"), "f8monitor/1")
         self.assertEqual(str(snapshot.serviceId), "svcA")
         self.assertTrue(bool(snapshot.ready))

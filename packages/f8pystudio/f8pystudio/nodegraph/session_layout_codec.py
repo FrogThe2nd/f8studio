@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from f8pysdk.msgspec_codec import copy_model, dump_json, validate_as
 import json
 import logging
 import os
@@ -65,8 +66,8 @@ class SessionLayoutCodecMixin:
             if isinstance(v, dict):
                 try:
                     if "operatorClass" in v:
-                        return F8OperatorSpec.model_validate(v)
-                    return F8ServiceSpec.model_validate(v)
+                        return validate_as(F8OperatorSpec, v)
+                    return validate_as(F8ServiceSpec, v)
                 except Exception:
                     return None
             return None
@@ -103,7 +104,7 @@ class SessionLayoutCodecMixin:
                         continue
                     patch = {k: ov.get(k) for k in allowed_keys if k in ov}
                     try:
-                        patched.append(f.model_copy(update=patch))
+                        patched.append(copy_model(f, update=patch))
                     except Exception:
                         patched.append(f)
                 state_fields = patched
@@ -205,8 +206,8 @@ class SessionLayoutCodecMixin:
             if isinstance(v, dict):
                 try:
                     if "operatorClass" in v:
-                        return F8OperatorSpec.model_validate(v)
-                    return F8ServiceSpec.model_validate(v)
+                        return validate_as(F8OperatorSpec, v)
+                    return validate_as(F8ServiceSpec, v)
                 except Exception:
                     return None
             return None
@@ -295,7 +296,7 @@ class SessionLayoutCodecMixin:
                     )
                     continue
 
-            merged = template_spec.model_dump(mode="json")
+            merged = dump_json(template_spec, mode="json")
 
             def _maybe_override_bool(key: str) -> None:
                 if key in session_spec_raw:
@@ -334,7 +335,7 @@ class SessionLayoutCodecMixin:
                 _maybe_override_list("dataInPorts", bool(merged.get("editableDataInPorts", False)))
                 _maybe_override_list("dataOutPorts", bool(merged.get("editableDataOutPorts", False)))
                 try:
-                    node_data["f8_spec"] = F8OperatorSpec.model_validate(merged).model_dump(mode="json")
+                    node_data["f8_spec"] = dump_json(validate_as(F8OperatorSpec, merged), mode="json")
                 except Exception as e:
                     errors.append(f"nodeId={node_id}: failed to merge operator spec: {e}")
             else:
@@ -355,7 +356,7 @@ class SessionLayoutCodecMixin:
                 _maybe_override_list("dataInPorts", bool(merged.get("editableDataInPorts", False)))
                 _maybe_override_list("dataOutPorts", bool(merged.get("editableDataOutPorts", False)))
                 try:
-                    node_data["f8_spec"] = F8ServiceSpec.model_validate(merged).model_dump(mode="json")
+                    node_data["f8_spec"] = dump_json(validate_as(F8ServiceSpec, merged), mode="json")
                 except Exception as e:
                     errors.append(f"nodeId={node_id}: failed to merge service spec: {e}")
 
@@ -389,7 +390,7 @@ class SessionLayoutCodecMixin:
         if isinstance(spec_obj, dict):
             return spec_obj
         if isinstance(spec_obj, (F8OperatorSpec, F8ServiceSpec)):
-            return spec_obj.model_dump(mode="json")
+            return dump_json(spec_obj, mode="json")
         return None
 
     @staticmethod

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from f8pysdk.msgspec_codec import dump_json, validate_as
 from typing import Any
 
 from .generated import F8ComplexObjectTypeSchema, F8DataPortSpec, F8DataTypeSchema
@@ -69,13 +70,13 @@ def monitor_snapshot_value_schema() -> F8DataTypeSchema:
             "lastTsMs": integer_schema(default=0, minimum=0),
         }
     )
-    cpu_schema = F8DataTypeSchema(root=cpu)
-    memory_schema = F8DataTypeSchema(root=memory)
-    gpu_schema = F8DataTypeSchema(root=gpu)
-    frame_schema = F8DataTypeSchema(root=frame)
-    timing_schema = F8DataTypeSchema(root=timing)
-    queue_schema = F8DataTypeSchema(root=queue)
-    error_schema = F8DataTypeSchema(root=error)
+    cpu_schema = cpu
+    memory_schema = memory
+    gpu_schema = gpu
+    frame_schema = frame
+    timing_schema = timing
+    queue_schema = queue
+    error_schema = error
 
     root = complex_object_schema(
         properties={
@@ -98,8 +99,8 @@ def monitor_snapshot_value_schema() -> F8DataTypeSchema:
         }
     )
     if isinstance(root, F8ComplexObjectTypeSchema):
-        return F8DataTypeSchema(root=root)
-    return F8DataTypeSchema(root=root)
+        return root
+    return root
 
 
 def monitor_snapshot_data_port() -> F8DataPortSpec:
@@ -113,25 +114,25 @@ def monitor_snapshot_data_port() -> F8DataPortSpec:
 
 
 def monitor_snapshot_schema_dict() -> dict[str, object]:
-    return monitor_snapshot_value_schema().model_dump(mode="json", by_alias=True)
+    return dump_json(monitor_snapshot_value_schema(), mode="json", by_alias=True)
 
 
 def validate_monitor_snapshot_payload(payload: dict[str, Any] | F8MonitorSnapshot) -> F8MonitorSnapshot:
     if isinstance(payload, F8MonitorSnapshot):
-        data = payload.model_dump(mode="json", by_alias=True)
-        return F8MonitorSnapshot.model_validate(data)
+        data = dump_json(payload, mode="json", by_alias=True)
+        return validate_as(F8MonitorSnapshot, data)
     if not isinstance(payload, dict):
         raise MonitorContractError("monitor snapshot payload must be dict or F8MonitorSnapshot")
-    return F8MonitorSnapshot.model_validate(payload)
+    return validate_as(F8MonitorSnapshot, payload)
 
 
 def validate_monitor_report_payload(payload: dict[str, Any] | F8MonitorReport) -> F8MonitorReport:
     if isinstance(payload, F8MonitorReport):
-        data = payload.model_dump(mode="json", by_alias=True)
-        return F8MonitorReport.model_validate(data)
+        data = dump_json(payload, mode="json", by_alias=True)
+        return validate_as(F8MonitorReport, data)
     if not isinstance(payload, dict):
         raise MonitorContractError("monitor report payload must be dict or F8MonitorReport")
-    return F8MonitorReport.model_validate(payload)
+    return validate_as(F8MonitorReport, payload)
 
 
 def validate_describe_monitor_contract(
@@ -172,7 +173,11 @@ def validate_describe_monitor_contract(
     if not isinstance(monitor_schema_obj, dict):
         raise MonitorContractError("`monitor` dataOutPort must contain object valueSchema")
     try:
-        parsed_schema = F8DataTypeSchema.model_validate(monitor_schema_obj).model_dump(mode="json", by_alias=True)
+        parsed_schema = dump_json(
+            validate_as(F8DataTypeSchema, monitor_schema_obj),
+            mode="json",
+            by_alias=True,
+        )
     except Exception as exc:
         raise MonitorContractError(f"`monitor` valueSchema is invalid: {type(exc).__name__}: {exc}") from exc
 

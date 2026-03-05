@@ -1,3 +1,4 @@
+from f8pysdk.msgspec_codec import validate_as
 import os
 import sys
 import unittest
@@ -15,7 +16,7 @@ class F8CommandRequiredFieldTests(unittest.TestCase):
         self.assertFalse(cmd.required)
 
     def test_required_parses_when_provided(self) -> None:
-        cmd = F8Command.model_validate({"name": "ping", "required": True, "params": []})
+        cmd = validate_as(F8Command, {"name": "ping", "required": True, "params": []})
         self.assertTrue(cmd.required)
 
 

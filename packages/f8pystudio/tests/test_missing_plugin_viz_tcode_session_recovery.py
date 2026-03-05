@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from f8pysdk.generated import F8OperatorSchemaVersion, F8OperatorSpec
+from f8pysdk.msgspec_codec import dump_json
 from f8pystudio.nodegraph.node_graph import F8StudioGraph
 
 
@@ -23,14 +24,17 @@ def test_missing_plugin_viz_tcode_is_coerced_to_missing_operator_node() -> None:
         "nodes": {
             "n1": {
                 "type_": "f8.pystudio.f8.viz.tcode",
-                "f8_spec": F8OperatorSpec(
-                    schemaVersion=F8OperatorSchemaVersion.f8operator_1,
-                    serviceClass="f8.pystudio",
-                    operatorClass="f8.viz.tcode",
-                    version="0.0.1",
-                    label="TCodeViz",
-                    rendererClass="viz_tcode",
-                ).model_dump(mode="json"),
+                "f8_spec": dump_json(
+                    F8OperatorSpec(
+                        schemaVersion=F8OperatorSchemaVersion.f8operator_1,
+                        serviceClass="f8.pystudio",
+                        operatorClass="f8.viz.tcode",
+                        version="0.0.1",
+                        label="TCodeViz",
+                        rendererClass="viz_tcode",
+                    ),
+                    mode="json",
+                ),
             }
         }
     }

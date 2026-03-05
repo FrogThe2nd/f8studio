@@ -30,7 +30,7 @@ class F8StudioVizOperatorNodeItem(F8StudioOperatorNodeItem):
     @staticmethod
     def _state_field_name_if_visible(state_field) -> str | None:
         """
-        Best-effort, explicit access for both dict-style and pydantic/dataclass specs.
+        Best-effort, explicit access for both dict-style and typed specs.
         """
         if isinstance(state_field, dict):
             if not bool(state_field.get("showOnNode") or False):

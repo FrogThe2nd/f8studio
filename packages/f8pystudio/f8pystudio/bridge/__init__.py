@@ -9,7 +9,6 @@ from .nats_lifecycle import (
     ensure_nats_server_owned_pid,
     stop_owned_nats_server,
 )
-from .nats_request import OkEnvelope, RequestJsonInput, parse_ok_envelope, request_json
 from .process_lifecycle import (
     LocalServiceProcessGateway,
     ServiceProcessGateway,
@@ -44,7 +43,6 @@ from .studio_runtime_flow import (
 )
 from .service_endpoint_client import (
     SetStateRequestResult,
-    decode_json_object,
     message_data_bytes,
     request_service_status,
     request_service_terminate,
@@ -64,9 +62,7 @@ __all__ = [
     "NatsConnectionManager",
     "NatsRungraphGateway",
     "NatsSingletonGuardResult",
-    "OkEnvelope",
     "ApplyWatchTargetsRequest",
-    "RequestJsonInput",
     "RemoteStateGateway",
     "RemoteStateGatewayAdapter",
     "RungraphDeployConfig",
@@ -87,18 +83,15 @@ __all__ = [
     "build_local_state_field_index",
     "build_remote_watch_targets",
     "build_studio_runtime_graph",
-    "decode_json_object",
     "coerce_json_dict",
     "coerce_json_value",
     "collect_managed_service_inventory",
     "dedupe_fields",
     "message_data_bytes",
-    "parse_ok_envelope",
     "request_service_status",
     "request_service_terminate",
     "request_set_remote_state",
     "request_set_service_active",
-    "request_json",
     "wait_for_studio_runtime_ready",
     "install_studio_runtime_graph",
     "apply_remote_state_watches_if_changed",

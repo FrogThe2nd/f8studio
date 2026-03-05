@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from f8pysdk.msgspec_codec import dump_json
 from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
 from f8pysdk.service_runtime_tools.catalog import ServiceCatalog
 from f8pysdk.service_runtime_tools.discovery import (
@@ -42,7 +43,7 @@ class PyStudioProgram:
         registry = register_pystudio_specs()
         manifests = self._load_plugin_manifests()
         self._apply_plugin_manifests_to_runtime_registry(manifests, registry=registry)
-        return RuntimeNodeRegistry.instance().describe(SERVICE_CLASS).model_dump(mode="json")
+        return dump_json(RuntimeNodeRegistry.instance().describe(SERVICE_CLASS), mode="json")
 
     @staticmethod
     def _inject_builtin_pystudio_specs(catalog: ServiceCatalog) -> str | None:

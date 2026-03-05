@@ -1,14 +1,22 @@
 from __future__ import annotations
 
+import enum
+import logging
 import time
 import uuid
 from typing import Any
 
+import msgspec
 from f8pysdk import F8Edge, F8EdgeKindEnum, F8EdgeStrategyEnum, F8RuntimeGraph, F8RuntimeNode, F8StateAccess
-from f8pysdk.nats_naming import ensure_token, kv_bucket_for_service, kv_key_rungraph, new_id, svc_endpoint_subject, svc_micro_name
+from f8pysdk.generated import F8SetRungraphArgs, F8SetRungraphReply, F8SetRungraphRequest
+from f8pysdk.msgspec_codec import dump_json
+from f8pysdk.nats_naming import ensure_token, kv_bucket_for_service, new_id, svc_endpoint_subject
 from f8pysdk.nats_transport import NatsTransport, NatsTransportConfig
 from f8pysdk.service_ready import wait_service_ready
-from f8pysdk.service_bus.codec import decode_obj, encode_obj
+from f8pysdk.service_bus.codec import decode_as, encode_obj
+
+
+log = logging.getLogger(__name__)
 
 
 def _now_rev() -> str:
@@ -35,6 +43,37 @@ def _raw_port_name(name: str) -> str:
         if n.endswith(suffix):
             n = n[: -len(suffix)]
     return n.strip()
+
+
+def _coerce_state_payload_value(value: Any) -> tuple[bool, Any]:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return True, value
+    if isinstance(value, (list, tuple)):
+        out: list[Any] = []
+        for item in value:
+            ok, normalized = _coerce_state_payload_value(item)
+            if not ok:
+                return False, None
+            out.append(normalized)
+        return True, out
+    if isinstance(value, dict):
+        out_obj: dict[str, Any] = {}
+        for key, item in value.items():
+            ok, normalized = _coerce_state_payload_value(item)
+            if not ok:
+                return False, None
+            out_obj[str(key)] = normalized
+        return True, out_obj
+    if isinstance(value, enum.Enum):
+        return _coerce_state_payload_value(value.value)
+    try:
+        dumped = dump_json(value, mode="json")
+    except (AttributeError, TypeError, ValueError):
+        return False, None
+    if dumped is value:
+        return False, None
+    return _coerce_state_payload_value(dumped)
+
 
 def _port_name(port: Any) -> str:
     """
@@ -128,9 +167,15 @@ def export_runtime_graph(
             if f.access == F8StateAccess.ro:
                 continue
             try:
-                state_values[name] = n.get_property(name)
+                raw_value = n.get_property(name)
             except (AttributeError, KeyError, RuntimeError, TypeError):
                 pass
+            else:
+                ok, normalized = _coerce_state_payload_value(raw_value)
+                if ok:
+                    state_values[name] = normalized
+                else:
+                    log.warning("skip non-serializable state value: %s.%s", node_id, name)
 
         nodes.append(
             F8RuntimeNode(
@@ -207,16 +252,17 @@ def export_runtime_graph(
 async def deploy_to_service(*, service_id: str, nats_url: str, graph: F8RuntimeGraph) -> None:
     service_id = ensure_token(service_id, label="service_id")
     bucket = kv_bucket_for_service(service_id)
-    key = kv_key_rungraph()
 
     tr = NatsTransport(NatsTransportConfig(url=str(nats_url).strip(), kv_bucket=bucket))
     await tr.connect()
     try:
         await wait_service_ready(tr, timeout_s=6.0)
-        graph_payload = graph.model_dump(mode="json", by_alias=True)
-        payload = encode_obj(graph_payload)
         # Endpoint-only mode: deploy via service endpoint (allows validation/rejection).
-        req = {"reqId": new_id(), "args": {"graph": graph_payload}, "meta": {"source": "deploy"}}
+        req = F8SetRungraphRequest(
+            reqId=new_id(),
+            args=F8SetRungraphArgs(graph=graph),
+            meta={"source": "deploy"},
+        )
         req_bytes = encode_obj(req)
         resp_raw = await tr.request(
             svc_endpoint_subject(service_id, "set_rungraph"),
@@ -227,17 +273,16 @@ async def deploy_to_service(*, service_id: str, nats_url: str, graph: F8RuntimeG
         if not resp_raw:
             raise RuntimeError("set_rungraph request failed: empty response")
         try:
-            resp = decode_obj(resp_raw)
-        except ValueError:
-            resp = {}
-        if isinstance(resp, dict) and resp.get("ok") is True:
+            resp = decode_as(resp_raw, F8SetRungraphReply)
+        except ValueError as exc:
+            raise RuntimeError(f"invalid set_rungraph response: {exc}") from exc
+        if resp.ok:
             return
-        if isinstance(resp, dict) and resp.get("ok") is False:
-            msg = ""
-            try:
-                msg = str((resp.get("error") or {}).get("message") or "")
-            except (AttributeError, RuntimeError, TypeError, ValueError):
+        if not resp.ok:
+            if resp.error is None or isinstance(resp.error, msgspec.UnsetType):
                 msg = ""
+            else:
+                msg = str(resp.error.message or "")
             raise RuntimeError(msg or "set_rungraph rejected")
         raise RuntimeError("invalid set_rungraph response")
     finally:

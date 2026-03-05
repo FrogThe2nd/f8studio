@@ -1,3 +1,4 @@
+from f8pysdk.msgspec_codec import copy_model
 import asyncio
 import os
 import sys
@@ -214,7 +215,7 @@ class ExecFlowMultiEntrypointTests(unittest.IsolatedAsyncioTestCase):
         t2 = asyncio.create_task(executor.trigger_exec("src", "exec", exec_id="e2"))
         await asyncio.sleep(0)
 
-        graph_v2 = graph_v1.model_copy(update={"revision": "r2"})
+        graph_v2 = copy_model(graph_v1, update={"revision": "r2"})
         await executor.apply_rungraph(graph_v2)
         sink.release.set()
 

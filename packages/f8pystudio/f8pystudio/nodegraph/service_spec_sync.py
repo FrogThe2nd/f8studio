@@ -112,13 +112,9 @@ def state_widget_for_schema(value_schema: Any) -> tuple[int, list[str] | None, t
 
     enum_items: list[Any] = []
     try:
-        root = value_schema.root
-        enum_items = list(root.enum or [])
+        enum_items = list(value_schema.enum or [])
     except (AttributeError, RuntimeError, TypeError, ValueError, KeyError, ImportError, OSError):
-        try:
-            enum_items = list(value_schema.enum or [])
-        except (AttributeError, RuntimeError, TypeError, ValueError, KeyError, ImportError, OSError):
-            enum_items = []
+        enum_items = []
     if enum_items:
         return NodePropWidgetEnum.QCOMBO_BOX.value, [str(item) for item in enum_items], None
 

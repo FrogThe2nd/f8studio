@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from f8pysdk.msgspec_codec import dump_json
 import json
 import logging
 from typing import Any, Iterable
@@ -567,13 +568,13 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
             show_warning(self, "Compile failed", str(exc))
             return
 
-        payload = compiled.global_graph.model_dump(mode="json", by_alias=True)
+        payload = dump_json(compiled.global_graph, mode="json", by_alias=True)
         print("\n=== F8Studio RuntimeGraph (global) ===")
         print(json.dumps(payload, ensure_ascii=False, indent=2, default=str))
 
         print("\n=== F8Studio RuntimeGraph (per-service) ===")
         for sid, g in compiled.per_service.items():
-            p = g.model_dump(mode="json", by_alias=True)
+            p = dump_json(g, mode="json", by_alias=True)
             print(f"\n--- serviceId={sid} ---")
             print(json.dumps(p, ensure_ascii=False, indent=2, default=str))
 

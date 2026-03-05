@@ -1,29 +1,41 @@
 from __future__ import annotations
 
-from enum import Enum
-
 from .generated import (
-    F8DataTypeSchema,
-    F8PrimitiveTypeEnum,
-    F8PrimitiveTypeSchema,
-    F8ArrayTypeSchema,
-    F8ArrayTypeKind,
     F8AnyTypeSchema,
-    F8AnyTypeKind,
+    F8ArrayTypeSchema,
+    F8BooleanTypeSchema,
     F8ComplexObjectTypeSchema,
-    F8ComplexTypeKind,
+    F8DataTypeSchema,
+    F8IntegerTypeSchema,
+    F8NullTypeSchema,
+    F8NumberTypeSchema,
+    F8StringTypeSchema,
 )
 
+
 def schema_type(schema: F8DataTypeSchema) -> str:
-    inner = schema.root
-    value = inner.type
-    if isinstance(value, Enum):
-        return str(value.value)
-    return str(value)
+    if isinstance(schema, F8StringTypeSchema):
+        return "string"
+    if isinstance(schema, F8NumberTypeSchema):
+        return "number"
+    if isinstance(schema, F8IntegerTypeSchema):
+        return "integer"
+    if isinstance(schema, F8BooleanTypeSchema):
+        return "boolean"
+    if isinstance(schema, F8NullTypeSchema):
+        return "null"
+    if isinstance(schema, F8ComplexObjectTypeSchema):
+        return "object"
+    if isinstance(schema, F8ArrayTypeSchema):
+        return "array"
+    if isinstance(schema, F8AnyTypeSchema):
+        return "any"
+    raise TypeError(f"unsupported schema type: {type(schema).__name__}")
 
 
-def schema_default(schema: F8DataTypeSchema) -> any:
-    return schema.root.default
+def schema_default(schema: F8DataTypeSchema) -> object:
+    default_value = schema.default
+    return None if default_value is None else default_value
 
 
 def number_schema(
@@ -31,17 +43,24 @@ def number_schema(
     default: float | None = None,
     minimum: float | None = None,
     maximum: float | None = None,
-) -> F8PrimitiveTypeSchema:
-    return F8PrimitiveTypeSchema(
-        type=F8PrimitiveTypeEnum.number,
-        default=default,
-        minimum=minimum,
-        maximum=maximum,
-    )
+) -> F8NumberTypeSchema:
+    kwargs: dict[str, object] = {}
+    if default is not None:
+        kwargs["default"] = default
+    if minimum is not None:
+        kwargs["minimum"] = minimum
+    if maximum is not None:
+        kwargs["maximum"] = maximum
+    return F8NumberTypeSchema(**kwargs)
 
 
-def string_schema(*, default: str | None = None, enum: list[str] | None = None) -> F8PrimitiveTypeSchema:
-    return F8PrimitiveTypeSchema(type=F8PrimitiveTypeEnum.string, default=default, enum=enum)
+def string_schema(*, default: str | None = None, enum: list[str] | None = None) -> F8StringTypeSchema:
+    kwargs: dict[str, object] = {}
+    if default is not None:
+        kwargs["default"] = default
+    if enum is not None:
+        kwargs["enum"] = enum
+    return F8StringTypeSchema(**kwargs)
 
 
 def integer_schema(
@@ -49,40 +68,37 @@ def integer_schema(
     default: int | None = None,
     minimum: int | None = None,
     maximum: int | None = None,
-) -> F8PrimitiveTypeSchema:
-    return F8PrimitiveTypeSchema(
-        type=F8PrimitiveTypeEnum.integer,
-        default=default,
-        minimum=minimum,
-        maximum=maximum,
-    )
+) -> F8IntegerTypeSchema:
+    kwargs: dict[str, object] = {}
+    if default is not None:
+        kwargs["default"] = default
+    if minimum is not None:
+        kwargs["minimum"] = minimum
+    if maximum is not None:
+        kwargs["maximum"] = maximum
+    return F8IntegerTypeSchema(**kwargs)
 
 
-def boolean_schema(*, default: bool | None = None) -> F8PrimitiveTypeSchema:
-    return F8PrimitiveTypeSchema(type=F8PrimitiveTypeEnum.boolean, default=default)
+def boolean_schema(*, default: bool | None = None) -> F8BooleanTypeSchema:
+    kwargs: dict[str, object] = {}
+    if default is not None:
+        kwargs["default"] = default
+    return F8BooleanTypeSchema(**kwargs)
 
 
 def array_schema(
     *,
     items: F8DataTypeSchema,
 ) -> F8ArrayTypeSchema:
-    return F8ArrayTypeSchema(
-        type=F8ArrayTypeKind.array,
-        items=items,
-    )
+    return F8ArrayTypeSchema(items=items)
 
 
 def any_schema() -> F8AnyTypeSchema:
-    return F8AnyTypeSchema(
-        type=F8AnyTypeKind.any,
-    )
+    return F8AnyTypeSchema()
 
 
 def complex_object_schema(
     *,
     properties: dict[str, F8DataTypeSchema],
 ) -> F8ComplexObjectTypeSchema:
-    return F8ComplexObjectTypeSchema(
-        type=F8ComplexTypeKind.object,
-        properties=properties,
-    )
+    return F8ComplexObjectTypeSchema(properties=properties)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from f8pysdk.msgspec_codec import dump_json
 import json
 import subprocess
 import sys
@@ -42,7 +43,7 @@ def test_schema_round_trip_supports_all_schema_kinds() -> None:
         schema = schema_from_json_obj(obj)
         out = schema_to_json_obj(schema)
         reparsed = schema_from_json_obj(out)
-        assert reparsed.model_dump(mode="json") == schema.model_dump(mode="json")
+        assert dump_json(reparsed, mode="json") == dump_json(schema, mode="json")
 
 
 def test_schema_round_trip_preserves_nested_object_array_object() -> None:
@@ -161,7 +162,7 @@ def test_schema_builder_read_only_disables_edits_and_preserves_schema() -> None:
     assert dlg._json_edit.isReadOnly() is True
     assert dlg._tree.isEnabled() is True
     assert dlg._form_host.isEnabled() is False
-    assert dlg.schema().model_dump(mode="json") == base.model_dump(mode="json")
+    assert dump_json(dlg.schema(), mode="json") == dump_json(base, mode="json")
 
 
 def test_schema_builder_type_switch_does_not_crash() -> None:

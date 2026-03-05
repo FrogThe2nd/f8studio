@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from f8pysdk.msgspec_codec import dump_json
 import os
 import sys
 
@@ -47,7 +48,7 @@ def test_monitor_center_build_report() -> None:
     center.update_service_status(service_id="svcB", active=False)
 
     report = center.build_report()
-    payload = report.model_dump(mode="json", by_alias=True)
+    payload = dump_json(report, mode="json", by_alias=True)
     assert payload["schemaVersion"] == "f8monitorReport/1"
     assert len(payload["services"]) == 2
     assert payload["hotspots"]["cpuTop"][0]["serviceId"] == "svcA"
@@ -62,7 +63,7 @@ def test_monitor_center_prunes_old_samples() -> None:
     center.ingest_snapshot(_snapshot(service_id="svcA", ts_ms=base_ts - 300, cpu=1.0, wait_p95=1.0, error_count=0))
     center.ingest_snapshot(_snapshot(service_id="svcA", ts_ms=base_ts - 20, cpu=2.0, wait_p95=2.0, error_count=0))
     report = center.build_report()
-    services = report.model_dump(mode="json", by_alias=True)["services"]
+    services = dump_json(report, mode="json", by_alias=True)["services"]
     assert services
     latest = services[0]["latest"]
     assert latest["tsMs"] >= base_ts - 20

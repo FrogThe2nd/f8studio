@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from f8pysdk.msgspec_codec import dump_json, validate_as
 import json
 import logging
 from typing import Any
@@ -74,14 +75,14 @@ def _decode_path(raw: Any) -> tuple[str, ...]:
 
 
 def schema_to_json_obj(schema: F8DataTypeSchema) -> dict[str, Any]:
-    obj = schema.model_dump(mode="json", by_alias=True, exclude_none=True)
+    obj = dump_json(schema, mode="json", by_alias=True, exclude_none=True)
     if isinstance(obj, dict):
         return obj
     raise ValueError("schema must serialize to a JSON object")
 
 
 def schema_from_json_obj(obj: Any) -> F8DataTypeSchema:
-    return F8DataTypeSchema.model_validate(obj)
+    return validate_as(F8DataTypeSchema, obj)
 
 
 def validate_schema_json_unknown_keys(obj: Any) -> list[str]:

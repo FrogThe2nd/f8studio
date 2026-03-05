@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from f8pysdk.msgspec_codec import dump_json
 from collections import defaultdict
 from typing import Any
 
@@ -136,7 +137,7 @@ class _F8StudioNodesTreeWidget(NodesTreeWidget):
         if schema_obj is None:
             return "{}"
         try:
-            payload = schema_obj.model_dump(mode="json", by_alias=True)
+            payload = dump_json(schema_obj, mode="json", by_alias=True)
         except Exception:
             payload = schema_obj
         try:
@@ -267,7 +268,7 @@ class _F8StudioNodesTreeWidget(NodesTreeWidget):
         else:
             overview.setMarkdown(self._render_service_doc(spec))
 
-        raw.setPlainText(json.dumps(spec.model_dump(mode="json", by_alias=True), ensure_ascii=False, indent=2, default=str))
+        raw.setPlainText(json.dumps(dump_json(spec, mode="json", by_alias=True), ensure_ascii=False, indent=2, default=str))
 
         tabs.addTab(overview, "Overview")
         tabs.addTab(raw, "Raw JSON")

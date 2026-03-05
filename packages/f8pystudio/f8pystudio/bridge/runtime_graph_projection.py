@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Callable
 
-from f8pysdk import F8RuntimeGraph
+from f8pysdk import F8RuntimeGraph, F8RuntimeGraphMeta
 from f8pysdk.nats_naming import ensure_token
 
 from ..nodegraph.runtime_compiler import CompiledRuntimeGraphs
@@ -48,7 +48,7 @@ def build_studio_runtime_graph(compiled: CompiledRuntimeGraphs, *, studio_servic
     return F8RuntimeGraph(
         graphId=graph_id,
         revision=revision,
-        meta={"source": "studio"},
+        meta=F8RuntimeGraphMeta(source="studio"),
         services=[],
         nodes=[*base_nodes],
         edges=[*base_edges],

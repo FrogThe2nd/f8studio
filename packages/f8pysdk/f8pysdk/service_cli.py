@@ -10,6 +10,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, replace
 from typing import Any
 
+from .msgspec_codec import dump_json
 from .runtime_node_registry import RuntimeNodeRegistry
 from .monitor_schema import validate_describe_monitor_contract
 from .service_runtime import ServiceRuntime, ServiceRuntimeConfig
@@ -158,7 +159,7 @@ class ServiceCliTemplate(ABC):
     def describe_json(self) -> dict[str, Any]:
         registry = self.build_registry()
         self.register_specs(registry)
-        payload = registry.describe(self.service_class).model_dump(mode="json")
+        payload = dump_json(registry.describe(self.service_class), mode="json")
         validate_describe_monitor_contract(payload)
         return payload
 

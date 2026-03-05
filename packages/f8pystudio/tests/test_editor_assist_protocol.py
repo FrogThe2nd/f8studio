@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from f8pysdk.msgspec_codec import validate_as
 from f8pysdk import F8OperatorSchemaVersion, F8OperatorSpec
 
 from f8pystudio.editor_assist.protocol import editor_assist_context_for_field
@@ -45,7 +46,7 @@ def _operator_spec_with_field_editor_assist(
     }
     if with_top_level and editor_assist is not None:
         base["editorAssist"] = editor_assist
-    return F8OperatorSpec.model_validate(base)
+    return validate_as(F8OperatorSpec, base)
 
 
 def test_editor_assist_context_for_field_accepts_valid_python_payload() -> None:
@@ -179,7 +180,9 @@ def test_invalid_dynamic_inputs_source_is_rejected_by_schema() -> None:
     try:
         _ = _operator_spec_with_field_editor_assist(with_top_level)
     except Exception as exc:
-        assert "data_in_ports" in str(exc)
+        message = str(exc)
+        assert "state_fields" in message
+        assert "dynamic_bindings.inputs.source" in message
     else:
         raise AssertionError("invalid dynamic input source must fail schema validation")
 
@@ -197,7 +200,9 @@ def test_invalid_dynamic_states_source_is_rejected_by_schema() -> None:
     try:
         _ = _operator_spec_with_field_editor_assist(payload)
     except Exception as exc:
-        assert "state_fields" in str(exc)
+        message = str(exc)
+        assert "data_in_ports" in message
+        assert "dynamic_bindings.states.source" in message
     else:
         raise AssertionError("invalid dynamic states source must fail schema validation")
 

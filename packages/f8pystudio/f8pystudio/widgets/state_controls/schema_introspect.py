@@ -4,6 +4,16 @@ import enum
 from typing import Any
 
 from f8pysdk import F8StateAccess
+from f8pysdk.generated import (
+    F8AnyTypeSchema,
+    F8ArrayTypeSchema,
+    F8BooleanTypeSchema,
+    F8ComplexObjectTypeSchema,
+    F8IntegerTypeSchema,
+    F8NullTypeSchema,
+    F8NumberTypeSchema,
+    F8StringTypeSchema,
+)
 
 
 def effective_state_fields(node: Any) -> list[Any]:
@@ -12,6 +22,7 @@ def effective_state_fields(node: Any) -> list[Any]:
     except AttributeError:
         fields = []
     return list(fields or [])
+
 
 def state_field_schema(node: Any, prop_name: str) -> Any | None:
     prop = str(prop_name or "").strip()
@@ -90,28 +101,36 @@ def state_field_ui_language(node: Any, prop_name: str) -> str:
 def schema_type_any(schema: Any) -> str:
     if schema is None:
         return ""
-    try:
-        inner = schema.root
-    except AttributeError:
-        inner = schema
-    try:
-        raw_type = inner.type
-    except AttributeError:
-        raw_type = None
-    if isinstance(raw_type, enum.Enum):
-        return str(raw_type.value)
-    return str(raw_type or "")
+    if isinstance(schema, dict):
+        raw = schema.get("type")
+        if isinstance(raw, enum.Enum):
+            return str(raw.value)
+        return str(raw or "")
+    inner = schema
+    if isinstance(inner, F8StringTypeSchema):
+        return "string"
+    if isinstance(inner, F8NumberTypeSchema):
+        return "number"
+    if isinstance(inner, F8IntegerTypeSchema):
+        return "integer"
+    if isinstance(inner, F8BooleanTypeSchema):
+        return "boolean"
+    if isinstance(inner, F8NullTypeSchema):
+        return "null"
+    if isinstance(inner, F8ComplexObjectTypeSchema):
+        return "object"
+    if isinstance(inner, F8ArrayTypeSchema):
+        return "array"
+    if isinstance(inner, F8AnyTypeSchema):
+        return "any"
+    return ""
 
 
 def schema_enum_items(schema: Any) -> list[str]:
     if schema is None:
         return []
     try:
-        root = schema.root
-    except AttributeError:
-        return []
-    try:
-        values = list(root.enum or [])
+        values = list(schema.enum or [])
     except AttributeError:
         return []
     return [str(item) for item in values]
@@ -155,28 +174,6 @@ def schema_numeric_range(schema: Any) -> tuple[float | None, float | None]:
         _append_max(schema.exclusiveMaximum)
     except AttributeError:
         _append_max(None)
-
-    try:
-        root = schema.root
-    except AttributeError:
-        root = None
-    if root is not None:
-        try:
-            _append_min(root.minimum)
-        except AttributeError:
-            _append_min(None)
-        try:
-            _append_min(root.exclusiveMinimum)
-        except AttributeError:
-            _append_min(None)
-        try:
-            _append_max(root.maximum)
-        except AttributeError:
-            _append_max(None)
-        try:
-            _append_max(root.exclusiveMaximum)
-        except AttributeError:
-            _append_max(None)
 
     lo = min(mins) if mins else None
     hi = max(maxs) if maxs else None

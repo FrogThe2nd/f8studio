@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from f8pysdk.msgspec_codec import dump_json, validate_as
 import asyncio
 import os
 import threading
@@ -404,12 +405,12 @@ class MonitorCollector:
             queue=F8MonitorQueue(depth=self._queue_depth()),
             error=error,
         )
-        return F8MonitorSnapshot.model_validate(snapshot.model_dump(mode="json", by_alias=True))
+        return validate_as(F8MonitorSnapshot, dump_json(snapshot, mode="json", by_alias=True))
 
     async def _publish_snapshot(self, snapshot: F8MonitorSnapshot) -> None:
         ts_value = int(snapshot.tsMs)
         payload = {
-            "value": snapshot.model_dump(mode="json", by_alias=True),
+            "value": dump_json(snapshot, mode="json", by_alias=True),
             "ts": ts_value,
         }
         subject = data_subject(

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from f8pysdk.msgspec_codec import dump_json, validate_as
 from collections import deque
 from dataclasses import dataclass
 from typing import Any
@@ -29,7 +30,7 @@ class MonitorCenter:
         self._overrides: dict[str, _ServiceOverrides] = {}
 
     def ingest_snapshot(self, payload: dict[str, Any]) -> F8MonitorSnapshot:
-        snapshot = F8MonitorSnapshot.model_validate(payload)
+        snapshot = validate_as(F8MonitorSnapshot, payload)
         service_id = str(snapshot.serviceId)
         series = self._by_service.get(service_id)
         if series is None:
@@ -128,7 +129,7 @@ class MonitorCenter:
         )
 
     def export_report_json(self) -> dict[str, Any]:
-        return self.build_report().model_dump(mode="json", by_alias=True)
+        return dump_json(self.build_report(), mode="json", by_alias=True)
 
     def latest_snapshot(self, *, service_id: str) -> F8MonitorSnapshot | None:
         sid = str(service_id or "").strip()

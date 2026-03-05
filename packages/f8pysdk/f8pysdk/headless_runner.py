@@ -9,6 +9,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+import msgspec
+
 logger = logging.getLogger(__name__)
 PYSTUDIO_SERVICE_CLASS = "f8.pystudio"
 
@@ -30,7 +32,8 @@ def _load_injector(ref: str) -> Callable[[Any], str | None]:
 
 
 async def _deploy_runtime_graph(*, nats_url: str, service_id: str, graph: Any) -> None:
-    from f8pysdk.service_bus.codec import decode_obj, encode_obj
+    from f8pysdk.generated import F8SetRungraphArgs, F8SetRungraphReply, F8SetRungraphRequest
+    from f8pysdk.service_bus.codec import decode_as, encode_obj
     from f8pysdk.nats_naming import kv_bucket_for_service, new_id, svc_endpoint_subject
     from f8pysdk.nats_transport import NatsTransport, NatsTransportConfig
     from f8pysdk.service_ready import wait_service_ready
@@ -40,12 +43,11 @@ async def _deploy_runtime_graph(*, nats_url: str, service_id: str, graph: Any) -
     await transport.connect()
     try:
         await wait_service_ready(transport, timeout_s=6.0)
-        graph_payload = graph.model_dump(mode="json", by_alias=True)
-        request_payload = {
-            "reqId": new_id(),
-            "args": {"graph": graph_payload},
-            "meta": {"source": "headless"},
-        }
+        request_payload = F8SetRungraphRequest(
+            reqId=new_id(),
+            args=F8SetRungraphArgs(graph=graph),
+            meta={"source": "headless"},
+        )
         request_bytes = encode_obj(request_payload)
         response_bytes = await transport.request(
             svc_endpoint_subject(service_id, "set_rungraph"),
@@ -55,17 +57,15 @@ async def _deploy_runtime_graph(*, nats_url: str, service_id: str, graph: Any) -
         )
         if not response_bytes:
             raise RuntimeError(f"set_rungraph failed for serviceId={service_id}: empty response")
-        response_payload = decode_obj(response_bytes)
-        if not isinstance(response_payload, dict):
-            raise RuntimeError(f"set_rungraph failed for serviceId={service_id}: invalid response")
-        if response_payload.get("ok") is True:
+        response_payload = decode_as(response_bytes, F8SetRungraphReply)
+        if response_payload.ok:
             return
-        if response_payload.get("ok") is False:
-            error = response_payload.get("error")
-            if isinstance(error, dict):
-                message = str(error.get("message") or "")
-            else:
+        if not response_payload.ok:
+            error = response_payload.error
+            if error is None or isinstance(error, msgspec.UnsetType):
                 message = ""
+            else:
+                message = str(error.message or "")
             raise RuntimeError(message or f"set_rungraph rejected for serviceId={service_id}")
         raise RuntimeError(f"set_rungraph failed for serviceId={service_id}: malformed envelope")
     finally:

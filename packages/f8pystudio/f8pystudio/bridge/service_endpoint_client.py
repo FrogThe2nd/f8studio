@@ -4,8 +4,23 @@ import asyncio
 from dataclasses import dataclass
 from typing import Any
 
+import msgspec
+from f8pysdk.generated import (
+    F8ActivateRequest,
+    F8ActiveReply,
+    F8CommandError,
+    F8DeactivateRequest,
+    F8EmptyArgs,
+    F8SetStateArgs,
+    F8SetStateReply,
+    F8SetStateRequest,
+    F8StatusReply,
+    F8StatusRequest,
+    F8TerminateReply,
+    F8TerminateRequest,
+)
 from f8pysdk.nats_naming import ensure_token, new_id, svc_endpoint_subject
-from f8pysdk.service_bus.codec import decode_obj, encode_obj
+from f8pysdk.service_bus.codec import decode_as, encode_obj
 
 from .nats_request import NatsRequester
 
@@ -29,14 +44,16 @@ def message_data_bytes(message: Any) -> bytes:
         return b""
 
 
-def decode_json_object(raw: bytes) -> dict[str, Any] | None:
-    if not raw:
-        return None
-    try:
-        decoded = decode_obj(raw)
-    except ValueError:
-        return None
-    return decoded
+def _error_message(error: F8CommandError | None | msgspec.UnsetType) -> str:
+    if error is None or isinstance(error, msgspec.UnsetType):
+        return ""
+    return str(error.message or "")
+
+
+def _error_code(error: F8CommandError | None | msgspec.UnsetType) -> str:
+    if error is None or isinstance(error, msgspec.UnsetType):
+        return ""
+    return str(error.code.value)
 
 
 async def request_service_status(
@@ -46,7 +63,13 @@ async def request_service_status(
     timeout_s: float = 0.4,
 ) -> dict[str, Any] | None:
     sid = ensure_token(str(service_id), label="service_id")
-    payload = encode_obj({"reqId": new_id(), "args": {}, "meta": {"actor": "studio", "cmd": "status"}})
+    payload = encode_obj(
+        F8StatusRequest(
+            reqId=new_id(),
+            args=F8EmptyArgs(),
+            meta={"actor": "studio", "cmd": "status"},
+        )
+    )
     try:
         message = await requester.request(svc_endpoint_subject(sid, "status"), payload, timeout=float(timeout_s))
     except Exception:
@@ -54,17 +77,17 @@ async def request_service_status(
     raw = message_data_bytes(message)
     if not raw:
         return None
-    response = decode_json_object(raw)
-    if response is None:
+    try:
+        response = decode_as(raw, F8StatusReply)
+    except ValueError:
         return None
-    if not (isinstance(response, dict) and response.get("ok") is True):
+    if not response.ok:
         return None
-    result = response.get("result") if isinstance(response.get("result"), dict) else {}
-    if not isinstance(result, dict):
+    result = response.result
+    if result is None or isinstance(result, msgspec.UnsetType):
         return None
     output: dict[str, Any] = {"alive": True}
-    if "active" in result:
-        output["active"] = bool(result.get("active"))
+    output["active"] = bool(result.active)
     return output
 
 
@@ -79,16 +102,21 @@ async def request_set_service_active(
 ) -> bool:
     sid = ensure_token(str(service_id), label="service_id")
     cmd = "activate" if bool(active) else "deactivate"
-    payload = encode_obj(
-        {"reqId": new_id(), "args": {"active": bool(active)}, "meta": {"actor": "studio", "cmd": cmd}}
-    )
+    if cmd == "activate":
+        payload = encode_obj(
+            F8ActivateRequest(reqId=new_id(), args=F8EmptyArgs(), meta={"actor": "studio", "cmd": cmd})
+        )
+    else:
+        payload = encode_obj(
+            F8DeactivateRequest(reqId=new_id(), args=F8EmptyArgs(), meta={"actor": "studio", "cmd": cmd})
+        )
     for _ in range(max(int(attempts), 1)):
         try:
             message = await requester.request(svc_endpoint_subject(sid, cmd), payload, timeout=float(timeout_s))
             data = message_data_bytes(message)
             if data:
-                response = decode_json_object(data) or {}
-                if isinstance(response, dict) and response.get("ok") is True:
+                response = decode_as(data, F8ActiveReply)
+                if response.ok:
                     return True
         except Exception:
             await asyncio.sleep(float(retry_sleep_s))
@@ -106,15 +134,21 @@ async def request_service_terminate(
 ) -> bool:
     sid = ensure_token(str(service_id), label="service_id")
     subject = svc_endpoint_subject(sid, "terminate")
-    payload = encode_obj({"reqId": new_id(), "args": {}, "meta": {"actor": "studio", "cmd": "terminate"}})
+    payload = encode_obj(
+        F8TerminateRequest(
+            reqId=new_id(),
+            args=F8EmptyArgs(),
+            meta={"actor": "studio", "cmd": "terminate"},
+        )
+    )
     for _ in range(max(int(attempts), 1)):
         try:
             message = await requester.request(subject, payload, timeout=float(timeout_s))
             raw = message_data_bytes(message)
             if not raw:
                 continue
-            response = decode_json_object(raw) or {}
-            if isinstance(response, dict) and response.get("ok") is True:
+            response = decode_as(raw, F8TerminateReply)
+            if response.ok:
                 return True
             return False
         except Exception:
@@ -145,11 +179,11 @@ async def request_set_remote_state(
             reject_message="",
         )
     payload = encode_obj(
-        {
-            "reqId": new_id(),
-            "args": {"nodeId": nid, "field": state_field, "value": value},
-            "meta": {"actor": "studio", "source": "ui"},
-        }
+        F8SetStateRequest(
+            reqId=new_id(),
+            args=F8SetStateArgs(nodeId=nid, field=state_field, value=value),
+            meta={"actor": "studio", "source": "ui"},
+        )
     )
     subject = svc_endpoint_subject(sid, "set_state")
     for _ in range(max(int(attempts), 1)):
@@ -158,21 +192,21 @@ async def request_set_remote_state(
             raw = message_data_bytes(message)
             if not raw:
                 continue
-            response = decode_json_object(raw) or {}
-            if isinstance(response, dict) and response.get("ok") is True:
+            response = decode_as(raw, F8SetStateReply)
+            if response.ok:
                 return SetStateRequestResult(
                     accepted=True,
                     rejected=False,
                     reject_code="",
                     reject_message="",
                 )
-            if isinstance(response, dict) and response.get("ok") is False:
-                error = response.get("error") if isinstance(response.get("error"), dict) else {}
+            if not response.ok:
+                error = response.error
                 return SetStateRequestResult(
                     accepted=False,
                     rejected=True,
-                    reject_code=str(error.get("code") or ""),
-                    reject_message=str(error.get("message") or ""),
+                    reject_code=_error_code(error),
+                    reject_message=_error_message(error),
                 )
         except Exception:
             await asyncio.sleep(float(retry_sleep_s))

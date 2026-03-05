@@ -6,6 +6,7 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
+from f8pysdk.msgspec_codec import dump_json
 from f8pysdk.generated import (  # noqa: E402
     F8OperatorSchemaVersion,
     F8OperatorSpec,
@@ -51,23 +52,26 @@ class SessionCompilerTests(unittest.TestCase):
             "nodes": {
                 "svc1": {
                     "id": "svc1",
-                    "f8_spec": self._service_spec("f8.pyengine").model_dump(mode="json"),
+                    "f8_spec": dump_json(self._service_spec("f8.pyengine"), mode="json"),
                 },
                 "op1": {
                     "id": "op1",
-                    "f8_spec": self._operator_spec("f8.pyengine", "f8.pyengine.op").model_dump(mode="json"),
+                    "f8_spec": dump_json(self._operator_spec("f8.pyengine", "f8.pyengine.op"), mode="json"),
                     "custom": {"svcId": "svc1"},
                 },
                 "studio_op": {
                     "id": "studio_op",
-                    "f8_spec": F8OperatorSpec(
-                        schemaVersion=F8OperatorSchemaVersion.f8operator_1,
-                        serviceClass="f8.pystudio",
-                        operatorClass="f8.pystudio.viz",
-                        version="0.0.1",
-                        label="Studio Viz",
-                        execInPorts=["in"],
-                    ).model_dump(mode="json"),
+                    "f8_spec": dump_json(
+                        F8OperatorSpec(
+                            schemaVersion=F8OperatorSchemaVersion.f8operator_1,
+                            serviceClass="f8.pystudio",
+                            operatorClass="f8.pystudio.viz",
+                            version="0.0.1",
+                            label="Studio Viz",
+                            execInPorts=["in"],
+                        ),
+                        mode="json",
+                    ),
                     "custom": {"svcId": "studio"},
                 },
             },
@@ -75,7 +79,6 @@ class SessionCompilerTests(unittest.TestCase):
                 {"out": ["op1", "next[E]"], "in": ["studio_op", "[E]in"]},
             ],
         }
-
         compiled = compile_runtime_graphs_from_session_layout(layout=layout, catalog=self.catalog)
         service_classes = {str(s.serviceClass) for s in compiled.global_graph.services}
         operator_classes = {str(n.operatorClass or "") for n in compiled.global_graph.nodes}
@@ -88,7 +91,7 @@ class SessionCompilerTests(unittest.TestCase):
             "nodes": {
                 "svc_unknown": {
                     "id": "svc_unknown",
-                    "f8_spec": self._service_spec("f8.unknown", label="Unknown").model_dump(mode="json"),
+                    "f8_spec": dump_json(self._service_spec("f8.unknown", label="Unknown"), mode="json"),
                 }
             },
             "connections": [],
@@ -101,17 +104,20 @@ class SessionCompilerTests(unittest.TestCase):
             "nodes": {
                 "svc1": {
                     "id": "svc1",
-                    "f8_spec": self._service_spec("f8.pyengine").model_dump(mode="json"),
+                    "f8_spec": dump_json(self._service_spec("f8.pyengine"), mode="json"),
                 },
                 "op_unknown": {
                     "id": "op_unknown",
-                    "f8_spec": F8OperatorSpec(
-                        schemaVersion=F8OperatorSchemaVersion.f8operator_1,
-                        serviceClass="f8.pyengine",
-                        operatorClass="f8.pyengine.unknown",
-                        version="0.0.1",
-                        label="Unknown Operator",
-                    ).model_dump(mode="json"),
+                    "f8_spec": dump_json(
+                        F8OperatorSpec(
+                            schemaVersion=F8OperatorSchemaVersion.f8operator_1,
+                            serviceClass="f8.pyengine",
+                            operatorClass="f8.pyengine.unknown",
+                            version="0.0.1",
+                            label="Unknown Operator",
+                        ),
+                        mode="json",
+                    ),
                     "custom": {"svcId": "svc1"},
                 },
             },
@@ -125,20 +131,20 @@ class SessionCompilerTests(unittest.TestCase):
             "nodes": {
                 "svc1": {
                     "id": "svc1",
-                    "f8_spec": self._service_spec("f8.pyengine").model_dump(mode="json"),
+                    "f8_spec": dump_json(self._service_spec("f8.pyengine"), mode="json"),
                 },
                 "svc2": {
                     "id": "svc2",
-                    "f8_spec": self._service_spec("f8.pyengine").model_dump(mode="json"),
+                    "f8_spec": dump_json(self._service_spec("f8.pyengine"), mode="json"),
                 },
                 "op1": {
                     "id": "op1",
-                    "f8_spec": self._operator_spec("f8.pyengine", "f8.pyengine.op").model_dump(mode="json"),
+                    "f8_spec": dump_json(self._operator_spec("f8.pyengine", "f8.pyengine.op"), mode="json"),
                     "custom": {"svcId": "svc1"},
                 },
                 "op2": {
                     "id": "op2",
-                    "f8_spec": self._operator_spec("f8.pyengine", "f8.pyengine.op").model_dump(mode="json"),
+                    "f8_spec": dump_json(self._operator_spec("f8.pyengine", "f8.pyengine.op"), mode="json"),
                     "custom": {"svcId": "svc2"},
                 },
             },
@@ -154,7 +160,7 @@ class SessionCompilerTests(unittest.TestCase):
             "nodes": {
                 "svc_missing": {
                     "id": "svc_missing",
-                    "f8_spec": self._service_spec("f8.pyengine").model_dump(mode="json"),
+                    "f8_spec": dump_json(self._service_spec("f8.pyengine"), mode="json"),
                     "f8_sys": {
                         "missingLocked": True,
                         "missingType": "svc.some.missing",

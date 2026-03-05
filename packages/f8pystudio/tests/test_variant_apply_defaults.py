@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from f8pysdk.msgspec_codec import copy_model, dump_json
 from typing import Any
 
 from f8pysdk.generated import F8OperatorSchemaVersion, F8OperatorSpec, F8StateAccess, F8StateSpec
@@ -61,14 +62,14 @@ def test_apply_variant_to_node_uses_variant_state_defaults_for_writable_fields()
             F8StateSpec(name="svcId", valueSchema=string_schema(default=""), access=F8StateAccess.ro),
         ],
     )
-    variant_spec_json = base_spec.model_copy(
+    variant_spec_json = dump_json(copy_model(base_spec, 
         update={
             "stateFields": [
                 F8StateSpec(name="code", valueSchema=string_schema(default="VARIANT_CODE"), access=F8StateAccess.rw),
                 F8StateSpec(name="svcId", valueSchema=string_schema(default="variant_svc"), access=F8StateAccess.ro),
             ]
         }
-    ).model_dump(mode="json")
+    ), mode="json")
     node = _NodeStub(base_spec)
     graph = F8StudioGraph.__new__(F8StudioGraph)
 

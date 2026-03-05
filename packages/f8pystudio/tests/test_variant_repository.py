@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from f8pysdk.msgspec_codec import dump_json
 from f8pystudio.variants.variant_models import F8NodeVariantRecord, F8VariantKind
 from f8pystudio.variants.variant_repository import (
     import_from_json,
@@ -71,8 +72,8 @@ def test_import_auto_renames_duplicates(monkeypatch: pytest.MonkeyPatch, tmp_pat
     payload = {
         "schemaVersion": "f8variantlib/1",
         "variants": [
-            _make_variant_record(variant_id="v2", base_node_type="svc.a.op", name="name").model_dump(mode="json"),
-            _make_variant_record(variant_id="v3", base_node_type="svc.a.op", name=" name ").model_dump(mode="json"),
+            dump_json(_make_variant_record(variant_id="v2", base_node_type="svc.a.op", name="name"), mode="json"),
+            dump_json(_make_variant_record(variant_id="v3", base_node_type="svc.a.op", name=" name "), mode="json"),
         ],
     }
     import_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")

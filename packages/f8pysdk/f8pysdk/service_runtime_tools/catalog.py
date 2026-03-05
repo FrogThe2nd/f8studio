@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+from f8pysdk.msgspec_codec import copy_model, validate_as
 from collections.abc import Iterable
 from pathlib import Path
 from typing import ClassVar
 
-from pydantic import ValidationError
+import msgspec
 
 from f8pysdk.generated import F8OperatorSchemaVersion, F8OperatorSpec, F8ServiceSchemaVersion, F8ServiceSpec
 
@@ -25,8 +26,8 @@ class ServiceSpecRegistry:
 
     def register(self, spec: F8ServiceSpec) -> F8ServiceSpec:
         try:
-            validated = F8ServiceSpec.model_validate(spec)
-        except ValidationError as exc:
+            validated = validate_as(F8ServiceSpec, spec)
+        except msgspec.ValidationError as exc:
             raise ValueError(str(exc)) from exc
 
         if validated.schemaVersion != F8ServiceSchemaVersion.f8service_1:
@@ -50,10 +51,10 @@ class ServiceSpecRegistry:
     def get(self, service_class: str) -> F8ServiceSpec:
         if service_class not in self._specs:
             raise KeyError(f'Service "{service_class}" not found')
-        return self._specs[service_class].model_copy(deep=True)
+        return copy_model(self._specs[service_class], deep=True)
 
     def all(self) -> list[F8ServiceSpec]:
-        return [spec.model_copy(deep=True) for spec in self._specs.values()]
+        return [copy_model(spec, deep=True) for spec in self._specs.values()]
 
 
 class OperatorSpecRegistry:
@@ -76,8 +77,8 @@ class OperatorSpecRegistry:
 
     def register(self, spec: F8OperatorSpec) -> F8OperatorSpec:
         try:
-            validated = F8OperatorSpec.model_validate(spec)
-        except ValidationError as exc:
+            validated = validate_as(F8OperatorSpec, spec)
+        except msgspec.ValidationError as exc:
             raise ValueError(str(exc)) from exc
 
         if validated.schemaVersion != F8OperatorSchemaVersion.f8operator_1:
@@ -102,19 +103,19 @@ class OperatorSpecRegistry:
         key = (service_class, operator_class)
         if key not in self._specs:
             raise KeyError(f'Operator spec "{key}" not found')
-        return self._specs[key].model_copy(deep=True)
+        return copy_model(self._specs[key], deep=True)
 
     def query(self, service_class: str | None) -> list[F8OperatorSpec]:
         if service_class is None:
-            return [spec.model_copy(deep=True) for spec in self._specs.values()]
+            return [copy_model(spec, deep=True) for spec in self._specs.values()]
         return [
-            spec.model_copy(deep=True)
+            copy_model(spec, deep=True)
             for (svc, _), spec in self._specs.items()
             if str(svc) == str(service_class)
         ]
 
     def all(self) -> list[F8OperatorSpec]:
-        return [spec.model_copy(deep=True) for spec in self._specs.values()]
+        return [copy_model(spec, deep=True) for spec in self._specs.values()]
 
 
 class ServiceCatalog:

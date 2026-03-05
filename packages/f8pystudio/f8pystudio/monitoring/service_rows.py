@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from f8pysdk.msgspec_codec import dump_json
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable, Mapping
 
@@ -81,7 +82,7 @@ def build_service_monitor_rows(
 
         if latest_snapshot is not None:
             try:
-                latest_payload = latest_snapshot.model_dump(mode="json", by_alias=True)
+                latest_payload = dump_json(latest_snapshot, mode="json", by_alias=True)
             except (AttributeError, TypeError, ValueError):
                 latest_payload = None
             service_class = str(latest_snapshot.serviceClass or "").strip() or service_class

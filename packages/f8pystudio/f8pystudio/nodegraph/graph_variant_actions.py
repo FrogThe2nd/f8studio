@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from f8pysdk.msgspec_codec import dump_json, validate_as
 from collections.abc import Callable
 from typing import Any
 
@@ -148,14 +149,14 @@ class GraphVariantActionsMixin:
         lib = load_library()
         for v in lib.variants:
             if str(v.variantId) == vid:
-                return v.model_dump(mode="json")
+                return dump_json(v, mode="json")
         return None
 
     @staticmethod
     def _coerce_variant_spec(value: dict[str, Any]) -> F8OperatorSpec | F8ServiceSpec:
         if "operatorClass" in value:
-            return F8OperatorSpec.model_validate(value)
-        return F8ServiceSpec.model_validate(value)
+            return validate_as(F8OperatorSpec, value)
+        return validate_as(F8ServiceSpec, value)
 
     def _apply_variant_to_node(
         self,

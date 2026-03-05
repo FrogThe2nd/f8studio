@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from f8pysdk.msgspec_codec import dump_json, validate_as
 import json
 from collections.abc import Callable
 from typing import Any
@@ -194,7 +195,7 @@ class NodeVariantManagerDialog(QtWidgets.QDialog):
         if selected is None:
             self._raw.setPlainText("")
             return
-        self._raw.setPlainText(json.dumps(selected.model_dump(mode="json"), ensure_ascii=False, indent=2, default=str))
+        self._raw.setPlainText(json.dumps(dump_json(selected, mode="json"), ensure_ascii=False, indent=2, default=str))
 
     def _on_item_double_clicked(self, _item: QtWidgets.QListWidgetItem) -> None:
         self._on_create_clicked()
@@ -259,13 +260,13 @@ class NodeVariantManagerDialog(QtWidgets.QDialog):
         if dlg.exec() != QtWidgets.QDialog.Accepted:
             return
         name, description, tags = dlg.values()
-        payload = selected.model_dump(mode="json")
+        payload = dump_json(selected, mode="json")
         payload["name"] = name
         payload["description"] = description
         payload["tags"] = tags
         payload["updatedAt"] = F8NodeVariantRecord.now_iso()
         try:
-            upsert_variant(F8NodeVariantRecord.model_validate(payload))
+            upsert_variant(validate_as(F8NodeVariantRecord, payload))
         except ValueError as exc:
             show_warning(self, "Invalid name", str(exc))
             return
