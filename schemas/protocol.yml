@@ -273,10 +273,6 @@ components:
           default: {}
           additionalProperties:
             $ref: "#/components/schemas/F8JsonValue"
-        timeoutMs:
-          type: integer
-          minimum: 0
-          description: Optional runtime-side timeout hint (client still enforces NATS request timeout).
         meta:
           type: object
           description: Optional metadata (traceId, actor, etc.).
@@ -284,7 +280,10 @@ components:
           additionalProperties:
             $ref: "#/components/schemas/F8JsonValue"
       required:
+        - reqId
         - call
+        - args
+        - meta
       additionalProperties: false
 
     F8CommandInvokeReply:
@@ -306,7 +305,110 @@ components:
             - type: "null"
           default: null
       required:
+        - reqId
         - ok
+        - result
+        - error
+      additionalProperties: false
+
+    F8EmptyArgs:
+      title: F8EmptyArgs
+      type: object
+      additionalProperties: false
+
+    F8StatusRequest:
+      title: F8StatusRequest
+      type: object
+      properties:
+        reqId:
+          type: string
+        args:
+          $ref: "#/components/schemas/F8EmptyArgs"
+        meta:
+          type: object
+          default: {}
+          additionalProperties:
+            $ref: "#/components/schemas/F8JsonValue"
+      required:
+        - reqId
+        - args
+        - meta
+      additionalProperties: false
+
+    F8StatusReplyResult:
+      title: F8StatusReplyResult
+      type: object
+      properties:
+        serviceId:
+          type: string
+        active:
+          type: boolean
+      required:
+        - serviceId
+        - active
+      additionalProperties: false
+
+    F8StatusReply:
+      title: F8StatusReply
+      type: object
+      properties:
+        reqId:
+          type: string
+        ok:
+          type: boolean
+        result:
+          anyOf:
+            - $ref: "#/components/schemas/F8StatusReplyResult"
+            - type: "null"
+          default: null
+        error:
+          anyOf:
+            - $ref: "#/components/schemas/F8CommandError"
+            - type: "null"
+          default: null
+      required:
+        - reqId
+        - ok
+        - result
+        - error
+      additionalProperties: false
+
+    F8ActivateRequest:
+      title: F8ActivateRequest
+      type: object
+      properties:
+        reqId:
+          type: string
+        args:
+          $ref: "#/components/schemas/F8EmptyArgs"
+        meta:
+          type: object
+          default: {}
+          additionalProperties:
+            $ref: "#/components/schemas/F8JsonValue"
+      required:
+        - reqId
+        - args
+        - meta
+      additionalProperties: false
+
+    F8DeactivateRequest:
+      title: F8DeactivateRequest
+      type: object
+      properties:
+        reqId:
+          type: string
+        args:
+          $ref: "#/components/schemas/F8EmptyArgs"
+        meta:
+          type: object
+          default: {}
+          additionalProperties:
+            $ref: "#/components/schemas/F8JsonValue"
+      required:
+        - reqId
+        - args
+        - meta
       additionalProperties: false
 
     F8SetActiveArgs:
@@ -318,6 +420,60 @@ components:
           type: boolean
       required:
         - active
+      additionalProperties: false
+
+    F8SetActiveRequest:
+      title: F8SetActiveRequest
+      type: object
+      properties:
+        reqId:
+          type: string
+        args:
+          $ref: "#/components/schemas/F8SetActiveArgs"
+        meta:
+          type: object
+          default: {}
+          additionalProperties:
+            $ref: "#/components/schemas/F8JsonValue"
+      required:
+        - reqId
+        - args
+        - meta
+      additionalProperties: false
+
+    F8ActiveReplyResult:
+      title: F8ActiveReplyResult
+      type: object
+      properties:
+        active:
+          type: boolean
+      required:
+        - active
+      additionalProperties: false
+
+    F8ActiveReply:
+      title: F8ActiveReply
+      type: object
+      properties:
+        reqId:
+          type: string
+        ok:
+          type: boolean
+        result:
+          anyOf:
+            - $ref: "#/components/schemas/F8ActiveReplyResult"
+            - type: "null"
+          default: null
+        error:
+          anyOf:
+            - $ref: "#/components/schemas/F8CommandError"
+            - type: "null"
+          default: null
+      required:
+        - reqId
+        - ok
+        - result
+        - error
       additionalProperties: false
 
     F8SetStateArgs:
@@ -337,6 +493,63 @@ components:
         - value
       additionalProperties: false
 
+    F8SetStateRequest:
+      title: F8SetStateRequest
+      type: object
+      properties:
+        reqId:
+          type: string
+        args:
+          $ref: "#/components/schemas/F8SetStateArgs"
+        meta:
+          type: object
+          default: {}
+          additionalProperties:
+            $ref: "#/components/schemas/F8JsonValue"
+      required:
+        - reqId
+        - args
+        - meta
+      additionalProperties: false
+
+    F8SetStateReplyResult:
+      title: F8SetStateReplyResult
+      type: object
+      properties:
+        nodeId:
+          type: string
+        field:
+          type: string
+      required:
+        - nodeId
+        - field
+      additionalProperties: false
+
+    F8SetStateReply:
+      title: F8SetStateReply
+      type: object
+      properties:
+        reqId:
+          type: string
+        ok:
+          type: boolean
+        result:
+          anyOf:
+            - $ref: "#/components/schemas/F8SetStateReplyResult"
+            - type: "null"
+          default: null
+        error:
+          anyOf:
+            - $ref: "#/components/schemas/F8CommandError"
+            - type: "null"
+          default: null
+      required:
+        - reqId
+        - ok
+        - result
+        - error
+      additionalProperties: false
+
     F8SetRungraphArgs:
       title: F8SetRungraphArgs
       type: object
@@ -346,6 +559,114 @@ components:
           $ref: "#/components/schemas/F8RuntimeGraph"
       required:
         - graph
+      additionalProperties: false
+
+    F8SetRungraphRequest:
+      title: F8SetRungraphRequest
+      type: object
+      properties:
+        reqId:
+          type: string
+        args:
+          $ref: "#/components/schemas/F8SetRungraphArgs"
+        meta:
+          type: object
+          default: {}
+          additionalProperties:
+            $ref: "#/components/schemas/F8JsonValue"
+      required:
+        - reqId
+        - args
+        - meta
+      additionalProperties: false
+
+    F8SetRungraphReplyResult:
+      title: F8SetRungraphReplyResult
+      type: object
+      properties:
+        graphId:
+          type: string
+      required:
+        - graphId
+      additionalProperties: false
+
+    F8SetRungraphReply:
+      title: F8SetRungraphReply
+      type: object
+      properties:
+        reqId:
+          type: string
+        ok:
+          type: boolean
+        result:
+          anyOf:
+            - $ref: "#/components/schemas/F8SetRungraphReplyResult"
+            - type: "null"
+          default: null
+        error:
+          anyOf:
+            - $ref: "#/components/schemas/F8CommandError"
+            - type: "null"
+          default: null
+      required:
+        - reqId
+        - ok
+        - result
+        - error
+      additionalProperties: false
+
+    F8TerminateRequest:
+      title: F8TerminateRequest
+      type: object
+      properties:
+        reqId:
+          type: string
+        args:
+          $ref: "#/components/schemas/F8EmptyArgs"
+        meta:
+          type: object
+          default: {}
+          additionalProperties:
+            $ref: "#/components/schemas/F8JsonValue"
+      required:
+        - reqId
+        - args
+        - meta
+      additionalProperties: false
+
+    F8TerminateReplyResult:
+      title: F8TerminateReplyResult
+      type: object
+      properties:
+        terminating:
+          type: boolean
+      required:
+        - terminating
+      additionalProperties: false
+
+    F8TerminateReply:
+      title: F8TerminateReply
+      type: object
+      properties:
+        reqId:
+          type: string
+        ok:
+          type: boolean
+        result:
+          anyOf:
+            - $ref: "#/components/schemas/F8TerminateReplyResult"
+            - type: "null"
+          default: null
+        error:
+          anyOf:
+            - $ref: "#/components/schemas/F8CommandError"
+            - type: "null"
+          default: null
+      required:
+        - reqId
+        - ok
+        - result
+        - error
       additionalProperties: false
     F8DataTypeSchemaCommonMetadata:
       title: F8DataTypeSchemaCommonMetadata
@@ -361,21 +682,34 @@ components:
           items: {}
         $comment:
           type: string
-    F8PrimitiveTypeSchema:
-      title: F8PrimitiveTypeSchema
+    F8StringTypeSchema:
+      title: F8StringTypeSchema
       allOf:
         - $ref: "#/components/schemas/F8DataTypeSchemaCommonMetadata"
         - type: object
           properties:
             type:
-              title: F8PrimitiveTypeEnum
+              title: F8StringTypeKind
               type: string
-              enum:
-                - string
-                - number
-                - integer
-                - boolean
-                - "null"
+              const: string
+              default: string
+            enum:
+              type: array
+              items: {}
+          required:
+            - type
+          additionalProperties: false
+    F8NumberTypeSchema:
+      title: F8NumberTypeSchema
+      allOf:
+        - $ref: "#/components/schemas/F8DataTypeSchemaCommonMetadata"
+        - type: object
+          properties:
+            type:
+              title: F8NumberTypeKind
+              type: string
+              const: number
+              default: number
             enum:
               type: array
               items: {}
@@ -398,6 +732,73 @@ components:
           required:
             - type
           additionalProperties: false
+    F8IntegerTypeSchema:
+      title: F8IntegerTypeSchema
+      allOf:
+        - $ref: "#/components/schemas/F8DataTypeSchemaCommonMetadata"
+        - type: object
+          properties:
+            type:
+              title: F8IntegerTypeKind
+              type: string
+              const: integer
+              default: integer
+            enum:
+              type: array
+              items: {}
+            minimum:
+              type: number
+              description: Optional lower bound for numeric types
+            maximum:
+              type: number
+              description: Optional upper bound for numeric types
+            exclusiveMinimum:
+              type: number
+              description: Exclusive lower bound for numeric types
+            exclusiveMaximum:
+              type: number
+              description: Exclusive upper bound for numeric types
+            multipleOf:
+              type: number
+              exclusiveMinimum: 0
+              description: Optional step/increment (e.g., for sliders or spinboxes)
+          required:
+            - type
+          additionalProperties: false
+    F8BooleanTypeSchema:
+      title: F8BooleanTypeSchema
+      allOf:
+        - $ref: "#/components/schemas/F8DataTypeSchemaCommonMetadata"
+        - type: object
+          properties:
+            type:
+              title: F8BooleanTypeKind
+              type: string
+              const: boolean
+              default: boolean
+            enum:
+              type: array
+              items: {}
+          required:
+            - type
+          additionalProperties: false
+    F8NullTypeSchema:
+      title: F8NullTypeSchema
+      allOf:
+        - $ref: "#/components/schemas/F8DataTypeSchemaCommonMetadata"
+        - type: object
+          properties:
+            type:
+              title: F8NullTypeKind
+              type: string
+              const: "null"
+              default: "null"
+            enum:
+              type: array
+              items: {}
+          required:
+            - type
+          additionalProperties: false
     F8ComplexObjectTypeSchema:
       title: F8ComplexObjectTypeSchema
       allOf:
@@ -407,8 +808,8 @@ components:
             type:
               title: F8ComplexTypeKind
               type: string
-              enum:
-                - object
+              const: object
+              default: object
             properties:
               type: object
               additionalProperties:
@@ -432,8 +833,8 @@ components:
             type:
               title: F8ArrayTypeKind
               type: string
-              enum:
-                - array
+              const: array
+              default: array
             items:
               $ref: "#/components/schemas/F8DataTypeSchema"
           required:
@@ -450,8 +851,8 @@ components:
             type:
               title: F8AnyTypeKind
               type: string
-              enum:
-                - any
+              const: any
+              default: any
           required:
             - type
           additionalProperties: false
@@ -460,10 +861,25 @@ components:
         A strict JSON Schema subset for data flow systems, supporting primitive types, objects,
         arrays, and a wildcard type.
       oneOf:
-        - $ref: "#/components/schemas/F8PrimitiveTypeSchema"
+        - $ref: "#/components/schemas/F8StringTypeSchema"
+        - $ref: "#/components/schemas/F8NumberTypeSchema"
+        - $ref: "#/components/schemas/F8IntegerTypeSchema"
+        - $ref: "#/components/schemas/F8BooleanTypeSchema"
+        - $ref: "#/components/schemas/F8NullTypeSchema"
         - $ref: "#/components/schemas/F8ComplexObjectTypeSchema"
         - $ref: "#/components/schemas/F8ArrayTypeSchema"
         - $ref: "#/components/schemas/F8AnyTypeSchema"
+      discriminator:
+        propertyName: type
+        mapping:
+          string: "#/components/schemas/F8StringTypeSchema"
+          number: "#/components/schemas/F8NumberTypeSchema"
+          integer: "#/components/schemas/F8IntegerTypeSchema"
+          boolean: "#/components/schemas/F8BooleanTypeSchema"
+          "null": "#/components/schemas/F8NullTypeSchema"
+          object: "#/components/schemas/F8ComplexObjectTypeSchema"
+          array: "#/components/schemas/F8ArrayTypeSchema"
+          any: "#/components/schemas/F8AnyTypeSchema"
     F8ServiceSpec:
       title: F8ServiceSpec
       type: object

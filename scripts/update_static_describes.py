@@ -11,6 +11,7 @@ from typing import Any
 
 from f8pysdk import F8ServiceDescribe
 from f8pysdk.builtin_state_fields import normalize_describe_payload_dict
+from f8pysdk.msgspec_codec import dump_json, validate_as
 from f8pysdk.monitor_schema import validate_describe_monitor_contract
 from f8pysdk.service_runtime_tools.discovery import find_service_dirs, load_service_entry
 
@@ -82,7 +83,7 @@ def _run_describe_subprocess(service_dir: Path, *, timeout_s: float) -> dict[str
 
     normalized = normalize_describe_payload_dict(obj)
     validate_describe_monitor_contract(normalized)
-    payload = F8ServiceDescribe.model_validate(normalized).model_dump(mode="json")
+    payload = dump_json(validate_as(F8ServiceDescribe, normalized), mode="json")
     return payload
 
 
