@@ -25,7 +25,7 @@ from f8pysdk.runtime_node import RuntimeNode
 from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
 
 from ..constants import SERVICE_CLASS
-from ..skeleton_protocols import skeleton_edges_for_protocol
+from ..skeleton_protocols import skeleton_edges_for_nodes
 from ..ui_bus import emit_ui_command
 from ._viz_base import StudioVizRuntimeNodeBase, viz_sampling_state_fields
 
@@ -376,14 +376,13 @@ class VizThreeDRuntimeNode(StudioVizRuntimeNodeBase):
     def _extract_person(self, *, payload: dict[str, Any], index: int) -> _PersonViz | None:
         person_name = self._extract_person_name(payload=payload, index=index)
         skeleton_protocol = self._extract_protocol(payload)
-        skeleton_edges = skeleton_edges_for_protocol(skeleton_protocol)
         bones_any = payload.get("bones")
         if not isinstance(bones_any, list):
             return _PersonViz(
                 name=person_name,
                 bbox=None,
                 skeleton_protocol=skeleton_protocol,
-                skeleton_edges=skeleton_edges,
+                skeleton_edges=None,
                 nodes=[],
             )
 
@@ -397,6 +396,8 @@ class VizThreeDRuntimeNode(StudioVizRuntimeNodeBase):
             nodes.append(node)
             if len(nodes) >= self._max_bones_per_person:
                 break
+        node_names = [node.name for node in nodes]
+        skeleton_edges = skeleton_edges_for_nodes(skeleton_protocol, node_names)
         return _PersonViz(
             name=person_name,
             bbox=self._compute_bbox(nodes),

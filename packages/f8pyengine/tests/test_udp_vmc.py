@@ -225,6 +225,7 @@ class UdpVmcTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNotNone(payload)
             assert payload is not None
             self.assertEqual(payload["modelName"], "VMC")
+            self.assertEqual(payload["skeletonProtocol"], "unity_humanoid")
             self.assertEqual(int(payload["boneCount"]), 1)
             bone = payload["bones"][0]
             self.assertEqual(bone["name"], "Hips")

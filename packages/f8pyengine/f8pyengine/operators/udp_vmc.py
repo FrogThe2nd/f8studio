@@ -34,6 +34,7 @@ from ..constants import SERVICE_CLASS
 
 OPERATOR_CLASS = "f8.udp_vmc"
 _VMC_MODEL_NAME = "VMC"
+_VMC_SKELETON_PROTOCOL = "unity_humanoid"
 _VMC_BONE_POS_ADDR = "/VMC/Ext/Bone/Pos"
 _VMC_ROOT_POS_ADDR = "/VMC/Ext/Root/Pos"
 _VMC_OK_ADDR = "/VMC/Ext/OK"
@@ -160,6 +161,7 @@ def _skeleton_payload_schema():
             "modelName": string_schema(),
             "timestampMs": integer_schema(),
             "schema": string_schema(),
+            "skeletonProtocol": string_schema(),
             "boneCount": integer_schema(),
             "bones": array_schema(items=_skeleton_bone_schema()),
             "trailer": _skeleton_trailer_schema(),
@@ -576,6 +578,7 @@ class UdpVmcRuntimeNode(OperatorNode, EntrypointNode):
             "modelName": _VMC_MODEL_NAME,
             "timestampMs": int(rx_ts_ms),
             "schema": "f8.skeleton.v1",
+            "skeletonProtocol": _VMC_SKELETON_PROTOCOL,
             "boneCount": len(bones),
             "bones": bones,
             "trailer": None,
