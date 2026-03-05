@@ -39,6 +39,9 @@ from .operators.sequence_player import register_operator as register_sequence_pl
 from .operators.playback_sync import register_operator as register_playback_sync_operator
 from .operators.handy_out import register_operator as register_handy_out_operator
 from .operators.state_trigger import register_operator as register_state_trigger_operator
+from .operators.bone_filter import register_operator as register_bone_filter_operator
+from .operators.quat_to_euler import register_operator as register_quat_to_euler_operator
+from .operators.udp_vmc import register_operator as register_udp_vmc_operator
 from .pyengine_service_node import PyEngineServiceNode
 
 
@@ -108,4 +111,7 @@ def register_pyengine_specs(registry: RuntimeNodeRegistry | None = None) -> Runt
     register_playback_sync_operator(reg)
     register_handy_out_operator(reg)
     register_state_trigger_operator(reg)
+    register_bone_filter_operator(reg)
+    register_quat_to_euler_operator(reg)
+    register_udp_vmc_operator(reg)
     return reg

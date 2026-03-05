@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
-import json
 import logging
+import math
 import socket
 import struct
 from dataclasses import dataclass
@@ -32,8 +32,74 @@ from f8pysdk.time_utils import now_ms
 
 from ..constants import SERVICE_CLASS
 
-OPERATOR_CLASS = "f8.udp_skeleton"
+OPERATOR_CLASS = "f8.udp_vmc"
+_VMC_MODEL_NAME = "VMC"
+_VMC_BONE_POS_ADDR = "/VMC/Ext/Bone/Pos"
+_VMC_ROOT_POS_ADDR = "/VMC/Ext/Root/Pos"
+_VMC_OK_ADDR = "/VMC/Ext/OK"
 logger = logging.getLogger(__name__)
+
+_BONE_PARENT_CANDIDATES: dict[str, tuple[str, ...]] = {
+    "Hips": (),
+    "Spine": ("Hips",),
+    "Chest": ("Spine",),
+    "UpperChest": ("Chest", "Spine"),
+    "Neck": ("UpperChest", "Chest", "Spine"),
+    "Head": ("Neck", "UpperChest", "Chest", "Spine"),
+    "LeftEye": ("Head",),
+    "RightEye": ("Head",),
+    "Jaw": ("Head",),
+    "LeftUpperLeg": ("Hips",),
+    "LeftLowerLeg": ("LeftUpperLeg",),
+    "LeftFoot": ("LeftLowerLeg",),
+    "LeftToes": ("LeftFoot",),
+    "RightUpperLeg": ("Hips",),
+    "RightLowerLeg": ("RightUpperLeg",),
+    "RightFoot": ("RightLowerLeg",),
+    "RightToes": ("RightFoot",),
+    "LeftShoulder": ("UpperChest", "Chest", "Spine"),
+    "LeftUpperArm": ("LeftShoulder", "UpperChest", "Chest", "Spine"),
+    "LeftLowerArm": ("LeftUpperArm",),
+    "LeftHand": ("LeftLowerArm",),
+    "RightShoulder": ("UpperChest", "Chest", "Spine"),
+    "RightUpperArm": ("RightShoulder", "UpperChest", "Chest", "Spine"),
+    "RightLowerArm": ("RightUpperArm",),
+    "RightHand": ("RightLowerArm",),
+    "LeftThumbMetacarpal": ("LeftHand",),
+    "LeftThumbProximal": ("LeftThumbMetacarpal", "LeftHand"),
+    "LeftThumbIntermediate": ("LeftThumbProximal",),
+    "LeftThumbDistal": ("LeftThumbIntermediate", "LeftThumbProximal"),
+    "LeftIndexProximal": ("LeftHand",),
+    "LeftIndexIntermediate": ("LeftIndexProximal",),
+    "LeftIndexDistal": ("LeftIndexIntermediate",),
+    "LeftMiddleProximal": ("LeftHand",),
+    "LeftMiddleIntermediate": ("LeftMiddleProximal",),
+    "LeftMiddleDistal": ("LeftMiddleIntermediate",),
+    "LeftRingProximal": ("LeftHand",),
+    "LeftRingIntermediate": ("LeftRingProximal",),
+    "LeftRingDistal": ("LeftRingIntermediate",),
+    "LeftLittleProximal": ("LeftHand",),
+    "LeftLittleIntermediate": ("LeftLittleProximal",),
+    "LeftLittleDistal": ("LeftLittleIntermediate",),
+    "RightThumbMetacarpal": ("RightHand",),
+    "RightThumbProximal": ("RightThumbMetacarpal", "RightHand"),
+    "RightThumbIntermediate": ("RightThumbProximal",),
+    "RightThumbDistal": ("RightThumbIntermediate", "RightThumbProximal"),
+    "RightIndexProximal": ("RightHand",),
+    "RightIndexIntermediate": ("RightIndexProximal",),
+    "RightIndexDistal": ("RightIndexIntermediate",),
+    "RightMiddleProximal": ("RightHand",),
+    "RightMiddleIntermediate": ("RightMiddleProximal",),
+    "RightMiddleDistal": ("RightMiddleIntermediate",),
+    "RightRingProximal": ("RightHand",),
+    "RightRingIntermediate": ("RightRingProximal",),
+    "RightRingDistal": ("RightRingIntermediate",),
+    "RightLittleProximal": ("RightHand",),
+    "RightLittleIntermediate": ("RightLittleProximal",),
+    "RightLittleDistal": ("RightLittleIntermediate",),
+}
+
+_BONE_ALIAS_TO_CANONICAL: dict[str, str] = {name.lower(): name for name in _BONE_PARENT_CANDIDATES}
 
 
 @dataclass(frozen=True)
@@ -48,15 +114,6 @@ class _UdpConfig:
 class _SkeletonEntry:
     rx_ts_ms: int
     payload: Any
-
-
-@dataclass
-class _ChunkFrameBuffer:
-    frame_id: int
-    chunk_count: int
-    started_rx_ts_ms: int
-    last_rx_ts_ms: int
-    chunks: dict[int, list[dict[str, Any]]]
 
 
 def _skeleton_anim_schema():
@@ -143,18 +200,8 @@ def _is_loopback_bind_address(value: str) -> bool:
         return False
 
 
-class UdpSkeletonRuntimeNode(OperatorNode, EntrypointNode):
-    """
-    UDP skeleton receiver.
-
-    - Starts a UDP listener (bindAddress/port)
-    - Decodes incoming packets (skeleton binary -> dict, or JSON/utf-8, otherwise base64)
-    - Maintains a per-model table (key -> latest skeleton + rxTsMs)
-    - Removes stale models older than `cleanupAfterMs`
-    - Synchronizes `availableKeys` state for Studio option pools
-    - Outputs are pull-based via `compute_output(...)`
-    - Emits exec on `packet` after packet/frame commit
-    """
+class UdpVmcRuntimeNode(OperatorNode, EntrypointNode):
+    """Receive VMC (OSC over UDP) and emit skeleton payloads compatible with udp_skeleton."""
 
     def __init__(self, *, node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any] | None = None) -> None:
         super().__init__(
@@ -184,8 +231,9 @@ class UdpSkeletonRuntimeNode(OperatorNode, EntrypointNode):
         self._selected_key = str(self._initial_state.get("selectedKey", "") or "")
 
         self._skeletons_by_key: dict[str, _SkeletonEntry] = {}
-        self._chunk_frames_by_key: dict[str, _ChunkFrameBuffer] = {}
-        self._last_completed_frame_id_by_key: dict[str, int] = {}
+        self._bones_by_key: dict[str, dict[str, dict[str, Any]]] = {}
+        self._pending_bones_by_key: dict[str, dict[str, dict[str, Any]]] = {}
+        self._pending_root_by_key: dict[str, dict[str, Any]] = {}
         self._output_version = 0
         self._last_synced_keys: list[str] = []
         self._ctx_output_cache: dict[tuple[str, str | int | None], tuple[int, Any]] = {}
@@ -197,17 +245,16 @@ class UdpSkeletonRuntimeNode(OperatorNode, EntrypointNode):
 
     def attach(self, bus: Any) -> None:
         super().attach(bus)
-        # Apply current active state immediately (best-effort).
         bus_like = bus if isinstance(bus, NodeBus) else None
         if bus_like is not None:
             try:
                 loop = asyncio.get_running_loop()
                 if not bool(bus_like.active):
-                    loop.create_task(self._stop_receiver(), name=f"udp_skeleton:deactivate:{self.node_id}")
+                    loop.create_task(self._stop_receiver(), name=f"udp_vmc:deactivate:{self.node_id}")
                     return
-                loop.create_task(self._ensure_receiver(), name=f"udp_skeleton:attach_start:{self.node_id}")
+                loop.create_task(self._ensure_receiver(), name=f"udp_vmc:attach_start:{self.node_id}")
             except RuntimeError:
-                logger.exception("udp_skeleton attach failed: no running loop nodeId=%s", self.node_id)
+                logger.exception("udp_vmc attach failed: no running loop nodeId=%s", self.node_id)
 
     async def on_lifecycle(self, active: bool, _meta: dict[str, Any]) -> None:
         if bool(active):
@@ -301,10 +348,10 @@ class UdpSkeletonRuntimeNode(OperatorNode, EntrypointNode):
             return int(default)
         try:
             return int(value)
-        except Exception:
+        except (TypeError, ValueError):
             try:
                 return int(float(value))
-            except Exception:
+            except (TypeError, ValueError):
                 return int(default)
 
     @staticmethod
@@ -339,26 +386,22 @@ class UdpSkeletonRuntimeNode(OperatorNode, EntrypointNode):
             bind_address = self._initial_state.get("bindAddress", "127.0.0.1")
         port = await self.get_state_value("port")
         if port is None:
-            port = self._initial_state.get("port", 39540)
+            port = self._initial_state.get("port", 39539)
         max_queue = await self.get_state_value("maxQueue")
         if max_queue is None:
             max_queue = self._initial_state.get("maxQueue", 512)
-
         reuse_address = await self.get_state_value("reuseAddress")
         if reuse_address is None:
             reuse_address = self._initial_state.get("reuseAddress", False)
 
-        try:
-            bind_address_s = str(bind_address).strip() or "127.0.0.1"
-        except Exception:
-            bind_address_s = "127.0.0.1"
+        bind_address_s = str(bind_address).strip() or "127.0.0.1"
         try:
             port_i = int(port)
-        except Exception:
-            port_i = 39540
+        except (TypeError, ValueError):
+            port_i = 39539
         try:
             max_q = int(max_queue)
-        except Exception:
+        except (TypeError, ValueError):
             max_q = 512
         if port_i <= 0 or port_i >= 65536:
             self._last_error = f"Invalid port: {port_i}"
@@ -368,7 +411,6 @@ class UdpSkeletonRuntimeNode(OperatorNode, EntrypointNode):
             self._last_error = "bindAddress must be loopback unless allowNonLoopbackBind is true"
             return None
 
-        reuse_addr = False
         if isinstance(reuse_address, bool):
             reuse_addr = reuse_address
         elif isinstance(reuse_address, (int, float)):
@@ -403,6 +445,7 @@ class UdpSkeletonRuntimeNode(OperatorNode, EntrypointNode):
         self._dropped_ref[0] = 0
         self._queue = asyncio.Queue(maxsize=int(cfg.max_queue))
 
+        sock: socket.socket | None = None
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             if cfg.reuse_address:
@@ -412,7 +455,7 @@ class UdpSkeletonRuntimeNode(OperatorNode, EntrypointNode):
                     pass
                 try:
                     reuseport = socket.SO_REUSEPORT
-                except Exception:
+                except AttributeError:
                     reuseport = None
                 if reuseport is not None:
                     try:
@@ -429,75 +472,321 @@ class UdpSkeletonRuntimeNode(OperatorNode, EntrypointNode):
             self._transport = transport  # type: ignore[assignment]
             self._last_error = None
         except Exception as exc:
-            try:
-                sock.close()
-            except Exception:
-                pass
+            if sock is not None:
+                try:
+                    sock.close()
+                except OSError:
+                    pass
             self._transport = None
             self._queue = None
             self._last_error = f"{type(exc).__name__}: {exc}"
             return
 
-        self._drain_task = asyncio.create_task(self._drain_loop(), name=f"udp_skeleton:{self.node_id}")
+        self._drain_task = asyncio.create_task(self._drain_loop(), name=f"udp_vmc:{self.node_id}")
 
     async def _stop_receiver(self) -> None:
         t = self._drain_task
         self._drain_task = None
         if t is not None:
-            try:
-                t.cancel()
-            except Exception:
-                pass
+            t.cancel()
             await asyncio.gather(t, return_exceptions=True)
         tr = self._transport
         self._transport = None
         if tr is not None:
-            try:
-                tr.close()
-            except Exception:
-                pass
+            tr.close()
         self._queue = None
         self._cfg = None
-        async with self._models_lock:
-            self._chunk_frames_by_key.clear()
 
     async def _drain_loop(self) -> None:
         assert self._queue is not None
         q = self._queue
         while True:
             try:
-                rx_ts_ms, raw, addr = await q.get()
+                rx_ts_ms, raw, _addr = await q.get()
                 if not self._bus_active():
                     continue
                 self._packet_count += 1
-                payload = self._decode_payload(raw)
-                model_name = self._extract_model_name(payload)
-                key = str(model_name or "").strip()
-                if not key:
-                    key = f"{addr[0]}:{addr[1]}"
+                messages = self._decode_osc_packet(raw)
+                if not messages:
+                    continue
 
                 keys_changed = False
+                committed = False
+                saw_ok = False
                 async with self._models_lock:
-                    merged_payload = self._merge_or_defer_chunk_payload(
-                        key=key,
-                        payload=payload,
-                        rx_ts_ms=int(rx_ts_ms),
-                    )
-                    if merged_payload is None:
-                        continue
-                    entry = _SkeletonEntry(rx_ts_ms=int(rx_ts_ms), payload=merged_payload)
-                    keys_changed = key not in self._skeletons_by_key
-                    self._skeletons_by_key[key] = entry
-                    self._bump_output_version()
+                    pending_existing = self._pending_bones_by_key.get(_VMC_MODEL_NAME, {})
+                    pending_working: dict[str, dict[str, Any]] = {
+                        name: dict(bone) for name, bone in pending_existing.items()
+                    }
+                    root_working = self._pending_root_by_key.get(_VMC_MODEL_NAME)
+                    has_bone_update = False
+
+                    for address, args in messages:
+                        normalized_address = str(address or "").strip().lower()
+                        if normalized_address == _VMC_BONE_POS_ADDR.lower():
+                            updated = self._update_bone_from_vmc(args)
+                            if updated is None:
+                                continue
+                            bone_name, bone_payload = updated
+                            pending_working[bone_name] = bone_payload
+                            has_bone_update = True
+                            continue
+                        if normalized_address == _VMC_ROOT_POS_ADDR.lower():
+                            root_parsed = self._parse_root_from_vmc(args)
+                            if root_parsed is None:
+                                continue
+                            root_working = root_parsed
+                            continue
+                        if normalized_address == _VMC_OK_ADDR.lower():
+                            saw_ok = True
+
+                    self._pending_bones_by_key[_VMC_MODEL_NAME] = pending_working
+                    if root_working is not None:
+                        self._pending_root_by_key[_VMC_MODEL_NAME] = root_working
+
+                    should_commit = has_bone_update or (saw_ok and bool(pending_working))
+
+                    if should_commit:
+                        local_bones = {name: dict(bone) for name, bone in pending_working.items()}
+                        root_for_commit = self._pending_root_by_key.get(_VMC_MODEL_NAME)
+                        live_bones = self._compute_world_bones(local_bones=local_bones, root=root_for_commit)
+                        self._bones_by_key[_VMC_MODEL_NAME] = live_bones
+                        payload = self._build_payload(rx_ts_ms=int(rx_ts_ms), bones_map=live_bones)
+                        entry = _SkeletonEntry(rx_ts_ms=int(rx_ts_ms), payload=payload)
+                        keys_changed = _VMC_MODEL_NAME not in self._skeletons_by_key
+                        self._skeletons_by_key[_VMC_MODEL_NAME] = entry
+                        self._bump_output_version()
+                        committed = True
 
                 if keys_changed:
                     await self._sync_available_keys_and_selection()
+                if not committed:
+                    continue
                 self._emit_seq += 1
                 self._request_exec_emit(exec_id=int(self._emit_seq))
             except asyncio.CancelledError:
                 raise
             except Exception:
-                logger.exception("udp_skeleton drain loop failed nodeId=%s", self.node_id)
+                logger.exception("udp_vmc drain loop failed nodeId=%s", self.node_id)
+
+    def _build_payload(self, *, rx_ts_ms: int, bones_map: dict[str, dict[str, Any]]) -> dict[str, Any]:
+        bones = [bones_map[name] for name in bones_map]
+        return {
+            "type": "skeleton_binary",
+            "modelName": _VMC_MODEL_NAME,
+            "timestampMs": int(rx_ts_ms),
+            "schema": "f8.skeleton.v1",
+            "boneCount": len(bones),
+            "bones": bones,
+            "trailer": None,
+        }
+
+    @staticmethod
+    def _coerce_finite_float(value: Any) -> float | None:
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            return None
+        if math.isnan(numeric) or math.isinf(numeric):
+            return None
+        return float(numeric)
+
+    @staticmethod
+    def _canonicalize_bone_name(name: str) -> str:
+        key = str(name or "").strip().lower()
+        if not key:
+            return ""
+        canonical = _BONE_ALIAS_TO_CANONICAL.get(key)
+        if canonical is not None:
+            return canonical
+        return str(name).strip()
+
+    @staticmethod
+    def _quat_mul(a: tuple[float, float, float, float], b: tuple[float, float, float, float]) -> tuple[float, float, float, float]:
+        aw, ax, ay, az = a
+        bw, bx, by, bz = b
+        return (
+            aw * bw - ax * bx - ay * by - az * bz,
+            aw * bx + ax * bw + ay * bz - az * by,
+            aw * by - ax * bz + ay * bw + az * bx,
+            aw * bz + ax * by - ay * bx + az * bw,
+        )
+
+    @staticmethod
+    def _quat_conjugate(q: tuple[float, float, float, float]) -> tuple[float, float, float, float]:
+        return (q[0], -q[1], -q[2], -q[3])
+
+    @staticmethod
+    def _quat_normalize(q: tuple[float, float, float, float]) -> tuple[float, float, float, float]:
+        norm = math.sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3])
+        if norm <= 1e-12:
+            return (1.0, 0.0, 0.0, 0.0)
+        inv = 1.0 / norm
+        return (q[0] * inv, q[1] * inv, q[2] * inv, q[3] * inv)
+
+    @classmethod
+    def _quat_rotate_vec(
+        cls, q: tuple[float, float, float, float], v: tuple[float, float, float]
+    ) -> tuple[float, float, float]:
+        qn = cls._quat_normalize(q)
+        p = (0.0, v[0], v[1], v[2])
+        rotated = cls._quat_mul(cls._quat_mul(qn, p), cls._quat_conjugate(qn))
+        return (rotated[1], rotated[2], rotated[3])
+
+    def _parse_root_from_vmc(self, args: tuple[Any, ...]) -> dict[str, Any] | None:
+        # Common VMC variants:
+        # 1) name, px, py, pz, qx, qy, qz, qw
+        # 2) px, py, pz, qx, qy, qz, qw
+        values: list[float]
+        if len(args) >= 8 and isinstance(args[0], str):
+            values = []
+            for idx in range(1, 8):
+                value = self._coerce_finite_float(args[idx])
+                if value is None:
+                    return None
+                values.append(value)
+        elif len(args) >= 7:
+            values = []
+            for idx in range(0, 7):
+                value = self._coerce_finite_float(args[idx])
+                if value is None:
+                    return None
+                values.append(value)
+        else:
+            return None
+
+        px, py, pz, qx, qy, qz, qw = values
+        return {
+            "pos": [px, py, pz],
+            "rot": [qw, qx, qy, qz],
+        }
+
+    def _parse_pose(self, pose: dict[str, Any]) -> tuple[tuple[float, float, float], tuple[float, float, float, float]] | None:
+        pos_raw = pose.get("pos")
+        rot_raw = pose.get("rot")
+        if (
+            not isinstance(pos_raw, list)
+            or not isinstance(rot_raw, list)
+            or len(pos_raw) != 3
+            or len(rot_raw) != 4
+        ):
+            return None
+        try:
+            pos = (float(pos_raw[0]), float(pos_raw[1]), float(pos_raw[2]))
+            rot = (float(rot_raw[0]), float(rot_raw[1]), float(rot_raw[2]), float(rot_raw[3]))
+        except (TypeError, ValueError):
+            return None
+        return (pos, self._quat_normalize(rot))
+
+    def _compose_pose(
+        self,
+        parent_pos: tuple[float, float, float],
+        parent_rot: tuple[float, float, float, float],
+        local_pos: tuple[float, float, float],
+        local_rot: tuple[float, float, float, float],
+    ) -> tuple[tuple[float, float, float], tuple[float, float, float, float]]:
+        rotated_local_pos = self._quat_rotate_vec(parent_rot, local_pos)
+        world_pos = (
+            parent_pos[0] + rotated_local_pos[0],
+            parent_pos[1] + rotated_local_pos[1],
+            parent_pos[2] + rotated_local_pos[2],
+        )
+        world_rot = self._quat_normalize(self._quat_mul(parent_rot, local_rot))
+        return (world_pos, world_rot)
+
+    def _resolve_existing_parent(self, bone_name: str, local_bones: dict[str, dict[str, Any]]) -> str | None:
+        candidates = _BONE_PARENT_CANDIDATES.get(bone_name)
+        if not candidates:
+            return None
+        for candidate in candidates:
+            if candidate in local_bones:
+                return candidate
+        return None
+
+    def _compute_world_bones(
+        self, *, local_bones: dict[str, dict[str, Any]], root: dict[str, Any] | None
+    ) -> dict[str, dict[str, Any]]:
+        parsed_root = self._parse_pose(root) if root is not None else None
+        if parsed_root is None:
+            root_pos = (0.0, 0.0, 0.0)
+            root_rot = (1.0, 0.0, 0.0, 0.0)
+        else:
+            root_pos, root_rot = parsed_root
+
+        world_pose_cache: dict[str, tuple[tuple[float, float, float], tuple[float, float, float, float]]] = {}
+        visit_state: dict[str, int] = {}
+
+        def _compute_for(name: str) -> tuple[tuple[float, float, float], tuple[float, float, float, float]] | None:
+            pose_raw = local_bones.get(name)
+            if pose_raw is None:
+                return None
+            cached = world_pose_cache.get(name)
+            if cached is not None:
+                return cached
+            state = visit_state.get(name, 0)
+            if state == 1:
+                return None
+            visit_state[name] = 1
+            parsed_local = self._parse_pose(pose_raw)
+            if parsed_local is None:
+                visit_state[name] = 2
+                return None
+            local_pos, local_rot = parsed_local
+
+            if name == "Hips":
+                result = self._compose_pose(root_pos, root_rot, local_pos, local_rot)
+            else:
+                parent_name = self._resolve_existing_parent(name, local_bones)
+                if parent_name is None:
+                    # Unknown parent relationship: keep as-is to avoid incorrect expansion.
+                    result = (local_pos, local_rot)
+                else:
+                    parent_world = _compute_for(parent_name)
+                    if parent_world is None:
+                        result = (local_pos, local_rot)
+                    else:
+                        parent_pos, parent_rot = parent_world
+                        result = self._compose_pose(parent_pos, parent_rot, local_pos, local_rot)
+            world_pose_cache[name] = result
+            visit_state[name] = 2
+            return result
+
+        world_bones: dict[str, dict[str, Any]] = {}
+        for name in local_bones:
+            world_pose = _compute_for(name)
+            if world_pose is None:
+                continue
+            pos, rot = world_pose
+            world_bones[name] = {
+                "name": name,
+                "pos": [pos[0], pos[1], pos[2]],
+                "rot": [rot[0], rot[1], rot[2], rot[3]],
+            }
+        return world_bones
+
+    def _update_bone_from_vmc(self, args: tuple[Any, ...]) -> tuple[str, dict[str, Any]] | None:
+        if len(args) < 8:
+            return None
+        bone_name = self._canonicalize_bone_name(str(args[0]).strip())
+        if not bone_name:
+            return None
+        px = self._coerce_finite_float(args[1])
+        py = self._coerce_finite_float(args[2])
+        pz = self._coerce_finite_float(args[3])
+        qx = self._coerce_finite_float(args[4])
+        qy = self._coerce_finite_float(args[5])
+        qz = self._coerce_finite_float(args[6])
+        qw = self._coerce_finite_float(args[7])
+        if px is None or py is None or pz is None or qx is None or qy is None or qz is None or qw is None:
+            return None
+        return (
+            bone_name,
+            {
+                "name": bone_name,
+                "pos": [px, py, pz],
+                "rot": [qw, qx, qy, qz],
+            },
+        )
 
     def _request_exec_emit(self, *, exec_id: str | int) -> None:
         if self._entrypoint_ctx is None:
@@ -513,7 +802,7 @@ class UdpSkeletonRuntimeNode(OperatorNode, EntrypointNode):
             return
         self._emit_task = loop.create_task(
             self._emit_exec_loop(),
-            name=f"udp_skeleton:emit_exec:{self.node_id}",
+            name=f"udp_vmc:emit_exec:{self.node_id}",
         )
 
     async def _emit_exec_loop(self) -> None:
@@ -531,7 +820,7 @@ class UdpSkeletonRuntimeNode(OperatorNode, EntrypointNode):
                 try:
                     await ctx.emit_exec("packet", exec_id=exec_id)
                 except Exception as exc:
-                    logger.exception("[%s:udp_skeleton] emit exec failed", self.node_id, exc_info=exc)
+                    logger.exception("[%s:udp_vmc] emit exec failed", self.node_id, exc_info=exc)
         except asyncio.CancelledError:
             raise
         finally:
@@ -550,7 +839,7 @@ class UdpSkeletonRuntimeNode(OperatorNode, EntrypointNode):
         except asyncio.CancelledError:
             return
         except Exception as exc:
-            logger.exception("[%s:udp_skeleton] stop emit task failed", self.node_id, exc_info=exc)
+            logger.exception("[%s:udp_vmc] stop emit task failed", self.node_id, exc_info=exc)
 
     def _bump_output_version(self) -> None:
         self._output_version += 1
@@ -565,221 +854,12 @@ class UdpSkeletonRuntimeNode(OperatorNode, EntrypointNode):
             return selected_key
         return keys[0]
 
-    @staticmethod
-    def _extract_model_name(payload: Any) -> str | None:
-        if isinstance(payload, dict):
-            for k in ("modelName", "name", "character", "actor"):
-                v = payload.get(k)
-                if v is None:
-                    continue
-                s = str(v).strip()
-                if s:
-                    return s
-        return None
-
-    @staticmethod
-    def _to_int(value: Any) -> int | None:
-        if isinstance(value, bool):
-            return None
-        if isinstance(value, int):
-            return value
-        if isinstance(value, float):
-            return int(value)
-        if isinstance(value, str):
-            s = value.strip()
-            if not s:
-                return None
-            try:
-                return int(s)
-            except ValueError:
-                return None
-        return None
-
-    def _merge_or_defer_chunk_payload(self, *, key: str, payload: Any, rx_ts_ms: int) -> Any | None:
-        if not isinstance(payload, dict):
-            return payload
-        payload_type = payload.get("type")
-        if payload_type != "skeleton_binary":
-            return payload
-
-        trailer_raw = payload.get("trailer")
-        if not isinstance(trailer_raw, dict):
-            return payload
-
-        chunk_count = self._to_int(trailer_raw.get("chunkCount"))
-        chunk_index = self._to_int(trailer_raw.get("chunkIndex"))
-        frame_id = self._to_int(trailer_raw.get("frameId"))
-
-        if chunk_count is None or chunk_index is None or frame_id is None:
-            return payload
-        if chunk_count <= 1:
-            self._last_completed_frame_id_by_key[key] = frame_id
-            return payload
-        if chunk_index < 0 or chunk_index >= chunk_count:
-            return None
-
-        last_completed = self._last_completed_frame_id_by_key.get(key)
-        if last_completed is not None and frame_id <= int(last_completed):
-            return None
-
-        active_buffer = self._chunk_frames_by_key.get(key)
-        if active_buffer is not None:
-            if frame_id < int(active_buffer.frame_id):
-                return None
-            if frame_id > int(active_buffer.frame_id):
-                active_buffer = None
-            elif chunk_count != int(active_buffer.chunk_count):
-                active_buffer = None
-
-        if active_buffer is None:
-            active_buffer = _ChunkFrameBuffer(
-                frame_id=frame_id,
-                chunk_count=chunk_count,
-                started_rx_ts_ms=rx_ts_ms,
-                last_rx_ts_ms=rx_ts_ms,
-                chunks={},
-            )
-            self._chunk_frames_by_key[key] = active_buffer
-
-        bones_raw = payload.get("bones")
-        if not isinstance(bones_raw, list):
-            return None
-        chunk_bones: list[dict[str, Any]] = []
-        for bone in bones_raw:
-            if isinstance(bone, dict):
-                chunk_bones.append(bone)
-
-        active_buffer.chunks[chunk_index] = chunk_bones
-        active_buffer.last_rx_ts_ms = rx_ts_ms
-
-        if len(active_buffer.chunks) < active_buffer.chunk_count:
-            return None
-
-        merged_bones: list[dict[str, Any]] = []
-        for i in range(active_buffer.chunk_count):
-            merged_bones.extend(active_buffer.chunks.get(i, []))
-
-        merged_payload = dict(payload)
-        merged_payload["bones"] = merged_bones
-        merged_payload["boneCount"] = len(merged_bones)
-
-        merged_trailer = dict(trailer_raw)
-        merged_trailer["chunkIndex"] = 0
-        merged_trailer["chunkCount"] = 1
-        merged_trailer["assembledChunkCount"] = active_buffer.chunk_count
-        merged_payload["trailer"] = merged_trailer
-
-        self._chunk_frames_by_key.pop(key, None)
-        self._last_completed_frame_id_by_key[key] = frame_id
-        return merged_payload
-
-    @staticmethod
-    def _decode_payload(raw: bytes) -> Any:
-        if not isinstance(raw, (bytes, bytearray)):
-            return raw
-
-        decoded_skeleton = UdpSkeletonRuntimeNode._decode_skeleton_packet(bytes(raw))
-        if decoded_skeleton is not None:
-            return decoded_skeleton
-
-        try:
-            text = raw.decode("utf-8")
-        except UnicodeDecodeError:
-            return {"rawBytesLen": len(raw)}
-        if not text:
-            return ""
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError:
-            return text
-
-    @staticmethod
-    def _read_aligned_string(buf: bytes, offset: int) -> tuple[str, int]:
-        end = buf.find(b"\x00", offset)
-        if end == -1:
-            raise ValueError("Missing string terminator")
-        value = buf[offset:end].decode("utf-8")
-        end += 1
-        pad = (4 - (end & 0x03)) & 0x03
-        return value, end + pad
-
-    @staticmethod
-    def _decode_skeleton_packet(raw: bytes) -> dict[str, Any] | None:
-        data = bytes(raw)
-        offset = 0
-        try:
-            model_name, offset = UdpSkeletonRuntimeNode._read_aligned_string(data, offset)
-            if offset + 8 > len(data):
-                return None
-            (timestamp_ms,) = struct.unpack_from("<Q", data, offset)
-            offset += 8
-
-            schema, offset = UdpSkeletonRuntimeNode._read_aligned_string(data, offset)
-            if offset + 4 > len(data):
-                return None
-            (bone_count,) = struct.unpack_from("<i", data, offset)
-            offset += 4
-            if bone_count < 0 or bone_count > 100000:
-                return None
-
-            bones: list[dict[str, Any]] = []
-            for _ in range(int(bone_count)):
-                name, offset = UdpSkeletonRuntimeNode._read_aligned_string(data, offset)
-                if offset + 7 * 4 > len(data):
-                    return None
-                x, y, z, qw, qx, qy, qz = struct.unpack_from("<fffffff", data, offset)
-                offset += 7 * 4
-                bones.append({"name": name, "pos": [x, y, z], "rot": [qw, qx, qy, qz]})
-
-            trailer: dict[str, Any] | None = None
-            trailer_size = 30
-            if offset + trailer_size <= len(data) and data[offset : offset + 4] == b"LMEX":
-                ext_ver, frame_id, chunk_i, chunk_n, total_bones, character_id = struct.unpack_from(
-                    "<HQiiii", data, offset + 4
-                )
-                trailer = {
-                    "magic": "LMEX",
-                    "extVersion": int(ext_ver),
-                    "frameId": int(frame_id),
-                    "chunkIndex": int(chunk_i),
-                    "chunkCount": int(chunk_n),
-                    "totalBoneCount": int(total_bones),
-                    "characterId": int(character_id),
-                }
-
-                ext_offset = offset + trailer_size
-                anim_header_size = 12
-                if ext_offset + anim_header_size <= len(data) and data[ext_offset : ext_offset + 4] == b"ANIM":
-                    normalized_time = struct.unpack_from("<f", data, ext_offset + 4)[0]
-                    layer_index = struct.unpack_from("<i", data, ext_offset + 8)[0]
-                    clip_name, next_offset = UdpSkeletonRuntimeNode._read_aligned_string(data, ext_offset + 12)
-                    pose_key, _ = UdpSkeletonRuntimeNode._read_aligned_string(data, next_offset)
-                    trailer["anim"] = {
-                        "normalizedTime": normalized_time,
-                        "layerIndex": int(layer_index),
-                        "clipName": clip_name,
-                        "poseKey": pose_key,
-                    }
-
-            return {
-                "type": "skeleton_binary",
-                "modelName": model_name,
-                "timestampMs": int(timestamp_ms),
-                "schema": schema,
-                "boneCount": int(bone_count),
-                "bones": bones,
-                "trailer": trailer,
-            }
-        except (struct.error, UnicodeDecodeError, ValueError):
-            return None
-
     async def _cleanup_stale(self, *, now_ts_ms: int | None = None) -> None:
         ttl_ms = int(self._cleanup_after_ms)
         if ttl_ms <= 0:
             return
         if now_ts_ms is None:
             now_ts_ms = int(now_ms())
-
         cutoff = int(now_ts_ms) - ttl_ms
         removed = False
         async with self._models_lock:
@@ -787,15 +867,12 @@ class UdpSkeletonRuntimeNode(OperatorNode, EntrypointNode):
                 rx = int(v.rx_ts_ms)
                 if rx and rx < cutoff:
                     self._skeletons_by_key.pop(k, None)
+                    self._bones_by_key.pop(k, None)
+                    self._pending_bones_by_key.pop(k, None)
+                    self._pending_root_by_key.pop(k, None)
                     removed = True
-
-            for k, pending in list(self._chunk_frames_by_key.items()):
-                if int(pending.last_rx_ts_ms) < cutoff:
-                    self._chunk_frames_by_key.pop(k, None)
-
             if removed:
                 self._bump_output_version()
-
         if removed:
             await self._sync_available_keys_and_selection()
 
@@ -803,27 +880,130 @@ class UdpSkeletonRuntimeNode(OperatorNode, EntrypointNode):
         async with self._models_lock:
             keys = sorted(self._skeletons_by_key.keys())
             selected_key = str(self._selected_key or "").strip()
-
         if keys != self._last_synced_keys:
             self._last_synced_keys = list(keys)
             await self.set_state("availableKeys", list(keys))
-
         next_selected_key = self._normalize_selected_key(keys, selected_key)
-
         if next_selected_key != self._selected_key:
             self._selected_key = next_selected_key
             self._bump_output_version()
             await self.set_state("selectedKey", next_selected_key)
 
+    @staticmethod
+    def _read_osc_string(buf: bytes, offset: int) -> tuple[str, int]:
+        end = buf.find(b"\x00", offset)
+        if end == -1:
+            raise ValueError("Missing OSC string terminator")
+        value = buf[offset:end].decode("utf-8", errors="ignore")
+        end += 1
+        pad = (4 - (end & 0x03)) & 0x03
+        return value, end + pad
 
-UdpSkeletonRuntimeNode.SPEC = F8OperatorSpec(
+    @staticmethod
+    def _decode_osc_message(data: bytes) -> tuple[str, tuple[Any, ...]] | None:
+        if not data:
+            return None
+        try:
+            offset = 0
+            address, offset = UdpVmcRuntimeNode._read_osc_string(data, offset)
+            if not address:
+                return None
+            typetags, offset = UdpVmcRuntimeNode._read_osc_string(data, offset)
+            if not typetags.startswith(","):
+                return (address, ())
+            values: list[Any] = []
+            for tag in typetags[1:]:
+                if tag == "i":
+                    if offset + 4 > len(data):
+                        return None
+                    values.append(struct.unpack(">i", data[offset : offset + 4])[0])
+                    offset += 4
+                elif tag == "f":
+                    if offset + 4 > len(data):
+                        return None
+                    values.append(struct.unpack(">f", data[offset : offset + 4])[0])
+                    offset += 4
+                elif tag == "h":
+                    if offset + 8 > len(data):
+                        return None
+                    values.append(struct.unpack(">q", data[offset : offset + 8])[0])
+                    offset += 8
+                elif tag == "d":
+                    if offset + 8 > len(data):
+                        return None
+                    values.append(struct.unpack(">d", data[offset : offset + 8])[0])
+                    offset += 8
+                elif tag == "s":
+                    text, offset = UdpVmcRuntimeNode._read_osc_string(data, offset)
+                    values.append(text)
+                elif tag == "T":
+                    values.append(True)
+                elif tag == "F":
+                    values.append(False)
+                elif tag in {"N", "I", "[", "]"}:
+                    # Nil/Impulse/Array delimiters do not consume payload bytes.
+                    values.append(None)
+                elif tag in {"c", "r", "m"}:
+                    if offset + 4 > len(data):
+                        return None
+                    offset += 4
+                elif tag == "b":
+                    if offset + 4 > len(data):
+                        return None
+                    size = struct.unpack(">i", data[offset : offset + 4])[0]
+                    offset += 4
+                    if size < 0 or offset + size > len(data):
+                        return None
+                    blob = data[offset : offset + size]
+                    offset += size
+                    pad = (4 - (size & 0x03)) & 0x03
+                    if offset + pad > len(data):
+                        return None
+                    offset += pad
+                    values.append(blob)
+                else:
+                    # Unknown payload-sized tags are skipped conservatively as 4 bytes.
+                    if offset + 4 > len(data):
+                        return None
+                    offset += 4
+            return (address, tuple(values))
+        except (ValueError, struct.error):
+            return None
+
+    @staticmethod
+    def _decode_osc_packet(packet: bytes) -> list[tuple[str, tuple[Any, ...]]]:
+        messages: list[tuple[str, tuple[Any, ...]]] = []
+        if not packet:
+            return messages
+        if packet.startswith(b"#bundle\x00"):
+            if len(packet) < 16:
+                return messages
+            offset = 16
+            while offset + 4 <= len(packet):
+                size = struct.unpack(">I", packet[offset : offset + 4])[0]
+                offset += 4
+                if size <= 0 or offset + size > len(packet):
+                    break
+                element = packet[offset : offset + size]
+                offset += size
+                nested = UdpVmcRuntimeNode._decode_osc_packet(element)
+                if nested:
+                    messages.extend(nested)
+            return messages
+        decoded = UdpVmcRuntimeNode._decode_osc_message(packet)
+        if decoded is not None:
+            messages.append(decoded)
+        return messages
+
+
+UdpVmcRuntimeNode.SPEC = F8OperatorSpec(
     schemaVersion=F8OperatorSchemaVersion.f8operator_1,
     serviceClass=SERVICE_CLASS,
     operatorClass=OPERATOR_CLASS,
     version="0.0.1",
-    label="UDP Skeleton",
-    description="Receives UDP packets, keeps latest skeleton per model key, and emits exec triggers per committed packet/frame.",
-    tags=["io", "udp", "network", "skeleton", "mocap"],
+    label="UDP VMC",
+    description="Receives VMC OSC packets, converts to skeleton payloads, and emits packet exec triggers.",
+    tags=["io", "udp", "network", "skeleton", "mocap", "vmc", "osc"],
     execInPorts=[],
     execOutPorts=["packet"],
     dataOutPorts=[
@@ -861,7 +1041,7 @@ UdpSkeletonRuntimeNode.SPEC = F8OperatorSpec(
             name="port",
             label="Port",
             description="UDP listen port.",
-            valueSchema=integer_schema(default=39540, minimum=1, maximum=65535),
+            valueSchema=integer_schema(default=39539, minimum=1, maximum=65535),
             access=F8StateAccess.rw,
             required=True,
             showOnNode=True,
@@ -888,7 +1068,7 @@ UdpSkeletonRuntimeNode.SPEC = F8OperatorSpec(
             name="cleanupAfterMs",
             label="Cleanup After (ms)",
             description="Remove models that haven't updated for this many ms (<=0 disables cleanup).",
-            valueSchema=integer_schema(default=100, minimum=0, maximum=60_000_000),
+            valueSchema=integer_schema(default=10000, minimum=0, maximum=60_000_000),
             access=F8StateAccess.wo,
             required=True,
             showOnNode=False,
@@ -920,8 +1100,8 @@ def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNod
     reg = registry or RuntimeNodeRegistry.instance()
 
     def _factory(node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any]) -> OperatorNode:
-        return UdpSkeletonRuntimeNode(node_id=node_id, node=node, initial_state=initial_state)
+        return UdpVmcRuntimeNode(node_id=node_id, node=node, initial_state=initial_state)
 
     reg.register(SERVICE_CLASS, OPERATOR_CLASS, _factory, overwrite=True)
-    reg.register_operator_spec(UdpSkeletonRuntimeNode.SPEC, overwrite=True)
+    reg.register_operator_spec(UdpVmcRuntimeNode.SPEC, overwrite=True)
     return reg
