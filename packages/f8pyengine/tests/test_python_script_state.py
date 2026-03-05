@@ -1,3 +1,4 @@
+from f8pysdk.msgspec_codec import dump_json
 import asyncio
 import os
 import sys
@@ -53,7 +54,7 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
         assert code_field is not None
         editor_assist = code_field.editorAssist
         self.assertIsNotNone(editor_assist)
-        python_payload = editor_assist.python.model_dump(mode="json") if editor_assist is not None else None
+        python_payload = dump_json(editor_assist.python, mode="json") if editor_assist is not None else None
         self.assertIsInstance(python_payload, dict)
         support_files = (python_payload or {}).get("support_files") if isinstance(python_payload, dict) else None
         self.assertIsInstance(support_files, dict)

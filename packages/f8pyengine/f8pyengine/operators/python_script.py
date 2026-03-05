@@ -5,7 +5,7 @@ import inspect
 import keyword
 import logging
 import time
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Any, Callable
 
 from f8pysdk import (
@@ -30,6 +30,7 @@ from .python_editor_assist import python_script_field_editor_assist_payload
 
 OPERATOR_CLASS = "f8.python_script"
 logger = logging.getLogger(__name__)
+_MISSING = object()
 
 try:
     import numpy as np
@@ -55,23 +56,41 @@ class _VideoShmSubscription:
 class _PyEngineObjectView:
     __slots__ = ("_data", "_attr_to_key")
 
-    def __init__(self, data: dict[str, Any]) -> None:
-        self._data: dict[str, Any] = dict(data)
+    def __init__(
+        self,
+        data: dict[str, Any],
+        *,
+        copy_data: bool = False,
+        build_attr_index: bool = False,
+    ) -> None:
+        if copy_data:
+            self._data = dict(data)
+        else:
+            self._data = data
+        self._attr_to_key: dict[str, str] | None
+        if build_attr_index:
+            self._attr_to_key = self._build_attr_to_key(self._data)
+        else:
+            self._attr_to_key = None
+
+    @staticmethod
+    def _build_attr_to_key(data: dict[str, Any]) -> dict[str, str]:
         attr_to_key: dict[str, str] = {}
-        for raw_key in self._data.keys():
+        for raw_key in data.keys():
             key = str(raw_key or "")
             if key.isidentifier() and not keyword.iskeyword(key):
                 attr_to_key[key] = key
-        self._attr_to_key = attr_to_key
+        return attr_to_key
 
     def __getitem__(self, key: str) -> Any:
         return self._wrap_value(self._data[str(key)])
 
     def get(self, key: str, default: Any = None) -> Any:
         key_s = str(key)
-        if key_s not in self._data:
+        value = self._data.get(key_s, _MISSING)
+        if value is _MISSING:
             return default
-        return self._wrap_value(self._data.get(key_s))
+        return self._wrap_value(value)
 
     def keys(self):
         return self._data.keys()
@@ -98,7 +117,11 @@ class _PyEngineObjectView:
         return str(self.to_dict())
 
     def __getattr__(self, name: str) -> Any:
-        key = self._attr_to_key.get(str(name or ""))
+        attr_to_key = self._attr_to_key
+        if attr_to_key is None:
+            attr_to_key = self._build_attr_to_key(self._data)
+            self._attr_to_key = attr_to_key
+        key = attr_to_key.get(str(name or ""))
         if key is None:
             raise AttributeError(f"Unknown attribute: {name}")
         return self._wrap_value(self._data.get(key))
@@ -108,9 +131,12 @@ class _PyEngineObjectView:
 
     @classmethod
     def _wrap_value(cls, value: Any) -> Any:
+        value_t = type(value)
+        if value_t in (str, int, float, bool, type(None)):
+            return value
         if isinstance(value, _PyEngineObjectView):
             return value
-        if isinstance(value, dict):
+        if value_t is dict:
             return cls(value)
         if isinstance(value, list):
             return [cls._wrap_value(item) for item in value]
@@ -148,7 +174,15 @@ class PyEngineContext:
     exec_in: str | None = None
 
     def with_exec_in(self, exec_in: str | None) -> "PyEngineContext":
-        return replace(self, exec_in=exec_in)
+        if self.exec_in == exec_in:
+            return self
+        return PyEngineContext(
+            _node=self._node,
+            node_id=self.node_id,
+            locals=self.locals,
+            _state_keys=self._state_keys,
+            exec_in=exec_in,
+        )
 
     @property
     def states(self) -> PyEngineStatesView:
@@ -330,6 +364,13 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         self._pull_cache_outputs: dict[str, Any] = {}
         self._state_key_hint_logged = False
         self._video_subscriptions: dict[str, _VideoShmSubscription] = {}
+        self._hook_on_msg: Callable[..., Any] | None = None
+        self._hook_on_exec: Callable[..., Any] | None = None
+        self._hook_on_state: Callable[..., Any] | None = None
+        self._on_msg_only_mode = False
+        self._data_out_port_set: set[str] = set()
+        self._has_out_port = False
+        self._refresh_data_out_port_cache()
 
         self._compile_and_start()
 
@@ -646,6 +687,19 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
             exec_in=None,
         )
 
+    def _refresh_runtime_hooks(self) -> None:
+        on_msg_raw = self._runtime.get("onMsg")
+        on_exec_raw = self._runtime.get("onExec")
+        on_state_raw = self._runtime.get("onState")
+        self._hook_on_msg = on_msg_raw if callable(on_msg_raw) else None
+        self._hook_on_exec = on_exec_raw if callable(on_exec_raw) else None
+        self._hook_on_state = on_state_raw if callable(on_state_raw) else None
+        self._on_msg_only_mode = self._hook_on_msg is not None and self._hook_on_exec is None
+
+    def _refresh_data_out_port_cache(self) -> None:
+        self._data_out_port_set = {str(name) for name in self.data_out_ports}
+        self._has_out_port = "out" in self._data_out_port_set
+
     def _build_states_view(self, state_keys: tuple[str, ...]) -> PyEngineStatesView:
         resolved_keys = [str(key) for key in state_keys if str(key)]
         if not resolved_keys:
@@ -692,6 +746,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         code = code.replace("\r\n", "\n").replace("\r", "\n")
         code = code.expandtabs(4)
         self._runtime = self._compile_script(code)
+        self._refresh_runtime_hooks()
         if not self._runtime:
             self._started = False
             return
@@ -704,6 +759,8 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         `self._ctx` holds shared utilities/state references, while `exec_in`
         must be invocation-scoped to avoid cross-call leakage under concurrency.
         """
+        if exec_in is None:
+            return self._ctx
         return self._ctx.with_exec_in(exec_in)
 
     def _invoke_hook_sync(self, name: str, *args: Any) -> None:
@@ -761,7 +818,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         if name in self._self_state_writes and self._self_state_writes.get(name) == value:
             return
 
-        fn = self._runtime.get("onState")
+        fn = self._hook_on_state
         if not callable(fn):
             return
         try:
@@ -789,7 +846,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         if not self._runtime:
             return list(self._exec_out_ports)
         inputs: dict[str, Any] = {}
-        for p in list(self.data_in_ports):
+        for p in self.data_in_ports:
             try:
                 inputs[str(p)] = await self.pull(str(p), ctx_id=exec_id)
             except Exception:
@@ -799,7 +856,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
 
     async def compute_output(self, port: str, ctx_id: str | int | None = None) -> Any:
         out_port = str(port or "")
-        if out_port not in self.data_out_ports:
+        if out_port not in self._data_out_port_set:
             return None
         if not self._runtime:
             return None
@@ -809,7 +866,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
                 return self._pull_cache_outputs.get(out_port)
 
         inputs: dict[str, Any] = {}
-        for in_port in list(self.data_in_ports):
+        for in_port in self.data_in_ports:
             try:
                 inputs[str(in_port)] = await self.pull(str(in_port), ctx_id=ctx_id)
             except Exception:
@@ -825,11 +882,12 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         return outputs.get(out_port)
 
     async def _run_on_exec(self, inputs: dict[str, Any], *, exec_in: str | None) -> list[str]:
-        fn = self._runtime.get("onExec")
+        fn = self._hook_on_exec
         if callable(fn):
+            inputs_view = PyEngineInputsView(inputs)
             try:
                 invoke_ctx = self._build_invoke_ctx(exec_in=exec_in)
-                r = fn(invoke_ctx, str(exec_in or ""), PyEngineInputsView(dict(inputs)))
+                r = fn(invoke_ctx, str(exec_in or ""), inputs_view)
                 if inspect.isawaitable(r):
                     r = await r
             except Exception as exc:
@@ -842,11 +900,25 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         return list(self._exec_out_ports)
 
     async def _compute_outputs_for_pull(self, inputs: dict[str, Any], *, exec_in: str | None) -> dict[str, Any]:
-        fn_exec = self._runtime.get("onExec")
-        if callable(fn_exec):
+        fn_msg = self._hook_on_msg
+        fn_exec = self._hook_on_exec
+        if self._on_msg_only_mode and callable(fn_msg):
+            inputs_view = PyEngineInputsView(inputs)
             try:
                 invoke_ctx = self._build_invoke_ctx(exec_in=exec_in)
-                result = fn_exec(invoke_ctx, str(exec_in or ""), PyEngineInputsView(dict(inputs)))
+                result = fn_msg(invoke_ctx, inputs_view)
+                if inspect.isawaitable(result):
+                    result = await result
+            except Exception as exc:
+                self._set_error("onMsg", exc)
+                return {}
+            return self._extract_outputs(result)
+
+        if callable(fn_exec):
+            inputs_view = PyEngineInputsView(inputs)
+            try:
+                invoke_ctx = self._build_invoke_ctx(exec_in=exec_in)
+                result = fn_exec(invoke_ctx, str(exec_in or ""), inputs_view)
                 if inspect.isawaitable(result):
                     result = await result
             except Exception as exc:
@@ -854,12 +926,12 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
                 return {}
             return self._extract_outputs(result)
 
-        fn_msg = self._runtime.get("onMsg")
         if not callable(fn_msg):
             return {}
+        inputs_view = PyEngineInputsView(inputs)
         try:
             invoke_ctx = self._build_invoke_ctx(exec_in=exec_in)
-            result = fn_msg(invoke_ctx, PyEngineInputsView(dict(inputs)))
+            result = fn_msg(invoke_ctx, inputs_view)
             if inspect.isawaitable(result):
                 result = await result
         except Exception as exc:
@@ -871,13 +943,25 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         if result is None:
             return {}
 
+        data_out_ports = self._data_out_port_set
         outputs: dict[str, Any] = {}
         if isinstance(result, dict):
             raw_outputs = result.get("outputs")
             if isinstance(raw_outputs, dict):
+                # Fast-path for dominant script pattern: {"outputs": {"tcode": value}}.
+                if len(raw_outputs) == 1:
+                    for raw_key, raw_value in raw_outputs.items():
+                        if isinstance(raw_key, str):
+                            if raw_key in data_out_ports:
+                                return {raw_key: raw_value}
+                            return {}
+                        key_s = str(raw_key)
+                        if key_s in data_out_ports:
+                            return {key_s: raw_value}
+                        return {}
                 for k, v in raw_outputs.items():
                     k_s = str(k)
-                    if k_s in self.data_out_ports:
+                    if k_s in data_out_ports:
                         outputs[k_s] = v
                 return outputs
 
@@ -885,21 +969,22 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
                 k_s = str(k)
                 if k_s in ("exec", "outputs"):
                     continue
-                if k_s in self.data_out_ports:
+                if k_s in data_out_ports:
                     outputs[k_s] = v
             return outputs
 
-        if "out" in self.data_out_ports:
+        if "out" in data_out_ports:
             outputs["out"] = result
         return outputs
 
     async def _run_on_msg(self, inputs: dict[str, Any], *, exec_in: str | None) -> None:
-        fn = self._runtime.get("onMsg")
+        fn = self._hook_on_msg
         if not callable(fn):
             return
+        inputs_view = PyEngineInputsView(inputs)
         try:
             invoke_ctx = self._build_invoke_ctx(exec_in=exec_in)
-            r = fn(invoke_ctx, PyEngineInputsView(dict(inputs)))
+            r = fn(invoke_ctx, inputs_view)
             if inspect.isawaitable(r):
                 r = await r
         except Exception as exc:
@@ -938,7 +1023,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
             return None
 
         # Non-dict: send to default data output if present.
-        if "out" in self.data_out_ports:
+        if self._has_out_port:
             try:
                 await self.emit("out", r)
             except Exception:

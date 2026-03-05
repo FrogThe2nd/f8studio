@@ -14,25 +14,16 @@ class CustomBuildHook(BuildHookInterface):
         repo_root = project_root.parent.parent
         protocol_path = repo_root / "schemas" / "protocol.yml"
         output_path = project_root / "f8pysdk" / "generated" / "__init__.py"
+        script_path = repo_root / "scripts" / "protocol_codegen_msgspec.py"
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
         command = [
             sys.executable,
-            "-m",
-            "datamodel_code_generator",
-            "--input",
+            str(script_path),
+            "--protocol",
             str(protocol_path),
-            "--input-file-type",
-            "openapi",
-            "--output-model-type",
-            "pydantic_v2.BaseModel",
             "--output",
             str(output_path),
-            "--use-default",
-            "--strict-nullable",
-            "--allow-population-by-field-name",
-            "--use-title-as-name",
-            "--use-annotated",
         ]
         subprocess.run(command, check=True, cwd=repo_root)

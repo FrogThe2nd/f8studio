@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from f8pysdk.msgspec_codec import copy_model, dump_json
 import asyncio
 import logging
 from collections import deque
 from typing import Any, TYPE_CHECKING
+
+import msgspec
 
 from ...generated import F8Edge, F8EdgeKindEnum, F8RuntimeGraph, F8RuntimeGraphMeta, F8StateAccess
 from ...json_unwrap import unwrap_json_value
@@ -33,13 +36,15 @@ log = logging.getLogger(__name__)
 
 
 def _with_rungraph_ts(graph: F8RuntimeGraph, ts_ms: int) -> F8RuntimeGraph:
-    meta = graph.meta if graph.meta is not None else F8RuntimeGraphMeta()
-    meta2 = meta.model_copy(deep=True, update={"ts": int(ts_ms)})
-    return graph.model_copy(deep=True, update={"meta": meta2})
+    meta = graph.meta
+    if meta is None or isinstance(meta, msgspec.UnsetType):
+        meta = F8RuntimeGraphMeta()
+    meta2 = copy_model(meta, deep=True, update={"ts": int(ts_ms)})
+    return copy_model(graph, deep=True, update={"meta": meta2})
 
 
 def _encode_rungraph_bytes(graph: F8RuntimeGraph) -> bytes:
-    payload = graph.model_dump(mode="json", by_alias=True)
+    payload = dump_json(graph, mode="json", by_alias=True)
     return encode_obj(payload)
 
 

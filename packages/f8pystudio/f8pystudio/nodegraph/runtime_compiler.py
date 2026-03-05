@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from f8pysdk.msgspec_codec import copy_model, dump_json
+import enum
 import hashlib
 import logging
 from dataclasses import dataclass
@@ -122,22 +124,34 @@ def _as_int(value: Any, *, default: int, minimum: int, maximum: int) -> int:
     return out
 
 
-def _unwrap_json_value(value: Any) -> Any:
+def _coerce_state_payload_value(value: Any) -> tuple[bool, Any]:
     if value is None or isinstance(value, (str, int, float, bool)):
-        return value
+        return True, value
     if isinstance(value, (list, tuple)):
-        return [_unwrap_json_value(v) for v in value]
+        out: list[Any] = []
+        for item in value:
+            ok, normalized = _coerce_state_payload_value(item)
+            if not ok:
+                return False, None
+            out.append(normalized)
+        return True, out
     if isinstance(value, dict):
-        return {str(k): _unwrap_json_value(v) for k, v in value.items()}
+        out_obj: dict[str, Any] = {}
+        for key, item in value.items():
+            ok, normalized = _coerce_state_payload_value(item)
+            if not ok:
+                return False, None
+            out_obj[str(key)] = normalized
+        return True, out_obj
+    if isinstance(value, enum.Enum):
+        return _coerce_state_payload_value(value.value)
     try:
-        return _unwrap_json_value(value.root)
-    except (AttributeError, TypeError):
-        pass
-    try:
-        return _unwrap_json_value(value.model_dump(mode="json"))
+        dumped = dump_json(value, mode="json")
     except (AttributeError, TypeError, ValueError):
-        pass
-    return value
+        return False, None
+    if dumped is value:
+        return False, None
+    return _coerce_state_payload_value(dumped)
 
 
 def _inject_studio_auto_pull_triggers(graph: F8RuntimeGraph) -> tuple[F8RuntimeGraph, list[str]]:
@@ -176,7 +190,11 @@ def _inject_studio_auto_pull_triggers(graph: F8RuntimeGraph) -> tuple[F8RuntimeG
             continue
 
         raw_state_values = dict(dst_node.stateValues or {})
-        state_values = {str(k): _unwrap_json_value(v) for k, v in raw_state_values.items()}
+        state_values: dict[str, Any] = {}
+        for key, item in raw_state_values.items():
+            ok, normalized = _coerce_state_payload_value(item)
+            if ok:
+                state_values[str(key)] = normalized
         mode = str(state_values.get("upstreamSamplingMode", "passive") or "").strip().lower()
         if mode != "auto":
             continue
@@ -286,7 +304,7 @@ def _inject_studio_auto_pull_triggers(graph: F8RuntimeGraph) -> tuple[F8RuntimeG
     for edge in list(new_edges) + injected_edges:
         dedup_edges[str(edge.edgeId)] = edge
 
-    patched = graph.model_copy(update={"nodes": new_nodes, "edges": list(dedup_edges.values())})
+    patched = copy_model(graph, update={"nodes": new_nodes, "edges": list(dedup_edges.values())})
     return patched, warnings
 
 
@@ -395,9 +413,17 @@ def compile_global_runtime_graph(
             try:
                 if name not in n.model.properties and name not in n.model.custom_properties:
                     continue
-                state_values[name] = n.model.get_property(name)
+                raw_value = n.model.get_property(name)
             except (AttributeError, KeyError, RuntimeError, TypeError):
                 continue
+            ok, normalized = _coerce_state_payload_value(raw_value)
+            if ok:
+                state_values[name] = normalized
+                continue
+            warning = f"skip non-serializable state value: {service_id}.{node_id}.{name}"
+            if compile_warnings is not None:
+                compile_warnings.append(warning)
+            logger.warning("%s", warning)
         # NOTE: values for upstream-driven state fields (bound via state edges)
         # are filtered out after compiling edges, so state propagation always
         # takes precedence over this snapshot on repeated deploys.
@@ -480,7 +506,7 @@ def compile_global_runtime_graph(
             if new_values == rn.stateValues:
                 filtered_nodes.append(rn)
                 continue
-            filtered_nodes.append(rn.model_copy(update={"stateValues": new_values or None}))
+            filtered_nodes.append(copy_model(rn, update={"stateValues": new_values or None}))
         runtime_nodes = filtered_nodes
 
     graph = F8RuntimeGraph(
@@ -514,12 +540,7 @@ def split_runtime_graph_by_service(graph: F8RuntimeGraph) -> dict[str, F8Runtime
 
     def _with_direction(edge: F8Edge, direction: F8EdgeDirection) -> F8Edge:
         # Avoid mutating shared edge instances across per-service graphs.
-        try:
-            return edge.model_copy(update={"direction": direction})
-        except Exception:
-            payload = edge.model_dump(mode="json", by_alias=True)
-            payload["direction"] = direction
-            return F8Edge.model_validate(payload)
+        return copy_model(edge, update={"direction": direction})
 
     by_service_nodes: dict[str, list[F8RuntimeNode]] = {}
     for n in graph.nodes:

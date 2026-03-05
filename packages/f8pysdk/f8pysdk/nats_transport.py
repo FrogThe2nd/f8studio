@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
 import nats  # type: ignore[import-not-found]
+from nats.errors import BadSubscriptionError  # type: ignore[import-not-found]
 from nats.errors import TimeoutError as NatsTimeoutError  # type: ignore[import-not-found]
 from nats.js.api import KeyValueConfig, StorageType  # type: ignore[import-not-found]
 from nats.js.errors import BucketNotFoundError, NotFoundError as JsNotFoundError  # type: ignore[import-not-found]
@@ -109,7 +110,11 @@ class NatsTransport:
                     await self._js.delete_key_value(str(self._config.kv_bucket))
                 except (BucketNotFoundError, JsNotFoundError) as exc:
                     # First boot / already-clean state: nothing to delete.
-                    log.debug("delete_key_value skipped during connect bucket=%s", self._config.kv_bucket, exc_info=exc)
+                    log.debug(
+                        "delete_key_value skipped during connect bucket=%s reason=%s",
+                        self._config.kv_bucket,
+                        type(exc).__name__,
+                    )
                 except Exception as exc:
                     log.debug("delete_key_value failed during connect bucket=%s", self._config.kv_bucket, exc_info=exc)
             self._kv = await self._open_kv(self._config.kv_bucket)
@@ -136,6 +141,9 @@ class NatsTransport:
             for sub in subs:
                 try:
                     await sub.unsubscribe()
+                except BadSubscriptionError:
+                    # Sub might already be closed by server/drain; treat as expected during shutdown.
+                    log.debug("skip unsubscribe for invalid subscription during close")
                 except Exception as exc:
                     log.debug("unsubscribe failed during close", exc_info=exc)
 
@@ -144,7 +152,11 @@ class NatsTransport:
                     await self._js.delete_key_value(str(self._config.kv_bucket))
                 except (BucketNotFoundError, JsNotFoundError) as exc:
                     # Closing an already-removed bucket is fine.
-                    log.debug("delete_key_value skipped during close bucket=%s", self._config.kv_bucket, exc_info=exc)
+                    log.debug(
+                        "delete_key_value skipped during close bucket=%s reason=%s",
+                        self._config.kv_bucket,
+                        type(exc).__name__,
+                    )
                 except Exception as exc:
                     log.debug("delete_key_value failed during close bucket=%s", self._config.kv_bucket, exc_info=exc)
 

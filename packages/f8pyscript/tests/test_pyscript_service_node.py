@@ -4,6 +4,8 @@ import sys
 import unittest
 import uuid
 
+import msgspec
+
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 SDK_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "f8pysdk"))
 if ROOT not in sys.path:
@@ -13,6 +15,7 @@ if SDK_ROOT not in sys.path:
 
 from f8pysdk import F8StateAccess, F8StateSpec, any_schema  # noqa: E402
 from f8pysdk.generated import F8RuntimeGraph, F8RuntimeNode  # noqa: E402
+from f8pysdk.msgspec_codec import dump_json  # noqa: E402
 from f8pysdk.runtime_node_registry import RuntimeNodeRegistry  # noqa: E402
 from f8pysdk.service_host import ServiceHost, ServiceHostConfig  # noqa: E402
 from f8pysdk.shm.video import VideoShmWriter  # noqa: E402
@@ -67,7 +70,9 @@ class PyScriptServiceNodeTests(unittest.IsolatedAsyncioTestCase):
         assert code_field is not None
         editor_assist = code_field.editorAssist
         self.assertIsNotNone(editor_assist)
-        python_payload = editor_assist.python.model_dump(mode="json") if editor_assist is not None else None
+        python_payload = None
+        if editor_assist is not None and not isinstance(editor_assist.python, msgspec.UnsetType):
+            python_payload = dump_json(editor_assist.python, mode="json")
         self.assertIsInstance(python_payload, dict)
         dynamic_bindings = (python_payload or {}).get("dynamic_bindings") if isinstance(python_payload, dict) else None
         self.assertIsInstance(dynamic_bindings, dict)

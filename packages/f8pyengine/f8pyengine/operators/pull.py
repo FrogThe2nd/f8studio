@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from f8pysdk.msgspec_codec import dump_json
 import asyncio
 import logging
 import time
@@ -181,12 +182,8 @@ def _unwrap_json_value(value: Any) -> Any:
     if isinstance(value, dict):
         return {str(k): _unwrap_json_value(v) for k, v in value.items()}
     try:
-        return _unwrap_json_value(value.root)
-    except Exception:
-        pass
-    try:
-        return _unwrap_json_value(value.model_dump(mode="json"))
-    except Exception:
+        return _unwrap_json_value(dump_json(value, mode="json"))
+    except (AttributeError, TypeError, ValueError):
         pass
     return value
 
