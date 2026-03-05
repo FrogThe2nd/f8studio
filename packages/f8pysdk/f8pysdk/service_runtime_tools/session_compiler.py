@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import uuid4
 
+import msgspec
+
 from f8pysdk.generated import (
     F8Edge,
     F8EdgeDirection,
@@ -291,15 +293,15 @@ def _compile_edges(layout_connections: list[Any], kept_by_id: dict[str, _KeptNod
             F8Edge(
                 edgeId=uuid4().hex,
                 fromServiceId=from_node.service_id,
-                fromOperatorId=(None if from_node.is_service_node else from_node.node_id),
+                fromOperatorId=(msgspec.UNSET if from_node.is_service_node else from_node.node_id),
                 fromPort=_raw_port_name(from_port_raw),
                 toServiceId=to_node.service_id,
-                toOperatorId=(None if to_node.is_service_node else to_node.node_id),
+                toOperatorId=(msgspec.UNSET if to_node.is_service_node else to_node.node_id),
                 toPort=_raw_port_name(to_port_raw),
                 kind=kind,
                 strategy=F8EdgeStrategyEnum.latest,
-                timeoutMs=None,
-                direction=None,
+                timeoutMs=msgspec.UNSET,
+                direction=msgspec.UNSET,
             )
         )
     return edges

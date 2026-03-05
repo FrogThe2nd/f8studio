@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from typing import Any, Iterable
 from uuid import uuid4
 
+import msgspec
+
 from f8pysdk import (
     F8DataPortSpec,
     F8Edge,
@@ -291,8 +293,8 @@ def _inject_studio_auto_pull_triggers(graph: F8RuntimeGraph) -> tuple[F8RuntimeG
                 toPort=trigger_port,
                 kind=F8EdgeKindEnum.data,
                 strategy=F8EdgeStrategyEnum.latest,
-                timeoutMs=None,
-                direction=None,
+                timeoutMs=msgspec.UNSET,
+                direction=msgspec.UNSET,
             )
         )
 
@@ -467,15 +469,17 @@ def compile_global_runtime_graph(
                     F8Edge(
                         edgeId=uuid4().hex,
                         fromServiceId=svc_map[src_node],
-                        fromOperatorId=(id_map[src_node] if kind_map.get(src_node) != "container" else None),
+                        fromOperatorId=(
+                            id_map[src_node] if kind_map.get(src_node) != "container" else msgspec.UNSET
+                        ),
                         fromPort=_raw_port_name(out_name),
                         toServiceId=svc_map[dst_node],
-                        toOperatorId=(id_map[dst_node] if kind_map.get(dst_node) != "container" else None),
+                        toOperatorId=(id_map[dst_node] if kind_map.get(dst_node) != "container" else msgspec.UNSET),
                         toPort=_raw_port_name(in_name),
                         kind=edge_kind,
                         strategy=F8EdgeStrategyEnum.latest,
-                        timeoutMs=None,
-                        direction=None,
+                        timeoutMs=msgspec.UNSET,
+                        direction=msgspec.UNSET,
                     )
                 )
 

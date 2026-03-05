@@ -33,6 +33,7 @@ def _load_injector(ref: str) -> Callable[[Any], str | None]:
 
 async def _deploy_runtime_graph(*, nats_url: str, service_id: str, graph: Any) -> None:
     from f8pysdk.generated import F8SetRungraphArgs, F8SetRungraphReply, F8SetRungraphRequest
+    from f8pysdk.msgspec_codec import copy_model
     from f8pysdk.service_bus.codec import decode_as, encode_obj
     from f8pysdk.nats_naming import kv_bucket_for_service, new_id, svc_endpoint_subject
     from f8pysdk.nats_transport import NatsTransport, NatsTransportConfig
@@ -43,9 +44,19 @@ async def _deploy_runtime_graph(*, nats_url: str, service_id: str, graph: Any) -
     await transport.connect()
     try:
         await wait_service_ready(transport, timeout_s=6.0)
+        graph_nodes = list(graph.nodes or [])
+        normalized_nodes = []
+        changed = False
+        for node in graph_nodes:
+            if node.operatorClass is None:
+                normalized_nodes.append(copy_model(node, update={"operatorClass": msgspec.UNSET}))
+                changed = True
+            else:
+                normalized_nodes.append(node)
+        graph_for_request = copy_model(graph, update={"nodes": normalized_nodes}) if changed else graph
         request_payload = F8SetRungraphRequest(
             reqId=new_id(),
-            args=F8SetRungraphArgs(graph=graph),
+            args=F8SetRungraphArgs(graph=graph_for_request),
             meta={"source": "headless"},
         )
         request_bytes = encode_obj(request_payload)

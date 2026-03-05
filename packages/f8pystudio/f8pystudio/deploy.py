@@ -9,7 +9,7 @@ from typing import Any
 import msgspec
 from f8pysdk import F8Edge, F8EdgeKindEnum, F8EdgeStrategyEnum, F8RuntimeGraph, F8RuntimeNode, F8StateAccess
 from f8pysdk.generated import F8SetRungraphArgs, F8SetRungraphReply, F8SetRungraphRequest
-from f8pysdk.msgspec_codec import dump_json
+from f8pysdk.msgspec_codec import copy_model, dump_json
 from f8pysdk.nats_naming import ensure_token, kv_bucket_for_service, new_id, svc_endpoint_subject
 from f8pysdk.nats_transport import NatsTransport, NatsTransportConfig
 from f8pysdk.service_ready import wait_service_ready
@@ -140,8 +140,8 @@ def export_runtime_graph(
         node_service_ids[n] = sid_s or service_id
 
         service_class = str(spec.serviceClass or "").strip()
-        operator_class = str(spec.operatorClass).strip() if spec.operatorClass is not None else None
-        is_service_node = operator_class is None
+        is_service_node = spec.operatorClass is None
+        operator_class = str(spec.operatorClass).strip() if not is_service_node else msgspec.UNSET
         node_is_service[n] = is_service_node
 
         # Service/container nodes use `nodeId == serviceId`.
@@ -236,10 +236,14 @@ def export_runtime_graph(
                     F8Edge(
                         edgeId=uuid.uuid4().hex,
                         fromServiceId=node_service_ids.get(src_node, service_id),
-                        fromOperatorId=(None if node_is_service.get(src_node, False) else from_id),
+                        fromOperatorId=(
+                            msgspec.UNSET if node_is_service.get(src_node, False) else from_id
+                        ),
                         fromPort=_raw_port_name(out_name),
                         toServiceId=node_service_ids.get(dst_node, service_id),
-                        toOperatorId=(None if node_is_service.get(dst_node, False) else to_id),
+                        toOperatorId=(
+                            msgspec.UNSET if node_is_service.get(dst_node, False) else to_id
+                        ),
                         toPort=_raw_port_name(in_name),
                         kind=edge_kind,
                         strategy=F8EdgeStrategyEnum.latest,
@@ -257,10 +261,19 @@ async def deploy_to_service(*, service_id: str, nats_url: str, graph: F8RuntimeG
     await tr.connect()
     try:
         await wait_service_ready(tr, timeout_s=6.0)
+        normalized_nodes = []
+        changed = False
+        for node in list(graph.nodes or []):
+            if node.operatorClass is None:
+                normalized_nodes.append(copy_model(node, update={"operatorClass": msgspec.UNSET}))
+                changed = True
+            else:
+                normalized_nodes.append(node)
+        graph_for_request = copy_model(graph, update={"nodes": normalized_nodes}) if changed else graph
         # Endpoint-only mode: deploy via service endpoint (allows validation/rejection).
         req = F8SetRungraphRequest(
             reqId=new_id(),
-            args=F8SetRungraphArgs(graph=graph),
+            args=F8SetRungraphArgs(graph=graph_for_request),
             meta={"source": "deploy"},
         )
         req_bytes = encode_obj(req)

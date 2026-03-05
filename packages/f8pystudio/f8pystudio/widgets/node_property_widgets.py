@@ -7,6 +7,8 @@ import time
 from collections import defaultdict
 from typing import Any, Callable
 
+import msgspec
+
 from NodeGraphQt import PropertiesBinWidget
 from NodeGraphQt.constants import NodeEnum, NodePropWidgetEnum
 from NodeGraphQt.custom_widgets.properties_bin.node_property_factory import NodePropertyWidgetFactory
@@ -1210,7 +1212,10 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
         if not (self._editable_data_in if is_in else self._editable_data_out):
             return
         port = F8DataPortSpec(
-            name="", required=True, description=None, valueSchema=_schema_from_json_obj({"type": "any"})
+            name="",
+            required=True,
+            description=msgspec.UNSET,
+            valueSchema=_schema_from_json_obj({"type": "any"}),
         )
         row = self._make_data_row(port, is_in=is_in)
         (self._sec_data_in if is_in else self._sec_data_out).add_row(row)
@@ -1920,7 +1925,13 @@ class _F8SpecCommandEditor(QtWidgets.QWidget):
         editable = bool(spec.editableCommands)
         if not editable:
             return
-        cmd = F8Command(name="", description=None, required=False, showOnNode=False, params=[])
+        cmd = F8Command(
+            name="",
+            description=msgspec.UNSET,
+            required=False,
+            showOnNode=False,
+            params=[],
+        )
         dlg = _F8EditCommandDialog(self, title="Add command", cmd=cmd, ui_only=False)
         if dlg.exec_() != QtWidgets.QDialog.Accepted:
             return

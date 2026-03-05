@@ -6,6 +6,7 @@ from typing import Protocol
 import msgspec
 from f8pysdk import F8RuntimeGraph
 from f8pysdk.generated import F8SetRungraphArgs, F8SetRungraphReply, F8SetRungraphRequest
+from f8pysdk.msgspec_codec import copy_model
 from f8pysdk.nats_naming import kv_bucket_for_service, new_id, svc_endpoint_subject
 from f8pysdk.nats_transport import NatsTransport, NatsTransportConfig
 from f8pysdk.service_ready import wait_service_ready
@@ -41,6 +42,20 @@ class RungraphDeployResult:
 class NatsRungraphGateway:
     config: RungraphDeployConfig
 
+    @staticmethod
+    def _normalize_graph_for_request(graph: F8RuntimeGraph) -> F8RuntimeGraph:
+        normalized_nodes = []
+        changed = False
+        for node in list(graph.nodes or []):
+            if node.operatorClass is None:
+                normalized_nodes.append(copy_model(node, update={"operatorClass": msgspec.UNSET}))
+                changed = True
+            else:
+                normalized_nodes.append(node)
+        if not changed:
+            return graph
+        return copy_model(graph, update={"nodes": normalized_nodes})
+
     async def deploy_runtime_graph(self, req: RungraphDeployRequest) -> RungraphDeployResult:
         service_id = str(req.service_id)
         bucket = kv_bucket_for_service(service_id)
@@ -48,9 +63,10 @@ class NatsRungraphGateway:
         await transport.connect()
         try:
             await wait_service_ready(transport, timeout_s=float(self.config.ready_timeout_s))
+            graph_for_request = self._normalize_graph_for_request(req.graph)
             request_payload = F8SetRungraphRequest(
                 reqId=new_id(),
-                args=F8SetRungraphArgs(graph=req.graph),
+                args=F8SetRungraphArgs(graph=graph_for_request),
                 meta={"source": str(req.source or "studio")},
             )
             request_bytes = encode_obj(request_payload)

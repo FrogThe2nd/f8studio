@@ -5,6 +5,8 @@ import importlib
 from collections.abc import Callable
 from typing import Any, ClassVar
 
+import msgspec
+
 from .generated import F8OperatorSpec, F8RuntimeNode, F8ServiceDescribe, F8ServiceSpec
 from .runtime_node import OperatorNode, RuntimeNode, ServiceNode
 from .builtin_state_fields import (
@@ -191,7 +193,12 @@ class RuntimeNodeRegistry:
             raise ValueError("node_id must be non-empty")
         if node is None:
             # Service/container nodes use `nodeId == serviceId`.
-            node = F8RuntimeNode(nodeId=str(node_id), serviceId=str(node_id), serviceClass=str(service_class), operatorClass=None)
+            node = F8RuntimeNode(
+                nodeId=str(node_id),
+                serviceId=str(node_id),
+                serviceClass=str(service_class),
+                operatorClass=msgspec.UNSET,
+            )
         factory = self._by_service_service.get(service_class)
         if factory is None:
             if service_class not in self._by_service_operator and service_class not in self._by_service_service:
@@ -211,7 +218,7 @@ class RuntimeNodeRegistry:
             raise ValueError("node.serviceClass must be non-empty")
 
         operator_class = node.operatorClass
-        if operator_class is None:
+        if operator_class is None or isinstance(operator_class, msgspec.UnsetType):
             return self.create_service_node(
                 service_class=str(service_class),
                 node_id=str(node_id),
