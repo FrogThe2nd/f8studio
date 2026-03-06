@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import ast
 import inspect
 import keyword
 import logging
@@ -8,6 +9,7 @@ import re
 import time
 from dataclasses import dataclass
 from typing import Any, Callable
+import numpy as np
 
 import msgspec
 from f8pysdk import (
@@ -41,11 +43,7 @@ from .python_editor_assist import python_script_field_editor_assist_payload
 OPERATOR_CLASS = "f8.python_script"
 logger = logging.getLogger(__name__)
 _MISSING = object()
-
-try:
-    import numpy as np
-except ModuleNotFoundError:
-    np = None  # type: ignore[assignment]
+_DICT_STYLE_INPUT_METHODS: frozenset[str] = frozenset({"get", "keys", "items", "values", "to_dict"})
 
 
 @dataclass
@@ -223,8 +221,83 @@ def _normalize_script_output_value(value: Any, *, _seen: set[int] | None = None)
     return value
 
 
+def _normalize_script_output_value_fast(value: Any) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return _normalize_script_output_value(value)
+
+
 def _is_valid_identifier(name: str) -> bool:
     return bool(name) and name.isidentifier() and not keyword.iskeyword(name)
+
+
+def _script_uses_inputs_object_access(code: str) -> bool:
+    """
+    Returns True when script body appears to rely on dot-style inputs access
+    (e.g. inputs.msg), which requires msgspec struct decoding.
+    """
+    try:
+        module = ast.parse(str(code or ""), mode="exec")
+    except SyntaxError:
+        # Conservative fallback: keep msgspec path when parser cannot decide.
+        return True
+
+    for node in module.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            fn_name = str(node.name or "")
+            if fn_name == "onMsg":
+                param_name = _inputs_param_name(node, expected_pos=1)
+                if param_name and _function_uses_dot_inputs_access(node, param_name):
+                    return True
+            elif fn_name == "onExec":
+                param_name = _inputs_param_name(node, expected_pos=2)
+                if param_name and _function_uses_dot_inputs_access(node, param_name):
+                    return True
+    return False
+
+
+def _inputs_param_name(node: ast.FunctionDef | ast.AsyncFunctionDef, *, expected_pos: int) -> str | None:
+    pos_args = list(node.args.posonlyargs) + list(node.args.args)
+    if expected_pos >= len(pos_args):
+        return None
+    raw_name = str(pos_args[expected_pos].arg or "").strip()
+    return raw_name or None
+
+
+def _function_uses_dot_inputs_access(node: ast.FunctionDef | ast.AsyncFunctionDef, param_name: str) -> bool:
+    alias_names: set[str] = {param_name}
+    for child in ast.walk(node):
+        if not isinstance(child, ast.Assign):
+            continue
+        if len(child.targets) != 1:
+            continue
+        target = child.targets[0]
+        if not isinstance(target, ast.Name):
+            continue
+        value = child.value
+        if isinstance(value, ast.Name) and str(value.id or "") in alias_names:
+            alias_names.add(str(target.id or ""))
+
+    for child in ast.walk(node):
+        if isinstance(child, ast.Call) and isinstance(child.func, ast.Name):
+            fn_name = str(child.func.id or "")
+            if fn_name in {"getattr", "setattr", "hasattr", "delattr"} and child.args:
+                first_arg = child.args[0]
+                if isinstance(first_arg, ast.Name) and str(first_arg.id or "") in alias_names:
+                    # Conservative fallback: dynamic attribute APIs may depend on object semantics.
+                    return True
+        if not isinstance(child, ast.Attribute):
+            continue
+        base = child.value
+        if not isinstance(base, ast.Name):
+            continue
+        if str(base.id or "") not in alias_names:
+            continue
+        attr_name = str(child.attr or "")
+        if attr_name in _DICT_STYLE_INPUT_METHODS:
+            continue
+        return True
+    return False
 
 
 def _normalize_attr_name(raw_name: str, *, fallback: str) -> str:
@@ -633,12 +706,20 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         self._hook_on_msg: Callable[..., Any] | None = None
         self._hook_on_exec: Callable[..., Any] | None = None
         self._hook_on_state: Callable[..., Any] | None = None
+        self._hook_on_msg_is_async = False
+        self._hook_on_exec_is_async = False
+        self._hook_on_state_is_async = False
+        self._hook_on_msg_maybe_awaitable = False
+        self._hook_on_exec_maybe_awaitable = False
+        self._hook_on_state_maybe_awaitable = False
         self._on_msg_only_mode = False
         self._data_out_port_set: set[str] = set()
         self._has_out_port = False
         inputs_model_builder = _InputsModelBuilder(node_id=self.node_id)
         self._inputs_model_type = inputs_model_builder.build_root(list(node.dataInPorts or []))
         self._inputs_model_warnings = tuple(inputs_model_builder.warnings)
+        self._prefer_raw_inputs = False
+        self._input_decode_mode_logged: str | None = None
         self._refresh_data_out_port_cache()
 
         self._compile_and_start()
@@ -964,6 +1045,12 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         self._hook_on_msg = on_msg_raw if callable(on_msg_raw) else None
         self._hook_on_exec = on_exec_raw if callable(on_exec_raw) else None
         self._hook_on_state = on_state_raw if callable(on_state_raw) else None
+        self._hook_on_msg_is_async = bool(self._hook_on_msg and inspect.iscoroutinefunction(self._hook_on_msg))
+        self._hook_on_exec_is_async = bool(self._hook_on_exec and inspect.iscoroutinefunction(self._hook_on_exec))
+        self._hook_on_state_is_async = bool(self._hook_on_state and inspect.iscoroutinefunction(self._hook_on_state))
+        self._hook_on_msg_maybe_awaitable = bool(self._hook_on_msg and not self._hook_on_msg_is_async)
+        self._hook_on_exec_maybe_awaitable = bool(self._hook_on_exec and not self._hook_on_exec_is_async)
+        self._hook_on_state_maybe_awaitable = bool(self._hook_on_state and not self._hook_on_state_is_async)
         self._on_msg_only_mode = self._hook_on_msg is not None and self._hook_on_exec is None
 
     def _refresh_data_out_port_cache(self) -> None:
@@ -1015,6 +1102,8 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         code = str(self._code or "")
         code = code.replace("\r\n", "\n").replace("\r", "\n")
         code = code.expandtabs(4)
+        self._prefer_raw_inputs = not _script_uses_inputs_object_access(code)
+        self._input_decode_mode_logged = None
         self._runtime = self._compile_script(code)
         if self._inputs_model_warnings:
             self._set_error("inputModel", ValueError("; ".join(self._inputs_model_warnings)))
@@ -1034,6 +1123,35 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         if exec_in is None:
             return self._ctx
         return self._ctx.with_exec_in(exec_in)
+
+    async def _resolve_hook_result(
+        self,
+        result: Any,
+        *,
+        hook: str,
+    ) -> Any:
+        if hook == "msg":
+            hook_is_async = self._hook_on_msg_is_async
+            maybe_awaitable = self._hook_on_msg_maybe_awaitable
+        elif hook == "exec":
+            hook_is_async = self._hook_on_exec_is_async
+            maybe_awaitable = self._hook_on_exec_maybe_awaitable
+        else:
+            hook_is_async = self._hook_on_state_is_async
+            maybe_awaitable = self._hook_on_state_maybe_awaitable
+        if hook_is_async:
+            return await result
+        if not maybe_awaitable:
+            return result
+        if inspect.isawaitable(result):
+            return await result
+        if hook == "msg":
+            self._hook_on_msg_maybe_awaitable = False
+        elif hook == "exec":
+            self._hook_on_exec_maybe_awaitable = False
+        else:
+            self._hook_on_state_maybe_awaitable = False
+        return result
 
     def _invoke_hook_sync(self, name: str, *args: Any) -> None:
         fn = self._runtime.get(name)
@@ -1095,8 +1213,10 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
             return
         try:
             r = fn(self._ctx, name, value, ts_ms)
-            if inspect.isawaitable(r):
-                await r
+            r = await self._resolve_hook_result(
+                r,
+                hook="state",
+            )
         except Exception as exc:
             self._set_error("onState", exc)
 
@@ -1162,8 +1282,10 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
             try:
                 invoke_ctx = self._build_invoke_ctx(exec_in=exec_in)
                 r = fn(invoke_ctx, str(exec_in or ""), inputs_obj)
-                if inspect.isawaitable(r):
-                    r = await r
+                r = await self._resolve_hook_result(
+                    r,
+                    hook="exec",
+                )
             except Exception as exc:
                 self._set_error("onExec", exc)
                 return list(self._exec_out_ports)
@@ -1183,8 +1305,10 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
             try:
                 invoke_ctx = self._build_invoke_ctx(exec_in=exec_in)
                 result = fn_msg(invoke_ctx, inputs_obj)
-                if inspect.isawaitable(result):
-                    result = await result
+                result = await self._resolve_hook_result(
+                    result,
+                    hook="msg",
+                )
             except Exception as exc:
                 self._set_error("onMsg", exc)
                 return {}
@@ -1194,8 +1318,10 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
             try:
                 invoke_ctx = self._build_invoke_ctx(exec_in=exec_in)
                 result = fn_exec(invoke_ctx, str(exec_in or ""), inputs_obj)
-                if inspect.isawaitable(result):
-                    result = await result
+                result = await self._resolve_hook_result(
+                    result,
+                    hook="exec",
+                )
             except Exception as exc:
                 self._set_error("onExec", exc)
                 return {}
@@ -1206,8 +1332,10 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         try:
             invoke_ctx = self._build_invoke_ctx(exec_in=exec_in)
             result = fn_msg(invoke_ctx, inputs_obj)
-            if inspect.isawaitable(result):
-                result = await result
+            result = await self._resolve_hook_result(
+                result,
+                hook="msg",
+            )
         except Exception as exc:
             self._set_error("onMsg", exc)
             return {}
@@ -1227,16 +1355,16 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
                     for raw_key, raw_value in raw_outputs.items():
                         if isinstance(raw_key, str):
                             if raw_key in data_out_ports:
-                                return {raw_key: _normalize_script_output_value(raw_value)}
+                                return {raw_key: _normalize_script_output_value_fast(raw_value)}
                             return {}
                         key_s = str(raw_key)
                         if key_s in data_out_ports:
-                            return {key_s: _normalize_script_output_value(raw_value)}
+                            return {key_s: _normalize_script_output_value_fast(raw_value)}
                         return {}
                 for k, v in raw_outputs.items():
                     k_s = str(k)
                     if k_s in data_out_ports:
-                        outputs[k_s] = _normalize_script_output_value(v)
+                        outputs[k_s] = _normalize_script_output_value_fast(v)
                 return outputs
 
             for k, v in result.items():
@@ -1244,11 +1372,11 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
                 if k_s in ("exec", "outputs"):
                     continue
                 if k_s in data_out_ports:
-                    outputs[k_s] = _normalize_script_output_value(v)
+                    outputs[k_s] = _normalize_script_output_value_fast(v)
             return outputs
 
         if "out" in data_out_ports:
-            outputs["out"] = _normalize_script_output_value(result)
+            outputs["out"] = _normalize_script_output_value_fast(result)
         return outputs
 
     async def _run_on_msg(self, inputs: dict[str, Any], *, exec_in: str | None) -> None:
@@ -1261,8 +1389,10 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         try:
             invoke_ctx = self._build_invoke_ctx(exec_in=exec_in)
             r = fn(invoke_ctx, inputs_obj)
-            if inspect.isawaitable(r):
-                r = await r
+            r = await self._resolve_hook_result(
+                r,
+                hook="msg",
+            )
         except Exception as exc:
             self._set_error("onMsg", exc)
             return
@@ -1307,6 +1437,14 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         return None
 
     def _decode_inputs(self, inputs: dict[str, Any], *, stage: str) -> Any | None:
+        if self._prefer_raw_inputs:
+            if self._input_decode_mode_logged != "raw":
+                logger.debug("[%s:python_script] input decode mode=raw", self.node_id)
+                self._input_decode_mode_logged = "raw"
+            return inputs
+        if self._input_decode_mode_logged != "msgspec":
+            logger.debug("[%s:python_script] input decode mode=msgspec", self.node_id)
+            self._input_decode_mode_logged = "msgspec"
         try:
             return msgspec.convert(inputs, type=self._inputs_model_type)
         except Exception as exc:

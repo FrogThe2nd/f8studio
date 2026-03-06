@@ -26,7 +26,11 @@ from f8pysdk.service_host import ServiceHost, ServiceHostConfig  # noqa: E402
 from f8pysdk.testing import ServiceBusHarness  # noqa: E402
 
 from f8pyengine.constants import SERVICE_CLASS  # noqa: E402
-from f8pyengine.operators.python_script import PythonScriptRuntimeNode, register_operator  # noqa: E402
+from f8pyengine.operators.python_script import (  # noqa: E402
+    PythonScriptRuntimeNode,
+    _script_uses_inputs_object_access,
+    register_operator,
+)
 
 
 def _runtime_python_script_node(
@@ -57,6 +61,32 @@ def _runtime_python_script_node(
 
 
 class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
+    def test_inputs_access_mode_detection(self) -> None:
+        mapping_only = (
+            "def onMsg(ctx, inputs):\n"
+            "    return inputs.get('msg')\n"
+        )
+        dot_access = (
+            "def onMsg(ctx, inputs):\n"
+            "    return inputs.msg\n"
+        )
+        alias_dot_access = (
+            "def onMsg(ctx, inputs):\n"
+            "    payload = inputs\n"
+            "    return payload.msg\n"
+        )
+        dynamic_attr_access = (
+            "def onMsg(ctx, inputs):\n"
+            "    return getattr(inputs, 'msg', None)\n"
+        )
+        syntax_error = "def onMsg(ctx, inputs)\n    return 1\n"
+        self.assertFalse(_script_uses_inputs_object_access(mapping_only))
+        self.assertTrue(_script_uses_inputs_object_access(dot_access))
+        self.assertTrue(_script_uses_inputs_object_access(alias_dot_access))
+        self.assertTrue(_script_uses_inputs_object_access(dynamic_attr_access))
+        # Conservative fallback when parser cannot decide.
+        self.assertTrue(_script_uses_inputs_object_access(syntax_error))
+
     def test_spec_contains_editor_assist_protocol(self) -> None:
         spec = PythonScriptRuntimeNode.SPEC
         code_field = next((f for f in list(spec.stateFields or []) if str(f.name or "").strip() == "code"), None)
@@ -512,6 +542,7 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
         data_in_ports = [F8DataPortSpec(name="msg", description="", valueSchema=msg_schema, required=True)]
         code = (
             "def onMsg(ctx, inputs):\n"
+            "    _ = inputs.msg\n"
             "    return {'outputs': {'out': 1}}\n"
         )
         op = _runtime_python_script_node(node_id="ps12", code=code, data_in_ports=data_in_ports)
@@ -521,6 +552,7 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
         node = bus.get_node("ps12")
         self.assertIsInstance(node, PythonScriptRuntimeNode)
         assert isinstance(node, PythonScriptRuntimeNode)
+        self.assertFalse(bool(node._prefer_raw_inputs))
         out = await node._compute_outputs_for_pull({"msg": {"bones": [None]}}, exec_in=None)
         self.assertEqual(out, {})
         error_text = str(node._last_error or "")
@@ -547,6 +579,7 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
         node = bus.get_node("ps16")
         self.assertIsInstance(node, PythonScriptRuntimeNode)
         assert isinstance(node, PythonScriptRuntimeNode)
+        self.assertTrue(bool(node._prefer_raw_inputs))
         out = await node._compute_outputs_for_pull({"msg": 123}, exec_in=None)
         self.assertEqual(out.get("out"), [123, 123])
 
@@ -572,8 +605,31 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
         node = bus.get_node("ps17")
         self.assertIsInstance(node, PythonScriptRuntimeNode)
         assert isinstance(node, PythonScriptRuntimeNode)
+        self.assertFalse(bool(node._prefer_raw_inputs))
         out = await node._compute_outputs_for_pull({"payload": {"user": "alice"}}, exec_in=None)
         self.assertEqual(out.get("out"), ["alice", "alice"])
+
+    async def test_dot_access_keeps_msgspec_decode_mode(self) -> None:
+        harness = ServiceBusHarness()
+        bus = harness.create_bus("svcA")
+        reg = RuntimeNodeRegistry.instance()
+        register_operator(reg)
+        _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
+
+        code = (
+            "def onMsg(ctx, inputs):\n"
+            "    return {'outputs': {'out': inputs.msg}}\n"
+        )
+        op = _runtime_python_script_node(node_id="ps18", code=code)
+        graph = F8RuntimeGraph(graphId="g18", revision="r1", nodes=[op], edges=[])
+        await bus.set_rungraph(graph)
+
+        node = bus.get_node("ps18")
+        self.assertIsInstance(node, PythonScriptRuntimeNode)
+        assert isinstance(node, PythonScriptRuntimeNode)
+        self.assertFalse(bool(node._prefer_raw_inputs))
+        out = await node._compute_outputs_for_pull({"msg": 123}, exec_in=None)
+        self.assertEqual(out.get("out"), 123)
 
     async def test_legacy_ctx_dict_access_sets_last_error(self) -> None:
         harness = ServiceBusHarness()

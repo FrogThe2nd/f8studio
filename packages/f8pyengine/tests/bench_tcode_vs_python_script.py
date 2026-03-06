@@ -28,7 +28,7 @@ from f8pyengine.operators.tcode import AXES, TCodeRuntimeNode  # noqa: E402
 from f8pyscript.script_service_node import PythonScriptServiceNode  # noqa: E402
 
 
-SCRIPT_CODE = (
+SCRIPT_CODE_DOT = (
     "import math\n"
     "AXES = ('L0','L1','L2','R0','R1','R2','V0','V1','A0','A1')\n"
     "def _coerce_number(value):\n"
@@ -55,6 +55,46 @@ SCRIPT_CODE = (
     "        ('L0', inputs.L0), ('L1', inputs.L1), ('L2', inputs.L2),\n"
     "        ('R0', inputs.R0), ('R1', inputs.R1), ('R2', inputs.R2),\n"
     "        ('V0', inputs.V0), ('V1', inputs.V1), ('A0', inputs.A0), ('A1', inputs.A1),\n"
+    "    ]\n"
+    "    for axis, raw in values:\n"
+    "        numeric = _coerce_number(raw)\n"
+    "        if numeric is None:\n"
+    "            continue\n"
+    "        clamped = min(1.0, max(0.0, float(numeric)))\n"
+    "        payload = _js_round(clamped * 9999.0)\n"
+    "        commands.append(f'{axis}{payload:04d}I{interval_i:03d}')\n"
+    "    if not commands:\n"
+    "        return {'outputs': {'tcode': ''}}\n"
+    "    return {'outputs': {'tcode': ' '.join(commands) + '\\n'}}\n"
+)
+
+SCRIPT_CODE_MAPPING = (
+    "import math\n"
+    "AXES = ('L0','L1','L2','R0','R1','R2','V0','V1','A0','A1')\n"
+    "def _coerce_number(value):\n"
+    "    if value is None or isinstance(value, bool):\n"
+    "        return None\n"
+    "    try:\n"
+    "        f = float(value)\n"
+    "    except Exception:\n"
+    "        return None\n"
+    "    if math.isnan(f) or math.isinf(f):\n"
+    "        return None\n"
+    "    return f\n"
+    "def _js_round(value):\n"
+    "    if value >= 0:\n"
+    "        return int(math.floor(value + 0.5))\n"
+    "    return -int(math.floor(abs(value) + 0.5))\n"
+    "def onMsg(ctx, inputs):\n"
+    "    interval = _coerce_number(inputs.get('intervalMs'))\n"
+    "    if interval is None:\n"
+    "        interval = 20\n"
+    "    interval_i = max(1, _js_round(float(interval)))\n"
+    "    commands = []\n"
+    "    values = [\n"
+    "        ('L0', inputs.get('L0')), ('L1', inputs.get('L1')), ('L2', inputs.get('L2')),\n"
+    "        ('R0', inputs.get('R0')), ('R1', inputs.get('R1')), ('R2', inputs.get('R2')),\n"
+    "        ('V0', inputs.get('V0')), ('V1', inputs.get('V1')), ('A0', inputs.get('A0')), ('A1', inputs.get('A1')),\n"
     "    ]\n"
     "    for axis, raw in values:\n"
     "        numeric = _coerce_number(raw)\n"
@@ -167,19 +207,19 @@ def _build_tcode_node() -> TCodeRuntimeNode:
     return TCodeRuntimeNode(node_id="tcode", node=node_desc, initial_state={"intervalMs": 20})
 
 
-def _build_python_script_node() -> PythonScriptRuntimeNode:
+def _build_python_script_node(*, node_id: str, code: str) -> PythonScriptRuntimeNode:
     data_in_ports, data_out_ports = _build_ports()
     node_desc = F8RuntimeNode(
-        nodeId="pyscript",
+        nodeId=node_id,
         serviceId="svcA",
         serviceClass=SERVICE_CLASS,
         operatorClass=PythonScriptRuntimeNode.SPEC.operatorClass,
         dataInPorts=data_in_ports,
         dataOutPorts=data_out_ports,
         stateFields=list(PythonScriptRuntimeNode.SPEC.stateFields or []),
-        stateValues={"code": SCRIPT_CODE},
+        stateValues={"code": code},
     )
-    return PythonScriptRuntimeNode(node_id="pyscript", node=node_desc, initial_state={"code": SCRIPT_CODE})
+    return PythonScriptRuntimeNode(node_id=node_id, node=node_desc, initial_state={"code": code})
 
 
 def _build_expr_node() -> ExprRuntimeNode:
@@ -333,26 +373,34 @@ async def main_async(args: argparse.Namespace) -> None:
     }
 
     tcode_node = _build_tcode_node()
-    pyscript_node = _build_python_script_node()
+    pyscript_dot_node = _build_python_script_node(node_id="pyscript_dot", code=SCRIPT_CODE_DOT)
+    pyscript_mapping_node = _build_python_script_node(node_id="pyscript_mapping", code=SCRIPT_CODE_MAPPING)
     expr_node = _build_expr_node()
     pyscript_service_node = _build_pyscript_service_node()
     _attach_fixed_inputs(tcode_node, inputs)
-    _attach_fixed_inputs(pyscript_node, inputs)
+    _attach_fixed_inputs(pyscript_dot_node, inputs)
+    _attach_fixed_inputs(pyscript_mapping_node, inputs)
     _attach_fixed_inputs(expr_node, inputs)
 
     expected = await tcode_node.compute_output("tcode", ctx_id=-1)
     if not isinstance(expected, str):
         raise AssertionError("tcode expected output is not string")
 
-    pyscript_once = await pyscript_node.compute_output("tcode", ctx_id=-1)
-    if pyscript_once != expected:
-        raise AssertionError("python_script output does not match tcode output")
+    pyscript_dot_once = await pyscript_dot_node.compute_output("tcode", ctx_id=-1)
+    if pyscript_dot_once != expected:
+        raise AssertionError("python_script(dot) output does not match tcode output")
+    pyscript_mapping_once = await pyscript_mapping_node.compute_output("tcode", ctx_id=-1)
+    if pyscript_mapping_once != expected:
+        raise AssertionError("python_script(mapping) output does not match tcode output")
 
     async def compute_tcode(ctx: int) -> Any:
         return await tcode_node.compute_output("tcode", ctx_id=ctx)
 
-    async def compute_pyscript(ctx: int) -> Any:
-        return await pyscript_node.compute_output("tcode", ctx_id=ctx)
+    async def compute_pyscript_dot(ctx: int) -> Any:
+        return await pyscript_dot_node.compute_output("tcode", ctx_id=ctx)
+
+    async def compute_pyscript_mapping(ctx: int) -> Any:
+        return await pyscript_mapping_node.compute_output("tcode", ctx_id=ctx)
 
     expected_expr = await expr_node.compute_output("out", ctx_id=-1)
 
@@ -387,17 +435,26 @@ async def main_async(args: argparse.Namespace) -> None:
         warmup=args.warmup,
         expected=expected,
     )
-    serial_pyscript = await _run_bench(
-        name="python_script(serial)",
-        compute_one=compute_pyscript,
+    serial_pyscript_dot = await _run_bench(
+        name="python_script_dot(serial)",
+        compute_one=compute_pyscript_dot,
+        iterations=args.iterations,
+        warmup=args.warmup,
+        expected=expected,
+    )
+    serial_pyscript_mapping = await _run_bench(
+        name="python_script_mapping(serial)",
+        compute_one=compute_pyscript_mapping,
         iterations=args.iterations,
         warmup=args.warmup,
         expected=expected,
     )
 
     _print_result(serial_tcode)
-    _print_result(serial_pyscript)
-    _print_ratio(serial_tcode, serial_pyscript, label="serial")
+    _print_result(serial_pyscript_dot)
+    _print_ratio(serial_tcode, serial_pyscript_dot, label="serial(dot vs tcode)")
+    _print_result(serial_pyscript_mapping)
+    _print_ratio(serial_tcode, serial_pyscript_mapping, label="serial(mapping vs tcode)")
     serial_expr = await _run_bench(
         name="expr(serial)",
         compute_one=compute_expr,
@@ -430,17 +487,27 @@ async def main_async(args: argparse.Namespace) -> None:
             concurrency=args.concurrency,
             expected=expected,
         )
-        concurrent_pyscript = await _run_bench_concurrent(
-            name="python_script(concurrent)",
-            compute_one=compute_pyscript,
+        concurrent_pyscript_dot = await _run_bench_concurrent(
+            name="python_script_dot(concurrent)",
+            compute_one=compute_pyscript_dot,
+            total_iterations=args.concurrent_iterations,
+            warmup=max(1, args.warmup // 2),
+            concurrency=args.concurrency,
+            expected=expected,
+        )
+        concurrent_pyscript_mapping = await _run_bench_concurrent(
+            name="python_script_mapping(concurrent)",
+            compute_one=compute_pyscript_mapping,
             total_iterations=args.concurrent_iterations,
             warmup=max(1, args.warmup // 2),
             concurrency=args.concurrency,
             expected=expected,
         )
         _print_result(concurrent_tcode)
-        _print_result(concurrent_pyscript)
-        _print_ratio(concurrent_tcode, concurrent_pyscript, label="concurrent")
+        _print_result(concurrent_pyscript_dot)
+        _print_ratio(concurrent_tcode, concurrent_pyscript_dot, label="concurrent(dot vs tcode)")
+        _print_result(concurrent_pyscript_mapping)
+        _print_ratio(concurrent_tcode, concurrent_pyscript_mapping, label="concurrent(mapping vs tcode)")
         concurrent_expr = await _run_bench_concurrent(
             name="expr(concurrent)",
             compute_one=compute_expr,
@@ -472,7 +539,7 @@ async def main_async(args: argparse.Namespace) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Benchmark: f8.tcode vs f8.python_script (equivalent TCode implementation) "
+            "Benchmark: f8.tcode vs f8.python_script (dot/msgspec and mapping/raw variants) "
             "+ f8.expr overhead reference (not functionally equivalent to TCode)."
         )
     )
