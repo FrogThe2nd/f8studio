@@ -8,7 +8,7 @@ from typing import Any, Awaitable, Callable, TYPE_CHECKING
 
 from ...capabilities import ComputableNode, DataReceivableNode
 from ...generated import F8Edge, F8EdgeStrategyEnum
-from ...nats_naming import data_subject, ensure_token
+from ...nats_naming import data_subject
 from ..error_utils import log_error_once
 from ...time_utils import now_ms
 from ..codec import decode_obj, encode_obj
@@ -41,17 +41,20 @@ def _ensure_input_buffer(
     to_port: str,
     edge: F8Edge | None,
 ) -> _InputBuffer:
-    key = (str(to_node), str(to_port))
+    key = (to_node, to_port)
     buf = bus._data_inputs.get(key)
     if buf is None:
-        buf = _InputBuffer(to_node=str(to_node), to_port=str(to_port), edge=edge)
+        buf = _InputBuffer(to_node=to_node, to_port=to_port, edge=edge)
         bus._data_inputs[key] = buf
     if edge is not None:
         buf.edge = edge
     return buf
 
 
-def precreate_input_buffers_for_cross_in(bus: "ServiceBus", cross_in: dict[str, list[tuple[str, str, F8Edge]]]) -> None:
+def precreate_input_buffers_for_cross_in(
+    bus: "ServiceBus",
+    cross_in: dict[str, tuple[tuple[str, str, F8Edge], ...]],
+) -> None:
     for _subject, targets in cross_in.items():
         for to_node, to_port, edge in targets:
             _ensure_input_buffer(
@@ -65,16 +68,11 @@ def precreate_input_buffers_for_cross_in(bus: "ServiceBus", cross_in: dict[str, 
 async def emit_data(bus: "ServiceBus", node_id: str, port: str, value: Any, *, ts_ms: int | None = None) -> None:
     if not bus._active:
         return
-    node_id = ensure_token(node_id, label="node_id")
-    port = ensure_token(port, label="port_id")
     ts = int(ts_ms or now_ms())
-    if bus._monitor_collector.enabled:
-        now_ts = int(now_ms())
-        bus._monitor_collector.record_processed(port=str(port), emit_ts_ms=int(ts), now_ts_ms=now_ts)
-        bus._monitor_collector.record_emit_completed(node_id=str(node_id), now_ts_ms=now_ts)
+    bus._monitor_record_emit(str(node_id), str(port), int(ts))
 
     # Intra edges.
-    for to_node, to_port in bus._intra_data_out.get((node_id, port), []):
+    for to_node, to_port in bus._intra_data_out.get((node_id, port), ()):
         push_input(bus, to_node, to_port, value, ts_ms=ts)
 
     # Cross edges (fan-out) - publish once per (node, out_port).
@@ -99,8 +97,6 @@ async def pull_data(bus: "ServiceBus", node_id: str, port: str, *, ctx_id: str |
     """
     if not bus._active:
         return None
-    node_id = ensure_token(node_id, label="node_id")
-    port = ensure_token(port, label="port_id")
     buf = _ensure_input_buffer(bus, to_node=node_id, to_port=port, edge=None)
     edge = buf.edge
     _now_ms = now_ms()
@@ -120,9 +116,9 @@ async def pull_data(bus: "ServiceBus", node_id: str, port: str, *, ctx_id: str |
             if not buf.queue:
                 return None
         v, ts = buf.queue.popleft()
-        if bus._monitor_collector.enabled and ts is not None:
+        if ts is not None:
             wait_ms = float(max(0, int(now_ms()) - int(ts)))
-            bus._monitor_collector.record_wait_ms(wait_ms=wait_ms)
+            bus._monitor_record_wait(wait_ms)
         buf.last_pulled_value = v
         buf.last_pulled_ts = int(ts) if ts is not None else _now_ms
         buf.last_pulled_ctx_id = ctx_id
@@ -132,9 +128,9 @@ async def pull_data(bus: "ServiceBus", node_id: str, port: str, *, ctx_id: str |
     if not buf.queue and (ctx_id is None or buf.last_seen_ctx_id != ctx_id):
         await ensure_input_available(bus, node_id=node_id, port=port, ctx_id=ctx_id)
     v = buf.last_seen_value
-    if bus._monitor_collector.enabled and buf.last_seen_ts is not None:
+    if buf.last_seen_ts is not None:
         wait_ms = float(max(0, int(now_ms()) - int(buf.last_seen_ts)))
-        bus._monitor_collector.record_wait_ms(wait_ms=wait_ms)
+        bus._monitor_record_wait(wait_ms)
     buf.queue.clear()
     if v is not None:
         buf.last_pulled_value = v
@@ -153,12 +149,12 @@ async def ensure_input_available(bus: "ServiceBus", *, node_id: str, port: str, 
     if not bus._graph:
         return
 
-    upstream = bus._intra_data_in.get((str(node_id), str(port))) or []
+    upstream = bus._intra_data_in.get((node_id, port)) or ()
     if not upstream:
         return
 
     stack: set[tuple[str, str]] = set()
-    await compute_and_buffer_for_input(bus, node_id=str(node_id), port=str(port), ctx_id=ctx_id, stack=stack)
+    await compute_and_buffer_for_input(bus, node_id=node_id, port=port, ctx_id=ctx_id, stack=stack)
 
 
 async def compute_and_buffer_for_input(
@@ -174,44 +170,56 @@ async def compute_and_buffer_for_input(
         return
     stack.add(key)
     try:
-        for from_node, from_port, edge in list(bus._intra_data_in.get(key) or []):
-            from_node_s = str(from_node)
-            from_port_s = str(from_port)
-            src = bus._nodes.get(from_node_s)
+        for from_node, from_port, edge in bus._intra_data_in.get(key) or ():
+            src = bus._nodes.get(from_node)
             if src is None:
                 continue
             try:
                 if isinstance(src, ComputableNode):
-                    v = await src.compute_output(from_port_s, ctx_id=ctx_id)
+                    v = await src.compute_output(from_port, ctx_id=ctx_id)
                 else:
                     v = None
             except Exception as exc:
                 log_error_once(
                     bus,
-                    key=f"compute_output_failed:{from_node_s}:{from_port_s}",
-                    message=f"compute_output failed for {from_node_s}.{from_port_s}",
+                    key=f"compute_output_failed:{from_node}:{from_port}",
+                    message=f"compute_output failed for {from_node}.{from_port}",
                     exc=exc,
                 )
                 continue
             if v is None:
                 continue
+            # Fast local path: if source has no cross-service out subject, buffer intra targets directly.
+            if not bus._publish_all_data and (from_node, from_port) not in bus._cross_out_subjects:
+                ts_now = int(now_ms())
+                for to_node, to_port in bus._intra_data_out.get((from_node, from_port), ()):
+                    buffer_input(
+                        bus,
+                        to_node,
+                        to_port,
+                        v,
+                        ts_ms=ts_now,
+                        edge=None,
+                        ctx_id=ctx_id,
+                    )
+                continue
             # Treat pull-triggered computation as producing a real output sample:
             # route it through `emit_data` so intra edges get buffered and any
             # cross-service subscribers can also receive the computed value.
             try:
-                await emit_data(bus, from_node_s, from_port_s, v, ts_ms=now_ms())
+                await emit_data(bus, from_node, from_port, v, ts_ms=now_ms())
             except Exception as exc:
                 log_error_once(
                     bus,
-                    key=f"emit_data_failed:{from_node_s}:{from_port_s}",
-                    message=f"emit_data failed for {from_node_s}.{from_port_s}; using local fallback buffer",
+                    key=f"emit_data_failed:{from_node}:{from_port}",
+                    message=f"emit_data failed for {from_node}.{from_port}; using local fallback buffer",
                     exc=exc,
                 )
                 # Fallback: still satisfy the local pull.
                 buffer_input(
                     bus,
-                    str(node_id),
-                    str(port),
+                    node_id,
+                    port,
                     v,
                     ts_ms=now_ms(),
                     edge=edge,
@@ -272,23 +280,23 @@ def push_input(bus: "ServiceBus", to_node: str, to_port: str, value: Any, *, ts_
     # the system can be configured for pull-based or push-based data delivery.
     buffer_input(
         bus,
-        to_node=str(to_node),
-        to_port=str(to_port),
+        to_node=to_node,
+        to_port=to_port,
         value=value,
         ts_ms=int(ts_ms),
         edge=edge,
         ctx_id=None,
     )
     if bus._data_delivery in ("push", "both"):
-        node = bus._nodes.get(str(to_node))
-        if node is not None:
+        bus._on_data_push_queue.append((to_node, to_port, value, int(ts_ms)))
+        task = bus._on_data_flush_task
+        if task is None or task.done():
             try:
-                if isinstance(node, DataReceivableNode):
-                    loop = asyncio.get_running_loop()
-                    loop.create_task(
-                        node.on_data(str(to_port), value, ts_ms=int(ts_ms)),  # type: ignore[misc]
-                        name=f"service_bus:on_data:{to_node}:{to_port}",
-                    )
+                loop = asyncio.get_running_loop()
+                bus._on_data_flush_task = loop.create_task(
+                    _flush_on_data_push_queue(bus),
+                    name=f"service_bus:on_data_flush:{bus.service_id}",
+                )
             except Exception as exc:
                 log_error_once(
                     bus,
@@ -308,16 +316,12 @@ def buffer_input(
     edge: F8Edge | None,
     ctx_id: str | int | None,
 ) -> None:
-    to_node = str(to_node)
-    to_port = str(to_port)
     buf = _ensure_input_buffer(bus, to_node=to_node, to_port=to_port, edge=edge)
 
     buf.last_seen_value = value
     buf.last_seen_ts = int(ts_ms)
     buf.last_seen_ctx_id = ctx_id
-    if bus._monitor_collector.enabled:
-        bus._monitor_collector.record_observed(port=str(to_port))
-        bus._monitor_collector.record_input_sample_ts(node_id=str(to_node), sample_ts_ms=int(ts_ms))
+    bus._monitor_record_input(str(to_node), str(to_port), int(ts_ms))
 
     buf.queue.append((value, int(ts_ms)))
     max_n = int(bus._data_input_default_queue_size)
@@ -331,10 +335,41 @@ def buffer_input(
         while len(buf.queue) > max_n:
             buf.queue.popleft()
             dropped_count += 1
-    if dropped_count > 0 and bus._monitor_collector.enabled:
-        bus._monitor_collector.record_dropped(dropped_count=int(dropped_count))
+    if dropped_count > 0:
+        bus._monitor_record_drop(int(dropped_count))
 
     return
+
+
+async def _flush_on_data_push_queue(bus: "ServiceBus") -> None:
+    try:
+        while bus._on_data_push_queue:
+            batch: list[tuple[str, str, Any, int]] = []
+            while bus._on_data_push_queue:
+                batch.append(bus._on_data_push_queue.popleft())
+            coalesced: dict[tuple[str, str], tuple[Any, int]] = {}
+            for node_id, port, value, ts_ms in batch:
+                coalesced[(node_id, port)] = (value, int(ts_ms))
+            for (node_id, port), (value, ts_ms) in coalesced.items():
+                node = bus._nodes.get(node_id)
+                if node is None or not isinstance(node, DataReceivableNode):
+                    continue
+                try:
+                    loop = asyncio.get_running_loop()
+                    loop.create_task(
+                        node.on_data(port, value, ts_ms=ts_ms),  # type: ignore[misc]
+                        name=f"service_bus:on_data:{node_id}:{port}",
+                    )
+                except Exception as exc:
+                    log_error_once(
+                        bus,
+                        key=f"push_on_data_schedule_failed:{node_id}:{port}",
+                        message=f"failed to schedule on_data for {node_id}.{port}",
+                        exc=exc,
+                    )
+            await asyncio.sleep(0)
+    finally:
+        bus._on_data_flush_task = None
 
 
 async def sync_subscriptions(bus: "ServiceBus", want_subjects: set[str]) -> None:

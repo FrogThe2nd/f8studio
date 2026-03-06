@@ -207,7 +207,7 @@ def _build_tcode_node() -> TCodeRuntimeNode:
     return TCodeRuntimeNode(node_id="tcode", node=node_desc, initial_state={"intervalMs": 20})
 
 
-def _build_python_script_node(*, node_id: str, code: str) -> PythonScriptRuntimeNode:
+def _build_python_script_node(*, node_id: str, code: str, input_mode: str) -> PythonScriptRuntimeNode:
     data_in_ports, data_out_ports = _build_ports()
     node_desc = F8RuntimeNode(
         nodeId=node_id,
@@ -217,9 +217,9 @@ def _build_python_script_node(*, node_id: str, code: str) -> PythonScriptRuntime
         dataInPorts=data_in_ports,
         dataOutPorts=data_out_ports,
         stateFields=list(PythonScriptRuntimeNode.SPEC.stateFields or []),
-        stateValues={"code": code},
+        stateValues={"code": code, "inputMode": input_mode},
     )
-    return PythonScriptRuntimeNode(node_id=node_id, node=node_desc, initial_state={"code": code})
+    return PythonScriptRuntimeNode(node_id=node_id, node=node_desc, initial_state={"code": code, "inputMode": input_mode})
 
 
 def _build_expr_node() -> ExprRuntimeNode:
@@ -373,34 +373,54 @@ async def main_async(args: argparse.Namespace) -> None:
     }
 
     tcode_node = _build_tcode_node()
-    pyscript_dot_node = _build_python_script_node(node_id="pyscript_dot", code=SCRIPT_CODE_DOT)
-    pyscript_mapping_node = _build_python_script_node(node_id="pyscript_mapping", code=SCRIPT_CODE_MAPPING)
+    pyscript_dot_input_view_node = _build_python_script_node(
+        node_id="pyscript_dot_input_view",
+        code=SCRIPT_CODE_DOT,
+        input_mode="input_view",
+    )
+    pyscript_dot_msgspec_node = _build_python_script_node(
+        node_id="pyscript_dot_msgspec",
+        code=SCRIPT_CODE_DOT,
+        input_mode="msgspec_struct",
+    )
+    pyscript_mapping_raw_node = _build_python_script_node(
+        node_id="pyscript_mapping_raw",
+        code=SCRIPT_CODE_MAPPING,
+        input_mode="raw_dict",
+    )
     expr_node = _build_expr_node()
     pyscript_service_node = _build_pyscript_service_node()
     _attach_fixed_inputs(tcode_node, inputs)
-    _attach_fixed_inputs(pyscript_dot_node, inputs)
-    _attach_fixed_inputs(pyscript_mapping_node, inputs)
+    _attach_fixed_inputs(pyscript_dot_input_view_node, inputs)
+    _attach_fixed_inputs(pyscript_dot_msgspec_node, inputs)
+    _attach_fixed_inputs(pyscript_mapping_raw_node, inputs)
     _attach_fixed_inputs(expr_node, inputs)
 
     expected = await tcode_node.compute_output("tcode", ctx_id=-1)
     if not isinstance(expected, str):
         raise AssertionError("tcode expected output is not string")
 
-    pyscript_dot_once = await pyscript_dot_node.compute_output("tcode", ctx_id=-1)
-    if pyscript_dot_once != expected:
-        raise AssertionError("python_script(dot) output does not match tcode output")
-    pyscript_mapping_once = await pyscript_mapping_node.compute_output("tcode", ctx_id=-1)
-    if pyscript_mapping_once != expected:
-        raise AssertionError("python_script(mapping) output does not match tcode output")
+    pyscript_dot_input_view_once = await pyscript_dot_input_view_node.compute_output("tcode", ctx_id=-1)
+    if pyscript_dot_input_view_once != expected:
+        raise AssertionError("python_script(dot/input_view) output does not match tcode output")
+    pyscript_dot_msgspec_once = await pyscript_dot_msgspec_node.compute_output("tcode", ctx_id=-1)
+    if pyscript_dot_msgspec_once != expected:
+        raise AssertionError("python_script(dot/msgspec) output does not match tcode output")
+    pyscript_mapping_raw_once = await pyscript_mapping_raw_node.compute_output("tcode", ctx_id=-1)
+    if pyscript_mapping_raw_once != expected:
+        raise AssertionError("python_script(mapping/raw_dict) output does not match tcode output")
 
     async def compute_tcode(ctx: int) -> Any:
         return await tcode_node.compute_output("tcode", ctx_id=ctx)
 
-    async def compute_pyscript_dot(ctx: int) -> Any:
-        return await pyscript_dot_node.compute_output("tcode", ctx_id=ctx)
+    async def compute_pyscript_dot_input_view(ctx: int) -> Any:
+        return await pyscript_dot_input_view_node.compute_output("tcode", ctx_id=ctx)
 
-    async def compute_pyscript_mapping(ctx: int) -> Any:
-        return await pyscript_mapping_node.compute_output("tcode", ctx_id=ctx)
+    async def compute_pyscript_dot_msgspec(ctx: int) -> Any:
+        return await pyscript_dot_msgspec_node.compute_output("tcode", ctx_id=ctx)
+
+    async def compute_pyscript_mapping_raw(ctx: int) -> Any:
+        return await pyscript_mapping_raw_node.compute_output("tcode", ctx_id=ctx)
 
     expected_expr = await expr_node.compute_output("out", ctx_id=-1)
 
@@ -435,26 +455,35 @@ async def main_async(args: argparse.Namespace) -> None:
         warmup=args.warmup,
         expected=expected,
     )
-    serial_pyscript_dot = await _run_bench(
-        name="python_script_dot(serial)",
-        compute_one=compute_pyscript_dot,
+    serial_pyscript_dot_input_view = await _run_bench(
+        name="python_script_dot_input_view(serial)",
+        compute_one=compute_pyscript_dot_input_view,
         iterations=args.iterations,
         warmup=args.warmup,
         expected=expected,
     )
-    serial_pyscript_mapping = await _run_bench(
-        name="python_script_mapping(serial)",
-        compute_one=compute_pyscript_mapping,
+    serial_pyscript_dot_msgspec = await _run_bench(
+        name="python_script_dot_msgspec(serial)",
+        compute_one=compute_pyscript_dot_msgspec,
+        iterations=args.iterations,
+        warmup=args.warmup,
+        expected=expected,
+    )
+    serial_pyscript_mapping_raw = await _run_bench(
+        name="python_script_mapping_raw(serial)",
+        compute_one=compute_pyscript_mapping_raw,
         iterations=args.iterations,
         warmup=args.warmup,
         expected=expected,
     )
 
     _print_result(serial_tcode)
-    _print_result(serial_pyscript_dot)
-    _print_ratio(serial_tcode, serial_pyscript_dot, label="serial(dot vs tcode)")
-    _print_result(serial_pyscript_mapping)
-    _print_ratio(serial_tcode, serial_pyscript_mapping, label="serial(mapping vs tcode)")
+    _print_result(serial_pyscript_dot_input_view)
+    _print_ratio(serial_tcode, serial_pyscript_dot_input_view, label="serial(dot/input_view vs tcode)")
+    _print_result(serial_pyscript_dot_msgspec)
+    _print_ratio(serial_tcode, serial_pyscript_dot_msgspec, label="serial(dot/msgspec vs tcode)")
+    _print_result(serial_pyscript_mapping_raw)
+    _print_ratio(serial_tcode, serial_pyscript_mapping_raw, label="serial(mapping/raw_dict vs tcode)")
     serial_expr = await _run_bench(
         name="expr(serial)",
         compute_one=compute_expr,
@@ -487,27 +516,37 @@ async def main_async(args: argparse.Namespace) -> None:
             concurrency=args.concurrency,
             expected=expected,
         )
-        concurrent_pyscript_dot = await _run_bench_concurrent(
-            name="python_script_dot(concurrent)",
-            compute_one=compute_pyscript_dot,
+        concurrent_pyscript_dot_input_view = await _run_bench_concurrent(
+            name="python_script_dot_input_view(concurrent)",
+            compute_one=compute_pyscript_dot_input_view,
             total_iterations=args.concurrent_iterations,
             warmup=max(1, args.warmup // 2),
             concurrency=args.concurrency,
             expected=expected,
         )
-        concurrent_pyscript_mapping = await _run_bench_concurrent(
-            name="python_script_mapping(concurrent)",
-            compute_one=compute_pyscript_mapping,
+        concurrent_pyscript_dot_msgspec = await _run_bench_concurrent(
+            name="python_script_dot_msgspec(concurrent)",
+            compute_one=compute_pyscript_dot_msgspec,
+            total_iterations=args.concurrent_iterations,
+            warmup=max(1, args.warmup // 2),
+            concurrency=args.concurrency,
+            expected=expected,
+        )
+        concurrent_pyscript_mapping_raw = await _run_bench_concurrent(
+            name="python_script_mapping_raw(concurrent)",
+            compute_one=compute_pyscript_mapping_raw,
             total_iterations=args.concurrent_iterations,
             warmup=max(1, args.warmup // 2),
             concurrency=args.concurrency,
             expected=expected,
         )
         _print_result(concurrent_tcode)
-        _print_result(concurrent_pyscript_dot)
-        _print_ratio(concurrent_tcode, concurrent_pyscript_dot, label="concurrent(dot vs tcode)")
-        _print_result(concurrent_pyscript_mapping)
-        _print_ratio(concurrent_tcode, concurrent_pyscript_mapping, label="concurrent(mapping vs tcode)")
+        _print_result(concurrent_pyscript_dot_input_view)
+        _print_ratio(concurrent_tcode, concurrent_pyscript_dot_input_view, label="concurrent(dot/input_view vs tcode)")
+        _print_result(concurrent_pyscript_dot_msgspec)
+        _print_ratio(concurrent_tcode, concurrent_pyscript_dot_msgspec, label="concurrent(dot/msgspec vs tcode)")
+        _print_result(concurrent_pyscript_mapping_raw)
+        _print_ratio(concurrent_tcode, concurrent_pyscript_mapping_raw, label="concurrent(mapping/raw_dict vs tcode)")
         concurrent_expr = await _run_bench_concurrent(
             name="expr(concurrent)",
             compute_one=compute_expr,

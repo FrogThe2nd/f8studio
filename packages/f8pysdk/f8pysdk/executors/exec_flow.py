@@ -70,7 +70,7 @@ class _ExecTrigger:
     node_id: str
     out_port: str
     exec_id: str | int
-    done: asyncio.Future[None]
+    done: asyncio.Future[None] | None
 
 
 @dataclass
@@ -99,7 +99,7 @@ class EntrypointContext:
 
         `exec_id` is a per-trigger execution id (used as an evaluation/cache key across a single propagation).
         """
-        await self.executor.trigger_exec(self.node_id, out_port, exec_id=exec_id)
+        await self.executor.trigger_exec_nowait(self.node_id, out_port, exec_id=exec_id)
 
     async def cancel(self) -> None:
         for t in list(self._tasks):
@@ -379,7 +379,7 @@ class ExecFlowExecutor:
                 trigger = self._trigger_queue.get_nowait()
             except asyncio.QueueEmpty:
                 return
-            if not trigger.done.done():
+            if trigger.done is not None and not trigger.done.done():
                 trigger.done.set_result(None)
             self._trigger_queue.task_done()
 
@@ -394,9 +394,32 @@ class ExecFlowExecutor:
                         exec_id=trigger.exec_id,
                     )
             finally:
-                if not trigger.done.done():
+                if trigger.done is not None and not trigger.done.done():
                     trigger.done.set_result(None)
                 self._trigger_queue.task_done()
+
+    async def trigger_exec_nowait(
+        self,
+        node_id: str,
+        out_port: str,
+        *,
+        exec_id: str | int,
+    ) -> None:
+        if not self._active:
+            return
+        if (node_id, out_port) not in self._exec_out:
+            return
+        if self._trigger_worker_task is None or self._trigger_worker_task.done():
+            await self._start_trigger_worker()
+        self._trigger_seq += 1
+        trigger = _ExecTrigger(
+            seq=int(self._trigger_seq),
+            node_id=node_id,
+            out_port=out_port,
+            exec_id=exec_id,
+            done=None,
+        )
+        await self._trigger_queue.put(trigger)
 
     # ---- triggering -----------------------------------------------------
     async def trigger_exec(
@@ -461,7 +484,13 @@ class ExecFlowExecutor:
             await self._emit_half_edge_outputs(to_node, exec_id=exec_id)
 
             # DFS scheduling: push in reverse so earlier ports run first.
-            for p in reversed(list(out_ports or [])):
+            if isinstance(out_ports, (list, tuple)):
+                route_ports = out_ports
+            elif out_ports is None:
+                route_ports = ()
+            else:
+                route_ports = tuple(out_ports)
+            for p in reversed(route_ports):
                 nxt = self._exec_out.get((to_node, str(p)))
                 if nxt is not None:
                     stack.append(nxt)

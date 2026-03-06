@@ -92,6 +92,17 @@ async def stop(bus: "ServiceBus") -> None:
     bus._intra_data_in.clear()
     bus._cross_out_subjects.clear()
     bus._data_inputs.clear()
+    bus._on_data_push_queue.clear()
+    flush_task = bus._on_data_flush_task
+    bus._on_data_flush_task = None
+    if flush_task is not None:
+        flush_task.cancel()
+        try:
+            await flush_task
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:
+            log.error("on_data flush task stop failed", exc_info=exc)
 
     bus._cross_state_in_by_key.clear()
     for (sid, key), watch in list(bus._remote_state_watches.items()):

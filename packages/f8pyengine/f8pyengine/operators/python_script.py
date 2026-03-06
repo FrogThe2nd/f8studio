@@ -1,32 +1,20 @@
 from __future__ import annotations
 
 import asyncio
-import ast
 import inspect
-import keyword
 import logging
-import re
 import time
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 import numpy as np
 
-import msgspec
 from f8pysdk import (
-    F8AnyTypeSchema,
-    F8ArrayTypeSchema,
-    F8BooleanTypeSchema,
-    F8ComplexObjectTypeSchema,
     F8DataPortSpec,
-    F8IntegerTypeSchema,
-    F8NullTypeSchema,
-    F8NumberTypeSchema,
     F8OperatorSchemaVersion,
     F8OperatorSpec,
     F8RuntimeNode,
     F8StateAccess,
     F8StateSpec,
-    F8StringTypeSchema,
     any_schema,
     string_schema,
 )
@@ -38,12 +26,20 @@ from f8pysdk.shm.video import VIDEO_FORMAT_BGRA32, VIDEO_FORMAT_FLOW2_F16, Video
 
 from ..constants import SERVICE_CLASS
 from ._ports import exec_out_ports
-from .python_editor_assist import python_script_field_editor_assist_payload
+from .script_utils.input_binding import (
+    INPUT_MODE_INPUT_VIEW,
+    InputBinding,
+    infer_script_input_style,
+    parse_input_mode,
+    script_uses_inputs_object_access,
+)
+from .script_utils.python_editor_assist import python_script_field_editor_assist_payload
+from .script_utils.result_binding import normalize_script_output_value, normalize_script_output_value_fast
+from .script_utils.script_runtime import HookSet, ScriptRuntimeCompiler
+from .script_utils.state_binding import PyEngineStatesView
 
 OPERATOR_CLASS = "f8.python_script"
 logger = logging.getLogger(__name__)
-_MISSING = object()
-_DICT_STYLE_INPUT_METHODS: frozenset[str] = frozenset({"get", "keys", "items", "values", "to_dict"})
 
 
 @dataclass
@@ -61,447 +57,9 @@ class _VideoShmSubscription:
     error_count: int = 0
 
 
-class _PyEngineStateView:
-    __slots__ = ("_data", "_attr_to_key")
-
-    def __init__(
-        self,
-        data: dict[str, Any],
-        *,
-        copy_data: bool = False,
-        build_attr_index: bool = False,
-    ) -> None:
-        if copy_data:
-            self._data = dict(data)
-        else:
-            self._data = data
-        self._attr_to_key: dict[str, str] | None
-        if build_attr_index:
-            self._attr_to_key = self._build_attr_to_key(self._data)
-        else:
-            self._attr_to_key = None
-
-    @staticmethod
-    def _build_attr_to_key(data: dict[str, Any]) -> dict[str, str]:
-        attr_to_key: dict[str, str] = {}
-        for raw_key in data.keys():
-            key = str(raw_key or "")
-            if key.isidentifier() and not keyword.iskeyword(key):
-                attr_to_key[key] = key
-        return attr_to_key
-
-    def __getitem__(self, key: str) -> Any:
-        return self._wrap_value(self._data[str(key)])
-
-    def get(self, key: str, default: Any = None) -> Any:
-        key_s = str(key)
-        value = self._data.get(key_s, _MISSING)
-        if value is _MISSING:
-            return default
-        return self._wrap_value(value)
-
-    def keys(self):
-        return self._data.keys()
-
-    def items(self):
-        return ((k, self._wrap_value(v)) for k, v in self._data.items())
-
-    def values(self):
-        return (self._wrap_value(v) for v in self._data.values())
-
-    def __contains__(self, key: object) -> bool:
-        return str(key or "") in self._data
-
-    def __iter__(self):
-        return iter(self._data)
-
-    def __len__(self) -> int:
-        return len(self._data)
-
-    def __repr__(self) -> str:
-        return repr(self.to_dict())
-
-    def __str__(self) -> str:
-        return str(self.to_dict())
-
-    def __getattr__(self, name: str) -> Any:
-        attr_to_key = self._attr_to_key
-        if attr_to_key is None:
-            attr_to_key = self._build_attr_to_key(self._data)
-            self._attr_to_key = attr_to_key
-        key = attr_to_key.get(str(name or ""))
-        if key is None:
-            raise AttributeError(f"Unknown attribute: {name}")
-        return self._wrap_value(self._data.get(key))
-
-    def to_dict(self) -> dict[str, Any]:
-        return self._unwrap_value(self._data)
-
-    @classmethod
-    def _wrap_value(cls, value: Any) -> Any:
-        value_t = type(value)
-        if value_t in (str, int, float, bool, type(None)):
-            return value
-        if isinstance(value, _PyEngineStateView):
-            return value
-        if value_t is dict:
-            return cls(value)
-        if isinstance(value, list):
-            return [cls._wrap_value(item) for item in value]
-        if isinstance(value, tuple):
-            return tuple(cls._wrap_value(item) for item in value)
-        return value
-
-    @classmethod
-    def _unwrap_value(cls, value: Any) -> Any:
-        if isinstance(value, _PyEngineStateView):
-            return {k: cls._unwrap_value(v) for k, v in value._data.items()}
-        if isinstance(value, dict):
-            return {str(k): cls._unwrap_value(v) for k, v in value.items()}
-        if isinstance(value, list):
-            return [cls._unwrap_value(item) for item in value]
-        if isinstance(value, tuple):
-            return tuple(cls._unwrap_value(item) for item in value)
-        return value
-
-
-class PyEngineStatesView(_PyEngineStateView):
-    pass
-
-
-def _normalize_script_output_value(value: Any, *, _seen: set[int] | None = None) -> Any:
-    if isinstance(value, _PyEngineStateView):
-        value = value.to_dict()
-    if isinstance(value, _MsgspecStructCompat):
-        return msgspec.to_builtins(value)
-    if value is None or type(value) in (str, int, float, bool):
-        return value
-    if isinstance(value, dict):
-        if _seen is None:
-            _seen = set()
-        value_id = id(value)
-        if value_id in _seen:
-            return None
-        _seen.add(value_id)
-        out: dict[str, Any] = {}
-        for key, item in value.items():
-            out[str(key)] = _normalize_script_output_value(item, _seen=_seen)
-        _seen.discard(value_id)
-        return out
-    if isinstance(value, list):
-        if _seen is None:
-            _seen = set()
-        value_id = id(value)
-        if value_id in _seen:
-            return []
-        _seen.add(value_id)
-        out_list = [_normalize_script_output_value(item, _seen=_seen) for item in value]
-        _seen.discard(value_id)
-        return out_list
-    if isinstance(value, tuple):
-        if _seen is None:
-            _seen = set()
-        value_id = id(value)
-        if value_id in _seen:
-            return ()
-        _seen.add(value_id)
-        out_tuple = tuple(_normalize_script_output_value(item, _seen=_seen) for item in value)
-        _seen.discard(value_id)
-        return out_tuple
-    if isinstance(value, set):
-        if _seen is None:
-            _seen = set()
-        value_id = id(value)
-        if value_id in _seen:
-            return []
-        _seen.add(value_id)
-        out_set = [_normalize_script_output_value(item, _seen=_seen) for item in value]
-        _seen.discard(value_id)
-        return out_set
-    return value
-
-
-def _normalize_script_output_value_fast(value: Any) -> Any:
-    if value is None or isinstance(value, (str, int, float, bool)):
-        return value
-    return _normalize_script_output_value(value)
-
-
-def _is_valid_identifier(name: str) -> bool:
-    return bool(name) and name.isidentifier() and not keyword.iskeyword(name)
-
-
 def _script_uses_inputs_object_access(code: str) -> bool:
-    """
-    Returns True when script body appears to rely on dot-style inputs access
-    (e.g. inputs.msg), which requires msgspec struct decoding.
-    """
-    try:
-        module = ast.parse(str(code or ""), mode="exec")
-    except SyntaxError:
-        # Conservative fallback: keep msgspec path when parser cannot decide.
-        return True
-
-    for node in module.body:
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            fn_name = str(node.name or "")
-            if fn_name == "onMsg":
-                param_name = _inputs_param_name(node, expected_pos=1)
-                if param_name and _function_uses_dot_inputs_access(node, param_name):
-                    return True
-            elif fn_name == "onExec":
-                param_name = _inputs_param_name(node, expected_pos=2)
-                if param_name and _function_uses_dot_inputs_access(node, param_name):
-                    return True
-    return False
-
-
-def _inputs_param_name(node: ast.FunctionDef | ast.AsyncFunctionDef, *, expected_pos: int) -> str | None:
-    pos_args = list(node.args.posonlyargs) + list(node.args.args)
-    if expected_pos >= len(pos_args):
-        return None
-    raw_name = str(pos_args[expected_pos].arg or "").strip()
-    return raw_name or None
-
-
-def _function_uses_dot_inputs_access(node: ast.FunctionDef | ast.AsyncFunctionDef, param_name: str) -> bool:
-    alias_names: set[str] = {param_name}
-    for child in ast.walk(node):
-        if not isinstance(child, ast.Assign):
-            continue
-        if len(child.targets) != 1:
-            continue
-        target = child.targets[0]
-        if not isinstance(target, ast.Name):
-            continue
-        value = child.value
-        if isinstance(value, ast.Name) and str(value.id or "") in alias_names:
-            alias_names.add(str(target.id or ""))
-
-    for child in ast.walk(node):
-        if isinstance(child, ast.Call) and isinstance(child.func, ast.Name):
-            fn_name = str(child.func.id or "")
-            if fn_name in {"getattr", "setattr", "hasattr", "delattr"} and child.args:
-                first_arg = child.args[0]
-                if isinstance(first_arg, ast.Name) and str(first_arg.id or "") in alias_names:
-                    # Conservative fallback: dynamic attribute APIs may depend on object semantics.
-                    return True
-        if not isinstance(child, ast.Attribute):
-            continue
-        base = child.value
-        if not isinstance(base, ast.Name):
-            continue
-        if str(base.id or "") not in alias_names:
-            continue
-        attr_name = str(child.attr or "")
-        if attr_name in _DICT_STYLE_INPUT_METHODS:
-            continue
-        return True
-    return False
-
-
-def _normalize_attr_name(raw_name: str, *, fallback: str) -> str:
-    text = str(raw_name or "").strip()
-    if _is_valid_identifier(text):
-        return text
-    text = re.sub(r"[^A-Za-z0-9_]", "_", text)
-    if not text:
-        text = fallback
-    if text[0].isdigit():
-        text = f"_{text}"
-    if keyword.iskeyword(text):
-        text = f"{text}_"
-    if not _is_valid_identifier(text):
-        text = fallback
-        if keyword.iskeyword(text):
-            text = f"{text}_"
-    return text
-
-
-class _MsgspecStructCompat:
-    __slots__ = ()
-
-    def __getitem__(self, key: str) -> Any:
-        name = str(key or "")
-        try:
-            return getattr(self, name)
-        except AttributeError as exc:
-            raise KeyError(name) from exc
-
-    def get(self, key: str, default: Any = None) -> Any:
-        name = str(key or "")
-        try:
-            return getattr(self, name)
-        except AttributeError:
-            return default
-
-
-class _InputsModelBuilder:
-    def __init__(self, *, node_id: str) -> None:
-        self._node_id = str(node_id or "")
-        self._struct_seq = 0
-        self._schema_struct_cache: dict[int, type[Any]] = {}
-        self._schema_building: set[int] = set()
-        self.warnings: list[str] = []
-
-    def build_root(self, data_in_ports: list[F8DataPortSpec]) -> type[Any]:
-        fields: list[tuple[Any, ...]] = []
-        used_attrs: set[str] = set()
-        for index, port in enumerate(list(data_in_ports or [])):
-            raw_name = str(port.name or "").strip()
-            if not raw_name:
-                continue
-            attr_name = self._unique_attr_name(raw_name, used_attrs, scope=f"port[{index}]")
-            field_type = self._schema_to_type(port.valueSchema, hint=f"Port_{attr_name}")
-            # `F8DataPortSpec.required` is edit-time protection, not a runtime non-null contract.
-            optional_type = field_type | None
-            if attr_name == raw_name:
-                fields.append((attr_name, optional_type, msgspec.field(default=None)))
-            else:
-                fields.append((attr_name, optional_type, msgspec.field(name=raw_name, default=None)))
-        return self._defstruct("F8Inputs", fields)
-
-    def _defstruct(self, prefix: str, fields: list[tuple[Any, ...]]) -> type[Any]:
-        self._struct_seq += 1
-        struct_name = f"{prefix}_{self._struct_seq}"
-        return msgspec.defstruct(
-            struct_name,
-            fields,
-            bases=(_MsgspecStructCompat,),
-            kw_only=True,
-            module=__name__,
-        )
-
-    def _unique_attr_name(self, raw_name: str, used: set[str], *, scope: str) -> str:
-        base_name = _normalize_attr_name(raw_name, fallback="field")
-        if base_name not in used:
-            used.add(base_name)
-            return base_name
-        suffix = 1
-        while True:
-            candidate = f"{base_name}_{suffix}"
-            if candidate not in used:
-                used.add(candidate)
-                self.warnings.append(
-                    f"input model field name collision ({scope}): raw='{raw_name}' mapped to '{candidate}'"
-                )
-                return candidate
-            suffix += 1
-
-    def _schema_to_type(self, schema: Any, *, hint: str) -> Any:
-        if schema is None or isinstance(schema, msgspec.UnsetType):
-            return Any
-        if isinstance(schema, dict):
-            schema_type = str(schema.get("type") or "").strip().lower()
-            if schema_type == "string":
-                return str
-            if schema_type == "number":
-                return float
-            if schema_type == "integer":
-                return int
-            if schema_type == "boolean":
-                return bool
-            if schema_type == "null":
-                return type(None)
-            if schema_type == "any":
-                return Any
-            if schema_type == "array":
-                return list[self._schema_to_type(schema.get("items"), hint=f"{hint}_item")]
-            if schema_type == "object":
-                props = schema.get("properties")
-                if not isinstance(props, dict) or not props:
-                    return dict[str, Any]
-                additional = schema.get("additionalProperties")
-                if additional is True:
-                    return dict[str, Any]
-                return self._schema_object_to_struct_dict(
-                    schema_id=id(schema),
-                    properties=props,
-                    required_values=schema.get("required"),
-                    hint=hint,
-                )
-            return Any
-        if isinstance(schema, F8StringTypeSchema):
-            return str
-        if isinstance(schema, F8NumberTypeSchema):
-            return float
-        if isinstance(schema, F8IntegerTypeSchema):
-            return int
-        if isinstance(schema, F8BooleanTypeSchema):
-            return bool
-        if isinstance(schema, F8NullTypeSchema):
-            return type(None)
-        if isinstance(schema, F8AnyTypeSchema):
-            return Any
-        if isinstance(schema, F8ArrayTypeSchema):
-            return list[self._schema_to_type(schema.items, hint=f"{hint}_item")]
-        if isinstance(schema, F8ComplexObjectTypeSchema):
-            if bool(schema.additionalProperties):
-                return dict[str, Any]
-            properties = dict(schema.properties or {})
-            if not properties:
-                return dict[str, Any]
-            return self._schema_object_to_struct_dict(
-                schema_id=id(schema),
-                properties=properties,
-                required_values=schema.required,
-                hint=hint,
-            )
-        return Any
-
-    def _schema_object_to_struct_dict(
-        self,
-        *,
-        schema_id: int,
-        properties: dict[str, Any],
-        required_values: Any,
-        hint: str,
-    ) -> type[Any]:
-        if schema_id in self._schema_struct_cache:
-            return self._schema_struct_cache[schema_id]
-        if schema_id in self._schema_building:
-            return dict[str, Any]
-        self._schema_building.add(schema_id)
-        try:
-            required_names = self._required_name_set(required_values)
-            fields: list[tuple[Any, ...]] = []
-            used_attrs: set[str] = set()
-            for key in sorted(properties.keys()):
-                raw_name = str(key or "").strip()
-                if not raw_name:
-                    continue
-                attr_name = self._unique_attr_name(raw_name, used_attrs, scope=f"{hint}.{raw_name}")
-                field_type = self._schema_to_type(properties.get(key), hint=f"{hint}_{attr_name}")
-                is_required = raw_name in required_names
-                if is_required:
-                    if attr_name == raw_name:
-                        fields.append((attr_name, field_type))
-                    else:
-                        fields.append((attr_name, field_type, msgspec.field(name=raw_name)))
-                    continue
-                optional_type = field_type | None
-                if attr_name == raw_name:
-                    fields.append((attr_name, optional_type, msgspec.field(default=None)))
-                else:
-                    fields.append((attr_name, optional_type, msgspec.field(name=raw_name, default=None)))
-            struct_type = self._defstruct(_normalize_attr_name(hint, fallback="InputObject"), fields)
-            self._schema_struct_cache[schema_id] = struct_type
-            return struct_type
-        finally:
-            self._schema_building.discard(schema_id)
-
-    @staticmethod
-    def _required_name_set(required_values: Any) -> set[str]:
-        if isinstance(required_values, msgspec.UnsetType) or required_values is None:
-            return set()
-        if not isinstance(required_values, (list, tuple, set)):
-            return set()
-        out: set[str] = set()
-        for item in required_values:
-            name = str(item or "").strip()
-            if name:
-                out.add(name)
-        return out
+    # Backward compatible helper for tests and call-sites.
+    return script_uses_inputs_object_access(code)
 
 
 @dataclass(slots=True)
@@ -526,6 +84,10 @@ class PyEngineContext:
     @property
     def states(self) -> PyEngineStatesView:
         return self._node._build_states_view(self._state_keys)
+
+    @property
+    def input_mode(self) -> str:
+        return str(self._node._input_binding.mode)
 
     def log(self, message: object) -> None:
         self._node._log(str(message))
@@ -632,7 +194,10 @@ DEFAULT_CODE = (
     "# - ctx.states.get(field)  # cached snapshot\n"
     "# - ctx.set_state(field, value)\n"
     "#   - await ctx.set_state_async(field, value)\n"
-    "# - inputs is a typed struct; use dot access only (inputs.msg)\n"
+    "# - inputs binding mode is configured by state `inputMode`:\n"
+    "#   - input_view (default): supports dot and mapping access\n"
+    "#   - raw_dict: plain dict only\n"
+    "#   - msgspec_struct: typed struct from dataIn schema\n"
     "# - Video SHM helpers:\n"
     "#   - ctx.subscribe_video_shm(key, shm_name, decode='auto', use_event=False)\n"
     "#   - pkt = ctx.get_video_shm(key)\n"
@@ -694,7 +259,19 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         self._ctx: PyEngineContext = self._build_ctx()
 
         self._code = str(self._initial_state.get("code") or DEFAULT_CODE)
-        self._runtime: dict[str, Callable[..., Any]] = {}
+        self._script_runtime = ScriptRuntimeCompiler(set_error=self._set_error)
+        self._hooks = HookSet(
+            runtime={},
+            on_msg=None,
+            on_exec=None,
+            on_state=None,
+            on_msg_is_async=False,
+            on_exec_is_async=False,
+            on_state_is_async=False,
+            on_msg_maybe_awaitable=False,
+            on_exec_maybe_awaitable=False,
+            on_state_maybe_awaitable=False,
+        )
         self._started = False
         self._closing = False
         self._last_error: str | None = None
@@ -703,23 +280,23 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         self._pull_cache_outputs: dict[str, Any] = {}
         self._state_key_hint_logged = False
         self._video_subscriptions: dict[str, _VideoShmSubscription] = {}
-        self._hook_on_msg: Callable[..., Any] | None = None
-        self._hook_on_exec: Callable[..., Any] | None = None
-        self._hook_on_state: Callable[..., Any] | None = None
-        self._hook_on_msg_is_async = False
-        self._hook_on_exec_is_async = False
-        self._hook_on_state_is_async = False
-        self._hook_on_msg_maybe_awaitable = False
-        self._hook_on_exec_maybe_awaitable = False
-        self._hook_on_state_maybe_awaitable = False
-        self._on_msg_only_mode = False
         self._data_out_port_set: set[str] = set()
+        self._single_data_out_port: str | None = None
         self._has_out_port = False
-        inputs_model_builder = _InputsModelBuilder(node_id=self.node_id)
-        self._inputs_model_type = inputs_model_builder.build_root(list(node.dataInPorts or []))
-        self._inputs_model_warnings = tuple(inputs_model_builder.warnings)
-        self._prefer_raw_inputs = False
+        self._input_mode = parse_input_mode(self._initial_state.get("inputMode"), default=INPUT_MODE_INPUT_VIEW)
+        self._input_binding = InputBinding(
+            node_id=self.node_id,
+            data_in_ports=list(node.dataInPorts or []),
+            mode=self._input_mode,
+        )
         self._input_decode_mode_logged: str | None = None
+        self._metric_input_decode_time_us: float = 0.0
+        self._metric_input_decode_errors = 0
+        self._metric_hook_exec_time_us: float = 0.0
+        self._metric_output_normalize_time_us: float = 0.0
+        self._metrics_enabled = logger.isEnabledFor(logging.DEBUG)
+        self._metrics_sample_mask = 0x7F
+        self._metrics_sample_counter = 0
         self._refresh_data_out_port_cache()
 
         self._compile_and_start()
@@ -749,6 +326,37 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
 
     def _log(self, message: str) -> None:
         logger.info("[%s:python_script] %s", self.node_id, message)
+
+    def get_performance_counters(self) -> dict[str, float | int]:
+        return {
+            "input_decode_time_us": float(self._metric_input_decode_time_us),
+            "input_decode_errors": int(self._metric_input_decode_errors),
+            "hook_exec_time_us": float(self._metric_hook_exec_time_us),
+            "output_normalize_time_us": float(self._metric_output_normalize_time_us),
+        }
+
+    def _metrics_start(self) -> float | None:
+        if not self._metrics_enabled:
+            return None
+        self._metrics_sample_counter = (int(self._metrics_sample_counter) + 1) & int(self._metrics_sample_mask)
+        if self._metrics_sample_counter != 0:
+            return None
+        return time.perf_counter()
+
+    def _metrics_add_hook_time(self, started_at: float | None) -> None:
+        if started_at is None:
+            return
+        self._metric_hook_exec_time_us += (time.perf_counter() - started_at) * 1_000_000.0
+
+    def _metrics_add_decode_time(self, started_at: float | None) -> None:
+        if started_at is None:
+            return
+        self._metric_input_decode_time_us += (time.perf_counter() - started_at) * 1_000_000.0
+
+    def _metrics_add_output_norm_time(self, started_at: float | None) -> None:
+        if started_at is None:
+            return
+        self._metric_output_normalize_time_us += (time.perf_counter() - started_at) * 1_000_000.0
 
     def _set_error(self, stage: str, exc: BaseException) -> None:
         msg = f"{stage}: {exc}"
@@ -1038,24 +646,43 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
             exec_in=None,
         )
 
-    def _refresh_runtime_hooks(self) -> None:
-        on_msg_raw = self._runtime.get("onMsg")
-        on_exec_raw = self._runtime.get("onExec")
-        on_state_raw = self._runtime.get("onState")
-        self._hook_on_msg = on_msg_raw if callable(on_msg_raw) else None
-        self._hook_on_exec = on_exec_raw if callable(on_exec_raw) else None
-        self._hook_on_state = on_state_raw if callable(on_state_raw) else None
-        self._hook_on_msg_is_async = bool(self._hook_on_msg and inspect.iscoroutinefunction(self._hook_on_msg))
-        self._hook_on_exec_is_async = bool(self._hook_on_exec and inspect.iscoroutinefunction(self._hook_on_exec))
-        self._hook_on_state_is_async = bool(self._hook_on_state and inspect.iscoroutinefunction(self._hook_on_state))
-        self._hook_on_msg_maybe_awaitable = bool(self._hook_on_msg and not self._hook_on_msg_is_async)
-        self._hook_on_exec_maybe_awaitable = bool(self._hook_on_exec and not self._hook_on_exec_is_async)
-        self._hook_on_state_maybe_awaitable = bool(self._hook_on_state and not self._hook_on_state_is_async)
-        self._on_msg_only_mode = self._hook_on_msg is not None and self._hook_on_exec is None
-
     def _refresh_data_out_port_cache(self) -> None:
         self._data_out_port_set = {str(name) for name in self.data_out_ports}
+        if len(self._data_out_port_set) == 1:
+            self._single_data_out_port = next(iter(self._data_out_port_set))
+        else:
+            self._single_data_out_port = None
         self._has_out_port = "out" in self._data_out_port_set
+
+    async def _await_msg_result(self, result: Any) -> Any:
+        if self._hooks.on_msg_is_async:
+            return await result
+        if not self._hooks.on_msg_maybe_awaitable:
+            return result
+        if inspect.isawaitable(result):
+            return await result
+        self._hooks.on_msg_maybe_awaitable = False
+        return result
+
+    async def _await_exec_result(self, result: Any) -> Any:
+        if self._hooks.on_exec_is_async:
+            return await result
+        if not self._hooks.on_exec_maybe_awaitable:
+            return result
+        if inspect.isawaitable(result):
+            return await result
+        self._hooks.on_exec_maybe_awaitable = False
+        return result
+
+    async def _await_state_result(self, result: Any) -> Any:
+        if self._hooks.on_state_is_async:
+            return await result
+        if not self._hooks.on_state_maybe_awaitable:
+            return result
+        if inspect.isawaitable(result):
+            return await result
+        self._hooks.on_state_maybe_awaitable = False
+        return result
 
     def _build_states_view(self, state_keys: tuple[str, ...]) -> PyEngineStatesView:
         resolved_keys = [str(key) for key in state_keys if str(key)]
@@ -1078,20 +705,6 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
             snapshot[str(key)] = self.get_state_cached(str(key), None)
         return PyEngineStatesView(snapshot)
 
-    def _compile_script(self, code: str) -> dict[str, Callable[..., Any]]:
-        env: dict[str, Any] = {"__builtins__": __builtins__}
-        try:
-            exec(code, env, env)
-        except Exception as exc:
-            self._set_error("compile", exc)
-            return {}
-        runtime: dict[str, Callable[..., Any]] = {}
-        for hook in ("onStart", "onState", "onMsg", "onExec", "onStop"):
-            fn = env.get(hook)
-            if callable(fn):
-                runtime[hook] = fn
-        return runtime
-
     def _compile_and_start(self) -> None:
         if self._started:
             self._invoke_hook_sync("onStop")
@@ -1102,13 +715,27 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         code = str(self._code or "")
         code = code.replace("\r\n", "\n").replace("\r", "\n")
         code = code.expandtabs(4)
-        self._prefer_raw_inputs = not _script_uses_inputs_object_access(code)
         self._input_decode_mode_logged = None
-        self._runtime = self._compile_script(code)
-        if self._inputs_model_warnings:
-            self._set_error("inputModel", ValueError("; ".join(self._inputs_model_warnings)))
-        self._refresh_runtime_hooks()
-        if not self._runtime:
+        self._hooks = self._script_runtime.compile(code)
+        if self._input_binding.warnings:
+            self._set_error("inputModel", ValueError("; ".join(self._input_binding.warnings)))
+
+        style = infer_script_input_style(code)
+        mode = self._input_binding.mode
+        if style == "dot" and mode == "raw_dict":
+            logger.warning(
+                "[%s:python_script] script appears to use dot inputs, but inputMode=%s",
+                self.node_id,
+                mode,
+            )
+        elif style == "mapping" and mode == "msgspec_struct":
+            logger.warning(
+                "[%s:python_script] script appears to use mapping inputs, but inputMode=%s",
+                self.node_id,
+                mode,
+            )
+
+        if not self._hooks.runtime:
             self._started = False
             return
         self._invoke_hook_sync("onStart")
@@ -1124,37 +751,8 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
             return self._ctx
         return self._ctx.with_exec_in(exec_in)
 
-    async def _resolve_hook_result(
-        self,
-        result: Any,
-        *,
-        hook: str,
-    ) -> Any:
-        if hook == "msg":
-            hook_is_async = self._hook_on_msg_is_async
-            maybe_awaitable = self._hook_on_msg_maybe_awaitable
-        elif hook == "exec":
-            hook_is_async = self._hook_on_exec_is_async
-            maybe_awaitable = self._hook_on_exec_maybe_awaitable
-        else:
-            hook_is_async = self._hook_on_state_is_async
-            maybe_awaitable = self._hook_on_state_maybe_awaitable
-        if hook_is_async:
-            return await result
-        if not maybe_awaitable:
-            return result
-        if inspect.isawaitable(result):
-            return await result
-        if hook == "msg":
-            self._hook_on_msg_maybe_awaitable = False
-        elif hook == "exec":
-            self._hook_on_exec_maybe_awaitable = False
-        else:
-            self._hook_on_state_maybe_awaitable = False
-        return result
-
     def _invoke_hook_sync(self, name: str, *args: Any) -> None:
-        fn = self._runtime.get(name)
+        fn = self._hooks.runtime.get(name)
         if not callable(fn):
             if name == "onStart":
                 self._started = True
@@ -1162,6 +760,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
                 self._started = False
             return
         try:
+            t0 = self._metrics_start()
             r = fn(self._ctx, *args)
             if inspect.isawaitable(r):
                 try:
@@ -1169,6 +768,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
                     loop.create_task(r, name=f"python_script:{name}:{self.node_id}")
                 except Exception:
                     pass
+            self._metrics_add_hook_time(t0)
         except Exception as exc:
             self._set_error(name, exc)
         finally:
@@ -1178,7 +778,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
                 self._started = False
 
     async def _invoke_hook_async(self, name: str, *args: Any) -> None:
-        fn = self._runtime.get(name)
+        fn = self._hooks.runtime.get(name)
         if not callable(fn):
             if name == "onStart":
                 self._started = True
@@ -1186,9 +786,11 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
                 self._started = False
             return
         try:
+            t0 = self._metrics_start()
             r = fn(self._ctx, *args)
             if inspect.isawaitable(r):
                 await r
+            self._metrics_add_hook_time(t0)
         except Exception as exc:
             self._set_error(name, exc)
         finally:
@@ -1200,23 +802,29 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
     async def on_state(self, field: str, value: Any, *, ts_ms: int | None = None) -> None:
         name = str(field)
         if name == "code":
-            self._code = str(value or "")
+            next_code = str(value or "")
+            if next_code == self._code:
+                return
+            self._code = next_code
             self._compile_and_start()
             return
+        if name == "inputMode":
+            self._input_mode = parse_input_mode(value, default=INPUT_MODE_INPUT_VIEW)
+            self._input_binding.set_mode(self._input_mode)
+            self._input_decode_mode_logged = None
 
         # Best-effort loop prevention for state writes originating from this node (via ctx.set_state()).
         if name in self._self_state_writes and self._self_state_writes.get(name) == value:
             return
 
-        fn = self._hook_on_state
+        fn = self._hooks.on_state
         if not callable(fn):
             return
         try:
             r = fn(self._ctx, name, value, ts_ms)
-            r = await self._resolve_hook_result(
-                r,
-                hook="state",
-            )
+            t0 = self._metrics_start()
+            r = await self._await_state_result(r)
+            self._metrics_add_hook_time(t0)
         except Exception as exc:
             self._set_error("onState", exc)
 
@@ -1225,17 +833,22 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         name = str(field or "").strip()
         if name == "code":
             return str(value or "")
+        if name == "inputMode":
+            mode = parse_input_mode(value, default=INPUT_MODE_INPUT_VIEW)
+            if str(value or "").strip().lower().replace("-", "_") not in ("raw_dict", "input_view", "msgspec_struct"):
+                raise ValueError(f"invalid inputMode: {value}")
+            return mode
         return value
 
     async def on_data(self, port: str, value: Any, *, ts_ms: int | None = None) -> None:
         # Push-mode: treat incoming data as a message.
-        if not self._runtime:
+        if not self._hooks.runtime:
             return
         await self._run_on_msg({str(port): value}, exec_in=None)
 
     async def on_exec(self, exec_id: str | int, in_port: str | None = None) -> list[str]:
         # Exec-driven: pull current values for all inputs.
-        if not self._runtime:
+        if not self._hooks.runtime:
             return list(self._exec_out_ports)
         inputs: dict[str, Any] = {}
         for p in self.data_in_ports:
@@ -1250,7 +863,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         out_port = str(port or "")
         if out_port not in self._data_out_port_set:
             return None
-        if not self._runtime:
+        if not self._hooks.runtime:
             return None
 
         if ctx_id is not None and ctx_id == self._pull_cache_ctx_id:
@@ -1274,7 +887,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         return outputs.get(out_port)
 
     async def _run_on_exec(self, inputs: dict[str, Any], *, exec_in: str | None) -> list[str]:
-        fn = self._hook_on_exec
+        fn = self._hooks.on_exec
         if callable(fn):
             inputs_obj = self._decode_inputs(inputs, stage="onExec")
             if inputs_obj is None:
@@ -1282,10 +895,9 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
             try:
                 invoke_ctx = self._build_invoke_ctx(exec_in=exec_in)
                 r = fn(invoke_ctx, str(exec_in or ""), inputs_obj)
-                r = await self._resolve_hook_result(
-                    r,
-                    hook="exec",
-                )
+                t0 = self._metrics_start()
+                r = await self._await_exec_result(r)
+                self._metrics_add_hook_time(t0)
             except Exception as exc:
                 self._set_error("onExec", exc)
                 return list(self._exec_out_ports)
@@ -1296,19 +908,18 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         return list(self._exec_out_ports)
 
     async def _compute_outputs_for_pull(self, inputs: dict[str, Any], *, exec_in: str | None) -> dict[str, Any]:
-        fn_msg = self._hook_on_msg
-        fn_exec = self._hook_on_exec
+        fn_msg = self._hooks.on_msg
+        fn_exec = self._hooks.on_exec
         inputs_obj = self._decode_inputs(inputs, stage="compute")
         if inputs_obj is None:
             return {}
-        if self._on_msg_only_mode and callable(fn_msg):
+        if self._hooks.on_msg_only_mode and callable(fn_msg):
             try:
                 invoke_ctx = self._build_invoke_ctx(exec_in=exec_in)
                 result = fn_msg(invoke_ctx, inputs_obj)
-                result = await self._resolve_hook_result(
-                    result,
-                    hook="msg",
-                )
+                t0 = self._metrics_start()
+                result = await self._await_msg_result(result)
+                self._metrics_add_hook_time(t0)
             except Exception as exc:
                 self._set_error("onMsg", exc)
                 return {}
@@ -1318,10 +929,9 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
             try:
                 invoke_ctx = self._build_invoke_ctx(exec_in=exec_in)
                 result = fn_exec(invoke_ctx, str(exec_in or ""), inputs_obj)
-                result = await self._resolve_hook_result(
-                    result,
-                    hook="exec",
-                )
+                t0 = self._metrics_start()
+                result = await self._await_exec_result(result)
+                self._metrics_add_hook_time(t0)
             except Exception as exc:
                 self._set_error("onExec", exc)
                 return {}
@@ -1332,10 +942,9 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         try:
             invoke_ctx = self._build_invoke_ctx(exec_in=exec_in)
             result = fn_msg(invoke_ctx, inputs_obj)
-            result = await self._resolve_hook_result(
-                result,
-                hook="msg",
-            )
+            t0 = self._metrics_start()
+            result = await self._await_msg_result(result)
+            self._metrics_add_hook_time(t0)
         except Exception as exc:
             self._set_error("onMsg", exc)
             return {}
@@ -1350,21 +959,37 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         if isinstance(result, dict):
             raw_outputs = result.get("outputs")
             if isinstance(raw_outputs, dict):
+                single_out_port = self._single_data_out_port
+                if single_out_port is not None and len(raw_outputs) == 1:
+                    value = raw_outputs.get(single_out_port, None)
+                    if single_out_port in raw_outputs:
+                        t0 = self._metrics_start()
+                        normalized = normalize_script_output_value_fast(value)
+                        self._metrics_add_output_norm_time(t0)
+                        return {single_out_port: normalized}
                 # Fast-path for dominant script pattern: {"outputs": {"tcode": value}}.
                 if len(raw_outputs) == 1:
                     for raw_key, raw_value in raw_outputs.items():
                         if isinstance(raw_key, str):
                             if raw_key in data_out_ports:
-                                return {raw_key: _normalize_script_output_value_fast(raw_value)}
+                                t0 = self._metrics_start()
+                                normalized = normalize_script_output_value_fast(raw_value)
+                                self._metrics_add_output_norm_time(t0)
+                                return {raw_key: normalized}
                             return {}
                         key_s = str(raw_key)
                         if key_s in data_out_ports:
-                            return {key_s: _normalize_script_output_value_fast(raw_value)}
+                            t0 = self._metrics_start()
+                            normalized = normalize_script_output_value_fast(raw_value)
+                            self._metrics_add_output_norm_time(t0)
+                            return {key_s: normalized}
                         return {}
                 for k, v in raw_outputs.items():
                     k_s = str(k)
                     if k_s in data_out_ports:
-                        outputs[k_s] = _normalize_script_output_value_fast(v)
+                        t0 = self._metrics_start()
+                        outputs[k_s] = normalize_script_output_value_fast(v)
+                        self._metrics_add_output_norm_time(t0)
                 return outputs
 
             for k, v in result.items():
@@ -1372,15 +997,19 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
                 if k_s in ("exec", "outputs"):
                     continue
                 if k_s in data_out_ports:
-                    outputs[k_s] = _normalize_script_output_value_fast(v)
+                    t0 = self._metrics_start()
+                    outputs[k_s] = normalize_script_output_value_fast(v)
+                    self._metrics_add_output_norm_time(t0)
             return outputs
 
         if "out" in data_out_ports:
-            outputs["out"] = _normalize_script_output_value_fast(result)
+            t0 = self._metrics_start()
+            outputs["out"] = normalize_script_output_value_fast(result)
+            self._metrics_add_output_norm_time(t0)
         return outputs
 
     async def _run_on_msg(self, inputs: dict[str, Any], *, exec_in: str | None) -> None:
-        fn = self._hook_on_msg
+        fn = self._hooks.on_msg
         if not callable(fn):
             return
         inputs_obj = self._decode_inputs(inputs, stage="onMsg")
@@ -1389,10 +1018,9 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         try:
             invoke_ctx = self._build_invoke_ctx(exec_in=exec_in)
             r = fn(invoke_ctx, inputs_obj)
-            r = await self._resolve_hook_result(
-                r,
-                hook="msg",
-            )
+            t0 = self._metrics_start()
+            r = await self._await_msg_result(r)
+            self._metrics_add_hook_time(t0)
         except Exception as exc:
             self._set_error("onMsg", exc)
             return
@@ -1414,11 +1042,11 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         if isinstance(r, dict):
             exec_sel = r.get("exec") if "exec" in r else None
             outputs = self._extract_outputs(r)
-            for k, v in outputs.items():
-                try:
+            try:
+                for k, v in outputs.items():
                     await self.emit(str(k), v)
-                except Exception:
-                    continue
+            except Exception:
+                return None
 
             if exec_sel is None:
                 return None
@@ -1431,23 +1059,32 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         # Non-dict: send to default data output if present.
         if self._has_out_port:
             try:
-                await self.emit("out", _normalize_script_output_value(r))
+                t0 = self._metrics_start()
+                out_value = normalize_script_output_value(r)
+                self._metrics_add_output_norm_time(t0)
+                await self.emit("out", out_value)
             except Exception:
                 pass
         return None
 
     def _decode_inputs(self, inputs: dict[str, Any], *, stage: str) -> Any | None:
-        if self._prefer_raw_inputs:
-            if self._input_decode_mode_logged != "raw":
-                logger.debug("[%s:python_script] input decode mode=raw", self.node_id)
-                self._input_decode_mode_logged = "raw"
-            return inputs
-        if self._input_decode_mode_logged != "msgspec":
-            logger.debug("[%s:python_script] input decode mode=msgspec", self.node_id)
-            self._input_decode_mode_logged = "msgspec"
+        decode_mode = self._input_binding.mode
+        if self._input_decode_mode_logged != decode_mode:
+            logger.debug("[%s:python_script] input decode mode=%s", self.node_id, decode_mode)
+            self._input_decode_mode_logged = decode_mode
         try:
-            return msgspec.convert(inputs, type=self._inputs_model_type)
+            t0 = self._metrics_start()
+            decoded = self._input_binding.decode(inputs)
+            self._metrics_add_decode_time(t0)
+            return decoded
         except Exception as exc:
+            self._metric_input_decode_errors += 1
+            logger.debug(
+                "[%s:python_script] input decode failed mode=%s sample_types=%s",
+                self.node_id,
+                decode_mode,
+                {str(k): type(v).__name__ for k, v in list(inputs.items())[:3]},
+            )
             self._set_error(f"{stage}:inputs", exc)
             return None
 
@@ -1480,6 +1117,15 @@ PythonScriptRuntimeNode.SPEC = F8OperatorSpec(
             required=True,
             showOnNode=False,
             editorAssist=python_script_field_editor_assist_payload(),
+        ),
+        F8StateSpec(
+            name="inputMode",
+            label="Input Mode",
+            description="Input binding mode: input_view | raw_dict | msgspec_struct.",
+            valueSchema=string_schema(default=INPUT_MODE_INPUT_VIEW),
+            access=F8StateAccess.rw,
+            required=True,
+            showOnNode=False,
         ),
         F8StateSpec(
             name="lastError",

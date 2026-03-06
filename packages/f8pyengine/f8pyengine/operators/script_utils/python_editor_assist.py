@@ -5,10 +5,12 @@ from f8pysdk.generated import F8EditorAssistSpec
 
 _PYENGINE_STUB = """from __future__ import annotations
 
-from typing import Any, Protocol
+from typing import Any, Mapping, Protocol, TypeAlias, Literal
 
 from f8_dynamic_inputs import F8Inputs as F8Inputs
 from f8_dynamic_states import F8States as F8States
+InputMode: TypeAlias = Literal['input_view', 'raw_dict', 'msgspec_struct']
+F8InputsMapping: TypeAlias = Mapping[str, Any]
 
 class F8PyEngineContext:
     \"\"\"Runtime context passed to f8.python_script hooks.\"\"\"
@@ -20,6 +22,8 @@ class F8PyEngineContext:
     \"\"\"Readonly cached state snapshot view (rw/ro fields only).\"\"\"
     exec_in: str | None
     \"\"\"Current exec trigger input name for onExec, else None.\"\"\"
+    input_mode: InputMode
+    \"\"\"Current input binding mode selected by node state `inputMode`.\"\"\"
     def log(self, message: object) -> None:
         \"\"\"Write an info log line from script context.\"\"\"
         ...
@@ -61,11 +65,11 @@ class PyEngineOnStateHook(Protocol):
 
 class PyEngineOnMsgHook(Protocol):
     \"\"\"Type signature for `onMsg(ctx, inputs)`.\"\"\"
-    def __call__(self, ctx: F8PyEngineContext, inputs: F8Inputs) -> Any: ...
+    def __call__(self, ctx: F8PyEngineContext, inputs: F8Inputs | F8InputsMapping) -> Any: ...
 
 class PyEngineOnExecHook(Protocol):
     \"\"\"Type signature for `onExec(ctx, exec_in, inputs)`.\"\"\"
-    def __call__(self, ctx: F8PyEngineContext, exec_in: str, inputs: F8Inputs) -> Any: ...
+    def __call__(self, ctx: F8PyEngineContext, exec_in: str, inputs: F8Inputs | F8InputsMapping) -> Any: ...
 
 class PyEngineOnStopHook(Protocol):
     \"\"\"Type signature for `onStop(ctx)`.\"\"\"

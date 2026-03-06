@@ -90,8 +90,13 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
     def test_spec_contains_editor_assist_protocol(self) -> None:
         spec = PythonScriptRuntimeNode.SPEC
         code_field = next((f for f in list(spec.stateFields or []) if str(f.name or "").strip() == "code"), None)
+        input_mode_field = next((f for f in list(spec.stateFields or []) if str(f.name or "").strip() == "inputMode"), None)
         self.assertIsNotNone(code_field)
+        self.assertIsNotNone(input_mode_field)
         assert code_field is not None
+        assert input_mode_field is not None
+        access_value = getattr(getattr(input_mode_field, "access", None), "value", getattr(input_mode_field, "access", None))
+        self.assertEqual(str(access_value), str(F8StateAccess.rw.value))
         editor_assist = code_field.editorAssist
         self.assertIsNotNone(editor_assist)
         python_payload = dump_json(editor_assist.python, mode="json") if editor_assist is not None else None
@@ -545,14 +550,19 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
             "    _ = inputs.msg\n"
             "    return {'outputs': {'out': 1}}\n"
         )
-        op = _runtime_python_script_node(node_id="ps12", code=code, data_in_ports=data_in_ports)
+        op = _runtime_python_script_node(
+            node_id="ps12",
+            code=code,
+            data_in_ports=data_in_ports,
+            state_values={"inputMode": "msgspec_struct"},
+        )
         graph = F8RuntimeGraph(graphId="g12", revision="r1", nodes=[op], edges=[])
         await bus.set_rungraph(graph)
 
         node = bus.get_node("ps12")
         self.assertIsInstance(node, PythonScriptRuntimeNode)
         assert isinstance(node, PythonScriptRuntimeNode)
-        self.assertFalse(bool(node._prefer_raw_inputs))
+        self.assertEqual(node._input_binding.mode, "msgspec_struct")
         out = await node._compute_outputs_for_pull({"msg": {"bones": [None]}}, exec_in=None)
         self.assertEqual(out, {})
         error_text = str(node._last_error or "")
@@ -579,7 +589,7 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
         node = bus.get_node("ps16")
         self.assertIsInstance(node, PythonScriptRuntimeNode)
         assert isinstance(node, PythonScriptRuntimeNode)
-        self.assertTrue(bool(node._prefer_raw_inputs))
+        self.assertEqual(node._input_binding.mode, "input_view")
         out = await node._compute_outputs_for_pull({"msg": 123}, exec_in=None)
         self.assertEqual(out.get("out"), [123, 123])
 
@@ -605,11 +615,11 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
         node = bus.get_node("ps17")
         self.assertIsInstance(node, PythonScriptRuntimeNode)
         assert isinstance(node, PythonScriptRuntimeNode)
-        self.assertFalse(bool(node._prefer_raw_inputs))
+        self.assertEqual(node._input_binding.mode, "input_view")
         out = await node._compute_outputs_for_pull({"payload": {"user": "alice"}}, exec_in=None)
         self.assertEqual(out.get("out"), ["alice", "alice"])
 
-    async def test_dot_access_keeps_msgspec_decode_mode(self) -> None:
+    async def test_dot_access_uses_default_input_view_mode(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
         reg = RuntimeNodeRegistry.instance()
@@ -627,9 +637,55 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
         node = bus.get_node("ps18")
         self.assertIsInstance(node, PythonScriptRuntimeNode)
         assert isinstance(node, PythonScriptRuntimeNode)
-        self.assertFalse(bool(node._prefer_raw_inputs))
+        self.assertEqual(node._input_binding.mode, "input_view")
         out = await node._compute_outputs_for_pull({"msg": 123}, exec_in=None)
         self.assertEqual(out.get("out"), 123)
+
+    async def test_raw_dict_mode_keeps_mapping_inputs(self) -> None:
+        harness = ServiceBusHarness()
+        bus = harness.create_bus("svcA")
+        reg = RuntimeNodeRegistry.instance()
+        register_operator(reg)
+        _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
+
+        code = (
+            "def onMsg(ctx, inputs):\n"
+            "    return {'outputs': {'out': inputs.get('msg')}}\n"
+        )
+        op = _runtime_python_script_node(node_id="ps19", code=code, state_values={"inputMode": "raw_dict"})
+        graph = F8RuntimeGraph(graphId="g19", revision="r1", nodes=[op], edges=[])
+        await bus.set_rungraph(graph)
+
+        node = bus.get_node("ps19")
+        self.assertIsInstance(node, PythonScriptRuntimeNode)
+        assert isinstance(node, PythonScriptRuntimeNode)
+        self.assertEqual(node._input_binding.mode, "raw_dict")
+        out = await node._compute_outputs_for_pull({"msg": 456}, exec_in=None)
+        self.assertEqual(out.get("out"), 456)
+
+    async def test_msgspec_mode_tracks_decode_metrics(self) -> None:
+        harness = ServiceBusHarness()
+        bus = harness.create_bus("svcA")
+        reg = RuntimeNodeRegistry.instance()
+        register_operator(reg)
+        _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
+
+        code = (
+            "def onMsg(ctx, inputs):\n"
+            "    return {'outputs': {'out': inputs.msg}}\n"
+        )
+        op = _runtime_python_script_node(node_id="ps20", code=code, state_values={"inputMode": "msgspec_struct"})
+        graph = F8RuntimeGraph(graphId="g20", revision="r1", nodes=[op], edges=[])
+        await bus.set_rungraph(graph)
+
+        node = bus.get_node("ps20")
+        self.assertIsInstance(node, PythonScriptRuntimeNode)
+        assert isinstance(node, PythonScriptRuntimeNode)
+        self.assertEqual(node._input_binding.mode, "msgspec_struct")
+        out = await node._compute_outputs_for_pull({"msg": 789}, exec_in=None)
+        self.assertEqual(out.get("out"), 789)
+        counters = node.get_performance_counters()
+        self.assertGreaterEqual(float(counters.get("input_decode_time_us", 0.0)), 0.0)
 
     async def test_legacy_ctx_dict_access_sets_last_error(self) -> None:
         harness = ServiceBusHarness()
