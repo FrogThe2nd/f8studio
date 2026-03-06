@@ -7,6 +7,16 @@ from NodeGraphQt.constants import NodeEnum, PortEnum
 from .operator_basenode import F8StudioOperatorNodeItem
 
 
+def _required_non_state_port_region_height(*, port_height: float, in_count: int, out_count: int) -> float:
+    max_count = max(0, int(in_count), int(out_count))
+    if max_count <= 0:
+        return 0.0
+    base_port_h = max(float(port_height), float(PortEnum.SIZE.value))
+    row_gap = 4.0
+    pad = 8.0
+    return (base_port_h * float(max_count)) + (row_gap * float(max_count - 1)) + (pad * 2.0)
+
+
 class F8StudioVizOperatorNodeItem(F8StudioOperatorNodeItem):
     """
     Viz-style operator node layout.
@@ -122,10 +132,37 @@ class F8StudioVizOperatorNodeItem(F8StudioOperatorNodeItem):
             except (AttributeError, RuntimeError, TypeError, ValueError):
                 continue
 
+        in_non_state_count = 0
+        out_non_state_count = 0
+        for port in self.inputs:
+            try:
+                if not port.isVisible():
+                    continue
+                if self._port_group(self._port_name(port)) == "state":
+                    continue
+                in_non_state_count += 1
+            except (AttributeError, RuntimeError, TypeError):
+                continue
+        for port in self.outputs:
+            try:
+                if not port.isVisible():
+                    continue
+                if self._port_group(self._port_name(port)) == "state":
+                    continue
+                out_non_state_count += 1
+            except (AttributeError, RuntimeError, TypeError):
+                continue
+
+        required_port_region_h = _required_non_state_port_region_height(
+            port_height=port_height,
+            in_count=in_non_state_count,
+            out_count=out_non_state_count,
+        )
+
         side_padding = 10.0 if widget_width else 0.0
         width = max(float(NodeEnum.WIDTH.value), float(text_w + 18.0), float(widget_width + side_padding))
 
-        port_region_h = state_h + widget_height
+        port_region_h = state_h + max(widget_height, required_port_region_h)
         height = max(float(NodeEnum.HEIGHT.value), float(text_h), float(port_region_h))
         if widget_height:
             height += 10.0
@@ -402,6 +439,19 @@ class F8StudioVizOperatorNodeItem(F8StudioOperatorNodeItem):
         width = float(self._width)
         in_x = (port_width / 2.0) * -1.0
         out_x = width - (port_width / 2.0)
+
+        required_region_h = _required_non_state_port_region_height(
+            port_height=port_height,
+            in_count=len(in_ports),
+            out_count=len(out_ports),
+        )
+        current_region_h = float(max(0.0, bottom - top))
+        if required_region_h > current_region_h:
+            candidate_top = float(self._ports_end_y or top)
+            candidate_bottom = float(self._height - 6.0)
+            if candidate_bottom > candidate_top:
+                top = candidate_top
+                bottom = candidate_bottom
 
         pad = 8.0
         min_cy = top + pad

@@ -1115,11 +1115,9 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
 
     def _edit_data(self, row: _F8SpecNameRow) -> None:
         dir_s = str(row.property("_port_dir") or "")
-        required = self._row_is_required_data_port(row)
         ui_only = bool(
             (dir_s == "data_in" and not self._editable_data_in)
             or (dir_s == "data_out" and not self._editable_data_out)
-            or required
         )
         read_only = bool(self._missing_locked)
         port = row.property("_port")
@@ -1213,7 +1211,8 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
             return
         port = F8DataPortSpec(
             name="",
-            required=True,
+            required=False,
+            showOnNode=False,
             description=msgspec.UNSET,
             valueSchema=_schema_from_json_obj({"type": "any"}),
         )
@@ -2227,11 +2226,7 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
             return
 
         editable = bool(spec.editableStateFields)
-        try:
-            required = bool(current.required)
-        except Exception:
-            required = False
-        ui_only = (not editable) or required
+        ui_only = not editable
 
         # If UI-only, we still want to allow editing UI fields (showOnNode/uiControl/etc).
         dlg = _F8EditStateFieldDialog(
@@ -2265,7 +2260,13 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
         editable = bool(spec.editableStateFields)
         if not editable:
             return
-        field = F8StateSpec(name="", valueSchema=_schema_from_json_obj({"type": "any"}), access=F8StateAccess.rw)
+        field = F8StateSpec(
+            name="",
+            valueSchema=_schema_from_json_obj({"type": "any"}),
+            access=F8StateAccess.rw,
+            required=False,
+            showOnNode=False,
+        )
         dlg = _F8EditStateFieldDialog(self, title="Add state field", field=field, ui_only=False)
         if dlg.exec_() != QtWidgets.QDialog.Accepted:
             return

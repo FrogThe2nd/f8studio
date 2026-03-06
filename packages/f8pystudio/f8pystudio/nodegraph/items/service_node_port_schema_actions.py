@@ -408,9 +408,8 @@ def open_data_port_editor_dialog(node_item: Any, *, is_in: bool, port_name: str)
     port, index = found
     spec = node.spec
     editable = bool(spec.editableDataInPorts) if bool(is_in) else bool(spec.editableDataOutPorts)
-    required = bool(port.required)
     missing_locked = bool(node.is_missing_locked())
-    ui_only = bool((not editable) or required)
+    ui_only = bool(not editable)
     read_only = bool(missing_locked)
 
     from ...widgets.node_property_widgets import _F8EditDataPortDialog
@@ -482,9 +481,8 @@ def open_state_field_editor_dialog(node_item: Any, *, field_name: str) -> None:
         current, _index = found
 
     editable = bool(spec.editableStateFields)
-    required = bool(current.required)
     missing_locked = bool(node.is_missing_locked())
-    ui_only = bool((not editable) or required)
+    ui_only = bool(not editable)
     read_only = bool(missing_locked)
 
     from ...widgets.node_property_widgets import _F8EditStateFieldDialog
@@ -532,16 +530,16 @@ def on_port_right_click(node_item: Any, port: Any, screen_pos: QtCore.QPoint) ->
         found_data = find_data_port_spec(node_item, is_in=bool(is_in), port_name=port_name)
         if found_data is None:
             return
-        data_port, _index = found_data
+        _data_port, _index = found_data
         editable = bool(node.spec.editableDataInPorts) if bool(is_in) else bool(node.spec.editableDataOutPorts)
-        can_edit = bool(editable and (not bool(data_port.required)) and (not bool(node.is_missing_locked())))
+        can_edit = bool(editable and (not bool(node.is_missing_locked())))
     elif kind == "state":
         found_field = find_state_field_spec(node_item, field_name=port_name)
         if found_field is None:
             return
-        field, _index = found_field
+        _field, _index = found_field
         editable = bool(node.spec.editableStateFields)
-        can_edit = bool(editable and (not bool(field.required)) and (not bool(node.is_missing_locked())))
+        can_edit = bool(editable and (not bool(node.is_missing_locked())))
     else:
         return
     menu = QtWidgets.QMenu()

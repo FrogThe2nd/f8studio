@@ -14,6 +14,7 @@ from f8pysdk import (
     F8RuntimeNode,
     F8StateAccess,
     F8StateSpec,
+    any_schema,
     boolean_schema,
     complex_object_schema,
     integer_schema,
@@ -83,7 +84,10 @@ class VizThreeDRuntimeNode(StudioVizRuntimeNodeBase):
     Studio-side runtime node for 3D skeleton visualization.
 
     Input:
-    - `skeletons`: list[dict] (preferred) or dict (single person)
+    - Any editable data-in port:
+      - skeleton dict
+      - list of skeleton dict
+      - single bone dict (`pos` + `rot`) which is auto-wrapped as a 1-bone skeleton
 
     Runtime always keeps ingesting and publishing UI payloads. If the detached
     viewer window is closed, render-side will pause drawing but reuse the latest
@@ -104,7 +108,9 @@ class VizThreeDRuntimeNode(StudioVizRuntimeNodeBase):
         self._last_refresh_ms: int | None = None
 
         self._dirty = False
+        self._latest_people_by_port: dict[str, list[_PersonViz]] = {}
         self._latest_people: list[_PersonViz] = []
+        self._last_input_ts_ms_by_port: dict[str, int] = {}
         self._last_input_ts_ms: int = 0
 
         self._throttle_ms = 33
@@ -139,13 +145,20 @@ class VizThreeDRuntimeNode(StudioVizRuntimeNodeBase):
         emit_ui_command(self.node_id, "viz.three_d.detach", {}, ts_ms=int(time.time() * 1000))
 
     async def on_data(self, port: str, value: Any, *, ts_ms: int | None = None) -> None:
-        if str(port or "").strip() != "skeletons":
+        port_name = str(port or "").strip()
+        if not port_name:
             return
         await self._ensure_config_loaded()
 
         now_ms = int(time.time() * 1000)
-        self._last_input_ts_ms = int(ts_ms) if ts_ms is not None else now_ms
-        self._latest_people = self._extract_people(value)
+        input_ts_ms = int(ts_ms) if ts_ms is not None else now_ms
+        self._last_input_ts_ms_by_port[port_name] = input_ts_ms
+        self._latest_people_by_port[port_name] = self._extract_people(port=port_name, value=value)
+        self._latest_people = self._aggregate_people_by_port()
+        if self._last_input_ts_ms_by_port:
+            self._last_input_ts_ms = max(self._last_input_ts_ms_by_port.values())
+        else:
+            self._last_input_ts_ms = input_ts_ms
         self._dirty = True
         await self._schedule_refresh(now_ms=now_ms)
 
@@ -352,29 +365,92 @@ class VizThreeDRuntimeNode(StudioVizRuntimeNodeBase):
             "people": people_json,
         }
 
-    def _extract_people(self, value: Any) -> list[_PersonViz]:
-        raw_people: list[dict[str, Any]] = []
-        if isinstance(value, dict):
-            raw_people = [value]
-        elif isinstance(value, list):
-            for item in value:
-                if isinstance(item, dict):
-                    raw_people.append(item)
-        else:
-            self._log_bad_input_once(value)
+    def _aggregate_people_by_port(self) -> list[_PersonViz]:
+        aggregated: list[_PersonViz] = []
+        preferred = [str(name) for name in (self.data_in_ports or []) if str(name).strip()]
+        known_ports = set(preferred)
+        available_ports = list(self._latest_people_by_port.keys())
+        unknown_ports = [name for name in available_ports if name not in known_ports]
+        ordered_ports = preferred + unknown_ports
+
+        for port_name in ordered_ports:
+            for person in self._latest_people_by_port.get(port_name, []):
+                aggregated.append(person)
+                if len(aggregated) >= self._max_people:
+                    return aggregated
+        return aggregated
+
+    def _extract_people(self, *, port: str, value: Any) -> list[_PersonViz]:
+        raw_people = self._normalize_people_payload(port=port, value=value)
+        if raw_people is None:
+            self._log_bad_input_once(port=port, value=value)
             return []
 
         out: list[_PersonViz] = []
         for index, payload in enumerate(raw_people):
-            person = self._extract_person(payload=payload, index=index)
+            person = self._extract_person(payload=payload, index=index, source_port=port)
             if person is not None:
                 out.append(person)
             if len(out) >= self._max_people:
                 break
         return out
 
-    def _extract_person(self, *, payload: dict[str, Any], index: int) -> _PersonViz | None:
-        person_name = self._extract_person_name(payload=payload, index=index)
+    def _normalize_people_payload(self, *, port: str, value: Any) -> list[dict[str, Any]] | None:
+        if isinstance(value, dict):
+            if self._looks_like_skeleton_payload(value):
+                return [value]
+            wrapped_bone = self._wrap_bone_as_skeleton(port=port, bone_payload=value)
+            if wrapped_bone is not None:
+                return [wrapped_bone]
+            return None
+
+        if not isinstance(value, list):
+            return None
+
+        skeletons: list[dict[str, Any]] = []
+        for item in value:
+            if not isinstance(item, dict):
+                continue
+            if self._looks_like_skeleton_payload(item):
+                skeletons.append(item)
+        if skeletons:
+            return skeletons
+        return None
+
+    @staticmethod
+    def _looks_like_skeleton_payload(value: dict[str, Any]) -> bool:
+        bones = value.get("bones")
+        return isinstance(bones, list)
+
+    def _wrap_bone_as_skeleton(self, *, port: str, bone_payload: dict[str, Any]) -> dict[str, Any] | None:
+        pos = self._coerce_vec3(bone_payload.get("pos"))
+        rot = self._coerce_quat(bone_payload.get("rot"))
+        if pos is None or rot is None:
+            return None
+        bone_name_any = bone_payload.get("name")
+        bone_name = str(bone_name_any).strip() if bone_name_any is not None else ""
+        if not bone_name:
+            bone_name = "bone_0"
+        return {
+            "type": "bones",
+            "schema": "bone",
+            "modelName": str(port),
+            "name": str(port),
+            "timestampMs": None,
+            "frameId": None,
+            "boneCount": 1,
+            "skeletonProtocol": "none",
+            "bones": [
+                {
+                    "name": bone_name,
+                    "pos": [float(pos[0]), float(pos[1]), float(pos[2])],
+                    "rot": [float(rot[0]), float(rot[1]), float(rot[2]), float(rot[3])],
+                }
+            ],
+        }
+
+    def _extract_person(self, *, payload: dict[str, Any], index: int, source_port: str) -> _PersonViz | None:
+        person_name = self._extract_person_name(payload=payload, index=index, source_port=source_port)
         skeleton_protocol = self._extract_protocol(payload)
         bones_any = payload.get("bones")
         if not isinstance(bones_any, list):
@@ -415,15 +491,19 @@ class VizThreeDRuntimeNode(StudioVizRuntimeNodeBase):
         return text
 
     @staticmethod
-    def _extract_person_name(*, payload: dict[str, Any], index: int) -> str:
+    def _extract_person_name(*, payload: dict[str, Any], index: int, source_port: str) -> str:
+        base_name = ""
         for key in ("modelName", "name", "character", "actor"):
             value = payload.get(key)
             if value is None:
                 continue
             text = str(value).strip()
             if text:
-                return text
-        return f"Person_{index + 1}"
+                base_name = text
+                break
+        if not base_name:
+            base_name = f"Person_{index + 1}"
+        return f"{source_port}:{base_name}"
 
     @staticmethod
     def _extract_node(*, raw_bone: dict[str, Any], index: int) -> _NodeViz | None:
@@ -545,12 +625,17 @@ class VizThreeDRuntimeNode(StudioVizRuntimeNodeBase):
             return fallback
         return "+y"
 
-    def _log_bad_input_once(self, value: Any) -> None:
-        sig = f"{type(value).__name__}"
+    def _log_bad_input_once(self, *, port: str, value: Any) -> None:
+        sig = f"{port}:{type(value).__name__}"
         if sig in self._warned_signatures:
             return
         self._warned_signatures.add(sig)
-        logger.warning("skeleton3d ignored invalid input type=%s nodeId=%s", type(value).__name__, self.node_id)
+        logger.warning(
+            "skeleton3d ignored invalid input port=%s type=%s nodeId=%s",
+            port,
+            type(value).__name__,
+            self.node_id,
+        )
 
 
 def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNodeRegistry:
@@ -572,11 +657,12 @@ def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNod
             dataInPorts=[
                 F8DataPortSpec(
                     name="skeletons",
-                    description="List of skeleton payloads (or single skeleton dict).",
-                    valueSchema=_viz_skeleton_input_schema(),
+                    description="Skeleton dict/list or single bone dict (auto-wrapped to 1-bone skeleton).",
+                    valueSchema=any_schema(),
                 ),
             ],
             dataOutPorts=[],
+            editableDataInPorts=True,
             rendererClass=RENDERER_CLASS,
             stateFields=[
                 F8StateSpec(
