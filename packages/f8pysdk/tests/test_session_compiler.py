@@ -174,6 +174,55 @@ class SessionCompilerTests(unittest.TestCase):
         self.assertIn("missing dependency node", str(ctx.exception))
         self.assertIn("svc_missing", str(ctx.exception))
 
+    def test_compiled_graph_omits_unset_optional_fields_in_payload(self) -> None:
+        service_spec = F8ServiceSpec(
+            schemaVersion=F8ServiceSchemaVersion.f8service_1,
+            serviceClass="f8.pyengine",
+            version="0.0.1",
+            label="",
+        )
+        operator_spec = F8OperatorSpec(
+            schemaVersion=F8OperatorSchemaVersion.f8operator_1,
+            serviceClass="f8.pyengine",
+            operatorClass="f8.pyengine.op",
+            version="0.0.1",
+            label="Op",
+            execInPorts=["in"],
+            execOutPorts=["next"],
+        )
+        layout = {
+            "nodes": {
+                "svc1": {
+                    "id": "svc1",
+                    "f8_spec": dump_json(service_spec, mode="json"),
+                },
+                "op1": {
+                    "id": "op1",
+                    "f8_spec": dump_json(operator_spec, mode="json"),
+                    "custom": {"svcId": "svc1"},
+                },
+            },
+            "connections": [],
+        }
+
+        compiled = compile_runtime_graphs_from_session_layout(layout=layout, catalog=self.catalog)
+        payload = dump_json(compiled.global_graph, mode="json", by_alias=True)
+        self.assertIsInstance(payload, dict)
+
+        services_payload = payload.get("services")
+        self.assertIsInstance(services_payload, list)
+        self.assertGreaterEqual(len(services_payload), 1)
+        self.assertNotIn("label", services_payload[0])
+
+        nodes_payload = payload.get("nodes")
+        self.assertIsInstance(nodes_payload, list)
+        self.assertGreaterEqual(len(nodes_payload), 2)
+        service_node_payload = next(item for item in nodes_payload if item.get("nodeId") == "svc1")
+        operator_node_payload = next(item for item in nodes_payload if item.get("nodeId") == "op1")
+        self.assertNotIn("operatorClass", service_node_payload)
+        self.assertNotIn("stateValues", service_node_payload)
+        self.assertNotIn("stateValues", operator_node_payload)
+
 
 if __name__ == "__main__":
     unittest.main()

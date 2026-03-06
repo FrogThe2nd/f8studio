@@ -188,7 +188,7 @@ def export_runtime_graph(
                 dataInPorts=data_in,
                 dataOutPorts=data_out,
                 stateFields=state_fields,
-                stateValues=state_values or None,
+                stateValues=state_values or msgspec.UNSET,
             )
         )
 

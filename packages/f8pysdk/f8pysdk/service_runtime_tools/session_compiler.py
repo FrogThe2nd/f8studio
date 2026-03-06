@@ -139,7 +139,9 @@ def _node_properties_map(node_data: dict[str, Any]) -> dict[str, Any]:
     return {}
 
 
-def _collect_state_values(spec: F8ServiceSpec | F8OperatorSpec, node_data: dict[str, Any]) -> dict[str, Any] | None:
+def _collect_state_values(
+    spec: F8ServiceSpec | F8OperatorSpec, node_data: dict[str, Any]
+) -> dict[str, Any] | msgspec.UnsetType:
     custom = _node_custom_map(node_data)
     properties = _node_properties_map(node_data)
     values: dict[str, Any] = {}
@@ -162,7 +164,7 @@ def _collect_state_values(spec: F8ServiceSpec | F8OperatorSpec, node_data: dict[
                 values[name] = normalized
             else:
                 logger.warning("skip non-serializable state value: %s", name)
-    return values or None
+    return values or msgspec.UNSET
 
 
 def _resolve_operator_service_id(node_id: str, node_data: dict[str, Any]) -> str:
@@ -173,14 +175,16 @@ def _resolve_operator_service_id(node_id: str, node_data: dict[str, Any]) -> str
     return service_id
 
 
-def _runtime_service_label(spec: F8ServiceSpec | F8OperatorSpec, node_data: dict[str, Any]) -> str | None:
+def _runtime_service_label(
+    spec: F8ServiceSpec | F8OperatorSpec, node_data: dict[str, Any]
+) -> str | msgspec.UnsetType:
     if isinstance(spec, F8ServiceSpec):
         custom = _node_custom_map(node_data)
         name = str(custom.get("name") or node_data.get("name") or "").strip()
         if name:
             return name
-        return str(spec.label or "").strip() or None
-    return None
+        return str(spec.label or "").strip() or msgspec.UNSET
+    return msgspec.UNSET
 
 
 def _compile_kept_nodes(
@@ -234,7 +238,7 @@ def _compile_kept_nodes(
             nodeId=node_id,
             serviceId=service_id,
             serviceClass=service_class,
-            operatorClass=(None if is_service_node else str(spec.operatorClass)),
+            operatorClass=(msgspec.UNSET if is_service_node else str(spec.operatorClass)),
             execInPorts=([] if is_service_node else [str(p) for p in list(spec.execInPorts or [])]),
             execOutPorts=([] if is_service_node else [str(p) for p in list(spec.execOutPorts or [])]),
             dataInPorts=list(spec.dataInPorts or []),

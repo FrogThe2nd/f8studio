@@ -784,7 +784,7 @@ class _F8EditDataPortDialog(QtWidgets.QDialog):
         name = str(self._name.text() or "").strip()
         required = bool(self._required.isChecked())
         show_on_node = bool(self._show_on_node.isChecked())
-        desc = str(self._desc.toPlainText() or "").strip() or None
+        desc = str(self._desc.toPlainText() or "").strip() or msgspec.UNSET
         port = F8DataPortSpec(name=name, required=required, description=desc, valueSchema=self._schema)
         try:
             return copy_model(port, update={"showOnNode": bool(show_on_node)})
@@ -915,10 +915,10 @@ class _F8EditStateFieldDialog(QtWidgets.QDialog):
             access = F8StateAccess.rw
         required = bool(self._required.isChecked())
         show_on_node = bool(self._show_on_node.isChecked())
-        label = str(self._label.text() or "").strip() or None
-        desc = str(self._desc.toPlainText() or "").strip() or None
-        ui_control = str(self._ui_control.text() or "").strip() or None
-        ui_lang = str(self._ui_lang.text() or "").strip() or None
+        label = str(self._label.text() or "").strip() or msgspec.UNSET
+        desc = str(self._desc.toPlainText() or "").strip() or msgspec.UNSET
+        ui_control = str(self._ui_control.text() or "").strip() or msgspec.UNSET
+        ui_lang = str(self._ui_lang.text() or "").strip() or msgspec.UNSET
         return F8StateSpec(
             name=name,
             label=label,
@@ -1348,8 +1348,8 @@ class _F8EditCommandParamDialog(QtWidgets.QDialog):
     def param(self) -> F8CommandParam:
         name = str(self._name.text() or "").strip()
         required = bool(self._required.isChecked())
-        desc = str(self._desc.toPlainText() or "").strip() or None
-        ui_control = str(self._ui_control.text() or "").strip() or None
+        desc = str(self._desc.toPlainText() or "").strip() or msgspec.UNSET
+        ui_control = str(self._ui_control.text() or "").strip() or msgspec.UNSET
         return F8CommandParam(name=name, required=required, description=desc, uiControl=ui_control, valueSchema=self._schema)
 
 
@@ -1490,7 +1490,7 @@ class _F8EditCommandDialog(QtWidgets.QDialog):
 
     def command(self) -> F8Command:
         name = str(self._name.text() or "").strip()
-        desc = str(self._desc.toPlainText() or "").strip() or None
+        desc = str(self._desc.toPlainText() or "").strip() or msgspec.UNSET
         required = bool(self._required.isChecked())
         show = bool(self._show_on_node.isChecked())
         return F8Command(name=name, description=desc, required=required, showOnNode=show, params=list(self._params))

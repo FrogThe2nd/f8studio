@@ -353,7 +353,7 @@ def compile_global_runtime_graph(
         runtime_services[service_id] = F8RuntimeService(
             serviceId=service_id,
             serviceClass=str(spec.serviceClass),
-            label=str(spec.label or "") or None,
+            label=str(spec.label or "") or msgspec.UNSET,
             meta=meta,
         )
 
@@ -446,7 +446,7 @@ def compile_global_runtime_graph(
                 dataInPorts=list(spec.dataInPorts or []),
                 dataOutPorts=list(spec.dataOutPorts or []),
                 stateFields=state_fields,
-                stateValues=state_values or None,
+                stateValues=state_values or msgspec.UNSET,
             )
         )
 
@@ -510,7 +510,7 @@ def compile_global_runtime_graph(
             if new_values == rn.stateValues:
                 filtered_nodes.append(rn)
                 continue
-            filtered_nodes.append(copy_model(rn, update={"stateValues": new_values or None}))
+            filtered_nodes.append(copy_model(rn, update={"stateValues": new_values or msgspec.UNSET}))
         runtime_nodes = filtered_nodes
 
     graph = F8RuntimeGraph(
