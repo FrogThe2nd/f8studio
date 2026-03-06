@@ -134,6 +134,14 @@ def pyscript_code_field_editor_assist_payload() -> F8EditorAssistSpec:
                 "support_files": {"f8_script_api.pyi": _PYSCRIPT_STUB},
                 "overlay_prefix": _PYSCRIPT_OVERLAY,
                 "dynamic_bindings": {
+                    "inputs": {
+                        "enabled": True,
+                        "source": "data_in_ports",
+                        "type_name": "F8Inputs",
+                        "module_name": "f8_dynamic_inputs",
+                        "schema_mode": "basic_recursive",
+                        "access_mode": "object_and_mapping",
+                    },
                     "states": {
                         "enabled": True,
                         "source": "state_fields",

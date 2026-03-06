@@ -17,6 +17,7 @@ from f8pysdk.runtime_node import ServiceNode
 from f8pysdk.shm.video import VIDEO_FORMAT_BGRA32, VIDEO_FORMAT_FLOW2_F16, VideoShmHeader, VideoShmReader
 
 logger = logging.getLogger(__name__)
+_MISSING = object()
 
 try:
     import numpy as np
@@ -44,6 +45,10 @@ DEFAULT_CODE = (
     "# - await ctx.set_state_async(field, value)\n"
     "# - ctx.emit(port, value)\n"
     "# - ctx.permission.local_exec_granted / ctx.permission.expires_ts_ms\n"
+    "# - TypeGuard helpers are available from f8_dynamic_inputs\n"
+    "#   - example: from f8_dynamic_inputs import is_port_in\n"
+    "#   - optional: from f8_dynamic_inputs import *\n"
+    "#   - then: if is_port_in(value, port): ...\n"
     "#\n"
     "from typing import TYPE_CHECKING, Any\n"
     "if TYPE_CHECKING:\n"
@@ -75,7 +80,7 @@ DEFAULT_CODE = (
     "#     value: Any,\n"
     "#     ts_ms: int | None = None,\n"
     "# ) -> None:\n"
-    "#     ctx.log(f'data {port}={value} ts_ms={ts_ms}')\n"
+    "#     ctx.log(f'data port={port} value={value} ts_ms={ts_ms}')\n"
     "#\n"
     "# def onTick(ctx: 'F8PyScriptContext', tick: 'F8Tick') -> None:\n"
     "#     ctx.log(f'tick seq={tick.seq} tsMs={tick.tsMs} deltaMs={tick.deltaMs}')\n"
@@ -121,26 +126,51 @@ class _VideoShmSubscription:
     error_count: int = 0
 
 
-class PyScriptStatesView:
+class _PyScriptObjectView:
     __slots__ = ("_data", "_attr_to_key")
 
-    def __init__(self, data: dict[str, Any]) -> None:
-        self._data: dict[str, Any] = dict(data)
+    def __init__(
+        self,
+        data: dict[str, Any],
+        *,
+        copy_data: bool = False,
+        build_attr_index: bool = False,
+    ) -> None:
+        if copy_data:
+            self._data = dict(data)
+        else:
+            self._data = data
+        self._attr_to_key: dict[str, str] | None
+        if build_attr_index:
+            self._attr_to_key = self._build_attr_to_key(self._data)
+        else:
+            self._attr_to_key = None
+
+    @staticmethod
+    def _build_attr_to_key(data: dict[str, Any]) -> dict[str, str]:
         attr_to_key: dict[str, str] = {}
-        for raw_key in self._data.keys():
+        for raw_key in data.keys():
             key = str(raw_key or "")
             if key.isidentifier() and not keyword.iskeyword(key):
                 attr_to_key[key] = key
-        self._attr_to_key = attr_to_key
+        for raw_key in data.keys():
+            key = str(raw_key or "")
+            if not key.isidentifier() or not keyword.iskeyword(key):
+                continue
+            alias = f"{key}_"
+            if alias.isidentifier() and not keyword.iskeyword(alias) and alias not in attr_to_key:
+                attr_to_key[alias] = key
+        return attr_to_key
 
     def __getitem__(self, key: str) -> Any:
         return self._wrap_value(self._data[str(key)])
 
     def get(self, key: str, default: Any = None) -> Any:
         key_s = str(key)
-        if key_s not in self._data:
+        value = self._data.get(key_s, _MISSING)
+        if value is _MISSING:
             return default
-        return self._wrap_value(self._data.get(key_s))
+        return self._wrap_value(value)
 
     def keys(self):
         return self._data.keys()
@@ -167,7 +197,11 @@ class PyScriptStatesView:
         return str(self.to_dict())
 
     def __getattr__(self, name: str) -> Any:
-        key = self._attr_to_key.get(str(name or ""))
+        attr_to_key = self._attr_to_key
+        if attr_to_key is None:
+            attr_to_key = self._build_attr_to_key(self._data)
+            self._attr_to_key = attr_to_key
+        key = attr_to_key.get(str(name or ""))
         if key is None:
             raise AttributeError(f"Unknown attribute: {name}")
         return self._wrap_value(self._data.get(key))
@@ -177,9 +211,12 @@ class PyScriptStatesView:
 
     @classmethod
     def _wrap_value(cls, value: Any) -> Any:
-        if isinstance(value, PyScriptStatesView):
+        value_t = type(value)
+        if value_t in (str, int, float, bool, type(None)):
             return value
-        if isinstance(value, dict):
+        if isinstance(value, _PyScriptObjectView):
+            return value
+        if value_t is dict:
             return cls(value)
         if isinstance(value, list):
             return [cls._wrap_value(item) for item in value]
@@ -189,7 +226,7 @@ class PyScriptStatesView:
 
     @classmethod
     def _unwrap_value(cls, value: Any) -> Any:
-        if isinstance(value, PyScriptStatesView):
+        if isinstance(value, _PyScriptObjectView):
             return {k: cls._unwrap_value(v) for k, v in value._data.items()}
         if isinstance(value, dict):
             return {str(k): cls._unwrap_value(v) for k, v in value.items()}
@@ -198,6 +235,10 @@ class PyScriptStatesView:
         if isinstance(value, tuple):
             return tuple(cls._unwrap_value(item) for item in value)
         return value
+
+
+class PyScriptStatesView(_PyScriptObjectView):
+    pass
 
 
 @dataclass(slots=True)
@@ -1159,11 +1200,12 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
     async def on_data(self, port: str, value: Any, *, ts_ms: int | None = None) -> None:
         if self._hook_on_data is None:
             return
+        in_port = str(port or "")
         result = await self._invoke_async(
             self._hook_on_data,
             self._hook_on_data_is_async,
             "onData",
-            str(port),
+            in_port,
             value,
             ts_ms,
         )

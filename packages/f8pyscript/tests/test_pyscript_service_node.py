@@ -76,6 +76,9 @@ class PyScriptServiceNodeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(python_payload, dict)
         dynamic_bindings = (python_payload or {}).get("dynamic_bindings") if isinstance(python_payload, dict) else None
         self.assertIsInstance(dynamic_bindings, dict)
+        inputs_binding = (dynamic_bindings or {}).get("inputs") if isinstance(dynamic_bindings, dict) else None
+        self.assertIsInstance(inputs_binding, dict)
+        self.assertTrue(bool((inputs_binding or {}).get("enabled")))
         states_binding = (dynamic_bindings or {}).get("states") if isinstance(dynamic_bindings, dict) else None
         self.assertIsInstance(states_binding, dict)
         self.assertTrue(bool((states_binding or {}).get("enabled")))
@@ -375,6 +378,37 @@ class PyScriptServiceNodeTests(unittest.IsolatedAsyncioTestCase):
         await node.on_state("code", code, ts_ms=1)
         await asyncio.sleep(0.05)
         self.assertIn("not subscriptable", str(await node.get_state_value("lastError") or ""))
+
+    async def test_on_data_passes_raw_value(self) -> None:
+        harness = ServiceBusHarness()
+        bus = harness.create_bus("svcA")
+        reg = RuntimeNodeRegistry.instance()
+        register_specs(reg)
+        _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
+
+        graph = F8RuntimeGraph(graphId="g11", revision="r1", nodes=[_service_node(code="")], edges=[])
+        await bus.set_rungraph(graph)
+        node = bus.get_node("svcA")
+        assert isinstance(node, PythonScriptServiceNode)
+
+        code = (
+            "def onData(ctx, port, value, ts_ms=None):\n"
+            "    if port == 'in':\n"
+            "        ctx.locals['v'] = value\n"
+            "\n"
+            "def onCommand(ctx, name, args, meta=None):\n"
+            "    if name != 'get':\n"
+            "        return {'ok': False}\n"
+            "    return {'v': ctx.locals.get('v')}\n"
+        )
+        await node.on_state("code", code, ts_ms=1)
+        await asyncio.sleep(0.05)
+
+        await node.on_data("in", 123, ts_ms=2)
+        out = await node.on_command("get", {})
+        out_result = (out or {}).get("result") if isinstance(out, dict) else {}
+        self.assertIsInstance(out_result, dict)
+        self.assertEqual((out_result or {}).get("v"), 123)
 
     async def test_hook_async_flags_and_invoke_context_reuse(self) -> None:
         harness = ServiceBusHarness()

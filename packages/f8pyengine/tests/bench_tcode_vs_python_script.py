@@ -81,7 +81,7 @@ PYSCRIPT_SERVICE_CODE = (
     "        return int(math.floor(value + 0.5))\n"
     "    return -int(math.floor(abs(value) + 0.5))\n"
     "def onData(ctx, port, value, ts_ms=None):\n"
-    "    if port != 'in' or not isinstance(value, dict):\n"
+    "    if value is None:\n"
     "        return {'outputs': {'tcode': ''}}\n"
     "    interval = _coerce_number(value.get('intervalMs'))\n"
     "    if interval is None:\n"
