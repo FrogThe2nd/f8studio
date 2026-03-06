@@ -349,6 +349,42 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
         out = await node._compute_outputs_for_pull({"payload": {"user": {"name": "alice"}}}, exec_in=None)
         self.assertEqual(out.get("out"), ["alice", "alice", "alice"])
 
+    async def test_outputs_unwrap_input_object_view_to_dict(self) -> None:
+        harness = ServiceBusHarness()
+        bus = harness.create_bus("svcA")
+        reg = RuntimeNodeRegistry.instance()
+        register_operator(reg)
+        _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
+
+        code = (
+            "def onExec(ctx, exec_in, inputs):\n"
+            "    msg = inputs.msg\n"
+            "    for b in msg.bones:\n"
+            "        if b.name == 'Hips':\n"
+            "            return {'outputs': {'out': b}}\n"
+            "    return {'outputs': {}}\n"
+        )
+        op = _runtime_python_script_node(node_id="ps13", code=code)
+        graph = F8RuntimeGraph(graphId="g13", revision="r1", nodes=[op], edges=[])
+        await bus.set_rungraph(graph)
+
+        node = bus.get_node("ps13")
+        self.assertIsInstance(node, PythonScriptRuntimeNode)
+        assert isinstance(node, PythonScriptRuntimeNode)
+        payload = {
+            "modelName": "m",
+            "bones": [
+                {"name": "Head", "position": [0, 1, 2]},
+                {"name": "Hips", "position": [3, 4, 5]},
+            ],
+        }
+        out = await node._compute_outputs_for_pull({"msg": payload}, exec_in="exec")
+        value = out.get("out")
+        self.assertIsInstance(value, dict)
+        assert isinstance(value, dict)
+        self.assertEqual(value.get("name"), "Hips")
+        self.assertEqual(value.get("position"), [3, 4, 5])
+
     async def test_inputs_dict_only_script_uses_raw_dict_fast_path(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")

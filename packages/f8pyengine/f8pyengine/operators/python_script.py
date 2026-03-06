@@ -167,6 +167,56 @@ class PyEngineStatesView(_PyEngineObjectView):
     pass
 
 
+def _normalize_script_output_value(value: Any, *, _seen: set[int] | None = None) -> Any:
+    if isinstance(value, _PyEngineObjectView):
+        value = value.to_dict()
+    if value is None or type(value) in (str, int, float, bool):
+        return value
+    if isinstance(value, dict):
+        if _seen is None:
+            _seen = set()
+        value_id = id(value)
+        if value_id in _seen:
+            return None
+        _seen.add(value_id)
+        out: dict[str, Any] = {}
+        for key, item in value.items():
+            out[str(key)] = _normalize_script_output_value(item, _seen=_seen)
+        _seen.discard(value_id)
+        return out
+    if isinstance(value, list):
+        if _seen is None:
+            _seen = set()
+        value_id = id(value)
+        if value_id in _seen:
+            return []
+        _seen.add(value_id)
+        out_list = [_normalize_script_output_value(item, _seen=_seen) for item in value]
+        _seen.discard(value_id)
+        return out_list
+    if isinstance(value, tuple):
+        if _seen is None:
+            _seen = set()
+        value_id = id(value)
+        if value_id in _seen:
+            return ()
+        _seen.add(value_id)
+        out_tuple = tuple(_normalize_script_output_value(item, _seen=_seen) for item in value)
+        _seen.discard(value_id)
+        return out_tuple
+    if isinstance(value, set):
+        if _seen is None:
+            _seen = set()
+        value_id = id(value)
+        if value_id in _seen:
+            return []
+        _seen.add(value_id)
+        out_set = [_normalize_script_output_value(item, _seen=_seen) for item in value]
+        _seen.discard(value_id)
+        return out_set
+    return value
+
+
 def _script_uses_inputs_object_access(code: str) -> bool:
     """
     Returns True when onMsg/onExec script body appears to rely on dot-style
@@ -1012,16 +1062,16 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
                     for raw_key, raw_value in raw_outputs.items():
                         if isinstance(raw_key, str):
                             if raw_key in data_out_ports:
-                                return {raw_key: raw_value}
+                                return {raw_key: _normalize_script_output_value(raw_value)}
                             return {}
                         key_s = str(raw_key)
                         if key_s in data_out_ports:
-                            return {key_s: raw_value}
+                            return {key_s: _normalize_script_output_value(raw_value)}
                         return {}
                 for k, v in raw_outputs.items():
                     k_s = str(k)
                     if k_s in data_out_ports:
-                        outputs[k_s] = v
+                        outputs[k_s] = _normalize_script_output_value(v)
                 return outputs
 
             for k, v in result.items():
@@ -1029,11 +1079,11 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
                 if k_s in ("exec", "outputs"):
                     continue
                 if k_s in data_out_ports:
-                    outputs[k_s] = v
+                    outputs[k_s] = _normalize_script_output_value(v)
             return outputs
 
         if "out" in data_out_ports:
-            outputs["out"] = result
+            outputs["out"] = _normalize_script_output_value(result)
         return outputs
 
     async def _run_on_msg(self, inputs: dict[str, Any], *, exec_in: str | None) -> None:
@@ -1088,7 +1138,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         # Non-dict: send to default data output if present.
         if self._has_out_port:
             try:
-                await self.emit("out", r)
+                await self.emit("out", _normalize_script_output_value(r))
             except Exception:
                 pass
         return None

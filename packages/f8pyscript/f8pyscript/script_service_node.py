@@ -241,6 +241,56 @@ class PyScriptStatesView(_PyScriptObjectView):
     pass
 
 
+def _normalize_script_output_value(value: Any, *, _seen: set[int] | None = None) -> Any:
+    if isinstance(value, _PyScriptObjectView):
+        value = value.to_dict()
+    if value is None or type(value) in (str, int, float, bool):
+        return value
+    if isinstance(value, dict):
+        if _seen is None:
+            _seen = set()
+        value_id = id(value)
+        if value_id in _seen:
+            return None
+        _seen.add(value_id)
+        out: dict[str, Any] = {}
+        for key, item in value.items():
+            out[str(key)] = _normalize_script_output_value(item, _seen=_seen)
+        _seen.discard(value_id)
+        return out
+    if isinstance(value, list):
+        if _seen is None:
+            _seen = set()
+        value_id = id(value)
+        if value_id in _seen:
+            return []
+        _seen.add(value_id)
+        out_list = [_normalize_script_output_value(item, _seen=_seen) for item in value]
+        _seen.discard(value_id)
+        return out_list
+    if isinstance(value, tuple):
+        if _seen is None:
+            _seen = set()
+        value_id = id(value)
+        if value_id in _seen:
+            return ()
+        _seen.add(value_id)
+        out_tuple = tuple(_normalize_script_output_value(item, _seen=_seen) for item in value)
+        _seen.discard(value_id)
+        return out_tuple
+    if isinstance(value, set):
+        if _seen is None:
+            _seen = set()
+        value_id = id(value)
+        if value_id in _seen:
+            return []
+        _seen.add(value_id)
+        out_set = [_normalize_script_output_value(item, _seen=_seen) for item in value]
+        _seen.discard(value_id)
+        return out_set
+    return value
+
+
 @dataclass(slots=True)
 class PyScriptPermissionContext:
     local_exec_granted: bool
@@ -896,13 +946,13 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
         if isinstance(result, dict):
             raw_outputs = result.get("outputs")
             if isinstance(raw_outputs, dict):
-                return {str(k): v for k, v in raw_outputs.items()}
+                return {str(k): _normalize_script_output_value(v) for k, v in raw_outputs.items()}
             return {
-                str(k): v
+                str(k): _normalize_script_output_value(v)
                 for k, v in result.items()
                 if str(k) not in ("ok", "result", "exec", "error", "outputs")
             }
-        return {"out": result}
+        return {"out": _normalize_script_output_value(result)}
 
     async def _emit_outputs(self, result: Any) -> None:
         outputs = self._extract_outputs(result)
@@ -1251,4 +1301,4 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
             call_args,
             call_meta,
         )
-        return {"ok": True, "result": result}
+        return {"ok": True, "result": _normalize_script_output_value(result)}

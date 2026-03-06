@@ -3,6 +3,7 @@ import os
 import sys
 import unittest
 import uuid
+from types import MethodType
 
 import msgspec
 
@@ -409,6 +410,76 @@ class PyScriptServiceNodeTests(unittest.IsolatedAsyncioTestCase):
         out_result = (out or {}).get("result") if isinstance(out, dict) else {}
         self.assertIsInstance(out_result, dict)
         self.assertEqual((out_result or {}).get("v"), 123)
+
+    async def test_outputs_unwrap_state_object_view_to_dict(self) -> None:
+        harness = ServiceBusHarness()
+        bus = harness.create_bus("svcA")
+        reg = RuntimeNodeRegistry.instance()
+        register_specs(reg)
+        _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
+
+        fields = list(RuntimeNodeRegistry.instance().service_spec(SERVICE_CLASS).stateFields or [])  # type: ignore[union-attr]
+        fields.append(F8StateSpec(name="pose", label="", description="", valueSchema=any_schema(), access=F8StateAccess.rw))
+
+        graph = F8RuntimeGraph(
+            graphId="g12",
+            revision="r1",
+            nodes=[
+                _service_node(
+                    code="",
+                    state_fields=fields,
+                    state_values={
+                        "pose": {
+                            "bones": [
+                                {"name": "Head", "position": [0, 1, 2]},
+                                {"name": "Hips", "position": [3, 4, 5]},
+                            ]
+                        }
+                    },
+                )
+            ],
+            edges=[],
+        )
+        await bus.set_rungraph(graph)
+        node = bus.get_node("svcA")
+        assert isinstance(node, PythonScriptServiceNode)
+
+        code = (
+            "def onData(ctx, port, value, ts_ms=None):\n"
+            "    for b in ctx.states.pose.bones:\n"
+            "        if b.name == 'Hips':\n"
+            "            return {'outputs': {'out': b}}\n"
+            "    return {'outputs': {}}\n"
+        )
+        await node.on_state("code", code, ts_ms=1)
+        await asyncio.sleep(0.05)
+
+        await bus.publish_state_external(
+            "svcA",
+            "pose",
+            {
+                "bones": [
+                    {"name": "Head", "position": [0, 1, 2]},
+                    {"name": "Hips", "position": [3, 4, 5]},
+                ]
+            },
+            source="test",
+        )
+        await asyncio.sleep(0.05)
+
+        captured: dict[str, object] = {}
+
+        async def _capture_emit(self: PythonScriptServiceNode, port: str, value: object, *, ts_ms: int | None = None) -> None:
+            del self, ts_ms
+            captured[str(port)] = value
+
+        node.emit = MethodType(_capture_emit, node)
+        await node.on_data("in", {"trigger": True}, ts_ms=2)
+        out_value = captured.get("out")
+        self.assertIsInstance(out_value, dict)
+        assert isinstance(out_value, dict)
+        self.assertEqual(out_value.get("name"), "Hips")
+        self.assertEqual(out_value.get("position"), [3, 4, 5])
 
     async def test_hook_async_flags_and_invoke_context_reuse(self) -> None:
         harness = ServiceBusHarness()
