@@ -119,6 +119,7 @@ class _Skeleton3DViewerWindow(QtWidgets.QDialog):
         self._page_ready = False
         self._pending_payload: dict[str, Any] | None = None
         self._is_open = False
+        self._shutdown_started = False
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -201,18 +202,50 @@ class _Skeleton3DViewerWindow(QtWidgets.QDialog):
         """
         Best-effort shutdown used when the host app is exiting.
         """
+        if self._shutdown_started:
+            return
+        self._shutdown_started = True
+        self._pending_payload = None
+        if self._is_open:
+            self._is_open = False
+            self._on_open_state_changed(False)
+        self._release_web_view(reason="app_quit")
         try:
-            self.detach_scene()
-        except (AttributeError, RuntimeError, TypeError):
-            pass
-        try:
-            self.close()
-        except (AttributeError, RuntimeError, TypeError):
-            pass
+            self.hide()
+        except RuntimeError:
+            logger.exception("failed to hide Skeleton3D viewer during shutdown")
         try:
             self.deleteLater()
-        except (AttributeError, RuntimeError, TypeError):
+        except RuntimeError:
+            logger.exception("failed to deleteLater Skeleton3D viewer during shutdown")
+
+    def _release_web_view(self, *, reason: str) -> None:
+        view = self._view
+        if view is None:
+            return
+        self._view = None
+        self._page_ready = False
+        logger.info("Skeleton3D viewer releasing web view: reason=%s", reason)
+
+        try:
+            view.loadFinished.disconnect(self._on_page_loaded)  # type: ignore[attr-defined]
+        except (TypeError, RuntimeError):
             pass
+
+        try:
+            view.stop()
+        except RuntimeError:
+            logger.exception("failed to stop Skeleton3D web view")
+
+        try:
+            view.setUrl(QtCore.QUrl("about:blank"))
+        except RuntimeError:
+            logger.exception("failed to reset Skeleton3D web view url")
+
+        try:
+            view.deleteLater()
+        except RuntimeError:
+            logger.exception("failed to deleteLater Skeleton3D web view")
 
     def bind_host_parent(self, parent: QtWidgets.QWidget | None) -> None:
         if parent is None:
@@ -378,15 +411,22 @@ class VizThreeDRenderNode(F8StudioOperatorBaseNode):
         )
         self._viewer_window = window
         self._presenter.attach_viewer(window)
+        window.setWindowTitle(self._viewer_window_title())
         return window
 
     def _open_viewer(self) -> None:
         window = self._ensure_window()
-        app = QtWidgets.QApplication.instance()
-        host_parent = app.activeWindow() if app is not None else None
-        if isinstance(host_parent, QtWidgets.QWidget):
-            window.bind_host_parent(host_parent)
+        window.setWindowTitle(self._viewer_window_title())
         window.open_viewer()
+
+    def _viewer_window_title(self) -> str:
+        try:
+            node_name = str(self.name() or "").strip()
+        except Exception:
+            node_name = ""
+        if node_name:
+            return node_name
+        return "3D Viewer"
 
     def _on_window_open_state_changed(self, is_open: bool) -> None:
         if is_open:
