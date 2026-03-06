@@ -91,7 +91,9 @@ async def apply_rungraph(bus: "ServiceBus", graph: F8RuntimeGraph) -> bool:
 
     # Service/container nodes use `nodeId == serviceId`.
     for n in list(graph.nodes or []):
-        if n.operatorClass is None and str(n.nodeId) != str(n.serviceId):
+        operator_class = n.operatorClass
+        is_service_node = operator_class is None or isinstance(operator_class, msgspec.UnsetType)
+        if is_service_node and str(n.nodeId) != str(n.serviceId):
             _log_rungraph_error_once(bus, "rungraph_invalid_service_node", "service node requires nodeId == serviceId")
             return False
 
@@ -408,7 +410,9 @@ async def seed_builtin_identity_state(bus: "ServiceBus", graph: F8RuntimeGraph) 
                     meta={"builtin": True, "_noStateFanout": True},
                     deliver_local=False,
                 )
-            if n.operatorClass is not None and bus._state_access_by_node_field.get((node_id, "operatorId")) is not None:
+            operator_class = n.operatorClass
+            is_service_node = operator_class is None or isinstance(operator_class, msgspec.UnsetType)
+            if not is_service_node and bus._state_access_by_node_field.get((node_id, "operatorId")) is not None:
                 await publish_state(
                     bus,
                     node_id,

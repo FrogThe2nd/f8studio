@@ -1,21 +1,30 @@
 from __future__ import annotations
 
 import asyncio
-import ast
 import inspect
 import keyword
 import logging
+import re
 import time
 from dataclasses import dataclass
 from typing import Any, Callable
 
+import msgspec
 from f8pysdk import (
+    F8AnyTypeSchema,
+    F8ArrayTypeSchema,
+    F8BooleanTypeSchema,
+    F8ComplexObjectTypeSchema,
     F8DataPortSpec,
+    F8IntegerTypeSchema,
+    F8NullTypeSchema,
+    F8NumberTypeSchema,
     F8OperatorSchemaVersion,
     F8OperatorSpec,
     F8RuntimeNode,
     F8StateAccess,
     F8StateSpec,
+    F8StringTypeSchema,
     any_schema,
     string_schema,
 )
@@ -32,7 +41,6 @@ from .python_editor_assist import python_script_field_editor_assist_payload
 OPERATOR_CLASS = "f8.python_script"
 logger = logging.getLogger(__name__)
 _MISSING = object()
-_DICT_STYLE_INPUT_METHODS: frozenset[str] = frozenset({"get", "keys", "items", "values", "to_dict"})
 
 try:
     import numpy as np
@@ -55,7 +63,7 @@ class _VideoShmSubscription:
     error_count: int = 0
 
 
-class _PyEngineObjectView:
+class _PyEngineStateView:
     __slots__ = ("_data", "_attr_to_key")
 
     def __init__(
@@ -136,7 +144,7 @@ class _PyEngineObjectView:
         value_t = type(value)
         if value_t in (str, int, float, bool, type(None)):
             return value
-        if isinstance(value, _PyEngineObjectView):
+        if isinstance(value, _PyEngineStateView):
             return value
         if value_t is dict:
             return cls(value)
@@ -148,7 +156,7 @@ class _PyEngineObjectView:
 
     @classmethod
     def _unwrap_value(cls, value: Any) -> Any:
-        if isinstance(value, _PyEngineObjectView):
+        if isinstance(value, _PyEngineStateView):
             return {k: cls._unwrap_value(v) for k, v in value._data.items()}
         if isinstance(value, dict):
             return {str(k): cls._unwrap_value(v) for k, v in value.items()}
@@ -159,17 +167,15 @@ class _PyEngineObjectView:
         return value
 
 
-class PyEngineInputsView(_PyEngineObjectView):
-    pass
-
-
-class PyEngineStatesView(_PyEngineObjectView):
+class PyEngineStatesView(_PyEngineStateView):
     pass
 
 
 def _normalize_script_output_value(value: Any, *, _seen: set[int] | None = None) -> Any:
-    if isinstance(value, _PyEngineObjectView):
+    if isinstance(value, _PyEngineStateView):
         value = value.to_dict()
+    if isinstance(value, _MsgspecStructCompat):
+        return msgspec.to_builtins(value)
     if value is None or type(value) in (str, int, float, bool):
         return value
     if isinstance(value, dict):
@@ -217,52 +223,224 @@ def _normalize_script_output_value(value: Any, *, _seen: set[int] | None = None)
     return value
 
 
-def _script_uses_inputs_object_access(code: str) -> bool:
-    """
-    Returns True when onMsg/onExec script body appears to rely on dot-style
-    inputs access (e.g. inputs.msg), which requires PyEngineInputsView.
-    """
-    try:
-        module = ast.parse(str(code or ""), mode="exec")
-    except SyntaxError:
+def _is_valid_identifier(name: str) -> bool:
+    return bool(name) and name.isidentifier() and not keyword.iskeyword(name)
+
+
+def _normalize_attr_name(raw_name: str, *, fallback: str) -> str:
+    text = str(raw_name or "").strip()
+    if _is_valid_identifier(text):
+        return text
+    text = re.sub(r"[^A-Za-z0-9_]", "_", text)
+    if not text:
+        text = fallback
+    if text[0].isdigit():
+        text = f"_{text}"
+    if keyword.iskeyword(text):
+        text = f"{text}_"
+    if not _is_valid_identifier(text):
+        text = fallback
+        if keyword.iskeyword(text):
+            text = f"{text}_"
+    return text
+
+
+def _is_required_flag(value: Any) -> bool:
+    if isinstance(value, msgspec.UnsetType):
         return True
-
-    for node in module.body:
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            fn_name = str(node.name or "")
-            if fn_name == "onMsg":
-                param_name = _inputs_param_name(node, expected_pos=1)
-                if param_name and _function_uses_dot_inputs_access(node, param_name):
-                    return True
-            elif fn_name == "onExec":
-                param_name = _inputs_param_name(node, expected_pos=2)
-                if param_name and _function_uses_dot_inputs_access(node, param_name):
-                    return True
-    return False
+    return bool(value)
 
 
-def _inputs_param_name(node: ast.FunctionDef | ast.AsyncFunctionDef, *, expected_pos: int) -> str | None:
-    pos_args = list(node.args.posonlyargs) + list(node.args.args)
-    if expected_pos >= len(pos_args):
-        return None
-    raw_name = str(pos_args[expected_pos].arg or "").strip()
-    return raw_name or None
+class _MsgspecStructCompat:
+    __slots__ = ()
+
+    def __getitem__(self, key: str) -> Any:
+        name = str(key or "")
+        try:
+            return getattr(self, name)
+        except AttributeError as exc:
+            raise KeyError(name) from exc
+
+    def get(self, key: str, default: Any = None) -> Any:
+        name = str(key or "")
+        try:
+            return getattr(self, name)
+        except AttributeError:
+            return default
 
 
-def _function_uses_dot_inputs_access(node: ast.FunctionDef | ast.AsyncFunctionDef, param_name: str) -> bool:
-    for child in ast.walk(node):
-        if not isinstance(child, ast.Attribute):
-            continue
-        base = child.value
-        if not isinstance(base, ast.Name):
-            continue
-        if str(base.id or "") != param_name:
-            continue
-        attr_name = str(child.attr or "")
-        if attr_name in _DICT_STYLE_INPUT_METHODS:
-            continue
-        return True
-    return False
+class _InputsModelBuilder:
+    def __init__(self, *, node_id: str) -> None:
+        self._node_id = str(node_id or "")
+        self._struct_seq = 0
+        self._schema_struct_cache: dict[int, type[Any]] = {}
+        self._schema_building: set[int] = set()
+        self.warnings: list[str] = []
+
+    def build_root(self, data_in_ports: list[F8DataPortSpec]) -> type[Any]:
+        fields: list[tuple[Any, ...]] = []
+        used_attrs: set[str] = set()
+        for index, port in enumerate(list(data_in_ports or [])):
+            raw_name = str(port.name or "").strip()
+            if not raw_name:
+                continue
+            attr_name = self._unique_attr_name(raw_name, used_attrs, scope=f"port[{index}]")
+            field_type = self._schema_to_type(port.valueSchema, hint=f"Port_{attr_name}")
+            nullable_field_type = field_type | None
+            if _is_required_flag(port.required):
+                if attr_name == raw_name:
+                    fields.append((attr_name, nullable_field_type))
+                else:
+                    fields.append((attr_name, nullable_field_type, msgspec.field(name=raw_name)))
+                continue
+            optional_type = nullable_field_type
+            if attr_name == raw_name:
+                fields.append((attr_name, optional_type, msgspec.field(default=None)))
+            else:
+                fields.append((attr_name, optional_type, msgspec.field(name=raw_name, default=None)))
+        return self._defstruct("F8Inputs", fields)
+
+    def _defstruct(self, prefix: str, fields: list[tuple[Any, ...]]) -> type[Any]:
+        self._struct_seq += 1
+        struct_name = f"{prefix}_{self._struct_seq}"
+        return msgspec.defstruct(
+            struct_name,
+            fields,
+            bases=(_MsgspecStructCompat,),
+            kw_only=True,
+            module=__name__,
+        )
+
+    def _unique_attr_name(self, raw_name: str, used: set[str], *, scope: str) -> str:
+        base_name = _normalize_attr_name(raw_name, fallback="field")
+        if base_name not in used:
+            used.add(base_name)
+            return base_name
+        suffix = 1
+        while True:
+            candidate = f"{base_name}_{suffix}"
+            if candidate not in used:
+                used.add(candidate)
+                self.warnings.append(
+                    f"input model field name collision ({scope}): raw='{raw_name}' mapped to '{candidate}'"
+                )
+                return candidate
+            suffix += 1
+
+    def _schema_to_type(self, schema: Any, *, hint: str) -> Any:
+        if schema is None or isinstance(schema, msgspec.UnsetType):
+            return Any
+        if isinstance(schema, dict):
+            schema_type = str(schema.get("type") or "").strip().lower()
+            if schema_type == "string":
+                return str
+            if schema_type == "number":
+                return float
+            if schema_type == "integer":
+                return int
+            if schema_type == "boolean":
+                return bool
+            if schema_type == "null":
+                return type(None)
+            if schema_type == "any":
+                return Any
+            if schema_type == "array":
+                return list[self._schema_to_type(schema.get("items"), hint=f"{hint}_item")]
+            if schema_type == "object":
+                props = schema.get("properties")
+                if not isinstance(props, dict) or not props:
+                    return dict[str, Any]
+                additional = schema.get("additionalProperties")
+                if additional is True:
+                    return dict[str, Any]
+                return self._schema_object_to_struct_dict(
+                    schema_id=id(schema),
+                    properties=props,
+                    required_values=schema.get("required"),
+                    hint=hint,
+                )
+            return Any
+        if isinstance(schema, F8StringTypeSchema):
+            return str
+        if isinstance(schema, F8NumberTypeSchema):
+            return float
+        if isinstance(schema, F8IntegerTypeSchema):
+            return int
+        if isinstance(schema, F8BooleanTypeSchema):
+            return bool
+        if isinstance(schema, F8NullTypeSchema):
+            return type(None)
+        if isinstance(schema, F8AnyTypeSchema):
+            return Any
+        if isinstance(schema, F8ArrayTypeSchema):
+            return list[self._schema_to_type(schema.items, hint=f"{hint}_item")]
+        if isinstance(schema, F8ComplexObjectTypeSchema):
+            if bool(schema.additionalProperties):
+                return dict[str, Any]
+            properties = dict(schema.properties or {})
+            if not properties:
+                return dict[str, Any]
+            return self._schema_object_to_struct_dict(
+                schema_id=id(schema),
+                properties=properties,
+                required_values=schema.required,
+                hint=hint,
+            )
+        return Any
+
+    def _schema_object_to_struct_dict(
+        self,
+        *,
+        schema_id: int,
+        properties: dict[str, Any],
+        required_values: Any,
+        hint: str,
+    ) -> type[Any]:
+        if schema_id in self._schema_struct_cache:
+            return self._schema_struct_cache[schema_id]
+        if schema_id in self._schema_building:
+            return dict[str, Any]
+        self._schema_building.add(schema_id)
+        try:
+            required_names = self._required_name_set(required_values)
+            fields: list[tuple[Any, ...]] = []
+            used_attrs: set[str] = set()
+            for key in sorted(properties.keys()):
+                raw_name = str(key or "").strip()
+                if not raw_name:
+                    continue
+                attr_name = self._unique_attr_name(raw_name, used_attrs, scope=f"{hint}.{raw_name}")
+                field_type = self._schema_to_type(properties.get(key), hint=f"{hint}_{attr_name}")
+                is_required = raw_name in required_names
+                if is_required:
+                    if attr_name == raw_name:
+                        fields.append((attr_name, field_type))
+                    else:
+                        fields.append((attr_name, field_type, msgspec.field(name=raw_name)))
+                    continue
+                optional_type = field_type | None
+                if attr_name == raw_name:
+                    fields.append((attr_name, optional_type, msgspec.field(default=None)))
+                else:
+                    fields.append((attr_name, optional_type, msgspec.field(name=raw_name, default=None)))
+            struct_type = self._defstruct(_normalize_attr_name(hint, fallback="InputObject"), fields)
+            self._schema_struct_cache[schema_id] = struct_type
+            return struct_type
+        finally:
+            self._schema_building.discard(schema_id)
+
+    @staticmethod
+    def _required_name_set(required_values: Any) -> set[str]:
+        if isinstance(required_values, msgspec.UnsetType) or required_values is None:
+            return set()
+        if not isinstance(required_values, (list, tuple, set)):
+            return set()
+        out: set[str] = set()
+        for item in required_values:
+            name = str(item or "").strip()
+            if name:
+                out.add(name)
+        return out
 
 
 @dataclass(slots=True)
@@ -393,7 +571,7 @@ DEFAULT_CODE = (
     "# - ctx.states.get(field)  # cached snapshot\n"
     "# - ctx.set_state(field, value)\n"
     "#   - await ctx.set_state_async(field, value)\n"
-    "# - inputs supports both dot-style and dict-style access\n"
+    "# - inputs is a typed struct; use dot access only (inputs.msg)\n"
     "# - Video SHM helpers:\n"
     "#   - ctx.subscribe_video_shm(key, shm_name, decode='auto', use_event=False)\n"
     "#   - pkt = ctx.get_video_shm(key)\n"
@@ -418,13 +596,13 @@ DEFAULT_CODE = (
     "#     ctx.log(f'state {field}={value} ts_ms={ts_ms}')\n"
     "#\n"
     "# def onMsg(ctx: 'F8PyEngineContext', inputs: 'F8Inputs') -> dict[str, Any]:\n"
-    "#     msg = inputs.msg if 'msg' in inputs else inputs.get('msg')\n"
+    "#     msg = inputs.msg\n"
     "#     return {'outputs': {'out': msg}}\n"
     "#\n"
     "# def onExec(ctx: 'F8PyEngineContext', exec_in: str, inputs: 'F8Inputs') -> dict[str, Any]:\n"
     "#     if exec_in == 'exec2':\n"
-    "#         return {'exec': ['exec2'], 'outputs': {'out': inputs.get('msg')}}\n"
-    "#     return {'exec': ['exec'], 'outputs': {'out': inputs.get('msg')}}\n"
+    "#         return {'exec': ['exec2'], 'outputs': {'out': inputs.msg}}\n"
+    "#     return {'exec': ['exec'], 'outputs': {'out': inputs.msg}}\n"
     "#\n"
     "# def onStop(ctx: 'F8PyEngineContext') -> None:\n"
     "#     ctx.log('python_script stopped')\n"
@@ -470,7 +648,9 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         self._on_msg_only_mode = False
         self._data_out_port_set: set[str] = set()
         self._has_out_port = False
-        self._prefer_raw_inputs = False
+        inputs_model_builder = _InputsModelBuilder(node_id=self.node_id)
+        self._inputs_model_type = inputs_model_builder.build_root(list(node.dataInPorts or []))
+        self._inputs_model_warnings = tuple(inputs_model_builder.warnings)
         self._refresh_data_out_port_cache()
 
         self._compile_and_start()
@@ -848,7 +1028,8 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         code = code.replace("\r\n", "\n").replace("\r", "\n")
         code = code.expandtabs(4)
         self._runtime = self._compile_script(code)
-        self._prefer_raw_inputs = not _script_uses_inputs_object_access(code)
+        if self._inputs_model_warnings:
+            self._set_error("inputModel", ValueError("; ".join(self._inputs_model_warnings)))
         self._refresh_runtime_hooks()
         if not self._runtime:
             self._started = False
@@ -987,11 +1168,9 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
     async def _run_on_exec(self, inputs: dict[str, Any], *, exec_in: str | None) -> list[str]:
         fn = self._hook_on_exec
         if callable(fn):
-            inputs_obj: dict[str, Any] | PyEngineInputsView
-            if self._prefer_raw_inputs:
-                inputs_obj = inputs
-            else:
-                inputs_obj = PyEngineInputsView(inputs)
+            inputs_obj = self._decode_inputs(inputs, stage="onExec")
+            if inputs_obj is None:
+                return list(self._exec_out_ports)
             try:
                 invoke_ctx = self._build_invoke_ctx(exec_in=exec_in)
                 r = fn(invoke_ctx, str(exec_in or ""), inputs_obj)
@@ -1009,11 +1188,9 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
     async def _compute_outputs_for_pull(self, inputs: dict[str, Any], *, exec_in: str | None) -> dict[str, Any]:
         fn_msg = self._hook_on_msg
         fn_exec = self._hook_on_exec
-        inputs_obj: dict[str, Any] | PyEngineInputsView
-        if self._prefer_raw_inputs:
-            inputs_obj = inputs
-        else:
-            inputs_obj = PyEngineInputsView(inputs)
+        inputs_obj = self._decode_inputs(inputs, stage="compute")
+        if inputs_obj is None:
+            return {}
         if self._on_msg_only_mode and callable(fn_msg):
             try:
                 invoke_ctx = self._build_invoke_ctx(exec_in=exec_in)
@@ -1090,11 +1267,9 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         fn = self._hook_on_msg
         if not callable(fn):
             return
-        inputs_obj: dict[str, Any] | PyEngineInputsView
-        if self._prefer_raw_inputs:
-            inputs_obj = inputs
-        else:
-            inputs_obj = PyEngineInputsView(inputs)
+        inputs_obj = self._decode_inputs(inputs, stage="onMsg")
+        if inputs_obj is None:
+            return
         try:
             invoke_ctx = self._build_invoke_ctx(exec_in=exec_in)
             r = fn(invoke_ctx, inputs_obj)
@@ -1142,6 +1317,13 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
             except Exception:
                 pass
         return None
+
+    def _decode_inputs(self, inputs: dict[str, Any], *, stage: str) -> Any | None:
+        try:
+            return msgspec.convert(inputs, type=self._inputs_model_type)
+        except Exception as exc:
+            self._set_error(f"{stage}:inputs", exc)
+            return None
 
 
 PythonScriptRuntimeNode.SPEC = F8OperatorSpec(
