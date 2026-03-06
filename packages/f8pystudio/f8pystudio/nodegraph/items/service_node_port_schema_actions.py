@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from f8pysdk.msgspec_codec import copy_model
+import json
+
+from f8pysdk.msgspec_codec import copy_model, dump_json
 from typing import Any
 
 from qtpy import QtCore, QtWidgets
@@ -257,9 +259,21 @@ def open_data_port_schema_dialog(node_item: Any, *, is_in: bool, port_name: str)
     if read_only:
         return
     new_schema = dlg.schema()
+    replace_data_port_schema(node_item, is_in=bool(is_in), port_name=port_name, new_schema=new_schema)
+
+
+def replace_data_port_schema(node_item: Any, *, is_in: bool, port_name: str, new_schema: Any) -> bool:
+    node = node_item._backend_node()
+    if node is None:
+        return False
+    found = find_data_port_spec(node_item, is_in=bool(is_in), port_name=port_name)
+    if found is None:
+        return False
+    _port, index = found
+    spec = node.spec
     ports = list(spec.dataInPorts or []) if bool(is_in) else list(spec.dataOutPorts or [])
     if int(index) < 0 or int(index) >= len(ports):
-        return
+        return False
     updated = copy_model(ports[int(index)], update={"valueSchema": new_schema})
     ports[int(index)] = updated
     if bool(is_in):
@@ -267,6 +281,7 @@ def open_data_port_schema_dialog(node_item: Any, *, is_in: bool, port_name: str)
     else:
         updated_spec = copy_model(spec, update={"dataOutPorts": ports})
     node.set_spec(updated_spec, rebuild=True)
+    return True
 
 
 def open_state_field_schema_dialog(node_item: Any, *, field_name: str) -> None:
@@ -292,13 +307,95 @@ def open_state_field_schema_dialog(node_item: Any, *, field_name: str) -> None:
     if read_only:
         return
     new_schema = dlg.schema()
+    replace_state_field_schema(node_item, field_name=field_name, new_schema=new_schema)
+
+
+def replace_state_field_schema(node_item: Any, *, field_name: str, new_schema: Any) -> bool:
+    node = node_item._backend_node()
+    if node is None:
+        return False
+    found = find_state_field_spec(node_item, field_name=field_name)
+    if found is None:
+        return False
+    _field, index = found
+    spec = node.spec
     fields = list(spec.stateFields or [])
     if int(index) < 0 or int(index) >= len(fields):
-        return
+        return False
     updated = copy_model(fields[int(index)], update={"valueSchema": new_schema})
     fields[int(index)] = updated
     updated_spec = copy_model(spec, update={"stateFields": fields})
     node.set_spec(updated_spec, rebuild=True)
+    return True
+
+
+def schema_to_clipboard_text(value_schema: Any) -> str:
+    schema_obj = value_schema
+    if schema_obj is None:
+        schema_obj = _schema_from_json_obj({"type": "any"})
+    payload = dump_json(schema_obj, mode="json", by_alias=True, exclude_none=True)
+    return json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
+
+
+def schema_from_clipboard_text(text: str) -> Any | None:
+    raw = str(text or "").strip()
+    if not raw:
+        return None
+    try:
+        payload = json.loads(raw)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    try:
+        return _schema_from_json_obj(payload)
+    except (TypeError, ValueError, KeyError, RuntimeError):
+        return None
+
+
+def _copy_value_schema_text_to_clipboard(schema_text: str) -> bool:
+    clipboard = QtWidgets.QApplication.clipboard()
+    if clipboard is None:
+        return False
+    clipboard.setText(schema_text)
+    return True
+
+
+def _read_value_schema_text_from_clipboard() -> str:
+    clipboard = QtWidgets.QApplication.clipboard()
+    if clipboard is None:
+        return ""
+    return str(clipboard.text() or "")
+
+
+def copy_data_port_schema_to_clipboard(node_item: Any, *, is_in: bool, port_name: str) -> bool:
+    found = find_data_port_spec(node_item, is_in=bool(is_in), port_name=port_name)
+    if found is None:
+        return False
+    port, _index = found
+    return _copy_value_schema_text_to_clipboard(schema_to_clipboard_text(port.valueSchema))
+
+
+def copy_state_field_schema_to_clipboard(node_item: Any, *, field_name: str) -> bool:
+    found = find_state_field_spec(node_item, field_name=field_name)
+    if found is None:
+        return False
+    field, _index = found
+    return _copy_value_schema_text_to_clipboard(schema_to_clipboard_text(field.valueSchema))
+
+
+def paste_data_port_schema_from_clipboard(node_item: Any, *, is_in: bool, port_name: str) -> bool:
+    new_schema = schema_from_clipboard_text(_read_value_schema_text_from_clipboard())
+    if new_schema is None:
+        return False
+    return replace_data_port_schema(node_item, is_in=bool(is_in), port_name=port_name, new_schema=new_schema)
+
+
+def paste_state_field_schema_from_clipboard(node_item: Any, *, field_name: str) -> bool:
+    new_schema = schema_from_clipboard_text(_read_value_schema_text_from_clipboard())
+    if new_schema is None:
+        return False
+    return replace_state_field_schema(node_item, field_name=field_name, new_schema=new_schema)
 
 
 def open_data_port_editor_dialog(node_item: Any, *, is_in: bool, port_name: str) -> None:
@@ -452,6 +549,9 @@ def on_port_right_click(node_item: Any, port: Any, screen_pos: QtCore.QPoint) ->
         schema_action = menu.addAction("Edit valueSchema...")
     else:
         schema_action = menu.addAction("View valueSchema...")
+    copy_schema_action = menu.addAction("Copy valueSchema")
+    paste_schema_action = menu.addAction("Paste valueSchema")
+    paste_schema_action.setEnabled(can_edit)
     if kind == "data":
         port_action = menu.addAction("Edit data port...")
     else:
@@ -462,6 +562,16 @@ def on_port_right_click(node_item: Any, port: Any, screen_pos: QtCore.QPoint) ->
             open_data_port_schema_dialog(node_item, is_in=bool(is_in), port_name=port_name)
         elif kind == "state":
             open_state_field_schema_dialog(node_item, field_name=port_name)
+    elif chosen is copy_schema_action:
+        if kind == "data":
+            copy_data_port_schema_to_clipboard(node_item, is_in=bool(is_in), port_name=port_name)
+        elif kind == "state":
+            copy_state_field_schema_to_clipboard(node_item, field_name=port_name)
+    elif chosen is paste_schema_action:
+        if kind == "data":
+            paste_data_port_schema_from_clipboard(node_item, is_in=bool(is_in), port_name=port_name)
+        elif kind == "state":
+            paste_state_field_schema_from_clipboard(node_item, field_name=port_name)
     elif chosen is port_action:
         if kind == "data":
             open_data_port_editor_dialog(node_item, is_in=bool(is_in), port_name=port_name)

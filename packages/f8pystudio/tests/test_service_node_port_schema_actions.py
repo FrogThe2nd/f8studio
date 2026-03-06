@@ -10,6 +10,9 @@ class _BackendNode:
     def __init__(self, spec: F8ServiceSpec) -> None:
         self.spec = spec
 
+    def set_spec(self, spec: F8ServiceSpec, *, rebuild: bool = False) -> None:
+        self.spec = spec
+
 
 class _NodeItemStub:
     def __init__(self, backend_node: _BackendNode) -> None:
@@ -69,3 +72,43 @@ def test_data_and_state_tooltip_use_spec_schema_brief() -> None:
     assert "Runtime mode" in state_tip
     assert actions.port_tooltip_text(node_item, "[D]gain") == data_tip
     assert actions.port_tooltip_text(node_item, "[S]mode") == state_tip
+
+
+def test_schema_clipboard_text_round_trip() -> None:
+    payload = actions.schema_to_clipboard_text(number_schema(minimum=0, maximum=5))
+    parsed = actions.schema_from_clipboard_text(payload)
+    assert parsed is not None
+    assert actions.schema_brief(parsed) == "number"
+    assert actions.schema_from_clipboard_text("not-json") is None
+
+
+def test_replace_data_port_schema_updates_spec() -> None:
+    spec = F8ServiceSpec(
+        serviceClass="f8.tests.schema-paste-data",
+        label="Schema Paste Data",
+        dataInPorts=[F8DataPortSpec(name="gain", valueSchema=number_schema())],
+    )
+    backend = _BackendNode(spec)
+    node_item = _NodeItemStub(backend)
+
+    parsed = actions.schema_from_clipboard_text('{"type":"string"}')
+    assert parsed is not None
+    changed = actions.replace_data_port_schema(node_item, is_in=True, port_name="gain", new_schema=parsed)
+    assert changed is True
+    assert actions.schema_brief(backend.spec.dataInPorts[0].valueSchema) == "string"
+
+
+def test_replace_state_field_schema_updates_spec() -> None:
+    spec = F8ServiceSpec(
+        serviceClass="f8.tests.schema-paste-state",
+        label="Schema Paste State",
+        stateFields=[F8StateSpec(name="mode", valueSchema=number_schema(), access=F8StateAccess.rw)],
+    )
+    backend = _BackendNode(spec)
+    node_item = _NodeItemStub(backend)
+
+    parsed = actions.schema_from_clipboard_text('{"type":"string"}')
+    assert parsed is not None
+    changed = actions.replace_state_field_schema(node_item, field_name="mode", new_schema=parsed)
+    assert changed is True
+    assert actions.schema_brief(backend.spec.stateFields[0].valueSchema) == "string"
