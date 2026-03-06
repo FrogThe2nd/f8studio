@@ -309,7 +309,7 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
         out = await node.compute_output("out", ctx_id="ctx-11")
         self.assertEqual(out, [7, 8, 8, False])
 
-    async def test_inputs_required_optional_decode_and_defaults(self) -> None:
+    async def test_inputs_required_flag_does_not_enforce_runtime_non_null(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
         reg = RuntimeNodeRegistry.instance()
@@ -331,8 +331,11 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
         node = bus.get_node("ps9")
         self.assertIsInstance(node, PythonScriptRuntimeNode)
         assert isinstance(node, PythonScriptRuntimeNode)
-        out = await node._compute_outputs_for_pull({"req": "hello"}, exec_in=None)
-        self.assertEqual(out.get("out"), ["hello", None])
+        out_all_missing = await node._compute_outputs_for_pull({}, exec_in=None)
+        self.assertEqual(out_all_missing.get("out"), [None, None])
+
+        out_required_present = await node._compute_outputs_for_pull({"req": "hello"}, exec_in=None)
+        self.assertEqual(out_required_present.get("out"), ["hello", None])
 
     async def test_required_input_accepts_none_value_for_transient_frames(self) -> None:
         harness = ServiceBusHarness()

@@ -28,6 +28,15 @@ def _attribute_name_for_key(name: str) -> str | None:
     return name
 
 
+def _optional_type_name(type_name: str) -> str:
+    raw = str(type_name or "").strip()
+    if raw == "None":
+        return raw
+    if raw.endswith(" | None") or raw.startswith("None | "):
+        return raw
+    return f"{raw} | None"
+
+
 def _schema_type_name(
     schema_obj: Any,
     *,
@@ -142,7 +151,6 @@ def build_dynamic_inputs_stub(
         root_doc="Dynamic input payload view for python_script hooks.",
         skipped_doc="Non-identifier input names are accessible only via mapping methods.",
         fields=data_in_ports,
-        required_default=True,
         include_port_type_guards=True,
     )
 
@@ -160,7 +168,6 @@ def build_dynamic_states_stub(
         root_doc="Dynamic state snapshot view for script contexts.",
         skipped_doc="Non-identifier state names are accessible only via mapping methods.",
         fields=state_fields,
-        required_default=False,
         include_port_type_guards=False,
     )
 
@@ -172,7 +179,6 @@ def _build_dynamic_mapping_stub(
     root_doc: str,
     skipped_doc: str,
     fields: tuple[Any, ...],
-    required_default: bool,
     include_port_type_guards: bool,
 ) -> str:
     root_type_name = _normalize_type_name(type_name, fallback=fallback_type_name)
@@ -191,17 +197,17 @@ def _build_dynamic_mapping_stub(
         name = str(getattr(raw_field, "name", "") or "").strip()
         if not name:
             continue
-        required = bool(getattr(raw_field, "required", required_default))
         value_schema = getattr(raw_field, "value_schema", None)
-        value_type = _schema_type_name(
-            value_schema,
-            base_name=f"{root_type_name}_{name}",
-            class_blocks=class_blocks,
-            used_names=used_names,
-            in_progress=in_progress,
+        # Port/state `required` flags describe edit-time protection, so runtime views remain nullable.
+        value_type = _optional_type_name(
+            _schema_type_name(
+                value_schema,
+                base_name=f"{root_type_name}_{name}",
+                class_blocks=class_blocks,
+                used_names=used_names,
+                in_progress=in_progress,
+            )
         )
-        if not required:
-            value_type = f"{value_type} | None"
         if include_port_type_guards:
             alias_base = _normalize_type_name(name, fallback="port")
             guard_name_base = f"is_port_{alias_base}"

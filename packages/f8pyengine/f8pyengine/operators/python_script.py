@@ -245,12 +245,6 @@ def _normalize_attr_name(raw_name: str, *, fallback: str) -> str:
     return text
 
 
-def _is_required_flag(value: Any) -> bool:
-    if isinstance(value, msgspec.UnsetType):
-        return True
-    return bool(value)
-
-
 class _MsgspecStructCompat:
     __slots__ = ()
 
@@ -286,14 +280,8 @@ class _InputsModelBuilder:
                 continue
             attr_name = self._unique_attr_name(raw_name, used_attrs, scope=f"port[{index}]")
             field_type = self._schema_to_type(port.valueSchema, hint=f"Port_{attr_name}")
-            nullable_field_type = field_type | None
-            if _is_required_flag(port.required):
-                if attr_name == raw_name:
-                    fields.append((attr_name, nullable_field_type))
-                else:
-                    fields.append((attr_name, nullable_field_type, msgspec.field(name=raw_name)))
-                continue
-            optional_type = nullable_field_type
+            # `F8DataPortSpec.required` is edit-time protection, not a runtime non-null contract.
+            optional_type = field_type | None
             if attr_name == raw_name:
                 fields.append((attr_name, optional_type, msgspec.field(default=None)))
             else:

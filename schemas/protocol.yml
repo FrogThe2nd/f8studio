@@ -140,7 +140,7 @@ components:
         required:
           type: boolean
           default: false
-          description: If true, this state must be provided
+          description: If true, this state is protected and cannot be deleted from editable state field lists.
         uiControl:
           type: string
           description: Optional UI hint (slider, spinbox, select, etc.)
@@ -171,7 +171,7 @@ components:
         required:
           type: boolean
           default: true
-          description: Whether the port must be connected/provided
+          description: If true, this data port is protected and cannot be deleted from editable data port lists.
         showOnNode:
           type: boolean
           default: true
@@ -217,6 +217,7 @@ components:
         required:
           type: boolean
           default: false
+          description: If true, this parameter is required when invoking the command.
         uiControl:
           type: string
           description: Optional UI hint (slider, select, etc.)
