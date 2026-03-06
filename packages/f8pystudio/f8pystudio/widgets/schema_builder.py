@@ -198,7 +198,6 @@ class SchemaBuilderDialog(QtWidgets.QDialog):
         self._set_status_valid("Valid schema")
 
         if self._read_only:
-            self._form_host.setEnabled(False)
             self._json_edit.setReadOnly(True)
 
         self.resize(980, 700)
@@ -530,9 +529,44 @@ class SchemaBuilderDialog(QtWidgets.QDialog):
                 self._render_array_form(path, node)
 
             if self._read_only:
-                self._form_host.setEnabled(False)
+                self._apply_read_only_form_controls()
         finally:
             self._is_rebuilding_form = False
+
+    def _apply_read_only_form_controls(self) -> None:
+        for line_edit in self._form_host.findChildren(QtWidgets.QLineEdit):
+            line_edit.setEnabled(True)
+            line_edit.setReadOnly(True)
+
+        for plain_edit in self._form_host.findChildren(QtWidgets.QPlainTextEdit):
+            plain_edit.setEnabled(True)
+            plain_edit.setReadOnly(True)
+
+        for spin_box in self._form_host.findChildren(QtWidgets.QAbstractSpinBox):
+            spin_box.setEnabled(True)
+            spin_box.setReadOnly(True)
+            spin_box.setButtonSymbols(QtWidgets.QAbstractSpinBox.ButtonSymbols.NoButtons)
+
+        for combo_box in self._form_host.findChildren(QtWidgets.QComboBox):
+            combo_box.setEnabled(False)
+
+        for check_box in self._form_host.findChildren(QtWidgets.QCheckBox):
+            check_box.setEnabled(False)
+
+        for push_button in self._form_host.findChildren(QtWidgets.QPushButton):
+            push_button.setEnabled(False)
+
+        table = self._required_table
+        if table is None:
+            return
+        table.setEnabled(True)
+        table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
+        read_only_flags = QtCore.Qt.ItemFlag.ItemIsEnabled | QtCore.Qt.ItemFlag.ItemIsSelectable
+        for row_index in range(table.rowCount()):
+            for col_index in (0, 1):
+                item = table.item(row_index, col_index)
+                if item is not None:
+                    item.setFlags(read_only_flags)
 
     def _render_primitive_form(self, path: tuple[str, ...], node: dict[str, Any]) -> None:
         enum_edit = QtWidgets.QLineEdit(self._enum_text(node.get("enum")), self._form_host)

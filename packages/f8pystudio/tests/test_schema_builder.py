@@ -5,7 +5,7 @@ import json
 import subprocess
 import sys
 
-from qtpy import QtWidgets
+from qtpy import QtCore, QtWidgets
 
 from f8pystudio.widgets.schema_builder import (
     SchemaBuilderDialog,
@@ -161,7 +161,12 @@ def test_schema_builder_read_only_disables_edits_and_preserves_schema() -> None:
 
     assert dlg._json_edit.isReadOnly() is True
     assert dlg._tree.isEnabled() is True
-    assert dlg._form_host.isEnabled() is False
+    assert dlg._form_host.isEnabled() is True
+    assert dlg._required_table is not None
+    assert dlg._required_table.isEnabled() is True
+    required_item = dlg._required_table.item(0, 1)
+    assert required_item is not None
+    assert bool(required_item.flags() & QtCore.Qt.ItemFlag.ItemIsUserCheckable) is False
     assert dump_json(dlg.schema(), mode="json") == dump_json(base, mode="json")
 
 

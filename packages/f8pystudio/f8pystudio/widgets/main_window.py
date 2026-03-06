@@ -559,35 +559,40 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         self._mark_session_saved()
 
     def _load_session_action(self) -> None:
-        session_load_last_session(
+        loaded = session_load_last_session(
             parent=self,
             studio_graph=self.studio_graph,
             session_file=self._session_file,
             show_info=show_info,
         )
-        self._mark_session_saved()
-        self._mark_auto_deploy_synced()
+        if loaded:
+            self._mark_session_saved()
+            self._mark_auto_deploy_synced()
 
     def _load_session_from_action(self) -> None:
-        self._session_dialog_dir = session_load_session_from_dialog(
+        session_dir, loaded = session_load_session_from_dialog(
             parent=self,
             studio_graph=self.studio_graph,
             log_dock=self._log_dock,
             start_dir=str(self._session_dialog_dir or ""),
             show_warning=show_warning,
         )
-        self._mark_session_saved()
-        self._mark_auto_deploy_synced()
+        self._session_dialog_dir = session_dir
+        if loaded:
+            self._mark_session_saved()
+            self._mark_auto_deploy_synced()
 
     def _save_session_as_action(self) -> None:
-        self._session_dialog_dir = session_save_session_as_dialog(
+        session_dir, saved = session_save_session_as_dialog(
             parent=self,
             studio_graph=self.studio_graph,
             log_dock=self._log_dock,
             start_dir=str(self._session_dialog_dir or ""),
             show_warning=show_warning,
         )
-        self._mark_session_saved()
+        self._session_dialog_dir = session_dir
+        if saved:
+            self._mark_session_saved()
 
     def _insert_graph_from_action(self) -> None:
         self._session_dialog_dir = session_insert_graph_from_dialog(
