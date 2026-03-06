@@ -41,15 +41,23 @@ def save_session(*, parent: QtWidgets.QWidget, studio_graph: Any, show_info: Any
     show_info(parent, "Session saved", f"Saved to:\n{path}")
 
 
-def load_last_session(*, parent: QtWidgets.QWidget, studio_graph: Any, session_file: Path, show_info: Any) -> None:
+def load_last_session(*, parent: QtWidgets.QWidget, studio_graph: Any, session_file: Path, show_info: Any) -> bool:
     path = studio_graph.load_last_session()
     if not path:
         show_info(parent, "No session", f"No session file found at:\n{session_file}")
-        return
+        return False
     show_info(parent, "Session loaded", f"Loaded:\n{path}")
+    return True
 
 
-def load_session_from_dialog(*, parent: QtWidgets.QWidget, studio_graph: Any, log_dock: Any, start_dir: str, show_warning: Any) -> str:
+def load_session_from_dialog(
+    *,
+    parent: QtWidgets.QWidget,
+    studio_graph: Any,
+    log_dock: Any,
+    start_dir: str,
+    show_warning: Any,
+) -> tuple[str, bool]:
     path, _ = QtWidgets.QFileDialog.getOpenFileName(
         parent,
         "Load Session",
@@ -58,18 +66,18 @@ def load_session_from_dialog(*, parent: QtWidgets.QWidget, studio_graph: Any, lo
     )
     selected_path = str(path or "").strip()
     if not selected_path:
-        return str(start_dir or "")
+        return str(start_dir or ""), False
 
     try:
         studio_graph.load_session(selected_path)
         resolved_dir = str(Path(selected_path).resolve().parent)
         log_dock.append("studio", f"[session] loaded: {selected_path}\n")
-        return resolved_dir
+        return resolved_dir, True
     except Exception as exc:
         log_dock.append("studio", f"[session] load failed: {exc}\n")
         log_dock.report_exception("studio", f"session load failed ({selected_path})", exc)
         show_warning(parent, "Load failed", f"Failed to load:\n{selected_path}\n\n{exc}")
-        return str(start_dir or "")
+        return str(start_dir or ""), False
 
 
 def save_session_as_dialog(
@@ -79,7 +87,7 @@ def save_session_as_dialog(
     log_dock: Any,
     start_dir: str,
     show_warning: Any,
-) -> str:
+) -> tuple[str, bool]:
     path, _ = QtWidgets.QFileDialog.getSaveFileName(
         parent,
         "Save Session As",
@@ -88,19 +96,19 @@ def save_session_as_dialog(
     )
     selected_path = str(path or "").strip()
     if not selected_path:
-        return str(start_dir or "")
+        return str(start_dir or ""), False
 
     save_path = selected_path if selected_path.lower().endswith(".json") else selected_path + ".json"
     try:
         studio_graph.save_session(save_path)
         resolved_dir = str(Path(save_path).resolve().parent)
         log_dock.append("studio", f"[session] saved: {save_path}\n")
-        return resolved_dir
+        return resolved_dir, True
     except Exception as exc:
         log_dock.append("studio", f"[session] save failed: {exc}\n")
         log_dock.report_exception("studio", f"session save failed ({save_path})", exc)
         show_warning(parent, "Save failed", f"Failed to save:\n{save_path}\n\n{exc}")
-        return str(start_dir or "")
+        return str(start_dir or ""), False
 
 
 def insert_graph_from_dialog(
@@ -139,4 +147,3 @@ def insert_graph_from_dialog(
     studio_graph.begin_graph_placement(request, label=placement_label)
     log_dock.append("studio", f"[insert] click canvas to place: {graph_name} ({request.node_count} nodes)\n")
     return resolved_dir
-

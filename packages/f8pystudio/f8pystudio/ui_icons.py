@@ -23,6 +23,7 @@ class StudioIcon(Enum):
     CODE = "code.svg"
     EYE = "eye.svg"
     EYE_SLASH = "eye-slash.svg"
+    AUTOMATION = "automation.svg"
 
 
 def icon_for(widget: QtWidgets.QWidget, token: StudioIcon) -> QtGui.QIcon:

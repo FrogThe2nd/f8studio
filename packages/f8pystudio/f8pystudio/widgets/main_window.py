@@ -54,6 +54,11 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
     _WINDOW_LAYOUT_STATE_VERSION = 1
     _LOG_LEVEL_SETTINGS_GROUP = "main_window/logging/v1"
     _LOG_LEVEL_SETTINGS_KEY = "level_name"
+    _AUTOMATION_SETTINGS_GROUP = "main_window/automation/v1"
+    _AUTO_SAVE_ENABLED_SETTINGS_KEY = "auto_save_enabled"
+    _AUTO_DEPLOY_ENABLED_SETTINGS_KEY = "auto_deploy_enabled"
+    _PERIODIC_AUTO_SAVE_INTERVAL_MS = 15000
+    _AUTO_DEPLOY_DEBOUNCE_MS = 2000
     _LOG_LEVEL_CHOICES: tuple[tuple[str, int], ...] = (
         ("DEBUG", logging.DEBUG),
         ("INFO", logging.INFO),
@@ -69,10 +74,14 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
     _view_menu: QtWidgets.QMenu
     _reset_layout_action: QtGui.QAction
     _log_level_menu: QtWidgets.QMenu
+    _auto_save_action: QtGui.QAction
+    _auto_deploy_action: QtGui.QAction
     _log_level_action_group: QtGui.QActionGroup
     _log_level_actions: dict[int, QtGui.QAction]
     _dock_widgets: list[QtWidgets.QDockWidget]
     _default_dock_layout_state: QtCore.QByteArray
+    _periodic_auto_save_timer: QtCore.QTimer
+    _auto_deploy_timer: QtCore.QTimer
 
     def __init__(self, node_classes: Iterable[type], parent=None):
         super().__init__(parent)
@@ -85,6 +94,8 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         self._dock_widgets = []
         self._log_level_actions = {}
         self._default_dock_layout_state = QtCore.QByteArray()
+        self._auto_save_enabled = self._read_saved_auto_save_enabled()
+        self._auto_deploy_enabled = self._read_saved_auto_deploy_enabled()
 
         self.studio_graph = F8StudioGraph()
         self.studio_graph.node_factory.clear_registered_nodes()
@@ -93,12 +104,25 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         self.studio_graph.install_variant_context_menu_for_nodes(list(node_classes))
         self.studio_graph.install_identity_context_menu_for_nodes(list(node_classes))
         self.studio_graph.install_duplicate_context_menu_for_nodes(list(node_classes))
+        self.studio_graph._undo_stack.indexChanged.connect(self._on_graph_undo_index_changed)  # type: ignore[attr-defined]
+        self._last_saved_undo_index = self._current_undo_index()
+        self._last_auto_deployed_undo_index = self._current_undo_index()
+        self._periodic_auto_save_timer = QtCore.QTimer(self)
+        self._periodic_auto_save_timer.setInterval(self._PERIODIC_AUTO_SAVE_INTERVAL_MS)
+        self._periodic_auto_save_timer.timeout.connect(self._on_periodic_auto_save_timeout)  # type: ignore[attr-defined]
+        self._periodic_auto_save_timer.start()
+        self._auto_deploy_timer = QtCore.QTimer(self)
+        self._auto_deploy_timer.setSingleShot(True)
+        self._auto_deploy_timer.setInterval(self._AUTO_DEPLOY_DEBOUNCE_MS)
+        self._auto_deploy_timer.timeout.connect(self._on_auto_deploy_timeout)  # type: ignore[attr-defined]
 
         self.setCentralWidget(self.studio_graph.widget)
 
         self._setup_docks()
         self._deploy_action = self._create_deploy_action()
         self._stop_all_services_action = self._create_stop_all_services_action()
+        self._auto_save_action = self._create_auto_save_action()
+        self._auto_deploy_action = self._create_auto_deploy_action()
         self._setup_menu()
         self._setup_toolbar()
         self._service_manager: ServiceManagerWidget | None = None
@@ -211,6 +235,8 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         save_action.setShortcut("Ctrl+S")
         save_action.triggered.connect(self._save_session_action)  # type: ignore[attr-defined]
         menu.addAction(save_action)
+        menu.addAction(self._auto_save_action)
+        menu.addAction(self._auto_deploy_action)
 
         menu.addSeparator()
 
@@ -419,6 +445,9 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         self._stop_all_services_action.setIcon(icon_for(self, StudioIcon.STOP_ALL))
         self._stop_all_services_action.setToolTip("Stop all service processes in graph")
         tb.addAction(self._stop_all_services_action)
+        self._auto_deploy_action.setIcon(icon_for(self, StudioIcon.AUTOMATION))
+        self._auto_deploy_action.setToolTip("Auto deploy running services after graph edits (2s debounce)")
+        tb.addAction(self._auto_deploy_action)
 
         # Push the edge-visibility toolbar to the far-right in the same top toolbar row.
         toolbar_spacer = QtWidgets.QWidget(tb)
@@ -507,17 +536,27 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
 
     def _auto_load_session(self) -> None:
         session_auto_load_session(studio_graph=self.studio_graph, log_dock=self._log_dock)
+        self._mark_session_saved()
+        self._mark_auto_deploy_synced()
 
     def _auto_save_session(self) -> None:
         # Called from both `closeEvent` and `QApplication.aboutToQuit`; guard to avoid double-save on exit.
+        if not self._auto_save_enabled:
+            return
+        if not self._graph_has_unsaved_changes():
+            self._exit_autosaved = True
+            return
         self._exit_autosaved = session_auto_save_session(
             studio_graph=self.studio_graph,
             log_dock=self._log_dock,
             already_saved=self._exit_autosaved,
         )
+        if self._exit_autosaved:
+            self._mark_session_saved()
 
     def _save_session_action(self) -> None:
         session_save_session(parent=self, studio_graph=self.studio_graph, show_info=show_info)
+        self._mark_session_saved()
 
     def _load_session_action(self) -> None:
         session_load_last_session(
@@ -526,6 +565,8 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
             session_file=self._session_file,
             show_info=show_info,
         )
+        self._mark_session_saved()
+        self._mark_auto_deploy_synced()
 
     def _load_session_from_action(self) -> None:
         self._session_dialog_dir = session_load_session_from_dialog(
@@ -535,6 +576,8 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
             start_dir=str(self._session_dialog_dir or ""),
             show_warning=show_warning,
         )
+        self._mark_session_saved()
+        self._mark_auto_deploy_synced()
 
     def _save_session_as_action(self) -> None:
         self._session_dialog_dir = session_save_session_as_dialog(
@@ -544,6 +587,7 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
             start_dir=str(self._session_dialog_dir or ""),
             show_warning=show_warning,
         )
+        self._mark_session_saved()
 
     def _insert_graph_from_action(self) -> None:
         self._session_dialog_dir = session_insert_graph_from_dialog(
@@ -665,3 +709,157 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
 
     def _on_ui_property_changed(self, node: Any, name: str, value: Any) -> None:
         self._runtime_state_sync.on_ui_property_changed(node, name, value)
+
+    def _create_auto_save_action(self) -> QtGui.QAction:
+        action = QtGui.QAction("Auto Save Last Session", self)
+        action.setCheckable(True)
+        action.setChecked(self._auto_save_enabled)
+        action.toggled.connect(self._on_auto_save_toggled)  # type: ignore[attr-defined]
+        return action
+
+    def _create_auto_deploy_action(self) -> QtGui.QAction:
+        action = QtGui.QAction("Auto Deploy Running Services", self)
+        action.setCheckable(True)
+        action.setChecked(self._auto_deploy_enabled)
+        action.toggled.connect(self._on_auto_deploy_toggled)  # type: ignore[attr-defined]
+        return action
+
+    @staticmethod
+    def _coerce_bool_setting(raw: Any, *, default: bool) -> bool:
+        if isinstance(raw, bool):
+            return raw
+        if isinstance(raw, (int, float)):
+            return bool(raw)
+        text = str(raw or "").strip().lower()
+        if text in {"1", "true", "yes", "on"}:
+            return True
+        if text in {"0", "false", "no", "off"}:
+            return False
+        return bool(default)
+
+    def _read_saved_auto_save_enabled(self) -> bool:
+        settings = self._layout_settings()
+        settings.beginGroup(self._AUTOMATION_SETTINGS_GROUP)
+        try:
+            raw = settings.value(self._AUTO_SAVE_ENABLED_SETTINGS_KEY, True)
+        finally:
+            settings.endGroup()
+        return self._coerce_bool_setting(raw, default=True)
+
+    def _write_saved_auto_save_enabled(self, *, enabled: bool) -> None:
+        settings = self._layout_settings()
+        settings.beginGroup(self._AUTOMATION_SETTINGS_GROUP)
+        try:
+            settings.setValue(self._AUTO_SAVE_ENABLED_SETTINGS_KEY, bool(enabled))
+            settings.sync()
+        finally:
+            settings.endGroup()
+
+    def _read_saved_auto_deploy_enabled(self) -> bool:
+        settings = self._layout_settings()
+        settings.beginGroup(self._AUTOMATION_SETTINGS_GROUP)
+        try:
+            raw = settings.value(self._AUTO_DEPLOY_ENABLED_SETTINGS_KEY, False)
+        finally:
+            settings.endGroup()
+        return self._coerce_bool_setting(raw, default=False)
+
+    def _write_saved_auto_deploy_enabled(self, *, enabled: bool) -> None:
+        settings = self._layout_settings()
+        settings.beginGroup(self._AUTOMATION_SETTINGS_GROUP)
+        try:
+            settings.setValue(self._AUTO_DEPLOY_ENABLED_SETTINGS_KEY, bool(enabled))
+            settings.sync()
+        finally:
+            settings.endGroup()
+
+    def _current_undo_index(self) -> int:
+        return int(self.studio_graph._undo_stack.index())  # type: ignore[attr-defined]
+
+    def _graph_has_unsaved_changes(self) -> bool:
+        return self._current_undo_index() != self._last_saved_undo_index
+
+    def _mark_session_saved(self) -> None:
+        self._last_saved_undo_index = self._current_undo_index()
+
+    def _mark_auto_deploy_synced(self) -> None:
+        self._last_auto_deployed_undo_index = self._current_undo_index()
+
+    @QtCore.Slot(bool)
+    def _on_auto_save_toggled(self, checked: bool) -> None:
+        self._auto_save_enabled = bool(checked)
+        self._write_saved_auto_save_enabled(enabled=self._auto_save_enabled)
+
+    @QtCore.Slot(bool)
+    def _on_auto_deploy_toggled(self, checked: bool) -> None:
+        self._auto_deploy_enabled = bool(checked)
+        self._write_saved_auto_deploy_enabled(enabled=self._auto_deploy_enabled)
+        if not self._auto_deploy_enabled:
+            self._auto_deploy_timer.stop()
+            return
+        if self._current_undo_index() != self._last_auto_deployed_undo_index:
+            self._auto_deploy_timer.start()
+
+    @QtCore.Slot(int)
+    def _on_graph_undo_index_changed(self, index: int) -> None:
+        _ = index
+        self._exit_autosaved = False
+        if bool(self.studio_graph._loading_session):  # type: ignore[attr-defined]
+            return
+        if self._auto_deploy_enabled:
+            self._auto_deploy_timer.start()
+
+    @QtCore.Slot()
+    def _on_periodic_auto_save_timeout(self) -> None:
+        if not self._auto_save_enabled:
+            return
+        if not self._graph_has_unsaved_changes():
+            return
+        try:
+            self.studio_graph.save_last_session()
+            self._mark_session_saved()
+        except Exception as exc:
+            self._log_dock.report_exception("studio", "periodic auto-save failed", exc)
+
+    @QtCore.Slot()
+    def _on_auto_deploy_timeout(self) -> None:
+        if not self._auto_deploy_enabled:
+            return
+        current_undo_index = self._current_undo_index()
+        if current_undo_index == self._last_auto_deployed_undo_index:
+            return
+
+        try:
+            compiled = compile_runtime_graphs_from_studio(self.studio_graph)
+        except ValueError as exc:
+            msg = str(exc or "").strip() or "auto deploy blocked by invalid graph"
+            self._log_dock.append("studio", f"[deploy][auto][blocked] {msg}\n")
+            return
+        except Exception as exc:
+            self._log_dock.append("studio", f"[deploy][auto][error] {exc}\n")
+            self._log_dock.report_exception("studio", "auto deploy compile failed", exc)
+            return
+
+        for warning in list(compiled.warnings or ()):
+            self._log_dock.append("studio", f"[compile][warn] {warning}\n")
+
+        running_service_ids: list[str] = []
+        for service_id in sorted(self._declared_graph_services().keys()):
+            try:
+                running = self._bridge.is_service_running(service_id)
+            except Exception as exc:
+                self._log_dock.report_exception("studio", f"auto deploy status check failed ({service_id})", exc)
+                continue
+            if running:
+                running_service_ids.append(service_id)
+
+        if not running_service_ids:
+            self._last_auto_deployed_undo_index = current_undo_index
+            return
+
+        for service_id in running_service_ids:
+            try:
+                self._bridge.deploy_service_rungraph(service_id, compiled=compiled)
+            except Exception as exc:
+                self._log_dock.report_exception("studio", f"auto deploy failed ({service_id})", exc)
+        self._last_auto_deployed_undo_index = current_undo_index
