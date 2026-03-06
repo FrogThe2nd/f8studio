@@ -26,6 +26,7 @@ from .state_trigger import StateTriggerRuntimeNode
 from .bone_filter import BoneFilterRuntimeNode
 from .quat_to_euler import QuatToEulerRuntimeNode
 from .udp_vmc import UdpVmcRuntimeNode
+from .bone_selector import BoneSelectorRuntimeNode
 
 __all__ = [
     "PrintRuntimeNode",
@@ -54,4 +55,5 @@ __all__ = [
     "BoneFilterRuntimeNode",
     "QuatToEulerRuntimeNode",
     "UdpVmcRuntimeNode",
+    "BoneSelectorRuntimeNode",
 ]
