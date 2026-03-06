@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from f8pysdk.msgspec_codec import dump_json
-import json
 import logging
 from typing import Any, Iterable
 
@@ -256,11 +254,6 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         menu.addAction(save_as_action)
 
         menu.addSeparator()
-
-        compile_action = QtWidgets.QAction("Compile Runtime Graph (print)", self)
-        compile_action.setShortcut("Ctrl+R")
-        compile_action.triggered.connect(self._compile_runtime_action)  # type: ignore[attr-defined]
-        menu.addAction(compile_action)
 
         menu.addAction(self._deploy_action)
         menu.addAction(self._stop_all_services_action)
@@ -602,30 +595,6 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
             start_dir=str(self._session_dialog_dir or ""),
             show_warning=show_warning,
         )
-
-    def _compile_runtime_action(self) -> None:
-        try:
-            compiled = compile_runtime_graphs_from_studio(self.studio_graph)
-        except ValueError as exc:
-            msg = str(exc or "").strip() or "compile failed"
-            self._log_dock.append("studio", f"[compile][blocked] {msg}\n")
-            show_warning(self, "Compile blocked", msg)
-            return
-        except Exception as exc:
-            self._log_dock.append("studio", f"[compile][error] {exc}\n")
-            self._log_dock.report_exception("studio", "compile runtime graph failed", exc)
-            show_warning(self, "Compile failed", str(exc))
-            return
-
-        payload = dump_json(compiled.global_graph, mode="json", by_alias=True)
-        print("\n=== F8Studio RuntimeGraph (global) ===")
-        print(json.dumps(payload, ensure_ascii=False, indent=2, default=str))
-
-        print("\n=== F8Studio RuntimeGraph (per-service) ===")
-        for sid, g in compiled.per_service.items():
-            p = dump_json(g, mode="json", by_alias=True)
-            print(f"\n--- serviceId={sid} ---")
-            print(json.dumps(p, ensure_ascii=False, indent=2, default=str))
 
     def _on_deploy_action_triggered(self) -> None:
         try:
