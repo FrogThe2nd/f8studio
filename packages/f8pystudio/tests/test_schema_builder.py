@@ -160,6 +160,8 @@ def test_schema_builder_read_only_disables_edits_and_preserves_schema() -> None:
     dlg = SchemaBuilderDialog(None, title="Schema", schema=base, read_only=True)
 
     assert dlg._json_edit.isReadOnly() is True
+    assert hasattr(dlg._json_edit, "_f8_json_highlighter")
+    assert hasattr(dlg._json_edit, "_f8_json_bracket_pair_controller")
     assert dlg._tree.isEnabled() is True
     assert dlg._form_host.isEnabled() is True
     assert dlg._required_table is not None

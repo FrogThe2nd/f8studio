@@ -40,6 +40,7 @@ from .schema_builder import (
     schema_from_json_obj as _schema_from_json_obj_strict,
     schema_to_json_obj as _schema_to_json_obj_strict,
 )
+from .json_text_editor import attach_json_enhancements
 from .editor_controls import (
     F8OptionCombo,
     F8PropBoolSwitch,
@@ -231,7 +232,7 @@ class _F8JsonEditorDialog(QtWidgets.QDialog):
         self.setWindowTitle(title)
 
         self._edit = QtWidgets.QPlainTextEdit()
-        self._edit.setTabStopDistance(4 * self.fontMetrics().horizontalAdvance(" "))
+        attach_json_enhancements(self._edit, read_only=False)
         try:
             text = json.dumps(value, ensure_ascii=False, indent=2)
         except TypeError:

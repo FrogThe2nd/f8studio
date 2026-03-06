@@ -9,6 +9,8 @@ from qtpy import QtCore, QtGui, QtWidgets
 
 from f8pysdk import F8DataTypeSchema
 
+from .json_text_editor import attach_json_enhancements
+
 logger = logging.getLogger(__name__)
 
 _SCHEMA_TYPE_VALUES: tuple[str, ...] = (
@@ -162,6 +164,7 @@ class SchemaBuilderDialog(QtWidgets.QDialog):
 
         self._json_edit = QtWidgets.QPlainTextEdit(self._json_tab)
         self._json_edit.setTabStopDistance(4 * self.fontMetrics().horizontalAdvance(" "))
+        attach_json_enhancements(self._json_edit, read_only=self._read_only)
 
         self._status = QtWidgets.QLabel(self)
 
@@ -196,9 +199,6 @@ class SchemaBuilderDialog(QtWidgets.QDialog):
         self._json_edit.setPlainText(json.dumps(self._schema_obj, ensure_ascii=False, indent=2))
         self._rebuild_tree(select_path=())
         self._set_status_valid("Valid schema")
-
-        if self._read_only:
-            self._json_edit.setReadOnly(True)
 
         self.resize(980, 700)
 

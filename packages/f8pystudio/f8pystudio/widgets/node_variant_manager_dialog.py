@@ -23,6 +23,7 @@ from ..variants.variant_repository import (
     upsert_variant,
 )
 from ..variants.variant_events import subscribe_variants_changed
+from .json_text_editor import attach_json_enhancements
 
 
 class _VariantMetaDialog(QtWidgets.QDialog):
@@ -109,6 +110,7 @@ class NodeVariantManagerDialog(QtWidgets.QDialog):
         self._raw = QtWidgets.QPlainTextEdit(self)
         self._raw.setReadOnly(True)
         self._raw.setLineWrapMode(QtWidgets.QPlainTextEdit.NoWrap)
+        attach_json_enhancements(self._raw, read_only=True)
 
         btn_add = QtWidgets.QPushButton("Save From Selected Node", self)
         btn_edit = QtWidgets.QPushButton("Edit Metadata", self)

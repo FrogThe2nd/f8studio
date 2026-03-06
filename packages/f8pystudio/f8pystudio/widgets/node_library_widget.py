@@ -16,6 +16,7 @@ from ..ui_notifications import show_warning
 from ..variants.variant_ids import build_variant_node_type, is_variant_node_type, parse_variant_node_type
 from ..variants.variant_repository import delete_variant, list_variants_for_base, variant_exists
 from ..variants.variant_events import subscribe_variants_changed
+from .json_text_editor import attach_json_enhancements
 
 
 class _F8StudioNodesTreeWidget(NodesTreeWidget):
@@ -262,6 +263,7 @@ class _F8StudioNodesTreeWidget(NodesTreeWidget):
         raw = QtWidgets.QPlainTextEdit(dialog)
         raw.setReadOnly(True)
         raw.setLineWrapMode(QtWidgets.QPlainTextEdit.NoWrap)
+        attach_json_enhancements(raw, read_only=True)
 
         if isinstance(spec, F8OperatorSpec):
             overview.setMarkdown(self._render_operator_doc(spec))

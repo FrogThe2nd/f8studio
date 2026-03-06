@@ -13,6 +13,7 @@ from ..editor_assist.bridge import PythonEditorAssistBridge
 from ..editor_assist.workspace import EditorAssistContext
 from ..ui_notifications import show_warning
 from ..ui_icons import StudioIcon, icon_for
+from .json_text_editor import attach_json_enhancements
 
 logger = logging.getLogger(__name__)
 
@@ -1505,6 +1506,8 @@ class F8JsonPropTextEdit(QtWidgets.QTextEdit):
         self._name: str | None = None
         self._prev_text = ""
         self._prev_value: Any = None
+        self.setAcceptRichText(False)
+        attach_json_enhancements(self, read_only=False)
 
     def get_name(self) -> str:
         return self._name or ""
