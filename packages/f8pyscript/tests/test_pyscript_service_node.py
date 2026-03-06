@@ -376,6 +376,35 @@ class PyScriptServiceNodeTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(0.05)
         self.assertIn("not subscriptable", str(await node.get_state_value("lastError") or ""))
 
+    async def test_hook_async_flags_and_invoke_context_reuse(self) -> None:
+        harness = ServiceBusHarness()
+        bus = harness.create_bus("svcA")
+        reg = RuntimeNodeRegistry.instance()
+        register_specs(reg)
+        _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
+
+        graph = F8RuntimeGraph(graphId="g10", revision="r1", nodes=[_service_node(code="")], edges=[])
+        await bus.set_rungraph(graph)
+        node = bus.get_node("svcA")
+        assert isinstance(node, PythonScriptServiceNode)
+
+        code = (
+            "def onData(ctx, port, value, ts_ms=None):\n"
+            "    return {'outputs': {'out': value}}\n"
+            "\n"
+            "async def onCommand(ctx, name, args, meta=None):\n"
+            "    return {'name': name}\n"
+        )
+        await node.on_state("code", code, ts_ms=1)
+        await asyncio.sleep(0.05)
+
+        self.assertFalse(bool(node._hook_on_data_is_async))
+        self.assertTrue(bool(node._hook_on_command_is_async))
+
+        invoke_ctx_a = node._build_invoke_ctx()
+        invoke_ctx_b = node._build_invoke_ctx()
+        self.assertIs(invoke_ctx_a, invoke_ctx_b)
+
 
 if __name__ == "__main__":
     unittest.main()

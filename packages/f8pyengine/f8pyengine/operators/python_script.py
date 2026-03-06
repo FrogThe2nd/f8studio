@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import ast
 import inspect
 import keyword
 import logging
@@ -31,6 +32,7 @@ from .python_editor_assist import python_script_field_editor_assist_payload
 OPERATOR_CLASS = "f8.python_script"
 logger = logging.getLogger(__name__)
 _MISSING = object()
+_DICT_STYLE_INPUT_METHODS: frozenset[str] = frozenset({"get", "keys", "items", "values", "to_dict"})
 
 try:
     import numpy as np
@@ -163,6 +165,54 @@ class PyEngineInputsView(_PyEngineObjectView):
 
 class PyEngineStatesView(_PyEngineObjectView):
     pass
+
+
+def _script_uses_inputs_object_access(code: str) -> bool:
+    """
+    Returns True when onMsg/onExec script body appears to rely on dot-style
+    inputs access (e.g. inputs.msg), which requires PyEngineInputsView.
+    """
+    try:
+        module = ast.parse(str(code or ""), mode="exec")
+    except SyntaxError:
+        return True
+
+    for node in module.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            fn_name = str(node.name or "")
+            if fn_name == "onMsg":
+                param_name = _inputs_param_name(node, expected_pos=1)
+                if param_name and _function_uses_dot_inputs_access(node, param_name):
+                    return True
+            elif fn_name == "onExec":
+                param_name = _inputs_param_name(node, expected_pos=2)
+                if param_name and _function_uses_dot_inputs_access(node, param_name):
+                    return True
+    return False
+
+
+def _inputs_param_name(node: ast.FunctionDef | ast.AsyncFunctionDef, *, expected_pos: int) -> str | None:
+    pos_args = list(node.args.posonlyargs) + list(node.args.args)
+    if expected_pos >= len(pos_args):
+        return None
+    raw_name = str(pos_args[expected_pos].arg or "").strip()
+    return raw_name or None
+
+
+def _function_uses_dot_inputs_access(node: ast.FunctionDef | ast.AsyncFunctionDef, param_name: str) -> bool:
+    for child in ast.walk(node):
+        if not isinstance(child, ast.Attribute):
+            continue
+        base = child.value
+        if not isinstance(base, ast.Name):
+            continue
+        if str(base.id or "") != param_name:
+            continue
+        attr_name = str(child.attr or "")
+        if attr_name in _DICT_STYLE_INPUT_METHODS:
+            continue
+        return True
+    return False
 
 
 @dataclass(slots=True)
@@ -370,6 +420,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         self._on_msg_only_mode = False
         self._data_out_port_set: set[str] = set()
         self._has_out_port = False
+        self._prefer_raw_inputs = False
         self._refresh_data_out_port_cache()
 
         self._compile_and_start()
@@ -406,6 +457,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         logger.error("[%s:python_script] error %s", self.node_id, msg, exc_info=exc)
         try:
             loop = asyncio.get_running_loop()
+
             async def _set_last_error() -> None:
                 try:
                     await self.set_state("lastError", msg)
@@ -746,6 +798,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         code = code.replace("\r\n", "\n").replace("\r", "\n")
         code = code.expandtabs(4)
         self._runtime = self._compile_script(code)
+        self._prefer_raw_inputs = not _script_uses_inputs_object_access(code)
         self._refresh_runtime_hooks()
         if not self._runtime:
             self._started = False
@@ -884,10 +937,14 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
     async def _run_on_exec(self, inputs: dict[str, Any], *, exec_in: str | None) -> list[str]:
         fn = self._hook_on_exec
         if callable(fn):
-            inputs_view = PyEngineInputsView(inputs)
+            inputs_obj: dict[str, Any] | PyEngineInputsView
+            if self._prefer_raw_inputs:
+                inputs_obj = inputs
+            else:
+                inputs_obj = PyEngineInputsView(inputs)
             try:
                 invoke_ctx = self._build_invoke_ctx(exec_in=exec_in)
-                r = fn(invoke_ctx, str(exec_in or ""), inputs_view)
+                r = fn(invoke_ctx, str(exec_in or ""), inputs_obj)
                 if inspect.isawaitable(r):
                     r = await r
             except Exception as exc:
@@ -902,11 +959,15 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
     async def _compute_outputs_for_pull(self, inputs: dict[str, Any], *, exec_in: str | None) -> dict[str, Any]:
         fn_msg = self._hook_on_msg
         fn_exec = self._hook_on_exec
+        inputs_obj: dict[str, Any] | PyEngineInputsView
+        if self._prefer_raw_inputs:
+            inputs_obj = inputs
+        else:
+            inputs_obj = PyEngineInputsView(inputs)
         if self._on_msg_only_mode and callable(fn_msg):
-            inputs_view = PyEngineInputsView(inputs)
             try:
                 invoke_ctx = self._build_invoke_ctx(exec_in=exec_in)
-                result = fn_msg(invoke_ctx, inputs_view)
+                result = fn_msg(invoke_ctx, inputs_obj)
                 if inspect.isawaitable(result):
                     result = await result
             except Exception as exc:
@@ -915,10 +976,9 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
             return self._extract_outputs(result)
 
         if callable(fn_exec):
-            inputs_view = PyEngineInputsView(inputs)
             try:
                 invoke_ctx = self._build_invoke_ctx(exec_in=exec_in)
-                result = fn_exec(invoke_ctx, str(exec_in or ""), inputs_view)
+                result = fn_exec(invoke_ctx, str(exec_in or ""), inputs_obj)
                 if inspect.isawaitable(result):
                     result = await result
             except Exception as exc:
@@ -928,10 +988,9 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
 
         if not callable(fn_msg):
             return {}
-        inputs_view = PyEngineInputsView(inputs)
         try:
             invoke_ctx = self._build_invoke_ctx(exec_in=exec_in)
-            result = fn_msg(invoke_ctx, inputs_view)
+            result = fn_msg(invoke_ctx, inputs_obj)
             if inspect.isawaitable(result):
                 result = await result
         except Exception as exc:
@@ -981,10 +1040,14 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         fn = self._hook_on_msg
         if not callable(fn):
             return
-        inputs_view = PyEngineInputsView(inputs)
+        inputs_obj: dict[str, Any] | PyEngineInputsView
+        if self._prefer_raw_inputs:
+            inputs_obj = inputs
+        else:
+            inputs_obj = PyEngineInputsView(inputs)
         try:
             invoke_ctx = self._build_invoke_ctx(exec_in=exec_in)
-            r = fn(invoke_ctx, inputs_view)
+            r = fn(invoke_ctx, inputs_obj)
             if inspect.isawaitable(r):
                 r = await r
         except Exception as exc:
@@ -1043,8 +1106,8 @@ PythonScriptRuntimeNode.SPEC = F8OperatorSpec(
     execOutPorts=["exec"],
     editableExecInPorts=True,
     editableExecOutPorts=True,
-    dataInPorts=[F8DataPortSpec(name="msg", description="Message input", valueSchema=any_schema())],
-    dataOutPorts=[F8DataPortSpec(name="out", description="Script output", valueSchema=any_schema())],
+    dataInPorts=[F8DataPortSpec(name="msg", description="Message input", valueSchema=any_schema(), required=False)],
+    dataOutPorts=[F8DataPortSpec(name="out", description="Script output", valueSchema=any_schema(), required=False)],
     editableDataInPorts=True,
     editableDataOutPorts=True,
     stateFields=[

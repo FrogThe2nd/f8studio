@@ -320,6 +320,7 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
         node = bus.get_node("ps9")
         self.assertIsInstance(node, PythonScriptRuntimeNode)
         assert isinstance(node, PythonScriptRuntimeNode)
+        self.assertFalse(bool(node._prefer_raw_inputs))
         out = await node._compute_outputs_for_pull({"msg": 123}, exec_in=None)
         self.assertEqual(out.get("out"), [123, 123, 123])
 
@@ -344,8 +345,34 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
         node = bus.get_node("ps10")
         self.assertIsInstance(node, PythonScriptRuntimeNode)
         assert isinstance(node, PythonScriptRuntimeNode)
+        self.assertFalse(bool(node._prefer_raw_inputs))
         out = await node._compute_outputs_for_pull({"payload": {"user": {"name": "alice"}}}, exec_in=None)
         self.assertEqual(out.get("out"), ["alice", "alice", "alice"])
+
+    async def test_inputs_dict_only_script_uses_raw_dict_fast_path(self) -> None:
+        harness = ServiceBusHarness()
+        bus = harness.create_bus("svcA")
+        reg = RuntimeNodeRegistry.instance()
+        register_operator(reg)
+        _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
+
+        code = (
+            "def onMsg(ctx, inputs):\n"
+            "    payload = inputs.get('payload')\n"
+            "    if not isinstance(payload, dict):\n"
+            "        return {'outputs': {'out': None}}\n"
+            "    return {'outputs': {'out': payload.get('user', {}).get('name')}}\n"
+        )
+        op = _runtime_python_script_node(node_id="ps12", code=code)
+        graph = F8RuntimeGraph(graphId="g12", revision="r1", nodes=[op], edges=[])
+        await bus.set_rungraph(graph)
+
+        node = bus.get_node("ps12")
+        self.assertIsInstance(node, PythonScriptRuntimeNode)
+        assert isinstance(node, PythonScriptRuntimeNode)
+        self.assertTrue(bool(node._prefer_raw_inputs))
+        out = await node._compute_outputs_for_pull({"payload": {"user": {"name": "bob"}}}, exec_in=None)
+        self.assertEqual(out.get("out"), "bob")
 
     async def test_legacy_ctx_dict_access_sets_last_error(self) -> None:
         harness = ServiceBusHarness()

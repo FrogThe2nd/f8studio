@@ -347,6 +347,14 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
         self._hook_on_data: Callable[..., Any] | None = None
         self._hook_on_tick: Callable[..., Any] | None = None
         self._hook_on_command: Callable[..., Any] | None = None
+        self._hook_on_start_is_async = False
+        self._hook_on_stop_is_async = False
+        self._hook_on_pause_is_async = False
+        self._hook_on_resume_is_async = False
+        self._hook_on_state_is_async = False
+        self._hook_on_data_is_async = False
+        self._hook_on_tick_is_async = False
+        self._hook_on_command_is_async = False
 
         self._started = False
         self._paused = False
@@ -376,7 +384,7 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
     def __del__(self) -> None:
         if self._started and not self._closing:
             try:
-                self._invoke_sync(self._hook_on_stop, "onStop")
+                self._invoke_sync(self._hook_on_stop, self._hook_on_stop_is_async, "onStop")
             except Exception as exc:
                 logger.error("[%s:pyscript] __del__ onStop failed", self.node_id, exc_info=exc)
         try:
@@ -698,7 +706,11 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
         )
 
     def _build_invoke_ctx(self) -> PyScriptServiceContext:
-        return self._ctx.with_permission(self._permission_context())
+        permission = self._permission_context()
+        if self._ctx.permission == permission:
+            return self._ctx
+        self._ctx = self._ctx.with_permission(permission)
+        return self._ctx
 
     def _build_states_view(self, state_keys: tuple[str, ...]) -> PyScriptStatesView:
         resolved_keys = [str(key) for key in state_keys if str(key)]
@@ -742,10 +754,22 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
         self._hook_on_data = on_data if callable(on_data) else None
         self._hook_on_tick = on_tick if callable(on_tick) else None
         self._hook_on_command = on_command if callable(on_command) else None
+        self._hook_on_start_is_async = inspect.iscoroutinefunction(self._hook_on_start) if self._hook_on_start is not None else False
+        self._hook_on_stop_is_async = inspect.iscoroutinefunction(self._hook_on_stop) if self._hook_on_stop is not None else False
+        self._hook_on_pause_is_async = inspect.iscoroutinefunction(self._hook_on_pause) if self._hook_on_pause is not None else False
+        self._hook_on_resume_is_async = (
+            inspect.iscoroutinefunction(self._hook_on_resume) if self._hook_on_resume is not None else False
+        )
+        self._hook_on_state_is_async = inspect.iscoroutinefunction(self._hook_on_state) if self._hook_on_state is not None else False
+        self._hook_on_data_is_async = inspect.iscoroutinefunction(self._hook_on_data) if self._hook_on_data is not None else False
+        self._hook_on_tick_is_async = inspect.iscoroutinefunction(self._hook_on_tick) if self._hook_on_tick is not None else False
+        self._hook_on_command_is_async = (
+            inspect.iscoroutinefunction(self._hook_on_command) if self._hook_on_command is not None else False
+        )
 
     def _compile_and_start(self) -> None:
         if self._started:
-            self._invoke_sync(self._hook_on_stop, "onStop")
+            self._invoke_sync(self._hook_on_stop, self._hook_on_stop_is_async, "onStop")
         self._shutdown_video_subscriptions_sync()
 
         self._locals = {}
@@ -760,6 +784,14 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
         self._hook_on_data = None
         self._hook_on_tick = None
         self._hook_on_command = None
+        self._hook_on_start_is_async = False
+        self._hook_on_stop_is_async = False
+        self._hook_on_pause_is_async = False
+        self._hook_on_resume_is_async = False
+        self._hook_on_state_is_async = False
+        self._hook_on_data_is_async = False
+        self._hook_on_tick_is_async = False
+        self._hook_on_command_is_async = False
 
         try:
             self._compile_script(code)
@@ -768,16 +800,26 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
             self._set_error("compile", exc)
             return
 
-        self._invoke_sync(self._hook_on_start, "onStart")
+        self._invoke_sync(self._hook_on_start, self._hook_on_start_is_async, "onStart")
         self._started = True
         self._paused = False
         self._ensure_tick_task()
 
-    def _invoke_sync(self, hook: Callable[..., Any] | None, stage: str, *args: Any) -> Any:
+    def _invoke_sync(self, hook: Callable[..., Any] | None, hook_is_async: bool, stage: str, *args: Any) -> Any:
         if hook is None:
             return None
         try:
             invoke_ctx = self._build_invoke_ctx()
+            if hook_is_async:
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError as exc:
+                    self._set_error(stage, exc)
+                    return None
+                coroutine = hook(invoke_ctx, *args)
+                loop.create_task(coroutine, name=f"pyscript:{stage}:{self.node_id}")
+                return None
+
             result = hook(invoke_ctx, *args)
             if inspect.isawaitable(result):
                 try:
@@ -792,11 +834,13 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
             self._set_error(stage, exc)
             return None
 
-    async def _invoke_async(self, hook: Callable[..., Any] | None, stage: str, *args: Any) -> Any:
+    async def _invoke_async(self, hook: Callable[..., Any] | None, hook_is_async: bool, stage: str, *args: Any) -> Any:
         if hook is None:
             return None
         try:
             invoke_ctx = self._build_invoke_ctx()
+            if hook_is_async:
+                return await hook(invoke_ctx, *args)
             result = hook(invoke_ctx, *args)
             if inspect.isawaitable(result):
                 return await result
@@ -1006,7 +1050,12 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
                 }
 
                 if self._hook_on_tick is not None:
-                    result = await self._invoke_async(self._hook_on_tick, "onTick", tick_payload)
+                    result = await self._invoke_async(
+                        self._hook_on_tick,
+                        self._hook_on_tick_is_async,
+                        "onTick",
+                        tick_payload,
+                    )
                     await self._emit_outputs(result)
 
                 interval_s = max(0.001, float(self._tick_ms) / 1000.0)
@@ -1026,7 +1075,7 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
             return
         self._closing = True
         try:
-            await self._invoke_async(self._hook_on_stop, "onStop")
+            await self._invoke_async(self._hook_on_stop, self._hook_on_stop_is_async, "onStop")
             self._started = False
             self._paused = False
             tick_task = self._tick_task
@@ -1045,13 +1094,23 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
         if self._active:
             if self._paused:
                 self._paused = False
-                result = await self._invoke_async(self._hook_on_resume, "onResume", dict(meta or {}))
+                result = await self._invoke_async(
+                    self._hook_on_resume,
+                    self._hook_on_resume_is_async,
+                    "onResume",
+                    dict(meta or {}),
+                )
                 await self._emit_outputs(result)
             return
 
         if not self._paused:
             self._paused = True
-            result = await self._invoke_async(self._hook_on_pause, "onPause", dict(meta or {}))
+            result = await self._invoke_async(
+                self._hook_on_pause,
+                self._hook_on_pause_is_async,
+                "onPause",
+                dict(meta or {}),
+            )
             await self._emit_outputs(result)
 
     async def validate_state(self, field: str, value: Any, *, ts_ms: int, meta: dict[str, Any]) -> Any:
@@ -1087,13 +1146,27 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
 
         if self._hook_on_state is None:
             return
-        result = await self._invoke_async(self._hook_on_state, "onState", name, value_unwrapped, ts_ms)
+        result = await self._invoke_async(
+            self._hook_on_state,
+            self._hook_on_state_is_async,
+            "onState",
+            name,
+            value_unwrapped,
+            ts_ms,
+        )
         await self._emit_outputs(result)
 
     async def on_data(self, port: str, value: Any, *, ts_ms: int | None = None) -> None:
         if self._hook_on_data is None:
             return
-        result = await self._invoke_async(self._hook_on_data, "onData", str(port), value, ts_ms)
+        result = await self._invoke_async(
+            self._hook_on_data,
+            self._hook_on_data_is_async,
+            "onData",
+            str(port),
+            value,
+            ts_ms,
+        )
         await self._emit_outputs(result)
 
     async def on_command(self, name: str, args: dict[str, Any] | None = None, *, meta: dict[str, Any] | None = None) -> Any:
@@ -1128,5 +1201,12 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
         if self._hook_on_command is None:
             raise ValueError(f"unknown command: {call}")
 
-        result = await self._invoke_async(self._hook_on_command, "onCommand", call, call_args, call_meta)
+        result = await self._invoke_async(
+            self._hook_on_command,
+            self._hook_on_command_is_async,
+            "onCommand",
+            call,
+            call_args,
+            call_meta,
+        )
         return {"ok": True, "result": result}
