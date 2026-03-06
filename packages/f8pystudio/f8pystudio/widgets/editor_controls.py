@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
+import os
 import re
 import time
 from dataclasses import dataclass
@@ -12,6 +14,8 @@ from qtpy import QtCore, QtGui, QtWidgets
 from ..ui_notifications import show_warning
 
 _COMBO_REOPEN_GUARD_S = 0.05
+_COMBO_POPUP_FLAGS = QtCore.Qt.Popup | QtCore.Qt.FramelessWindowHint | QtCore.Qt.NoDropShadowWindowHint
+logger = logging.getLogger(__name__)
 
 
 def _strip_data_url_prefix(b64: str) -> tuple[str, str | None]:
@@ -64,15 +68,59 @@ def parse_multiselect_pool(ui_control: str) -> str | None:
         return None
     return str(m.group(1))
 
+
+def _popup_above_y(anchor_y: int, popup_h: int) -> int:
+    return int(anchor_y) - max(0, int(popup_h))
+
+
+def _combo_popup_debug_enabled() -> bool:
+    raw = str(os.getenv("F8_DEBUG_COMBO_POPUP", "")).strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _choose_best_view_for_scene_point(views: list[Any], scene_pos: QtCore.QPointF) -> Any | None:
+    visible_views: list[Any] = []
+    for view in list(views or []):
+        try:
+            if bool(view.isVisible()):
+                visible_views.append(view)
+        except (AttributeError, RuntimeError, TypeError):
+            continue
+    if not visible_views:
+        return None
+
+    containing_views: list[Any] = []
+    for view in visible_views:
+        try:
+            view_pos = view.mapFromScene(scene_pos)
+            viewport = view.viewport()
+            if viewport is not None and bool(viewport.rect().contains(view_pos)):
+                containing_views.append(view)
+        except (AttributeError, RuntimeError, TypeError):
+            continue
+
+    candidates = containing_views if containing_views else visible_views
+    for view in candidates:
+        try:
+            if bool(view.hasFocus()):
+                return view
+        except (AttributeError, RuntimeError, TypeError):
+            continue
+    for view in candidates:
+        try:
+            if bool(view.isActiveWindow()):
+                return view
+        except (AttributeError, RuntimeError, TypeError):
+            continue
+    return candidates[0] if candidates else None
+
 class _F8ComboPopup(QtWidgets.QFrame):
     valueSelected = QtCore.Signal(int)
 
     def __init__(self, parent_combo: "F8OptionCombo") -> None:
-        super().__init__(
-            parent_combo,
-            QtCore.Qt.Popup | QtCore.Qt.FramelessWindowHint | QtCore.Qt.NoDropShadowWindowHint,
-        )
+        super().__init__(None, _COMBO_POPUP_FLAGS)
         self._combo = parent_combo
+        self._last_show_monotonic_s: float = 0.0
         self.setAttribute(QtCore.Qt.WA_TranslucentBackground, True)
         self.setAutoFillBackground(False)
         self.setFrameShape(QtWidgets.QFrame.NoFrame)
@@ -125,12 +173,16 @@ class _F8ComboPopup(QtWidgets.QFrame):
             return
         self._view.setCurrentIndex(idx)
 
-    def focusOutEvent(self, event: QtGui.QFocusEvent) -> None:  # type: ignore[override]
-        super().focusOutEvent(event)
-        self.hide()
-
     def hideEvent(self, event: QtGui.QHideEvent) -> None:  # type: ignore[override]
         super().hideEvent(event)
+        if _combo_popup_debug_enabled():
+            dt_ms = (time.monotonic() - self._last_show_monotonic_s) * 1000.0
+            logger.warning(
+                "combo_popup hide name=%s dtMs=%.1f visible=%s",
+                self._combo.objectName() or "<unnamed>",
+                dt_ms,
+                bool(self.isVisible()),
+            )
         self._combo._block_popup_for(_COMBO_REOPEN_GUARD_S)
 
     def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:  # type: ignore[override]
@@ -160,6 +212,7 @@ class F8OptionCombo(QtWidgets.QComboBox):
         self._context_tooltip = ""
         self._read_only = False
         self._popup_block_until_s: float = 0.0
+        self._pending_popup_show = False
         self.setEditable(False)
         self.setInsertPolicy(QtWidgets.QComboBox.NoInsert)
         self.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
@@ -171,7 +224,7 @@ class F8OptionCombo(QtWidgets.QComboBox):
         self.currentIndexChanged.connect(self._emit)  # type: ignore[attr-defined]
         self._popup: _F8ComboPopup | None = _F8ComboPopup(self)
         self._popup.valueSelected.connect(self._on_popup_selected)  # type: ignore[attr-defined]
-        self._popup.destroyed.connect(self._on_popup_destroyed)  # type: ignore[attr-defined]
+        self._popup.destroyed.connect(lambda _obj=None: self._on_popup_destroyed(_obj))  # type: ignore[attr-defined]
 
     def _on_popup_destroyed(self, _obj: Any) -> None:
         self._popup = None
@@ -270,13 +323,23 @@ class F8OptionCombo(QtWidgets.QComboBox):
         popup.set_model(model)
         popup.set_current_index(self.currentIndex())
         popup.resize(self._popup_size())
-        pos = self._popup_pos(popup.height())
-        popup.move(pos)
-        popup.raise_()
-        popup.show()
-        popup.activateWindow()
+        anchor = self._anchor_global()
+        pos = self._popup_pos(anchor, popup.height())
+        if _combo_popup_debug_enabled():
+            logger.warning(
+                "combo_popup show name=%s anchor=%s target=%s popupSize=%sx%s parent=%s",
+                self.objectName() or "<unnamed>",
+                anchor,
+                pos,
+                popup.width(),
+                popup.height(),
+                type(popup.parentWidget()).__name__ if popup.parentWidget() is not None else "<none>",
+            )
+        self._pending_popup_show = True
+        QtCore.QTimer.singleShot(0, lambda: self._show_popup_deferred(pos))
 
     def hidePopup(self) -> None:  # type: ignore[override]
+        self._pending_popup_show = False
         popup = self._popup
         if popup is None:
             return
@@ -289,6 +352,29 @@ class F8OptionCombo(QtWidgets.QComboBox):
         if visible:
             self._block_popup_for(_COMBO_REOPEN_GUARD_S)
             popup.hide()
+
+    def _show_popup_deferred(self, pos: QtCore.QPoint) -> None:
+        if not self._pending_popup_show:
+            return
+        self._pending_popup_show = False
+        popup = self._popup
+        if popup is None or not self.isVisible() or not self.isEnabled():
+            return
+        popup._last_show_monotonic_s = time.monotonic()
+        popup.move(pos)
+        popup.show()
+        popup.raise_()
+        popup.activateWindow()
+        popup.setFocus(QtCore.Qt.PopupFocusReason)
+        if _combo_popup_debug_enabled():
+            screen = QtGui.QGuiApplication.screenAt(pos)
+            logger.warning(
+                "combo_popup shown name=%s visible=%s geo=%s screen=%s",
+                self.objectName() or "<unnamed>",
+                bool(popup.isVisible()),
+                popup.geometry(),
+                type(screen).__name__ if screen is not None else "<none>",
+            )
 
     def wheelEvent(self, event: QtGui.QWheelEvent) -> None:  # type: ignore[override]
         if self._read_only:
@@ -324,15 +410,15 @@ class F8OptionCombo(QtWidgets.QComboBox):
         width = max(self.width(), self.view().sizeHintForColumn(0) + 20)
         return QtCore.QSize(width, height)
 
-    def _popup_pos(self, popup_h: int) -> QtCore.QPoint:
-        anchor = self._anchor_global()
-        top_left = QtCore.QPoint(anchor.x(), anchor.y() - self.height())
+    def _popup_pos(self, anchor: QtCore.QPoint, popup_h: int) -> QtCore.QPoint:
         below = anchor
-        above = QtCore.QPoint(top_left.x(), top_left.y() - popup_h)
+        above = QtCore.QPoint(anchor.x(), _popup_above_y(anchor.y(), popup_h))
         screen = QtGui.QGuiApplication.screenAt(below)
         if screen is None:
             screen = QtGui.QGuiApplication.primaryScreen()
         if screen is None:
+            if _combo_popup_debug_enabled():
+                logger.warning("combo_popup no_screen anchor=%s", anchor)
             return below
         geo = screen.availableGeometry()
         if below.y() + popup_h <= geo.bottom():
@@ -353,13 +439,15 @@ class F8OptionCombo(QtWidgets.QComboBox):
                 if scene is not None:
                     views = scene.views()
                     if views:
-                        view = next((v for v in views if v.isVisible()), views[0])
                         root = proxy.widget()
                         if root is not None:
                             local_pt = self.mapTo(root, self.rect().bottomLeft())
                             scene_pos = proxy.mapToScene(QtCore.QPointF(local_pt))
                         else:
                             scene_pos = proxy.mapToScene(QtCore.QPointF(self.rect().bottomLeft()))
+                        view = _choose_best_view_for_scene_point(list(views), scene_pos)
+                        if view is None:
+                            return self.mapToGlobal(QtCore.QPoint(0, self.height()))
                         view_pt = view.mapFromScene(scene_pos)
                         return view.viewport().mapToGlobal(view_pt)
         except (AttributeError, RuntimeError, TypeError):
