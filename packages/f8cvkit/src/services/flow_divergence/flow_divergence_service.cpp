@@ -16,7 +16,7 @@
 #include "f8cppsdk/time_utils.h"
 #include "../common/service_runtime_utils.h"
 
-namespace f8::cvkit::flow_divergence {
+namespace f8::cvkit::flow_metric {
 
 using json = nlohmann::json;
 
@@ -25,6 +25,15 @@ namespace {
 json schema_string() { return json{{"type", "string"}}; }
 json schema_number() { return json{{"type", "number"}}; }
 json schema_integer() { return json{{"type", "integer"}}; }
+json schema_string_enum(const std::vector<std::string>& values, const std::string& default_value) {
+  json s{{"type", "string"}};
+  s["enum"] = json::array();
+  for (const std::string& v : values) {
+    s["enum"].push_back(v);
+  }
+  s["default"] = default_value;
+  return s;
+}
 
 json schema_number(double default_value, double minimum, double maximum) {
   json s{{"type", "number"}};
@@ -90,11 +99,11 @@ float half_to_float(std::uint16_t half_bits) {
 
 }  // namespace
 
-FlowDivergenceService::FlowDivergenceService(Config cfg) : cfg_(std::move(cfg)) {}
+FlowMetricService::FlowMetricService(Config cfg) : cfg_(std::move(cfg)) {}
 
-FlowDivergenceService::~FlowDivergenceService() { stop(); }
+FlowMetricService::~FlowMetricService() { stop(); }
 
-bool FlowDivergenceService::start() {
+bool FlowMetricService::start() {
   if (running_.load(std::memory_order_acquire)) return true;
 
   f8::cppsdk::ServiceBus::Config bus_cfg;
@@ -102,7 +111,7 @@ bool FlowDivergenceService::start() {
   bus_cfg.nats_url = cfg_.nats_url;
   bus_cfg.kv_memory_storage = true;
   bus_cfg.service_class = cfg_.service_class;
-  bus_cfg.service_name = "CVKit Flow Divergence";
+  bus_cfg.service_name = "CVKit Flow Metric";
   bus_ = std::make_unique<f8::cppsdk::ServiceBus>(bus_cfg);
   bus_->add_lifecycle_node(this);
   bus_->add_stateful_node(this);
@@ -115,7 +124,9 @@ bool FlowDivergenceService::start() {
 
   input_flow_shm_name_.clear();
   compute_every_n_frames_ = 1;
-  divergence_scale_ = 1.0;
+  metric_mode_ = MetricMode::Divergence;
+  metric_mode_state_ = "divergence";
+  metric_scale_ = 1.0;
   scalar_shm_name_ = "shm." + cfg_.service_id + ".scalar";
   scalar_shm_format_ = "scalar1_f32";
 
@@ -129,8 +140,10 @@ bool FlowDivergenceService::start() {
   flow_u_.release();
   flow_v_.release();
   du_dx_.release();
+  du_dy_.release();
+  dv_dx_.release();
   dv_dy_.release();
-  divergence_.release();
+  metric_output_.release();
 
   monitor_observed_frames_ = 0;
   monitor_processed_frames_ = 0;
@@ -145,18 +158,20 @@ bool FlowDivergenceService::start() {
   publish_state_if_changed("serviceClass", cfg_.service_class, "init", json::object());
   publish_state_if_changed("inputFlowShmName", "", "init", json::object());
   publish_state_if_changed("computeEveryNFrames", compute_every_n_frames_, "init", json::object());
-  publish_state_if_changed("divergenceScale", divergence_scale_, "init", json::object());
+  publish_state_if_changed("metricMode", metric_mode_state_, "init", json::object());
+  publish_state_if_changed("metricScale", metric_scale_, "init", json::object());
+  publish_state_if_changed("divergenceScale", metric_scale_, "init", json::object());
   publish_state_if_changed("scalarShmName", scalar_shm_name_, "init", json::object());
   publish_state_if_changed("scalarShmFormat", scalar_shm_format_, "init", json::object());
   publish_state_if_changed("lastError", "", "init", json::object());
 
   running_.store(true, std::memory_order_release);
   stop_requested_.store(false, std::memory_order_release);
-  spdlog::info("cvkit_flow_divergence started serviceId={} natsUrl={}", cfg_.service_id, cfg_.nats_url);
+  spdlog::info("cvkit_flow_metric started serviceId={} natsUrl={}", cfg_.service_id, cfg_.nats_url);
   return true;
 }
 
-void FlowDivergenceService::stop() {
+void FlowMetricService::stop() {
   stop_requested_.store(true, std::memory_order_release);
   if (!running_.exchange(false, std::memory_order_acq_rel)) return;
   if (bus_) {
@@ -168,7 +183,7 @@ void FlowDivergenceService::stop() {
   flow_reader_.close();
 }
 
-void FlowDivergenceService::tick() {
+void FlowMetricService::tick() {
   if (!running()) return;
   if (bus_) {
     (void)bus_->drain_main_thread();
@@ -183,14 +198,14 @@ void FlowDivergenceService::tick() {
   process_frame_once();
 }
 
-void FlowDivergenceService::publish_state_if_changed(const std::string& field, const json& value, const std::string& source,
-                                                     const json& meta) {
+void FlowMetricService::publish_state_if_changed(const std::string& field, const json& value, const std::string& source,
+                                                 const json& meta) {
   service_runtime::publish_state_if_changed(state_mu_, published_state_, bus_.get(), cfg_.service_id, field, value,
                                             source, meta);
 }
 
-void FlowDivergenceService::emit_monitor_snapshot(std::int64_t ts_ms, std::uint64_t frame_id, double process_ms,
-                                                  std::uint64_t points_per_frame) {
+void FlowMetricService::emit_monitor_snapshot(std::int64_t ts_ms, std::uint64_t frame_id, double process_ms,
+                                              std::uint64_t points_per_frame) {
   if (!bus_) return;
   (void)frame_id;
   if (monitor_window_start_ms_ <= 0) {
@@ -219,13 +234,13 @@ void FlowDivergenceService::emit_monitor_snapshot(std::int64_t ts_ms, std::uint6
   (void)dropped_frames;
 }
 
-void FlowDivergenceService::on_lifecycle(bool active, const json& meta) {
+void FlowMetricService::on_lifecycle(bool active, const json& meta) {
   active_.store(active, std::memory_order_release);
   (void)meta;
 }
 
-void FlowDivergenceService::on_state(const std::string& node_id, const std::string& field, const json& value,
-                                     std::int64_t ts_ms, const json& meta) {
+void FlowMetricService::on_state(const std::string& node_id, const std::string& field, const json& value, std::int64_t ts_ms,
+                                 const json& meta) {
   (void)ts_ms;
   if (node_id != cfg_.service_id) return;
 
@@ -247,8 +262,10 @@ void FlowDivergenceService::on_state(const std::string& node_id, const std::stri
       flow_u_.release();
       flow_v_.release();
       du_dx_.release();
+      du_dy_.release();
+      dv_dx_.release();
       dv_dy_.release();
-      divergence_.release();
+      metric_output_.release();
     }
     publish_state_if_changed("inputFlowShmName", input_flow_shm_name_, "state", meta);
     return;
@@ -267,21 +284,49 @@ void FlowDivergenceService::on_state(const std::string& node_id, const std::stri
     return;
   }
 
-  if (field == "divergenceScale") {
-    double v = 0.0;
-    if (!service_runtime::parse_json_double(value, v)) {
-      publish_state_if_changed("lastError", "invalid divergenceScale", "state", meta);
+  if (field == "metricMode") {
+    if (!value.is_string()) {
+      publish_state_if_changed("lastError", "invalid metricMode", "state", meta);
       return;
     }
-    divergence_scale_ = std::max(-1000.0, std::min(1000.0, v));
-    publish_state_if_changed("divergenceScale", divergence_scale_, "state", meta);
+    const std::string mode = service_runtime::to_lower_ascii_copy(service_runtime::trim_copy(value.get<std::string>()));
+    if (mode == "divergence") {
+      metric_mode_ = MetricMode::Divergence;
+      metric_mode_state_ = "divergence";
+    } else if (mode == "magnitude") {
+      metric_mode_ = MetricMode::Magnitude;
+      metric_mode_state_ = "magnitude";
+    } else if (mode == "curl") {
+      metric_mode_ = MetricMode::Curl;
+      metric_mode_state_ = "curl";
+    } else if (mode == "strain") {
+      metric_mode_ = MetricMode::Strain;
+      metric_mode_state_ = "strain";
+    } else {
+      publish_state_if_changed("lastError", "invalid metricMode: " + value.get<std::string>(), "state", meta);
+      return;
+    }
+    publish_state_if_changed("metricMode", metric_mode_state_, "state", meta);
+    publish_state_if_changed("lastError", "", "state", meta);
+    return;
+  }
+
+  if (field == "metricScale" || field == "divergenceScale") {
+    double v = 0.0;
+    if (!service_runtime::parse_json_double(value, v)) {
+      publish_state_if_changed("lastError", "invalid metricScale", "state", meta);
+      return;
+    }
+    metric_scale_ = std::max(-1000.0, std::min(1000.0, v));
+    publish_state_if_changed("metricScale", metric_scale_, "state", meta);
+    publish_state_if_changed("divergenceScale", metric_scale_, "state", meta);
     publish_state_if_changed("lastError", "", "state", meta);
     return;
   }
 }
 
-void FlowDivergenceService::on_data(const std::string& node_id, const std::string& port, const json& value, std::int64_t ts_ms,
-                                    const json& meta) {
+void FlowMetricService::on_data(const std::string& node_id, const std::string& port, const json& value, std::int64_t ts_ms,
+                                const json& meta) {
   (void)node_id;
   (void)port;
   (void)value;
@@ -290,7 +335,7 @@ void FlowDivergenceService::on_data(const std::string& node_id, const std::strin
   // SHM pull mode only.
 }
 
-bool FlowDivergenceService::ensure_flow_open() {
+bool FlowMetricService::ensure_flow_open() {
   f8::cppsdk::VideoSharedMemoryHeader hdr{};
   if (flow_reader_.readHeader(hdr)) {
     return true;
@@ -345,7 +390,7 @@ bool FlowDivergenceService::ensure_flow_open() {
   return true;
 }
 
-void FlowDivergenceService::process_frame_once() {
+void FlowMetricService::process_frame_once() {
   if (!bus_) return;
 
   std::lock_guard<std::mutex> lock(io_mu_);
@@ -419,13 +464,37 @@ void FlowDivergenceService::process_frame_once() {
   }
 
   try {
-    cv::Sobel(flow_u_, du_dx_, CV_32F, 1, 0, 3, 0.5, 0.0, cv::BORDER_REPLICATE);
-    cv::Sobel(flow_v_, dv_dy_, CV_32F, 0, 1, 3, 0.5, 0.0, cv::BORDER_REPLICATE);
-    cv::add(du_dx_, dv_dy_, divergence_);
-    divergence_ *= static_cast<float>(divergence_scale_);
+    switch (metric_mode_) {
+      case MetricMode::Divergence:
+        cv::Sobel(flow_u_, du_dx_, CV_32F, 1, 0, 3, 0.5, 0.0, cv::BORDER_REPLICATE);
+        cv::Sobel(flow_v_, dv_dy_, CV_32F, 0, 1, 3, 0.5, 0.0, cv::BORDER_REPLICATE);
+        cv::add(du_dx_, dv_dy_, metric_output_);
+        break;
+      case MetricMode::Magnitude:
+        cv::magnitude(flow_u_, flow_v_, metric_output_);
+        break;
+      case MetricMode::Curl:
+        cv::Sobel(flow_v_, dv_dx_, CV_32F, 1, 0, 3, 0.5, 0.0, cv::BORDER_REPLICATE);
+        cv::Sobel(flow_u_, du_dy_, CV_32F, 0, 1, 3, 0.5, 0.0, cv::BORDER_REPLICATE);
+        cv::subtract(dv_dx_, du_dy_, metric_output_);
+        break;
+      case MetricMode::Strain:
+        cv::Sobel(flow_u_, du_dx_, CV_32F, 1, 0, 3, 0.5, 0.0, cv::BORDER_REPLICATE);
+        cv::Sobel(flow_v_, dv_dy_, CV_32F, 0, 1, 3, 0.5, 0.0, cv::BORDER_REPLICATE);
+        cv::Sobel(flow_u_, du_dy_, CV_32F, 0, 1, 3, 0.5, 0.0, cv::BORDER_REPLICATE);
+        cv::Sobel(flow_v_, dv_dx_, CV_32F, 1, 0, 3, 0.5, 0.0, cv::BORDER_REPLICATE);
+        cv::Mat extensional;
+        cv::Mat shear;
+        cv::subtract(du_dx_, dv_dy_, extensional);
+        cv::add(du_dy_, dv_dx_, shear);
+        cv::magnitude(extensional, shear, metric_output_);
+        break;
+    }
+    metric_output_ *= static_cast<float>(metric_scale_);
   } catch (const cv::Exception& ex) {
     ++monitor_fail_frames_;
-    publish_state_if_changed("lastError", std::string("opencv divergence failed: ") + ex.what(), "runtime", json::object());
+    publish_state_if_changed("lastError", std::string("opencv flow metric failed: ") + ex.what(), "runtime",
+                             json::object());
     return;
   }
 
@@ -453,7 +522,7 @@ void FlowDivergenceService::process_frame_once() {
   const std::size_t scalar_bytes = scalar_pitch * static_cast<std::size_t>(height);
   scalar_payload_.assign(scalar_bytes, std::byte{0});
   for (int y = 0; y < height; ++y) {
-    const float* src = divergence_.ptr<float>(y);
+    const float* src = metric_output_.ptr<float>(y);
     std::byte* dst = scalar_payload_.data() + static_cast<std::size_t>(y) * scalar_pitch;
     std::memcpy(dst, src, static_cast<std::size_t>(width) * sizeof(float));
   }
@@ -464,8 +533,10 @@ void FlowDivergenceService::process_frame_once() {
     return;
   }
 
+  publish_state_if_changed("metricMode", metric_mode_state_, "runtime", json::object());
+  publish_state_if_changed("metricScale", metric_scale_, "runtime", json::object());
   publish_state_if_changed("scalarShmFormat", scalar_shm_format_, "runtime", json::object());
-  publish_state_if_changed("divergenceScale", divergence_scale_, "runtime", json::object());
+  publish_state_if_changed("divergenceScale", metric_scale_, "runtime", json::object());
   publish_state_if_changed("lastError", "", "runtime", json::object());
 
   const std::int64_t end_ts_ms = f8::cppsdk::now_ms();
@@ -473,22 +544,26 @@ void FlowDivergenceService::process_frame_once() {
   emit_monitor_snapshot(end_ts_ms, hdr.frame_id, static_cast<double>(end_ts_ms - process_start_ms), points);
 }
 
-json FlowDivergenceService::describe() {
+json FlowMetricService::describe() {
   json service;
   service["schemaVersion"] = "f8service/1";
-  service["serviceClass"] = "f8.cvkit.flowdivergence";
-  service["label"] = "CVKit Flow Divergence";
+  service["serviceClass"] = "f8.cvkit.flowmetric";
+  service["label"] = "CVKit Flow Metric";
   service["version"] = "0.0.1";
   service["rendererClass"] = "default_svc";
-  service["tags"] = json::array({"cv", "optical_flow", "divergence", "scalar_field"});
+  service["tags"] = json::array({"cv", "optical_flow", "flow_metric", "scalar_field"});
   service["stateFields"] = json::array({
       state_field("inputFlowShmName", schema_string(), "rw", "Input Flow SHM",
                   "Input flow SHM name (format flow2_f16, e.g. shm.xxx.flow).", true),
       state_field("computeEveryNFrames", schema_integer(1, 1, 120), "rw", "Compute Every N Frames",
-                  "Compute divergence once per N new flow frames.", false),
-      state_field("divergenceScale", schema_number(1.0, -1000.0, 1000.0), "rw", "Divergence Scale",
-                  "Scale factor applied to computed divergence values before output.", false),
-      state_field("scalarShmName", schema_string(), "ro", "Scalar SHM Name", "Output SHM name for scalar divergence field.",
+                  "Compute selected flow metric once per N new flow frames.", false),
+      state_field("metricMode", schema_string_enum({"divergence", "magnitude", "curl", "strain"}, "divergence"), "rw",
+                  "Metric Mode", "Flow metric mode: divergence | magnitude | curl | strain.", false),
+      state_field("metricScale", schema_number(1.0, -1000.0, 1000.0), "rw", "Metric Scale",
+                  "Scale factor applied to computed metric values before output.", false),
+      state_field("divergenceScale", schema_number(1.0, -1000.0, 1000.0), "rw", "Divergence Scale (Legacy)",
+                  "Deprecated alias of metricScale for backward compatibility.", false),
+      state_field("scalarShmName", schema_string(), "ro", "Scalar SHM Name", "Output SHM name for scalar metric field.",
                   true),
       state_field("scalarShmFormat", schema_string(), "ro", "Scalar SHM Format",
                   "Output payload format. Fixed to scalar1_f32.", false),
@@ -508,4 +583,4 @@ json FlowDivergenceService::describe() {
   return out;
 }
 
-}  // namespace f8::cvkit::flow_divergence
+}  // namespace f8::cvkit::flow_metric

@@ -15,20 +15,20 @@
 #include "f8cppsdk/service_bus.h"
 #include "f8cppsdk/video_shared_memory_sink.h"
 
-namespace f8::cvkit::flow_divergence {
+namespace f8::cvkit::flow_metric {
 
-class FlowDivergenceService final : public f8::cppsdk::LifecycleNode,
-                                    public f8::cppsdk::StatefulNode,
-                                    public f8::cppsdk::DataReceivableNode {
+class FlowMetricService final : public f8::cppsdk::LifecycleNode,
+                                public f8::cppsdk::StatefulNode,
+                                public f8::cppsdk::DataReceivableNode {
  public:
   struct Config {
     std::string service_id;
-    std::string service_class = "f8.cvkit.flowdivergence";
+    std::string service_class = "f8.cvkit.flowmetric";
     std::string nats_url = "nats://127.0.0.1:4222";
   };
 
-  explicit FlowDivergenceService(Config cfg);
-  ~FlowDivergenceService();
+  explicit FlowMetricService(Config cfg);
+  ~FlowMetricService();
 
   bool start();
   void stop();
@@ -48,6 +48,12 @@ class FlowDivergenceService final : public f8::cppsdk::LifecycleNode,
 
  private:
   using json = nlohmann::json;
+  enum class MetricMode {
+    Divergence,
+    Magnitude,
+    Curl,
+    Strain,
+  };
 
   void publish_state_if_changed(const std::string& field, const json& value, const std::string& source,
                                 const json& meta);
@@ -69,7 +75,9 @@ class FlowDivergenceService final : public f8::cppsdk::LifecycleNode,
   // Input flow SHM settings and reader state.
   std::string input_flow_shm_name_;
   int compute_every_n_frames_ = 1;
-  double divergence_scale_ = 1.0;
+  MetricMode metric_mode_ = MetricMode::Divergence;
+  std::string metric_mode_state_ = "divergence";
+  double metric_scale_ = 1.0;
   f8::cppsdk::VideoSharedMemoryReader flow_reader_;
   std::vector<std::byte> flow_payload_;
   std::uint32_t last_notify_seq_ = 0;
@@ -87,8 +95,10 @@ class FlowDivergenceService final : public f8::cppsdk::LifecycleNode,
   cv::Mat flow_u_;
   cv::Mat flow_v_;
   cv::Mat du_dx_;
+  cv::Mat du_dy_;
+  cv::Mat dv_dx_;
   cv::Mat dv_dy_;
-  cv::Mat divergence_;
+  cv::Mat metric_output_;
 
   // Monitor stats.
   std::uint64_t monitor_observed_frames_ = 0;
@@ -102,4 +112,4 @@ class FlowDivergenceService final : public f8::cppsdk::LifecycleNode,
   double monitor_fps_ = 0.0;
 };
 
-}  // namespace f8::cvkit::flow_divergence
+}  // namespace f8::cvkit::flow_metric

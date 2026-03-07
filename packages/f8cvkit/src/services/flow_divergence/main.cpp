@@ -23,7 +23,7 @@ void on_signal(int) { g_stop.store(true, std::memory_order_release); }
 }  // namespace
 
 int main(int argc, char** argv) {
-  cxxopts::Options options("f8cvkit_flow_divergence_service", "CVKit optical-flow divergence service");
+  cxxopts::Options options("f8cvkit_flow_metric_service", "CVKit optical-flow metric service");
   options.add_options()("describe", "Print service spec JSON and exit")(
       "service-id", "Service instance id (required unless --describe)", cxxopts::value<std::string>()->default_value(""))(
       "nats-url", "NATS server URL", cxxopts::value<std::string>()->default_value("nats://127.0.0.1:4222"))(
@@ -36,7 +36,7 @@ int main(int argc, char** argv) {
   }
   if (result.count("describe")) {
     const auto payload = f8::cppsdk::normalize_describe_with_builtin_state_fields(
-        f8::cvkit::flow_divergence::FlowDivergenceService::describe());
+        f8::cvkit::flow_metric::FlowMetricService::describe());
     std::cout << payload.dump(1) << "\n";
     return 0;
   }
@@ -60,13 +60,13 @@ int main(int argc, char** argv) {
     return 2;
   }
 
-  f8::cvkit::flow_divergence::FlowDivergenceService::Config cfg;
+  f8::cvkit::flow_metric::FlowMetricService::Config cfg;
   cfg.service_id = service_id;
   cfg.nats_url = result["nats-url"].as<std::string>();
 
-  f8::cvkit::flow_divergence::FlowDivergenceService svc(cfg);
+  f8::cvkit::flow_metric::FlowMetricService svc(cfg);
   if (!svc.start()) {
-    spdlog::error("cvkit_flow_divergence start failed");
+    spdlog::error("cvkit_flow_metric start failed");
     return 1;
   }
 

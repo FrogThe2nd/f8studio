@@ -82,6 +82,34 @@ def test_prepare_insert_graph_from_file_rejects_invalid_schema(tmp_path: Path) -
         graph.prepare_insert_graph_from_file(str(file_path))
 
 
+def test_prepare_insert_graph_from_file_accepts_utf8_bom_and_chinese(tmp_path: Path) -> None:
+    graph = _new_graph_stub()
+    graph.all_nodes = lambda: []  # type: ignore[method-assign]
+
+    payload = {
+        "schemaVersion": "f8studio-session/1",
+        "layout": {
+            "nodes": {
+                "svc.zh": {
+                    "id": "svc.zh",
+                    "name": "中文服务",
+                    "custom": {"label": "相机输入"},
+                    "pos": [12, 34],
+                }
+            },
+            "connections": [],
+        },
+    }
+    file_path = tmp_path / "insert_utf8_bom_zh.json"
+    file_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8-sig")
+
+    request = graph.prepare_insert_graph_from_file(str(file_path))
+
+    assert request.node_count == 1
+    assert request.source_bbox.min_x == 12.0
+    assert request.source_bbox.min_y == 34.0
+
+
 def test_build_insert_id_remap_uses_suffix_strategy() -> None:
     graph = _new_graph_stub()
     graph.all_nodes = lambda: [_FakeNode("cam"), _FakeNode("cam_2"), _FakeNode("op")]  # type: ignore[method-assign]
