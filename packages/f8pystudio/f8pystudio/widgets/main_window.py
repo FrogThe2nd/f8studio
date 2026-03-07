@@ -254,7 +254,7 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         QtWidgets.QApplication.instance().aboutToQuit.connect(self._auto_save_session)  # type: ignore[attr-defined]
 
     def _install_window_flash_trace_filter(self) -> None:
-        raw = str(os.environ.get("F8_STUDIO_TRACE_WINDOW_FLASH", "1") or "").strip().lower()
+        raw = str(os.environ.get("F8_STUDIO_TRACE_WINDOW_FLASH", "0") or "").strip().lower()
         if raw in {"0", "false", "off", "no"}:
             return
         app = QtWidgets.QApplication.instance()
@@ -262,7 +262,7 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
             return
         self._window_flash_trace_filter = _WindowFlashTraceFilter(main_window=self, parent=self)
         app.installEventFilter(self._window_flash_trace_filter)
-        logger.warning("[WindowTrace] top-level window trace enabled (set F8_STUDIO_TRACE_WINDOW_FLASH=0 to disable)")
+        logger.warning("[WindowTrace] top-level window trace enabled via F8_STUDIO_TRACE_WINDOW_FLASH")
 
     @QtCore.Slot(str, str)
     def _on_service_output(self, service_id: str, line: str) -> None:

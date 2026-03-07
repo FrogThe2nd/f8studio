@@ -1113,20 +1113,6 @@ def open_code_editor_window(
     assist_context_provider: Callable[[], EditorAssistContext | None] | None = None,
 ) -> QtWidgets.QDialog:
     dlg: QtWidgets.QDialog
-    parent_class = parent.__class__.__name__ if parent is not None else "None"
-    parent_title = ""
-    if parent is not None:
-        try:
-            parent_title = str(parent.windowTitle() or "")
-        except (AttributeError, RuntimeError, TypeError):
-            parent_title = ""
-    logger.warning(
-        "[WindowTrace] open_code_editor_window requested title=%r language=%s parentClass=%s parentTitle=%r",
-        str(title or ""),
-        str(language or ""),
-        parent_class,
-        parent_title,
-    )
     # Always create as a top-level window (no Qt parent) so it behaves as an
     # independent editor window in the OS window manager/task switcher.
     resolved_context = _resolve_assist_context(
@@ -1170,20 +1156,6 @@ def open_code_editor_window(
     dlg.show()
     dlg.raise_()
     dlg.activateWindow()
-    try:
-        geom = dlg.frameGeometry()
-        logger.warning(
-            "[WindowTrace] open_code_editor_window shown class=%s title=%r size=%dx%d pos=(%d,%d) object=%s",
-            dlg.__class__.__name__,
-            str(dlg.windowTitle() or ""),
-            int(geom.width()),
-            int(geom.height()),
-            int(geom.x()),
-            int(geom.y()),
-            hex(id(dlg)),
-        )
-    except (AttributeError, RuntimeError, TypeError):
-        logger.warning("[WindowTrace] open_code_editor_window shown (geometry unavailable) object=%s", hex(id(dlg)))
     return dlg
 
 

@@ -3,7 +3,6 @@ from __future__ import annotations
 from f8pysdk.msgspec_codec import copy_model, dump_json
 import json
 import logging
-import os
 import time
 from collections import defaultdict
 from typing import Any, Callable
@@ -84,27 +83,6 @@ from ..ui_icons import StudioIcon, icon_for
 
 
 logger = logging.getLogger(__name__)
-
-
-def _window_trace_detail_enabled() -> bool:
-    raw = str(os.getenv("F8_STUDIO_TRACE_WINDOW_FLASH_DETAIL", "1") or "").strip().lower()
-    return raw not in {"0", "false", "off", "no"}
-
-
-def _visible_top_level_counts() -> tuple[int, int]:
-    app = QtWidgets.QApplication.instance()
-    if app is None:
-        return 0, 0
-    try:
-        widget_count = len([widget for widget in app.topLevelWidgets() if bool(widget.isVisible())])
-    except (AttributeError, RuntimeError, TypeError):
-        widget_count = 0
-    try:
-        windows = list(QtGui.QGuiApplication.topLevelWindows() or [])
-        window_count = len([window for window in windows if bool(window.isVisible())])
-    except (AttributeError, RuntimeError, TypeError):
-        window_count = 0
-    return widget_count, window_count
 
 
 def _apply_read_only_widget(widget: QtWidgets.QWidget) -> None:
@@ -2415,14 +2393,6 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
     def bind_node(self, node: Any, *, view_state: dict[str, Any] | None = None) -> None:
         if node is None:
             return
-        try:
-            node_id_for_trace = str(node.id or "")
-        except Exception:
-            node_id_for_trace = ""
-        logger.warning("[WindowTrace] property_editor bind_node nodeId=%s", node_id_for_trace)
-        detail_trace = _window_trace_detail_enabled()
-        start_monotonic = time.monotonic() if detail_trace else 0.0
-        before_widget_count, before_window_count = _visible_top_level_counts() if detail_trace else (0, 0)
         self._node = node
         try:
             self.__node_id = str(node.id or "")
@@ -2440,18 +2410,6 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
             self.type_wgt.setText("")
         self._option_pool_dependents = {}
         self._port_connections = self._read_node(node)
-        if detail_trace:
-            after_widget_count, after_window_count = _visible_top_level_counts()
-            elapsed_ms = (time.monotonic() - start_monotonic) * 1000.0
-            logger.warning(
-                "[WindowTrace] property_editor bind_node after_read nodeId=%s dtMs=%.1f topLevelWidgets=%d->%d topLevelWindows=%d->%d",
-                node_id_for_trace,
-                elapsed_ms,
-                int(before_widget_count),
-                int(after_widget_count),
-                int(before_window_count),
-                int(after_window_count),
-            )
         missing_locked, missing_type = _node_missing_lock_info(node)
         try:
             self._missing_banner.setVisible(bool(missing_locked))
@@ -2813,17 +2771,6 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
         model = node.model
         graph_model = node.graph.model
         missing_locked, _missing_type = _node_missing_lock_info(node)
-        detail_trace = _window_trace_detail_enabled()
-        if detail_trace:
-            try:
-                custom_prop_count = len(list(model.custom_properties.items()))
-            except Exception:
-                custom_prop_count = -1
-            logger.warning(
-                "[WindowTrace] _read_node start nodeId=%s customProps=%d",
-                str(self.__node_id or ""),
-                int(custom_prop_count),
-            )
 
         common_props = graph_model.get_node_common_properties(node.type_) or {}
         spec = _get_node_spec(node)
@@ -2928,18 +2875,6 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
                     wid_type = _widget_type_for_property(name)
                     if wid_type == 0:
                         continue
-                    if detail_trace:
-                        try:
-                            ui_control = str(_state_field_ui_control(node, name) or "").strip().lower()
-                        except Exception:
-                            ui_control = ""
-                        logger.warning(
-                            "[WindowTrace] _read_node build_state_widget nodeId=%s field=%s widType=%d uiControl=%s",
-                            str(self.__node_id or ""),
-                            name,
-                            int(wid_type),
-                            ui_control,
-                        )
                     widget = _build_state_value_widget(
                         node=node,
                         prop_name=name,
@@ -2984,19 +2919,6 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
                 wid_type = _widget_type_for_property(str(prop_name))
                 if wid_type == 0:
                     continue
-                if detail_trace:
-                    try:
-                        ui_control = str(_state_field_ui_control(node, prop_name) or "").strip().lower()
-                    except Exception:
-                        ui_control = ""
-                    logger.warning(
-                        "[WindowTrace] _read_node build_prop_widget nodeId=%s prop=%s tab=%s widType=%d uiControl=%s",
-                        str(self.__node_id or ""),
-                        str(prop_name or ""),
-                        str(tab or ""),
-                        int(wid_type),
-                        ui_control,
-                    )
                 widget = _build_state_value_widget(
                     node=node,
                     prop_name=prop_name,
@@ -3175,12 +3097,6 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
                     self.__tab.setCurrentIndex(i)
                     break
 
-        if detail_trace:
-            logger.warning(
-                "[WindowTrace] _read_node end nodeId=%s tabCount=%d",
-                str(self.__node_id or ""),
-                int(self.__tab.count()),
-            )
         return None
 
     def _on_spec_applied(self) -> None:
@@ -3546,7 +3462,6 @@ class F8StudioSingleNodePropertiesWidget(QtWidgets.QWidget):
 
     def set_node(self, node: Any | None, *, force_clear: bool = False) -> None:
         if node is None:
-            logger.warning("[WindowTrace] single_prop_panel set_node(None) force_clear=%s", bool(force_clear))
             # Avoid transient clear -> re-set flicker caused by selection jitter.
             # Only clear when explicitly forced (eg. node deleted) or when the
             # panel is currently empty.
@@ -3557,7 +3472,6 @@ class F8StudioSingleNodePropertiesWidget(QtWidgets.QWidget):
             node_id = str(node.id or "")
         except Exception:
             node_id = ""
-        logger.warning("[WindowTrace] single_prop_panel set_node nodeId=%s", node_id)
         if not node_id:
             self._clear_editor(clear_node_id=True)
             return

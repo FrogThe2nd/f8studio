@@ -23,75 +23,14 @@ from ...widgets.editor_controls import (
 from ...widgets.state_controls.pool_resolver import resolve_pool_items
 from ...widgets.property_value_widgets import F8NumberPropLineEdit, open_code_editor_window
 from .node_item_core import StateFieldInfo, state_field_info
+from .proxy_widget_utils import dispose_detached_proxy_widget
 from .service_toolbar_host import F8ElideToolButton, F8ForceGlobalToolTipFilter
 
 logger = logging.getLogger(__name__)
 
 
-def _trace_widget(widget: QtWidgets.QWidget | None) -> str:
-    if widget is None:
-        return "None"
-    try:
-        class_name = str(widget.metaObject().className() or widget.__class__.__name__)
-    except (AttributeError, RuntimeError, TypeError):
-        class_name = widget.__class__.__name__
-    try:
-        title = str(widget.windowTitle() or "")
-    except (AttributeError, RuntimeError, TypeError):
-        title = ""
-    try:
-        visible = bool(widget.isVisible())
-    except (AttributeError, RuntimeError, TypeError):
-        visible = False
-    try:
-        is_window = bool(widget.isWindow())
-    except (AttributeError, RuntimeError, TypeError):
-        is_window = False
-    try:
-        parent_widget = widget.parentWidget()
-    except (AttributeError, RuntimeError, TypeError):
-        parent_widget = None
-    parent_class = parent_widget.__class__.__name__ if parent_widget is not None else "None"
-    return (
-        f"{class_name}(title={title!r}, visible={visible}, isWindow={is_window}, "
-        f"parent={parent_class}, object={hex(id(widget))})"
-    )
-
-
-def _node_id_for_trace(node_item: Any) -> str:
-    node = node_item._backend_node()
-    if node is None:
-        return ""
-    try:
-        return str(node.id or "")
-    except (AttributeError, RuntimeError, TypeError):
-        return ""
-
-
 def _dispose_proxy_widget(widget: QtWidgets.QWidget | None) -> None:
-    """
-    Dispose a widget detached from QGraphicsProxyWidget without exposing it as
-    a transient top-level window.
-    """
-    if widget is None:
-        return
-    logger.warning("[WindowTrace] inline_state dispose detached widget=%s", _trace_widget(widget))
-    try:
-        widget.hide()
-    except (AttributeError, RuntimeError, TypeError):
-        logger.exception("Failed to hide detached inline-state widget before dispose")
-    try:
-        widget.setWindowFlag(QtCore.Qt.WindowType.Window, False)
-    except (AttributeError, RuntimeError, TypeError):
-        logger.exception("Failed to clear Window flag on detached inline-state widget")
-    try:
-        widget.setAttribute(QtCore.Qt.WidgetAttribute.WA_DontShowOnScreen, True)
-    except (AttributeError, RuntimeError, TypeError):
-        logger.exception("Failed to set WA_DontShowOnScreen on detached inline-state widget")
-    try:
-        widget.deleteLater()
-    except (AttributeError, RuntimeError, TypeError):
-        logger.exception("Failed to delete detached inline-state widget")
+    dispose_detached_proxy_widget(widget, context="inline_state")
 
 
 def _editor_assist_context(node_item: Any, *, state_field_name: str) -> EditorAssistContext | None:
@@ -794,7 +733,6 @@ def ensure_inline_state_widgets(node_item: Any) -> bool:
     # not ready yet; these frames can trigger redundant proxy rebuild churn.
     if not node_id:
         return False
-    logger.warning("[WindowTrace] inline_state ensure start nodeId=%s", node_id)
     layout_dirty = False
     try:
         fields = list(node.effective_state_fields() or [])
@@ -846,12 +784,6 @@ def ensure_inline_state_widgets(node_item: Any) -> bool:
             pass
         _dispose_proxy_widget(old)
         layout_dirty = True
-        logger.warning(
-            "[WindowTrace] inline_state remove stale field nodeId=%s field=%s old=%s",
-            _node_id_for_trace(node_item),
-            str(name or ""),
-            _trace_widget(old),
-        )
         try:
             proxy.setParentItem(None)
             if node_item.scene() is not None:
@@ -957,13 +889,6 @@ def ensure_inline_state_widgets(node_item: Any) -> bool:
         proxy.setWidget(panel)
         layout_dirty = True
         if old is not None and old is not panel:
-            logger.warning(
-                "[WindowTrace] inline_state replace proxy widget nodeId=%s field=%s old=%s new=%s",
-                node_id,
-                str(name or ""),
-                _trace_widget(old),
-                _trace_widget(panel),
-            )
             _dispose_proxy_widget(old)
             layout_dirty = True
 
