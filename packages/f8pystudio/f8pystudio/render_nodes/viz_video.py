@@ -6,7 +6,7 @@ import numpy as np
 from NodeGraphQt.nodes.base_node import NodeBaseWidget
 from qtpy import QtCore, QtGui, QtWidgets
 
-from f8pysdk.shm import VIDEO_FORMAT_FLOW2_F16, VideoShmReader
+from f8pysdk.shm import VIDEO_FORMAT_FLOW2_F16, VIDEO_FORMAT_SCALAR1_F32, VideoShmReader
 
 from ..nodegraph.operator_basenode import F8StudioOperatorBaseNode
 from ..nodegraph.viz_operator_nodeitem import F8StudioVizOperatorNodeItem
@@ -29,6 +29,120 @@ def _hsv_to_rgb_u8(h: np.ndarray, s: np.ndarray, v: np.ndarray) -> np.ndarray:
     b = np.select([m == 0, m == 1, m == 2, m == 3, m == 4], [p, p, t, v, v], default=q)
     rgb = np.stack([r, g, b], axis=2)
     return np.clip(rgb * 255.0, 0.0, 255.0).astype(np.uint8)
+
+
+def _colormap_gray(v: np.ndarray) -> np.ndarray:
+    vv = np.clip(v, 0.0, 1.0)
+    return np.stack([vv, vv, vv], axis=2)
+
+
+def _colormap_turbo(v: np.ndarray) -> np.ndarray:
+    vv = np.clip(v, 0.0, 1.0)
+    r = np.clip(1.6 * vv - 0.2, 0.0, 1.0)
+    g = np.clip(1.2 - np.abs(2.0 * vv - 1.0) * 1.6, 0.0, 1.0)
+    b = np.clip(1.2 * (1.0 - vv) - 0.1, 0.0, 1.0)
+    return np.stack([r, g, b], axis=2)
+
+
+def _colormap_viridis(v: np.ndarray) -> np.ndarray:
+    vv = np.clip(v, 0.0, 1.0)
+    r = np.clip(0.28 + 0.65 * vv**1.15, 0.0, 1.0)
+    g = np.clip(0.08 + 1.05 * vv - 0.25 * vv**2.0, 0.0, 1.0)
+    b = np.clip(0.40 + 0.65 * (1.0 - vv) ** 1.1, 0.0, 1.0)
+    return np.stack([r, g, b], axis=2)
+
+
+def _colormap_magma(v: np.ndarray) -> np.ndarray:
+    vv = np.clip(v, 0.0, 1.0)
+    r = np.clip(0.05 + 1.20 * vv - 0.20 * vv**2.0, 0.0, 1.0)
+    g = np.clip(0.00 + 0.90 * vv**1.7, 0.0, 1.0)
+    b = np.clip(0.10 + 0.65 * (1.0 - vv) ** 1.6, 0.0, 1.0)
+    return np.stack([r, g, b], axis=2)
+
+
+def _apply_colormap(values_01: np.ndarray, *, colormap: str) -> np.ndarray:
+    cmap = str(colormap or "").strip().lower()
+    if cmap == "gray":
+        rgb = _colormap_gray(values_01)
+    elif cmap == "viridis":
+        rgb = _colormap_viridis(values_01)
+    elif cmap == "magma":
+        rgb = _colormap_magma(values_01)
+    else:
+        rgb = _colormap_turbo(values_01)
+    return np.clip(rgb * 255.0, 0.0, 255.0).astype(np.uint8)
+
+
+def _normalize_scalar_values(
+    values: np.ndarray,
+    *,
+    range_mode: str,
+    manual_min: float,
+    manual_max: float,
+    auto_percentile_lo: float,
+    auto_percentile_hi: float,
+    invert: bool,
+    nan_mode: str,
+) -> tuple[np.ndarray, np.ndarray]:
+    finite_mask = np.isfinite(values)
+    alpha = np.full(values.shape, 255, dtype=np.uint8)
+    normalized = np.zeros(values.shape, dtype=np.float32)
+
+    if finite_mask.any():
+        finite_values = values[finite_mask].astype(np.float32, copy=False)
+        if str(range_mode or "").strip().lower() == "manual":
+            lo = float(manual_min)
+            hi = float(manual_max)
+        else:
+            lo_pct = float(max(0.0, min(100.0, auto_percentile_lo)))
+            hi_pct = float(max(0.0, min(100.0, auto_percentile_hi)))
+            if hi_pct < lo_pct:
+                lo_pct, hi_pct = hi_pct, lo_pct
+            lo = float(np.percentile(finite_values, lo_pct))
+            hi = float(np.percentile(finite_values, hi_pct))
+
+        if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:
+            lo = float(np.min(finite_values))
+            hi = float(np.max(finite_values))
+
+        if np.isfinite(lo) and np.isfinite(hi) and hi > lo:
+            normalized = ((values.astype(np.float32, copy=False) - lo) / (hi - lo)).astype(np.float32, copy=False)
+            normalized = np.clip(normalized, 0.0, 1.0)
+        else:
+            normalized.fill(0.0)
+    else:
+        normalized.fill(0.0)
+
+    nan_mode_normalized = str(nan_mode or "").strip().lower()
+    invalid_mask = ~finite_mask
+    if invalid_mask.any():
+        if nan_mode_normalized == "transparent":
+            alpha[invalid_mask] = 0
+            normalized[invalid_mask] = 0.0
+        elif nan_mode_normalized in ("zero", "min"):
+            normalized[invalid_mask] = 0.0
+        elif nan_mode_normalized == "max":
+            normalized[invalid_mask] = 1.0
+        else:
+            alpha[invalid_mask] = 0
+            normalized[invalid_mask] = 0.0
+
+    if invert:
+        normalized = 1.0 - normalized
+    return normalized, alpha
+
+
+def _to_bool(value: object, *, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    text = str(value or "").strip().lower()
+    if text in ("1", "true", "yes", "on"):
+        return True
+    if text in ("0", "false", "no", "off"):
+        return False
+    return bool(default)
 
 
 class _VideoShmPane(QtWidgets.QWidget):
@@ -76,11 +190,22 @@ class _VideoShmPane(QtWidgets.QWidget):
 
         self._video_reader: VideoShmReader | None = None
         self._flow_reader: VideoShmReader | None = None
+        self._scalar_reader: VideoShmReader | None = None
         self._video_shm_name = ""
         self._flow_shm_name = ""
+        self._scalar_shm_name = ""
         self._flow_display_mode = "off"
         self._flow_mag_scale = 20.0
         self._flow_stride = 12
+        self._scalar_display_mode = "off"
+        self._scalar_colormap = "turbo"
+        self._scalar_range_mode = "auto"
+        self._scalar_min = -1.0
+        self._scalar_max = 1.0
+        self._scalar_auto_percentile_lo = 2.0
+        self._scalar_auto_percentile_hi = 98.0
+        self._scalar_invert = False
+        self._scalar_nan_mode = "transparent"
         self._scale_mode = "native"
 
         self._last_video_frame_id = 0
@@ -109,13 +234,36 @@ class _VideoShmPane(QtWidgets.QWidget):
         flow_display_mode: str,
         flow_mag_scale: float,
         flow_stride: int,
+        scalar_shm_name: str,
+        scalar_display_mode: str,
+        scalar_colormap: str,
+        scalar_range_mode: str,
+        scalar_min: float,
+        scalar_max: float,
+        scalar_auto_percentile_lo: float,
+        scalar_auto_percentile_hi: float,
+        scalar_invert: bool,
+        scalar_nan_mode: str,
         scale_mode: str,
     ) -> None:
         next_video = str(shm_name or "").strip()
         next_flow = str(flow_shm_name or "").strip()
+        next_scalar = str(scalar_shm_name or "").strip()
         next_mode = str(flow_display_mode or "off").strip().lower()
         if next_mode not in ("off", "hsv", "arrows"):
             next_mode = "off"
+        next_scalar_mode = str(scalar_display_mode or "off").strip().lower()
+        if next_scalar_mode not in ("off", "colormap"):
+            next_scalar_mode = "off"
+        next_scalar_colormap = str(scalar_colormap or "turbo").strip().lower()
+        if next_scalar_colormap not in ("gray", "turbo", "viridis", "magma"):
+            next_scalar_colormap = "turbo"
+        next_scalar_range = str(scalar_range_mode or "auto").strip().lower()
+        if next_scalar_range not in ("auto", "manual"):
+            next_scalar_range = "auto"
+        next_scalar_nan_mode = str(scalar_nan_mode or "transparent").strip().lower()
+        if next_scalar_nan_mode not in ("transparent", "zero", "min", "max"):
+            next_scalar_nan_mode = "transparent"
 
         if next_video != self._video_shm_name:
             self._video_shm_name = next_video
@@ -123,9 +271,21 @@ class _VideoShmPane(QtWidgets.QWidget):
         if next_flow != self._flow_shm_name:
             self._flow_shm_name = next_flow
             self._reset_flow_reader()
+        if next_scalar != self._scalar_shm_name:
+            self._scalar_shm_name = next_scalar
+            self._reset_scalar_reader()
         self._flow_display_mode = next_mode
         self._flow_mag_scale = max(0.1, float(flow_mag_scale))
         self._flow_stride = max(2, int(flow_stride))
+        self._scalar_display_mode = next_scalar_mode
+        self._scalar_colormap = next_scalar_colormap
+        self._scalar_range_mode = next_scalar_range
+        self._scalar_min = float(scalar_min)
+        self._scalar_max = float(scalar_max)
+        self._scalar_auto_percentile_lo = float(max(0.0, min(100.0, float(scalar_auto_percentile_lo))))
+        self._scalar_auto_percentile_hi = float(max(0.0, min(100.0, float(scalar_auto_percentile_hi))))
+        self._scalar_invert = bool(scalar_invert)
+        self._scalar_nan_mode = next_scalar_nan_mode
         next_scale_mode = str(scale_mode or "native").strip().lower()
         self._scale_mode = next_scale_mode if next_scale_mode in ("native", "fit") else "native"
         self._timer.setInterval(max(1, int(throttle_ms)))
@@ -138,6 +298,7 @@ class _VideoShmPane(QtWidgets.QWidget):
             pass
         self._reset_video_reader()
         self._reset_flow_reader()
+        self._reset_scalar_reader()
 
     def _reset_video_reader(self) -> None:
         try:
@@ -158,8 +319,16 @@ class _VideoShmPane(QtWidgets.QWidget):
         self._flow_reader = None
         self._last_flow_frame_id = 0
 
+    def _reset_scalar_reader(self) -> None:
+        try:
+            if self._scalar_reader is not None:
+                self._scalar_reader.close()
+        except (AttributeError, RuntimeError, TypeError):
+            pass
+        self._scalar_reader = None
+
     def _sync_timer_with_update_state(self) -> None:
-        has_source = bool(self._video_shm_name) or bool(self._flow_shm_name)
+        has_source = bool(self._video_shm_name) or bool(self._flow_shm_name) or bool(self._scalar_shm_name)
         if self.update_enabled() and has_source:
             if not self._timer.isActive():
                 self._timer.start()
@@ -193,6 +362,20 @@ class _VideoShmPane(QtWidgets.QWidget):
             return True
         except Exception:
             self._flow_reader = None
+            return False
+
+    def _ensure_scalar_reader(self) -> bool:
+        if self._scalar_reader is not None:
+            return True
+        if not self._scalar_shm_name:
+            return False
+        try:
+            r = VideoShmReader(self._scalar_shm_name)
+            r.open(use_event=False)
+            self._scalar_reader = r
+            return True
+        except Exception:
+            self._scalar_reader = None
             return False
 
     def _update_video_cache(self) -> None:
@@ -287,6 +470,86 @@ class _VideoShmPane(QtWidgets.QWidget):
             p.end()
         return canvas
 
+    def _render_scalar_colormap(self, payload: memoryview, width: int, height: int, pitch: int) -> QtGui.QImage | None:
+        row_bytes = width * 4
+        if row_bytes <= 0 or pitch < row_bytes:
+            return None
+        scalar_rows: list[bytes] = []
+        for y in range(height):
+            offset = y * pitch
+            scalar_rows.append(bytes(payload[offset : offset + row_bytes]))
+        scalar_bytes = b"".join(scalar_rows)
+        scalar_values = np.frombuffer(scalar_bytes, dtype="<f4").reshape(height, width)
+        normalized, alpha = _normalize_scalar_values(
+            scalar_values,
+            range_mode=self._scalar_range_mode,
+            manual_min=self._scalar_min,
+            manual_max=self._scalar_max,
+            auto_percentile_lo=self._scalar_auto_percentile_lo,
+            auto_percentile_hi=self._scalar_auto_percentile_hi,
+            invert=self._scalar_invert,
+            nan_mode=self._scalar_nan_mode,
+        )
+        rgb = _apply_colormap(normalized, colormap=self._scalar_colormap)
+        bgra = np.empty((height, width, 4), dtype=np.uint8)
+        bgra[:, :, 0] = rgb[:, :, 2]
+        bgra[:, :, 1] = rgb[:, :, 1]
+        bgra[:, :, 2] = rgb[:, :, 0]
+        bgra[:, :, 3] = alpha
+        try:
+            img = QtGui.QImage(bgra.data, width, height, width * 4, QtGui.QImage.Format_ARGB32)
+            return img.copy()
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return None
+
+    def _try_render_flow(self) -> QtGui.QImage | None:
+        if self._flow_display_mode == "off":
+            return None
+        if not self._ensure_flow_reader() or self._flow_reader is None:
+            return None
+        try:
+            header, payload = self._flow_reader.read_latest_frame()
+        except Exception:
+            return None
+        if header is None or payload is None:
+            return None
+        if int(header.fmt) != VIDEO_FORMAT_FLOW2_F16:
+            return None
+        frame_id = int(header.frame_id)
+        if frame_id == self._last_flow_frame_id:
+            return None
+        self._last_flow_frame_id = frame_id
+
+        width = int(header.width)
+        height = int(header.height)
+        pitch = int(header.pitch)
+        if width <= 0 or height <= 0 or pitch <= 0:
+            return None
+        if self._flow_display_mode == "hsv":
+            return self._render_hsv_flow(payload, width, height, pitch)
+        return self._render_arrows_flow(payload, width, height, pitch)
+
+    def _try_render_scalar(self) -> QtGui.QImage | None:
+        if self._scalar_display_mode == "off":
+            return None
+        if not self._ensure_scalar_reader() or self._scalar_reader is None:
+            return None
+        try:
+            header, payload = self._scalar_reader.read_latest_frame()
+        except Exception:
+            return None
+        if header is None or payload is None:
+            return None
+        if int(header.fmt) != VIDEO_FORMAT_SCALAR1_F32:
+            return None
+
+        width = int(header.width)
+        height = int(header.height)
+        pitch = int(header.pitch)
+        if width <= 0 or height <= 0 or pitch <= 0:
+            return None
+        return self._render_scalar_colormap(payload, width, height, pitch)
+
     def _present(self, image: QtGui.QImage) -> None:
         pix = QtGui.QPixmap.fromImage(image)
         if self._scale_mode == "fit":
@@ -303,41 +566,16 @@ class _VideoShmPane(QtWidgets.QWidget):
         if not self.update_enabled():
             return
         self._update_video_cache()
-
-        if self._flow_display_mode == "off":
-            if self._latest_video is not None:
-                self._present(self._latest_video)
+        flow_image = self._try_render_flow()
+        if flow_image is not None:
+            self._present(flow_image)
             return
-
-        if not self._ensure_flow_reader() or self._flow_reader is None:
+        scalar_image = self._try_render_scalar()
+        if scalar_image is not None:
+            self._present(scalar_image)
             return
-        try:
-            header, payload = self._flow_reader.read_latest_frame()
-        except Exception:
-            return
-        if header is None or payload is None:
-            return
-        if int(header.fmt) != VIDEO_FORMAT_FLOW2_F16:
-            return
-        frame_id = int(header.frame_id)
-        if frame_id == self._last_flow_frame_id:
-            return
-        self._last_flow_frame_id = frame_id
-
-        w = int(header.width)
-        h = int(header.height)
-        pitch = int(header.pitch)
-        if w <= 0 or h <= 0 or pitch <= 0:
-            return
-
-        image: QtGui.QImage | None
-        if self._flow_display_mode == "hsv":
-            image = self._render_hsv_flow(payload, w, h, pitch)
-        else:
-            image = self._render_arrows_flow(payload, w, h, pitch)
-        if image is None:
-            return
-        self._present(image)
+        if self._latest_video is not None:
+            self._present(self._latest_video)
 
 
 class _VideoShmWidget(NodeBaseWidget):
@@ -392,6 +630,16 @@ class _VideoShmWidget(NodeBaseWidget):
         flow_display_mode: str,
         flow_mag_scale: float,
         flow_stride: int,
+        scalar_shm_name: str,
+        scalar_display_mode: str,
+        scalar_colormap: str,
+        scalar_range_mode: str,
+        scalar_min: float,
+        scalar_max: float,
+        scalar_auto_percentile_lo: float,
+        scalar_auto_percentile_hi: float,
+        scalar_invert: bool,
+        scalar_nan_mode: str,
         scale_mode: str,
     ) -> None:
         self._pane.set_config(
@@ -401,6 +649,16 @@ class _VideoShmWidget(NodeBaseWidget):
             flow_display_mode=flow_display_mode,
             flow_mag_scale=flow_mag_scale,
             flow_stride=flow_stride,
+            scalar_shm_name=scalar_shm_name,
+            scalar_display_mode=scalar_display_mode,
+            scalar_colormap=scalar_colormap,
+            scalar_range_mode=scalar_range_mode,
+            scalar_min=scalar_min,
+            scalar_max=scalar_max,
+            scalar_auto_percentile_lo=scalar_auto_percentile_lo,
+            scalar_auto_percentile_hi=scalar_auto_percentile_hi,
+            scalar_invert=scalar_invert,
+            scalar_nan_mode=scalar_nan_mode,
             scale_mode=scale_mode,
         )
 
@@ -463,6 +721,16 @@ class VizVideoRenderNode(F8StudioOperatorBaseNode):
             flow_display_mode = str(payload.get("flowDisplayMode") or "off").strip().lower()
             flow_mag_scale = float(payload.get("flowMagScale") or 20.0)
             flow_stride = int(payload.get("flowStride") or 12)
+            scalar_shm_name = str(payload.get("scalarShmName") or "").strip()
+            scalar_display_mode = str(payload.get("scalarDisplayMode") or "off").strip().lower()
+            scalar_colormap = str(payload.get("scalarColormap") or "turbo").strip().lower()
+            scalar_range_mode = str(payload.get("scalarRangeMode") or "auto").strip().lower()
+            scalar_min = float(payload.get("scalarMin") or -1.0)
+            scalar_max = float(payload.get("scalarMax") or 1.0)
+            scalar_auto_percentile_lo = float(payload.get("scalarAutoPercentileLo") or 2.0)
+            scalar_auto_percentile_hi = float(payload.get("scalarAutoPercentileHi") or 98.0)
+            scalar_invert = _to_bool(payload.get("scalarInvert"), default=False)
+            scalar_nan_mode = str(payload.get("scalarNanMode") or "transparent").strip().lower()
             scale_mode = str(payload.get("scaleMode") or "native").strip().lower()
         except (AttributeError, TypeError, ValueError):
             return
@@ -476,5 +744,15 @@ class VizVideoRenderNode(F8StudioOperatorBaseNode):
             flow_display_mode=flow_display_mode,
             flow_mag_scale=flow_mag_scale,
             flow_stride=flow_stride,
+            scalar_shm_name=scalar_shm_name,
+            scalar_display_mode=scalar_display_mode,
+            scalar_colormap=scalar_colormap,
+            scalar_range_mode=scalar_range_mode,
+            scalar_min=scalar_min,
+            scalar_max=scalar_max,
+            scalar_auto_percentile_lo=scalar_auto_percentile_lo,
+            scalar_auto_percentile_hi=scalar_auto_percentile_hi,
+            scalar_invert=scalar_invert,
+            scalar_nan_mode=scalar_nan_mode,
             scale_mode=scale_mode,
         )

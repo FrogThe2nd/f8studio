@@ -30,6 +30,7 @@ from .sizing import (
 from .video import (
     VIDEO_FORMAT_BGRA32,
     VIDEO_FORMAT_FLOW2_F16,
+    VIDEO_FORMAT_SCALAR1_F32,
     VIDEO_SHM_MAGIC,
     VIDEO_SHM_VERSION,
     VideoShmHeader,
@@ -68,6 +69,7 @@ __all__ = [
     "VIDEO_SHM_VERSION",
     "VIDEO_FORMAT_BGRA32",
     "VIDEO_FORMAT_FLOW2_F16",
+    "VIDEO_FORMAT_SCALAR1_F32",
     "VideoShmHeader",
     "VideoShmReader",
     "VideoShmWriter",
