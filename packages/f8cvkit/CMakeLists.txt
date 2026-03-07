@@ -43,8 +43,8 @@ add_executable(f8cvkit_video_stab_service
 )
 
 add_executable(f8cvkit_flow_metric_service
-  src/services/flow_divergence/main.cpp
-  src/services/flow_divergence/flow_divergence_service.cpp
+  src/services/flow_metric/main.cpp
+  src/services/flow_metric/flow_metric_service.cpp
 )
 
 foreach(_t IN ITEMS f8cvkit_template_match_service f8cvkit_dense_optflow_service f8cvkit_tracking_service f8cvkit_video_stab_service f8cvkit_flow_metric_service)

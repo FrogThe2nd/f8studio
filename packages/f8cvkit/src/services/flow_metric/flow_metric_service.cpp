@@ -1,4 +1,4 @@
-#include "flow_divergence_service.h"
+#include "flow_metric_service.h"
 
 #include <algorithm>
 #include <cmath>

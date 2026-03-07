@@ -12,7 +12,7 @@
 #include <spdlog/spdlog.h>
 
 #include "f8cppsdk/describe_builtins.h"
-#include "flow_divergence_service.h"
+#include "flow_metric_service.h"
 
 namespace {
 
