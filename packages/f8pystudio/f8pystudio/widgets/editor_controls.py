@@ -78,6 +78,11 @@ def _combo_popup_debug_enabled() -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
+def _window_trace_detail_enabled() -> bool:
+    raw = str(os.getenv("F8_STUDIO_TRACE_WINDOW_FLASH_DETAIL", "1") or "").strip().lower()
+    return raw not in {"0", "false", "off", "no"}
+
+
 def _choose_best_view_for_scene_point(views: list[Any], scene_pos: QtCore.QPointF) -> Any | None:
     visible_views: list[Any] = []
     for view in list(views or []):
@@ -121,6 +126,12 @@ class _F8ComboPopup(QtWidgets.QFrame):
         super().__init__(None, _COMBO_POPUP_FLAGS)
         self._combo = parent_combo
         self._last_show_monotonic_s: float = 0.0
+        if _window_trace_detail_enabled():
+            logger.warning(
+                "[WindowTrace] combo_popup init comboObject=%s popupObject=%s",
+                hex(id(parent_combo)),
+                hex(id(self)),
+            )
         self.setAttribute(QtCore.Qt.WA_TranslucentBackground, True)
         self.setAutoFillBackground(False)
         self.setFrameShape(QtWidgets.QFrame.NoFrame)
@@ -223,6 +234,12 @@ class F8OptionCombo(QtWidgets.QComboBox):
         self.setView(view)
         self.currentIndexChanged.connect(self._emit)  # type: ignore[attr-defined]
         self._popup: _F8ComboPopup | None = _F8ComboPopup(self)
+        if _window_trace_detail_enabled():
+            logger.warning(
+                "[WindowTrace] option_combo init comboObject=%s popupObject=%s",
+                hex(id(self)),
+                hex(id(self._popup)) if self._popup is not None else "None",
+            )
         self._popup.valueSelected.connect(self._on_popup_selected)  # type: ignore[attr-defined]
         self._popup.destroyed.connect(lambda _obj=None: self._on_popup_destroyed(_obj))  # type: ignore[attr-defined]
 
@@ -946,7 +963,7 @@ class F8MultiSelect(QtWidgets.QWidget):
         self._context_tooltip = ""
         self._read_only = False
 
-        self._button = QtWidgets.QToolButton()
+        self._button = QtWidgets.QToolButton(self)
         self._button.setToolButtonStyle(QtCore.Qt.ToolButtonTextOnly)
         self._button.setMinimumHeight(22)
         self._button.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)

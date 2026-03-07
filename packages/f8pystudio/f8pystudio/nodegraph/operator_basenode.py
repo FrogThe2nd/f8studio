@@ -553,6 +553,17 @@ class F8StudioOperatorNodeItem(F8StudioServiceNodeItem):
         # Operators don't expose service commands; ensure any previous command proxy is removed.
         proxy = self._cmd_proxy
         if proxy is not None:
+            old = None
+            try:
+                old = proxy.widget()
+            except (AttributeError, RuntimeError, TypeError):
+                old = None
+            logger.warning(
+                "[WindowTrace] operator clear inline command proxy nodeId=%s oldWidgetClass=%s oldWidgetTitle=%r",
+                str(self.id or ""),
+                old.__class__.__name__ if old is not None else "None",
+                str(old.windowTitle() or "") if old is not None else "",
+            )
             try:
                 proxy.setWidget(None)
             except (AttributeError, RuntimeError, TypeError):

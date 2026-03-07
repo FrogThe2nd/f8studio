@@ -16,6 +16,72 @@ from .service_toolbar_host import F8ForceGlobalToolTipFilter
 logger = logging.getLogger(__name__)
 
 
+def _trace_widget(widget: QtWidgets.QWidget | None) -> str:
+    if widget is None:
+        return "None"
+    try:
+        class_name = str(widget.metaObject().className() or widget.__class__.__name__)
+    except (AttributeError, RuntimeError, TypeError):
+        class_name = widget.__class__.__name__
+    try:
+        title = str(widget.windowTitle() or "")
+    except (AttributeError, RuntimeError, TypeError):
+        title = ""
+    try:
+        visible = bool(widget.isVisible())
+    except (AttributeError, RuntimeError, TypeError):
+        visible = False
+    try:
+        is_window = bool(widget.isWindow())
+    except (AttributeError, RuntimeError, TypeError):
+        is_window = False
+    try:
+        parent_widget = widget.parentWidget()
+    except (AttributeError, RuntimeError, TypeError):
+        parent_widget = None
+    parent_class = parent_widget.__class__.__name__ if parent_widget is not None else "None"
+    return (
+        f"{class_name}(title={title!r}, visible={visible}, isWindow={is_window}, "
+        f"parent={parent_class}, object={hex(id(widget))})"
+    )
+
+
+def _node_id_for_trace(node_item: Any) -> str:
+    node = node_item._backend_node()
+    if node is None:
+        return ""
+    try:
+        return str(node.id or "")
+    except (AttributeError, RuntimeError, TypeError):
+        return ""
+
+
+def _dispose_proxy_widget(widget: QtWidgets.QWidget | None) -> None:
+    """
+    Dispose a widget detached from QGraphicsProxyWidget without transient
+    top-level flashing.
+    """
+    if widget is None:
+        return
+    logger.warning("[WindowTrace] inline_command dispose detached widget=%s", _trace_widget(widget))
+    try:
+        widget.hide()
+    except (AttributeError, RuntimeError, TypeError):
+        logger.exception("Failed to hide detached inline-command widget before dispose")
+    try:
+        widget.setWindowFlag(QtCore.Qt.WindowType.Window, False)
+    except (AttributeError, RuntimeError, TypeError):
+        logger.exception("Failed to clear Window flag on detached inline-command widget")
+    try:
+        widget.setAttribute(QtCore.Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+    except (AttributeError, RuntimeError, TypeError):
+        logger.exception("Failed to set WA_DontShowOnScreen on detached inline-command widget")
+    try:
+        widget.deleteLater()
+    except (AttributeError, RuntimeError, TypeError):
+        logger.exception("Failed to delete detached inline-command widget")
+
+
 def _is_missing_locked(node_item: Any) -> bool:
     try:
         node = node_item._backend_node()
@@ -390,6 +456,7 @@ def prompt_command_args(node_item: Any, cmd: Any) -> dict[str, Any] | None:
 
 
 def ensure_inline_command_widget(node_item: Any) -> None:
+    logger.warning("[WindowTrace] inline_command ensure start nodeId=%s", _node_id_for_trace(node_item))
     node_item._ensure_bridge_process_hook()
     node = node_item._backend_node()
     if node is None:
@@ -448,15 +515,12 @@ def ensure_inline_command_widget(node_item: Any) -> None:
                 node_item._cmd_proxy.setWidget(None)
             except RuntimeError:
                 pass
-            if old is not None:
-                try:
-                    old.setParent(None)
-                except (AttributeError, RuntimeError, TypeError):
-                    pass
-                try:
-                    old.deleteLater()
-                except (AttributeError, RuntimeError, TypeError):
-                    pass
+            _dispose_proxy_widget(old)
+            logger.warning(
+                "[WindowTrace] inline_command remove proxy nodeId=%s old=%s",
+                _node_id_for_trace(node_item),
+                _trace_widget(old),
+            )
             try:
                 node_item._cmd_proxy.setParentItem(None)
                 if node_item.scene() is not None:
@@ -553,12 +617,11 @@ def ensure_inline_command_widget(node_item: Any) -> None:
             old = None
         node_item._cmd_proxy.setWidget(widget)
         if old is not None and old is not widget:
-            try:
-                old.setParent(None)
-            except (AttributeError, RuntimeError, TypeError):
-                pass
-            try:
-                old.deleteLater()
-            except (AttributeError, RuntimeError, TypeError):
-                pass
+            logger.warning(
+                "[WindowTrace] inline_command replace proxy widget nodeId=%s old=%s new=%s",
+                _node_id_for_trace(node_item),
+                _trace_widget(old),
+                _trace_widget(widget),
+            )
+            _dispose_proxy_widget(old)
     node_item._cmd_widget = widget

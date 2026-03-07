@@ -28,6 +28,72 @@ from .service_toolbar_host import F8ElideToolButton, F8ForceGlobalToolTipFilter
 logger = logging.getLogger(__name__)
 
 
+def _trace_widget(widget: QtWidgets.QWidget | None) -> str:
+    if widget is None:
+        return "None"
+    try:
+        class_name = str(widget.metaObject().className() or widget.__class__.__name__)
+    except (AttributeError, RuntimeError, TypeError):
+        class_name = widget.__class__.__name__
+    try:
+        title = str(widget.windowTitle() or "")
+    except (AttributeError, RuntimeError, TypeError):
+        title = ""
+    try:
+        visible = bool(widget.isVisible())
+    except (AttributeError, RuntimeError, TypeError):
+        visible = False
+    try:
+        is_window = bool(widget.isWindow())
+    except (AttributeError, RuntimeError, TypeError):
+        is_window = False
+    try:
+        parent_widget = widget.parentWidget()
+    except (AttributeError, RuntimeError, TypeError):
+        parent_widget = None
+    parent_class = parent_widget.__class__.__name__ if parent_widget is not None else "None"
+    return (
+        f"{class_name}(title={title!r}, visible={visible}, isWindow={is_window}, "
+        f"parent={parent_class}, object={hex(id(widget))})"
+    )
+
+
+def _node_id_for_trace(node_item: Any) -> str:
+    node = node_item._backend_node()
+    if node is None:
+        return ""
+    try:
+        return str(node.id or "")
+    except (AttributeError, RuntimeError, TypeError):
+        return ""
+
+
+def _dispose_proxy_widget(widget: QtWidgets.QWidget | None) -> None:
+    """
+    Dispose a widget detached from QGraphicsProxyWidget without exposing it as
+    a transient top-level window.
+    """
+    if widget is None:
+        return
+    logger.warning("[WindowTrace] inline_state dispose detached widget=%s", _trace_widget(widget))
+    try:
+        widget.hide()
+    except (AttributeError, RuntimeError, TypeError):
+        logger.exception("Failed to hide detached inline-state widget before dispose")
+    try:
+        widget.setWindowFlag(QtCore.Qt.WindowType.Window, False)
+    except (AttributeError, RuntimeError, TypeError):
+        logger.exception("Failed to clear Window flag on detached inline-state widget")
+    try:
+        widget.setAttribute(QtCore.Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+    except (AttributeError, RuntimeError, TypeError):
+        logger.exception("Failed to set WA_DontShowOnScreen on detached inline-state widget")
+    try:
+        widget.deleteLater()
+    except (AttributeError, RuntimeError, TypeError):
+        logger.exception("Failed to delete detached inline-state widget")
+
+
 def _editor_assist_context(node_item: Any, *, state_field_name: str) -> EditorAssistContext | None:
     if str(state_field_name or "").strip() != "code":
         return None
@@ -237,7 +303,12 @@ def on_state_toggle(node_item: Any, name: str, expanded: bool) -> None:
         _redraw_and_invalidate()
 
 
-def make_state_inline_control(node_item: Any, state_field: StateFieldInfo) -> QtWidgets.QWidget:
+def make_state_inline_control(
+    node_item: Any,
+    state_field: StateFieldInfo,
+    *,
+    parent: QtWidgets.QWidget | None = None,
+) -> QtWidgets.QWidget:
     name = state_field.name
     ui_raw = state_field.ui_control
     ui = str(ui_raw or "").strip().lower()
@@ -368,7 +439,7 @@ def make_state_inline_control(node_item: Any, state_field: StateFieldInfo) -> Qt
                     self.textCursor().insertText(txt)
                 return
 
-        edit = _InlineWrapLineEdit()
+        edit = _InlineWrapLineEdit(parent)
         edit.setLineWrapMode(QtWidgets.QPlainTextEdit.LineWrapMode.WidgetWidth)
         edit.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         edit.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -433,7 +504,7 @@ def make_state_inline_control(node_item: Any, state_field: StateFieldInfo) -> Qt
                     return
                 super().keyPressEvent(event)
 
-        edit = _InlineExprEdit()
+        edit = _InlineExprEdit(parent)
         edit.setLineWrapMode(QtWidgets.QPlainTextEdit.LineWrapMode.WidgetWidth)
         edit.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         edit.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -467,7 +538,7 @@ def make_state_inline_control(node_item: Any, state_field: StateFieldInfo) -> Qt
         return edit
 
     if ui in {"code"}:
-        btn = QtWidgets.QPushButton()
+        btn = QtWidgets.QPushButton(parent)
         btn.setText("Edit...")
         btn.setIcon(icon_for(btn, StudioIcon.CODE))
         btn.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred)
@@ -555,7 +626,7 @@ def make_state_inline_control(node_item: Any, state_field: StateFieldInfo) -> Qt
 
     is_image_b64 = schema_type_value == "string" and (ui in {"image", "image_b64", "img"} or "b64" in name.lower())
     if is_image_b64:
-        img = F8ImageB64Editor()
+        img = F8ImageB64Editor(parent)
 
         def _apply_value(value: Any) -> None:
             img.set_value("" if value is None else str(value))
@@ -568,7 +639,7 @@ def make_state_inline_control(node_item: Any, state_field: StateFieldInfo) -> Qt
         return img
 
     if multiselect_pool_field or ui in {"multiselect", "multi_select", "multi-select"}:
-        multi = F8MultiSelect()
+        multi = F8MultiSelect(parent)
         if field_tooltip:
             multi.set_context_tooltip(field_tooltip)
 
@@ -588,7 +659,7 @@ def make_state_inline_control(node_item: Any, state_field: StateFieldInfo) -> Qt
         return multi
 
     if enum_items or select_pool_field or ui in {"select", "dropdown", "dropbox", "combo", "combobox"}:
-        combo = F8OptionCombo()
+        combo = F8OptionCombo(parent)
         _common_style(combo)
 
         items = _pool_items(select_pool_field) if select_pool_field else list(enum_items)
@@ -611,7 +682,7 @@ def make_state_inline_control(node_item: Any, state_field: StateFieldInfo) -> Qt
         return combo
 
     if schema_type_value == "boolean" or ui in {"switch", "toggle"}:
-        sw = F8Switch()
+        sw = F8Switch(parent)
         sw.set_labels("True", "False")
         if field_tooltip:
             sw.setToolTip(field_tooltip)
@@ -629,7 +700,7 @@ def make_state_inline_control(node_item: Any, state_field: StateFieldInfo) -> Qt
 
     if schema_type_value in {"integer", "number"} and ui == "slider":
         is_int = schema_type_value == "integer"
-        bar = F8ValueBar(integer=is_int, minimum=0.0, maximum=1.0)
+        bar = F8ValueBar(parent, integer=is_int, minimum=0.0, maximum=1.0)
         bar.set_range(lo, hi)
 
         def _apply_value(value: Any) -> None:
@@ -644,7 +715,7 @@ def make_state_inline_control(node_item: Any, state_field: StateFieldInfo) -> Qt
         return bar
 
     if schema_type_value == "integer" or ui in {"spinbox", "int"}:
-        line = F8NumberPropLineEdit(data_type=int)
+        line = F8NumberPropLineEdit(parent, data_type=int)
         line.set_name(name)
         _common_style(line)
         line.setMinimumWidth(90)
@@ -668,7 +739,7 @@ def make_state_inline_control(node_item: Any, state_field: StateFieldInfo) -> Qt
         return line
 
     if schema_type_value == "number" or ui in {"doublespinbox", "float"}:
-        line = F8NumberPropLineEdit(data_type=float)
+        line = F8NumberPropLineEdit(parent, data_type=float)
         line.set_name(name)
         _common_style(line)
         line.setMinimumWidth(90)
@@ -692,7 +763,7 @@ def make_state_inline_control(node_item: Any, state_field: StateFieldInfo) -> Qt
         return line
 
     # default: text input.
-    line = QtWidgets.QLineEdit()
+    line = QtWidgets.QLineEdit(parent)
     line.setMinimumWidth(90)
     _common_style(line)
 
@@ -710,11 +781,21 @@ def make_state_inline_control(node_item: Any, state_field: StateFieldInfo) -> Qt
     return line
 
 
-def ensure_inline_state_widgets(node_item: Any) -> None:
+def ensure_inline_state_widgets(node_item: Any) -> bool:
     node_item._ensure_graph_property_hook()
     node = node_item._backend_node()
     if node is None:
-        return
+        return False
+    try:
+        node_id = str(node.id or "")
+    except (AttributeError, RuntimeError, TypeError):
+        node_id = ""
+    # Skip transient init frames during graph load where the backend node id is
+    # not ready yet; these frames can trigger redundant proxy rebuild churn.
+    if not node_id:
+        return False
+    logger.warning("[WindowTrace] inline_state ensure start nodeId=%s", node_id)
+    layout_dirty = False
     try:
         fields = list(node.effective_state_fields() or [])
     except Exception:
@@ -763,15 +844,14 @@ def ensure_inline_state_widgets(node_item: Any) -> None:
             proxy.setWidget(None)
         except RuntimeError:
             pass
-        if old is not None:
-            try:
-                old.setParent(None)
-            except RuntimeError:
-                pass
-            try:
-                old.deleteLater()
-            except RuntimeError:
-                pass
+        _dispose_proxy_widget(old)
+        layout_dirty = True
+        logger.warning(
+            "[WindowTrace] inline_state remove stale field nodeId=%s field=%s old=%s",
+            _node_id_for_trace(node_item),
+            str(name or ""),
+            _trace_widget(old),
+        )
         try:
             proxy.setParentItem(None)
             if node_item.scene() is not None:
@@ -820,8 +900,6 @@ def ensure_inline_state_widgets(node_item: Any) -> None:
                 pass
 
         ctrl_sig = _ctrl_serial(info)
-        if name in node_item._state_inline_proxies and ctrl_sig and ctrl_sig == node_item._state_inline_ctrl_serial.get(name, ""):
-            continue
 
         # Default collapsed; restore persisted expand state from ui overrides.
         expanded = False
@@ -830,17 +908,73 @@ def ensure_inline_state_widgets(node_item: Any) -> None:
         if isinstance(store, dict) and name in store:
             expanded = bool(store.get(name))
         expanded = bool(node_item._state_inline_expanded.get(name, expanded))
-        control = node_item._make_state_inline_control(info)
+        if name in node_item._state_inline_proxies and ctrl_sig and ctrl_sig == node_item._state_inline_ctrl_serial.get(name, ""):
+            body_existing = node_item._state_inline_bodies.get(name)
+            btn_cached = node_item._state_inline_toggles.get(name)
+            was_expanded = bool(node_item._state_inline_expanded.get(name, False))
+            if body_existing is not None:
+                try:
+                    was_visible = bool(body_existing.isVisible())
+                    if was_visible != bool(expanded):
+                        body_existing.setVisible(bool(expanded))
+                        layout_dirty = True
+                except (AttributeError, RuntimeError, TypeError):
+                    pass
+            if btn_cached is not None:
+                try:
+                    with QtCore.QSignalBlocker(btn_cached):
+                        btn_cached.setChecked(bool(expanded))
+                    btn_cached.setArrowType(QtCore.Qt.DownArrow if expanded else QtCore.Qt.RightArrow)
+                except (AttributeError, RuntimeError, TypeError):
+                    pass
+            if was_expanded != bool(expanded):
+                layout_dirty = True
+            node_item._state_inline_expanded[name] = bool(expanded)
+            continue
+        # Install/replace proxy as early as possible so newly created widgets are
+        # attached to a proxy host immediately instead of existing transiently as
+        # parent-less top-level QWidget candidates.
+        proxy = node_item._state_inline_proxies.get(name)
+        if proxy is None:
+            proxy = QtWidgets.QGraphicsProxyWidget(node_item)
+            proxy.setCacheMode(QtWidgets.QGraphicsItem.DeviceCoordinateCache)
+            node_item._state_inline_proxies[name] = proxy
+            layout_dirty = True
+        old = None
+        try:
+            old = proxy.widget()
+        except Exception:
+            old = None
 
         # Header: toggle button (state name).
-        header = QtWidgets.QWidget()
+        panel = QtWidgets.QWidget()
+        panel_lay = QtWidgets.QVBoxLayout(panel)
+        panel_lay.setContentsMargins(0, 0, 0, 0)
+        panel_lay.setSpacing(0)
+        panel.setProperty("_f8_state_panel", True)
+        panel.setAttribute(QtCore.Qt.WA_StyledBackground, True)
+        panel.setStyleSheet("background: transparent;")
+        proxy.setWidget(panel)
+        layout_dirty = True
+        if old is not None and old is not panel:
+            logger.warning(
+                "[WindowTrace] inline_state replace proxy widget nodeId=%s field=%s old=%s new=%s",
+                node_id,
+                str(name or ""),
+                _trace_widget(old),
+                _trace_widget(panel),
+            )
+            _dispose_proxy_widget(old)
+            layout_dirty = True
+
+        header = QtWidgets.QWidget(panel)
         header_lay = QtWidgets.QHBoxLayout(header)
         header_lay.setContentsMargins(0, 0, 0, 0)
         header_lay.setSpacing(6)
         header.setAttribute(QtCore.Qt.WA_StyledBackground, True)
         header.setStyleSheet("background: transparent;")
 
-        btn = F8ElideToolButton()
+        btn = F8ElideToolButton(header)
         btn.setCheckable(True)
         btn.setChecked(expanded)
         btn.setAutoRaise(True)
@@ -868,10 +1002,13 @@ def ensure_inline_state_widgets(node_item: Any) -> None:
         header_lay.addWidget(btn, 1)
 
         # Body: control widget (collapsed by default).
-        body = QtWidgets.QWidget()
+        body = QtWidgets.QWidget(panel)
         body_lay = QtWidgets.QVBoxLayout(body)
         body_lay.setContentsMargins(8, 0, 8, 6)
         body_lay.setSpacing(0)
+        control = node_item._make_state_inline_control(info, parent=body)
+        if control.parentWidget() is None:
+            control.setParent(body)
         body_lay.addWidget(control)
         body.setVisible(expanded)
         body.setStyleSheet(
@@ -882,43 +1019,12 @@ def ensure_inline_state_widgets(node_item: Any) -> None:
             }
             """
         )
-
-        panel = QtWidgets.QWidget()
-        panel_lay = QtWidgets.QVBoxLayout(panel)
-        panel_lay.setContentsMargins(0, 0, 0, 0)
-        panel_lay.setSpacing(0)
         panel_lay.addWidget(header)
         panel_lay.addWidget(body)
-        panel.setProperty("_f8_state_panel", True)
-        panel.setAttribute(QtCore.Qt.WA_StyledBackground, True)
-        panel.setStyleSheet("background: transparent;")
 
         # Connect toggle.
         btn.toggled.connect(lambda v, _n=name: node_item._on_state_toggle(_n, bool(v)))  # type: ignore[attr-defined]
         btn.pressed.connect(node_item._select_node_from_embedded_widget)  # type: ignore[attr-defined]
-
-        # Install/replace proxy.
-        proxy = node_item._state_inline_proxies.get(name)
-        if proxy is None:
-            proxy = QtWidgets.QGraphicsProxyWidget(node_item)
-            proxy.setCacheMode(QtWidgets.QGraphicsItem.DeviceCoordinateCache)
-            node_item._state_inline_proxies[name] = proxy
-
-        old = None
-        try:
-            old = proxy.widget()
-        except Exception:
-            old = None
-        proxy.setWidget(panel)
-        if old is not None and old is not panel:
-            try:
-                old.setParent(None)
-            except RuntimeError:
-                pass
-            try:
-                old.deleteLater()
-            except RuntimeError:
-                pass
 
         node_item._state_inline_controls[name] = control
         node_item._state_inline_toggles[name] = btn
@@ -927,3 +1033,5 @@ def ensure_inline_state_widgets(node_item: Any) -> None:
         node_item._state_inline_expanded[name] = expanded
         if ctrl_sig:
             node_item._state_inline_ctrl_serial[name] = ctrl_sig
+        layout_dirty = True
+    return layout_dirty
