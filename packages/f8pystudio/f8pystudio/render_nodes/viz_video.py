@@ -206,7 +206,7 @@ class _VideoShmPane(QtWidgets.QWidget):
         self._scalar_auto_percentile_hi = 98.0
         self._scalar_invert = False
         self._scalar_nan_mode = "transparent"
-        self._scale_mode = "native"
+        self._scale_mode = "fit"
 
         self._last_video_frame_id = 0
         self._last_flow_frame_id = 0
@@ -286,8 +286,8 @@ class _VideoShmPane(QtWidgets.QWidget):
         self._scalar_auto_percentile_hi = float(max(0.0, min(100.0, float(scalar_auto_percentile_hi))))
         self._scalar_invert = bool(scalar_invert)
         self._scalar_nan_mode = next_scalar_nan_mode
-        next_scale_mode = str(scale_mode or "native").strip().lower()
-        self._scale_mode = next_scale_mode if next_scale_mode in ("native", "fit") else "native"
+        next_scale_mode = str(scale_mode or "fit").strip().lower()
+        self._scale_mode = next_scale_mode if next_scale_mode in ("native", "fit") else "fit"
         self._timer.setInterval(max(1, int(throttle_ms)))
         self._sync_timer_with_update_state()
 
@@ -731,7 +731,7 @@ class VizVideoRenderNode(F8StudioOperatorBaseNode):
             scalar_auto_percentile_hi = float(payload.get("scalarAutoPercentileHi") or 98.0)
             scalar_invert = _to_bool(payload.get("scalarInvert"), default=False)
             scalar_nan_mode = str(payload.get("scalarNanMode") or "transparent").strip().lower()
-            scale_mode = str(payload.get("scaleMode") or "native").strip().lower()
+            scale_mode = str(payload.get("scaleMode") or "fit").strip().lower()
         except (AttributeError, TypeError, ValueError):
             return
         widget = self._widget()

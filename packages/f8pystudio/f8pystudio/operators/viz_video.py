@@ -129,7 +129,7 @@ class VizVideoRuntimeNode(OperatorNode):
                 name="scaleMode",
                 label="Scale Mode",
                 description="Video scaling mode: native (1:1) or fit.",
-                valueSchema=string_schema(default="native", enum=["native", "fit"]),
+                valueSchema=string_schema(default="fit", enum=["native", "fit"]),
                 access=F8StateAccess.rw,
                 required=True,
                 showOnNode=False,
