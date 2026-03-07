@@ -570,7 +570,7 @@ class SessionLayoutCodecMixin:
         self._loading_session = True
         try:
             self.clear_session()
-            with open(file_path) as data_file:
+            with open(file_path, encoding="utf-8-sig") as data_file:
                 payload = json.load(data_file)
             layout_data = _extract_session_layout(payload)
             self._inject_node_ids(layout_data)

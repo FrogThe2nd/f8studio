@@ -79,7 +79,7 @@ class GraphInsertFlowMixin:
             raise ValueError("insert graph path is empty")
         if not os.path.isfile(file_path):
             raise IOError(f"file does not exist: {file_path}")
-        with open(file_path) as data_file:
+        with open(file_path, encoding="utf-8-sig") as data_file:
             payload = json.load(data_file)
         raw_layout_data = _extract_session_layout(payload)
         layout_data, dropped_invalid_connections = self._normalize_insert_layout(raw_layout_data)
