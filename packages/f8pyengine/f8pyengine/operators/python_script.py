@@ -28,6 +28,8 @@ from ..constants import SERVICE_CLASS
 from ._ports import exec_out_ports
 from .script_utils.input_binding import (
     INPUT_MODE_INPUT_VIEW,
+    INPUT_MODE_MSGSPEC_STRUCT,
+    INPUT_MODE_RAW_DICT,
     InputBinding,
     infer_script_input_style,
     parse_input_mode,
@@ -1122,7 +1124,10 @@ PythonScriptRuntimeNode.SPEC = F8OperatorSpec(
             name="inputMode",
             label="Input Mode",
             description="Input binding mode: input_view | raw_dict | msgspec_struct.",
-            valueSchema=string_schema(default=INPUT_MODE_INPUT_VIEW),
+            valueSchema=string_schema(
+                default=INPUT_MODE_INPUT_VIEW,
+                enum=[INPUT_MODE_INPUT_VIEW, INPUT_MODE_RAW_DICT, INPUT_MODE_MSGSPEC_STRUCT],
+            ),
             access=F8StateAccess.rw,
             required=True,
             showOnNode=False,
