@@ -42,7 +42,12 @@ add_executable(f8cvkit_video_stab_service
   src/services/video_stab/video_stab_service.cpp
 )
 
-foreach(_t IN ITEMS f8cvkit_template_match_service f8cvkit_dense_optflow_service f8cvkit_tracking_service f8cvkit_video_stab_service)
+add_executable(f8cvkit_flow_divergence_service
+  src/services/flow_divergence/main.cpp
+  src/services/flow_divergence/flow_divergence_service.cpp
+)
+
+foreach(_t IN ITEMS f8cvkit_template_match_service f8cvkit_dense_optflow_service f8cvkit_tracking_service f8cvkit_video_stab_service f8cvkit_flow_divergence_service)
   target_compile_features(${_t} PRIVATE cxx_std_17)
   target_link_libraries(${_t}
     PRIVATE

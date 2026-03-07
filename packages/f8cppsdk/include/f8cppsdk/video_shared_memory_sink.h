@@ -11,6 +11,7 @@ namespace f8::cppsdk {
 
 constexpr std::uint32_t kVideoFormatBgra32 = 1;
 constexpr std::uint32_t kVideoFormatFlow2F16 = 2;
+constexpr std::uint32_t kVideoFormatScalar1F32 = 3;
 
 class VideoSharedMemorySink {
  public:
