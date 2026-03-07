@@ -151,7 +151,8 @@ def build_dynamic_inputs_stub(
         root_doc="Dynamic input payload view for python_script hooks.",
         skipped_doc="Non-identifier input names are accessible only via mapping methods.",
         fields=data_in_ports,
-        include_port_type_guards=True,
+        guard_prefix="is_port",
+        guard_selector_name="port",
     )
 
 
@@ -168,7 +169,8 @@ def build_dynamic_states_stub(
         root_doc="Dynamic state snapshot view for script contexts.",
         skipped_doc="Non-identifier state names are accessible only via mapping methods.",
         fields=state_fields,
-        include_port_type_guards=False,
+        guard_prefix="is_state",
+        guard_selector_name="field",
     )
 
 
@@ -179,7 +181,8 @@ def _build_dynamic_mapping_stub(
     root_doc: str,
     skipped_doc: str,
     fields: tuple[Any, ...],
-    include_port_type_guards: bool,
+    guard_prefix: str | None,
+    guard_selector_name: str,
 ) -> str:
     root_type_name = _normalize_type_name(type_name, fallback=fallback_type_name)
 
@@ -187,7 +190,7 @@ def _build_dynamic_mapping_stub(
     attribute_lines: list[str] = []
     keyword_attribute_lines: list[str] = []
     skipped_names: list[str] = []
-    port_type_guards: list[tuple[str, str]] = []
+    type_guards: list[tuple[str, str]] = []
     occupied_attr_names: set[str] = set()
     occupied_guard_names: set[str] = set()
     used_names: set[str] = set()
@@ -208,16 +211,16 @@ def _build_dynamic_mapping_stub(
                 in_progress=in_progress,
             )
         )
-        if include_port_type_guards:
-            alias_base = _normalize_type_name(name, fallback="port")
-            guard_name_base = f"is_port_{alias_base}"
+        if guard_prefix:
+            alias_base = _normalize_type_name(name, fallback=guard_selector_name)
+            guard_name_base = f"{guard_prefix}_{alias_base}"
             guard_name = guard_name_base
             guard_index = 1
             while guard_name in occupied_guard_names:
                 guard_name = f"{guard_name_base}_{guard_index}"
                 guard_index += 1
             occupied_guard_names.add(guard_name)
-            port_type_guards.append((guard_name, value_type))
+            type_guards.append((guard_name, value_type))
         attr_name = _attribute_name_for_key(name)
         if attr_name is None:
             skipped_names.append(name)
@@ -274,11 +277,10 @@ def _build_dynamic_mapping_stub(
         for skipped in skipped_names:
             lines.append(f"    # - {skipped!r}")
 
-    if include_port_type_guards:
-        if port_type_guards:
-            lines.append("")
-            for guard_name, guard_type in port_type_guards:
-                lines.append(f"def {guard_name}(value: Any, port: str) -> TypeGuard[{guard_type}]: ...")
+    if type_guards:
+        lines.append("")
+        for guard_name, guard_type in type_guards:
+            lines.append(f"def {guard_name}(value: Any, {guard_selector_name}: str) -> TypeGuard[{guard_type}]: ...")
 
     lines.append("")
     return "\n".join(lines)

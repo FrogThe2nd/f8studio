@@ -105,6 +105,8 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(support_files, dict)
         api_stub = str((support_files or {}).get("f8_script_api.pyi") or "")
         self.assertIn("from f8_dynamic_inputs import F8Inputs as F8Inputs", api_stub)
+        self.assertIn("from f8_dynamic_states import F8States as F8States", api_stub)
+        self.assertIn("rw/ro/wo fields", api_stub)
         dynamic_bindings = (python_payload or {}).get("dynamic_bindings") if isinstance(python_payload, dict) else None
         self.assertIsInstance(dynamic_bindings, dict)
         inputs_binding = (dynamic_bindings or {}).get("inputs") if isinstance(dynamic_bindings, dict) else None

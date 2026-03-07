@@ -33,7 +33,7 @@ class F8PyScriptContext:
     locals: dict[str, Any]
     \"\"\"Script-local mutable memory persisted between hook calls.\"\"\"
     states: F8States
-    \"\"\"Readonly cached state snapshot view (rw/ro fields only).\"\"\"
+    \"\"\"Readonly cached state snapshot view (rw/ro/wo fields).\"\"\"
     permission: F8Permission
     \"\"\"Permission snapshot for local execution and imports.\"\"\"
     def log(self, message: object) -> None:

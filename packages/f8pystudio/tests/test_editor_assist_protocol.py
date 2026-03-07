@@ -164,7 +164,7 @@ def test_editor_assist_context_for_field_accepts_dynamic_states_binding() -> Non
     assert "code" in state_names
     assert "visible_rw" in state_names
     assert "visible_ro" in state_names
-    assert "hidden_wo" not in state_names
+    assert "hidden_wo" in state_names
 
 
 def test_invalid_dynamic_inputs_source_is_rejected_by_schema() -> None:

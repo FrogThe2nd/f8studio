@@ -141,7 +141,7 @@ def _spec_readable_state_fields(spec: F8ServiceSpec | F8OperatorSpec) -> tuple[E
             continue
         access_raw = getattr(field, "access", None)
         access = str(getattr(access_raw, "value", access_raw) or "").strip().lower()
-        if access not in ("rw", "ro"):
+        if access not in ("rw", "ro", "wo"):
             continue
         required = bool(getattr(field, "required", False))
         value_schema: dict[str, Any] | None = None

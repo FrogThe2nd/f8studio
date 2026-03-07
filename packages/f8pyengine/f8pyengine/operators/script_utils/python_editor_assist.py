@@ -19,7 +19,7 @@ class F8PyEngineContext:
     locals: dict[str, Any]
     \"\"\"Script-local mutable memory persisted between hook calls.\"\"\"
     states: F8States
-    \"\"\"Readonly cached state snapshot view (rw/ro fields only).\"\"\"
+    \"\"\"Readonly cached state snapshot view (rw/ro/wo fields).\"\"\"
     exec_in: str | None
     \"\"\"Current exec trigger input name for onExec, else None.\"\"\"
     input_mode: InputMode
