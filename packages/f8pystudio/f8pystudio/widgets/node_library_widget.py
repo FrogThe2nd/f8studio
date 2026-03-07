@@ -495,6 +495,10 @@ class F8StudioNodeLibraryWidget(QtWidgets.QWidget):
     """
     Tree-based nodes browser with keyword search for Studio.
     """
+    _SETTINGS_ORGANIZATION = "Feel8"
+    _SETTINGS_APPLICATION = "F8PyStudio"
+    _SETTINGS_GROUP = "node_library/preferences/v1"
+    _SEARCH_VARIANTS_ENABLED_KEY = "search_variants_enabled"
 
     def __init__(self, parent: QtWidgets.QWidget | None = None, node_graph: Any | None = None) -> None:
         super().__init__(parent)
@@ -505,8 +509,9 @@ class F8StudioNodeLibraryWidget(QtWidgets.QWidget):
         self._search = QtWidgets.QLineEdit(self)
         self._search.setPlaceholderText("Search nodes (name, tags, description)")
         self._search_variants = QtWidgets.QCheckBox("Search Variants", self)
-        self._search_variants.setChecked(False)
+        self._search_variants.setChecked(self._read_saved_search_variants_enabled())
         self._tree = _F8StudioNodesTreeWidget(self, node_graph=node_graph)
+        self._tree.set_search_variants_enabled(self._search_variants.isChecked())
 
         search_row = QtWidgets.QHBoxLayout()
         search_row.setContentsMargins(0, 0, 0, 0)
@@ -531,7 +536,9 @@ class F8StudioNodeLibraryWidget(QtWidgets.QWidget):
         self._tree.set_search_text(str(text or ""))
 
     def _on_search_variants_toggled(self, enabled: bool) -> None:
-        self._tree.set_search_variants_enabled(bool(enabled))
+        enabled_flag = bool(enabled)
+        self._tree.set_search_variants_enabled(enabled_flag)
+        self._write_saved_search_variants_enabled(enabled=enabled_flag)
 
     def _on_nodes_registered(self, _nodes: list[Any]) -> None:
         self._tree.update()
@@ -586,3 +593,37 @@ class F8StudioNodeLibraryWidget(QtWidgets.QWidget):
 
     def update(self) -> None:
         self._tree.update()
+
+    def _settings(self) -> QtCore.QSettings:
+        return QtCore.QSettings(self._SETTINGS_ORGANIZATION, self._SETTINGS_APPLICATION)
+
+    @staticmethod
+    def _coerce_bool_setting(raw: Any, *, default: bool) -> bool:
+        if isinstance(raw, bool):
+            return raw
+        if isinstance(raw, (int, float)):
+            return bool(raw)
+        text = str(raw or "").strip().lower()
+        if text in {"1", "true", "yes", "on"}:
+            return True
+        if text in {"0", "false", "no", "off"}:
+            return False
+        return bool(default)
+
+    def _read_saved_search_variants_enabled(self) -> bool:
+        settings = self._settings()
+        settings.beginGroup(self._SETTINGS_GROUP)
+        try:
+            raw = settings.value(self._SEARCH_VARIANTS_ENABLED_KEY, False)
+        finally:
+            settings.endGroup()
+        return self._coerce_bool_setting(raw, default=False)
+
+    def _write_saved_search_variants_enabled(self, *, enabled: bool) -> None:
+        settings = self._settings()
+        settings.beginGroup(self._SETTINGS_GROUP)
+        try:
+            settings.setValue(self._SEARCH_VARIANTS_ENABLED_KEY, bool(enabled))
+            settings.sync()
+        finally:
+            settings.endGroup()

@@ -4,7 +4,7 @@ import os
 import sys
 from types import SimpleNamespace
 
-from qtpy import QtWidgets
+from qtpy import QtCore, QtWidgets
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
@@ -65,6 +65,26 @@ def test_library_keeps_placement_for_non_variant(monkeypatch) -> None:
     monkeypatch.setattr("f8pystudio.widgets.node_library_widget.variant_exists", lambda _vid: False)
     widget._cancel_invalid_variant_placement_if_needed()
     assert fake_graph.cancel_node_placement_calls == 0
+
+
+def test_library_search_variants_checkbox_persists_user_choice(monkeypatch, tmp_path) -> None:
+    _ensure_app()
+    settings_path = tmp_path / "node-library.ini"
+    settings = QtCore.QSettings(str(settings_path), QtCore.QSettings.IniFormat)
+    settings.clear()
+    settings.sync()
+
+    monkeypatch.setattr(F8StudioNodeLibraryWidget, "_settings", lambda self: settings)
+
+    widget = F8StudioNodeLibraryWidget(node_graph=None)
+    assert widget._search_variants.isChecked() is False
+
+    widget._search_variants.setChecked(True)
+    assert widget._search_variants.isChecked() is True
+    widget.deleteLater()
+
+    widget2 = F8StudioNodeLibraryWidget(node_graph=None)
+    assert widget2._search_variants.isChecked() is True
 
 
 class _FakeViewer:
