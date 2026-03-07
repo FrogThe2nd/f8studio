@@ -190,7 +190,7 @@ DEFAULT_CODE = (
     "# Notes:\n"
     "# - ctx.locals is preserved between calls (script-local memory)\n"
     "# - ctx.exec_in is set only for exec-triggered calls\n"
-    "# - ctx.states.<field> reads cached rw/ro state snapshot\n"
+    "# - ctx.states.<field> reads cached rw/ro/wo state snapshot\n"
     "#   - example: ctx.states.foo / ctx.states.pose.x\n"
     "# - await ctx.read_state(field)  # fresh runtime read\n"
     "# - ctx.states.get(field)  # cached snapshot\n"
@@ -400,7 +400,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
             if not name or name in seen:
                 continue
             access = str(getattr(access_raw, "value", access_raw) or "").strip().lower()
-            if access not in ("rw", "ro"):
+            if access not in ("rw", "ro", "wo"):
                 continue
             seen.add(name)
             out.append(name)
@@ -698,7 +698,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
                 if str(node_id) != self.node_id:
                     continue
                 access = str(getattr(raw_access, "value", raw_access) or "").strip().lower()
-                if access not in ("rw", "ro"):
+                if access not in ("rw", "ro", "wo"):
                     continue
                 resolved_keys.append(str(field))
         unique_keys = tuple(sorted({key for key in resolved_keys if key}))

@@ -302,7 +302,7 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
         out2 = await node.compute_output("out", ctx_id="ctx-7b")
         self.assertEqual(out2, 33)
 
-    async def test_states_view_supports_object_and_mapping_access_and_hides_wo(self) -> None:
+    async def test_states_view_supports_object_and_mapping_access_and_exposes_wo(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
         reg = RuntimeNodeRegistry.instance()
@@ -327,8 +327,9 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
             "    dot_v = ctx.states.rw_state\n"
             "    map_v = ctx.states['ro_state']\n"
             "    get_v = ctx.states.get('ro_state')\n"
+            "    wo_v = ctx.states.get('wo_state')\n"
             "    has_wo = 'wo_state' in ctx.states\n"
-            "    return {'outputs': {'out': [dot_v, map_v, get_v, has_wo]}}\n"
+            "    return {'outputs': {'out': [dot_v, map_v, get_v, wo_v, has_wo]}}\n"
         )
         op = _runtime_python_script_node(node_id="ps11", code=code, state_fields=state_fields)
         graph = F8RuntimeGraph(graphId="g11", revision="r1", nodes=[op], edges=[])
@@ -342,7 +343,35 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(node, PythonScriptRuntimeNode)
         assert isinstance(node, PythonScriptRuntimeNode)
         out = await node.compute_output("out", ctx_id="ctx-11")
-        self.assertEqual(out, [7, 8, 8, False])
+        self.assertEqual(out, [7, 8, 8, None, True])
+
+    async def test_states_view_fallback_access_map_exposes_wo(self) -> None:
+        harness = ServiceBusHarness()
+        bus = harness.create_bus("svcA")
+        reg = RuntimeNodeRegistry.instance()
+        register_operator(reg)
+        _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
+
+        state_fields = list(PythonScriptRuntimeNode.SPEC.stateFields or [])
+        state_fields.append(
+            F8StateSpec(name="rw_state", label="rw_state", description="", valueSchema=any_schema(), access=F8StateAccess.rw)
+        )
+        state_fields.append(
+            F8StateSpec(name="ro_state", label="ro_state", description="", valueSchema=any_schema(), access=F8StateAccess.ro)
+        )
+        state_fields.append(
+            F8StateSpec(name="wo_state", label="wo_state", description="", valueSchema=any_schema(), access=F8StateAccess.wo)
+        )
+        op = _runtime_python_script_node(node_id="ps11f", code="def onExec(ctx, exec_in, inputs): return None", state_fields=state_fields)
+        graph = F8RuntimeGraph(graphId="g11f", revision="r1", nodes=[op], edges=[])
+        await bus.set_rungraph(graph)
+
+        node = bus.get_node("ps11f")
+        self.assertIsInstance(node, PythonScriptRuntimeNode)
+        assert isinstance(node, PythonScriptRuntimeNode)
+        view = node._build_states_view(())
+        self.assertTrue("wo_state" in view)
+        self.assertIsNone(view.get("wo_state"))
 
     async def test_inputs_required_flag_does_not_enforce_runtime_non_null(self) -> None:
         harness = ServiceBusHarness()

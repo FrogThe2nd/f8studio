@@ -315,7 +315,7 @@ class PyScriptServiceNodeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(out2_result, dict)
         self.assertEqual(int((out2_result or {}).get("value") or 0), 123)
 
-    async def test_states_view_supports_object_and_mapping_access_and_hides_wo(self) -> None:
+    async def test_states_view_supports_object_and_mapping_access_and_exposes_wo(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
         reg = RuntimeNodeRegistry.instance()
@@ -347,8 +347,9 @@ class PyScriptServiceNodeTests(unittest.IsolatedAsyncioTestCase):
             "    dot_v = ctx.states.my_rw\n"
             "    map_v = ctx.states['my_ro']\n"
             "    get_v = ctx.states.get('my_ro')\n"
+            "    wo_v = ctx.states.get('my_wo')\n"
             "    has_wo = 'my_wo' in ctx.states\n"
-            "    return {'values': [dot_v, map_v, get_v, has_wo]}\n"
+            "    return {'values': [dot_v, map_v, get_v, wo_v, has_wo]}\n"
         )
         await node.on_state("code", code, ts_ms=1)
         await asyncio.sleep(0.05)
@@ -358,7 +359,33 @@ class PyScriptServiceNodeTests(unittest.IsolatedAsyncioTestCase):
         out = await node.on_command("state_view", {})
         out_result = (out or {}).get("result") if isinstance(out, dict) else {}
         self.assertIsInstance(out_result, dict)
-        self.assertEqual((out_result or {}).get("values"), [41, 42, 42, False])
+        self.assertEqual((out_result or {}).get("values"), [41, 42, 42, None, True])
+
+    async def test_states_view_fallback_access_map_exposes_wo(self) -> None:
+        harness = ServiceBusHarness()
+        bus = harness.create_bus("svcA")
+        reg = RuntimeNodeRegistry.instance()
+        register_specs(reg)
+        _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
+
+        fields = list(RuntimeNodeRegistry.instance().service_spec(SERVICE_CLASS).stateFields or [])  # type: ignore[union-attr]
+        fields.append(F8StateSpec(name="my_rw", label="", description="", valueSchema=any_schema(), access=F8StateAccess.rw))
+        fields.append(F8StateSpec(name="my_ro", label="", description="", valueSchema=any_schema(), access=F8StateAccess.ro))
+        fields.append(F8StateSpec(name="my_wo", label="", description="", valueSchema=any_schema(), access=F8StateAccess.wo))
+
+        graph = F8RuntimeGraph(
+            graphId="g9f",
+            revision="r1",
+            nodes=[_service_node(code="", state_fields=fields)],
+            edges=[],
+        )
+        await bus.set_rungraph(graph)
+        node = bus.get_node("svcA")
+        assert isinstance(node, PythonScriptServiceNode)
+
+        view = node._build_states_view(())
+        self.assertTrue("my_wo" in view)
+        self.assertIsNone(view.get("my_wo"))
 
     async def test_legacy_ctx_dict_access_sets_last_error(self) -> None:
         harness = ServiceBusHarness()
