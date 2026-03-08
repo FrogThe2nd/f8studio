@@ -14,8 +14,10 @@ class GraphServiceReclaimMixin:
         Clear the current canvas. Any removed service instances are reclaimed
         after a short debounce (so undo / immediate re-add won't kill processes).
         """
+        nodes = list(self.all_nodes() or [])
+        self._teardown_nodes(nodes)
         before: set[str] = set()
-        for n in self.all_nodes():
+        for n in nodes:
             try:
                 spec = n.spec
                 if not isinstance(spec, F8ServiceSpec):

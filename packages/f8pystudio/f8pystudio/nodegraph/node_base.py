@@ -247,6 +247,15 @@ class F8StudioBaseNode(BaseNode):
         """
         return
 
+    def on_graph_teardown(self) -> None:
+        """
+        Hook called before this node is removed from a graph session.
+
+        Subclasses should release external resources (timers, windows, workers)
+        and must keep this method idempotent.
+        """
+        return
+
     def is_missing_locked(self) -> bool:
         model = self.model
         if not isinstance(model.f8_sys, dict):

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from NodeGraphQt.base.commands import NodeAddedCmd
@@ -12,8 +13,44 @@ from ..constants import STUDIO_SERVICE_ID
 from ..ui_notifications import show_warning
 from ..variants.variant_ids import parse_variant_node_type
 
+logger = logging.getLogger(__name__)
+
 
 class GraphFactoryFlowMixin:
+    @staticmethod
+    def _node_debug_identity(node: Any) -> tuple[str, str]:
+        node_id = ""
+        node_type = ""
+        try:
+            node_id = str(node.id or "")
+        except (AttributeError, RuntimeError, TypeError):
+            node_id = ""
+        try:
+            node_type = str(node.type_ or "")
+        except (AttributeError, RuntimeError, TypeError):
+            node_type = ""
+        return node_id, node_type
+
+    def _teardown_node(self, node: Any) -> None:
+        if node is None:
+            return
+        try:
+            node.on_graph_teardown()
+        except AttributeError:
+            return
+        except Exception:
+            node_id, node_type = self._node_debug_identity(node)
+            logger.exception("node graph teardown failed nodeId=%s type=%s", node_id, node_type)
+
+    def _teardown_nodes(self, nodes: list[Any]) -> None:
+        seen_refs: set[int] = set()
+        for node in list(nodes or []):
+            marker = id(node)
+            if marker in seen_refs:
+                continue
+            seen_refs.add(marker)
+            self._teardown_node(node)
+
     def _assign_node_id(self, node: BaseNode) -> BaseNode:
         new_nid = self.new_unique_node_id()
         node.model.id = new_nid
@@ -230,6 +267,7 @@ class GraphFactoryFlowMixin:
         if not nodes:
             return
         self.repair_stale_port_connection_refs()
+        self._teardown_nodes(nodes)
 
         service_ids: set[str] = set()
         for n in list(nodes or []):

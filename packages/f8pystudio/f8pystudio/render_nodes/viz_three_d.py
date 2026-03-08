@@ -72,6 +72,10 @@ class _Skeleton3DPresenter:
     def attach_viewer(self, viewer: _ViewerHandle) -> None:
         self._viewer = viewer
 
+    def detach_viewer(self) -> None:
+        self._viewer = None
+        self.viewer_open = False
+
     def on_viewer_opened(self) -> None:
         self.viewer_open = True
         payload = self.latest_payload
@@ -121,30 +125,58 @@ class _Skeleton3DViewerWindow(QtWidgets.QDialog):
         self._is_open = False
         self._shutdown_started = False
 
-        layout = QtWidgets.QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
+        self._layout = QtWidgets.QVBoxLayout(self)
+        self._layout.setContentsMargins(0, 0, 0, 0)
+        self._layout.setSpacing(0)
+        self._fallback: QtWidgets.QLabel | None = None
+        self._show_fallback("Viewer closed")
+        self._on_viewer_status_changed("idle")
 
+    def _show_fallback(self, text: str) -> None:
+        fallback = self._fallback
+        if fallback is None:
+            fallback = QtWidgets.QLabel(self)
+            fallback.setAlignment(QtCore.Qt.AlignCenter)
+            self._layout.addWidget(fallback, 1)
+            self._fallback = fallback
+        fallback.setText(str(text or ""))
+        fallback.show()
+
+    def _hide_fallback(self) -> None:
+        fallback = self._fallback
+        if fallback is None:
+            return
+        fallback.hide()
+
+    def _create_web_view(self):
         try:
             from PySide6 import QtWebEngineWidgets  # type: ignore[import-not-found]
-        except Exception:
-            QtWebEngineWidgets = None
-
-        if QtWebEngineWidgets is None:
-            fallback = QtWidgets.QLabel("QtWebEngine is not available")
-            fallback.setAlignment(QtCore.Qt.AlignCenter)
-            layout.addWidget(fallback, 1)
+        except ImportError:
             self._on_viewer_status_changed("QtWebEngine unavailable")
-            return
+            logger.exception("failed to import QtWebEngineWidgets for Skeleton3D viewer")
+            return None
+        return QtWebEngineWidgets.QWebEngineView(self)
 
-        self._view = QtWebEngineWidgets.QWebEngineView(self)
+    def _ensure_web_view(self) -> bool:
+        if self._view is not None:
+            return True
+        view = self._create_web_view()
+        if view is None:
+            self._show_fallback("QtWebEngine is not available")
+            return False
+        self._hide_fallback()
+        self._view = view
         _configure_default_webengine_profile()
-        self._view.setContextMenuPolicy(QtCore.Qt.NoContextMenu)
+        view.setContextMenuPolicy(QtCore.Qt.NoContextMenu)
         self._enable_remote_asset_access()
-        self._view.loadFinished.connect(self._on_page_loaded)  # type: ignore[attr-defined]
-        layout.addWidget(self._view, 1)
+        view.loadFinished.connect(self._on_page_loaded)  # type: ignore[attr-defined]
+        page = view.page()
+        if page is not None:
+            page.renderProcessTerminated.connect(self._on_render_process_terminated)  # type: ignore[attr-defined]
+        self._layout.addWidget(view, 1)
         self._load_index_html()
         self._on_viewer_status_changed("loading")
+        return True
 
     def _enable_remote_asset_access(self) -> None:
         if self._view is None:
@@ -184,7 +216,41 @@ class _Skeleton3DViewerWindow(QtWidgets.QDialog):
         if pending is not None and self._is_open:
             self._run_set_data(pending)
 
+    def _on_render_process_terminated(self, termination_status: Any, exit_code: int) -> None:
+        status_text = self._termination_status_text(termination_status)
+        logger.error(
+            "Skeleton3D render process terminated status=%s exitCode=%s",
+            status_text,
+            int(exit_code),
+        )
+        self._on_viewer_status_changed(f"render process terminated: {status_text} ({int(exit_code)})")
+        self._pending_payload = None
+        if self._is_open:
+            self._is_open = False
+            self._on_open_state_changed(False)
+        self._release_web_view(reason="render_process_terminated")
+        self._show_fallback("Render process terminated. Re-open viewer.")
+
+    @staticmethod
+    def _termination_status_text(termination_status: Any) -> str:
+        try:
+            status_value = int(termination_status)
+        except (TypeError, ValueError):
+            return str(termination_status or "unknown")
+        if status_value == 0:
+            return "normal"
+        if status_value == 1:
+            return "abnormal"
+        if status_value == 2:
+            return "crashed"
+        if status_value == 3:
+            return "killed"
+        return f"unknown({status_value})"
+
     def open_viewer(self) -> None:
+        if not self._ensure_web_view():
+            self._show_fallback("QtWebEngine is not available")
+            return
         self.show()
         self.raise_()
         self.activateWindow()
@@ -194,8 +260,12 @@ class _Skeleton3DViewerWindow(QtWidgets.QDialog):
         self._on_open_state_changed(True)
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
-        self._is_open = False
-        self._on_open_state_changed(False)
+        if self._is_open:
+            self._is_open = False
+            self._on_open_state_changed(False)
+        self._pending_payload = None
+        self._release_web_view(reason="window_close")
+        self._on_viewer_status_changed("closed")
         super().closeEvent(event)
 
     def force_shutdown(self) -> None:
@@ -227,10 +297,22 @@ class _Skeleton3DViewerWindow(QtWidgets.QDialog):
         self._page_ready = False
         logger.info("Skeleton3D viewer releasing web view: reason=%s", reason)
 
+        page = None
+        try:
+            page = view.page()
+        except (AttributeError, RuntimeError, TypeError):
+            page = None
+
         try:
             view.loadFinished.disconnect(self._on_page_loaded)  # type: ignore[attr-defined]
         except (TypeError, RuntimeError):
             pass
+
+        if page is not None:
+            try:
+                page.renderProcessTerminated.disconnect(self._on_render_process_terminated)  # type: ignore[attr-defined]
+            except (TypeError, RuntimeError):
+                pass
 
         try:
             view.stop()
@@ -241,6 +323,11 @@ class _Skeleton3DViewerWindow(QtWidgets.QDialog):
             view.setUrl(QtCore.QUrl("about:blank"))
         except RuntimeError:
             logger.exception("failed to reset Skeleton3D web view url")
+
+        try:
+            self._layout.removeWidget(view)
+        except (AttributeError, RuntimeError, TypeError):
+            pass
 
         try:
             view.deleteLater()
@@ -274,7 +361,13 @@ class _Skeleton3DViewerWindow(QtWidgets.QDialog):
             f"window.Skeleton3DViewer.setData({payload_json});"
             "}"
         )
-        self._view.page().runJavaScript(script)
+        page = self._view.page()
+        if page is None:
+            return
+        try:
+            page.runJavaScript(script)
+        except (AttributeError, RuntimeError, TypeError):
+            logger.exception("failed to run Skeleton3D setData javascript")
 
     def detach_scene(self) -> None:
         self._pending_payload = None
@@ -287,7 +380,13 @@ class _Skeleton3DViewerWindow(QtWidgets.QDialog):
             "window.Skeleton3DViewer.detach();"
             "}"
         )
-        self._view.page().runJavaScript(script)
+        page = self._view.page()
+        if page is None:
+            return
+        try:
+            page.runJavaScript(script)
+        except (AttributeError, RuntimeError, TypeError):
+            logger.exception("failed to run Skeleton3D detach javascript")
 
 
 class _Skeleton3DControlPane(QtWidgets.QWidget):
@@ -354,8 +453,8 @@ class VizThreeDRenderNode(F8StudioOperatorBaseNode):
     Render node for `f8.viz.three_d`.
 
     Node body is a compact control panel. 3D rendering lives in a detached viewer
-    window, so closing the window only pauses rendering while runtime continues to
-    stream/cumulate payload updates.
+    window. Closing the window releases WebEngine resources; re-opening recreates
+    the page and replays latest payload from runtime.
     """
 
     def __init__(self):
@@ -383,6 +482,19 @@ class VizThreeDRenderNode(F8StudioOperatorBaseNode):
         except Exception:
             logger.exception("failed to bind Skeleton3D app quit hook")
 
+    def _unbind_app_quit_hook(self) -> None:
+        if not self._app_quit_hook_bound:
+            return
+        app = QtWidgets.QApplication.instance()
+        if app is None:
+            self._app_quit_hook_bound = False
+            return
+        try:
+            app.aboutToQuit.disconnect(self._on_app_about_to_quit)  # type: ignore[attr-defined]
+        except (TypeError, RuntimeError):
+            pass
+        self._app_quit_hook_bound = False
+
     def _on_app_about_to_quit(self) -> None:
         window = self._viewer_window
         if window is None:
@@ -391,6 +503,19 @@ class VizThreeDRenderNode(F8StudioOperatorBaseNode):
             window.force_shutdown()
         except Exception:
             logger.exception("failed to shutdown Skeleton3D viewer during app quit")
+
+    def on_graph_teardown(self) -> None:
+        self._unbind_app_quit_hook()
+        self._presenter.on_detach()
+        window = self._viewer_window
+        self._viewer_window = None
+        self._presenter.detach_viewer()
+        if window is None:
+            return
+        try:
+            window.force_shutdown()
+        except Exception:
+            logger.exception("failed to shutdown Skeleton3D viewer during node teardown")
 
     def _get_widget(self) -> _Skeleton3DWidget | None:
         try:
@@ -404,7 +529,11 @@ class VizThreeDRenderNode(F8StudioOperatorBaseNode):
     def _ensure_window(self) -> _Skeleton3DViewerWindow:
         window = self._viewer_window
         if window is not None:
-            return window
+            try:
+                _ = window.windowTitle()
+                return window
+            except RuntimeError:
+                self._viewer_window = None
         window = _Skeleton3DViewerWindow(
             on_open_state_changed=self._on_window_open_state_changed,
             on_viewer_status_changed=self._on_viewer_status_changed,

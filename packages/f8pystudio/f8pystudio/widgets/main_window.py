@@ -787,7 +787,8 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         try:
             if isinstance(node, UiCommandApplier):
                 node.apply_ui_command(cmd)
-        except (AttributeError, RuntimeError, TypeError, ValueError):
+        except Exception as exc:
+            self._log_dock.report_exception("studio", f"apply_ui_command failed nodeId={node_id}", exc)
             return
 
     def _on_ui_property_changed(self, node: Any, name: str, value: Any) -> None:
