@@ -171,6 +171,40 @@ class DistCiDiscoveryTest(unittest.TestCase):
         self.assertIn("pixi install -e default -e onnx", script_text)
         self.assertNotIn("pixi install -a", script_text)
 
+    def test_filter_dist_environments_keeps_only_runtime_environments(self) -> None:
+        pixi_text = (
+            "[workspace]\n"
+            'name = "demo"\n'
+            "\n"
+            "[environments]\n"
+            'default = { features = ["python", "launcher-runtime"] }\n'
+            'onnx = { features = ["python", "launcher-runtime"] }\n'
+            'ci = { features = ["ci"] }\n'
+            'launcher = { features = ["launcher"] }\n'
+            "\n"
+            "[tasks]\n"
+            'demo = "echo ok"\n'
+        )
+
+        filtered = self.module._filter_dist_environments(pixi_text, ["default", "onnx"])
+
+        self.assertIn('default = { features = ["python", "launcher-runtime"] }', filtered)
+        self.assertIn('onnx = { features = ["python", "launcher-runtime"] }', filtered)
+        self.assertNotIn('ci = { features = ["ci"] }', filtered)
+        self.assertNotIn('launcher = { features = ["launcher"] }', filtered)
+        self.assertIn("[tasks]", filtered)
+
+    def test_filter_dist_environments_fails_when_runtime_environment_missing(self) -> None:
+        pixi_text = (
+            "[environments]\n"
+            'default = { features = ["python", "launcher-runtime"] }\n'
+        )
+
+        with self.assertRaises(ValueError) as ctx:
+            self.module._filter_dist_environments(pixi_text, ["default", "onnx"])
+
+        self.assertIn("onnx", str(ctx.exception))
+
 
 class DistCiCppBuildTest(unittest.TestCase):
     def setUp(self) -> None:

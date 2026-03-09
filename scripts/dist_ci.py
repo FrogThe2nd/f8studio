@@ -171,7 +171,53 @@ def _build_python_wheels(wheels_dir: Path, dependency_to_package_dir: dict[str, 
     return dependency_to_wheel
 
 
-def _render_dist_pixi_toml(dependency_to_wheel: dict[str, str]) -> str:
+def _filter_dist_environments(pixi_text: str, runtime_environment_names: list[str]) -> str:
+    start_match = re.search(r"(?m)^\[environments\]\s*$", pixi_text)
+    if start_match is None:
+        raise ValueError("Expected [environments] table in pixi.toml")
+
+    next_section_match = re.search(r"(?m)^\[[^\[\]\n].*\]\s*$", pixi_text[start_match.end() :])
+    if next_section_match is None:
+        section_end = len(pixi_text)
+    else:
+        section_end = start_match.end() + next_section_match.start()
+
+    section_text = pixi_text[start_match.end() : section_end]
+    runtime_environment_set = set(runtime_environment_names)
+    kept_environment_names: list[str] = []
+    filtered_lines: list[str] = []
+
+    for line in section_text.splitlines(keepends=True):
+        stripped_line = line.strip()
+        if stripped_line == "" or stripped_line.startswith("#"):
+            filtered_lines.append(line)
+            continue
+
+        env_match = re.match(r"^([A-Za-z0-9_.-]+)\s*=", stripped_line)
+        if env_match is None:
+            raise ValueError(f"Unsupported [environments] entry format: {stripped_line}")
+        environment_name = env_match.group(1)
+
+        if environment_name in runtime_environment_set:
+            filtered_lines.append(line)
+            kept_environment_names.append(environment_name)
+
+    missing_runtime_environments = [
+        environment_name
+        for environment_name in runtime_environment_names
+        if environment_name not in kept_environment_names
+    ]
+    if missing_runtime_environments:
+        raise ValueError(
+            "Failed to retain runtime environments in dist manifest: "
+            + ", ".join(missing_runtime_environments)
+        )
+
+    filtered_section_text = "".join(filtered_lines)
+    return pixi_text[: start_match.end()] + filtered_section_text + pixi_text[section_end:]
+
+
+def _render_dist_pixi_toml(dependency_to_wheel: dict[str, str], runtime_environment_names: list[str]) -> str:
     pixi_text = PIXI_TOML_PATH.read_text(encoding="utf-8")
     for dependency_name, wheel_rel_path in dependency_to_wheel.items():
         pattern = re.compile(
@@ -184,7 +230,7 @@ def _render_dist_pixi_toml(dependency_to_wheel: dict[str, str]) -> str:
             raise ValueError(
                 f"Expected exactly one editable path dependency entry for '{dependency_name}' in pixi.toml"
             )
-    return pixi_text
+    return _filter_dist_environments(pixi_text, runtime_environment_names)
 
 
 def _launcher_binary_name() -> str:
@@ -341,7 +387,7 @@ def main() -> int:
     dependency_to_package_dir = _discover_local_editable_package_dirs()
     runtime_environment_names = _discover_launcher_runtime_environments()
     dependency_to_wheel = _build_python_wheels(wheels_dir, dependency_to_package_dir)
-    dist_pixi_text = _render_dist_pixi_toml(dependency_to_wheel)
+    dist_pixi_text = _render_dist_pixi_toml(dependency_to_wheel, runtime_environment_names)
     dist_manifest_path = dist_dir / "pixi.toml"
     dist_manifest_path.write_text(dist_pixi_text, encoding="utf-8")
 
