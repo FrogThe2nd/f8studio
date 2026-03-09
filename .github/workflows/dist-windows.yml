@@ -1,4 +1,4 @@
-name: dist-windows-manual
+name: dist-windows
 
 on:
   workflow_dispatch:
