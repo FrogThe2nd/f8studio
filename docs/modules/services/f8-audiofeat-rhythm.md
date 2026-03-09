@@ -21,12 +21,12 @@ pixi run f8pyaudiofeat_rhythm
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `tempoWindowSec` | `rw` | `false` | `true` | `number / default=8.0` | Window length in seconds for tempo estimation. |
-| `pulseWindowSec` | `rw` | `false` | `true` | `number / default=6.0` | Window length in seconds for pulse clarity. |
-| `emitEvery` | `rw` | `false` | `true` | `integer / default=1` | Emit one rhythmFeatures payload every N coreFeatures inputs. |
-| `lastError` | `ro` | `false` | `false` | `string / default=` | Last runtime error string. |
-| `active` | `rw` | `false` | `true` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
-| `svcId` | `ro` | `false` | `false` | `string` | Readonly: current service instance id (svcId). |
+| `tempoWindowSec` | `rw` | `true` | `true` | `number / default=8.0` | Window length in seconds for tempo estimation. |
+| `pulseWindowSec` | `rw` | `true` | `true` | `number / default=6.0` | Window length in seconds for pulse clarity. |
+| `emitEvery` | `rw` | `true` | `true` | `integer / default=1` | Emit one rhythmFeatures payload every N coreFeatures inputs. |
+| `lastError` | `ro` | `true` | `false` | `string / default=` | Last runtime error string. |
+| `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
+| `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 
 ## Service Commands
 
@@ -36,37 +36,49 @@ _None_
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
-| `coreFeatures` | `true` | `true` | `any` | Input core feature payload from f8.audiofeat.core. |
+| `coreFeatures` | `true` | `true` | `object{hopLength, onsetEnvelope, onsetStrength, rms, ...}` | Input core feature payload from f8.audiofeat.core. |
 
 ## Service Data Output Ports
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
-| `rhythmFeatures` | `true` | `true` | `any` | Rhythm feature payload. |
+| `rhythmFeatures` | `true` | `true` | `object{beatPeriodMs, onsetStrengthMean, onsetStrengthStd, pulseClarity, ...}` | Rhythm feature payload. |
+| `monitor` | `true` | `false` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
 
 ## Operators
 
 _None_
 
-## Usage Guide (Manual)
+## When to Use
 
-### Recommended Use Cases
+- Use `f8.audiofeat.rhythm` when beat, onset, or tempo-like cues matter more than raw energy.
+- It complements `f8.audiofeat.core` rather than replacing it.
 
-- Derive tempo and pulse clarity from `coreFeatures` output.
-- Build rungraph controls synced with music beat intensity.
+## Typical Inputs / Outputs
 
-### Minimal Run Example
+- Data inputs: `coreFeatures`
+- Data outputs: `rhythmFeatures`, `monitor`
+- Commands: none
 
-```bash
-pixi run f8pyaudiofeat_rhythm --service-id audiofeat_rhythm
-```
+## Common Wiring Patterns
 
-### Common Pitfalls
+- Feed the same Audio SHM from `f8.audiocap` into both `core` and `rhythm` services.
+- Visualize rhythm outputs with `TextViz` or map them into `Tick`, `Envelope`, or `Range Map` driven logic.
 
-- No incoming `coreFeatures` edge means rhythm node stays idle.
-- Too-short `tempoWindowSec` may produce unstable BPM estimates.
+## Key Fields That Matter
 
-### Troubleshooting
+- `tempoWindowSec` (Tempo Window (s), `rw`): Window length in seconds for tempo estimation. Schema: `number / default=8.0`.
+- `pulseWindowSec` (Pulse Window (s), `rw`): Window length in seconds for pulse clarity. Schema: `number / default=6.0`.
+- `emitEvery` (Emit Every, `rw`): Emit one rhythmFeatures payload every N coreFeatures inputs. Schema: `integer / default=1`.
+- `lastError` (Last Error, `ro`): Last runtime error string. Schema: `string / default=`.
+- `active` (Active, `rw`): Service lifecycle state (activate/deactivate). Schema: `boolean / default=True`.
+- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
 
-- Verify rungraph edge: `f8.audiofeat.core/coreFeatures -> f8.audiofeat.rhythm/coreFeatures`.
-- Increase `tempoWindowSec` when BPM jumps too frequently.
+## Pitfalls / Gotchas
+
+- Rhythm features can look sparse if the source material lacks sharp transients.
+- Users often overfit downstream thresholds before checking whether the input audio itself is strong enough.
+
+## Related Scenarios
+
+- [Scene 03: Audio Driven TCode](../../scenarios/scene-03-audio_driven.md)

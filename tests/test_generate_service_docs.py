@@ -45,6 +45,7 @@ class GenerateServiceDocsTest(unittest.TestCase):
         service_class: str,
         label: str,
         describe_payload: dict[str, object],
+        entry_filename: str = "service.yml",
     ) -> None:
         service_dir.mkdir(parents=True, exist_ok=True)
         service_yml = {
@@ -59,7 +60,7 @@ class GenerateServiceDocsTest(unittest.TestCase):
                 "workdir": "../../..",
             },
         }
-        (service_dir / "service.yml").write_text(yaml.safe_dump(service_yml), encoding="utf-8")
+        (service_dir / entry_filename).write_text(yaml.safe_dump(service_yml), encoding="utf-8")
         (service_dir / "describe.json").write_text(json.dumps(describe_payload), encoding="utf-8")
 
     def _write_manual(self, service_class: str, text: str) -> None:
@@ -291,6 +292,46 @@ class GenerateServiceDocsTest(unittest.TestCase):
             )
 
         self.assertIn("missing or invalid 'label'", str(ctx.exception))
+
+    def test_generates_service_page_from_platform_specific_entry_file(self) -> None:
+        service_class = "f8.cvkit.tracking"
+        describe_payload = {
+            "service": {
+                "serviceClass": service_class,
+                "label": "CVKit Tracking",
+                "description": "Tracking service.",
+                "tags": ["cvkit"],
+                "stateFields": [],
+                "commands": [],
+                "dataInPorts": [],
+                "dataOutPorts": [],
+            },
+            "operators": [],
+        }
+        service_dir = self.services_root / "f8" / "cvkit" / "tracking"
+        self._write_service_entry(
+            service_dir=service_dir,
+            service_class=service_class,
+            label="CVKit Tracking",
+            describe_payload=describe_payload,
+            entry_filename="service.linux.yml",
+        )
+        self._write_manual(service_class, "### Recommended Use Cases\n\nTrack targets from CV streams.")
+
+        result = self.module.build_docs(
+            services_root=self.services_root,
+            output_root=self.output_root,
+            manual_root=self.manual_root,
+            index_path=self.index_path,
+            check=False,
+        )
+
+        self.assertEqual(result, 0)
+        service_page = self.output_root / "f8-cvkit-tracking.md"
+        self.assertTrue(service_page.exists())
+        index_text = self.index_path.read_text(encoding="utf-8")
+        self.assertIn("## CVKit", index_text)
+        self.assertIn("f8.cvkit.tracking", index_text)
 
 
 if __name__ == "__main__":

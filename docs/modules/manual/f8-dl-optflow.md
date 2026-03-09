@@ -1,20 +1,15 @@
-### Recommended Use Cases
+## When to Use
 
-- GPU optical-flow inference with NeuFlowV2 ONNX models.
-- Dense motion SHM generation for downstream script/operator consumption.
+- Use `f8.dl.optflow` when learned flow quality is preferred over the classical CV implementation.
+- It is a strong option for motion-sensitive graphs when model-backed flow is already part of the deployment stack.
 
-### Minimal Run Example
+## Common Wiring Patterns
 
-```bash
-pixi run f8pydl_optflow
-```
+- Feed it from video producers, then inspect outputs through `f8.viz.video` or reduce them with `f8.cvkit.flowmetric`.
+- Compare it against the CVKit flow path before committing a release pipeline.
 
-### Common Pitfalls
+## Pitfalls / Gotchas
 
-- `inputShmName` mismatch causes no output flow frames.
-- Missing `.onnx` model file or wrong `task` in weights YAML prevents runtime init.
+- GPU/runtime availability matters; validate packaging and device selection early.
+- Flow quality problems are often input-quality problems rather than model bugs.
 
-### Troubleshooting
-
-- Verify `flowShmName` is populated and `flowShmFormat` is `flow2_f16`.
-- Start with `computeEveryNFrames=2`, then tune throughput/latency.

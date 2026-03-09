@@ -10,10 +10,15 @@ from f8pysdk.schema_helpers import schema_default, schema_type
 
 from ...command_ui_protocol import CommandUiHandler, CommandUiSource
 from ...ui_notifications import show_warning
-from ...widgets.f8_editor_widgets import F8OptionCombo, F8Switch, F8ValueBar, parse_select_pool
+from ...widgets.editor_controls import F8OptionCombo, F8Switch, F8ValueBar, parse_select_pool
+from .proxy_widget_utils import dispose_detached_proxy_widget
 from .service_toolbar_host import F8ForceGlobalToolTipFilter
 
 logger = logging.getLogger(__name__)
+
+
+def _dispose_proxy_widget(widget: QtWidgets.QWidget | None) -> None:
+    dispose_detached_proxy_widget(widget, context="inline_command")
 
 
 def _is_missing_locked(node_item: Any) -> bool:
@@ -448,15 +453,7 @@ def ensure_inline_command_widget(node_item: Any) -> None:
                 node_item._cmd_proxy.setWidget(None)
             except RuntimeError:
                 pass
-            if old is not None:
-                try:
-                    old.setParent(None)
-                except (AttributeError, RuntimeError, TypeError):
-                    pass
-                try:
-                    old.deleteLater()
-                except (AttributeError, RuntimeError, TypeError):
-                    pass
+            _dispose_proxy_widget(old)
             try:
                 node_item._cmd_proxy.setParentItem(None)
                 if node_item.scene() is not None:
@@ -553,12 +550,5 @@ def ensure_inline_command_widget(node_item: Any) -> None:
             old = None
         node_item._cmd_proxy.setWidget(widget)
         if old is not None and old is not widget:
-            try:
-                old.setParent(None)
-            except (AttributeError, RuntimeError, TypeError):
-                pass
-            try:
-                old.deleteLater()
-            except (AttributeError, RuntimeError, TypeError):
-                pass
+            _dispose_proxy_widget(old)
     node_item._cmd_widget = widget

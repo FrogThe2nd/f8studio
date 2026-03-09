@@ -21,12 +21,12 @@ pixi run f8pyexpr
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `code` | `rw` | `false` | `true` | `string / default=msg` | Single-line expression. Available names: inputs + identifier-safe input ports. |
-| `allowNumpy` | `wo` | `false` | `false` | `boolean / default=False` | Enable numpy calls in expressions (np.*, numpy.*). |
-| `unpackDictOutputs` | `wo` | `false` | `false` | `boolean / default=False` | When enabled, dict results are emitted per matching output port key. |
-| `lastError` | `ro` | `false` | `false` | `string / default=` | Last expression compile/eval error. |
-| `active` | `rw` | `false` | `true` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
-| `svcId` | `ro` | `false` | `false` | `string` | Readonly: current service instance id (svcId). |
+| `code` | `rw` | `true` | `true` | `string / default=msg` | Single-line expression. Available names: inputs + identifier-safe input ports. |
+| `allowNumpy` | `wo` | `true` | `false` | `boolean / default=False` | Enable numpy calls in expressions (np.*, numpy.*). |
+| `unpackDictOutputs` | `wo` | `true` | `false` | `boolean / default=False` | When enabled, dict results are emitted per matching output port key. |
+| `lastError` | `ro` | `true` | `false` | `string / default=` | Last expression compile/eval error. |
+| `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
+| `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 
 ## Service Commands
 
@@ -36,43 +36,49 @@ _None_
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
-| `msg` | `true` | `true` | `any` | Default input value. |
+| `msg` | `false` | `true` | `any` | Default input value. |
 
 ## Service Data Output Ports
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
-| `out` | `true` | `true` | `any` | Default expression output value. |
+| `out` | `false` | `true` | `any` | Default expression output value. |
+| `monitor` | `true` | `false` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
 
 ## Operators
 
 _None_
 
-## Usage Guide (Manual)
+## When to Use
 
-# Python Expr Service (`f8.pyexpr`)
+- Use `f8.pyexpr` for lightweight service-level expression evaluation when a full `PyEngine` operator graph is unnecessary.
+- It is good for extracting one value, remapping a payload, or applying a simple computed rule.
 
-`f8.pyexpr` is a standalone expression service for lightweight data-flow transforms.
+## Typical Inputs / Outputs
 
-## State Fields
+- Data inputs: `msg`
+- Data outputs: `out`, `monitor`
+- Commands: none
 
-- `code` (`rw`): single-line expression.
-- `allowNumpy` (`rw`): enables `np.*` / `numpy.*` calls.
-- `unpackDictOutputs` (`rw`): controls dict-output fanout behavior.
-- `lastError` (`ro`): last compile/eval error.
-- `active` (`rw`): lifecycle active flag.
+## Common Wiring Patterns
 
-## Expression Names
+- Feed it structured data from feature or CV services, then forward the reduced output into `f8.pyengine`, `TextViz`, or state edges.
+- Keep expressions small and explicit; move complex flow into `f8.pyengine` or `f8.pyscript`.
 
-- `inputs`: dict of latest input values by port name.
-- Identifier-safe input ports are also injected directly as variables.
+## Key Fields That Matter
 
-## Dict Output Behavior
+- `code` (Expr, `rw`): Single-line expression. Available names: inputs + identifier-safe input ports. Schema: `string / default=msg`.
+- `allowNumpy` (Allow Numpy, `wo`): Enable numpy calls in expressions (np.*, numpy.*). Schema: `boolean / default=False`.
+- `unpackDictOutputs` (Unpack Dict Outputs, `wo`): When enabled, dict results are emitted per matching output port key. Schema: `boolean / default=False`.
+- `lastError` (Last Error, `ro`): Last expression compile/eval error. Schema: `string / default=`.
+- `active` (Active, `rw`): Service lifecycle state (activate/deactivate). Schema: `boolean / default=True`.
+- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
 
-- `unpackDictOutputs = false` (default):
-  - A dict result is emitted as one value to default output (`out`).
-  - Example result: `{"a": 1}` -> emits one payload `{"a": 1}` on `out`.
-- `unpackDictOutputs = true`:
-  - Dict keys are treated as output port names.
-  - Example result: `{"a": 1, "b": 2}` -> emits `1` on port `a`, `2` on port `b`.
-  - Keys without matching output ports are ignored (deduped warning only).
+## Pitfalls / Gotchas
+
+- Expression failures often come from unclear input payload shape rather than Python syntax alone.
+- If the expression starts carrying workflow state, it has outgrown this service.
+
+## Related Scenarios
+
+- [Scene 03: Audio Driven TCode](../../scenarios/scene-03-audio_driven.md)

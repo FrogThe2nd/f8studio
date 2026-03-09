@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from f8pysdk.msgspec_codec import dump_json
 import asyncio
 import enum
 import logging
@@ -49,8 +50,8 @@ def coerce_state_value(value: Any) -> Any:
     """
     Best-effort conversion of state values into JSON-friendly primitives.
 
-    This prevents accidental persistence of pydantic RootModel/BaseModel objects
-    as strings like "root=0.5", which then breaks runtime numeric coercion.
+    This prevents accidental persistence of wrapped schema/value objects
+    as strings, which then breaks runtime numeric coercion.
     """
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
@@ -63,9 +64,9 @@ def coerce_state_value(value: Any) -> Any:
     if isinstance(value, enum.Enum):
         return coerce_state_value(value.value)
 
-    # Pydantic v2 models/root models.
+    # msgspec structs and other dump-able model objects.
     try:
-        dumped = value.model_dump(mode="json")  # type: ignore[attr-defined]
+        dumped = dump_json(value, mode="json")  # type: ignore[attr-defined]
         return coerce_state_value(dumped)
     except (AttributeError, TypeError, ValueError):
         pass
@@ -314,4 +315,3 @@ async def publish_state(
                 field,
                 exc_info=exc,
             )
-

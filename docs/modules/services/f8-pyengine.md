@@ -21,9 +21,9 @@ pixi run f8pyengine
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `dataDelivery` | `rw` | `false` | `true` | `string / enum[pull, push, both] / default=pull` | How data inputs are delivered to nodes: pull (default), push, or both. |
-| `active` | `rw` | `false` | `true` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
-| `svcId` | `ro` | `false` | `false` | `string` | Readonly: current service instance id (svcId). |
+| `dataDelivery` | `rw` | `true` | `true` | `string / enum[pull, push, both] / default=pull` | How data inputs are delivered to nodes: pull (default), push, or both. |
+| `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
+| `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 
 ## Service Commands
 
@@ -35,10 +35,13 @@ _None_
 
 ## Service Data Output Ports
 
-_None_
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `monitor` | `true` | `false` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
 
 ## Operators
 
+<a id="operator-f8-tick"></a>
 ### Tick (`f8.tick`)
 Source operator that generates periodic exec ticks.
 
@@ -49,10 +52,10 @@ Source operator that generates periodic exec ticks.
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `tickMs` | `rw` | `false` | `true` | `integer / default=100` | Interval in milliseconds for emitting exec ticks. |
-| `hiResTimer` | `rw` | `false` | `false` | `boolean / default=True` | Request 1ms system timer resolution to reduce jitter on Windows. |
-| `svcId` | `ro` | `false` | `false` | `string` | Readonly: current service instance id (svcId). |
-| `operatorId` | `ro` | `false` | `false` | `string` | Readonly: current operator/node id (operatorId). |
+| `tickMs` | `rw` | `true` | `true` | `integer / default=100` | Interval in milliseconds for emitting exec ticks. |
+| `hiResTimer` | `rw` | `true` | `false` | `boolean / default=True` | Request 1ms system timer resolution to reduce jitter on Windows. |
+| `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
+| `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
 #### Data Input Ports
 
@@ -66,6 +69,42 @@ _None_
 | `intervalMs` | `true` | `false` | `integer / default=0` | Actual interval between tick starts in milliseconds. |
 | `latenessMs` | `true` | `false` | `integer / default=0` | How late this tick started relative to its scheduled deadline (ms). |
 
+#### When to Use
+
+- Use `Tick` when the graph needs a simple periodic exec clock.
+- It is the usual root node for deterministic update loops in `f8.pyengine`.
+
+#### Typical Inputs / Outputs
+
+- Exec outputs: `exec`
+- Data inputs: none
+- Data outputs: `processingMs`, `intervalMs`, `latenessMs`
+
+#### Common Wiring Patterns
+
+- Drive `Sequence` when several branches must run in a predictable order each tick.
+- Keep `tickMs` aligned with downstream device cadence such as `TCode.intervalMs`.
+
+#### Key Fields That Matter
+
+- `tickMs` (Tick (ms), `rw`): Interval in milliseconds for emitting exec ticks. Schema: `integer / default=100`.
+- `hiResTimer` (High-res Timer (Windows), `rw`): Request 1ms system timer resolution to reduce jitter on Windows. Schema: `boolean / default=True`.
+- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
+- `operatorId` (Operator Id, `ro`): Readonly: current operator/node id (operatorId). Schema: `string`.
+
+#### Pitfalls / Gotchas
+
+- Very small intervals can make the whole graph look unstable when the real problem is scheduling load.
+- If downstream nodes are not exec-driven, adding more tick roots will not help.
+
+#### Related Scenarios
+
+- [Scene 01: CVKit Template Tracking](../../scenarios/scene-01-cvkit_template_tracking.md)
+- [Scene 02: GameMod Skeleton](../../scenarios/scene-02-gamemod_skeleton.md)
+- [Scene 03: Audio Driven TCode](../../scenarios/scene-03-audio_driven.md)
+- [Scene 04: Functional TCode Generation](../../scenarios/scene-04-functional_tcode.md)
+
+<a id="operator-f8-sequence"></a>
 ### Sequence (`f8.sequence`)
 Exec flow splitter: triggers its exec outputs in order (requires DFS scheduling).
 
@@ -76,8 +115,8 @@ Exec flow splitter: triggers its exec outputs in order (requires DFS scheduling)
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `svcId` | `ro` | `false` | `false` | `string` | Readonly: current service instance id (svcId). |
-| `operatorId` | `ro` | `false` | `false` | `string` | Readonly: current operator/node id (operatorId). |
+| `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
+| `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
 #### Data Input Ports
 
@@ -87,6 +126,38 @@ _None_
 
 _None_
 
+#### When to Use
+
+- Use `Sequence` when one exec trigger should fan out into ordered branches.
+- It is the cleanest way to make evaluation order explicit on canvas.
+
+#### Typical Inputs / Outputs
+
+- Exec inputs: `exec`
+- Exec outputs: `0`, `1`, `2`
+- Data inputs: none
+- Data outputs: none
+
+#### Common Wiring Patterns
+
+- Place it immediately after `Tick` to separate read, transform, and output branches.
+- Use different numbered outputs for side effects that should not race each other.
+
+#### Key Fields That Matter
+
+- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
+- `operatorId` (Operator Id, `ro`): Readonly: current operator/node id (operatorId). Schema: `string`.
+
+#### Pitfalls / Gotchas
+
+- `Sequence` controls ordering, not timing isolation; expensive branches still affect the whole tick.
+- Overusing many nested `Sequence` nodes can make graphs harder to read than separate well-named branches.
+
+#### Related Scenarios
+
+- No bundled scenario references this node yet.
+
+<a id="operator-f8-cosine"></a>
 ### Cosine (`f8.cosine`)
 Cosine phase transform. Provide `phase` (0..1) from an upstream phase driver (e.g. Phase node).
 
@@ -97,11 +168,11 @@ Cosine phase transform. Provide `phase` (0..1) from an upstream phase driver (e.
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `dc` | `rw` | `false` | `false` | `number / default=0.5` | Default DC offset (used when `dc` input is not provided). |
-| `amp` | `rw` | `false` | `false` | `number / default=0.5` | Amplitude. |
-| `phaseOffset` | `rw` | `false` | `false` | `number / default=0.0` | Normalized phase offset (0.0 to 1.0). |
-| `svcId` | `ro` | `false` | `false` | `string` | Readonly: current service instance id (svcId). |
-| `operatorId` | `ro` | `false` | `false` | `string` | Readonly: current operator/node id (operatorId). |
+| `dc` | `rw` | `true` | `false` | `number / default=0.5` | Default DC offset (used when `dc` input is not provided). |
+| `amp` | `rw` | `true` | `false` | `number / default=0.5` | Amplitude. |
+| `phaseOffset` | `rw` | `true` | `false` | `number / default=0.0` | Normalized phase offset (0.0 to 1.0). |
+| `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
+| `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
 #### Data Input Ports
 
@@ -118,6 +189,39 @@ Cosine phase transform. Provide `phase` (0..1) from an upstream phase driver (e.
 | --- | --- | --- | --- | --- |
 | `value` | `true` | `true` | `number` | cosine output |
 
+#### When to Use
+
+- Use `Cosine` when a normalized phase should become a smooth periodic value.
+- It is a good building block for simple rhythmic motion or modulation.
+
+#### Typical Inputs / Outputs
+
+- Data inputs: `phase`, `amp`, `dc`, `phaseOffset`
+- Data outputs: `value`
+
+#### Common Wiring Patterns
+
+- Feed it from `Phase`, then send `value` into `Range Map`, `WaveViz`, or motion outputs.
+- Override `amp` or `dc` from state edges when one waveform needs quick live tuning.
+
+#### Key Fields That Matter
+
+- `dc` (DC, `rw`): Default DC offset (used when `dc` input is not provided). Schema: `number / default=0.5`.
+- `amp` (Amp, `rw`): Amplitude. Schema: `number / default=0.5`.
+- `phaseOffset` (Phase Offset, `rw`): Normalized phase offset (0.0 to 1.0). Schema: `number / default=0.0`.
+- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
+- `operatorId` (Operator Id, `ro`): Readonly: current operator/node id (operatorId). Schema: `string`.
+
+#### Pitfalls / Gotchas
+
+- If the phase source is wrong, tuning amplitude and offset will not fix the waveform.
+- Keep output range expectations explicit before wiring it into device-facing nodes.
+
+#### Related Scenarios
+
+- [Scene 04: Functional TCode Generation](../../scenarios/scene-04-functional_tcode.md)
+
+<a id="operator-f8-tempest"></a>
 ### Tempest (`f8.tempest`)
 Tempest phase transform (phase-modulated cosine). Provide `phase` (0..1) from an upstream phase driver (e.g. Phase node).
 
@@ -128,12 +232,12 @@ Tempest phase transform (phase-modulated cosine). Provide `phase` (0..1) from an
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `dc` | `rw` | `false` | `false` | `number / default=0.5` | Default DC offset (used when `dc` input is not provided). |
-| `amp` | `rw` | `false` | `false` | `number / default=0.5` | Default amplitude (used when `amp`/`amplitude` input is not provided). |
-| `phaseOffset` | `rw` | `false` | `false` | `number / default=0.0` | Fraction of a full cycle added to the phase (0..1). |
-| `eccentric` | `rw` | `false` | `false` | `number / default=0.0` | Controls curvature of the inner sine. |
-| `svcId` | `ro` | `false` | `false` | `string` | Readonly: current service instance id (svcId). |
-| `operatorId` | `ro` | `false` | `false` | `string` | Readonly: current operator/node id (operatorId). |
+| `dc` | `rw` | `true` | `false` | `number / default=0.5` | Default DC offset (used when `dc` input is not provided). |
+| `amp` | `rw` | `true` | `false` | `number / default=0.5` | Default amplitude (used when `amp`/`amplitude` input is not provided). |
+| `phaseOffset` | `rw` | `true` | `false` | `number / default=0.0` | Fraction of a full cycle added to the phase (0..1). |
+| `eccentric` | `rw` | `true` | `false` | `number / default=0.0` | Controls curvature of the inner sine. |
+| `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
+| `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
 #### Data Input Ports
 
@@ -151,6 +255,40 @@ Tempest phase transform (phase-modulated cosine). Provide `phase` (0..1) from an
 | --- | --- | --- | --- | --- |
 | `out` | `true` | `true` | `number` | tempest output |
 
+#### When to Use
+
+- Use `Tempest` when you want a phase-driven waveform with more character than plain cosine.
+- It fits motion patterns that need controllable curvature and asymmetry.
+
+#### Typical Inputs / Outputs
+
+- Data inputs: `phase`, `amp`, `phaseOffset`, `eccentric`, `dc`
+- Data outputs: `out`
+
+#### Common Wiring Patterns
+
+- Feed it from `Phase`, then normalize or map the result before hardware output.
+- Compare it against `Cosine` in parallel with `WaveViz` before choosing a release preset.
+
+#### Key Fields That Matter
+
+- `dc` (DC, `rw`): Default DC offset (used when `dc` input is not provided). Schema: `number / default=0.5`.
+- `amp` (Amp, `rw`): Default amplitude (used when `amp`/`amplitude` input is not provided). Schema: `number / default=0.5`.
+- `phaseOffset` (Phase Offset, `rw`): Fraction of a full cycle added to the phase (0..1). Schema: `number / default=0.0`.
+- `eccentric` (Eccentric, `rw`): Controls curvature of the inner sine. Schema: `number / default=0.0`.
+- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
+- `operatorId` (Operator Id, `ro`): Readonly: current operator/node id (operatorId). Schema: `string`.
+
+#### Pitfalls / Gotchas
+
+- `eccentric` can make the curve feel broken if you have not first validated the base phase path.
+- Treat it as a shaping stage, not as a substitute for final output range control.
+
+#### Related Scenarios
+
+- [Scene 04: Functional TCode Generation](../../scenarios/scene-04-functional_tcode.md)
+
+<a id="operator-f8-phase"></a>
 ### Phase (`f8.phase`)
 Phase accumulator. Outputs normalized phase (0..1) and unwrapped phase turns.
 
@@ -161,9 +299,9 @@ Phase accumulator. Outputs normalized phase (0..1) and unwrapped phase turns.
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `hz` | `rw` | `false` | `true` | `number / default=1.0` | Frequency in Hz. |
-| `svcId` | `ro` | `false` | `false` | `string` | Readonly: current service instance id (svcId). |
-| `operatorId` | `ro` | `false` | `false` | `string` | Readonly: current operator/node id (operatorId). |
+| `hz` | `rw` | `true` | `true` | `number / default=1.0` | Frequency in Hz. |
+| `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
+| `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
 #### Data Input Ports
 
@@ -180,6 +318,37 @@ Phase accumulator. Outputs normalized phase (0..1) and unwrapped phase turns.
 | `phase` | `true` | `true` | `number` | Normalized phase (0..1). |
 | `phaseTurns` | `true` | `true` | `number` | Unwrapped phase turns (cycles). |
 
+#### When to Use
+
+- Use `Phase` when a graph needs a normalized oscillator or continuous cycle counter.
+- It is the default upstream driver for `Cosine`, `Tempest`, and many rhythmic graphs.
+
+#### Typical Inputs / Outputs
+
+- Data inputs: `hz`, `phase`, `reset`
+- Data outputs: `phase`, `phaseTurns`
+
+#### Common Wiring Patterns
+
+- Feed `phase` into waveform generators and send `phaseTurns` into debug or sync branches.
+- Use state or data overrides for `hz`, `phase`, and `reset` when the clock must react live.
+
+#### Key Fields That Matter
+
+- `hz` (Hz, `rw`): Frequency in Hz. Schema: `number / default=1.0`.
+- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
+- `operatorId` (Operator Id, `ro`): Readonly: current operator/node id (operatorId). Schema: `string`.
+
+#### Pitfalls / Gotchas
+
+- If the graph already has an authoritative timebase, adding another `Phase` can make behavior harder to reason about.
+- Reset behavior should be verified with a visual branch before it drives hardware.
+
+#### Related Scenarios
+
+- [Scene 04: Functional TCode Generation](../../scenarios/scene-04-functional_tcode.md)
+
+<a id="operator-f8-print"></a>
 ### Print (`f8.print`)
 Exec-driven printer (pulls `value` and prints).
 
@@ -190,9 +359,9 @@ Exec-driven printer (pulls `value` and prints).
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `strip` | `wo` | `false` | `false` | `boolean / default=True` | If true, strip whitespace/newlines from the start/end of string values before printing. |
-| `svcId` | `ro` | `false` | `false` | `string` | Readonly: current service instance id (svcId). |
-| `operatorId` | `ro` | `false` | `false` | `string` | Readonly: current operator/node id (operatorId). |
+| `strip` | `wo` | `true` | `false` | `boolean / default=True` | If true, strip whitespace/newlines from the start/end of string values before printing. |
+| `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
+| `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
 #### Data Input Ports
 
@@ -204,6 +373,38 @@ Exec-driven printer (pulls `value` and prints).
 
 _None_
 
+#### When to Use
+
+- Use `Print` when you need a quick exec-driven debug sink on canvas.
+- It is best for development and release validation, not polished production UX.
+
+#### Typical Inputs / Outputs
+
+- Exec inputs: `exec`
+- Data inputs: `value`
+- Data outputs: none
+
+#### Common Wiring Patterns
+
+- Trigger it from `Tick` or `Sequence` and pull the value you want to inspect on that branch.
+- Keep it close to the stage you are diagnosing so the log reflects the right execution context.
+
+#### Key Fields That Matter
+
+- `strip` (Strip, `wo`): If true, strip whitespace/newlines from the start/end of string values before printing. Schema: `boolean / default=True`.
+- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
+- `operatorId` (Operator Id, `ro`): Readonly: current operator/node id (operatorId). Schema: `string`.
+
+#### Pitfalls / Gotchas
+
+- Leaving many `Print` nodes active in a hot loop can drown out more important logs.
+- It is a sink; if you need persistent visualization, use `TextViz` or `WaveViz` instead.
+
+#### Related Scenarios
+
+- No bundled scenario references this node yet.
+
+<a id="operator-f8-pull"></a>
 ### Pull (`f8.pull`)
 Hidden internal sink that periodically pulls all data inputs to trigger upstream computation.
 
@@ -214,10 +415,10 @@ Hidden internal sink that periodically pulls all data inputs to trigger upstream
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `autoTriggerEnabled` | `rw` | `false` | `true` | `boolean / default=False` | When enabled, periodically pull all data inputs without exec. |
-| `autoTriggerHz` | `rw` | `false` | `true` | `integer / default=10` | Periodic pull frequency in Hz when Auto Trigger is enabled. |
-| `svcId` | `ro` | `false` | `false` | `string` | Readonly: current service instance id (svcId). |
-| `operatorId` | `ro` | `false` | `false` | `string` | Readonly: current operator/node id (operatorId). |
+| `autoTriggerEnabled` | `rw` | `true` | `true` | `boolean / default=False` | When enabled, periodically pull all data inputs without exec. |
+| `autoTriggerHz` | `rw` | `true` | `true` | `integer / default=10` | Periodic pull frequency in Hz when Auto Trigger is enabled. |
+| `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
+| `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
 #### Data Input Ports
 
@@ -227,6 +428,38 @@ _None_
 
 _None_
 
+#### When to Use
+
+- Use `Pull` only when a graph needs an explicit auto-sampling sink for upstream data nodes.
+- Treat it as an advanced/internal helper rather than a default authoring node.
+
+#### Typical Inputs / Outputs
+
+- Data inputs: none
+- Data outputs: none
+
+#### Common Wiring Patterns
+
+- Use it to force periodic upstream evaluation in graphs that are otherwise data-only.
+- Keep it isolated and clearly labeled when it exists in a shared session.
+
+#### Key Fields That Matter
+
+- `autoTriggerEnabled` (Auto Trigger, `rw`): When enabled, periodically pull all data inputs without exec. Schema: `boolean / default=False`.
+- `autoTriggerHz` (Auto Trigger Hz, `rw`): Periodic pull frequency in Hz when Auto Trigger is enabled. Schema: `integer / default=10`.
+- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
+- `operatorId` (Operator Id, `ro`): Readonly: current operator/node id (operatorId). Schema: `string`.
+
+#### Pitfalls / Gotchas
+
+- It can hide the real execution model if used casually.
+- Prefer clear exec flow first; reach for `Pull` only when the graph genuinely needs passive sampling.
+
+#### Related Scenarios
+
+- No bundled scenario references this node yet.
+
+<a id="operator-f8-program-wave"></a>
 ### Program Wave (`f8.program_wave`)
 Generate a program-controlled phase/gate waveform from a dict state payload.
 
@@ -237,9 +470,9 @@ Generate a program-controlled phase/gate waveform from a dict state payload.
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `program` | `wo` | `true` | `true` | `any` | Dict payload defining tsMs/timeSec/hz/loopRunningSec/loopPauseSec. |
-| `svcId` | `ro` | `false` | `false` | `string` | Readonly: current service instance id (svcId). |
-| `operatorId` | `ro` | `false` | `false` | `string` | Readonly: current operator/node id (operatorId). |
+| `program` | `wo` | `true` | `true` | `object{hz, loopPauseSec, loopRunningSec, timeSec, ...}` | Dict payload defining tsMs/timeSec/hz/loopRunningSec/loopPauseSec. |
+| `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
+| `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
 #### Data Input Ports
 
@@ -255,6 +488,37 @@ _None_
 | `done` | `true` | `true` | `boolean` | Whether program finished (timeSec elapsed). |
 | `elapsedSec` | `true` | `true` | `number` | Elapsed seconds since start. |
 
+#### When to Use
+
+- Use `Program Wave` when a graph should emit or shape a reusable wave/program payload rather than a single scalar.
+- It is useful for authoring richer motion sequences upstream of playback or device formatting nodes.
+
+#### Typical Inputs / Outputs
+
+- Data inputs: none
+- Data outputs: `phaseTurns`, `phase`, `active`, `done`, `elapsedSec`
+
+#### Common Wiring Patterns
+
+- Pair it with `Tick`, `Phase`, or `Sequence Player`, then inspect outputs before converting them into `TCode`.
+- Keep it upstream from protocol-specific nodes so one program can feed multiple targets.
+
+#### Key Fields That Matter
+
+- `program` (Program, `wo`): Dict payload defining tsMs/timeSec/hz/loopRunningSec/loopPauseSec. Schema: `object{hz, loopPauseSec, loopRunningSec, timeSec, ...}`.
+- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
+- `operatorId` (Operator Id, `ro`): Readonly: current operator/node id (operatorId). Schema: `string`.
+
+#### Pitfalls / Gotchas
+
+- Program-oriented nodes depend on consistent payload shape; validate that contract early.
+- If the graph only needs a single scalar, this node may be more abstraction than you need.
+
+#### Related Scenarios
+
+- No bundled scenario references this node yet.
+
+<a id="operator-f8-envelope"></a>
 ### Envelope (`f8.envelope`)
 Tracks upper/lower envelopes and emits normalized + confidence outputs.
 
@@ -265,28 +529,28 @@ Tracks upper/lower envelopes and emits normalized + confidence outputs.
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `method` | `rw` | `false` | `true` | `string / enum[EMA, DEMA, SMA] / default=EMA` | Envelope filter method. |
-| `rise_alpha` | `rw` | `false` | `true` | `number / default=0.4` | Smoothing factor when moving toward the envelope. |
-| `fall_alpha` | `rw` | `false` | `true` | `number / default=0.05` | Smoothing factor when moving away from the envelope. |
-| `min_span` | `rw` | `false` | `true` | `number / default=0.25` | Minimum enforced envelope span. |
-| `sma_window` | `rw` | `false` | `true` | `number / default=10` | Window size for SMA mode. |
-| `margin` | `rw` | `false` | `false` | `number / default=0.0` | Extra margin added to envelopes before normalization. |
-| `jumpEnabled` | `rw` | `false` | `false` | `boolean / default=True` | Enable consecutive-frame jump detection and reseed. |
-| `jumpSpanMult` | `rw` | `false` | `false` | `number / default=4.0` | Distance threshold in envelope-span units for jump detection. |
-| `jumpConsecutiveFrames` | `rw` | `false` | `false` | `number / default=4` | Consecutive far frames required before jump trigger. |
-| `jumpReseedFrames` | `rw` | `false` | `false` | `number / default=8` | Blend length (frames) after jump reset. |
-| `jumpResetConfidence` | `rw` | `false` | `false` | `boolean / default=True` | Reset confidence history when jump reset is triggered. |
-| `confidenceEnabled` | `rw` | `false` | `false` | `boolean / default=True` | Enable periodicity confidence estimation. |
-| `confidenceWindow` | `rw` | `false` | `false` | `number / default=128` | Sliding window size for autocorrelation confidence. |
-| `confidenceMinLag` | `rw` | `false` | `false` | `number / default=4` | Minimum lag used in autocorrelation scan. |
-| `confidenceMaxLag` | `rw` | `false` | `false` | `number / default=48` | Maximum lag used in autocorrelation scan. |
-| `confidencePeakProminence` | `rw` | `false` | `false` | `number / default=0.1` | Minimum local prominence for valid autocorrelation peaks. |
-| `confidenceMinPeaks` | `rw` | `false` | `false` | `number / default=1` | Minimum valid autocorrelation peaks before full confidence. |
-| `confidenceSmoothingAlpha` | `rw` | `false` | `false` | `number / default=0.25` | EMA smoothing factor for confidence output. |
-| `confidenceNoiseFloor` | `rw` | `false` | `false` | `number / default=0.0001` | Minimum energy needed before periodicity confidence can rise. |
-| `confidenceResetOnMissing` | `rw` | `false` | `false` | `boolean / default=False` | Decay confidence when input is missing. |
-| `svcId` | `ro` | `false` | `false` | `string` | Readonly: current service instance id (svcId). |
-| `operatorId` | `ro` | `false` | `false` | `string` | Readonly: current operator/node id (operatorId). |
+| `method` | `rw` | `true` | `true` | `string / enum[EMA, DEMA, SMA] / default=EMA` | Envelope filter method. |
+| `rise_alpha` | `rw` | `true` | `true` | `number / default=0.4` | Smoothing factor when moving toward the envelope. |
+| `fall_alpha` | `rw` | `true` | `true` | `number / default=0.05` | Smoothing factor when moving away from the envelope. |
+| `min_span` | `rw` | `true` | `true` | `number / default=0.25` | Minimum enforced envelope span. |
+| `sma_window` | `rw` | `true` | `true` | `number / default=10` | Window size for SMA mode. |
+| `margin` | `rw` | `true` | `false` | `number / default=0.0` | Extra margin added to envelopes before normalization. |
+| `jumpEnabled` | `rw` | `true` | `false` | `boolean / default=True` | Enable consecutive-frame jump detection and reseed. |
+| `jumpSpanMult` | `rw` | `true` | `false` | `number / default=4.0` | Distance threshold in envelope-span units for jump detection. |
+| `jumpConsecutiveFrames` | `rw` | `true` | `false` | `number / default=4` | Consecutive far frames required before jump trigger. |
+| `jumpReseedFrames` | `rw` | `true` | `false` | `number / default=8` | Blend length (frames) after jump reset. |
+| `jumpResetConfidence` | `rw` | `true` | `false` | `boolean / default=True` | Reset confidence history when jump reset is triggered. |
+| `confidenceEnabled` | `rw` | `true` | `false` | `boolean / default=True` | Enable periodicity confidence estimation. |
+| `confidenceWindow` | `rw` | `true` | `false` | `number / default=128` | Sliding window size for autocorrelation confidence. |
+| `confidenceMinLag` | `rw` | `true` | `false` | `number / default=4` | Minimum lag used in autocorrelation scan. |
+| `confidenceMaxLag` | `rw` | `true` | `false` | `number / default=48` | Maximum lag used in autocorrelation scan. |
+| `confidencePeakProminence` | `rw` | `true` | `false` | `number / default=0.1` | Minimum local prominence for valid autocorrelation peaks. |
+| `confidenceMinPeaks` | `rw` | `true` | `false` | `number / default=1` | Minimum valid autocorrelation peaks before full confidence. |
+| `confidenceSmoothingAlpha` | `rw` | `true` | `false` | `number / default=0.25` | EMA smoothing factor for confidence output. |
+| `confidenceNoiseFloor` | `rw` | `true` | `false` | `number / default=0.0001` | Minimum energy needed before periodicity confidence can rise. |
+| `confidenceResetOnMissing` | `rw` | `true` | `false` | `boolean / default=False` | Decay confidence when input is missing. |
+| `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
+| `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
 #### Data Input Ports
 
@@ -303,6 +567,44 @@ Tracks upper/lower envelopes and emits normalized + confidence outputs.
 | `normalized` | `true` | `true` | `number` | Normalized value (0..1). |
 | `confidence` | `true` | `true` | `number / default=0.0` | Periodicity confidence estimate (0..1). |
 
+#### When to Use
+
+- Use `Envelope` when a noisy or fast-changing scalar should become a smoother magnitude trace.
+- It is common in audio-reactive and gesture-reactive graphs.
+
+#### Typical Inputs / Outputs
+
+- Data inputs: `value`
+- Data outputs: `lower`, `upper`, `normalized`, `confidence`
+
+#### Common Wiring Patterns
+
+- Feed it from feature outputs, then send the smoothed result into `Smooth Filter`, `Range Map`, or `WaveViz`.
+- Tune it before downstream scaling so later nodes see a stable signal.
+
+#### Key Fields That Matter
+
+- `method` (Method, `rw`): Envelope filter method. Schema: `string / enum[EMA, DEMA, SMA] / default=EMA`.
+- `rise_alpha` (Rise Alpha, `rw`): Smoothing factor when moving toward the envelope. Schema: `number / default=0.4`.
+- `fall_alpha` (Fall Alpha, `rw`): Smoothing factor when moving away from the envelope. Schema: `number / default=0.05`.
+- `min_span` (Min Span, `rw`): Minimum enforced envelope span. Schema: `number / default=0.25`.
+- `sma_window` (SMA Window, `rw`): Window size for SMA mode. Schema: `number / default=10`.
+- `margin` (Margin, `rw`): Extra margin added to envelopes before normalization. Schema: `number / default=0.0`.
+- `jumpEnabled` (Jump Enabled, `rw`): Enable consecutive-frame jump detection and reseed. Schema: `boolean / default=True`.
+- `jumpSpanMult` (Jump Span Mult, `rw`): Distance threshold in envelope-span units for jump detection. Schema: `number / default=4.0`.
+
+#### Pitfalls / Gotchas
+
+- Over-smoothing can make a graph feel laggy even when the source is fine.
+- If the input source is mostly wrong or empty, envelope tuning only hides the real issue.
+
+#### Related Scenarios
+
+- [Scene 01: CVKit Template Tracking](../../scenarios/scene-01-cvkit_template_tracking.md)
+- [Scene 02: GameMod Skeleton](../../scenarios/scene-02-gamemod_skeleton.md)
+- [Scene 03: Audio Driven TCode](../../scenarios/scene-03-audio_driven.md)
+
+<a id="operator-f8-axis-envelope"></a>
 ### Axis Envelope (`f8.axis_envelope`)
 Estimate normalized amplitudes along major/minor axes from 2D input.
 
@@ -313,17 +615,17 @@ Estimate normalized amplitudes along major/minor axes from 2D input.
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `ema_alpha` | `rw` | `false` | `true` | `number / default=0.2` | EMA smoothing for center/covariance tracking. |
-| `method` | `rw` | `false` | `true` | `string / enum[EMA, DEMA, SMA] / default=EMA` | Envelope filter method. |
-| `rise_alpha` | `rw` | `false` | `true` | `number / default=0.4` | Smoothing factor when moving toward the envelope. |
-| `fall_alpha` | `rw` | `false` | `true` | `number / default=0.05` | Smoothing factor when moving away from the envelope. |
-| `min_span` | `rw` | `false` | `true` | `number / default=0.25` | Minimum enforced envelope span. |
-| `sma_window` | `rw` | `false` | `true` | `number / default=10` | Window size for SMA mode. |
-| `margin` | `rw` | `false` | `false` | `number / default=0.0` | Extra margin added to the envelopes before normalization. |
-| `reset_z` | `rw` | `false` | `false` | `number / default=8.0` | Proportional outlier threshold. If a sample is >= this many sigma (2D) or spans (1D) away, reset and ignore it (0 disables). |
-| `reset_abs_max` | `rw` | `false` | `false` | `number / default=0.0` | Legacy absolute outlier threshold; if abs(x) or abs(y) exceeds this value, reset and ignore the sample (0 disables). |
-| `svcId` | `ro` | `false` | `false` | `string` | Readonly: current service instance id (svcId). |
-| `operatorId` | `ro` | `false` | `false` | `string` | Readonly: current operator/node id (operatorId). |
+| `ema_alpha` | `rw` | `true` | `true` | `number / default=0.2` | EMA smoothing for center/covariance tracking. |
+| `method` | `rw` | `true` | `true` | `string / enum[EMA, DEMA, SMA] / default=EMA` | Envelope filter method. |
+| `rise_alpha` | `rw` | `true` | `true` | `number / default=0.4` | Smoothing factor when moving toward the envelope. |
+| `fall_alpha` | `rw` | `true` | `true` | `number / default=0.05` | Smoothing factor when moving away from the envelope. |
+| `min_span` | `rw` | `true` | `true` | `number / default=0.25` | Minimum enforced envelope span. |
+| `sma_window` | `rw` | `true` | `true` | `number / default=10` | Window size for SMA mode. |
+| `margin` | `rw` | `true` | `false` | `number / default=0.0` | Extra margin added to the envelopes before normalization. |
+| `reset_z` | `rw` | `true` | `false` | `number / default=8.0` | Proportional outlier threshold. If a sample is >= this many sigma (2D) or spans (1D) away, reset and ignore it (0 disables). |
+| `reset_abs_max` | `rw` | `true` | `false` | `number / default=0.0` | Legacy absolute outlier threshold; if abs(x) or abs(y) exceeds this value, reset and ignore the sample (0 disables). |
+| `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
+| `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
 #### Data Input Ports
 
@@ -339,6 +641,42 @@ Estimate normalized amplitudes along major/minor axes from 2D input.
 | `major` | `true` | `true` | `number` | Normalized amplitude along the major axis (0..1). |
 | `minor` | `true` | `true` | `number` | Normalized amplitude along the minor axis (0..1). |
 
+#### When to Use
+
+- Use `Axis Envelope` when 2D motion should be reduced into normalized major/minor-axis amplitudes.
+- It is especially useful for pose- or cursor-like signals that need directional intensity.
+
+#### Typical Inputs / Outputs
+
+- Data inputs: `x`, `y`
+- Data outputs: `major`, `minor`
+
+#### Common Wiring Patterns
+
+- Feed it `x` and `y`, then map `major` and `minor` into separate wave or device branches.
+- Visualize both outputs with `WaveViz` while tuning smoothing and normalization.
+
+#### Key Fields That Matter
+
+- `ema_alpha` (EMA Alpha, `rw`): EMA smoothing for center/covariance tracking. Schema: `number / default=0.2`.
+- `method` (Method, `rw`): Envelope filter method. Schema: `string / enum[EMA, DEMA, SMA] / default=EMA`.
+- `rise_alpha` (Rise Alpha, `rw`): Smoothing factor when moving toward the envelope. Schema: `number / default=0.4`.
+- `fall_alpha` (Fall Alpha, `rw`): Smoothing factor when moving away from the envelope. Schema: `number / default=0.05`.
+- `min_span` (Min Span, `rw`): Minimum enforced envelope span. Schema: `number / default=0.25`.
+- `sma_window` (SMA Window, `rw`): Window size for SMA mode. Schema: `number / default=10`.
+- `margin` (Margin, `rw`): Extra margin added to the envelopes before normalization. Schema: `number / default=0.0`.
+- `reset_z` (Reset Z, `rw`): Proportional outlier threshold. If a sample is >= this many sigma (2D) or spans (1D) away, reset and ignore it (0 disables). Schema: `number / default=8.0`.
+
+#### Pitfalls / Gotchas
+
+- Poorly scaled inputs make the envelope look broken when the problem is really upstream normalization.
+- Reset and span settings matter when the motion range shifts over time.
+
+#### Related Scenarios
+
+- No bundled scenario references this node yet.
+
+<a id="operator-f8-smooth-filter"></a>
 ### Smooth Filter (`f8.smooth_filter`)
 Smooths scalar or vector inputs with EMA/DEMA/One Euro filtering.
 
@@ -349,15 +687,15 @@ Smooths scalar or vector inputs with EMA/DEMA/One Euro filtering.
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `filter_type` | `rw` | `false` | `true` | `string / enum[NONE, EMA, DEMA, ONEEURO] / default=EMA` | Filter type. |
-| `ema_alpha` | `rw` | `false` | `true` | `number / default=0.4` | EMA smoothing factor (0..1). |
-| `dema_alpha` | `rw` | `false` | `true` | `number / default=0.4` | DEMA smoothing factor (0..1). |
-| `one_euro_min_cutoff` | `rw` | `false` | `true` | `number / default=1.5` | Minimum cutoff frequency. |
-| `one_euro_beta` | `rw` | `false` | `true` | `number / default=0.0` | Speed coefficient for dynamic cutoff. |
-| `one_euro_derivative_cutoff` | `rw` | `false` | `true` | `number / default=1.0` | Cutoff frequency for the derivative filter. |
-| `one_euro_default_freq` | `rw` | `false` | `true` | `number / default=90.0` | Default sampling frequency (Hz). |
-| `svcId` | `ro` | `false` | `false` | `string` | Readonly: current service instance id (svcId). |
-| `operatorId` | `ro` | `false` | `false` | `string` | Readonly: current operator/node id (operatorId). |
+| `filter_type` | `rw` | `true` | `true` | `string / enum[NONE, EMA, DEMA, ONEEURO] / default=EMA` | Filter type. |
+| `ema_alpha` | `rw` | `true` | `true` | `number / default=0.4` | EMA smoothing factor (0..1). |
+| `dema_alpha` | `rw` | `true` | `true` | `number / default=0.4` | DEMA smoothing factor (0..1). |
+| `one_euro_min_cutoff` | `rw` | `true` | `true` | `number / default=1.5` | Minimum cutoff frequency. |
+| `one_euro_beta` | `rw` | `true` | `true` | `number / default=0.0` | Speed coefficient for dynamic cutoff. |
+| `one_euro_derivative_cutoff` | `rw` | `true` | `true` | `number / default=1.0` | Cutoff frequency for the derivative filter. |
+| `one_euro_default_freq` | `rw` | `true` | `true` | `number / default=90.0` | Default sampling frequency (Hz). |
+| `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
+| `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
 #### Data Input Ports
 
@@ -371,6 +709,43 @@ Smooths scalar or vector inputs with EMA/DEMA/One Euro filtering.
 | --- | --- | --- | --- | --- |
 | `value` | `true` | `true` | `any` | Filtered output. |
 
+#### When to Use
+
+- Use `Smooth Filter` when a scalar already exists but still needs temporal stabilization.
+- It is a good second-stage cleanup node after feature extraction or coarse mapping.
+
+#### Typical Inputs / Outputs
+
+- Data inputs: `value`
+- Data outputs: `value`
+
+#### Common Wiring Patterns
+
+- Place it after `Envelope` or `Range Map`, then compare raw vs filtered signals in parallel on `WaveViz`.
+- Keep one filter node per semantic signal so tuning remains readable.
+
+#### Key Fields That Matter
+
+- `filter_type` (Filter, `rw`): Filter type. Schema: `string / enum[NONE, EMA, DEMA, ONEEURO] / default=EMA`.
+- `ema_alpha` (EMA Alpha, `rw`): EMA smoothing factor (0..1). Schema: `number / default=0.4`.
+- `dema_alpha` (DEMA Alpha, `rw`): DEMA smoothing factor (0..1). Schema: `number / default=0.4`.
+- `one_euro_min_cutoff` (One Euro Min Cutoff, `rw`): Minimum cutoff frequency. Schema: `number / default=1.5`.
+- `one_euro_beta` (One Euro Beta, `rw`): Speed coefficient for dynamic cutoff. Schema: `number / default=0.0`.
+- `one_euro_derivative_cutoff` (One Euro Derivative Cutoff, `rw`): Cutoff frequency for the derivative filter. Schema: `number / default=1.0`.
+- `one_euro_default_freq` (One Euro Default Freq, `rw`): Default sampling frequency (Hz). Schema: `number / default=90.0`.
+- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
+
+#### Pitfalls / Gotchas
+
+- A filter cannot fix a fundamentally wrong input path.
+- Filtering too late can hide where instability actually enters the graph.
+
+#### Related Scenarios
+
+- [Scene 01: CVKit Template Tracking](../../scenarios/scene-01-cvkit_template_tracking.md)
+- [Scene 03: Audio Driven TCode](../../scenarios/scene-03-audio_driven.md)
+
+<a id="operator-f8-range-map"></a>
 ### Range Map (`f8.range_map`)
 Clip input to [inMin,inMax] then remap to [outMin,outMax] with a curve.
 
@@ -381,13 +756,13 @@ Clip input to [inMin,inMax] then remap to [outMin,outMax] with a curve.
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `inMin` | `rw` | `false` | `false` | `number / default=0.0` | Input range minimum. |
-| `inMax` | `rw` | `false` | `false` | `number / default=1.0` | Input range maximum. |
-| `outMin` | `rw` | `false` | `true` | `number / default=0.0` | Output range minimum. |
-| `outMax` | `rw` | `false` | `true` | `number / default=1.0` | Output range maximum. |
-| `curve` | `rw` | `false` | `true` | `string / enum[LINEAR, SMOOTHSTEP, SMOOTHERSTEP, EASE_IN, EASE_OUT, ...] / default=LINEAR` | Mapping curve. |
-| `svcId` | `ro` | `false` | `false` | `string` | Readonly: current service instance id (svcId). |
-| `operatorId` | `ro` | `false` | `false` | `string` | Readonly: current operator/node id (operatorId). |
+| `inMin` | `rw` | `true` | `false` | `number / default=0.0` | Input range minimum. |
+| `inMax` | `rw` | `true` | `false` | `number / default=1.0` | Input range maximum. |
+| `outMin` | `rw` | `true` | `true` | `number / default=0.0` | Output range minimum. |
+| `outMax` | `rw` | `true` | `true` | `number / default=1.0` | Output range maximum. |
+| `curve` | `rw` | `true` | `true` | `string / enum[LINEAR, SMOOTHSTEP, SMOOTHERSTEP, EASE_IN, EASE_OUT, ...] / default=LINEAR` | Mapping curve. |
+| `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
+| `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
 #### Data Input Ports
 
@@ -401,6 +776,43 @@ Clip input to [inMin,inMax] then remap to [outMin,outMax] with a curve.
 | --- | --- | --- | --- | --- |
 | `value` | `true` | `true` | `number` | Mapped output. |
 
+#### When to Use
+
+- Use `Range Map` when one numeric range must be clipped and remapped into another.
+- It is the default scaling node before actuator-facing outputs.
+
+#### Typical Inputs / Outputs
+
+- Data inputs: `value`
+- Data outputs: `value`
+
+#### Common Wiring Patterns
+
+- Feed it cleaned scalar values, then send mapped output to `TCode`, `Serial Out`, or `WaveViz`.
+- Tune `inMin/inMax` against real observed source values before finalizing `outMin/outMax`.
+
+#### Key Fields That Matter
+
+- `inMin` (Input Min, `rw`): Input range minimum. Schema: `number / default=0.0`.
+- `inMax` (Input Max, `rw`): Input range maximum. Schema: `number / default=1.0`.
+- `outMin` (Output Min, `rw`): Output range minimum. Schema: `number / default=0.0`.
+- `outMax` (Output Max, `rw`): Output range maximum. Schema: `number / default=1.0`.
+- `curve` (Curve, `rw`): Mapping curve. Schema: `string / enum[LINEAR, SMOOTHSTEP, SMOOTHERSTEP, EASE_IN, EASE_OUT, ...] / default=LINEAR`.
+- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
+- `operatorId` (Operator Id, `ro`): Readonly: current operator/node id (operatorId). Schema: `string`.
+
+#### Pitfalls / Gotchas
+
+- A bad input range makes every downstream node look wrong.
+- Curve shaping is easier to evaluate visually than by guessing from device behavior alone.
+
+#### Related Scenarios
+
+- [Scene 01: CVKit Template Tracking](../../scenarios/scene-01-cvkit_template_tracking.md)
+- [Scene 02: GameMod Skeleton](../../scenarios/scene-02-gamemod_skeleton.md)
+- [Scene 03: Audio Driven TCode](../../scenarios/scene-03-audio_driven.md)
+
+<a id="operator-f8-rate-limiter"></a>
 ### Rate Limiter (`f8.rate_limiter`)
 Limits the rate of change (and optionally acceleration) of an input signal.
 
@@ -411,13 +823,13 @@ Limits the rate of change (and optionally acceleration) of an input signal.
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `inMin` | `rw` | `false` | `false` | `number / default=0.0` | Input/output clamp minimum (typical 0). |
-| `inMax` | `rw` | `false` | `false` | `number / default=1.0` | Input/output clamp maximum (typical 1). |
-| `maxRateUp` | `rw` | `false` | `true` | `number / default=2.0` | Maximum rising rate (units/sec). |
-| `maxRateDown` | `rw` | `false` | `true` | `number / default=2.0` | Maximum falling rate (units/sec). |
-| `maxAccel` | `rw` | `false` | `false` | `number / default=0.0` | Maximum acceleration (units/sec^2). 0 disables acceleration limiting. |
-| `svcId` | `ro` | `false` | `false` | `string` | Readonly: current service instance id (svcId). |
-| `operatorId` | `ro` | `false` | `false` | `string` | Readonly: current operator/node id (operatorId). |
+| `inMin` | `rw` | `true` | `false` | `number / default=0.0` | Input/output clamp minimum (typical 0). |
+| `inMax` | `rw` | `true` | `false` | `number / default=1.0` | Input/output clamp maximum (typical 1). |
+| `maxRateUp` | `rw` | `true` | `true` | `number / default=2.0` | Maximum rising rate (units/sec). |
+| `maxRateDown` | `rw` | `true` | `true` | `number / default=2.0` | Maximum falling rate (units/sec). |
+| `maxAccel` | `rw` | `true` | `false` | `number / default=0.0` | Maximum acceleration (units/sec^2). 0 disables acceleration limiting. |
+| `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
+| `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
 #### Data Input Ports
 
@@ -431,26 +843,62 @@ Limits the rate of change (and optionally acceleration) of an input signal.
 | --- | --- | --- | --- | --- |
 | `value` | `true` | `true` | `number` | Rate-limited output. |
 
+#### When to Use
+
+- Use `Rate Limiter` when output should change no faster than a configured slope or step rate.
+- It is useful for making actuator commands safer and less jumpy.
+
+#### Typical Inputs / Outputs
+
+- Data inputs: `value`
+- Data outputs: `value`
+
+#### Common Wiring Patterns
+
+- Place it late in the chain, after mapping and smoothing but before hardware/protocol output.
+- Compare limited vs unlimited branches with `WaveViz` when setting release-safe values.
+
+#### Key Fields That Matter
+
+- `inMin` (Input Min, `rw`): Input/output clamp minimum (typical 0). Schema: `number / default=0.0`.
+- `inMax` (Input Max, `rw`): Input/output clamp maximum (typical 1). Schema: `number / default=1.0`.
+- `maxRateUp` (Max Rate Up, `rw`): Maximum rising rate (units/sec). Schema: `number / default=2.0`.
+- `maxRateDown` (Max Rate Down, `rw`): Maximum falling rate (units/sec). Schema: `number / default=2.0`.
+- `maxAccel` (Max Accel, `rw`): Maximum acceleration (units/sec^2). 0 disables acceleration limiting. Schema: `number / default=0.0`.
+- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
+- `operatorId` (Operator Id, `ro`): Readonly: current operator/node id (operatorId). Schema: `string`.
+
+#### Pitfalls / Gotchas
+
+- If placed too early, it can distort the semantics of the whole control signal.
+- Aggressive limiting can make the graph feel unresponsive even when upstream timing is correct.
+
+#### Related Scenarios
+
+- [Scene 01: CVKit Template Tracking](../../scenarios/scene-01-cvkit_template_tracking.md)
+- [Scene 02: GameMod Skeleton](../../scenarios/scene-02-gamemod_skeleton.md)
+
+<a id="operator-f8-udp-skeleton"></a>
 ### UDP Skeleton (`f8.udp_skeleton`)
-Receives UDP packets and keeps latest skeleton per model key, with TTL cleanup and selection.
+Receives UDP packets, keeps latest skeleton per model key, and emits exec triggers per committed packet/frame.
 
 - Exec in ports: none
-- Exec out ports: none
+- Exec out ports: `packet`
 
 #### State Fields
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `bindAddress` | `rw` | `false` | `false` | `string / default=127.0.0.1` | Local address to bind (loopback by default). |
-| `allowNonLoopbackBind` | `rw` | `false` | `false` | `boolean / default=False` | When true, allow bindAddress values other than loopback. |
-| `port` | `rw` | `false` | `true` | `integer / default=39540` | UDP listen port. |
-| `maxQueue` | `rw` | `false` | `false` | `integer / default=512` | Max queued packets before dropping (1..4096). |
-| `reuseAddress` | `rw` | `false` | `false` | `boolean / default=False` | Best-effort: allow multiple listeners on same (address, port) if OS supports. |
-| `cleanupAfterMs` | `wo` | `false` | `false` | `integer / default=10000` | Remove models that haven't updated for this many ms (<=0 disables cleanup). |
-| `selectedKey` | `rw` | `false` | `true` | `string / default=` | If set and matches an available key, outputs `selectedSkeleton`; otherwise None. |
-| `availableKeys` | `ro` | `false` | `true` | `array[string]` | Read-only list of current keys (updated only on changes). |
-| `svcId` | `ro` | `false` | `false` | `string` | Readonly: current service instance id (svcId). |
-| `operatorId` | `ro` | `false` | `false` | `string` | Readonly: current operator/node id (operatorId). |
+| `bindAddress` | `rw` | `true` | `false` | `string / default=127.0.0.1` | Local address to bind (loopback by default). |
+| `allowNonLoopbackBind` | `rw` | `true` | `false` | `boolean / default=False` | When true, allow bindAddress values other than loopback. |
+| `port` | `rw` | `true` | `true` | `integer / default=39540` | UDP listen port. |
+| `maxQueue` | `rw` | `true` | `false` | `integer / default=512` | Max queued packets before dropping (1..4096). |
+| `reuseAddress` | `rw` | `true` | `false` | `boolean / default=False` | Best-effort: allow multiple listeners on same (address, port) if OS supports. |
+| `cleanupAfterMs` | `wo` | `true` | `false` | `integer / default=100` | Remove models that haven't updated for this many ms (<=0 disables cleanup). |
+| `selectedKey` | `rw` | `true` | `true` | `string / default=` | If set and matches an available key, outputs `selectedSkeleton`; otherwise None. |
+| `availableKeys` | `ro` | `true` | `true` | `array[string]` | Read-only list of current keys (updated only on changes). |
+| `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
+| `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
 #### Data Input Ports
 
@@ -460,9 +908,46 @@ _None_
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
-| `skeletons` | `true` | `true` | `any` | List of latest payloads (ordered by key). |
-| `selectedSkeleton` | `true` | `true` | `any` | Latest payload matching `selectedKey` (or None). |
+| `skeletons` | `true` | `true` | `array[object]` | List of latest payloads (ordered by key). |
+| `selectedSkeleton` | `true` | `true` | `object{boneCount, bones, modelName, schema, ...}` | Latest payload matching `selectedKey` (or None). |
 
+#### When to Use
+
+- Use `UDP Skeleton` when skeleton payloads arrive over a simple UDP path and should enter the graph as pose data.
+- It is a straightforward ingest node for external body-tracking sources.
+
+#### Typical Inputs / Outputs
+
+- Exec outputs: `packet`
+- Data inputs: none
+- Data outputs: `skeletons`, `selectedSkeleton`
+
+#### Common Wiring Patterns
+
+- Feed its skeleton output into `Bone Selector`, `Bone Filter`, or `f8.viz.three_d`.
+- Keep a visualization branch attached while validating source coordinate conventions.
+
+#### Key Fields That Matter
+
+- `bindAddress` (Bind Address, `rw`): Local address to bind (loopback by default). Schema: `string / default=127.0.0.1`.
+- `allowNonLoopbackBind` (Allow Non-loopback Bind, `rw`): When true, allow bindAddress values other than loopback. Schema: `boolean / default=False`.
+- `port` (Port, `rw`): UDP listen port. Schema: `integer / default=39540`.
+- `maxQueue` (Max Queue, `rw`): Max queued packets before dropping (1..4096). Schema: `integer / default=512`.
+- `reuseAddress` (Reuse Address, `rw`): Best-effort: allow multiple listeners on same (address, port) if OS supports. Schema: `boolean / default=False`.
+- `cleanupAfterMs` (Cleanup After (ms), `wo`): Remove models that haven't updated for this many ms (<=0 disables cleanup). Schema: `integer / default=100`.
+- `selectedKey` (Selected Key, `rw`): If set and matches an available key, outputs `selectedSkeleton`; otherwise None. Schema: `string / default=`.
+- `availableKeys` (Available Keys, `ro`): Read-only list of current keys (updated only on changes). Schema: `array[string]`.
+
+#### Pitfalls / Gotchas
+
+- Networking and coordinate-frame issues often look like downstream logic bugs.
+- Do not tune bone-processing nodes until the incoming skeleton itself is visually sane.
+
+#### Related Scenarios
+
+- [Scene 02: GameMod Skeleton](../../scenarios/scene-02-gamemod_skeleton.md)
+
+<a id="operator-f8-serial-out"></a>
 ### Serial Out (`f8.serial_out`)
 Writes incoming values to a serial port (pyserial).
 
@@ -473,13 +958,13 @@ Writes incoming values to a serial port (pyserial).
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `enabled` | `rw` | `false` | `true` | `boolean / default=True` | Enable/disable serial output. |
-| `port` | `rw` | `false` | `true` | `string / default=COM4` | Serial port name (e.g., COM3). |
-| `baudrate` | `wo` | `false` | `false` | `integer / default=115200` | Serial baud rate. |
-| `encoding` | `rw` | `false` | `false` | `string / default=ascii` | Deprecated. Serial Out always encodes as ASCII for TCode devices. |
-| `newline` | `rw` | `false` | `false` | `string / default=` | Deprecated. Provide newline in the input payload if needed. |
-| `svcId` | `ro` | `false` | `false` | `string` | Readonly: current service instance id (svcId). |
-| `operatorId` | `ro` | `false` | `false` | `string` | Readonly: current operator/node id (operatorId). |
+| `enabled` | `rw` | `true` | `true` | `boolean / default=True` | Enable/disable serial output. |
+| `port` | `rw` | `true` | `true` | `string / default=COM4` | Serial port name (e.g., COM3). |
+| `baudrate` | `wo` | `true` | `false` | `integer / default=115200` | Serial baud rate. |
+| `encoding` | `rw` | `true` | `false` | `string / default=ascii` | Deprecated. Serial Out always encodes as ASCII for TCode devices. |
+| `newline` | `rw` | `true` | `false` | `string / default=` | Deprecated. Provide newline in the input payload if needed. |
+| `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
+| `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
 #### Data Input Ports
 
@@ -495,6 +980,45 @@ Writes incoming values to a serial port (pyserial).
 | `writtenBytes` | `true` | `true` | `integer / default=0` | Bytes written by last exec. |
 | `error` | `true` | `true` | `string / default=` | Last error (if any). |
 
+#### When to Use
+
+- Use `Serial Out` when the final command stream should go to a serial-connected device.
+- It is the simplest hardware sink for TCode-like outputs.
+
+#### Typical Inputs / Outputs
+
+- Exec inputs: `exec`
+- Data inputs: `value`
+- Data outputs: `isOpen`, `writtenBytes`, `error`
+
+#### Common Wiring Patterns
+
+- Feed it from `TCode` or another finalized string stream and keep `TCodeViz` in parallel during bring-up.
+- Put safety/limiting nodes upstream, not in the serial node itself.
+
+#### Key Fields That Matter
+
+- `enabled` (Enabled, `rw`): Enable/disable serial output. Schema: `boolean / default=True`.
+- `port` (Port, `rw`): Serial port name (e.g., COM3). Schema: `string / default=COM4`.
+- `baudrate` (Baudrate, `wo`): Serial baud rate. Schema: `integer / default=115200`.
+- `encoding` (Encoding (deprecated), `rw`): Deprecated. Serial Out always encodes as ASCII for TCode devices. Schema: `string / default=ascii`.
+- `newline` (Newline (deprecated), `rw`): Deprecated. Provide newline in the input payload if needed. Schema: `string / default=`.
+- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
+- `operatorId` (Operator Id, `ro`): Readonly: current operator/node id (operatorId). Schema: `string`.
+
+#### Pitfalls / Gotchas
+
+- Port-name mistakes are far more common than graph-shape mistakes here.
+- Validate the outgoing string format before blaming transport settings.
+
+#### Related Scenarios
+
+- [Scene 01: CVKit Template Tracking](../../scenarios/scene-01-cvkit_template_tracking.md)
+- [Scene 02: GameMod Skeleton](../../scenarios/scene-02-gamemod_skeleton.md)
+- [Scene 03: Audio Driven TCode](../../scenarios/scene-03-audio_driven.md)
+- [Scene 04: Functional TCode Generation](../../scenarios/scene-04-functional_tcode.md)
+
+<a id="operator-f8-tcode"></a>
 ### TCode (`f8.tcode`)
 Generates TCode v0.3 command strings from normalized axis values.
 
@@ -505,9 +1029,9 @@ Generates TCode v0.3 command strings from normalized axis values.
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `intervalMs` | `rw` | `false` | `true` | `number / default=20` | Default interval appended as `I###` when `intervalMs` input is not provided. |
-| `svcId` | `ro` | `false` | `false` | `string` | Readonly: current service instance id (svcId). |
-| `operatorId` | `ro` | `false` | `false` | `string` | Readonly: current operator/node id (operatorId). |
+| `intervalMs` | `rw` | `true` | `true` | `number / default=20` | Default interval appended as `I###` when `intervalMs` input is not provided. |
+| `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
+| `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
 #### Data Input Ports
 
@@ -531,6 +1055,40 @@ Generates TCode v0.3 command strings from normalized axis values.
 | --- | --- | --- | --- | --- |
 | `tcode` | `true` | `true` | `string` | TCode v0.3 command string |
 
+#### When to Use
+
+- Use `TCode` when one or more normalized control channels must become a TCode string stream.
+- It is the core formatter between scalar motion signals and device/protocol outputs.
+
+#### Typical Inputs / Outputs
+
+- Data inputs: `L0`, `L1`, `L2`, `R0`, `R1`, `R2`, `V0`, `V1`, `A0`, `A1`, `intervalMs`
+- Data outputs: `tcode`
+
+#### Common Wiring Patterns
+
+- Feed it mapped numeric channels, then branch the resulting string to `Serial Out`, `Handy Out`, or `TCodeViz`.
+- Keep timing explicit by aligning `intervalMs` with the tick source that drives updates.
+
+#### Key Fields That Matter
+
+- `intervalMs` (Interval (ms), `rw`): Default interval appended as `I###` when `intervalMs` input is not provided. Schema: `number / default=20`.
+- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
+- `operatorId` (Operator Id, `ro`): Readonly: current operator/node id (operatorId). Schema: `string`.
+
+#### Pitfalls / Gotchas
+
+- If the upstream channel semantics are unclear, the final string may be valid but still wrong for the device.
+- View the emitted string in `TCodeViz` before debugging transport nodes.
+
+#### Related Scenarios
+
+- [Scene 01: CVKit Template Tracking](../../scenarios/scene-01-cvkit_template_tracking.md)
+- [Scene 02: GameMod Skeleton](../../scenarios/scene-02-gamemod_skeleton.md)
+- [Scene 03: Audio Driven TCode](../../scenarios/scene-03-audio_driven.md)
+- [Scene 04: Functional TCode Generation](../../scenarios/scene-04-functional_tcode.md)
+
+<a id="operator-f8-python-script"></a>
 ### Python Script (`f8.python_script`)
 Execute Python code with onStart/onState/onMsg/onExec/onStop hooks.
 
@@ -541,23 +1099,119 @@ Execute Python code with onStart/onState/onMsg/onExec/onStop hooks.
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `code` | `rw` | `false` | `false` | `string / default=# Define hooks (any subset is ok):<br># - onStart(ctx)<br># - onState(ctx, field, value, tsMs=None)      # called on state updates (except 'code')<br># - onMsg(ctx, inputs)                        # called on data arrival (push mode) or as fallback for exec<br># - onExec(ctx, execIn, inputs)               # called on exec trigger (pull mode)<br># - onStop(ctx)<br># - ctx['locals'] is preserved between calls (script-local memory)<br># - ctx['execIn'] is set for exec-triggered calls<br># - State helpers:<br>#   - await ctx['get_state'](field)           # read state value<br>#   - ctx['get_state_cached'](field, default=None)  # sync cached snapshot (may be stale)<br>#   - ctx['set_state'](field, value)          # write state (fire-and-forget)<br>#   - await ctx['set_state_async'](field, value)<br># - Video SHM helpers:<br>#   - ctx['subscribe_video_shm'](key, shm_name, decode='auto', use_event=False)<br>#   - pkt = ctx['get_video_shm'](key)          # latest cached packet or None<br>#   - ctx['unsubscribe_video_shm'](key)<br>#   - ctx['list_video_shm_subscriptions']()<br>#   Note: for best UI/graph support, add the target state fields on the node (editableStateFields=True).<br># - inputs is a dict keyed by input port names<br># Return value protocol:<br># - onMsg: return {'outputs': {...}} or any value (emits to 'out' if present)<br># - onExec: return {'exec': ['exec','exec2'], 'outputs': {...}}<br>#   - 'exec' selects exec out port(s) to trigger (defaults to pass-through)<br>#   - 'outputs' is a dict mapping dataOutPort -> value<br><br>def onStart(ctx):<br>    ctx['log']('python_script started')<br><br>def onState(ctx, field, value, tsMs=None):<br>    # Example: react to a state change.<br>    # ctx['log'](f'state {field}={value} tsMs={tsMs}')<br>    return<br><br>def onMsg(ctx, inputs):<br>    msg = inputs.get('msg')<br>    return {'outputs': {'out': msg}}<br><br>def onExec(ctx, execIn, inputs):<br>    # Example: choose different exec outputs by execIn port name.<br>    if execIn == 'exec2':<br>        return {'exec': ['exec2'], 'outputs': {'out': inputs.get('msg')}}<br>    return {'exec': ['exec'], 'outputs': {'out': inputs.get('msg')}}<br><br>def onStop(ctx):<br>    ctx['log']('python_script stopped')<br>` | Python source code defining onStart(ctx), onMsg(ctx, inputs), onStop(ctx). |
-| `lastError` | `wo` | `false` | `false` | `string / default=` | Last script error (compile/runtime). |
-| `svcId` | `ro` | `false` | `false` | `string` | Readonly: current service instance id (svcId). |
-| `operatorId` | `ro` | `false` | `false` | `string` | Readonly: current operator/node id (operatorId). |
+| `code` | `rw` | `true` | `false` | `string / default=# Hooks template (uncomment what you need):<br># - onStart(ctx)<br># - onState(ctx, field, value, ts_ms=None)<br># - onMsg(ctx, inputs)<br># - onExec(ctx, exec_in, inputs)<br># - onStop(ctx)<br>#<br># Notes:<br># - ctx.locals is preserved between calls (script-local memory)<br># - ctx.exec_in is set only for exec-triggered calls<br># - ctx.states.<field> reads cached rw/ro/wo state snapshot<br>#   - example: ctx.states.foo / ctx.states.pose.x<br># - await ctx.read_state(field)  # fresh runtime read<br># - ctx.states.get(field)  # cached snapshot<br># - ctx.set_state(field, value)<br>#   - await ctx.set_state_async(field, value)<br># - inputs binding mode is configured by state `inputMode`:<br>#   - input_view (default): supports dot and mapping access<br>#   - raw_dict: plain dict only<br>#   - msgspec_struct: typed struct from dataIn schema<br># - State TypeGuard helpers are available from f8_dynamic_states<br>#   - example: from f8_dynamic_states import is_state_lastError<br>#   - then: if is_state_lastError(value, field): ...<br># - Video SHM helpers:<br>#   - ctx.subscribe_video_shm(key, shm_name, decode='auto', use_event=False)<br>#   - pkt = ctx.get_video_shm(key)<br>#   - ctx.unsubscribe_video_shm(key)<br>#   - ctx.list_video_shm_subscriptions()<br>#<br># Return value protocol:<br># - onMsg: {'outputs': {...}} or any value (emits to 'out' if present)<br># - onExec: {'exec': ['exec', ...], 'outputs': {...}}<br><br>from typing import TYPE_CHECKING, Any<br>if TYPE_CHECKING:<br>    from f8_script_api import F8Inputs, F8PyEngineContext, F8States<br><br>def onStart(ctx: 'F8PyEngineContext') -> None:<br>    ctx.log('python_script started')<br><br># def onState(<br>#     ctx: 'F8PyEngineContext',<br>#     field: str,<br>#     value: Any,<br>#     ts_ms: int \| None = None,<br># ) -> None:<br>#     ctx.log(f'state {field}={value} ts_ms={ts_ms}')<br>#<br># def onMsg(ctx: 'F8PyEngineContext', inputs: 'F8Inputs') -> dict[str, Any]:<br>#     msg = inputs.msg<br>#     return {'outputs': {'out': msg}}<br>#<br># def onExec(ctx: 'F8PyEngineContext', exec_in: str, inputs: 'F8Inputs') -> dict[str, Any]:<br>#     if exec_in == 'exec2':<br>#         return {'exec': ['exec2'], 'outputs': {'out': inputs.msg}}<br>#     return {'exec': ['exec'], 'outputs': {'out': inputs.msg}}<br>#<br># def onStop(ctx: 'F8PyEngineContext') -> None:<br>#     ctx.log('python_script stopped')<br>` | Python source code defining onStart(ctx), onMsg(ctx, inputs), onStop(ctx). |
+| `inputMode` | `rw` | `true` | `false` | `string / enum[input_view, raw_dict, msgspec_struct] / default=input_view` | Input binding mode: input_view \| raw_dict \| msgspec_struct. |
+| `lastError` | `wo` | `true` | `false` | `string / default=` | Last script error (compile/runtime). |
+| `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
+| `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
 #### Data Input Ports
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
-| `msg` | `true` | `true` | `any` | Message input |
+| `msg` | `false` | `true` | `any` | Message input |
 
 #### Data Output Ports
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
-| `out` | `true` | `true` | `any` | Script output |
+| `out` | `false` | `true` | `any` | Script output |
 
+#### When to Use
+
+- Use `Python Script` when one operator in the graph needs custom logic but should still live inside `f8.pyengine`.
+- It is the most flexible in-graph escape hatch for shaping data or control flow.
+
+#### Typical Inputs / Outputs
+
+- Exec inputs: `exec`
+- Exec outputs: `exec`
+- Data inputs: `msg`
+- Data outputs: `out`
+
+#### Common Wiring Patterns
+
+- Keep the script narrow in scope and surround it with visualization nodes so its inputs and outputs stay obvious.
+- Prefer one script per clear responsibility instead of one script doing the whole scenario.
+
+#### Key Fields That Matter
+
+- `code` (Code, `rw`): Python source code defining onStart(ctx), onMsg(ctx, inputs), onStop(ctx). Schema: `string / default=# Hooks template (uncomment what you need):
+# - onStart(ctx)
+# - onState(ctx, field, value, ts_ms=None)
+# - onMsg(ctx, inputs)
+# - onExec(ctx, exec_in, inputs)
+# - onStop(ctx)
+#
+# Notes:
+# - ctx.locals is preserved between calls (script-local memory)
+# - ctx.exec_in is set only for exec-triggered calls
+# - ctx.states.<field> reads cached rw/ro/wo state snapshot
+#   - example: ctx.states.foo / ctx.states.pose.x
+# - await ctx.read_state(field)  # fresh runtime read
+# - ctx.states.get(field)  # cached snapshot
+# - ctx.set_state(field, value)
+#   - await ctx.set_state_async(field, value)
+# - inputs binding mode is configured by state `inputMode`:
+#   - input_view (default): supports dot and mapping access
+#   - raw_dict: plain dict only
+#   - msgspec_struct: typed struct from dataIn schema
+# - State TypeGuard helpers are available from f8_dynamic_states
+#   - example: from f8_dynamic_states import is_state_lastError
+#   - then: if is_state_lastError(value, field): ...
+# - Video SHM helpers:
+#   - ctx.subscribe_video_shm(key, shm_name, decode='auto', use_event=False)
+#   - pkt = ctx.get_video_shm(key)
+#   - ctx.unsubscribe_video_shm(key)
+#   - ctx.list_video_shm_subscriptions()
+#
+# Return value protocol:
+# - onMsg: {'outputs': {...}} or any value (emits to 'out' if present)
+# - onExec: {'exec': ['exec', ...], 'outputs': {...}}
+
+from typing import TYPE_CHECKING, Any
+if TYPE_CHECKING:
+    from f8_script_api import F8Inputs, F8PyEngineContext, F8States
+
+def onStart(ctx: 'F8PyEngineContext') -> None:
+    ctx.log('python_script started')
+
+# def onState(
+#     ctx: 'F8PyEngineContext',
+#     field: str,
+#     value: Any,
+#     ts_ms: int | None = None,
+# ) -> None:
+#     ctx.log(f'state {field}={value} ts_ms={ts_ms}')
+#
+# def onMsg(ctx: 'F8PyEngineContext', inputs: 'F8Inputs') -> dict[str, Any]:
+#     msg = inputs.msg
+#     return {'outputs': {'out': msg}}
+#
+# def onExec(ctx: 'F8PyEngineContext', exec_in: str, inputs: 'F8Inputs') -> dict[str, Any]:
+#     if exec_in == 'exec2':
+#         return {'exec': ['exec2'], 'outputs': {'out': inputs.msg}}
+#     return {'exec': ['exec'], 'outputs': {'out': inputs.msg}}
+#
+# def onStop(ctx: 'F8PyEngineContext') -> None:
+#     ctx.log('python_script stopped')
+`.
+- `inputMode` (Input Mode, `rw`): Input binding mode: input_view | raw_dict | msgspec_struct. Schema: `string / enum[input_view, raw_dict, msgspec_struct] / default=input_view`.
+- `lastError` (Last Error, `wo`): Last script error (compile/runtime). Schema: `string / default=`.
+- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
+- `operatorId` (Operator Id, `ro`): Readonly: current operator/node id (operatorId). Schema: `string`.
+
+#### Pitfalls / Gotchas
+
+- A script node can become a maintenance bottleneck if it hides too much graph logic.
+- Weak schemas around the script make completion and downstream debugging much worse.
+
+#### Related Scenarios
+
+- [Scene 01: CVKit Template Tracking](../../scenarios/scene-01-cvkit_template_tracking.md)
+- [Scene 02: GameMod Skeleton](../../scenarios/scene-02-gamemod_skeleton.md)
+
+<a id="operator-f8-expr"></a>
 ### Python Expr (`f8.expr`)
 Evaluate a small expression using input values (math/logic/extraction).
 
@@ -571,8 +1225,8 @@ Evaluate a small expression using input values (math/logic/extraction).
 | `allowNumpy` | `rw` | `false` | `false` | `boolean / default=False` | Enable numpy calls in expressions (np.*, numpy.*). |
 | `unpackDictOutputs` | `rw` | `false` | `false` | `boolean / default=False` | When enabled, dict results are emitted by matching output port names. |
 | `code` | `rw` | `false` | `true` | `string / default=x` | Single-line expression (no statements). Available: abs/min/max/round/float/int, math.*, comprehensions. Numpy (np.*, numpy.*) is available only when Allow Numpy is enabled. |
-| `svcId` | `ro` | `false` | `false` | `string` | Readonly: current service instance id (svcId). |
-| `operatorId` | `ro` | `false` | `false` | `string` | Readonly: current operator/node id (operatorId). |
+| `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
+| `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
 #### Data Input Ports
 
@@ -586,81 +1240,228 @@ Evaluate a small expression using input values (math/logic/extraction).
 | --- | --- | --- | --- | --- |
 | `out` | `false` | `true` | `any` | Expression result. |
 
-### Buttplug Bridge (`f8.buttplug_bridge`)
-Connect to Intiface/Buttplug, publish device capabilities, and drive selected device outputs.
+#### When to Use
 
-- Exec in ports: `exec`
+- Use `Python Expr` when a one-line transformation is enough and a full script node would be overkill.
+- It is ideal for extracting a field, combining a small number of values, or applying a simple formula.
+
+#### Typical Inputs / Outputs
+
+- Data inputs: `x`
+- Data outputs: `out`
+
+#### Common Wiring Patterns
+
+- Feed it structured data from services or other operators, then pass the result into `Range Map`, `WaveViz`, or state edges.
+- Keep expressions readable enough that the graph still explains itself.
+
+#### Key Fields That Matter
+
+- `allowNumpy` (Allow Numpy, `rw`): Enable numpy calls in expressions (np.*, numpy.*). Schema: `boolean / default=False`.
+- `unpackDictOutputs` (Unpack Dict Outputs, `rw`): When enabled, dict results are emitted by matching output port names. Schema: `boolean / default=False`.
+- `code` (Expr, `rw`): Single-line expression (no statements). Available: abs/min/max/round/float/int, math.*, comprehensions. Numpy (np.*, numpy.*) is available only when Allow Numpy is enabled. Schema: `string / default=x`.
+- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
+- `operatorId` (Operator Id, `ro`): Readonly: current operator/node id (operatorId). Schema: `string`.
+
+#### Pitfalls / Gotchas
+
+- Once the expression needs lifecycle logic or hidden state, switch to `Python Script`.
+- If the payload shape is unclear, the expression node becomes fragile very quickly.
+
+#### Related Scenarios
+
+- [Scene 04: Functional TCode Generation](../../scenarios/scene-04-functional_tcode.md)
+
+<a id="operator-f8-lovense-out"></a>
+### Lovense Out (`f8.lovense_out`)
+Send Lovense Local API commands with split channels: sendPositionCmd->Position, sendFunctionCmd->Function.
+
+- Exec in ports: `sendPositionCmd`, `sendFunctionCmd`
 - Exec out ports: none
 
 #### State Fields
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `enabled` | `rw` | `false` | `true` | `boolean / default=True` | Enable bridge connection and output control. |
-| `wsUrl` | `rw` | `false` | `true` | `string / default=ws://127.0.0.1:12345` | Buttplug server websocket URL. |
-| `autoConnect` | `rw` | `false` | `true` | `boolean / default=True` | Automatically connect while enabled. |
-| `autoScanOnConnect` | `rw` | `false` | `false` | `boolean / default=True` | Start and stop scan once after connect. |
-| `scanDurationMs` | `rw` | `false` | `false` | `integer / default=5000` | Scan duration before stop when scan is triggered. |
-| `reconnectIntervalMs` | `rw` | `false` | `false` | `integer / default=2000` | Reconnect throttle interval. |
-| `selectedDevice` | `rw` | `false` | `true` | `string / default=` | Target token: "index\|name". |
-| `rescan` | `rw` | `false` | `true` | `boolean / default=False` | Set true to trigger one scan cycle; runtime resets it to false. |
-| `vibrateFeatureIndex` | `rw` | `false` | `false` | `integer / default=-1` | Feature index for vibrate (-1 = all). |
-| `rotateFeatureIndex` | `rw` | `false` | `false` | `integer / default=-1` | Feature index for rotate (-1 = all). |
-| `oscillateFeatureIndex` | `rw` | `false` | `false` | `integer / default=-1` | Feature index for oscillate (-1 = all). |
-| `positionFeatureIndex` | `rw` | `false` | `false` | `integer / default=-1` | Feature index for position (-1 = all). |
-| `defaultPositionDurationMs` | `rw` | `false` | `false` | `integer / default=500` | Default duration for position output. |
-| `stopOnDeactivate` | `rw` | `false` | `false` | `boolean / default=True` | Send stop command when service deactivates. |
-| `connected` | `ro` | `false` | `true` | `boolean / default=False` | True when websocket is connected. |
-| `scanning` | `ro` | `false` | `false` | `boolean / default=False` | True while scanning is active. |
-| `availableDevices` | `ro` | `false` | `false` | `array[string]` | Device tokens for selection UI. |
-| `deviceInfos` | `ro` | `false` | `false` | `any` | Full discovered device infos. |
-| `selectedDeviceInfo` | `ro` | `false` | `true` | `any` | Current selected device info object. |
-| `lastError` | `ro` | `false` | `true` | `string / default=` | Last runtime error. |
-| `sentCommands` | `ro` | `false` | `false` | `integer / default=0` | Total sent output/stop commands. |
-| `lastCommandTsMs` | `ro` | `false` | `false` | `integer / default=0` | Timestamp of last sent command. |
-| `svcId` | `ro` | `false` | `false` | `string` | Readonly: current service instance id (svcId). |
-| `operatorId` | `ro` | `false` | `false` | `string` | Readonly: current operator/node id (operatorId). |
+| `enabled` | `rw` | `true` | `true` | `boolean / default=True` | Enable/disable Lovense output. |
+| `commandUrl` | `rw` | `true` | `false` | `string / default=https://127-0-0-1.lovense.club:30010/command` | Lovense Local API /command URL. |
+| `platformName` | `rw` | `true` | `false` | `string / default=Feel8 Studio` | Value for X-platform request header. |
+| `requestTimeoutMs` | `rw` | `true` | `false` | `integer / default=5000` | HTTP timeout for Lovense requests. |
+| `verifyTls` | `rw` | `true` | `false` | `boolean / default=True` | Verify HTTPS certificate when using https:// commandUrl. |
+| `minSendIntervalMs` | `rw` | `true` | `false` | `integer / default=100` | Minimum interval between Position commands sent by sendPositionCmd (0 disables throttling). |
+| `vibrate` | `rw` | `true` | `false` | `number` | Normalized Function Vibrate level (0..1). |
+| `rotate` | `rw` | `true` | `false` | `number` | Normalized Function Rotate level (0..1). |
+| `pump` | `rw` | `true` | `false` | `number` | Normalized Function Pump level (0..1). |
+| `thrusting` | `rw` | `true` | `false` | `number` | Normalized Function Thrusting level (0..1). |
+| `fingering` | `rw` | `true` | `false` | `number` | Normalized Function Fingering level (0..1). |
+| `suction` | `rw` | `true` | `false` | `number` | Normalized Function Suction level (0..1). |
+| `depth` | `rw` | `true` | `false` | `number` | Normalized Function Depth level (0..1). |
+| `oscillate` | `rw` | `true` | `false` | `number` | Normalized Function Oscillate level (0..1). |
+| `all` | `rw` | `true` | `false` | `number` | Normalized Function All level (0..1). |
+| `strokeMin` | `rw` | `true` | `false` | `number` | Normalized Function Stroke min (0..1). Requires strokeMax. |
+| `strokeMax` | `rw` | `true` | `false` | `number` | Normalized Function Stroke max (0..1). Requires strokeMin. |
+| `stop` | `rw` | `true` | `false` | `boolean / default=False` | When true, sendFunctionCmd sends Function Stop. |
+| `timeSec` | `rw` | `true` | `false` | `number / default=0.0` | Function timeSec. |
+| `loopRunningSec` | `rw` | `true` | `false` | `number` | Optional Function loopRunningSec (omit when empty or <=0). |
+| `loopPauseSec` | `rw` | `true` | `false` | `number` | Optional Function loopPauseSec (omit when empty or <=0). |
+| `stopPrevious` | `rw` | `true` | `false` | `boolean / default=True` | Function stopPrevious (true->1, false->0). |
+| `toy` | `rw` | `true` | `true` | `string / default=` | Optional target toy id. Empty uses defaultToy. |
+| `defaultToy` | `rw` | `true` | `false` | `string / default=` | Fallback toy id when toy is empty. |
+| `availableToys` | `ro` | `true` | `false` | `array[string]` | Discovered toy IDs from GetToys response. |
+| `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
+| `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
 #### Data Input Ports
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
-| `vibrate` | `true` | `true` | `number` | Vibrate intensity (0..1). |
-| `rotate` | `true` | `true` | `number` | Rotate speed (-1..1). |
-| `oscillate` | `true` | `true` | `number` | Oscillate intensity (0..1). |
-| `position` | `true` | `true` | `number` | Position target (0..1). |
-| `positionDurationMs` | `false` | `true` | `number / default=500` | Optional position duration in milliseconds. |
-| `stop` | `false` | `true` | `boolean / default=False` | When true on exec, stop output on selected device. |
+| `position` | `true` | `true` | `number` | Normalized position input (0..1). Sent on sendPositionCmd as Lovense Position command. |
 
 #### Data Output Ports
 
+_None_
+
+#### When to Use
+
+- Use `Lovense Out` when the graph should drive a Lovense target directly from `f8.pyengine`.
+- It is the device-facing sink for Lovense-specific runtime control.
+
+#### Typical Inputs / Outputs
+
+- Exec inputs: `sendPositionCmd`, `sendFunctionCmd`
+- Data inputs: `position`
+- Data outputs: none
+
+#### Common Wiring Patterns
+
+- Feed it already-mapped control values or Lovense-formatted program data from upstream adapters.
+- Keep `Lovense Mock Server` or other debug aids around while validating release behavior.
+
+#### Key Fields That Matter
+
+- `enabled` (Enabled, `rw`): Enable/disable Lovense output. Schema: `boolean / default=True`.
+- `commandUrl` (Command URL, `rw`): Lovense Local API /command URL. Schema: `string / default=https://127-0-0-1.lovense.club:30010/command`.
+- `platformName` (Platform Name, `rw`): Value for X-platform request header. Schema: `string / default=Feel8 Studio`.
+- `requestTimeoutMs` (Request Timeout (ms), `rw`): HTTP timeout for Lovense requests. Schema: `integer / default=5000`.
+- `verifyTls` (Verify TLS, `rw`): Verify HTTPS certificate when using https:// commandUrl. Schema: `boolean / default=True`.
+- `minSendIntervalMs` (Min Send Interval (ms), `rw`): Minimum interval between Position commands sent by sendPositionCmd (0 disables throttling). Schema: `integer / default=100`.
+- `vibrate` (Vibrate, `rw`): Normalized Function Vibrate level (0..1). Schema: `number`.
+- `rotate` (Rotate, `rw`): Normalized Function Rotate level (0..1). Schema: `number`.
+
+#### Pitfalls / Gotchas
+
+- Protocol/device assumptions should be validated before tuning intensity curves.
+- Do not bury transport-specific fixes upstream if they only matter to this sink.
+
+#### Related Scenarios
+
+- No bundled scenario references this node yet.
+
+<a id="operator-f8-buttplug-out"></a>
+### Buttplug Out (`f8.buttplug_out`)
+Connect to Intiface/Buttplug with split channels: sendPositionCmd->position, sendFunctionCmd->state.
+
+- Exec in ports: `sendPositionCmd`, `sendFunctionCmd`
+- Exec out ports: none
+
+#### State Fields
+
+| Name | Access | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- | --- |
+| `enabled` | `rw` | `true` | `true` | `boolean / default=True` | Enable connection and output control. |
+| `wsUrl` | `rw` | `true` | `false` | `string / default=ws://127.0.0.1:12345` | Buttplug server websocket URL. |
+| `autoConnect` | `rw` | `true` | `false` | `boolean / default=True` | Automatically connect while enabled. |
+| `autoScanOnConnect` | `rw` | `true` | `false` | `boolean / default=True` | Start and stop scan once after connect. |
+| `scanDurationMs` | `rw` | `true` | `false` | `integer / default=5000` | Scan duration before stop when scan is triggered. |
+| `reconnectIntervalMs` | `rw` | `true` | `false` | `integer / default=2000` | Reconnect throttle interval. |
+| `selectedDevice` | `rw` | `true` | `true` | `string / default=` | Target token: "index\|name". |
+| `rescan` | `rw` | `true` | `false` | `boolean / default=False` | Set true to trigger one scan cycle; runtime resets it to false. |
+| `vibrateFeatureIndex` | `rw` | `true` | `false` | `integer / default=-1` | Feature index for vibrate (-1 = all). |
+| `rotateFeatureIndex` | `rw` | `true` | `false` | `integer / default=-1` | Feature index for rotate (-1 = all). |
+| `oscillateFeatureIndex` | `rw` | `true` | `false` | `integer / default=-1` | Feature index for oscillate (-1 = all). |
+| `positionFeatureIndex` | `rw` | `true` | `false` | `integer / default=-1` | Feature index for position (-1 = all). |
+| `defaultPositionDurationMs` | `rw` | `true` | `true` | `integer / default=500` | Default duration for position output. |
+| `vibrate` | `rw` | `true` | `false` | `number` | Function-channel vibrate intensity (0..1). |
+| `rotate` | `rw` | `true` | `false` | `number` | Function-channel rotate speed (-1..1). |
+| `oscillate` | `rw` | `true` | `false` | `number` | Function-channel oscillate intensity (0..1). |
+| `stop` | `rw` | `true` | `false` | `boolean / default=False` | When true, sendFunctionCmd stops output on selected device. |
+| `stopOnDeactivate` | `rw` | `true` | `false` | `boolean / default=True` | Send stop command when service deactivates. |
+| `connected` | `ro` | `true` | `false` | `boolean / default=False` | True when websocket is connected. |
+| `scanning` | `ro` | `true` | `false` | `boolean / default=False` | True while scanning is active. |
+| `availableDevices` | `ro` | `true` | `false` | `array[string]` | Device tokens for selection UI. |
+| `deviceInfos` | `ro` | `true` | `false` | `array[object]` | Full discovered device infos. |
+| `selectedDeviceInfo` | `ro` | `true` | `false` | `object{displayName, index, inputs, messageTimingGapMs, ...}` | Current selected device info object. |
+| `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
+| `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
+
+#### Data Input Ports
+
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
-| `connected` | `true` | `true` | `boolean / default=False` | Current connection status. |
-| `selectedDeviceInfo` | `true` | `true` | `any` | Selected device info object. |
-| `error` | `true` | `true` | `string / default=` | Last error string. |
+| `position` | `true` | `true` | `number` | Position-channel target (0.0001..0.9999) used by sendPositionCmd. |
 
+#### Data Output Ports
+
+_None_
+
+#### When to Use
+
+- Use `Buttplug Out` when the final control path targets a Buttplug-compatible device.
+- It is the adapter node for Buttplug-specific runtime output.
+
+#### Typical Inputs / Outputs
+
+- Exec inputs: `sendPositionCmd`, `sendFunctionCmd`
+- Data inputs: `position`
+- Data outputs: none
+
+#### Common Wiring Patterns
+
+- Feed it cleaned, bounded control values rather than raw feature outputs.
+- Keep the protocol branch separate from generic signal shaping so the graph stays portable.
+
+#### Key Fields That Matter
+
+- `enabled` (Enabled, `rw`): Enable connection and output control. Schema: `boolean / default=True`.
+- `wsUrl` (WebSocket URL, `rw`): Buttplug server websocket URL. Schema: `string / default=ws://127.0.0.1:12345`.
+- `autoConnect` (Auto Connect, `rw`): Automatically connect while enabled. Schema: `boolean / default=True`.
+- `autoScanOnConnect` (Auto Scan On Connect, `rw`): Start and stop scan once after connect. Schema: `boolean / default=True`.
+- `scanDurationMs` (Scan Duration (ms), `rw`): Scan duration before stop when scan is triggered. Schema: `integer / default=5000`.
+- `reconnectIntervalMs` (Reconnect Interval (ms), `rw`): Reconnect throttle interval. Schema: `integer / default=2000`.
+- `selectedDevice` (Selected Device, `rw`): Target token: "index|name". Schema: `string / default=`.
+- `rescan` (Rescan, `rw`): Set true to trigger one scan cycle; runtime resets it to false. Schema: `boolean / default=False`.
+
+#### Pitfalls / Gotchas
+
+- Device capability mismatches are common; confirm the target supports the intended command style.
+- A bad upstream range will feel like a protocol problem even when transport is fine.
+
+#### Related Scenarios
+
+- No bundled scenario references this node yet.
+
+<a id="operator-f8-lovense-mock-server"></a>
 ### Lovense Mock Server (`f8.lovense_mock_server`)
-Event-driven input node that mocks the Lovense Local API and publishes received commands as state.
+Event-driven input node that mocks the Lovense Local API, publishes received commands as state, and emits exec.
 
 - Exec in ports: none
-- Exec out ports: none
+- Exec out ports: `event`
 
 #### State Fields
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `bindAddress` | `rw` | `false` | `true` | `string / default=127.0.0.1` | Local address to bind (loopback by default). |
-| `allowNonLoopbackBind` | `rw` | `false` | `false` | `boolean / default=False` | When true, allow bindAddress values other than loopback. |
-| `port` | `rw` | `false` | `true` | `integer / default=30010` | HTTP port for the mock Lovense server. |
-| `printEnabled` | `rw` | `false` | `false` | `boolean / default=False` | If enabled, logs raw incoming requests and outgoing responses (debug). |
-| `eventIncludePayload` | `rw` | `false` | `false` | `boolean / default=False` | Include the parsed request payload in the `event` state (debug). |
-| `eventIncludeRequest` | `rw` | `false` | `false` | `boolean / default=False` | Include request headers/body in the `event` state (debug). |
-| `listening` | `ro` | `false` | `true` | `boolean / default=False` | True if the HTTP server is currently listening. |
-| `lastError` | `ro` | `false` | `true` | `string / default=` | Last server error (e.g. bind failure). |
-| `event` | `ro` | `false` | `true` | `any` | Latest received Lovense command (dict with seq/eventId/summary/raw). |
-| `svcId` | `ro` | `false` | `false` | `string` | Readonly: current service instance id (svcId). |
-| `operatorId` | `ro` | `false` | `false` | `string` | Readonly: current operator/node id (operatorId). |
+| `bindAddress` | `rw` | `true` | `true` | `string / default=127.0.0.1` | Local address to bind (loopback by default). |
+| `allowNonLoopbackBind` | `rw` | `true` | `false` | `boolean / default=False` | When true, allow bindAddress values other than loopback. |
+| `port` | `rw` | `true` | `true` | `integer / default=30010` | HTTP port for the mock Lovense server. |
+| `printEnabled` | `rw` | `true` | `false` | `boolean / default=False` | If enabled, logs raw incoming requests and outgoing responses (debug). |
+| `eventIncludePayload` | `rw` | `true` | `false` | `boolean / default=False` | Include the parsed request payload in the `event` state (debug). |
+| `eventIncludeRequest` | `rw` | `true` | `false` | `boolean / default=False` | Include request headers/body in the `event` state (debug). |
+| `listening` | `ro` | `true` | `true` | `boolean / default=False` | True if the HTTP server is currently listening. |
+| `lastError` | `ro` | `true` | `true` | `string / default=` | Last server error (e.g. bind failure). |
+| `event` | `ro` | `true` | `true` | `object{eventId, isoTime, method, path, ...}` | Latest received Lovense command (dict with seq/eventId/summary/raw). |
+| `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
+| `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
 #### Data Input Ports
 
@@ -670,6 +1471,43 @@ _None_
 
 _None_
 
+#### When to Use
+
+- Use `Lovense Mock Server` when you need to test Lovense Local API integrations without the real device stack.
+- It is valuable for release rehearsals, demos, and protocol debugging.
+
+#### Typical Inputs / Outputs
+
+- Exec outputs: `event`
+- Data inputs: none
+- Data outputs: none
+
+#### Common Wiring Patterns
+
+- Keep it in a side branch used for validation and automated checks, not as the default production path.
+- Inspect emitted event state and exec triggers with `Print` or `TextViz` while testing adapters.
+
+#### Key Fields That Matter
+
+- `bindAddress` (Bind Address, `rw`): Local address to bind (loopback by default). Schema: `string / default=127.0.0.1`.
+- `allowNonLoopbackBind` (Allow Non-loopback Bind, `rw`): When true, allow bindAddress values other than loopback. Schema: `boolean / default=False`.
+- `port` (Port, `rw`): HTTP port for the mock Lovense server. Schema: `integer / default=30010`.
+- `printEnabled` (Print Raw IO, `rw`): If enabled, logs raw incoming requests and outgoing responses (debug). Schema: `boolean / default=False`.
+- `eventIncludePayload` (Event Include Payload, `rw`): Include the parsed request payload in the `event` state (debug). Schema: `boolean / default=False`.
+- `eventIncludeRequest` (Event Include Request, `rw`): Include request headers/body in the `event` state (debug). Schema: `boolean / default=False`.
+- `listening` (Listening, `ro`): True if the HTTP server is currently listening. Schema: `boolean / default=False`.
+- `lastError` (Last Error, `ro`): Last server error (e.g. bind failure). Schema: `string / default=`.
+
+#### Pitfalls / Gotchas
+
+- It validates protocol flow, not real hardware behavior.
+- Binding issues and loopback settings are the first things to check when it appears silent.
+
+#### Related Scenarios
+
+- No bundled scenario references this node yet.
+
+<a id="operator-f8-lovense-program-adapter"></a>
 ### Lovense Program Adapter (`f8.lovense_program_adapter`)
 Convert Lovense Mock Server events into ProgramWave input + amplitude.
 
@@ -680,23 +1518,23 @@ Convert Lovense Mock Server events into ProgramWave input + amplitude.
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `lovenseEvent` | `wo` | `false` | `true` | `any` | State-edge input from Lovense Mock Server: the latest event dict. |
-| `program` | `ro` | `false` | `true` | `any` | Readonly output: ProgramWave-compatible dict (tsMs/timeSec/hz/loopRunningSec/loopPauseSec). |
+| `lovenseEvent` | `wo` | `true` | `true` | `object{eventId, payload, request, seq, ...}` | State-edge input from Lovense Mock Server: the latest event dict. |
+| `program` | `ro` | `false` | `true` | `object{hz, loopPauseSec, loopRunningSec, timeSec, ...}` | Readonly output: ProgramWave-compatible dict (tsMs/timeSec/hz/loopRunningSec/loopPauseSec). |
 | `amplitude` | `ro` | `false` | `true` | `number / default=0.0` | Readonly output: normalized amplitude (0..1). |
 | `kind` | `ro` | `false` | `false` | `string / default=` | Readonly output: event kind (debug). |
-| `sequence` | `ro` | `false` | `false` | `any` | Readonly output: sequence dict for Sequence Player (typically pattern -> hz sequence). |
-| `minHz` | `rw` | `false` | `false` | `number / default=0.0` | Frequency at thrusting=0. |
-| `maxHz` | `rw` | `false` | `false` | `number / default=3.0` | Frequency at thrusting=thrustingMax. |
-| `thrustingMax` | `rw` | `false` | `false` | `number / default=20.0` | Normalize thrusting value by this maximum. |
-| `depthMax` | `wo` | `false` | `false` | `number / default=3.0` | Normalize depth value by this maximum (amplitude). |
-| `speedGamma` | `wo` | `false` | `false` | `number / default=1.0` | Nonlinear curve for thrusting->speed (>=0.01). |
-| `vibrateHz` | `wo` | `false` | `false` | `number / default=2.0` | Default program frequency for All: vibration events. |
-| `vibrateMax` | `rw` | `false` | `false` | `number / default=20.0` | Normalize All: vibration strength by this maximum. |
-| `patternMinHz` | `rw` | `false` | `false` | `number / default=0.0` | Pattern strength=0 mapped Hz minimum. |
-| `patternMaxHz` | `rw` | `false` | `false` | `number / default=5.0` | Pattern strength=patternStrengthMax mapped Hz maximum. |
-| `patternStrengthMax` | `rw` | `false` | `false` | `number / default=20.0` | Normalize Pattern strength values by this maximum before mapping to Hz. |
-| `svcId` | `ro` | `false` | `false` | `string` | Readonly: current service instance id (svcId). |
-| `operatorId` | `ro` | `false` | `false` | `string` | Readonly: current operator/node id (operatorId). |
+| `sequence` | `ro` | `false` | `false` | `object{stepMs, timeSec, tsMs, values}` | Readonly output: sequence dict for Sequence Player (typically pattern -> hz sequence). |
+| `minHz` | `rw` | `true` | `false` | `number / default=0.0` | Frequency at thrusting=0. |
+| `maxHz` | `rw` | `true` | `false` | `number / default=3.0` | Frequency at thrusting=thrustingMax. |
+| `thrustingMax` | `rw` | `true` | `false` | `number / default=20.0` | Normalize thrusting value by this maximum. |
+| `depthMax` | `wo` | `true` | `false` | `number / default=3.0` | Normalize depth value by this maximum (amplitude). |
+| `speedGamma` | `wo` | `true` | `false` | `number / default=1.0` | Nonlinear curve for thrusting->speed (>=0.01). |
+| `vibrateHz` | `wo` | `true` | `false` | `number / default=2.0` | Default program frequency for All: vibration events. |
+| `vibrateMax` | `rw` | `true` | `false` | `number / default=20.0` | Normalize All: vibration strength by this maximum. |
+| `patternMinHz` | `rw` | `true` | `false` | `number / default=0.0` | Pattern strength=0 mapped Hz minimum. |
+| `patternMaxHz` | `rw` | `true` | `false` | `number / default=5.0` | Pattern strength=patternStrengthMax mapped Hz maximum. |
+| `patternStrengthMax` | `rw` | `true` | `false` | `number / default=20.0` | Normalize Pattern strength values by this maximum before mapping to Hz. |
+| `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
+| `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
 #### Data Input Ports
 
@@ -706,6 +1544,42 @@ _None_
 
 _None_
 
+#### When to Use
+
+- Use `Lovense Program Adapter` when generic motion/control signals should become Lovense-style program semantics.
+- It isolates protocol translation from the rest of the graph.
+
+#### Typical Inputs / Outputs
+
+- Data inputs: none
+- Data outputs: none
+
+#### Common Wiring Patterns
+
+- Place it after waveform generation and normalization, then feed the adapted output into `Lovense Out`.
+- Keep the generic motion branch visible in parallel so adapter behavior is easy to compare.
+
+#### Key Fields That Matter
+
+- `lovenseEvent` (Lovense Event, `wo`): State-edge input from Lovense Mock Server: the latest event dict. Schema: `object{eventId, payload, request, seq, ...}`.
+- `program` (Program, `ro`): Readonly output: ProgramWave-compatible dict (tsMs/timeSec/hz/loopRunningSec/loopPauseSec). Schema: `object{hz, loopPauseSec, loopRunningSec, timeSec, ...}`.
+- `amplitude` (Amplitude, `ro`): Readonly output: normalized amplitude (0..1). Schema: `number / default=0.0`.
+- `minHz` (Min Hz, `rw`): Frequency at thrusting=0. Schema: `number / default=0.0`.
+- `maxHz` (Max Hz, `rw`): Frequency at thrusting=thrustingMax. Schema: `number / default=3.0`.
+- `thrustingMax` (Thrusting Max, `rw`): Normalize thrusting value by this maximum. Schema: `number / default=20.0`.
+- `depthMax` (Depth Max, `wo`): Normalize depth value by this maximum (amplitude). Schema: `number / default=3.0`.
+- `speedGamma` (Speed Gamma, `wo`): Nonlinear curve for thrusting->speed (>=0.01). Schema: `number / default=1.0`.
+
+#### Pitfalls / Gotchas
+
+- If the source signal is poorly normalized, adapter tuning becomes guesswork.
+- Mixing protocol mapping with source-signal cleanup makes both stages harder to reuse.
+
+#### Related Scenarios
+
+- No bundled scenario references this node yet.
+
+<a id="operator-f8-sequence-player"></a>
 ### Sequence Player (`f8.sequence_player`)
 Play a step-sequence over time (epoch-based), outputting the current step value.
 
@@ -716,9 +1590,9 @@ Play a step-sequence over time (epoch-based), outputting the current step value.
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `sequence` | `wo` | `true` | `true` | `any` | Dict payload defining tsMs/stepMs/values/timeSec. |
-| `svcId` | `ro` | `false` | `false` | `string` | Readonly: current service instance id (svcId). |
-| `operatorId` | `ro` | `false` | `false` | `string` | Readonly: current operator/node id (operatorId). |
+| `sequence` | `wo` | `true` | `true` | `object{stepMs, timeSec, tsMs, values}` | Dict payload defining tsMs/stepMs/values/timeSec. |
+| `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
+| `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
 #### Data Input Ports
 
@@ -734,6 +1608,37 @@ _None_
 | `done` | `true` | `true` | `boolean` | Whether playback ended. |
 | `elapsedSec` | `true` | `true` | `number` | Elapsed seconds since start. |
 
+#### When to Use
+
+- Use `Sequence Player` when a prepared sequence should play back over time and expose current value/index state.
+- It is a good fit for reproducible demos and scripted motion passages.
+
+#### Typical Inputs / Outputs
+
+- Data inputs: none
+- Data outputs: `value`, `index`, `active`, `done`, `elapsedSec`
+
+#### Common Wiring Patterns
+
+- Feed it a sequence payload, then branch `value` into mapping or device output nodes and monitor `index`/`done` for control logic.
+- Pair it with `Playback Sync` when the rest of the graph needs to follow the same timeline.
+
+#### Key Fields That Matter
+
+- `sequence` (Sequence, `wo`): Dict payload defining tsMs/stepMs/values/timeSec. Schema: `object{stepMs, timeSec, tsMs, values}`.
+- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
+- `operatorId` (Operator Id, `ro`): Readonly: current operator/node id (operatorId). Schema: `string`.
+
+#### Pitfalls / Gotchas
+
+- Sequence schema errors can look like timing problems if the payload contract is not validated first.
+- Keep timeline ownership clear so the graph does not fight between live and prerecorded sources.
+
+#### Related Scenarios
+
+- No bundled scenario references this node yet.
+
+<a id="operator-f8-mix-silence-fill"></a>
 ### Mix (Silence Fill) (`f8.mix_silence_fill`)
 Outputs A by default; when A is silent for a while, crossfades to B as filler.
 
@@ -744,11 +1649,11 @@ Outputs A by default; when A is silent for a while, crossfades to B as filler.
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `silenceMs` | `rw` | `false` | `true` | `integer / default=500` | If A changes less than deltaThreshold for this long, fade to B. |
-| `deltaThreshold` | `rw` | `false` | `true` | `number / default=0.001` | Absolute change threshold to treat A as active. |
-| `fadeMs` | `rw` | `false` | `true` | `integer / default=200` | Crossfade time (0=instant). |
-| `svcId` | `ro` | `false` | `false` | `string` | Readonly: current service instance id (svcId). |
-| `operatorId` | `ro` | `false` | `false` | `string` | Readonly: current operator/node id (operatorId). |
+| `silenceMs` | `rw` | `true` | `true` | `integer / default=500` | If A changes less than deltaThreshold for this long, fade to B. |
+| `deltaThreshold` | `rw` | `true` | `true` | `number / default=0.001` | Absolute change threshold to treat A as active. |
+| `fadeMs` | `rw` | `true` | `true` | `integer / default=200` | Crossfade time (0=instant). |
+| `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
+| `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
 #### Data Input Ports
 
@@ -765,8 +1670,43 @@ Outputs A by default; when A is silent for a while, crossfades to B as filler.
 | `alpha` | `true` | `true` | `number` | Crossfade factor (0=A, 1=B) |
 | `silent` | `true` | `true` | `number` | 1 if A is considered silent else 0 |
 
+#### When to Use
+
+- Use `Mix (Silence Fill)` when multiple sources should be combined while missing inputs are treated as silence rather than failure.
+- It is useful in audio/control graphs that must remain continuous even when one branch drops out.
+
+#### Typical Inputs / Outputs
+
+- Exec inputs: `exec`
+- Exec outputs: `exec`
+- Data inputs: `A`, `B`
+- Data outputs: `out`, `alpha`, `silent`
+
+#### Common Wiring Patterns
+
+- Mix upstream branches before final smoothing or mapping so you can inspect one combined signal.
+- Keep `WaveViz` after the mixer while balancing branch contribution.
+
+#### Key Fields That Matter
+
+- `silenceMs` (Silence (ms), `rw`): If A changes less than deltaThreshold for this long, fade to B. Schema: `integer / default=500`.
+- `deltaThreshold` (Delta Threshold, `rw`): Absolute change threshold to treat A as active. Schema: `number / default=0.001`.
+- `fadeMs` (Fade (ms), `rw`): Crossfade time (0=instant). Schema: `integer / default=200`.
+- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
+- `operatorId` (Operator Id, `ro`): Readonly: current operator/node id (operatorId). Schema: `string`.
+
+#### Pitfalls / Gotchas
+
+- Silence fill can hide an upstream outage if there is no separate health visualization.
+- Mixing too early can make debugging branch-specific issues much harder.
+
+#### Related Scenarios
+
+- No bundled scenario references this node yet.
+
+<a id="operator-f8-playback-sync"></a>
 ### Playback Sync (`f8.playback_sync`)
-Extrapolates IMPlayer playback position between sparse telemetry updates.
+Extrapolates IMPlayer playback position between sparse playback state updates.
 
 - Exec in ports: none
 - Exec out ports: none
@@ -775,17 +1715,17 @@ Extrapolates IMPlayer playback position between sparse telemetry updates.
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `maxExtrapolateMs` | `rw` | `false` | `false` | `integer / default=1000` | Limit extrapolation horizon to avoid drift when telemetry is stale (0 = unlimited). |
-| `playbackRate` | `rw` | `false` | `false` | `number / default=1.0` | Rate multiplier used for extrapolation when playing. |
-| `clampToDuration` | `rw` | `false` | `false` | `boolean / default=True` | Clamp estimated position to latest duration when available. |
-| `svcId` | `ro` | `false` | `false` | `string` | Readonly: current service instance id (svcId). |
-| `operatorId` | `ro` | `false` | `false` | `string` | Readonly: current operator/node id (operatorId). |
+| `maxExtrapolateMs` | `rw` | `true` | `false` | `integer / default=1000` | Limit extrapolation horizon to avoid drift when playback state is stale (0 = unlimited). |
+| `playbackRate` | `rw` | `true` | `false` | `number / default=1.0` | Rate multiplier used for extrapolation when playing. |
+| `clampToDuration` | `rw` | `true` | `false` | `boolean / default=True` | Clamp estimated position to latest duration when available. |
+| `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
+| `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
 #### Data Input Ports
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
-| `playback` | `false` | `true` | `any` | Playback payload from f8.implayer/playback (position/duration/playing/videoId). |
+| `playback` | `false` | `true` | `object{duration, playing, position, videoId}` | Playback payload from f8.implayer/playback (position/duration/playing/videoId). |
 
 #### Data Output Ports
 
@@ -799,6 +1739,39 @@ Extrapolates IMPlayer playback position between sparse telemetry updates.
 | `ageMs` | `true` | `false` | `integer` | Age of latest playback sample in milliseconds. |
 | `stale` | `true` | `false` | `boolean` | True if sample age exceeds max extrapolation window. |
 
+#### When to Use
+
+- Use `Playback Sync` when a graph needs a timeline or state derived from media/sequence playback progress.
+- It helps tie motion logic to a shared playback clock.
+
+#### Typical Inputs / Outputs
+
+- Data inputs: `playback`
+- Data outputs: `position`, `rawPosition`, `duration`, `playing`, `videoId`, `ageMs`, `stale`
+
+#### Common Wiring Patterns
+
+- Pair it with `Sequence Player`, `IM Player`, or other time-based sources so downstream operators can lock to the same progress.
+- Keep sync state visible during authoring to confirm the graph follows the intended master clock.
+
+#### Key Fields That Matter
+
+- `maxExtrapolateMs` (Max Extrapolate (ms), `rw`): Limit extrapolation horizon to avoid drift when playback state is stale (0 = unlimited). Schema: `integer / default=1000`.
+- `playbackRate` (Playback Rate, `rw`): Rate multiplier used for extrapolation when playing. Schema: `number / default=1.0`.
+- `clampToDuration` (Clamp To Duration, `rw`): Clamp estimated position to latest duration when available. Schema: `boolean / default=True`.
+- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
+- `operatorId` (Operator Id, `ro`): Readonly: current operator/node id (operatorId). Schema: `string`.
+
+#### Pitfalls / Gotchas
+
+- Competing timebases are a common source of drift and surprise resets.
+- If playback ownership is unclear, downstream timing bugs are hard to localize.
+
+#### Related Scenarios
+
+- No bundled scenario references this node yet.
+
+<a id="operator-f8-handy-out"></a>
 ### Handy Out (`f8.handy_out`)
 Drive The Handy via HDSP using normalized 0..1 input values.
 
@@ -809,26 +1782,26 @@ Drive The Handy via HDSP using normalized 0..1 input values.
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `enabled` | `rw` | `false` | `true` | `boolean / default=True` | Enable/disable Handy output. |
-| `connectionKey` | `rw` | `false` | `true` | `string / default=` | The Handy X-Connection-Key value. |
-| `baseUrl` | `rw` | `false` | `true` | `string / default=https://www.handyfeeling.com/api/handy/v2` | Handy API base URL. |
-| `ensureHdspMode` | `rw` | `false` | `true` | `boolean / default=True` | Automatically set mode=HDSP before sending position commands. |
-| `invert` | `rw` | `false` | `true` | `boolean / default=False` | Invert 0..1 input mapping before percent conversion. |
-| `minPercent` | `rw` | `false` | `true` | `number / default=0.0` | Mapped output minimum in percent. |
-| `maxPercent` | `rw` | `false` | `true` | `number / default=100.0` | Mapped output maximum in percent. |
-| `defaultDurationMs` | `rw` | `false` | `true` | `integer / default=100` | Default /hdsp/xpt duration when durationMs input is not provided. |
-| `requestTimeoutMs` | `rw` | `false` | `false` | `integer / default=5000` | HTTP request timeout for Handy API calls. |
-| `minSendIntervalMs` | `rw` | `false` | `true` | `integer / default=0` | Minimum interval between sent commands (0 means follow tick rate). |
-| `immediateResponse` | `rw` | `false` | `false` | `boolean / default=False` | Default immediateResponse value for /hdsp/xpt. |
-| `stopOnTarget` | `rw` | `false` | `false` | `boolean / default=False` | Default stopOnTarget value for /hdsp/xpt. |
+| `enabled` | `rw` | `true` | `true` | `boolean / default=True` | Enable/disable Handy output. |
+| `connectionKey` | `rw` | `true` | `true` | `string / default=` | The Handy X-Connection-Key value. |
+| `baseUrl` | `rw` | `true` | `true` | `string / default=https://www.handyfeeling.com/api/handy/v2` | Handy API base URL. |
+| `ensureHdspMode` | `rw` | `true` | `true` | `boolean / default=True` | Automatically set mode=HDSP before sending position commands. |
+| `invert` | `rw` | `true` | `true` | `boolean / default=False` | Invert 0..1 input mapping before percent conversion. |
+| `minPercent` | `rw` | `true` | `true` | `number / default=0.0` | Mapped output minimum in percent. |
+| `maxPercent` | `rw` | `true` | `true` | `number / default=100.0` | Mapped output maximum in percent. |
+| `defaultDurationMs` | `rw` | `true` | `true` | `integer / default=100` | Default /hdsp/xpt duration when durationMs input is not provided. |
+| `requestTimeoutMs` | `rw` | `true` | `false` | `integer / default=5000` | HTTP request timeout for Handy API calls. |
+| `minSendIntervalMs` | `rw` | `true` | `true` | `integer / default=0` | Minimum interval between sent commands (0 means follow tick rate). |
+| `immediateResponse` | `rw` | `true` | `false` | `boolean / default=False` | Default immediateResponse value for /hdsp/xpt. |
+| `stopOnTarget` | `rw` | `true` | `false` | `boolean / default=False` | Default stopOnTarget value for /hdsp/xpt. |
 | `lastError` | `ro` | `false` | `true` | `string / default=` | Last runtime error message. |
 | `lastHttpStatus` | `ro` | `false` | `true` | `integer / default=0` | Last HTTP status code from Handy API. |
 | `lastResult` | `ro` | `false` | `true` | `number / default=0.0` | Last Handy RPC result value. |
 | `sentCommands` | `ro` | `false` | `false` | `integer / default=0` | Total successfully sent HDSP commands. |
 | `droppedCommands` | `ro` | `false` | `false` | `integer / default=0` | Commands dropped due to backoff or minSendInterval filtering. |
 | `lastSentTsMs` | `ro` | `false` | `false` | `integer / default=0` | Timestamp of the last successful HDSP command. |
-| `svcId` | `ro` | `false` | `false` | `string` | Readonly: current service instance id (svcId). |
-| `operatorId` | `ro` | `false` | `false` | `string` | Readonly: current operator/node id (operatorId). |
+| `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
+| `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
 #### Data Input Ports
 
@@ -848,32 +1821,389 @@ Drive The Handy via HDSP using normalized 0..1 input values.
 | `result` | `true` | `true` | `number / default=0.0` | Last RPC result code. |
 | `error` | `true` | `true` | `string / default=` | Last runtime error. |
 
-## Usage Guide (Manual)
+#### When to Use
 
-### Recommended Use Cases
+- Use `Handy Out` when the final output path targets The Handy device/protocol.
+- It is the specialized sink for Handy-specific runtime control.
 
-- Build operator pipelines for signal processing and device control.
-- Bridge service outputs into composable runtime logic.
+#### Typical Inputs / Outputs
 
-### Minimal Run Example
+- Exec inputs: `exec`
+- Data inputs: `value`, `durationMs`, `immediateResponse`, `stopOnTarget`
+- Data outputs: `sentPosition`, `httpStatus`, `result`, `error`
 
-```bash
-pixi run -e default engine
-```
+#### Common Wiring Patterns
 
-### Operator Composition Notes
+- Feed it finalized `TCode` or equivalent control data after scaling and safety shaping are already done.
+- Keep a viewer branch such as `TCodeViz` attached while validating device-targeted behavior.
 
-- Keep time-base generation (`tick`, `phase`, `program_wave`) separated from mapping stages (`range_map`, `smooth_filter`, `rate_limiter`).
-- Use dedicated adapter operators (`lovense_program_adapter`, `buttplug_bridge`) to isolate protocol translation from signal logic.
-- `f8.expr` is an operator inside `f8.pyengine`; if you need a standalone service-level expression runtime, use `f8.pyexpr`.
-- For reusable chains, keep clear input/output contracts and avoid hidden side effects.
+#### Key Fields That Matter
 
-### Common Pitfalls
+- `enabled` (Enabled, `rw`): Enable/disable Handy output. Schema: `boolean / default=True`.
+- `connectionKey` (Connection Key, `rw`): The Handy X-Connection-Key value. Schema: `string / default=`.
+- `baseUrl` (Base URL, `rw`): Handy API base URL. Schema: `string / default=https://www.handyfeeling.com/api/handy/v2`.
+- `ensureHdspMode` (Ensure HDSP Mode, `rw`): Automatically set mode=HDSP before sending position commands. Schema: `boolean / default=True`.
+- `invert` (Invert, `rw`): Invert 0..1 input mapping before percent conversion. Schema: `boolean / default=False`.
+- `minPercent` (Min Percent, `rw`): Mapped output minimum in percent. Schema: `number / default=0.0`.
+- `maxPercent` (Max Percent, `rw`): Mapped output maximum in percent. Schema: `number / default=100.0`.
+- `defaultDurationMs` (Default Duration (ms), `rw`): Default /hdsp/xpt duration when durationMs input is not provided. Schema: `integer / default=100`.
 
-- Mixed push/pull data delivery can cause unintended ordering assumptions.
-- Overly dense operator graphs make runtime diagnosis difficult.
+#### Pitfalls / Gotchas
 
-### Troubleshooting
+- Treat it as a transport/device layer, not the place to fix signal semantics.
+- Verify device-specific cadence assumptions early in release testing.
 
-- Start with a minimal chain and add one operator at a time.
-- Inspect service and operator state ports to locate stale or invalid values.
+#### Related Scenarios
+
+- No bundled scenario references this node yet.
+
+<a id="operator-f8-state-trigger"></a>
+### State Trigger (`f8.state_trigger`)
+Triggers exec on `changed` when state `value` changes and node is enabled.
+
+- Exec in ports: none
+- Exec out ports: `changed`
+
+#### State Fields
+
+| Name | Access | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- | --- |
+| `value` | `rw` | `false` | `true` | `any` | Watched state value. Exec emits when this changes. |
+| `enabled` | `rw` | `true` | `true` | `boolean / default=True` | Enable/disable trigger emission on value changes. |
+| `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
+| `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
+
+#### Data Input Ports
+
+_None_
+
+#### Data Output Ports
+
+_None_
+
+#### When to Use
+
+- Use `State Trigger` when exec should fire only when a watched state value changes.
+- It is useful for event-like reactions without polling every tick.
+
+#### Typical Inputs / Outputs
+
+- Exec outputs: `changed`
+- Data inputs: none
+- Data outputs: none
+
+#### Common Wiring Patterns
+
+- Feed a stateful value into it, then use the `changed` exec output to gate side effects or downstream updates.
+- Pair it with `ControlPanel` or service state edges when authoring reactive graphs.
+
+#### Key Fields That Matter
+
+- `value` (Value, `rw`): Watched state value. Exec emits when this changes. Schema: `any`.
+- `enabled` (Enabled, `rw`): Enable/disable trigger emission on value changes. Schema: `boolean / default=True`.
+- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
+- `operatorId` (Operator Id, `ro`): Readonly: current operator/node id (operatorId). Schema: `string`.
+
+#### Pitfalls / Gotchas
+
+- If the watched value changes every frame, this becomes effectively another tick source.
+- Make sure the graph really wants change detection and not periodic evaluation.
+
+#### Related Scenarios
+
+- No bundled scenario references this node yet.
+
+<a id="operator-f8-bone-filter"></a>
+### Bone Filter (`f8.bone_filter`)
+Smooths a single bone pose and outputs filtered + local relative pose.
+
+- Exec in ports: none
+- Exec out ports: none
+
+#### State Fields
+
+| Name | Access | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- | --- |
+| `filter_type` | `rw` | `true` | `true` | `string / enum[NONE, EMA, DEMA, ONEEURO] / default=EMA` | Filter type. |
+| `ema_alpha` | `rw` | `true` | `true` | `number / default=0.4` | EMA smoothing factor (0..1). |
+| `dema_alpha` | `rw` | `true` | `true` | `number / default=0.4` | DEMA smoothing factor (0..1). |
+| `one_euro_min_cutoff` | `rw` | `true` | `true` | `number / default=1.5` | Minimum cutoff frequency. |
+| `one_euro_beta` | `rw` | `true` | `true` | `number / default=0.0` | Speed coefficient for dynamic cutoff. |
+| `one_euro_derivative_cutoff` | `rw` | `true` | `false` | `number / default=1.0` | Cutoff frequency for derivative filter. |
+| `one_euro_default_freq` | `rw` | `true` | `false` | `number / default=90.0` | Default sampling frequency (Hz). |
+| `jumpEnabled` | `rw` | `true` | `false` | `boolean / default=True` | Enable jump detection and hard reset. |
+| `jumpPosThreshold` | `rw` | `true` | `false` | `number / default=0.25` | Position distance threshold. |
+| `jumpRotDegThreshold` | `rw` | `true` | `false` | `number / default=35.0` | Rotation distance threshold in degrees. |
+| `jumpConsecutiveFrames` | `rw` | `true` | `false` | `number / default=3` | Consecutive far frames required before reset. |
+| `jumpCooldownFrames` | `rw` | `true` | `false` | `number / default=8` | Cooldown frames after reset. |
+| `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
+| `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
+
+#### Data Input Ports
+
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `bone` | `true` | `true` | `object{pos, rot}` | Input bone pose with pos[3] and rot[4] quaternion. |
+
+#### Data Output Ports
+
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `filtered` | `true` | `true` | `object{pos, rot}` | Filtered bone pose. |
+| `relative` | `true` | `true` | `object{pos, rot}` | Relative pose in filtered local space. |
+
+#### When to Use
+
+- Use `Bone Filter` when one bone pose should be smoothed and converted into a more stable local signal.
+- It is ideal for skeleton-driven control graphs where jitter matters.
+
+#### Typical Inputs / Outputs
+
+- Data inputs: `bone`
+- Data outputs: `filtered`, `relative`
+
+#### Common Wiring Patterns
+
+- Feed it from `Bone Selector`, then use `filtered` or `relative` outputs for mapping, Euler conversion, or visualization.
+- Tune it with a live skeleton viewer attached so resets and lag are easy to spot.
+
+#### Key Fields That Matter
+
+- `filter_type` (Filter, `rw`): Filter type. Schema: `string / enum[NONE, EMA, DEMA, ONEEURO] / default=EMA`.
+- `ema_alpha` (EMA Alpha, `rw`): EMA smoothing factor (0..1). Schema: `number / default=0.4`.
+- `dema_alpha` (DEMA Alpha, `rw`): DEMA smoothing factor (0..1). Schema: `number / default=0.4`.
+- `one_euro_min_cutoff` (One Euro Min Cutoff, `rw`): Minimum cutoff frequency. Schema: `number / default=1.5`.
+- `one_euro_beta` (One Euro Beta, `rw`): Speed coefficient for dynamic cutoff. Schema: `number / default=0.0`.
+- `one_euro_derivative_cutoff` (One Euro Deriv Cutoff, `rw`): Cutoff frequency for derivative filter. Schema: `number / default=1.0`.
+- `one_euro_default_freq` (One Euro Default Freq, `rw`): Default sampling frequency (Hz). Schema: `number / default=90.0`.
+- `jumpEnabled` (Jump Enabled, `rw`): Enable jump detection and hard reset. Schema: `boolean / default=True`.
+
+#### Pitfalls / Gotchas
+
+- Do not tune the filter before confirming the selected bone stream is correct.
+- Jump-reset settings can mask coordinate or source glitches if they are too aggressive.
+
+#### Related Scenarios
+
+- No bundled scenario references this node yet.
+
+<a id="operator-f8-quat-to-euler"></a>
+### Quat To Euler (`f8.quat_to_euler`)
+Converts quaternion [w,x,y,z] to Euler angles with configurable order.
+
+- Exec in ports: none
+- Exec out ports: none
+
+#### State Fields
+
+| Name | Access | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- | --- |
+| `order` | `rw` | `true` | `true` | `string / enum[XYZ, XZY, YXZ, YZX, ZXY, ...] / default=ZYX` | Euler rotation order. |
+| `degrees` | `rw` | `true` | `true` | `boolean / default=True` | Output in degrees when true, radians when false. |
+| `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
+| `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
+
+#### Data Input Ports
+
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `quat` | `false` | `true` | `array[number]` | Input quaternion [w,x,y,z]. |
+
+#### Data Output Ports
+
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `euler` | `true` | `true` | `array[number]` | Euler angles [x,y,z] in selected order. |
+
+#### When to Use
+
+- Use `Quat To Euler` when quaternion rotation data must become human-readable or axis-specific angles.
+- It is most useful at the edge between skeleton math and scalar control logic.
+
+#### Typical Inputs / Outputs
+
+- Data inputs: `quat`
+- Data outputs: `euler`
+
+#### Common Wiring Patterns
+
+- Feed it from `Bone Selector` or `Bone Filter`, then map the resulting Euler components into waves or device outputs.
+- Keep the chosen order and degree/radian choice explicit in notes or node labels.
+
+#### Key Fields That Matter
+
+- `order` (Order, `rw`): Euler rotation order. Schema: `string / enum[XYZ, XZY, YXZ, YZX, ZXY, ...] / default=ZYX`.
+- `degrees` (Degrees, `rw`): Output in degrees when true, radians when false. Schema: `boolean / default=True`.
+- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
+- `operatorId` (Operator Id, `ro`): Readonly: current operator/node id (operatorId). Schema: `string`.
+
+#### Pitfalls / Gotchas
+
+- Wrong rotation order can produce believable but incorrect motion.
+- Euler conversion should happen as late as possible if upstream nodes can stay in quaternion form.
+
+#### Related Scenarios
+
+- No bundled scenario references this node yet.
+
+<a id="operator-f8-udp-vmc"></a>
+### UDP VMC (`f8.udp_vmc`)
+Receives VMC OSC packets, converts to skeleton payloads, and emits packet exec triggers.
+
+- Exec in ports: none
+- Exec out ports: `packet`
+
+#### State Fields
+
+| Name | Access | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- | --- |
+| `bindAddress` | `rw` | `true` | `false` | `string / default=127.0.0.1` | Local address to bind (loopback by default). |
+| `allowNonLoopbackBind` | `rw` | `true` | `false` | `boolean / default=False` | When true, allow bindAddress values other than loopback. |
+| `port` | `rw` | `true` | `true` | `integer / default=39539` | UDP listen port. |
+| `maxQueue` | `rw` | `true` | `false` | `integer / default=512` | Max queued packets before dropping (1..4096). |
+| `reuseAddress` | `rw` | `true` | `false` | `boolean / default=False` | Best-effort: allow multiple listeners on same (address, port) if OS supports. |
+| `cleanupAfterMs` | `wo` | `true` | `false` | `integer / default=10000` | Remove models that haven't updated for this many ms (<=0 disables cleanup). |
+| `selectedKey` | `rw` | `true` | `true` | `string / default=` | If set and matches an available key, outputs `selectedSkeleton`; otherwise None. |
+| `availableKeys` | `ro` | `true` | `true` | `array[string]` | Read-only list of current keys (updated only on changes). |
+| `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
+| `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
+
+#### Data Input Ports
+
+_None_
+
+#### Data Output Ports
+
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `skeletons` | `true` | `true` | `array[object]` | List of latest payloads (ordered by key). |
+| `selectedSkeleton` | `true` | `true` | `object{boneCount, bones, modelName, schema, ...}` | Latest payload matching `selectedKey` (or None). |
+
+#### When to Use
+
+- Use `UDP VMC` when the graph should ingest VMC/OSC pose streams directly.
+- It is a strong entrypoint for live avatar or mocap-driven skeleton workflows.
+
+#### Typical Inputs / Outputs
+
+- Exec outputs: `packet`
+- Data inputs: none
+- Data outputs: `skeletons`, `selectedSkeleton`
+
+#### Common Wiring Patterns
+
+- Feed `selectedSkeleton` into `Bone Selector`, `Bone Filter`, or `f8.viz.three_d`.
+- Keep `availableKeys` and `selectedKey` visible while choosing which model stream the graph should follow.
+
+#### Key Fields That Matter
+
+- `bindAddress` (Bind Address, `rw`): Local address to bind (loopback by default). Schema: `string / default=127.0.0.1`.
+- `allowNonLoopbackBind` (Allow Non-loopback Bind, `rw`): When true, allow bindAddress values other than loopback. Schema: `boolean / default=False`.
+- `port` (Port, `rw`): UDP listen port. Schema: `integer / default=39539`.
+- `maxQueue` (Max Queue, `rw`): Max queued packets before dropping (1..4096). Schema: `integer / default=512`.
+- `reuseAddress` (Reuse Address, `rw`): Best-effort: allow multiple listeners on same (address, port) if OS supports. Schema: `boolean / default=False`.
+- `cleanupAfterMs` (Cleanup After (ms), `wo`): Remove models that haven't updated for this many ms (<=0 disables cleanup). Schema: `integer / default=10000`.
+- `selectedKey` (Selected Key, `rw`): If set and matches an available key, outputs `selectedSkeleton`; otherwise None. Schema: `string / default=`.
+- `availableKeys` (Available Keys, `ro`): Read-only list of current keys (updated only on changes). Schema: `array[string]`.
+
+#### Pitfalls / Gotchas
+
+- Network bind settings and selected-key mismatches are the first things to verify.
+- Coordinate-frame or source-quality issues should be visualized before downstream mapping is tuned.
+
+#### Related Scenarios
+
+- No bundled scenario references this node yet.
+
+<a id="operator-f8-bone-selector"></a>
+### Bone Selector (`f8.bone_selector`)
+Selects one bone from a skeleton by `target` and outputs `{name,pos,rot}`.
+
+- Exec in ports: none
+- Exec out ports: none
+
+#### State Fields
+
+| Name | Access | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- | --- |
+| `target` | `rw` | `true` | `true` | `string / default=` | Bone name to select. |
+| `availableBones` | `ro` | `true` | `false` | `array[string]` | Read-only list of available bone names from current skeleton input. |
+| `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
+| `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
+
+#### Data Input Ports
+
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `skeleton` | `true` | `true` | `object{bones}` | Single skeleton payload (e.g. udp_vmc.selectedSkeleton). |
+
+#### Data Output Ports
+
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `bone` | `true` | `true` | `object{name, pos, rot}` | Selected bone payload `{name,pos,rot}` or None. |
+
+#### When to Use
+
+- Use `Bone Selector` when a full skeleton should be reduced to one named bone payload.
+- It is the cleanest bridge between skeleton ingest and bone-specific control logic.
+
+#### Typical Inputs / Outputs
+
+- Data inputs: `skeleton`
+- Data outputs: `bone`
+
+#### Common Wiring Patterns
+
+- Feed it from `UDP Skeleton` or `UDP VMC`, then pass the selected bone into `Bone Filter` or `Quat To Euler`.
+- Watch `availableBones` while authoring so the chosen target name is valid.
+
+#### Key Fields That Matter
+
+- `target` (Target Bone, `rw`): Bone name to select. Schema: `string / default=`.
+- `availableBones` (Available Bones, `ro`): Read-only list of available bone names from current skeleton input. Schema: `array[string]`.
+- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
+- `operatorId` (Operator Id, `ro`): Readonly: current operator/node id (operatorId). Schema: `string`.
+
+#### Pitfalls / Gotchas
+
+- A missing bone name is often a naming mismatch, not a broken upstream skeleton.
+- Keep source-skeleton validation in place; this node cannot fix a malformed pose stream.
+
+#### Related Scenarios
+
+- No bundled scenario references this node yet.
+
+## When to Use
+
+- Use `f8.pyengine` as the main runtime host for `f8.*` operators, signal transforms, protocol adapters, and custom control logic.
+- It is the default choice when a graph needs composable operator chains rather than a standalone service.
+
+## Typical Inputs / Outputs
+
+- Data inputs: none
+- Data outputs: `monitor`
+- Commands: none
+
+## Common Wiring Patterns
+
+- Create one or more `PyEngine` host nodes, then bind each operator `Service Id` to the correct host node `id`.
+- Separate timing/wave generation, mapping, and device-output branches so release debugging stays tractable.
+
+## Key Fields That Matter
+
+- `dataDelivery` (Data Delivery, `rw`): How data inputs are delivered to nodes: pull (default), push, or both. Schema: `string / enum[pull, push, both] / default=pull`.
+- `active` (Active, `rw`): Service lifecycle state (activate/deactivate). Schema: `boolean / default=True`.
+- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
+
+## Pitfalls / Gotchas
+
+- Missing or wrong `Service Id` is the most common reason an operator graph looks correct but does nothing.
+- Overloading one host with too many unrelated responsibilities makes runtime diagnosis and reuse harder.
+
+## Related Scenarios
+
+- [Scene 01: CVKit Template Tracking](../../scenarios/scene-01-cvkit_template_tracking.md)
+- [Scene 02: GameMod Skeleton](../../scenarios/scene-02-gamemod_skeleton.md)
+- [Scene 03: Audio Driven TCode](../../scenarios/scene-03-audio_driven.md)
+- [Scene 04: Functional TCode Generation](../../scenarios/scene-04-functional_tcode.md)

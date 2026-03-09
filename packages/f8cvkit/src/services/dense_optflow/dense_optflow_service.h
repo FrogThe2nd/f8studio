@@ -51,7 +51,7 @@ class DenseOptflowService final : public f8::cppsdk::LifecycleNode,
 
   void publish_state_if_changed(const std::string& field, const json& value, const std::string& source,
                                 const json& meta);
-  void emit_telemetry(std::int64_t ts_ms, std::uint64_t frame_id, double process_ms, std::uint64_t vectors_per_frame);
+  void emit_monitor_snapshot(std::int64_t ts_ms, std::uint64_t frame_id, double process_ms, std::uint64_t vectors_per_frame);
 
   bool ensure_video_open();
   void process_frame_once();
@@ -90,16 +90,16 @@ class DenseOptflowService final : public f8::cppsdk::LifecycleNode,
   int prev_width_ = 0;
   int prev_height_ = 0;
 
-  // Telemetry.
-  std::uint64_t telemetry_observed_frames_ = 0;
-  std::uint64_t telemetry_processed_frames_ = 0;
-  std::uint64_t telemetry_window_processed_frames_ = 0;
-  std::uint64_t telemetry_fail_frames_ = 0;
-  std::uint64_t telemetry_last_vectors_per_frame_ = 0;
-  std::int64_t telemetry_window_start_ms_ = 0;
-  double telemetry_last_process_ms_ = 0.0;
-  double telemetry_total_process_ms_ = 0.0;
-  double telemetry_fps_ = 0.0;
+  // Monitor stats.
+  std::uint64_t monitor_observed_frames_ = 0;
+  std::uint64_t monitor_processed_frames_ = 0;
+  std::uint64_t monitor_window_processed_frames_ = 0;
+  std::uint64_t monitor_fail_frames_ = 0;
+  std::uint64_t monitor_last_vectors_per_frame_ = 0;
+  std::int64_t monitor_window_start_ms_ = 0;
+  double monitor_last_process_ms_ = 0.0;
+  double monitor_total_process_ms_ = 0.0;
+  double monitor_fps_ = 0.0;
 };
 
 }  // namespace f8::cvkit::dense_optflow

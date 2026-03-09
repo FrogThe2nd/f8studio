@@ -1,6 +1,6 @@
 [project]
 name = "f8pystudio"
-version = "0.1.0"
+version = "0.1.1"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -14,7 +14,7 @@ dependencies = [
     "nats-py>=2.12.0",
     "datamodel-code-generator>=0.50.0",
     "shortuuid>=1.0.13",
-    "jedi>=0.19.2",
+    "basedpyright>=1.31.0",
 ]
 
 [project.optional-dependencies]
@@ -32,6 +32,10 @@ include = [
     "f8pystudio/render_nodes/web_assets/**/*.html",
     "f8pystudio/render_nodes/web_assets/**/*.js",
     "f8pystudio/render_nodes/web_assets/**/*.css",
+    "f8pystudio/assets/**/*.svg",
+    "f8pystudio/assets/**/*.png",
+    "f8pystudio/assets/**/*.ico",
+    "f8pystudio/assets/**/*.txt",
 ]
 
 [tool.uv]
@@ -49,7 +53,8 @@ follow_imports = "skip"
 ignore_missing_imports = true
 files = [
     "f8pystudio/bridge",
-    "f8pystudio/extensions",
+    "f8pystudio/plugin_api.py",
+    "f8pystudio/plugin_loader.py",
     "f8pystudio/session_migration.py",
     "f8pystudio/widgets/state_controls",
 ]

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from f8pysdk.msgspec_codec import dump_json
 import argparse
 import json
 import math
@@ -125,7 +126,7 @@ def _build_rungraph_payload(node_count: int) -> dict[str, Any]:
                 )
             )
     graph = F8RuntimeGraph(graphId="g-bench", revision="r1", nodes=nodes, edges=edges)
-    return graph.model_dump(mode="json", by_alias=True)
+    return dump_json(graph, mode="json", by_alias=True)
 
 
 def _bench_codec(

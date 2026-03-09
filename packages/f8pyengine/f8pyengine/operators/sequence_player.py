@@ -12,8 +12,9 @@ from f8pysdk import (
     F8RuntimeNode,
     F8StateAccess,
     F8StateSpec,
-    any_schema,
+    array_schema,
     boolean_schema,
+    complex_object_schema,
     integer_schema,
     number_schema,
 )
@@ -24,6 +25,17 @@ from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
 from ..constants import SERVICE_CLASS
 
 OPERATOR_CLASS: Final[str] = "f8.sequence_player"
+
+
+def _sequence_state_schema():
+    return complex_object_schema(
+        properties={
+            "tsMs": integer_schema(),
+            "stepMs": number_schema(),
+            "values": array_schema(items=number_schema()),
+            "timeSec": number_schema(),
+        }
+    )
 
 
 def _coerce_number(value: Any) -> float | None:
@@ -239,7 +251,7 @@ SequencePlayerRuntimeNode.SPEC = F8OperatorSpec(
             name="sequence",
             label="Sequence",
             description="Dict payload defining tsMs/stepMs/values/timeSec.",
-            valueSchema=any_schema(),
+            valueSchema=_sequence_state_schema(),
             access=F8StateAccess.wo,
             showOnNode=True,
             required=True,

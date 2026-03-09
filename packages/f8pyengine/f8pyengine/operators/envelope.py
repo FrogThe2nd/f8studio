@@ -869,6 +869,7 @@ EnvelopeRuntimeNode.SPEC = F8OperatorSpec(
             description="Envelope filter method.",
             valueSchema=string_schema(default="EMA", enum=["EMA", "DEMA", "SMA"]),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=True,
         ),
         F8StateSpec(
@@ -877,6 +878,7 @@ EnvelopeRuntimeNode.SPEC = F8OperatorSpec(
             description="Smoothing factor when moving toward the envelope.",
             valueSchema=number_schema(default=0.4, minimum=0.0, maximum=1.0),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=True,
         ),
         F8StateSpec(
@@ -885,6 +887,7 @@ EnvelopeRuntimeNode.SPEC = F8OperatorSpec(
             description="Smoothing factor when moving away from the envelope.",
             valueSchema=number_schema(default=0.05, minimum=0.0, maximum=1.0),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=True,
         ),
         F8StateSpec(
@@ -893,6 +896,7 @@ EnvelopeRuntimeNode.SPEC = F8OperatorSpec(
             description="Minimum enforced envelope span.",
             valueSchema=number_schema(default=0.25, minimum=0.0),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=True,
         ),
         F8StateSpec(
@@ -901,6 +905,7 @@ EnvelopeRuntimeNode.SPEC = F8OperatorSpec(
             description="Window size for SMA mode.",
             valueSchema=number_schema(default=10, minimum=1.0),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=True,
         ),
         F8StateSpec(
@@ -909,6 +914,7 @@ EnvelopeRuntimeNode.SPEC = F8OperatorSpec(
             description="Extra margin added to envelopes before normalization.",
             valueSchema=number_schema(default=0.0, minimum=0.0),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -917,6 +923,7 @@ EnvelopeRuntimeNode.SPEC = F8OperatorSpec(
             description="Enable consecutive-frame jump detection and reseed.",
             valueSchema=boolean_schema(default=True),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -925,6 +932,7 @@ EnvelopeRuntimeNode.SPEC = F8OperatorSpec(
             description="Distance threshold in envelope-span units for jump detection.",
             valueSchema=number_schema(default=4.0, minimum=0.5),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -933,6 +941,7 @@ EnvelopeRuntimeNode.SPEC = F8OperatorSpec(
             description="Consecutive far frames required before jump trigger.",
             valueSchema=number_schema(default=4, minimum=1.0),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -941,6 +950,7 @@ EnvelopeRuntimeNode.SPEC = F8OperatorSpec(
             description="Blend length (frames) after jump reset.",
             valueSchema=number_schema(default=8, minimum=1.0),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -949,6 +959,7 @@ EnvelopeRuntimeNode.SPEC = F8OperatorSpec(
             description="Reset confidence history when jump reset is triggered.",
             valueSchema=boolean_schema(default=True),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -957,6 +968,7 @@ EnvelopeRuntimeNode.SPEC = F8OperatorSpec(
             description="Enable periodicity confidence estimation.",
             valueSchema=boolean_schema(default=True),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -965,6 +977,7 @@ EnvelopeRuntimeNode.SPEC = F8OperatorSpec(
             description="Sliding window size for autocorrelation confidence.",
             valueSchema=number_schema(default=128, minimum=8.0),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -973,6 +986,7 @@ EnvelopeRuntimeNode.SPEC = F8OperatorSpec(
             description="Minimum lag used in autocorrelation scan.",
             valueSchema=number_schema(default=4, minimum=1.0),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -981,6 +995,7 @@ EnvelopeRuntimeNode.SPEC = F8OperatorSpec(
             description="Maximum lag used in autocorrelation scan.",
             valueSchema=number_schema(default=48, minimum=1.0),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -989,6 +1004,7 @@ EnvelopeRuntimeNode.SPEC = F8OperatorSpec(
             description="Minimum local prominence for valid autocorrelation peaks.",
             valueSchema=number_schema(default=0.1, minimum=0.0),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -997,6 +1013,7 @@ EnvelopeRuntimeNode.SPEC = F8OperatorSpec(
             description="Minimum valid autocorrelation peaks before full confidence.",
             valueSchema=number_schema(default=1, minimum=1.0),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -1005,6 +1022,7 @@ EnvelopeRuntimeNode.SPEC = F8OperatorSpec(
             description="EMA smoothing factor for confidence output.",
             valueSchema=number_schema(default=0.25, minimum=0.0, maximum=1.0),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -1013,6 +1031,7 @@ EnvelopeRuntimeNode.SPEC = F8OperatorSpec(
             description="Minimum energy needed before periodicity confidence can rise.",
             valueSchema=number_schema(default=1e-4, minimum=0.0),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -1021,6 +1040,7 @@ EnvelopeRuntimeNode.SPEC = F8OperatorSpec(
             description="Decay confidence when input is missing.",
             valueSchema=boolean_schema(default=False),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=False,
         ),
     ],

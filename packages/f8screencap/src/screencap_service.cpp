@@ -67,6 +67,7 @@ json state_field(std::string name, const json& value_schema, std::string access,
   sf["name"] = std::move(name);
   sf["valueSchema"] = value_schema;
   sf["access"] = std::move(access);
+  sf["required"] = true;
   if (!label.empty())
     sf["label"] = std::move(label);
   if (!description.empty())
@@ -231,10 +232,7 @@ bool ScreenCapService::start() {
 #endif
   capture_->configure(cfg_.mode, cfg_.fps, cfg_.display_id, cfg_.window_id, cfg_.region_csv, cfg_.scale_csv);
   capture_->set_on_running([this](bool r) { capture_running_.store(r, std::memory_order_release); });
-  capture_->set_on_frame([this](std::uint64_t frame_id, std::int64_t ts_ms) {
-    frame_id_.store(frame_id, std::memory_order_release);
-    last_frame_ts_ms_.store(ts_ms, std::memory_order_release);
-  });
+  capture_->set_on_frame([](std::uint64_t, std::int64_t) {});
   capture_->set_on_error([this](std::string err) {
     std::lock_guard<std::mutex> lock(state_mu_);
     last_error_ = std::move(err);
@@ -899,13 +897,7 @@ json ScreenCapService::describe() {
   });
   service["editableCommands"] = false;
   service["dataInPorts"] = json::array();
-  service["dataOutPorts"] = json::array({
-      json{{"name", "frameId"},
-           {"valueSchema", schema_integer()},
-           {"description", "Monotonic frame counter."},
-           {"required", false},
-           {"showOnNode", false}},
-  });
+  service["dataOutPorts"] = json::array();
   service["editableDataInPorts"] = false;
   service["editableDataOutPorts"] = false;
 

@@ -1,10 +1,8 @@
 #include "dense_optflow_service.h"
 
 #include <algorithm>
-#include <cctype>
 #include <cmath>
 #include <cstring>
-#include <limits>
 #include <utility>
 
 #include <nlohmann/json.hpp>
@@ -16,6 +14,7 @@
 #include "f8cppsdk/shm/sizing.h"
 #include "f8cppsdk/state_kv.h"
 #include "f8cppsdk/time_utils.h"
+#include "../common/service_runtime_utils.h"
 
 namespace f8::cvkit::dense_optflow {
 
@@ -58,50 +57,12 @@ json state_field(std::string name, const json& value_schema, std::string access,
   sf["name"] = std::move(name);
   sf["valueSchema"] = value_schema;
   sf["access"] = std::move(access);
+  sf["required"] = true;
   if (!label.empty()) sf["label"] = std::move(label);
   if (!description.empty()) sf["description"] = std::move(description);
   if (show_on_node) sf["showOnNode"] = true;
   if (!ui_control.empty()) sf["uiControl"] = std::move(ui_control);
   return sf;
-}
-
-std::string trim_copy(const std::string& value) {
-  std::string out = value;
-  while (!out.empty() && std::isspace(static_cast<unsigned char>(out.front()))) out.erase(out.begin());
-  while (!out.empty() && std::isspace(static_cast<unsigned char>(out.back()))) out.pop_back();
-  return out;
-}
-
-bool parse_int_value(const json& value, int& out) {
-  if (value.is_number_integer()) {
-    out = value.get<int>();
-    return true;
-  }
-  if (value.is_number_unsigned()) {
-    out = static_cast<int>(value.get<unsigned int>());
-    return true;
-  }
-  if (value.is_number_float()) {
-    out = static_cast<int>(std::lround(value.get<double>()));
-    return true;
-  }
-  return false;
-}
-
-bool parse_double_value(const json& value, double& out) {
-  if (value.is_number_float()) {
-    out = value.get<double>();
-    return true;
-  }
-  if (value.is_number_integer()) {
-    out = static_cast<double>(value.get<int>());
-    return true;
-  }
-  if (value.is_number_unsigned()) {
-    out = static_cast<double>(value.get<unsigned int>());
-    return true;
-  }
-  return false;
 }
 
 std::uint16_t float32_to_half(float value) {
@@ -198,15 +159,15 @@ bool DenseOptflowService::start() {
   prev_width_ = 0;
   prev_height_ = 0;
 
-  telemetry_observed_frames_ = 0;
-  telemetry_processed_frames_ = 0;
-  telemetry_window_processed_frames_ = 0;
-  telemetry_fail_frames_ = 0;
-  telemetry_last_vectors_per_frame_ = 0;
-  telemetry_window_start_ms_ = 0;
-  telemetry_last_process_ms_ = 0.0;
-  telemetry_total_process_ms_ = 0.0;
-  telemetry_fps_ = 0.0;
+  monitor_observed_frames_ = 0;
+  monitor_processed_frames_ = 0;
+  monitor_window_processed_frames_ = 0;
+  monitor_fail_frames_ = 0;
+  monitor_last_vectors_per_frame_ = 0;
+  monitor_window_start_ms_ = 0;
+  monitor_last_process_ms_ = 0.0;
+  monitor_total_process_ms_ = 0.0;
+  monitor_fps_ = 0.0;
 
   publish_state_if_changed("serviceClass", cfg_.service_class, "init", json::object());
   publish_state_if_changed("inputShmName", "", "init", json::object());
@@ -251,53 +212,38 @@ void DenseOptflowService::tick() {
 
 void DenseOptflowService::publish_state_if_changed(const std::string& field, const json& value, const std::string& source,
                                                    const json& meta) {
-  std::lock_guard<std::mutex> lock(state_mu_);
-  auto it = published_state_.find(field);
-  if (it != published_state_.end() && it->second == value) return;
-  published_state_[field] = value;
-  if (bus_) {
-    (void)f8::cppsdk::kv_set_node_state(bus_->kv(), cfg_.service_id, cfg_.service_id, field, value, source, meta);
-  }
+  service_runtime::publish_state_if_changed(state_mu_, published_state_, bus_.get(), cfg_.service_id, field, value,
+                                            source, meta);
 }
 
-void DenseOptflowService::emit_telemetry(std::int64_t ts_ms, std::uint64_t frame_id, double process_ms,
+void DenseOptflowService::emit_monitor_snapshot(std::int64_t ts_ms, std::uint64_t frame_id, double process_ms,
                                          std::uint64_t vectors_per_frame) {
   if (!bus_) return;
-  if (telemetry_window_start_ms_ <= 0) {
-    telemetry_window_start_ms_ = ts_ms;
+  (void)frame_id;
+  if (monitor_window_start_ms_ <= 0) {
+    monitor_window_start_ms_ = ts_ms;
   }
-  ++telemetry_processed_frames_;
-  ++telemetry_window_processed_frames_;
-  telemetry_last_process_ms_ = process_ms;
-  telemetry_total_process_ms_ += process_ms;
-  telemetry_last_vectors_per_frame_ = vectors_per_frame;
+  ++monitor_processed_frames_;
+  ++monitor_window_processed_frames_;
+  monitor_last_process_ms_ = process_ms;
+  monitor_total_process_ms_ += process_ms;
+  monitor_last_vectors_per_frame_ = vectors_per_frame;
 
-  const std::int64_t elapsed = ts_ms - telemetry_window_start_ms_;
+  const std::int64_t elapsed = ts_ms - monitor_window_start_ms_;
   if (elapsed >= 1000) {
-    telemetry_fps_ = static_cast<double>(telemetry_window_processed_frames_) * 1000.0 / static_cast<double>(elapsed);
-    telemetry_window_start_ms_ = ts_ms;
-    telemetry_window_processed_frames_ = 0;
+    monitor_fps_ = static_cast<double>(monitor_window_processed_frames_) * 1000.0 / static_cast<double>(elapsed);
+    monitor_window_start_ms_ = ts_ms;
+    monitor_window_processed_frames_ = 0;
   }
 
-  const std::uint64_t dropped_frames = telemetry_observed_frames_ > telemetry_processed_frames_
-                                           ? (telemetry_observed_frames_ - telemetry_processed_frames_)
+  const std::uint64_t dropped_frames = monitor_observed_frames_ > monitor_processed_frames_
+                                           ? (monitor_observed_frames_ - monitor_processed_frames_)
                                            : 0;
-  const double avg_process_ms = telemetry_processed_frames_ > 0
-                                    ? (telemetry_total_process_ms_ / static_cast<double>(telemetry_processed_frames_))
+  const double avg_process_ms = monitor_processed_frames_ > 0
+                                    ? (monitor_total_process_ms_ / static_cast<double>(monitor_processed_frames_))
                                     : 0.0;
-
-  json telemetry = json::object();
-  telemetry["tsMs"] = ts_ms;
-  telemetry["frameId"] = frame_id;
-  telemetry["fps"] = telemetry_fps_;
-  telemetry["processMs"] = telemetry_last_process_ms_;
-  telemetry["avgProcessMs"] = avg_process_ms;
-  telemetry["observedFrames"] = telemetry_observed_frames_;
-  telemetry["processedFrames"] = telemetry_processed_frames_;
-  telemetry["droppedFrames"] = dropped_frames;
-  telemetry["vectorsPerFrame"] = telemetry_last_vectors_per_frame_;
-  telemetry["failFrames"] = telemetry_fail_frames_;
-  (void)bus_->emit_data(cfg_.service_id, "telemetry", telemetry);
+  (void)avg_process_ms;
+  (void)dropped_frames;
 }
 
 void DenseOptflowService::on_lifecycle(bool active, const json& meta) {
@@ -311,7 +257,7 @@ void DenseOptflowService::on_state(const std::string& node_id, const std::string
   if (node_id != cfg_.service_id) return;
 
   if (field == "inputShmName" && value.is_string()) {
-    const std::string next = trim_copy(value.get<std::string>());
+    const std::string next = service_runtime::trim_copy(value.get<std::string>());
     {
       std::lock_guard<std::mutex> lock(flow_mu_);
       if (next == input_shm_name_) {
@@ -336,7 +282,7 @@ void DenseOptflowService::on_state(const std::string& node_id, const std::string
 
   if (field == "computeEveryNFrames") {
     int v = 0;
-    if (!parse_int_value(value, v)) {
+    if (!service_runtime::parse_json_int(value, v)) {
       publish_state_if_changed("lastError", "invalid computeEveryNFrames", "state", meta);
       return;
     }
@@ -349,7 +295,7 @@ void DenseOptflowService::on_state(const std::string& node_id, const std::string
 
   if (field == "computeScale") {
     double v = 0.0;
-    if (!parse_double_value(value, v)) {
+    if (!service_runtime::parse_json_double(value, v)) {
       publish_state_if_changed("lastError", "invalid computeScale", "state", meta);
       return;
     }
@@ -420,23 +366,23 @@ void DenseOptflowService::process_frame_once() {
     return;
   }
 
-  ++telemetry_observed_frames_;
+  ++monitor_observed_frames_;
   ++frame_counter_;
   last_frame_id_ = hdr.frame_id;
 
   if (hdr.format != 1 || hdr.width == 0 || hdr.height == 0 || hdr.pitch == 0) {
-    ++telemetry_fail_frames_;
+    ++monitor_fail_frames_;
     publish_state_if_changed("lastError", "unsupported video shm format", "runtime", json::object());
     return;
   }
   const std::size_t row_bytes = static_cast<std::size_t>(hdr.pitch);
   if (row_bytes < static_cast<std::size_t>(hdr.width) * 4) {
-    ++telemetry_fail_frames_;
+    ++monitor_fail_frames_;
     publish_state_if_changed("lastError", "invalid video shm pitch", "runtime", json::object());
     return;
   }
   if (frame_bgra_.size() < row_bytes * static_cast<std::size_t>(hdr.height)) {
-    ++telemetry_fail_frames_;
+    ++monitor_fail_frames_;
     publish_state_if_changed("lastError", "video shm frame too small", "runtime", json::object());
     return;
   }
@@ -447,7 +393,7 @@ void DenseOptflowService::process_frame_once() {
   try {
     cv::cvtColor(bgra, gray, cv::COLOR_BGRA2GRAY);
   } catch (const cv::Exception& ex) {
-    ++telemetry_fail_frames_;
+    ++monitor_fail_frames_;
     publish_state_if_changed("lastError", std::string("opencv cvtColor failed: ") + ex.what(), "runtime", json::object());
     return;
   }
@@ -480,7 +426,7 @@ void DenseOptflowService::process_frame_once() {
       cv::resize(prev_gray_, prev_compute, cv::Size(sw, sh), 0.0, 0.0, cv::INTER_AREA);
       cv::resize(gray, gray_compute, cv::Size(sw, sh), 0.0, 0.0, cv::INTER_AREA);
     } catch (const cv::Exception& ex) {
-      ++telemetry_fail_frames_;
+      ++monitor_fail_frames_;
       publish_state_if_changed("lastError", std::string("opencv resize failed: ") + ex.what(), "runtime", json::object());
       prev_gray_ = gray;
       return;
@@ -491,7 +437,7 @@ void DenseOptflowService::process_frame_once() {
   try {
     cv::calcOpticalFlowFarneback(prev_compute, gray_compute, flow_compute, 0.5, 3, 15, 3, 5, 1.2, 0);
   } catch (const cv::Exception& ex) {
-    ++telemetry_fail_frames_;
+    ++monitor_fail_frames_;
     publish_state_if_changed("lastError", std::string("opencv farneback failed: ") + ex.what(), "runtime", json::object());
     prev_gray_ = gray;
     return;
@@ -503,14 +449,14 @@ void DenseOptflowService::process_frame_once() {
       cv::resize(flow_compute, flow, gray.size(), 0.0, 0.0, cv::INTER_LINEAR);
       flow *= static_cast<float>(1.0 / scale);
     } catch (const cv::Exception& ex) {
-      ++telemetry_fail_frames_;
+      ++monitor_fail_frames_;
       publish_state_if_changed("lastError", std::string("opencv flow upscale failed: ") + ex.what(), "runtime", json::object());
       prev_gray_ = gray;
       return;
     }
   }
 
-  std::string shm_name = trim_copy(flow_shm_name_);
+  std::string shm_name = service_runtime::trim_copy(flow_shm_name_);
   if (shm_name.empty()) {
     shm_name = "shm." + cfg_.service_id + ".flow";
     flow_shm_name_ = shm_name;
@@ -518,7 +464,7 @@ void DenseOptflowService::process_frame_once() {
   }
   if (flow_sink_.regionName() != shm_name) {
     if (!flow_sink_.initialize(shm_name, f8::cppsdk::shm::kDefaultVideoShmBytes, f8::cppsdk::shm::kDefaultVideoShmSlots)) {
-      ++telemetry_fail_frames_;
+      ++monitor_fail_frames_;
       publish_state_if_changed("lastError", "flow shm init failed: " + shm_name, "runtime", json::object());
       prev_gray_ = gray;
       return;
@@ -526,7 +472,7 @@ void DenseOptflowService::process_frame_once() {
   }
   if (!flow_sink_.ensureConfigurationForFormat(static_cast<unsigned>(flow.cols), static_cast<unsigned>(flow.rows),
                                                f8::cppsdk::kVideoFormatFlow2F16, 4)) {
-    ++telemetry_fail_frames_;
+    ++monitor_fail_frames_;
     publish_state_if_changed("lastError", "flow shm ensureConfiguration failed", "runtime", json::object());
     prev_gray_ = gray;
     return;
@@ -550,7 +496,7 @@ void DenseOptflowService::process_frame_once() {
   }
 
   if (!flow_sink_.writeFrameWithFormat(flow_payload_.data(), static_cast<unsigned>(flow_pitch), f8::cppsdk::kVideoFormatFlow2F16)) {
-    ++telemetry_fail_frames_;
+    ++monitor_fail_frames_;
     publish_state_if_changed("lastError", "flow shm write failed", "runtime", json::object());
     prev_gray_ = gray;
     return;
@@ -563,23 +509,12 @@ void DenseOptflowService::process_frame_once() {
   const std::int64_t end_ts_ms = f8::cppsdk::now_ms();
   const std::uint64_t dense_vectors = static_cast<std::uint64_t>(std::max(0, flow.cols)) *
                                       static_cast<std::uint64_t>(std::max(0, flow.rows));
-  emit_telemetry(end_ts_ms, hdr.frame_id, static_cast<double>(end_ts_ms - process_start_ms), dense_vectors);
+  emit_monitor_snapshot(end_ts_ms, hdr.frame_id, static_cast<double>(end_ts_ms - process_start_ms), dense_vectors);
 
   prev_gray_ = gray;
 }
 
 json DenseOptflowService::describe() {
-  const json telemetry_schema = schema_object(
-      json{{"tsMs", schema_integer()},
-           {"frameId", schema_integer()},
-           {"fps", schema_number()},
-           {"processMs", schema_number()},
-           {"avgProcessMs", schema_number()},
-           {"observedFrames", schema_integer()},
-           {"processedFrames", schema_integer()},
-           {"droppedFrames", schema_integer()},
-           {"vectorsPerFrame", schema_integer()},
-           {"failFrames", schema_integer()}});
   json service;
   service["schemaVersion"] = "f8service/1";
   service["serviceClass"] = "f8.cvkit.denseoptflow";
@@ -601,12 +536,7 @@ json DenseOptflowService::describe() {
   service["commands"] = json::array();
   service["editableCommands"] = false;
   service["dataInPorts"] = json::array();
-  service["dataOutPorts"] = json::array({
-      json{{"name", "telemetry"},
-           {"valueSchema", telemetry_schema},
-           {"description", "Runtime telemetry: fps/process time/vectors/failures."},
-           {"required", false}},
-  });
+  service["dataOutPorts"] = json::array();
   service["editableDataInPorts"] = false;
   service["editableDataOutPorts"] = false;
 

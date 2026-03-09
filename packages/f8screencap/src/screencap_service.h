@@ -99,8 +99,6 @@ class ScreenCapService final : public f8::cppsdk::LifecycleNode,
 
   std::atomic<bool> capture_restart_{false};
   std::atomic<bool> capture_running_{false};
-  std::atomic<std::uint64_t> frame_id_{0};
-  std::atomic<std::int64_t> last_frame_ts_ms_{0};
   std::string last_error_;
   std::int64_t last_state_pub_ms_ = 0;
 

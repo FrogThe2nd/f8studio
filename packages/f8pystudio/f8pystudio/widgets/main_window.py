@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-import json
 import logging
-from pathlib import Path
+import os
 from typing import Any, Iterable
 
 from qtpy import QtCore, QtGui, QtWidgets
-
-from f8pysdk import F8OperatorSpec, F8ServiceSpec
 
 from ..nodegraph import F8StudioGraph
 from ..nodegraph.edge_rules import EDGE_KIND_DATA, EDGE_KIND_EXEC, EDGE_KIND_STATE
@@ -20,25 +17,181 @@ from ..ui_bus import UiCommand, UiCommandApplier
 from ..ui_icons import StudioIcon, icon_for
 from .node_property_widgets import F8StudioSingleNodePropertiesWidget
 from .node_library_widget import F8StudioNodeLibraryWidget
+from .service_manager_widget import ServiceManagerWidget
+from .service_inventory import collect_declared_service_ids, collect_declared_services
 from .service_log_widget import ServiceLogDock
+from .runtime_state_sync import RuntimeStateSyncController
+from .session_actions import (
+    auto_load_session as session_auto_load_session,
+    auto_save_session as session_auto_save_session,
+    insert_graph_from_dialog as session_insert_graph_from_dialog,
+    load_last_session as session_load_last_session,
+    load_session_from_dialog as session_load_session_from_dialog,
+    save_session as session_save_session,
+    save_session_as_dialog as session_save_session_as_dialog,
+)
+from .main_window_prefs import (
+    as_qbytearray as prefs_as_qbytearray,
+    log_level_name_for_value as prefs_log_level_name_for_value,
+    log_level_value_from_name as prefs_log_level_value_from_name,
+    normalize_supported_log_level as prefs_normalize_supported_log_level,
+    read_layout_bytes as prefs_read_layout_bytes,
+    read_saved_log_level_name as prefs_read_saved_log_level_name,
+    write_layout_bytes as prefs_write_layout_bytes,
+    write_saved_log_level_name as prefs_write_saved_log_level_name,
+)
 
 logger = logging.getLogger(__name__)
 
 
+class _WindowFlashTraceFilter(QtCore.QObject):
+    """
+    Runtime tracer for transient top-level windows that may flash during graph
+    load / node switch.
+    """
+
+    def __init__(self, *, main_window: QtWidgets.QMainWindow, parent: QtCore.QObject | None = None) -> None:
+        super().__init__(parent)
+        self._main_window = main_window
+
+    def eventFilter(self, watched: QtCore.QObject, event: QtCore.QEvent) -> bool:  # type: ignore[override]
+        event_type = event.type()
+        if event_type not in (QtCore.QEvent.Type.Show, QtCore.QEvent.Type.Hide):
+            return super().eventFilter(watched, event)
+        phase = "SHOW" if event_type == QtCore.QEvent.Type.Show else "HIDE"
+        if isinstance(watched, QtWidgets.QWidget):
+            widget = watched
+            if not widget.isWindow():
+                return super().eventFilter(watched, event)
+            if widget is self._main_window:
+                return super().eventFilter(watched, event)
+            if isinstance(widget, QtWidgets.QMenu):
+                return super().eventFilter(watched, event)
+
+            flags = widget.windowFlags()
+            geom = widget.frameGeometry()
+            width = int(geom.width())
+            height = int(geom.height())
+            title = str(widget.windowTitle() or "")
+            class_name = str(widget.metaObject().className() or widget.__class__.__name__)
+            parent_widget = widget.parentWidget()
+            parent_class = (
+                str(parent_widget.metaObject().className() or parent_widget.__class__.__name__)
+                if parent_widget is not None
+                else "None"
+            )
+
+            is_suspicious = bool((width <= 520 and height <= 260) or not title.strip())
+            if is_suspicious:
+                logger.warning(
+                    "[WindowTrace] %s QWidget class=%s title=%r size=%dx%d pos=(%d,%d) flags=0x%x parent=%s object=%s",
+                    phase,
+                    class_name,
+                    title,
+                    width,
+                    height,
+                    int(geom.x()),
+                    int(geom.y()),
+                    int(flags),
+                    parent_class,
+                    hex(id(widget)),
+                )
+            return super().eventFilter(watched, event)
+
+        if isinstance(watched, QtGui.QWindow):
+            window = watched
+            main_window_handle = self._main_window.windowHandle()
+            if main_window_handle is not None and window is main_window_handle:
+                return super().eventFilter(watched, event)
+            try:
+                parent_window = window.parent()
+            except (AttributeError, RuntimeError, TypeError):
+                parent_window = None
+            if parent_window is not None:
+                return super().eventFilter(watched, event)
+
+            try:
+                flags = int(window.flags())
+            except (AttributeError, RuntimeError, TypeError):
+                flags = 0
+            geom = window.geometry()
+            width = int(geom.width())
+            height = int(geom.height())
+            title = str(window.title() or "")
+            class_name = str(window.metaObject().className() or window.__class__.__name__)
+            parent_class = parent_window.__class__.__name__ if parent_window is not None else "None"
+
+            is_suspicious = bool((width <= 520 and height <= 260) or not title.strip())
+            if is_suspicious:
+                logger.warning(
+                    "[WindowTrace] %s QWindow class=%s title=%r size=%dx%d pos=(%d,%d) flags=0x%x parent=%s object=%s",
+                    phase,
+                    class_name,
+                    title,
+                    width,
+                    height,
+                    int(geom.x()),
+                    int(geom.y()),
+                    flags,
+                    parent_class,
+                    hex(id(window)),
+                )
+        return super().eventFilter(watched, event)
+
+
 class F8StudioMainWin(QtWidgets.QMainWindow):
+    _WINDOW_LAYOUT_SETTINGS_ORGANIZATION = "Feel8"
+    _WINDOW_LAYOUT_SETTINGS_APPLICATION = "F8PyStudio"
+    _WINDOW_LAYOUT_SETTINGS_GROUP = "main_window/layout/v1"
+    _WINDOW_LAYOUT_STATE_KEY = "state"
+    _WINDOW_LAYOUT_GEOMETRY_KEY = "geometry"
+    _WINDOW_LAYOUT_STATE_VERSION = 1
+    _LOG_LEVEL_SETTINGS_GROUP = "main_window/logging/v1"
+    _LOG_LEVEL_SETTINGS_KEY = "level_name"
+    _AUTOMATION_SETTINGS_GROUP = "main_window/automation/v1"
+    _AUTO_SAVE_ENABLED_SETTINGS_KEY = "auto_save_enabled"
+    _AUTO_DEPLOY_ENABLED_SETTINGS_KEY = "auto_deploy_enabled"
+    _PERIODIC_AUTO_SAVE_INTERVAL_MS = 15000
+    _AUTO_DEPLOY_DEBOUNCE_MS = 2000
+    _LOG_LEVEL_CHOICES: tuple[tuple[str, int], ...] = (
+        ("DEBUG", logging.DEBUG),
+        ("INFO", logging.INFO),
+        ("WARNING", logging.WARNING),
+        ("ERROR", logging.ERROR),
+        ("CRITICAL", logging.CRITICAL),
+    )
+
     studio_graph: F8StudioGraph
     _exec_lines_action: QtGui.QAction
     _data_lines_action: QtGui.QAction
     _state_lines_action: QtGui.QAction
+    _view_menu: QtWidgets.QMenu
+    _reset_layout_action: QtGui.QAction
+    _log_level_menu: QtWidgets.QMenu
+    _auto_save_action: QtGui.QAction
+    _auto_deploy_action: QtGui.QAction
+    _log_level_action_group: QtGui.QActionGroup
+    _log_level_actions: dict[int, QtGui.QAction]
+    _dock_widgets: list[QtWidgets.QDockWidget]
+    _default_dock_layout_state: QtCore.QByteArray
+    _periodic_auto_save_timer: QtCore.QTimer
+    _auto_deploy_timer: QtCore.QTimer
 
     def __init__(self, node_classes: Iterable[type], parent=None):
         super().__init__(parent)
+        self._window_flash_trace_filter: _WindowFlashTraceFilter | None = None
+        self._install_window_flash_trace_filter()
         self.setWindowTitle("F8PyStudio")
         self.resize(1920, 980)
 
         self._session_file = last_session_path()
         self._session_dialog_dir = str(self._session_file.parent)
         self._exit_autosaved: bool = False
+        self._dock_widgets = []
+        self._log_level_actions = {}
+        self._default_dock_layout_state = QtCore.QByteArray()
+        self._auto_save_enabled = self._read_saved_auto_save_enabled()
+        self._auto_deploy_enabled = self._read_saved_auto_deploy_enabled()
 
         self.studio_graph = F8StudioGraph()
         self.studio_graph.node_factory.clear_registered_nodes()
@@ -46,30 +199,70 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
             self.studio_graph.node_factory.register_node(cls)
         self.studio_graph.install_variant_context_menu_for_nodes(list(node_classes))
         self.studio_graph.install_identity_context_menu_for_nodes(list(node_classes))
+        self.studio_graph.install_duplicate_context_menu_for_nodes(list(node_classes))
+        self.studio_graph._undo_stack.indexChanged.connect(self._on_graph_undo_index_changed)  # type: ignore[attr-defined]
+        self._last_saved_undo_index = self._current_undo_index()
+        self._last_auto_deployed_undo_index = self._current_undo_index()
+        self._periodic_auto_save_timer = QtCore.QTimer(self)
+        self._periodic_auto_save_timer.setInterval(self._PERIODIC_AUTO_SAVE_INTERVAL_MS)
+        self._periodic_auto_save_timer.timeout.connect(self._on_periodic_auto_save_timeout)  # type: ignore[attr-defined]
+        self._periodic_auto_save_timer.start()
+        self._auto_deploy_timer = QtCore.QTimer(self)
+        self._auto_deploy_timer.setSingleShot(True)
+        self._auto_deploy_timer.setInterval(self._AUTO_DEPLOY_DEBOUNCE_MS)
+        self._auto_deploy_timer.timeout.connect(self._on_auto_deploy_timeout)  # type: ignore[attr-defined]
 
         self.setCentralWidget(self.studio_graph.widget)
 
         self._setup_docks()
         self._deploy_action = self._create_deploy_action()
         self._stop_all_services_action = self._create_stop_all_services_action()
+        self._auto_save_action = self._create_auto_save_action()
+        self._auto_deploy_action = self._create_auto_deploy_action()
         self._setup_menu()
         self._setup_toolbar()
-        self._applying_runtime_state = False
+        self._service_manager: ServiceManagerWidget | None = None
 
         self._bridge = PyStudioServiceBridge(PyStudioServiceBridgeConfig(), parent=self)
         self._bridge.ui_command.connect(self._on_ui_command)  # type: ignore[attr-defined]
         self._bridge.service_output.connect(self._on_service_output)  # type: ignore[attr-defined]
         self._bridge.service_process_state.connect(self._on_service_process_state)  # type: ignore[attr-defined]
         self._bridge.log.connect(lambda s: self._log_dock.append("studio", str(s) + "\n"))  # type: ignore[attr-defined]
+        self._setup_service_manager_dock()
+        self._capture_default_dock_layout_state()
+        self._restore_saved_window_layout()
+        self._restore_saved_log_level()
+        self._setup_view_menu()
+        self._setup_log_level_menu()
+        self._shortcut_escape_cancel = QtGui.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key_Escape), self)
+        self._shortcut_escape_cancel.setContext(QtCore.Qt.ShortcutContext.WindowShortcut)
+        self._shortcut_escape_cancel.activated.connect(self._on_escape_cancel_placement)  # type: ignore[attr-defined]
         self._bridge.start()
         try:
             self.studio_graph.set_service_bridge(self._bridge)
         except Exception as exc:
             self._log_dock.report_exception("studio", "studio_graph.set_service_bridge failed", exc)
+        self._runtime_state_sync = RuntimeStateSyncController(
+            studio_graph=self.studio_graph,
+            property_editor=self._prop_editor,
+            bridge=self._bridge,
+            studio_service_class=STUDIO_SERVICE_CLASS,
+        )
         self.studio_graph.property_changed.connect(self._on_ui_property_changed)  # type: ignore[attr-defined]
 
         QtCore.QTimer.singleShot(0, self._auto_load_session)
         QtWidgets.QApplication.instance().aboutToQuit.connect(self._auto_save_session)  # type: ignore[attr-defined]
+
+    def _install_window_flash_trace_filter(self) -> None:
+        raw = str(os.environ.get("F8_STUDIO_TRACE_WINDOW_FLASH", "0") or "").strip().lower()
+        if raw in {"0", "false", "off", "no"}:
+            return
+        app = QtWidgets.QApplication.instance()
+        if app is None:
+            return
+        self._window_flash_trace_filter = _WindowFlashTraceFilter(main_window=self, parent=self)
+        app.installEventFilter(self._window_flash_trace_filter)
+        logger.warning("[WindowTrace] top-level window trace enabled via F8_STUDIO_TRACE_WINDOW_FLASH")
 
     @QtCore.Slot(str, str)
     def _on_service_output(self, service_id: str, line: str) -> None:
@@ -86,27 +279,56 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
 
     @QtCore.Slot(str, bool)
     def _on_service_process_state(self, service_id: str, running: bool) -> None:
+        manager = self._service_manager
         if bool(running):
+            if manager is not None:
+                manager.queue_refresh()
             return
         try:
             self._log_dock.close_service_tab(service_id)
         except (AttributeError, RuntimeError, TypeError):
             pass
+        if manager is not None:
+            manager.queue_refresh()
 
     def _setup_docks(self) -> None:
         prop_editor = F8StudioSingleNodePropertiesWidget(node_graph=self.studio_graph)
         self._prop_editor = prop_editor
-        prop_dock = QtWidgets.QDockWidget("Properties", self)
-        prop_dock.setWidget(prop_editor)
-        self.addDockWidget(QtCore.Qt.LeftDockWidgetArea, prop_dock)
+        self._properties_dock = QtWidgets.QDockWidget("Properties", self)
+        self._properties_dock.setObjectName("PropertiesDock")
+        self._properties_dock.setWidget(prop_editor)
+        self.addDockWidget(QtCore.Qt.LeftDockWidgetArea, self._properties_dock)
 
         self._log_dock = ServiceLogDock(self)
         self.addDockWidget(QtCore.Qt.BottomDockWidgetArea, self._log_dock)
 
         node_library = F8StudioNodeLibraryWidget(node_graph=self.studio_graph)
-        node_library_dock = QtWidgets.QDockWidget("Node Library", self)
-        node_library_dock.setWidget(node_library)
-        self.addDockWidget(QtCore.Qt.RightDockWidgetArea, node_library_dock)
+        self._node_library_dock = QtWidgets.QDockWidget("Node Library", self)
+        self._node_library_dock.setObjectName("NodeLibraryDock")
+        self._node_library_dock.setWidget(node_library)
+        self.addDockWidget(QtCore.Qt.RightDockWidgetArea, self._node_library_dock)
+
+        self._dock_widgets = [self._properties_dock, self._log_dock, self._node_library_dock]
+
+    def _setup_service_manager_dock(self) -> None:
+        manager = ServiceManagerWidget(
+            bridge=self._bridge,
+            get_declared_services=self._declared_graph_services,
+            parent=self,
+        )
+        self._service_manager = manager
+        self._service_manager_dock = QtWidgets.QDockWidget("Service Manager", self)
+        self._service_manager_dock.setObjectName("ServiceManagerDock")
+        self._service_manager_dock.setWidget(manager)
+        self.addDockWidget(QtCore.Qt.BottomDockWidgetArea, self._service_manager_dock)
+        self.tabifyDockWidget(self._log_dock, self._service_manager_dock)
+        self._dock_widgets.append(self._service_manager_dock)
+
+    def _declared_graph_services(self) -> dict[str, str]:
+        return collect_declared_services(
+            nodes=list(self.studio_graph.all_nodes() or []),
+            studio_service_class=STUDIO_SERVICE_CLASS,
+        )
 
     def _setup_menu(self) -> None:
         menu = self.menuBar().addMenu("Graph")
@@ -120,6 +342,8 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         save_action.setShortcut("Ctrl+S")
         save_action.triggered.connect(self._save_session_action)  # type: ignore[attr-defined]
         menu.addAction(save_action)
+        menu.addAction(self._auto_save_action)
+        menu.addAction(self._auto_deploy_action)
 
         menu.addSeparator()
 
@@ -140,13 +364,137 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
 
         menu.addSeparator()
 
-        compile_action = QtWidgets.QAction("Compile Runtime Graph (print)", self)
-        compile_action.setShortcut("Ctrl+R")
-        compile_action.triggered.connect(self._compile_runtime_action)  # type: ignore[attr-defined]
-        menu.addAction(compile_action)
-
         menu.addAction(self._deploy_action)
         menu.addAction(self._stop_all_services_action)
+
+    def _setup_view_menu(self) -> None:
+        self._view_menu = self.menuBar().addMenu("View")
+        for dock in self._dock_widgets:
+            action = dock.toggleViewAction()
+            action.setCheckable(True)
+            self._view_menu.addAction(action)
+        self._view_menu.addSeparator()
+        self._reset_layout_action = QtGui.QAction("Reset Layout", self)
+        self._reset_layout_action.triggered.connect(self._on_reset_layout_triggered)  # type: ignore[attr-defined]
+        self._view_menu.addAction(self._reset_layout_action)
+
+    def _setup_log_level_menu(self) -> None:
+        self._log_level_menu = self.menuBar().addMenu("Logs")
+        self._log_level_action_group = QtGui.QActionGroup(self)
+        self._log_level_action_group.setExclusive(True)
+
+        current_level = self._normalize_supported_log_level(logging.getLogger().getEffectiveLevel())
+        for level_name, level_value in self._LOG_LEVEL_CHOICES:
+            action = QtGui.QAction(level_name, self)
+            action.setCheckable(True)
+            action.setChecked(level_value == current_level)
+            action.toggled.connect(  # type: ignore[attr-defined]
+                lambda checked, selected_level=level_value: self._on_log_level_toggled(checked, selected_level)
+            )
+            self._log_level_action_group.addAction(action)
+            self._log_level_menu.addAction(action)
+            self._log_level_actions[level_value] = action
+
+    def _layout_settings(self) -> QtCore.QSettings:
+        return QtCore.QSettings(self._WINDOW_LAYOUT_SETTINGS_ORGANIZATION, self._WINDOW_LAYOUT_SETTINGS_APPLICATION)
+
+    @staticmethod
+    def _as_qbytearray(value: Any) -> QtCore.QByteArray | None:
+        return prefs_as_qbytearray(value)
+
+    def _read_layout_bytes(self, *, key: str) -> QtCore.QByteArray | None:
+        return prefs_read_layout_bytes(
+            settings=self._layout_settings(),
+            group=self._WINDOW_LAYOUT_SETTINGS_GROUP,
+            key=key,
+        )
+
+    def _write_layout_bytes(self, *, key: str, value: QtCore.QByteArray) -> None:
+        prefs_write_layout_bytes(
+            settings=self._layout_settings(),
+            group=self._WINDOW_LAYOUT_SETTINGS_GROUP,
+            key=key,
+            value=value,
+        )
+
+    @classmethod
+    def _normalize_supported_log_level(cls, level: int) -> int:
+        return prefs_normalize_supported_log_level(level)
+
+    @classmethod
+    def _log_level_name_for_value(cls, level: int) -> str:
+        return prefs_log_level_name_for_value(level=level, choices=cls._LOG_LEVEL_CHOICES)
+
+    @classmethod
+    def _log_level_value_from_name(cls, level_name: str) -> int | None:
+        return prefs_log_level_value_from_name(level_name=level_name, choices=cls._LOG_LEVEL_CHOICES)
+
+    def _read_saved_log_level_name(self) -> str:
+        return prefs_read_saved_log_level_name(
+            settings=self._layout_settings(),
+            group=self._LOG_LEVEL_SETTINGS_GROUP,
+            key=self._LOG_LEVEL_SETTINGS_KEY,
+        )
+
+    def _write_saved_log_level_name(self, *, level_name: str) -> None:
+        prefs_write_saved_log_level_name(
+            settings=self._layout_settings(),
+            group=self._LOG_LEVEL_SETTINGS_GROUP,
+            key=self._LOG_LEVEL_SETTINGS_KEY,
+            level_name=level_name,
+        )
+
+    def _apply_log_level(self, *, level: int, persist: bool) -> None:
+        normalized_level = self._normalize_supported_log_level(level)
+        logging.getLogger().setLevel(normalized_level)
+        if persist:
+            self._write_saved_log_level_name(level_name=self._log_level_name_for_value(normalized_level))
+
+    def _restore_saved_log_level(self) -> None:
+        saved_level_name = self._read_saved_log_level_name()
+        if not saved_level_name:
+            return
+        saved_level_value = self._log_level_value_from_name(saved_level_name)
+        if saved_level_value is None:
+            logger.warning("Invalid saved log level ignored: %s", saved_level_name)
+            return
+        self._apply_log_level(level=saved_level_value, persist=False)
+
+    def _on_log_level_toggled(self, checked: bool, level: int) -> None:
+        if not bool(checked):
+            return
+        self._apply_log_level(level=level, persist=True)
+
+    def _capture_default_dock_layout_state(self) -> None:
+        self._default_dock_layout_state = self.saveState(self._WINDOW_LAYOUT_STATE_VERSION)
+
+    def _restore_saved_window_layout(self) -> None:
+        geometry_state = self._read_layout_bytes(key=self._WINDOW_LAYOUT_GEOMETRY_KEY)
+        if geometry_state is not None and not geometry_state.isEmpty():
+            self.restoreGeometry(geometry_state)
+        dock_state = self._read_layout_bytes(key=self._WINDOW_LAYOUT_STATE_KEY)
+        if dock_state is None or dock_state.isEmpty():
+            return
+        restored = self.restoreState(dock_state, self._WINDOW_LAYOUT_STATE_VERSION)
+        if not restored:
+            logger.warning("Failed to restore dock layout from QSettings")
+
+    def _save_window_layout(self) -> None:
+        self._write_layout_bytes(
+            key=self._WINDOW_LAYOUT_STATE_KEY,
+            value=self.saveState(self._WINDOW_LAYOUT_STATE_VERSION),
+        )
+        self._write_layout_bytes(key=self._WINDOW_LAYOUT_GEOMETRY_KEY, value=self.saveGeometry())
+
+    @QtCore.Slot()
+    def _on_reset_layout_triggered(self) -> None:
+        if self._default_dock_layout_state.isEmpty():
+            return
+        restored = self.restoreState(self._default_dock_layout_state, self._WINDOW_LAYOUT_STATE_VERSION)
+        if not restored:
+            logger.warning("Failed to reset dock layout to defaults")
+            return
+        self._save_window_layout()
 
     def _create_deploy_action(self) -> QtGui.QAction:
         deploy_action = QtGui.QAction("Send Graph", self)
@@ -160,9 +508,11 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         return action
 
     def _setup_toolbar(self) -> None:
-        tb = self.addToolBar("Run")
+        tb = QtWidgets.QToolBar("Run", self)
+        tb.setObjectName("RunToolBar")
         tb.setMovable(False)
         tb.setToolButtonStyle(QtCore.Qt.ToolButtonIconOnly)
+        self.addToolBar(QtCore.Qt.TopToolBarArea, tb)
 
         # Graph file management.
         self._open_icon = icon_for(self, StudioIcon.FOLDER_OPEN)
@@ -197,32 +547,52 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         self._stop_all_services_action.setIcon(icon_for(self, StudioIcon.STOP_ALL))
         self._stop_all_services_action.setToolTip("Stop all service processes in graph")
         tb.addAction(self._stop_all_services_action)
+        self._auto_deploy_action.setIcon(icon_for(self, StudioIcon.AUTOMATION))
+        self._auto_deploy_action.setToolTip("Auto deploy running services after graph edits (2s debounce)")
+        tb.addAction(self._auto_deploy_action)
 
-        tb.addSeparator()
+        # Push the edge-visibility toolbar to the far-right in the same top toolbar row.
+        toolbar_spacer = QtWidgets.QWidget(tb)
+        toolbar_spacer.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred)
+        tb.addWidget(toolbar_spacer)
+
+        edge_tb = QtWidgets.QToolBar("Pipe Visibility", self)
+        edge_tb.setObjectName("PipeVisibilityToolBar")
+        edge_tb.setMovable(False)
+        edge_tb.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
+        self.addToolBar(QtCore.Qt.TopToolBarArea, edge_tb)
+
+        edge_left_spacer = QtWidgets.QWidget(edge_tb)
+        edge_left_spacer.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred)
+        edge_tb.addWidget(edge_left_spacer)
+
+        edge_label = QtWidgets.QLabel("Pipe Visibility:", edge_tb)
+        edge_tb.addWidget(edge_label)
+        edge_tb.addSeparator()
 
         self._exec_lines_action = QtGui.QAction("EXEC", self)
         self._exec_lines_action.setCheckable(True)
         self._exec_lines_action.setChecked(True)
         self._exec_lines_action.toggled.connect(self._on_exec_lines_toggled)  # type: ignore[attr-defined]
         self._set_edge_visibility_action_icon(self._exec_lines_action, True)
-        tb.addAction(self._exec_lines_action)
-        self._set_action_text_beside_icon(tb, self._exec_lines_action, italic=True)
+        edge_tb.addAction(self._exec_lines_action)
+        self._set_action_text_beside_icon(edge_tb, self._exec_lines_action, italic=True)
 
         self._data_lines_action = QtGui.QAction("DATA", self)
         self._data_lines_action.setCheckable(True)
         self._data_lines_action.setChecked(True)
         self._data_lines_action.toggled.connect(self._on_data_lines_toggled)  # type: ignore[attr-defined]
         self._set_edge_visibility_action_icon(self._data_lines_action, True)
-        tb.addAction(self._data_lines_action)
-        self._set_action_text_beside_icon(tb, self._data_lines_action, italic=True)
+        edge_tb.addAction(self._data_lines_action)
+        self._set_action_text_beside_icon(edge_tb, self._data_lines_action, italic=True)
 
         self._state_lines_action = QtGui.QAction("STATE", self)
         self._state_lines_action.setCheckable(True)
         self._state_lines_action.setChecked(True)
         self._state_lines_action.toggled.connect(self._on_state_lines_toggled)  # type: ignore[attr-defined]
         self._set_edge_visibility_action_icon(self._state_lines_action, True)
-        tb.addAction(self._state_lines_action)
-        self._set_action_text_beside_icon(tb, self._state_lines_action, italic=True)
+        edge_tb.addAction(self._state_lines_action)
+        self._set_action_text_beside_icon(edge_tb, self._state_lines_action, italic=True)
 
     def _set_action_text_beside_icon(
         self, toolbar: QtWidgets.QToolBar, action: QtGui.QAction, italic: bool = False
@@ -258,6 +628,7 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         self._set_edge_visibility_action_icon(self._state_lines_action, visible)
 
     def closeEvent(self, event):
+        self._save_window_layout()
         self._auto_save_session()
         try:
             self._bridge.stop()
@@ -266,143 +637,73 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         super().closeEvent(event)
 
     def _auto_load_session(self) -> None:
-        try:
-            loaded = self.studio_graph.load_last_session()
-            if loaded:
-                logger.info("Loaded session from %s", loaded)
-        except Exception as exc:
-            self._log_dock.report_exception("studio", "session auto-load failed", exc)
-            logger.exception("Auto-load session failed")
+        session_auto_load_session(studio_graph=self.studio_graph, log_dock=self._log_dock)
+        self._mark_session_saved()
+        self._mark_auto_deploy_synced()
 
     def _auto_save_session(self) -> None:
         # Called from both `closeEvent` and `QApplication.aboutToQuit`; guard to avoid double-save on exit.
-        if self._exit_autosaved:
+        if not self._auto_save_enabled:
             return
-        try:
-            saved = self.studio_graph.save_last_session()
+        if not self._graph_has_unsaved_changes():
             self._exit_autosaved = True
-            logger.info("Saved session to %s", saved)
-        except Exception:
-            try:
-                self._log_dock.append("studio", "[session] auto-save failed\n")
-            except (AttributeError, RuntimeError, TypeError):
-                pass
-            logger.exception("Auto-save session failed")
+            return
+        self._exit_autosaved = session_auto_save_session(
+            studio_graph=self.studio_graph,
+            log_dock=self._log_dock,
+            already_saved=self._exit_autosaved,
+        )
+        if self._exit_autosaved:
+            self._mark_session_saved()
 
     def _save_session_action(self) -> None:
-        path = self.studio_graph.save_last_session()
-        show_info(self, "Session saved", f"Saved to:\n{path}")
+        session_save_session(parent=self, studio_graph=self.studio_graph, show_info=show_info)
+        self._mark_session_saved()
 
     def _load_session_action(self) -> None:
-        path = self.studio_graph.load_last_session()
-        if not path:
-            show_info(self, "No session", f"No session file found at:\n{self._session_file}")
-            return
-        show_info(self, "Session loaded", f"Loaded:\n{path}")
+        loaded = session_load_last_session(
+            parent=self,
+            studio_graph=self.studio_graph,
+            session_file=self._session_file,
+            show_info=show_info,
+        )
+        if loaded:
+            self._mark_session_saved()
+            self._mark_auto_deploy_synced()
 
     def _load_session_from_action(self) -> None:
-        try:
-            start_dir = str(self._session_dialog_dir or "")
-        except Exception:
-            start_dir = ""
-        path, _ = QtWidgets.QFileDialog.getOpenFileName(
-            self,
-            "Load Session",
-            start_dir,
-            "F8 Studio Session (*.json);;JSON (*.json);;All Files (*)",
+        session_dir, loaded = session_load_session_from_dialog(
+            parent=self,
+            studio_graph=self.studio_graph,
+            log_dock=self._log_dock,
+            start_dir=str(self._session_dialog_dir or ""),
+            show_warning=show_warning,
         )
-        p = str(path or "").strip()
-        if not p:
-            return
-        try:
-            self.studio_graph.load_session(p)
-            self._session_dialog_dir = str(Path(p).resolve().parent)
-            self._log_dock.append("studio", f"[session] loaded: {p}\n")
-        except Exception as exc:
-            self._log_dock.append("studio", f"[session] load failed: {exc}\n")
-            self._log_dock.report_exception("studio", f"session load failed ({p})", exc)
-            show_warning(self, "Load failed", f"Failed to load:\n{p}\n\n{exc}")
+        self._session_dialog_dir = session_dir
+        if loaded:
+            self._mark_session_saved()
+            self._mark_auto_deploy_synced()
 
     def _save_session_as_action(self) -> None:
-        try:
-            start_dir = str(self._session_dialog_dir or "")
-        except Exception:
-            start_dir = ""
-        path, _ = QtWidgets.QFileDialog.getSaveFileName(
-            self,
-            "Save Session As",
-            start_dir,
-            "F8 Studio Session (*.json);;JSON (*.json);;All Files (*)",
+        session_dir, saved = session_save_session_as_dialog(
+            parent=self,
+            studio_graph=self.studio_graph,
+            log_dock=self._log_dock,
+            start_dir=str(self._session_dialog_dir or ""),
+            show_warning=show_warning,
         )
-        p = str(path or "").strip()
-        if not p:
-            return
-        if not p.lower().endswith(".json"):
-            p = p + ".json"
-        try:
-            self.studio_graph.save_session(p)
-            self._session_dialog_dir = str(Path(p).resolve().parent)
-            self._log_dock.append("studio", f"[session] saved: {p}\n")
-        except Exception as exc:
-            self._log_dock.append("studio", f"[session] save failed: {exc}\n")
-            self._log_dock.report_exception("studio", f"session save failed ({p})", exc)
-            show_warning(self, "Save failed", f"Failed to save:\n{p}\n\n{exc}")
+        self._session_dialog_dir = session_dir
+        if saved:
+            self._mark_session_saved()
 
     def _insert_graph_from_action(self) -> None:
-        try:
-            start_dir = str(self._session_dialog_dir or "")
-        except Exception:
-            start_dir = ""
-        path, _ = QtWidgets.QFileDialog.getOpenFileName(
-            self,
-            "Insert Graph",
-            start_dir,
-            "F8 Studio Session (*.json);;JSON (*.json);;All Files (*)",
+        self._session_dialog_dir = session_insert_graph_from_dialog(
+            parent=self,
+            studio_graph=self.studio_graph,
+            log_dock=self._log_dock,
+            start_dir=str(self._session_dialog_dir or ""),
+            show_warning=show_warning,
         )
-        p = str(path or "").strip()
-        if not p:
-            return
-        try:
-            request = self.studio_graph.prepare_insert_graph_from_file(p)
-        except Exception as exc:
-            self._log_dock.append("studio", f"[insert] prepare failed: {exc}\n")
-            self._log_dock.report_exception("studio", f"insert graph prepare failed ({p})", exc)
-            show_warning(self, "Insert failed", f"Failed to prepare insert:\n{p}\n\n{exc}")
-            return
-
-        self._session_dialog_dir = str(Path(p).resolve().parent)
-        if request.node_count <= 0:
-            show_warning(self, "Insert blocked", f"Graph has no nodes:\n{p}")
-            return
-
-        graph_name = Path(p).name
-        placement_label = f"Insert: {graph_name}\n{request.node_count} nodes"
-        self.studio_graph.begin_graph_placement(request, label=placement_label)
-        self._log_dock.append("studio", f"[insert] click canvas to place: {graph_name} ({request.node_count} nodes)\n")
-
-    def _compile_runtime_action(self) -> None:
-        try:
-            compiled = compile_runtime_graphs_from_studio(self.studio_graph)
-        except ValueError as exc:
-            msg = str(exc or "").strip() or "compile failed"
-            self._log_dock.append("studio", f"[compile][blocked] {msg}\n")
-            show_warning(self, "Compile blocked", msg)
-            return
-        except Exception as exc:
-            self._log_dock.append("studio", f"[compile][error] {exc}\n")
-            self._log_dock.report_exception("studio", "compile runtime graph failed", exc)
-            show_warning(self, "Compile failed", str(exc))
-            return
-
-        payload = compiled.global_graph.model_dump(mode="json", by_alias=True)
-        print("\n=== F8Studio RuntimeGraph (global) ===")
-        print(json.dumps(payload, ensure_ascii=False, indent=2, default=str))
-
-        print("\n=== F8Studio RuntimeGraph (per-service) ===")
-        for sid, g in compiled.per_service.items():
-            p = g.model_dump(mode="json", by_alias=True)
-            print(f"\n--- serviceId={sid} ---")
-            print(json.dumps(p, ensure_ascii=False, indent=2, default=str))
 
     def _on_deploy_action_triggered(self) -> None:
         try:
@@ -422,22 +723,10 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         self._bridge.deploy(compiled)
 
     def _on_stop_all_services_triggered(self) -> None:
-        service_ids: set[str] = set()
-        for node in list(self.studio_graph.all_nodes() or []):
-            try:
-                spec = node.spec
-            except Exception:
-                continue
-            if not isinstance(spec, F8ServiceSpec):
-                continue
-            if str(spec.serviceClass or "") == STUDIO_SERVICE_CLASS:
-                continue
-            try:
-                service_id = str(node.id or "").strip()
-            except Exception:
-                service_id = ""
-            if service_id:
-                service_ids.add(service_id)
+        service_ids = collect_declared_service_ids(
+            nodes=list(self.studio_graph.all_nodes() or []),
+            studio_service_class=STUDIO_SERVICE_CLASS,
+        )
 
         if not service_ids:
             self._log_dock.append("studio", "[service] no graph service instances to stop\n")
@@ -450,45 +739,32 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
             except Exception as exc:
                 self._log_dock.report_exception("studio", f"stop service failed ({service_id})", exc)
 
-    def _on_runtime_state_updated(self, service_id: str, node_id: str, field: str, value: Any, ts_ms: Any) -> None:
-        """
-        Apply live state updates to the corresponding UI node property (best-effort).
-        """
-        try:
-            node = self.studio_graph.get_node_by_id(str(node_id))
-        except Exception:
-            node = None
-        if node is None:
+    @QtCore.Slot()
+    def _on_escape_cancel_placement(self) -> None:
+        app = QtWidgets.QApplication.instance()
+        if app is not None and app.activePopupWidget() is not None:
+            return
+        viewer = self.studio_graph.viewer()
+        if viewer is None:
             return
         try:
-            if field in node.model.properties or field in node.model.custom_properties:
-                self._applying_runtime_state = True
-                try:
-                    node.set_property(field, value, push_undo=False)
-                    # If this node is currently shown in the Properties dock, also refresh the widget value.
-                    try:
-                        editor = self._prop_editor.get_property_editor_widget(node)
-                        w = editor.get_widget(field) if editor is not None else None
-                        if w is not None:
-                            try:
-                                w.blockSignals(True)
-                            except (AttributeError, RuntimeError, TypeError):
-                                pass
-                            try:
-                                w.set_value(value)
-                            finally:
-                                try:
-                                    w.blockSignals(False)
-                                except (AttributeError, RuntimeError, TypeError):
-                                    pass
-                    except (AttributeError, RuntimeError, TypeError, ValueError):
-                        pass
-                finally:
-                    self._applying_runtime_state = False
+            if viewer.is_graph_placement_active():
+                self.studio_graph.cancel_graph_placement()
+                return
+            if viewer.is_node_placement_active():
+                self.studio_graph.cancel_node_placement()
+                return
         except (AttributeError, RuntimeError, TypeError):
             return
 
+    def _on_runtime_state_updated(self, service_id: str, node_id: str, field: str, value: Any, ts_ms: Any) -> None:
+        self._runtime_state_sync.on_runtime_state_updated(service_id, node_id, field, value, ts_ms)
+
     def _on_ui_command(self, cmd: UiCommand) -> None:
+        if str(cmd.command) == "monitor.update":
+            manager = self._service_manager
+            if manager is not None:
+                manager.queue_refresh()
         if str(cmd.command) == "state.update":
             payload = dict(cmd.payload or {})
             field = str(payload.get("field") or "")
@@ -511,48 +787,163 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         try:
             if isinstance(node, UiCommandApplier):
                 node.apply_ui_command(cmd)
-        except (AttributeError, RuntimeError, TypeError, ValueError):
+        except Exception as exc:
+            self._log_dock.report_exception("studio", f"apply_ui_command failed nodeId={node_id}", exc)
             return
 
     def _on_ui_property_changed(self, node: Any, name: str, value: Any) -> None:
-        """
-        Propagate UI state edits into the corresponding runtime.
-        """
-        if self._applying_runtime_state:
+        self._runtime_state_sync.on_ui_property_changed(node, name, value)
+
+    def _create_auto_save_action(self) -> QtGui.QAction:
+        action = QtGui.QAction("Auto Save Last Session", self)
+        action.setCheckable(True)
+        action.setChecked(self._auto_save_enabled)
+        action.toggled.connect(self._on_auto_save_toggled)  # type: ignore[attr-defined]
+        return action
+
+    def _create_auto_deploy_action(self) -> QtGui.QAction:
+        action = QtGui.QAction("Auto Deploy Running Services", self)
+        action.setCheckable(True)
+        action.setChecked(self._auto_deploy_enabled)
+        action.toggled.connect(self._on_auto_deploy_toggled)  # type: ignore[attr-defined]
+        return action
+
+    @staticmethod
+    def _coerce_bool_setting(raw: Any, *, default: bool) -> bool:
+        if isinstance(raw, bool):
+            return raw
+        if isinstance(raw, (int, float)):
+            return bool(raw)
+        text = str(raw or "").strip().lower()
+        if text in {"1", "true", "yes", "on"}:
+            return True
+        if text in {"0", "false", "no", "off"}:
+            return False
+        return bool(default)
+
+    def _read_saved_auto_save_enabled(self) -> bool:
+        settings = self._layout_settings()
+        settings.beginGroup(self._AUTOMATION_SETTINGS_GROUP)
+        try:
+            raw = settings.value(self._AUTO_SAVE_ENABLED_SETTINGS_KEY, True)
+        finally:
+            settings.endGroup()
+        return self._coerce_bool_setting(raw, default=True)
+
+    def _write_saved_auto_save_enabled(self, *, enabled: bool) -> None:
+        settings = self._layout_settings()
+        settings.beginGroup(self._AUTOMATION_SETTINGS_GROUP)
+        try:
+            settings.setValue(self._AUTO_SAVE_ENABLED_SETTINGS_KEY, bool(enabled))
+            settings.sync()
+        finally:
+            settings.endGroup()
+
+    def _read_saved_auto_deploy_enabled(self) -> bool:
+        settings = self._layout_settings()
+        settings.beginGroup(self._AUTOMATION_SETTINGS_GROUP)
+        try:
+            raw = settings.value(self._AUTO_DEPLOY_ENABLED_SETTINGS_KEY, False)
+        finally:
+            settings.endGroup()
+        return self._coerce_bool_setting(raw, default=False)
+
+    def _write_saved_auto_deploy_enabled(self, *, enabled: bool) -> None:
+        settings = self._layout_settings()
+        settings.beginGroup(self._AUTOMATION_SETTINGS_GROUP)
+        try:
+            settings.setValue(self._AUTO_DEPLOY_ENABLED_SETTINGS_KEY, bool(enabled))
+            settings.sync()
+        finally:
+            settings.endGroup()
+
+    def _current_undo_index(self) -> int:
+        return int(self.studio_graph._undo_stack.index())  # type: ignore[attr-defined]
+
+    def _graph_has_unsaved_changes(self) -> bool:
+        return self._current_undo_index() != self._last_saved_undo_index
+
+    def _mark_session_saved(self) -> None:
+        self._last_saved_undo_index = self._current_undo_index()
+
+    def _mark_auto_deploy_synced(self) -> None:
+        self._last_auto_deployed_undo_index = self._current_undo_index()
+
+    @QtCore.Slot(bool)
+    def _on_auto_save_toggled(self, checked: bool) -> None:
+        self._auto_save_enabled = bool(checked)
+        self._write_saved_auto_save_enabled(enabled=self._auto_save_enabled)
+
+    @QtCore.Slot(bool)
+    def _on_auto_deploy_toggled(self, checked: bool) -> None:
+        self._auto_deploy_enabled = bool(checked)
+        self._write_saved_auto_deploy_enabled(enabled=self._auto_deploy_enabled)
+        if not self._auto_deploy_enabled:
+            self._auto_deploy_timer.stop()
+            return
+        if self._current_undo_index() != self._last_auto_deployed_undo_index:
+            self._auto_deploy_timer.start()
+
+    @QtCore.Slot(int)
+    def _on_graph_undo_index_changed(self, index: int) -> None:
+        _ = index
+        self._exit_autosaved = False
+        if bool(self.studio_graph._loading_session):  # type: ignore[attr-defined]
+            return
+        if self._auto_deploy_enabled:
+            self._auto_deploy_timer.start()
+
+    @QtCore.Slot()
+    def _on_periodic_auto_save_timeout(self) -> None:
+        if not self._auto_save_enabled:
+            return
+        if not self._graph_has_unsaved_changes():
             return
         try:
-            spec = node.spec
-        except Exception:
-            spec = None
-        if not isinstance(spec, (F8OperatorSpec, F8ServiceSpec)):
+            self.studio_graph.save_last_session()
+            self._mark_session_saved()
+        except Exception as exc:
+            self._log_dock.report_exception("studio", "periodic auto-save failed", exc)
+
+    @QtCore.Slot()
+    def _on_auto_deploy_timeout(self) -> None:
+        if not self._auto_deploy_enabled:
             return
-        service_class = str(spec.serviceClass or "")
-        # Only state fields are propagated.
-        try:
-            state_names = {str(s.name or "") for s in (spec.stateFields or [])}
-        except Exception:
-            state_names = set()
-        if str(name) not in state_names:
-            return
-        try:
-            node_id = str(node.id or "")
-        except Exception:
-            node_id = ""
-        if not node_id:
-            return
-        if service_class == STUDIO_SERVICE_CLASS:
-            self._bridge.set_local_state(node_id, str(name), value)
+        current_undo_index = self._current_undo_index()
+        if current_undo_index == self._last_auto_deployed_undo_index:
             return
 
-        # Non-studio services: push state to the runtime via `set_state` endpoint.
-        # Service nodes represent service instances themselves: node_id == service_id.
-        if isinstance(spec, F8ServiceSpec):
-            service_id = node_id
-        else:
-            try:
-                service_id = str(node.svcId or "")
-            except Exception:
-                service_id = ""
-        if not service_id:
+        try:
+            compiled = compile_runtime_graphs_from_studio(self.studio_graph)
+        except ValueError as exc:
+            msg = str(exc or "").strip() or "auto deploy blocked by invalid graph"
+            self._log_dock.append("studio", f"[deploy][auto][blocked] {msg}\n")
             return
-        self._bridge.set_remote_state(service_id, node_id, str(name), value)
+        except Exception as exc:
+            self._log_dock.append("studio", f"[deploy][auto][error] {exc}\n")
+            self._log_dock.report_exception("studio", "auto deploy compile failed", exc)
+            return
+
+        for warning in list(compiled.warnings or ()):
+            self._log_dock.append("studio", f"[compile][warn] {warning}\n")
+
+        running_service_ids: list[str] = []
+        for service_id in sorted(self._declared_graph_services().keys()):
+            try:
+                running = self._bridge.is_service_running(service_id)
+            except Exception as exc:
+                self._log_dock.report_exception("studio", f"auto deploy status check failed ({service_id})", exc)
+                continue
+            if running:
+                running_service_ids.append(service_id)
+
+        if not running_service_ids:
+            self._last_auto_deployed_undo_index = current_undo_index
+            return
+
+        for service_id in running_service_ids:
+            try:
+                self._bridge.deploy_service_rungraph(service_id, compiled=compiled)
+            except Exception as exc:
+                self._log_dock.report_exception("studio", f"auto deploy failed ({service_id})", exc)
+        self._last_auto_deployed_undo_index = current_undo_index

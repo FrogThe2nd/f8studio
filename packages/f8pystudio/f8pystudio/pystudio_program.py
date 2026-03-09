@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from f8pysdk.msgspec_codec import dump_json
 from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
 from f8pysdk.service_runtime_tools.catalog import ServiceCatalog
 from f8pysdk.service_runtime_tools.discovery import (
@@ -14,7 +15,8 @@ from f8pysdk.service_runtime_tools.discovery import (
     load_discovery_into_catalog,
 )
 
-from .extensions import ExtensionRegistry, StudioPluginManifest
+from .plugin_api import StudioPluginManifest
+from .plugin_loader import load_entrypoint_plugins
 from .pystudio_node_registry import SERVICE_CLASS, register_pystudio_specs
 
 logger = logging.getLogger(__name__)
@@ -31,15 +33,17 @@ class PyStudioProgram:
             if candidate.exists():
                 return candidate
 
-        repo_icon = Path(__file__).resolve().parents[3] / "assets" / "icon.png"
-        if repo_icon.exists():
-            return repo_icon
+        package_icon = Path(__file__).resolve().parent / "assets" / "logo.png"
+        if package_icon.exists():
+            return package_icon
 
         return None
 
     def describe_json(self) -> dict[str, Any]:
-        register_pystudio_specs()
-        return RuntimeNodeRegistry.instance().describe(SERVICE_CLASS).model_dump(mode="json")
+        registry = register_pystudio_specs()
+        manifests = self._load_plugin_manifests()
+        self._apply_plugin_manifests_to_runtime_registry(manifests, registry=registry)
+        return dump_json(RuntimeNodeRegistry.instance().describe(SERVICE_CLASS), mode="json")
 
     @staticmethod
     def _inject_builtin_pystudio_specs(catalog: ServiceCatalog) -> str | None:
@@ -53,61 +57,63 @@ class PyStudioProgram:
         return str(service_spec.serviceClass)
 
     @staticmethod
-    def _load_extensions_from_env() -> ExtensionRegistry:
-        registry = ExtensionRegistry()
-        raw = os.environ.get("F8PYSTUDIO_PLUGINS", "")
-        module_names = [name.strip() for name in raw.split(",") if name.strip()]
-        for module_name in module_names:
-            try:
-                manifest = registry.register_module(module_name)
-            except (ModuleNotFoundError, ImportError, TypeError, ValueError):
-                logger.exception("Failed to load extension module '%s'", module_name)
-                continue
+    def _load_plugin_manifests() -> list[StudioPluginManifest]:
+        manifests = load_entrypoint_plugins()
+        for manifest in manifests:
             logger.info(
-                "Loaded extension plugin: id=%s name=%s version=%s",
+                "Loaded plugin manifest: id=%s name=%s version=%s",
                 manifest.plugin_id,
                 manifest.plugin_name,
                 manifest.plugin_version,
             )
-        return registry
+        return manifests
 
     @staticmethod
-    def _apply_extensions(registry: ExtensionRegistry) -> None:
-        if not registry.manifests():
+    def _apply_plugin_manifests_to_runtime_registry(
+        manifests: list[StudioPluginManifest], *, registry: RuntimeNodeRegistry
+    ) -> None:
+        if not manifests:
             return
+        for manifest in manifests:
+            for op_reg in manifest.operators:
+                try:
+                    out_reg = op_reg.register(registry)
+                except Exception:
+                    logger.exception("Operator registration failed in plugin '%s'", manifest.plugin_id)
+                    continue
+                if out_reg is not registry:
+                    logger.warning(
+                        "Plugin '%s' returned a different RuntimeNodeRegistry instance; ignoring replacement.",
+                        manifest.plugin_id,
+                    )
 
+    @staticmethod
+    def _apply_plugin_manifests_to_renderers(manifests: list[StudioPluginManifest]) -> None:
+        if not manifests:
+            return
         from .render_nodes import RenderNodeRegistry
 
         render_registry = RenderNodeRegistry.instance()
-        for manifest in registry.manifests():
-            PyStudioProgram._apply_manifest(manifest, render_registry)
-
-    @staticmethod
-    def _apply_manifest(manifest: StudioPluginManifest, render_registry: Any) -> None:
-        for renderer in manifest.renderers:
-            key = str(renderer.renderer_class).strip()
-            if not key:
-                logger.warning("Skip empty renderer key in plugin '%s'", manifest.plugin_id)
-                continue
-            try:
-                render_registry.register(key, renderer.node_class)
-            except ValueError:
-                logger.warning("Renderer already registered (skip): %s", key)
-            except TypeError:
-                logger.exception("Invalid renderer class for key '%s' in plugin '%s'", key, manifest.plugin_id)
-
-        if manifest.state_controls:
-            logger.info(
-                "Plugin '%s' provides %s state control registration(s).",
-                manifest.plugin_id,
-                len(manifest.state_controls),
-            )
-        if manifest.command_handlers:
-            logger.info(
-                "Plugin '%s' provides %s command handler registration(s).",
-                manifest.plugin_id,
-                len(manifest.command_handlers),
-            )
+        for manifest in manifests:
+            for renderer in manifest.renderers:
+                key = str(renderer.renderer_class).strip()
+                if not key:
+                    logger.warning("Skip empty renderer key in plugin '%s'", manifest.plugin_id)
+                    continue
+                try:
+                    render_registry.register(key, renderer.node_class)
+                except ValueError:
+                    logger.warning(
+                        "Renderer already registered (skip): key=%s plugin_id=%s",
+                        key,
+                        manifest.plugin_id,
+                    )
+                except TypeError:
+                    logger.exception(
+                        "Invalid renderer class in plugin '%s' for key '%s'",
+                        manifest.plugin_id,
+                        key,
+                    )
 
     @staticmethod
     def build_node_classes() -> list[type]:
@@ -160,12 +166,14 @@ class PyStudioProgram:
 
         from .widgets.main_window import F8StudioMainWin
 
+        manifests = self._load_plugin_manifests()
+        self._apply_plugin_manifests_to_runtime_registry(manifests, registry=RuntimeNodeRegistry.instance())
+
         load_discovery_into_catalog(
             catalog=ServiceCatalog.instance(),
             builtin_injectors=(self._inject_builtin_pystudio_specs,),
         )
-        extensions = self._load_extensions_from_env()
-        self._apply_extensions(extensions)
+        self._apply_plugin_manifests_to_renderers(manifests)
 
         node_classes = self.build_node_classes()
 

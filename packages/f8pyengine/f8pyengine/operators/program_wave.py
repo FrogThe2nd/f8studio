@@ -13,8 +13,9 @@ from f8pysdk import (
     F8RuntimeNode,
     F8StateAccess,
     F8StateSpec,
-    any_schema,
     boolean_schema,
+    complex_object_schema,
+    integer_schema,
     number_schema,
 )
 from f8pysdk.nats_naming import ensure_token
@@ -26,6 +27,18 @@ from ..constants import SERVICE_CLASS
 OPERATOR_CLASS: Final[str] = "f8.program_wave"
 
 logger = logging.getLogger(__name__)
+
+
+def _program_state_schema():
+    return complex_object_schema(
+        properties={
+            "tsMs": integer_schema(),
+            "timeSec": number_schema(),
+            "hz": number_schema(),
+            "loopRunningSec": number_schema(),
+            "loopPauseSec": number_schema(),
+        }
+    )
 
 
 def _coerce_number(value: Any) -> float | None:
@@ -279,7 +292,7 @@ ProgramWaveRuntimeNode.SPEC = F8OperatorSpec(
             name="program",
             label="Program",
             description="Dict payload defining tsMs/timeSec/hz/loopRunningSec/loopPauseSec.",
-            valueSchema=any_schema(),
+            valueSchema=_program_state_schema(),
             access=F8StateAccess.wo,
             showOnNode=True,
             required=True,

@@ -29,3 +29,7 @@ class ServiceBusConfig:
     state_cache_max_entries: int = 8192
     data_input_max_buffers: int = 4096
     data_input_default_queue_size: int = 256
+    monitor_enabled: bool = True
+    monitor_interval_ms: int = 1000
+    monitor_window_ms: int = 30000
+    monitor_gpu_enabled: bool = True

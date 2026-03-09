@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from f8pysdk.msgspec_codec import copy_model, dump_json
 import asyncio
 import logging
 from collections import deque
 from typing import Any, TYPE_CHECKING
+
+import msgspec
 
 from ...generated import F8Edge, F8EdgeKindEnum, F8RuntimeGraph, F8RuntimeGraphMeta, F8StateAccess
 from ...json_unwrap import unwrap_json_value
@@ -33,13 +36,15 @@ log = logging.getLogger(__name__)
 
 
 def _with_rungraph_ts(graph: F8RuntimeGraph, ts_ms: int) -> F8RuntimeGraph:
-    meta = graph.meta if graph.meta is not None else F8RuntimeGraphMeta()
-    meta2 = meta.model_copy(deep=True, update={"ts": int(ts_ms)})
-    return graph.model_copy(deep=True, update={"meta": meta2})
+    meta = graph.meta
+    if meta is None or isinstance(meta, msgspec.UnsetType):
+        meta = F8RuntimeGraphMeta()
+    meta2 = copy_model(meta, deep=True, update={"ts": int(ts_ms)})
+    return copy_model(graph, deep=True, update={"meta": meta2})
 
 
 def _encode_rungraph_bytes(graph: F8RuntimeGraph) -> bytes:
-    payload = graph.model_dump(mode="json", by_alias=True)
+    payload = dump_json(graph, mode="json", by_alias=True)
     return encode_obj(payload)
 
 
@@ -86,7 +91,9 @@ async def apply_rungraph(bus: "ServiceBus", graph: F8RuntimeGraph) -> bool:
 
     # Service/container nodes use `nodeId == serviceId`.
     for n in list(graph.nodes or []):
-        if n.operatorClass is None and str(n.nodeId) != str(n.serviceId):
+        operator_class = n.operatorClass
+        is_service_node = operator_class is None or isinstance(operator_class, msgspec.UnsetType)
+        if is_service_node and str(n.nodeId) != str(n.serviceId):
             _log_rungraph_error_once(bus, "rungraph_invalid_service_node", "service node requires nodeId == serviceId")
             return False
 
@@ -403,7 +410,9 @@ async def seed_builtin_identity_state(bus: "ServiceBus", graph: F8RuntimeGraph) 
                     meta={"builtin": True, "_noStateFanout": True},
                     deliver_local=False,
                 )
-            if n.operatorClass is not None and bus._state_access_by_node_field.get((node_id, "operatorId")) is not None:
+            operator_class = n.operatorClass
+            is_service_node = operator_class is None or isinstance(operator_class, msgspec.UnsetType)
+            if not is_service_node and bus._state_access_by_node_field.get((node_id, "operatorId")) is not None:
                 await publish_state(
                     bus,
                     node_id,
@@ -487,8 +496,8 @@ async def rebuild_routes(bus: "ServiceBus") -> None:
             continue
         intra.setdefault((str(edge.fromOperatorId), str(edge.fromPort)), []).append((str(edge.toOperatorId), str(edge.toPort)))
         intra_in.setdefault((str(edge.toOperatorId), str(edge.toPort)), []).append((str(edge.fromOperatorId), str(edge.fromPort), edge))
-    bus._intra_data_out = intra
-    bus._intra_data_in = intra_in
+    bus._intra_data_out = {k: tuple(v) for k, v in intra.items()}
+    bus._intra_data_in = {k: tuple(v) for k, v in intra_in.items()}
 
     # Intra-service state fanout: local state edges.
     intra_state_out: dict[tuple[str, str], list[tuple[str, str, F8Edge]]] = {}
@@ -500,7 +509,7 @@ async def rebuild_routes(bus: "ServiceBus") -> None:
         if not edge.fromOperatorId or not edge.toOperatorId:
             continue
         intra_state_out.setdefault((str(edge.fromOperatorId), str(edge.fromPort)), []).append((str(edge.toOperatorId), str(edge.toPort), edge))
-    bus._intra_state_out = intra_state_out
+    bus._intra_state_out = {k: tuple(v) for k, v in intra_state_out.items()}
 
     # Cross routing.
     cross_in: dict[str, list[tuple[str, str, F8Edge]]] = {}
@@ -526,7 +535,7 @@ async def rebuild_routes(bus: "ServiceBus") -> None:
             from_node = str(edge.fromOperatorId)
             cross_out[(from_node, str(edge.fromPort))] = subject
 
-    bus._cross_in_by_subject = cross_in
+    bus._cross_in_by_subject = {k: tuple(v) for k, v in cross_in.items()}
     bus._cross_out_subjects = cross_out
 
     precreate_input_buffers_for_cross_in(bus, cross_in)

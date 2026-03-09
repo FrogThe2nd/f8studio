@@ -12,8 +12,8 @@ from f8pysdk import (
     F8RuntimeNode,
     F8StateAccess,
     F8StateSpec,
-    any_schema,
     boolean_schema,
+    complex_object_schema,
     integer_schema,
     number_schema,
     string_schema,
@@ -26,6 +26,17 @@ from ..constants import SERVICE_CLASS
 from ._ports import exec_out_ports
 
 OPERATOR_CLASS: Final[str] = "f8.playback_sync"
+
+
+def _playback_input_schema():
+    return complex_object_schema(
+        properties={
+            "position": number_schema(),
+            "duration": number_schema(),
+            "playing": boolean_schema(),
+            "videoId": string_schema(),
+        }
+    )
 
 
 def _coerce_number(value: Any) -> float | None:
@@ -112,7 +123,7 @@ def _parse_playback(value: Any, *, default_playing: bool) -> _PlaybackSample | N
 
 class PlaybackSyncRuntimeNode(OperatorNode):
     """
-    Extrapolates playback position from sparse IMPlayer playback telemetry.
+    Extrapolates playback position from sparse IMPlayer playback state updates.
 
     Input payload (dataIn `playback`) is expected to include:
     - position (seconds)
@@ -299,7 +310,7 @@ PlaybackSyncRuntimeNode.SPEC = F8OperatorSpec(
     operatorClass=OPERATOR_CLASS,
     version="0.0.1",
     label="Playback Sync",
-    description="Extrapolates IMPlayer playback position between sparse telemetry updates.",
+    description="Extrapolates IMPlayer playback position between sparse playback state updates.",
     tags=["playback", "estimate", "timing", "media", "sync"],
     execInPorts=[],
     execOutPorts=[],
@@ -307,7 +318,7 @@ PlaybackSyncRuntimeNode.SPEC = F8OperatorSpec(
         F8DataPortSpec(
             name="playback",
             description="Playback payload from f8.implayer/playback (position/duration/playing/videoId).",
-            valueSchema=any_schema(),
+            valueSchema=_playback_input_schema(),
             required=False,
         ),
     ],
@@ -327,9 +338,10 @@ PlaybackSyncRuntimeNode.SPEC = F8OperatorSpec(
         F8StateSpec(
             name="maxExtrapolateMs",
             label="Max Extrapolate (ms)",
-            description="Limit extrapolation horizon to avoid drift when telemetry is stale (0 = unlimited).",
+            description="Limit extrapolation horizon to avoid drift when playback state is stale (0 = unlimited).",
             valueSchema=integer_schema(default=1000, minimum=0, maximum=600_000),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -338,6 +350,7 @@ PlaybackSyncRuntimeNode.SPEC = F8OperatorSpec(
             description="Rate multiplier used for extrapolation when playing.",
             valueSchema=number_schema(default=1.0, minimum=0.0, maximum=16.0),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -346,6 +359,7 @@ PlaybackSyncRuntimeNode.SPEC = F8OperatorSpec(
             description="Clamp estimated position to latest duration when available.",
             valueSchema=boolean_schema(default=True),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=False,
         ),
     ],

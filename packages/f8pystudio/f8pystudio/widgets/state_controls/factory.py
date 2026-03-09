@@ -4,14 +4,16 @@ from typing import Any
 
 from f8pysdk import F8StateAccess
 
-from ..f8_editor_widgets import (
+from ...editor_assist.protocol import editor_assist_context_for_field
+from ...editor_assist.workspace import EditorAssistContext
+from ..editor_controls import (
     F8PropBoolSwitch,
     F8PropImageB64,
     F8PropMultiSelect,
     F8PropOptionCombo,
     F8PropValueBar,
 )
-from ..f8_prop_value_widgets import F8CodeButtonPropWidget, F8InlineCodePropWidget, F8NumberPropLineEdit, F8WrapLinePropWidget
+from ..property_value_widgets import F8CodeButtonPropWidget, F8InlineCodePropWidget, F8NumberPropLineEdit, F8WrapLinePropWidget
 from .descriptors import ControlBuildContext
 from .pool_resolver import build_node_pool_resolver, parse_multiselect_pool, parse_select_pool
 from .schema_introspect import (
@@ -22,6 +24,16 @@ from .schema_introspect import (
     state_field_ui_control,
     state_field_ui_language,
 )
+
+
+def _editor_assist_context_for_code_field(node: Any, prop_name: str) -> EditorAssistContext | None:
+    if str(prop_name or "").strip() != "code":
+        return None
+    try:
+        spec = node.spec
+    except Exception:
+        return None
+    return editor_assist_context_for_field(spec, field_kind="state", field_key="code", language="python")
 
 
 def build_state_value_widget(context: ControlBuildContext) -> Any:
@@ -54,6 +66,13 @@ def build_state_value_widget(context: ControlBuildContext) -> Any:
             title = f"Edit {prop_name}"
         widget = F8CodeButtonPropWidget(title=title, language=ui_language or "plaintext")
         widget.set_name(prop_name)
+        widget.set_editor_assist_context(_editor_assist_context_for_code_field(node, prop_name))
+        widget.set_editor_assist_context_provider(
+            lambda current_node=node, current_prop=prop_name: _editor_assist_context_for_code_field(
+                current_node,
+                current_prop,
+            )
+        )
         return widget
 
     if ui_control_l in {"wrapline"}:

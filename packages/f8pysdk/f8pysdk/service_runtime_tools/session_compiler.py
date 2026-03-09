@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+from f8pysdk.msgspec_codec import dump_json, validate_as
+import enum
 import logging
 from dataclasses import dataclass
 from typing import Any
 from uuid import uuid4
+
+import msgspec
 
 from f8pysdk.generated import (
     F8Edge,
@@ -45,6 +49,36 @@ class _KeptNode:
     runtime_node: F8RuntimeNode
 
 
+def _coerce_state_payload_value(value: Any) -> tuple[bool, Any]:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return True, value
+    if isinstance(value, (list, tuple)):
+        out: list[Any] = []
+        for item in value:
+            ok, normalized = _coerce_state_payload_value(item)
+            if not ok:
+                return False, None
+            out.append(normalized)
+        return True, out
+    if isinstance(value, dict):
+        out_obj: dict[str, Any] = {}
+        for key, item in value.items():
+            ok, normalized = _coerce_state_payload_value(item)
+            if not ok:
+                return False, None
+            out_obj[str(key)] = normalized
+        return True, out_obj
+    if isinstance(value, enum.Enum):
+        return _coerce_state_payload_value(value.value)
+    try:
+        dumped = dump_json(value, mode="json")
+    except (AttributeError, TypeError, ValueError):
+        return False, None
+    if dumped is value:
+        return False, None
+    return _coerce_state_payload_value(dumped)
+
+
 def _port_kind(name: str) -> F8EdgeKindEnum | None:
     n = str(name or "")
     if n.startswith("[E]") or n.endswith("[E]"):
@@ -80,8 +114,8 @@ def _coerce_spec(spec_payload: Any) -> F8ServiceSpec | F8OperatorSpec:
     if not isinstance(spec_payload, dict):
         raise ValueError("node f8_spec must be an object")
     if "operatorClass" in spec_payload:
-        return F8OperatorSpec.model_validate(spec_payload)
-    return F8ServiceSpec.model_validate(spec_payload)
+        return validate_as(F8OperatorSpec, spec_payload)
+    return validate_as(F8ServiceSpec, spec_payload)
 
 
 def _node_custom_map(node_data: dict[str, Any]) -> dict[str, Any]:
@@ -105,7 +139,9 @@ def _node_properties_map(node_data: dict[str, Any]) -> dict[str, Any]:
     return {}
 
 
-def _collect_state_values(spec: F8ServiceSpec | F8OperatorSpec, node_data: dict[str, Any]) -> dict[str, Any] | None:
+def _collect_state_values(
+    spec: F8ServiceSpec | F8OperatorSpec, node_data: dict[str, Any]
+) -> dict[str, Any] | msgspec.UnsetType:
     custom = _node_custom_map(node_data)
     properties = _node_properties_map(node_data)
     values: dict[str, Any] = {}
@@ -116,11 +152,19 @@ def _collect_state_values(spec: F8ServiceSpec | F8OperatorSpec, node_data: dict[
         if str(field.access) == "F8StateAccess.ro" or field.access.value == "ro":
             continue
         if name in custom:
-            values[name] = custom[name]
+            ok, normalized = _coerce_state_payload_value(custom[name])
+            if ok:
+                values[name] = normalized
+            else:
+                logger.warning("skip non-serializable state value: %s", name)
             continue
         if name in properties:
-            values[name] = properties[name]
-    return values or None
+            ok, normalized = _coerce_state_payload_value(properties[name])
+            if ok:
+                values[name] = normalized
+            else:
+                logger.warning("skip non-serializable state value: %s", name)
+    return values or msgspec.UNSET
 
 
 def _resolve_operator_service_id(node_id: str, node_data: dict[str, Any]) -> str:
@@ -131,14 +175,16 @@ def _resolve_operator_service_id(node_id: str, node_data: dict[str, Any]) -> str
     return service_id
 
 
-def _runtime_service_label(spec: F8ServiceSpec | F8OperatorSpec, node_data: dict[str, Any]) -> str | None:
+def _runtime_service_label(
+    spec: F8ServiceSpec | F8OperatorSpec, node_data: dict[str, Any]
+) -> str | msgspec.UnsetType:
     if isinstance(spec, F8ServiceSpec):
         custom = _node_custom_map(node_data)
         name = str(custom.get("name") or node_data.get("name") or "").strip()
         if name:
             return name
-        return str(spec.label or "").strip() or None
-    return None
+        return str(spec.label or "").strip() or msgspec.UNSET
+    return msgspec.UNSET
 
 
 def _compile_kept_nodes(
@@ -192,7 +238,7 @@ def _compile_kept_nodes(
             nodeId=node_id,
             serviceId=service_id,
             serviceClass=service_class,
-            operatorClass=(None if is_service_node else str(spec.operatorClass)),
+            operatorClass=(msgspec.UNSET if is_service_node else str(spec.operatorClass)),
             execInPorts=([] if is_service_node else [str(p) for p in list(spec.execInPorts or [])]),
             execOutPorts=([] if is_service_node else [str(p) for p in list(spec.execOutPorts or [])]),
             dataInPorts=list(spec.dataInPorts or []),
@@ -251,15 +297,15 @@ def _compile_edges(layout_connections: list[Any], kept_by_id: dict[str, _KeptNod
             F8Edge(
                 edgeId=uuid4().hex,
                 fromServiceId=from_node.service_id,
-                fromOperatorId=(None if from_node.is_service_node else from_node.node_id),
+                fromOperatorId=(msgspec.UNSET if from_node.is_service_node else from_node.node_id),
                 fromPort=_raw_port_name(from_port_raw),
                 toServiceId=to_node.service_id,
-                toOperatorId=(None if to_node.is_service_node else to_node.node_id),
+                toOperatorId=(msgspec.UNSET if to_node.is_service_node else to_node.node_id),
                 toPort=_raw_port_name(to_port_raw),
                 kind=kind,
                 strategy=F8EdgeStrategyEnum.latest,
-                timeoutMs=None,
-                direction=None,
+                timeoutMs=msgspec.UNSET,
+                direction=msgspec.UNSET,
             )
         )
     return edges
@@ -267,9 +313,9 @@ def _compile_edges(layout_connections: list[Any], kept_by_id: dict[str, _KeptNod
 
 def split_runtime_graph_by_service(graph: F8RuntimeGraph) -> dict[str, F8RuntimeGraph]:
     def _with_direction(edge: F8Edge, direction: F8EdgeDirection) -> F8Edge:
-        payload = edge.model_dump(mode="json", by_alias=True)
+        payload = dump_json(edge, mode="json", by_alias=True)
         payload["direction"] = direction
-        return F8Edge.model_validate(payload)
+        return validate_as(F8Edge, payload)
 
     by_service_nodes: dict[str, list[F8RuntimeNode]] = {}
     for node in list(graph.nodes or []):

@@ -5,7 +5,7 @@ model:
   provider: neuflowv2
   task: optflow_neuflowv2
   onnxPath: neuflow_mixed.onnx
-  onnxUrl: https://github.com/ibaiGorordo/ONNX-NeuFlowV2-Optical-Flow/releases/download/0.1.0/neuflow_mixed.onnx
+  onnxUrl: https://github.com/feel8-fun/f8studio/releases/download/v0.1.0/neuflow_mixed.onnx
   onnxSHA256: 7a07929423133f9267e33aec322873ef1dfcb17224020f30c794e569d353624d
 input:
   width: 768

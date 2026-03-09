@@ -194,6 +194,7 @@ TickRuntimeNode.SPEC = F8OperatorSpec(
             description="Interval in milliseconds for emitting exec ticks.",
             valueSchema=integer_schema(default=100, minimum=1, maximum=50000),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=True,
         ),
         F8StateSpec(
@@ -202,6 +203,7 @@ TickRuntimeNode.SPEC = F8OperatorSpec(
             description="Request 1ms system timer resolution to reduce jitter on Windows.",
             valueSchema=boolean_schema(default=True),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=False,
         ),
     ],

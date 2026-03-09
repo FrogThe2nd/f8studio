@@ -4,8 +4,8 @@ from .viz_wave import VizWaveRuntimeNode, register_operator as register_viz_wave
 from .viz_video import VizVideoRuntimeNode, register_operator as register_viz_video
 from .viz_audio import VizAudioRuntimeNode, register_operator as register_viz_audio
 from .viz_three_d import VizThreeDRuntimeNode, register_operator as register_viz_three_d
-from .viz_tcode import VizTCodeRuntimeNode, register_operator as register_viz_tcode
 from .control_panel import ControlPanelRuntimeNode, register_operator as register_control_panel
+from .note import NoteRuntimeNode, register_operator as register_note
 
 __all__ = [
     "VizTextRuntimeNode",
@@ -14,8 +14,8 @@ __all__ = [
     "VizVideoRuntimeNode",
     "VizAudioRuntimeNode",
     "VizThreeDRuntimeNode",
-    "VizTCodeRuntimeNode",
     "ControlPanelRuntimeNode",
+    "NoteRuntimeNode",
     "register_operator",
 ]
 
@@ -30,6 +30,6 @@ def register_operator(registry=None):
     reg = register_viz_video(reg)
     reg = register_viz_audio(reg)
     reg = register_viz_three_d(reg)
-    reg = register_viz_tcode(reg)
     reg = register_control_panel(reg)
+    reg = register_note(reg)
     return reg

@@ -17,12 +17,14 @@ from f8pysdk import (
     F8RuntimeNode,
     F8StateAccess,
     F8StateSpec,
-    any_schema,
     boolean_schema,
+    complex_object_schema,
     integer_schema,
+    number_schema,
     string_schema,
 )
-from f8pysdk.capabilities import ClosableNode, NodeBus
+from f8pysdk.capabilities import ClosableNode, EntrypointNode, NodeBus
+from f8pysdk.executors.exec_flow import EntrypointContext
 from f8pysdk.json_unwrap import unwrap_json_value as _unwrap_json_value
 from f8pysdk.nats_naming import ensure_token
 from f8pysdk.runtime_node import OperatorNode
@@ -34,6 +36,36 @@ from ..constants import SERVICE_CLASS
 OPERATOR_CLASS = "f8.lovense_mock_server"
 
 logger = logging.getLogger(__name__)
+
+
+def _event_schema():
+    return complex_object_schema(
+        properties={
+            "seq": integer_schema(),
+            "eventId": string_schema(),
+            "tsMs": integer_schema(),
+            "isoTime": string_schema(),
+            "peer": string_schema(),
+            "method": string_schema(),
+            "path": string_schema(),
+            "summary": complex_object_schema(
+                properties={
+                    "type": string_schema(),
+                    "toy": string_schema(),
+                    "timeSec": number_schema(),
+                    "action": string_schema(),
+                    "thrusting": integer_schema(),
+                    "depth": integer_schema(),
+                    "all": integer_schema(),
+                    "loopRunningSec": number_schema(),
+                    "loopPauseSec": number_schema(),
+                    "apiVer": integer_schema(),
+                }
+            ),
+            "payload": complex_object_schema(properties={}),
+            "request": complex_object_schema(properties={}),
+        }
+    )
 
 _MAX_BODY_BYTES = 1024 * 1024
 _MAX_HEADER_BYTES = 32 * 1024
@@ -326,7 +358,7 @@ def _is_loopback_bind_address(value: str) -> bool:
         return False
 
 
-class LovenseMockServerRuntimeNode(OperatorNode, ClosableNode):
+class LovenseMockServerRuntimeNode(OperatorNode, ClosableNode, EntrypointNode):
     """
     Mock Lovense Local API server (Mobile mode) for ingesting external commands.
 
@@ -334,9 +366,10 @@ class LovenseMockServerRuntimeNode(OperatorNode, ClosableNode):
     - Responds to GetToys with a minimal toy list
     - Captures all requests into a runtime-owned `event` state field
 
-    This node is pure event-driven (no exec ports). It keeps the server running as
-    long as the node instance stays registered in the ServiceHost, so rungraph
-    redeploys that do not recreate the node won't drop connections.
+    This node is event-driven and can trigger exec downstream after event commits.
+    It keeps the server running as long as the node instance stays registered in
+    the ServiceHost, so rungraph redeploys that do not recreate the node won't
+    drop connections.
     """
 
     def __init__(self, *, node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any] | None = None) -> None:
@@ -372,6 +405,10 @@ class LovenseMockServerRuntimeNode(OperatorNode, ClosableNode):
 
         self._seq = 0
         self._last_error: str | None = None
+        self._entrypoint_ctx: EntrypointContext | None = None
+        self._pending_exec_id: str | int | None = None
+        self._emit_wakeup = asyncio.Event()
+        self._emit_task: asyncio.Task[None] | None = None
 
     def attach(self, bus: Any) -> None:
         super().attach(bus)
@@ -391,7 +428,15 @@ class LovenseMockServerRuntimeNode(OperatorNode, ClosableNode):
             pass
 
     async def close(self) -> None:
+        await self.stop_entrypoint()
         await self._stop_server()
+
+    async def start_entrypoint(self, ctx: EntrypointContext) -> None:
+        self._entrypoint_ctx = ctx
+
+    async def stop_entrypoint(self) -> None:
+        self._entrypoint_ctx = None
+        await self._cancel_emit_task()
 
     async def on_lifecycle(self, active: bool, _meta: dict[str, Any]) -> None:
         if bool(active):
@@ -546,7 +591,61 @@ class LovenseMockServerRuntimeNode(OperatorNode, ClosableNode):
             await self.set_state("event", event)
         except Exception:
             return None
+        self._request_exec_emit(exec_id=str(event["eventId"]))
         return event
+
+    def _request_exec_emit(self, *, exec_id: str | int) -> None:
+        if self._entrypoint_ctx is None:
+            return
+        self._pending_exec_id = exec_id
+        self._emit_wakeup.set()
+        task = self._emit_task
+        if task is not None and not task.done():
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        self._emit_task = loop.create_task(
+            self._emit_exec_loop(),
+            name=f"lovense_mock_server:emit_exec:{self.node_id}",
+        )
+
+    async def _emit_exec_loop(self) -> None:
+        try:
+            while True:
+                await self._emit_wakeup.wait()
+                self._emit_wakeup.clear()
+                exec_id = self._pending_exec_id
+                self._pending_exec_id = None
+                if exec_id is None:
+                    continue
+                ctx = self._entrypoint_ctx
+                if ctx is None:
+                    continue
+                try:
+                    await ctx.emit_exec("event", exec_id=exec_id)
+                except Exception as exc:
+                    logger.exception("[%s:lovense_mock_server] emit exec failed", self.node_id, exc_info=exc)
+        except asyncio.CancelledError:
+            raise
+        finally:
+            self._emit_task = None
+
+    async def _cancel_emit_task(self) -> None:
+        task = self._emit_task
+        self._emit_task = None
+        self._pending_exec_id = None
+        self._emit_wakeup.clear()
+        if task is None:
+            return
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            return
+        except Exception as exc:
+            logger.exception("[%s:lovense_mock_server] stop emit task failed", self.node_id, exc_info=exc)
 
     async def _handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
@@ -1303,8 +1402,9 @@ LovenseMockServerRuntimeNode.SPEC = F8OperatorSpec(
     operatorClass=OPERATOR_CLASS,
     version="0.0.2",
     label="Lovense Mock Server",
-    description="Event-driven input node that mocks the Lovense Local API and publishes received commands as state.",
+    description="Event-driven input node that mocks the Lovense Local API, publishes received commands as state, and emits exec.",
     tags=["io", "lovense", "http", "server", "event"],
+    execOutPorts=["event"],
     stateFields=[
         F8StateSpec(
             name="bindAddress",
@@ -1312,6 +1412,7 @@ LovenseMockServerRuntimeNode.SPEC = F8OperatorSpec(
             description="Local address to bind (loopback by default).",
             valueSchema=string_schema(default="127.0.0.1"),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=True,
         ),
         F8StateSpec(
@@ -1320,6 +1421,7 @@ LovenseMockServerRuntimeNode.SPEC = F8OperatorSpec(
             description="When true, allow bindAddress values other than loopback.",
             valueSchema=boolean_schema(default=False),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -1328,6 +1430,7 @@ LovenseMockServerRuntimeNode.SPEC = F8OperatorSpec(
             description="HTTP port for the mock Lovense server.",
             valueSchema=integer_schema(default=30010, minimum=1, maximum=65535),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=True,
         ),
         F8StateSpec(
@@ -1336,6 +1439,7 @@ LovenseMockServerRuntimeNode.SPEC = F8OperatorSpec(
             description="If enabled, logs raw incoming requests and outgoing responses (debug).",
             valueSchema=boolean_schema(default=False),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -1344,6 +1448,7 @@ LovenseMockServerRuntimeNode.SPEC = F8OperatorSpec(
             description="Include the parsed request payload in the `event` state (debug).",
             valueSchema=boolean_schema(default=False),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -1352,6 +1457,7 @@ LovenseMockServerRuntimeNode.SPEC = F8OperatorSpec(
             description="Include request headers/body in the `event` state (debug).",
             valueSchema=boolean_schema(default=False),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -1360,6 +1466,7 @@ LovenseMockServerRuntimeNode.SPEC = F8OperatorSpec(
             description="True if the HTTP server is currently listening.",
             valueSchema=boolean_schema(default=False),
             access=F8StateAccess.ro,
+            required=True,
             showOnNode=True,
         ),
         F8StateSpec(
@@ -1368,14 +1475,16 @@ LovenseMockServerRuntimeNode.SPEC = F8OperatorSpec(
             description="Last server error (e.g. bind failure).",
             valueSchema=string_schema(default=""),
             access=F8StateAccess.ro,
+            required=True,
             showOnNode=True,
         ),
         F8StateSpec(
             name="event",
             label="Event",
             description="Latest received Lovense command (dict with seq/eventId/summary/raw).",
-            valueSchema=any_schema(),
+            valueSchema=_event_schema(),
             access=F8StateAccess.ro,
+            required=True,
             showOnNode=True,
         ),
     ],

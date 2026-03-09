@@ -1,3 +1,4 @@
+from f8pysdk.msgspec_codec import dump_json
 import asyncio
 import os
 import sys
@@ -10,14 +11,26 @@ if ROOT not in sys.path:
 if SDK_ROOT not in sys.path:
     sys.path.insert(0, SDK_ROOT)
 
-from f8pysdk import F8StateAccess, F8StateSpec, any_schema  # noqa: E402
+from f8pysdk import (  # noqa: E402
+    F8ArrayTypeSchema,
+    F8ComplexObjectTypeSchema,
+    F8DataPortSpec,
+    F8StateAccess,
+    F8StateSpec,
+    any_schema,
+    string_schema,
+)
 from f8pysdk.generated import F8RuntimeGraph, F8RuntimeNode  # noqa: E402
 from f8pysdk.runtime_node_registry import RuntimeNodeRegistry  # noqa: E402
 from f8pysdk.service_host import ServiceHost, ServiceHostConfig  # noqa: E402
 from f8pysdk.testing import ServiceBusHarness  # noqa: E402
 
 from f8pyengine.constants import SERVICE_CLASS  # noqa: E402
-from f8pyengine.operators.python_script import PythonScriptRuntimeNode, register_operator  # noqa: E402
+from f8pyengine.operators.python_script import (  # noqa: E402
+    PythonScriptRuntimeNode,
+    _script_uses_inputs_object_access,
+    register_operator,
+)
 
 
 def _runtime_python_script_node(
@@ -25,8 +38,14 @@ def _runtime_python_script_node(
     node_id: str,
     code: str,
     state_fields: list[F8StateSpec] | None = None,
+    state_values: dict[str, object] | None = None,
+    data_in_ports: list[F8DataPortSpec] | None = None,
+    data_out_ports: list[F8DataPortSpec] | None = None,
 ) -> F8RuntimeNode:
     spec = PythonScriptRuntimeNode.SPEC
+    merged_state_values: dict[str, object] = {"code": code}
+    if state_values is not None:
+        merged_state_values.update(state_values)
     return F8RuntimeNode(
         nodeId=node_id,
         serviceId="svcA",
@@ -34,14 +53,69 @@ def _runtime_python_script_node(
         operatorClass=spec.operatorClass,
         execInPorts=list(spec.execInPorts or []),
         execOutPorts=list(spec.execOutPorts or []),
-        dataInPorts=list(spec.dataInPorts or []),
-        dataOutPorts=list(spec.dataOutPorts or []),
+        dataInPorts=list(data_in_ports if data_in_ports is not None else (spec.dataInPorts or [])),
+        dataOutPorts=list(data_out_ports if data_out_ports is not None else (spec.dataOutPorts or [])),
         stateFields=list(state_fields if state_fields is not None else (spec.stateFields or [])),
-        stateValues={"code": code},
+        stateValues=merged_state_values,
     )
 
 
 class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
+    def test_inputs_access_mode_detection(self) -> None:
+        mapping_only = (
+            "def onMsg(ctx, inputs):\n"
+            "    return inputs.get('msg')\n"
+        )
+        dot_access = (
+            "def onMsg(ctx, inputs):\n"
+            "    return inputs.msg\n"
+        )
+        alias_dot_access = (
+            "def onMsg(ctx, inputs):\n"
+            "    payload = inputs\n"
+            "    return payload.msg\n"
+        )
+        dynamic_attr_access = (
+            "def onMsg(ctx, inputs):\n"
+            "    return getattr(inputs, 'msg', None)\n"
+        )
+        syntax_error = "def onMsg(ctx, inputs)\n    return 1\n"
+        self.assertFalse(_script_uses_inputs_object_access(mapping_only))
+        self.assertTrue(_script_uses_inputs_object_access(dot_access))
+        self.assertTrue(_script_uses_inputs_object_access(alias_dot_access))
+        self.assertTrue(_script_uses_inputs_object_access(dynamic_attr_access))
+        # Conservative fallback when parser cannot decide.
+        self.assertTrue(_script_uses_inputs_object_access(syntax_error))
+
+    def test_spec_contains_editor_assist_protocol(self) -> None:
+        spec = PythonScriptRuntimeNode.SPEC
+        code_field = next((f for f in list(spec.stateFields or []) if str(f.name or "").strip() == "code"), None)
+        input_mode_field = next((f for f in list(spec.stateFields or []) if str(f.name or "").strip() == "inputMode"), None)
+        self.assertIsNotNone(code_field)
+        self.assertIsNotNone(input_mode_field)
+        assert code_field is not None
+        assert input_mode_field is not None
+        access_value = getattr(getattr(input_mode_field, "access", None), "value", getattr(input_mode_field, "access", None))
+        self.assertEqual(str(access_value), str(F8StateAccess.rw.value))
+        editor_assist = code_field.editorAssist
+        self.assertIsNotNone(editor_assist)
+        python_payload = dump_json(editor_assist.python, mode="json") if editor_assist is not None else None
+        self.assertIsInstance(python_payload, dict)
+        support_files = (python_payload or {}).get("support_files") if isinstance(python_payload, dict) else None
+        self.assertIsInstance(support_files, dict)
+        api_stub = str((support_files or {}).get("f8_script_api.pyi") or "")
+        self.assertIn("from f8_dynamic_inputs import F8Inputs as F8Inputs", api_stub)
+        self.assertIn("from f8_dynamic_states import F8States as F8States", api_stub)
+        self.assertIn("rw/ro/wo fields", api_stub)
+        dynamic_bindings = (python_payload or {}).get("dynamic_bindings") if isinstance(python_payload, dict) else None
+        self.assertIsInstance(dynamic_bindings, dict)
+        inputs_binding = (dynamic_bindings or {}).get("inputs") if isinstance(dynamic_bindings, dict) else None
+        self.assertIsInstance(inputs_binding, dict)
+        self.assertTrue(bool((inputs_binding or {}).get("enabled")))
+        states_binding = (dynamic_bindings or {}).get("states") if isinstance(dynamic_bindings, dict) else None
+        self.assertIsInstance(states_binding, dict)
+        self.assertTrue(bool((states_binding or {}).get("enabled")))
+
     async def test_on_state_runs_and_can_write_state(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
@@ -52,7 +126,7 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
         code = (
             "def onState(ctx, field, value, tsMs=None):\n"
             "    if field == 'foo':\n"
-            "        ctx['set_state']('bar', int(value) * 2)\n"
+            "        ctx.set_state('bar', int(value) * 2)\n"
         )
 
         state_fields = list(PythonScriptRuntimeNode.SPEC.stateFields or [])
@@ -84,7 +158,7 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
         )
         op = _runtime_python_script_node(
             node_id="ps2",
-            code="def onStart(ctx):\n    ctx['set_state']('booted', True)\n",
+            code="def onStart(ctx):\n    ctx.set_state('booted', True)\n",
             state_fields=state_fields,
         )
         graph = F8RuntimeGraph(graphId="g2", revision="r1", nodes=[op], edges=[])
@@ -105,7 +179,7 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
         code = (
-            "def onExec(ctx, execIn, inputs):\n"
+            "def onExec(ctx, exec_in, inputs):\n"
             "    return {'outputs': {'out': 123}}\n"
         )
         op = _runtime_python_script_node(node_id="ps3", code=code)
@@ -150,9 +224,9 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
 
         code = (
             "def onMsg(ctx, inputs):\n"
-            "    c = int(ctx['locals'].get('count') or 0)\n"
+            "    c = int(ctx.locals.get('count') or 0)\n"
             "    c += 1\n"
-            "    ctx['locals']['count'] = c\n"
+            "    ctx.locals['count'] = c\n"
             "    return {'outputs': {'out': c}}\n"
         )
         op = _runtime_python_script_node(node_id="ps5", code=code)
@@ -178,10 +252,10 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
         state_fields = list(PythonScriptRuntimeNode.SPEC.stateFields or [])
         state_fields.append(F8StateSpec(name="x", label="x", description="", valueSchema=any_schema(), access=F8StateAccess.rw))
         code = (
-            "async def onExec(ctx, execIn, inputs):\n"
-            "    ctx['locals']['x'] = 1\n"
-            "    await ctx['set_state_async']('x', 2)\n"
-            "    v = await ctx['get_state']('x')\n"
+            "async def onExec(ctx, exec_in, inputs):\n"
+            "    ctx.locals['x'] = 1\n"
+            "    await ctx.set_state_async('x', 2)\n"
+            "    v = await ctx.read_state('x')\n"
             "    return {'outputs': {'out': v}}\n"
         )
         op = _runtime_python_script_node(node_id="ps6", code=code, state_fields=state_fields)
@@ -208,8 +282,10 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
         state_fields = list(PythonScriptRuntimeNode.SPEC.stateFields or [])
         state_fields.append(F8StateSpec(name="x", label="x", description="", valueSchema=any_schema(), access=F8StateAccess.rw))
         code = (
-            "def onExec(ctx, execIn, inputs):\n"
-            "    v = ctx['get_state_cached']('x', 7)\n"
+            "def onExec(ctx, exec_in, inputs):\n"
+            "    v = ctx.states.get('x')\n"
+            "    if v is None:\n"
+            "        v = 7\n"
             "    return {'outputs': {'out': v}}\n"
         )
         op = _runtime_python_script_node(node_id="ps7", code=code, state_fields=state_fields)
@@ -227,6 +303,443 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(0.05)
         out2 = await node.compute_output("out", ctx_id="ctx-7b")
         self.assertEqual(out2, 33)
+
+    async def test_states_view_supports_object_and_mapping_access_and_exposes_wo(self) -> None:
+        harness = ServiceBusHarness()
+        bus = harness.create_bus("svcA")
+        reg = RuntimeNodeRegistry.instance()
+        register_operator(reg)
+        _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
+
+        state_fields = list(PythonScriptRuntimeNode.SPEC.stateFields or [])
+        state_fields.append(
+            F8StateSpec(name="rw_state", label="rw_state", description="", valueSchema=any_schema(), access=F8StateAccess.rw)
+        )
+        state_fields.append(
+            F8StateSpec(name="ro_state", label="ro_state", description="", valueSchema=any_schema(), access=F8StateAccess.ro)
+        )
+        state_fields.append(
+            F8StateSpec(name="wo_state", label="wo_state", description="", valueSchema=any_schema(), access=F8StateAccess.wo)
+        )
+        code = (
+            "def onStart(ctx):\n"
+            "    ctx.set_state('ro_state', 8)\n"
+            "\n"
+            "def onExec(ctx, exec_in, inputs):\n"
+            "    dot_v = ctx.states.rw_state\n"
+            "    map_v = ctx.states['ro_state']\n"
+            "    get_v = ctx.states.get('ro_state')\n"
+            "    wo_v = ctx.states.get('wo_state')\n"
+            "    has_wo = 'wo_state' in ctx.states\n"
+            "    return {'outputs': {'out': [dot_v, map_v, get_v, wo_v, has_wo]}}\n"
+        )
+        op = _runtime_python_script_node(node_id="ps11", code=code, state_fields=state_fields)
+        graph = F8RuntimeGraph(graphId="g11", revision="r1", nodes=[op], edges=[])
+        await bus.set_rungraph(graph)
+
+        await asyncio.sleep(0.05)
+        await bus.publish_state_external("ps11", "rw_state", 7, source="test")
+        await asyncio.sleep(0.05)
+
+        node = bus.get_node("ps11")
+        self.assertIsInstance(node, PythonScriptRuntimeNode)
+        assert isinstance(node, PythonScriptRuntimeNode)
+        out = await node.compute_output("out", ctx_id="ctx-11")
+        self.assertEqual(out, [7, 8, 8, None, True])
+
+    async def test_states_view_fallback_access_map_exposes_wo(self) -> None:
+        harness = ServiceBusHarness()
+        bus = harness.create_bus("svcA")
+        reg = RuntimeNodeRegistry.instance()
+        register_operator(reg)
+        _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
+
+        state_fields = list(PythonScriptRuntimeNode.SPEC.stateFields or [])
+        state_fields.append(
+            F8StateSpec(name="rw_state", label="rw_state", description="", valueSchema=any_schema(), access=F8StateAccess.rw)
+        )
+        state_fields.append(
+            F8StateSpec(name="ro_state", label="ro_state", description="", valueSchema=any_schema(), access=F8StateAccess.ro)
+        )
+        state_fields.append(
+            F8StateSpec(name="wo_state", label="wo_state", description="", valueSchema=any_schema(), access=F8StateAccess.wo)
+        )
+        op = _runtime_python_script_node(node_id="ps11f", code="def onExec(ctx, exec_in, inputs): return None", state_fields=state_fields)
+        graph = F8RuntimeGraph(graphId="g11f", revision="r1", nodes=[op], edges=[])
+        await bus.set_rungraph(graph)
+
+        node = bus.get_node("ps11f")
+        self.assertIsInstance(node, PythonScriptRuntimeNode)
+        assert isinstance(node, PythonScriptRuntimeNode)
+        view = node._build_states_view(())
+        self.assertTrue("wo_state" in view)
+        self.assertIsNone(view.get("wo_state"))
+
+    async def test_inputs_required_flag_does_not_enforce_runtime_non_null(self) -> None:
+        harness = ServiceBusHarness()
+        bus = harness.create_bus("svcA")
+        reg = RuntimeNodeRegistry.instance()
+        register_operator(reg)
+        _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
+
+        data_in_ports = [
+            F8DataPortSpec(name="req", description="", valueSchema=string_schema(), required=True),
+            F8DataPortSpec(name="opt", description="", valueSchema=string_schema(), required=False),
+        ]
+        code = (
+            "def onMsg(ctx, inputs):\n"
+            "    return {'outputs': {'out': [inputs.req, inputs.opt]}}\n"
+        )
+        op = _runtime_python_script_node(node_id="ps9", code=code, data_in_ports=data_in_ports)
+        graph = F8RuntimeGraph(graphId="g9", revision="r1", nodes=[op], edges=[])
+        await bus.set_rungraph(graph)
+
+        node = bus.get_node("ps9")
+        self.assertIsInstance(node, PythonScriptRuntimeNode)
+        assert isinstance(node, PythonScriptRuntimeNode)
+        out_all_missing = await node._compute_outputs_for_pull({}, exec_in=None)
+        self.assertEqual(out_all_missing.get("out"), [None, None])
+
+        out_required_present = await node._compute_outputs_for_pull({"req": "hello"}, exec_in=None)
+        self.assertEqual(out_required_present.get("out"), ["hello", None])
+
+    async def test_required_input_accepts_none_value_for_transient_frames(self) -> None:
+        harness = ServiceBusHarness()
+        bus = harness.create_bus("svcA")
+        reg = RuntimeNodeRegistry.instance()
+        register_operator(reg)
+        _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
+
+        msg_schema = F8ComplexObjectTypeSchema(
+            properties={"bones": F8ArrayTypeSchema(items=any_schema())},
+            required=["bones"],
+        )
+        data_in_ports = [F8DataPortSpec(name="msg", description="", valueSchema=msg_schema, required=True)]
+        code = (
+            "def onExec(ctx, exec_in, inputs):\n"
+            "    if inputs.msg is None:\n"
+            "        return {'outputs': {'out': 'none'}}\n"
+            "    return {'outputs': {'out': 'ok'}}\n"
+        )
+        op = _runtime_python_script_node(node_id="ps9n", code=code, data_in_ports=data_in_ports)
+        graph = F8RuntimeGraph(graphId="g9n", revision="r1", nodes=[op], edges=[])
+        await bus.set_rungraph(graph)
+
+        node = bus.get_node("ps9n")
+        self.assertIsInstance(node, PythonScriptRuntimeNode)
+        assert isinstance(node, PythonScriptRuntimeNode)
+        out = await node._compute_outputs_for_pull({"msg": None}, exec_in="exec")
+        self.assertEqual(out.get("out"), "none")
+
+    async def test_inputs_nested_object_and_array_support_dot_access(self) -> None:
+        harness = ServiceBusHarness()
+        bus = harness.create_bus("svcA")
+        reg = RuntimeNodeRegistry.instance()
+        register_operator(reg)
+        _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
+
+        bone_schema = F8ComplexObjectTypeSchema(
+            properties={"name": string_schema()},
+            required=["name"],
+        )
+        msg_schema = F8ComplexObjectTypeSchema(
+            properties={"bones": F8ArrayTypeSchema(items=bone_schema)},
+            required=["bones"],
+        )
+        data_in_ports = [F8DataPortSpec(name="msg", description="", valueSchema=msg_schema, required=True)]
+        code = (
+            "def onMsg(ctx, inputs):\n"
+            "    return {'outputs': {'out': inputs.msg.bones[1].name}}\n"
+        )
+        op = _runtime_python_script_node(node_id="ps10", code=code, data_in_ports=data_in_ports)
+        graph = F8RuntimeGraph(graphId="g10", revision="r1", nodes=[op], edges=[])
+        await bus.set_rungraph(graph)
+
+        node = bus.get_node("ps10")
+        self.assertIsInstance(node, PythonScriptRuntimeNode)
+        assert isinstance(node, PythonScriptRuntimeNode)
+        out = await node._compute_outputs_for_pull(
+            {"msg": {"bones": [{"name": "Head"}, {"name": "Hips"}]}},
+            exec_in=None,
+        )
+        self.assertEqual(out.get("out"), "Hips")
+
+    async def test_inputs_non_identifier_port_name_maps_to_attribute(self) -> None:
+        harness = ServiceBusHarness()
+        bus = harness.create_bus("svcA")
+        reg = RuntimeNodeRegistry.instance()
+        register_operator(reg)
+        _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
+
+        data_in_ports = [F8DataPortSpec(name="hip-pos", description="", valueSchema=string_schema(), required=True)]
+        code = (
+            "def onMsg(ctx, inputs):\n"
+            "    return {'outputs': {'out': inputs.hip_pos}}\n"
+        )
+        op = _runtime_python_script_node(node_id="ps14", code=code, data_in_ports=data_in_ports)
+        graph = F8RuntimeGraph(graphId="g14", revision="r1", nodes=[op], edges=[])
+        await bus.set_rungraph(graph)
+
+        node = bus.get_node("ps14")
+        self.assertIsInstance(node, PythonScriptRuntimeNode)
+        assert isinstance(node, PythonScriptRuntimeNode)
+        out = await node._compute_outputs_for_pull({"hip-pos": "ok"}, exec_in=None)
+        self.assertEqual(out.get("out"), "ok")
+
+    async def test_inputs_name_collision_warns_and_keeps_both_fields(self) -> None:
+        harness = ServiceBusHarness()
+        bus = harness.create_bus("svcA")
+        reg = RuntimeNodeRegistry.instance()
+        register_operator(reg)
+        _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
+
+        data_in_ports = [
+            F8DataPortSpec(name="a-b", description="", valueSchema=string_schema(), required=True),
+            F8DataPortSpec(name="a b", description="", valueSchema=string_schema(), required=True),
+        ]
+        code = (
+            "def onMsg(ctx, inputs):\n"
+            "    return {'outputs': {'out': [inputs.a_b, inputs.a_b_1]}}\n"
+        )
+        op = _runtime_python_script_node(node_id="ps15", code=code, data_in_ports=data_in_ports)
+        graph = F8RuntimeGraph(graphId="g15", revision="r1", nodes=[op], edges=[])
+        await bus.set_rungraph(graph)
+
+        node = bus.get_node("ps15")
+        self.assertIsInstance(node, PythonScriptRuntimeNode)
+        assert isinstance(node, PythonScriptRuntimeNode)
+        out = await node._compute_outputs_for_pull({"a-b": "x", "a b": "y"}, exec_in=None)
+        self.assertEqual(out.get("out"), ["x", "y"])
+        self.assertIn("inputModel:", str(node._last_error or ""))
+        self.assertIn("collision", str(node._last_error or ""))
+
+    async def test_outputs_unwrap_input_object_view_to_dict(self) -> None:
+        harness = ServiceBusHarness()
+        bus = harness.create_bus("svcA")
+        reg = RuntimeNodeRegistry.instance()
+        register_operator(reg)
+        _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
+
+        msg_schema = F8ComplexObjectTypeSchema(
+            properties={
+                "modelName": string_schema(),
+                "bones": F8ArrayTypeSchema(
+                    items=F8ComplexObjectTypeSchema(
+                        properties={
+                            "name": string_schema(),
+                            "position": F8ArrayTypeSchema(items=any_schema()),
+                        }
+                    )
+                ),
+            },
+            required=["bones"],
+        )
+        data_in_ports = [F8DataPortSpec(name="msg", description="", valueSchema=msg_schema, required=True)]
+        code = (
+            "def onExec(ctx, exec_in, inputs):\n"
+            "    msg = inputs.msg\n"
+            "    for b in msg.bones:\n"
+            "        if b.name == 'Hips':\n"
+            "            return {'outputs': {'out': b}}\n"
+            "    return {'outputs': {}}\n"
+        )
+        op = _runtime_python_script_node(node_id="ps13", code=code, data_in_ports=data_in_ports)
+        graph = F8RuntimeGraph(graphId="g13", revision="r1", nodes=[op], edges=[])
+        await bus.set_rungraph(graph)
+
+        node = bus.get_node("ps13")
+        self.assertIsInstance(node, PythonScriptRuntimeNode)
+        assert isinstance(node, PythonScriptRuntimeNode)
+        payload = {
+            "modelName": "m",
+            "bones": [
+                {"name": "Head", "position": [0, 1, 2]},
+                {"name": "Hips", "position": [3, 4, 5]},
+            ],
+        }
+        out = await node._compute_outputs_for_pull({"msg": payload}, exec_in="exec")
+        value = out.get("out")
+        self.assertIsInstance(value, dict)
+        assert isinstance(value, dict)
+        self.assertEqual(value.get("name"), "Hips")
+        self.assertEqual(value.get("position"), [3, 4, 5])
+
+    async def test_inputs_decode_error_sets_last_error_with_path(self) -> None:
+        harness = ServiceBusHarness()
+        bus = harness.create_bus("svcA")
+        reg = RuntimeNodeRegistry.instance()
+        register_operator(reg)
+        _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
+
+        msg_schema = F8ComplexObjectTypeSchema(
+            properties={"bones": F8ArrayTypeSchema(items=F8ComplexObjectTypeSchema(properties={"name": string_schema()}))},
+            required=["bones"],
+        )
+        data_in_ports = [F8DataPortSpec(name="msg", description="", valueSchema=msg_schema, required=True)]
+        code = (
+            "def onMsg(ctx, inputs):\n"
+            "    _ = inputs.msg\n"
+            "    return {'outputs': {'out': 1}}\n"
+        )
+        op = _runtime_python_script_node(
+            node_id="ps12",
+            code=code,
+            data_in_ports=data_in_ports,
+            state_values={"inputMode": "msgspec_struct"},
+        )
+        graph = F8RuntimeGraph(graphId="g12", revision="r1", nodes=[op], edges=[])
+        await bus.set_rungraph(graph)
+
+        node = bus.get_node("ps12")
+        self.assertIsInstance(node, PythonScriptRuntimeNode)
+        assert isinstance(node, PythonScriptRuntimeNode)
+        self.assertEqual(node._input_binding.mode, "msgspec_struct")
+        out = await node._compute_outputs_for_pull({"msg": {"bones": [None]}}, exec_in=None)
+        self.assertEqual(out, {})
+        error_text = str(node._last_error or "")
+        self.assertIn("compute:inputs:", error_text)
+        self.assertIn("$.msg.bones[0]", error_text)
+
+    async def test_inputs_struct_supports_get_and_index_access(self) -> None:
+        harness = ServiceBusHarness()
+        bus = harness.create_bus("svcA")
+        reg = RuntimeNodeRegistry.instance()
+        register_operator(reg)
+        _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
+
+        code = (
+            "def onMsg(ctx, inputs):\n"
+            "    x = inputs.get('msg')\n"
+            "    y = inputs['msg']\n"
+            "    return {'outputs': {'out': [x, y]}}\n"
+        )
+        op = _runtime_python_script_node(node_id="ps16", code=code)
+        graph = F8RuntimeGraph(graphId="g16", revision="r1", nodes=[op], edges=[])
+        await bus.set_rungraph(graph)
+
+        node = bus.get_node("ps16")
+        self.assertIsInstance(node, PythonScriptRuntimeNode)
+        assert isinstance(node, PythonScriptRuntimeNode)
+        self.assertEqual(node._input_binding.mode, "input_view")
+        out = await node._compute_outputs_for_pull({"msg": 123}, exec_in=None)
+        self.assertEqual(out.get("out"), [123, 123])
+
+    async def test_any_input_inner_dict_supports_get_and_index_access(self) -> None:
+        harness = ServiceBusHarness()
+        bus = harness.create_bus("svcA")
+        reg = RuntimeNodeRegistry.instance()
+        register_operator(reg)
+        _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
+
+        data_in_ports = [F8DataPortSpec(name="payload", description="", valueSchema=any_schema(), required=True)]
+        code = (
+            "def onMsg(ctx, inputs):\n"
+            "    p = inputs.payload\n"
+            "    a = p.get('user')\n"
+            "    b = p['user']\n"
+            "    return {'outputs': {'out': [a, b]}}\n"
+        )
+        op = _runtime_python_script_node(node_id="ps17", code=code, data_in_ports=data_in_ports)
+        graph = F8RuntimeGraph(graphId="g17", revision="r1", nodes=[op], edges=[])
+        await bus.set_rungraph(graph)
+
+        node = bus.get_node("ps17")
+        self.assertIsInstance(node, PythonScriptRuntimeNode)
+        assert isinstance(node, PythonScriptRuntimeNode)
+        self.assertEqual(node._input_binding.mode, "input_view")
+        out = await node._compute_outputs_for_pull({"payload": {"user": "alice"}}, exec_in=None)
+        self.assertEqual(out.get("out"), ["alice", "alice"])
+
+    async def test_dot_access_uses_default_input_view_mode(self) -> None:
+        harness = ServiceBusHarness()
+        bus = harness.create_bus("svcA")
+        reg = RuntimeNodeRegistry.instance()
+        register_operator(reg)
+        _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
+
+        code = (
+            "def onMsg(ctx, inputs):\n"
+            "    return {'outputs': {'out': inputs.msg}}\n"
+        )
+        op = _runtime_python_script_node(node_id="ps18", code=code)
+        graph = F8RuntimeGraph(graphId="g18", revision="r1", nodes=[op], edges=[])
+        await bus.set_rungraph(graph)
+
+        node = bus.get_node("ps18")
+        self.assertIsInstance(node, PythonScriptRuntimeNode)
+        assert isinstance(node, PythonScriptRuntimeNode)
+        self.assertEqual(node._input_binding.mode, "input_view")
+        out = await node._compute_outputs_for_pull({"msg": 123}, exec_in=None)
+        self.assertEqual(out.get("out"), 123)
+
+    async def test_raw_dict_mode_keeps_mapping_inputs(self) -> None:
+        harness = ServiceBusHarness()
+        bus = harness.create_bus("svcA")
+        reg = RuntimeNodeRegistry.instance()
+        register_operator(reg)
+        _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
+
+        code = (
+            "def onMsg(ctx, inputs):\n"
+            "    return {'outputs': {'out': inputs.get('msg')}}\n"
+        )
+        op = _runtime_python_script_node(node_id="ps19", code=code, state_values={"inputMode": "raw_dict"})
+        graph = F8RuntimeGraph(graphId="g19", revision="r1", nodes=[op], edges=[])
+        await bus.set_rungraph(graph)
+
+        node = bus.get_node("ps19")
+        self.assertIsInstance(node, PythonScriptRuntimeNode)
+        assert isinstance(node, PythonScriptRuntimeNode)
+        self.assertEqual(node._input_binding.mode, "raw_dict")
+        out = await node._compute_outputs_for_pull({"msg": 456}, exec_in=None)
+        self.assertEqual(out.get("out"), 456)
+
+    async def test_msgspec_mode_tracks_decode_metrics(self) -> None:
+        harness = ServiceBusHarness()
+        bus = harness.create_bus("svcA")
+        reg = RuntimeNodeRegistry.instance()
+        register_operator(reg)
+        _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
+
+        code = (
+            "def onMsg(ctx, inputs):\n"
+            "    return {'outputs': {'out': inputs.msg}}\n"
+        )
+        op = _runtime_python_script_node(node_id="ps20", code=code, state_values={"inputMode": "msgspec_struct"})
+        graph = F8RuntimeGraph(graphId="g20", revision="r1", nodes=[op], edges=[])
+        await bus.set_rungraph(graph)
+
+        node = bus.get_node("ps20")
+        self.assertIsInstance(node, PythonScriptRuntimeNode)
+        assert isinstance(node, PythonScriptRuntimeNode)
+        self.assertEqual(node._input_binding.mode, "msgspec_struct")
+        out = await node._compute_outputs_for_pull({"msg": 789}, exec_in=None)
+        self.assertEqual(out.get("out"), 789)
+        counters = node.get_performance_counters()
+        self.assertGreaterEqual(float(counters.get("input_decode_time_us", 0.0)), 0.0)
+
+    async def test_legacy_ctx_dict_access_sets_last_error(self) -> None:
+        harness = ServiceBusHarness()
+        bus = harness.create_bus("svcA")
+        reg = RuntimeNodeRegistry.instance()
+        register_operator(reg)
+        _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
+
+        code = (
+            "def onStart(ctx):\n"
+            "    ctx['log']('legacy syntax')\n"
+        )
+        op = _runtime_python_script_node(node_id="ps8", code=code)
+        graph = F8RuntimeGraph(graphId="g8", revision="r1", nodes=[op], edges=[])
+        await bus.set_rungraph(graph)
+        await asyncio.sleep(0.05)
+
+        node = bus.get_node("ps8")
+        self.assertIsInstance(node, PythonScriptRuntimeNode)
+        assert isinstance(node, PythonScriptRuntimeNode)
+        last_error = await node.get_state_value("lastError")
+        error_text = str(last_error or node._last_error or "")
+        self.assertIn("not subscriptable", error_text)
 
 if __name__ == "__main__":
     unittest.main()

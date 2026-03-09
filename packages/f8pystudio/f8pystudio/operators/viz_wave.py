@@ -324,6 +324,7 @@ def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNod
                     description="Pause/resume embedded chart updates in the editor.",
                     valueSchema=boolean_schema(default=True),
                     access=F8StateAccess.rw,
+                    required=True,
                     showOnNode=False,
                 ),
                 F8StateSpec(
@@ -332,6 +333,7 @@ def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNod
                     description="Maximum number of points kept in memory.",
                     valueSchema=integer_schema(default=200, minimum=10, maximum=5000),
                     access=F8StateAccess.rw,
+                    required=True,
                     showOnNode=False,
                 ),
                 F8StateSpec(
@@ -340,6 +342,7 @@ def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNod
                     description="Increment to clear accumulated series buffer.",
                     valueSchema=integer_schema(default=0, minimum=0, maximum=2147483647),
                     access=F8StateAccess.rw,
+                    required=True,
                     showOnNode=False,
                 ),
                 F8StateSpec(
@@ -348,6 +351,7 @@ def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNod
                     description="Only keep data within this time window.",
                     valueSchema=integer_schema(default=10000, minimum=100, maximum=600000),
                     access=F8StateAccess.rw,
+                    required=True,
                     showOnNode=False,
                 ),
                 F8StateSpec(
@@ -356,6 +360,7 @@ def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNod
                     description="UI refresh interval in milliseconds.",
                     valueSchema=integer_schema(default=100, minimum=0, maximum=60000),
                     access=F8StateAccess.rw,
+                    required=True,
                     showOnNode=False,
                 ),
                 F8StateSpec(
@@ -364,6 +369,7 @@ def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNod
                     description="Toggle plot legend visibility.",
                     valueSchema=boolean_schema(default=False),
                     access=F8StateAccess.rw,
+                    required=True,
                     showOnNode=False,
                 ),
                 F8StateSpec(
@@ -372,6 +378,7 @@ def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNod
                     description="Fixed y-axis minimum (leave empty for auto).",
                     valueSchema=number_schema(default=None),
                     access=F8StateAccess.rw,
+                    required=True,
                     showOnNode=False,
                 ),
                 F8StateSpec(
@@ -380,6 +387,7 @@ def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNod
                     description="Fixed y-axis maximum (leave empty for auto).",
                     valueSchema=number_schema(default=None),
                     access=F8StateAccess.rw,
+                    required=True,
                     showOnNode=False,
                 ),
                 *viz_sampling_state_fields(show_on_node=False),

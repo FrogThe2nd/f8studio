@@ -144,6 +144,7 @@ class PosePayloadTests(unittest.TestCase):
             world_keypoints=None,
             width=200,
             height=100,
+            skeleton_source="camera",
         )
         self.assertEqual(payload["type"], "skeleton_binary")
         self.assertEqual(payload["schema"], "f8.skeleton.v1")
@@ -154,7 +155,9 @@ class PosePayloadTests(unittest.TestCase):
         self.assertEqual(len(bones), 33)
         self.assertEqual(bones[0]["name"], "nose")
         self.assertEqual(len(bones[0]["rot"]), 4)
-        self.assertEqual(bones[0]["pos"], [0.005, 0.02, 0.1])
+        self.assertAlmostEqual(float(bones[0]["pos"][0]), 1.0, places=6)
+        self.assertAlmostEqual(float(bones[0]["pos"][1]), 2.0, places=6)
+        self.assertAlmostEqual(float(bones[0]["pos"][2]), 14.1421356, places=5)
         self.assertEqual(bones[11]["name"], "left_shoulder")
         self.assertEqual(payload["trailer"], None)
 
@@ -167,6 +170,7 @@ class PosePayloadTests(unittest.TestCase):
             world_keypoints=None,
             width=1280,
             height=720,
+            skeleton_source="camera",
         )
         self.assertEqual(payload["boneCount"], 0)
         self.assertEqual(payload["bones"], [])
@@ -182,6 +186,7 @@ class PosePayloadTests(unittest.TestCase):
             world_keypoints=None,
             width=1000,
             height=1000,
+            skeleton_source="camera",
         )
         by_name = {str(item["name"]): item for item in payload["bones"]}
         shoulder = by_name["left_shoulder"]
@@ -198,6 +203,7 @@ class PosePayloadTests(unittest.TestCase):
             world_keypoints=None,
             width=1000,
             height=1000,
+            skeleton_source="camera",
         )
         by_name = {str(item["name"]): item for item in payload["bones"]}
         shoulder = by_name["left_shoulder"]
@@ -207,7 +213,7 @@ class PosePayloadTests(unittest.TestCase):
         self.assertAlmostEqual(float(rot[2]), 0.0, places=4)
         self.assertAlmostEqual(float(rot[3]), -0.707106, places=4)
 
-    def test_build_skeleton_payload_prefers_world_keypoints(self) -> None:
+    def test_build_skeleton_payload_world_source_uses_world_landmarks(self) -> None:
         keypoints = [
             {"x": float(i + 1), "y": float(i + 2), "z": 0.1 * float(i + 1), "score": 0.95}
             for i in range(33)
@@ -223,10 +229,37 @@ class PosePayloadTests(unittest.TestCase):
             world_keypoints=world_keypoints,
             width=1920,
             height=1080,
+            skeleton_source="world",
         )
         bones = payload["bones"]
         self.assertEqual(bones[10]["name"], "mouth_right")
-        self.assertEqual(bones[10]["pos"], [0.1, 0.2, 0.3])
+        self.assertAlmostEqual(float(bones[10]["pos"][0]), 0.1, places=6)
+        self.assertAlmostEqual(float(bones[10]["pos"][1]), 0.2, places=6)
+        self.assertAlmostEqual(float(bones[10]["pos"][2]), 0.3, places=6)
+
+    def test_build_skeleton_payload_camera_source_ignores_world_keypoints(self) -> None:
+        keypoints = [
+            {"x": float(i + 1), "y": float(i + 2), "z": 0.1 * float(i + 1), "score": 0.95}
+            for i in range(33)
+        ]
+        world_keypoints = [
+            {"x": 100.0 + float(i), "y": 100.0 + float(i), "z": 100.0 + float(i), "score": 0.95}
+            for i in range(33)
+        ]
+        payload = build_pose_skeleton_payload(
+            frame_id=121,
+            ts_ms=6790,
+            keypoints=keypoints,
+            world_keypoints=world_keypoints,
+            width=200,
+            height=100,
+            skeleton_source="camera",
+        )
+        bones = payload["bones"]
+        self.assertEqual(bones[10]["name"], "mouth_right")
+        self.assertAlmostEqual(float(bones[10]["pos"][0]), 11.0, places=6)
+        self.assertAlmostEqual(float(bones[10]["pos"][1]), 12.0, places=6)
+        self.assertAlmostEqual(float(bones[10]["pos"][2]), 155.563492, places=5)
 
     def test_tasks_model_spec_mapping(self) -> None:
         lite = _tasks_model_spec_for_complexity("lite")

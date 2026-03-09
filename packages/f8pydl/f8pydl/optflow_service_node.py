@@ -250,7 +250,7 @@ class OnnxOptflowServiceNode(ServiceNode):
         super().__init__(
             node_id=ensure_token(node_id, label="node_id"),
             data_in_ports=[],
-            data_out_ports=["telemetry"],
+            data_out_ports=[],
             state_fields=[s.name for s in (node.stateFields or [])],
         )
         self._initial_state = dict(initial_state or {})
@@ -295,7 +295,6 @@ class OnnxOptflowServiceNode(ServiceNode):
         self._new_frame_counter = 0
 
         self._frame_cache = OptflowFramePairCache()
-        self._telemetry = _Telemetry()
 
     def attach(self, bus: Any) -> None:
         super().attach(bus)
@@ -371,30 +370,6 @@ class OnnxOptflowServiceNode(ServiceNode):
             )
             return
 
-        if name == "telemetryIntervalMs":
-            self._telemetry.set_config(
-                interval_ms=_coerce_int(
-                    await self.get_state_value("telemetryIntervalMs"),
-                    default=self._telemetry.interval_ms,
-                    minimum=0,
-                    maximum=60000,
-                ),
-                window_ms=self._telemetry.window_ms,
-            )
-            return
-
-        if name == "telemetryWindowMs":
-            self._telemetry.set_config(
-                interval_ms=self._telemetry.interval_ms,
-                window_ms=_coerce_int(
-                    await self.get_state_value("telemetryWindowMs"),
-                    default=self._telemetry.window_ms,
-                    minimum=100,
-                    maximum=60000,
-                ),
-            )
-            return
-
     async def _ensure_config_loaded(self) -> None:
         if self._config_loaded:
             return
@@ -425,21 +400,6 @@ class OnnxOptflowServiceNode(ServiceNode):
             await self.get_state_value("autoDownloadWeights"),
             default=bool(self._initial_state.get("autoDownloadWeights", True)),
         )
-        self._telemetry.set_config(
-            interval_ms=_coerce_int(
-                await self.get_state_value("telemetryIntervalMs"),
-                default=int(self._initial_state.get("telemetryIntervalMs") or 1000),
-                minimum=0,
-                maximum=60000,
-            ),
-            window_ms=_coerce_int(
-                await self.get_state_value("telemetryWindowMs"),
-                default=int(self._initial_state.get("telemetryWindowMs") or 2000),
-                minimum=100,
-                maximum=60000,
-            ),
-        )
-
         self._config_loaded = True
         await self.set_state("flowShmName", self._flow_shm_name)
         await self.set_state("flowShmFormat", self._flow_shm_format)
@@ -495,22 +455,6 @@ class OnnxOptflowServiceNode(ServiceNode):
     async def _set_last_error(self, message: str) -> None:
         self._last_error = str(message or "")
         await self.set_state("lastError", self._last_error)
-
-    async def _emit_idle_telemetry(self, *, now_ms: int, shm_name: str) -> None:
-        if not self._telemetry.should_emit(now_ms):
-            return
-        telemetry_payload = self._telemetry.summary(
-            now_ms=now_ms,
-            node_id=self.node_id,
-            service_class=self._service_class,
-            model=self._model,
-            ort_provider=self._ort_provider,
-            shm_name=shm_name,
-            frame_id_last_seen=self._last_processed_frame_id,
-            frame_id_last_processed=self._last_processed_frame_id,
-        )
-        await self.emit("telemetry", telemetry_payload, ts_ms=now_ms)
-        self._telemetry.mark_emitted(now_ms)
 
     async def _record_exception(self, *, where: str, exc: Exception) -> None:
         signature = f"{type(exc).__name__}:{exc}"
@@ -750,7 +694,6 @@ class OnnxOptflowServiceNode(ServiceNode):
                 input_shm_name = self._resolve_input_shm_name()
                 if not input_shm_name:
                     await self._set_last_error("missing inputShmName")
-                    await self._emit_idle_telemetry(now_ms=int(time.time() * 1000), shm_name="")
                     await asyncio.sleep(0.05)
                     continue
 
@@ -768,23 +711,19 @@ class OnnxOptflowServiceNode(ServiceNode):
                 self._shm.wait_new_frame(timeout_ms=10)
                 header, payload = self._shm.read_latest_frame()
                 if header is None or payload is None:
-                    await self._emit_idle_telemetry(now_ms=int(time.time() * 1000), shm_name=input_shm_name)
                     continue
                 if int(header.fmt) != VIDEO_FORMAT_BGRA32:
                     await self._set_last_error(
                         f"input SHM format must be BGRA32(fmt={VIDEO_FORMAT_BGRA32}), got fmt={int(header.fmt)} "
                         f"for {input_shm_name!r}"
                     )
-                    await self._emit_idle_telemetry(now_ms=int(header.ts_ms or time.time() * 1000), shm_name=input_shm_name)
                     await asyncio.sleep(0.05)
                     continue
 
                 frame_id_seen = int(header.frame_id)
                 if self._last_processed_frame_id is not None and frame_id_seen == int(self._last_processed_frame_id):
                     self._dup_skipped_since_last_processed += 1
-                    await self._emit_idle_telemetry(now_ms=int(header.ts_ms or time.time() * 1000), shm_name=input_shm_name)
                     continue
-                dup_skipped = int(self._dup_skipped_since_last_processed)
                 self._dup_skipped_since_last_processed = 0
 
                 width = int(header.width)
@@ -814,11 +753,9 @@ class OnnxOptflowServiceNode(ServiceNode):
                 )
                 if pair is None:
                     await self._set_last_error("waiting for frame pair (need at least 2 valid BGRA frames)")
-                    await self._emit_idle_telemetry(now_ms=int(header.ts_ms or time.time() * 1000), shm_name=input_shm_name)
                     continue
 
                 if (int(self._new_frame_counter) % int(self._compute_every_n_frames)) != 0:
-                    await self._emit_idle_telemetry(now_ms=int(header.ts_ms or time.time() * 1000), shm_name=input_shm_name)
                     continue
 
                 t_infer0 = time.perf_counter()
@@ -852,26 +789,8 @@ class OnnxOptflowServiceNode(ServiceNode):
                     await self._set_last_error("")
 
                 self._last_infer_frame_id = frame_id_seen
-                now_ms = int(header.ts_ms)
-                self._telemetry.observe_frame(
-                    ts_ms=now_ms,
-                    infer_ms=(t_infer1 - t_infer0) * 1000.0,
-                    total_ms=(time.perf_counter() - t0) * 1000.0,
-                    dup_skipped=dup_skipped,
-                )
-                if self._telemetry.should_emit(now_ms):
-                    telemetry_payload = self._telemetry.summary(
-                        now_ms=now_ms,
-                        node_id=self.node_id,
-                        service_class=self._service_class,
-                        model=self._model,
-                        ort_provider=self._ort_provider,
-                        shm_name=str(self._shm_open_name or input_shm_name),
-                        frame_id_last_seen=frame_id_seen,
-                        frame_id_last_processed=self._last_processed_frame_id,
-                    )
-                    await self.emit("telemetry", telemetry_payload, ts_ms=now_ms)
-                    self._telemetry.mark_emitted(now_ms)
+                _ = t0
+                _ = t_infer1
             except asyncio.CancelledError:
                 raise
             except Exception as exc:

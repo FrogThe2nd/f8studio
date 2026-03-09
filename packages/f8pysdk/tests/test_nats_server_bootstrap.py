@@ -14,6 +14,8 @@ from f8pysdk.nats_server_bootstrap import (  # noqa: E402
     _parse_nats_host_port,
     _resolve_nats_server_binary,
     ensure_nats_server,
+    ensure_nats_server_with_result,
+    stop_nats_server_process,
 )
 
 
@@ -70,6 +72,34 @@ class NatsServerBootstrapTests(unittest.TestCase):
         ):
             out = ensure_nats_server("nats://127.0.0.1:4222")
         self.assertFalse(out)
+
+    def test_nats_bootstrap_with_result_marks_owned_spawn(self) -> None:
+        with patch(
+            "f8pysdk.nats_server_bootstrap._is_tcp_reachable",
+            side_effect=[False, True],
+        ), patch("f8pysdk.nats_server_bootstrap._resolve_nats_server_binary"), patch(
+            "f8pysdk.nats_server_bootstrap._spawn_nats_server",
+            return_value=43210,
+        ):
+            out = ensure_nats_server_with_result("nats://127.0.0.1:4222")
+        self.assertTrue(out.reachable)
+        self.assertTrue(out.started_by_current_process)
+        self.assertEqual(out.started_pid, 43210)
+
+    def test_nats_bootstrap_with_result_existing_server_not_owned(self) -> None:
+        with patch("f8pysdk.nats_server_bootstrap._is_tcp_reachable", return_value=True), patch(
+            "f8pysdk.nats_server_bootstrap._spawn_nats_server"
+        ) as spawn_mock:
+            out = ensure_nats_server_with_result("nats://127.0.0.1:4222")
+        self.assertTrue(out.reachable)
+        self.assertFalse(out.started_by_current_process)
+        self.assertIsNone(out.started_pid)
+        spawn_mock.assert_not_called()
+
+    def test_stop_nats_server_process_when_already_stopped(self) -> None:
+        with patch("f8pysdk.nats_server_bootstrap._is_pid_running", return_value=False):
+            out = stop_nats_server_process(99999)
+        self.assertTrue(out)
 
 
 if __name__ == "__main__":

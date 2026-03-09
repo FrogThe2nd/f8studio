@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from collections.abc import Awaitable, Callable
 from typing import Any, Generic, Protocol, TYPE_CHECKING, TypeVar
 
@@ -22,6 +22,7 @@ from ...nats_naming import (
     kv_key_rungraph,
 )
 from ...nats_transport import NatsTransport, NatsTransportConfig
+from ...time_utils import now_ms
 from ..payload import coerce_inbound_ts_ms, extract_ts_field
 from ..codec import decode_obj
 from ..state_publish import (
@@ -45,6 +46,7 @@ from ..lifecycle import (
 )
 from ..state_read import StateRead
 from .config import DataDeliveryMode, ServiceBusConfig, _debug_state_enabled
+from ..monitor_collector import MonitorCollector, MonitorCollectorConfig
 
 if TYPE_CHECKING:
     from ..micro import _ServiceBusMicroEndpoints
@@ -120,6 +122,7 @@ class ServiceBus:
         self._publish_all_data = bool(config.publish_all_data)
         self._debug_state = _debug_state_enabled()
         self._active = True
+        self._ready = False
         mode = _coerce_data_delivery_mode(config.data_delivery)
         if mode is None:
             if self._debug_state or log.isEnabledFor(logging.WARNING):
@@ -153,16 +156,16 @@ class ServiceBus:
         self._micro_endpoints: _ServiceBusMicroEndpoints | None = None
 
         # Routing tables (data only).
-        self._intra_data_out: dict[tuple[str, str], list[tuple[str, str]]] = {}
-        self._intra_data_in: dict[tuple[str, str], list[tuple[str, str, F8Edge]]] = {}
-        self._cross_in_by_subject: dict[str, list[tuple[str, str, F8Edge]]] = {}
+        self._intra_data_out: dict[tuple[str, str], tuple[tuple[str, str], ...]] = {}
+        self._intra_data_in: dict[tuple[str, str], tuple[tuple[str, str, F8Edge], ...]] = {}
+        self._cross_in_by_subject: dict[str, tuple[tuple[str, str, F8Edge], ...]] = {}
         self._cross_out_subjects: dict[tuple[str, str], str] = {}
         self._data_inputs: _CappedOrderedDict[tuple[str, str], _InputBuffer] = _CappedOrderedDict(
             max_entries=self._data_input_max_buffers
         )
 
         # Intra-service state fanout (state edges within the same service).
-        self._intra_state_out: dict[tuple[str, str], list[tuple[str, str, F8Edge]]] = {}
+        self._intra_state_out: dict[tuple[str, str], tuple[tuple[str, str, F8Edge], ...]] = {}
 
         # Cross-state binding (remote KV -> local node.on_state + local KV mirror).
         self._cross_state_in_by_key: dict[tuple[str, str], list[tuple[str, str, F8Edge]]] = {}
@@ -188,9 +191,63 @@ class ServiceBus:
         # Process-level termination request (set via `svc.<serviceId>.terminate`).
         # Service entrypoints may `await bus.wait_terminate()` to exit gracefully.
         self._terminate_event = asyncio.Event()
+        self._monitor_collector = MonitorCollector(
+            self,
+            MonitorCollectorConfig(
+                enabled=bool(config.monitor_enabled),
+                interval_ms=max(200, int(config.monitor_interval_ms)),
+                window_ms=max(1000, int(config.monitor_window_ms)),
+                gpu_enabled=bool(config.monitor_gpu_enabled),
+            ),
+        )
+        if self._monitor_collector.enabled:
+            self._monitor_record_emit = self._record_emit_metrics_enabled
+            self._monitor_record_wait = self._record_wait_metrics_enabled
+            self._monitor_record_input = self._record_input_metrics_enabled
+            self._monitor_record_drop = self._record_drop_metrics_enabled
+        else:
+            self._monitor_record_emit = self._noop_record_emit
+            self._monitor_record_wait = self._noop_record_wait
+            self._monitor_record_input = self._noop_record_input
+            self._monitor_record_drop = self._noop_record_drop
+
+        # Push-mode on_data micro-batching.
+        self._on_data_push_queue: deque[tuple[str, str, Any, int]] = deque()
+        self._on_data_flush_task: asyncio.Task[None] | None = None
 
     async def wait_terminate(self) -> None:
         await self._terminate_event.wait()
+
+    @staticmethod
+    def _noop_record_emit(node_id: str, port: str, ts: int) -> None:
+        del node_id, port, ts
+
+    @staticmethod
+    def _noop_record_wait(wait_ms: float) -> None:
+        del wait_ms
+
+    @staticmethod
+    def _noop_record_input(node_id: str, port: str, ts: int) -> None:
+        del node_id, port, ts
+
+    @staticmethod
+    def _noop_record_drop(dropped_count: int) -> None:
+        del dropped_count
+
+    def _record_emit_metrics_enabled(self, node_id: str, port: str, ts: int) -> None:
+        now_ts = int(now_ms())
+        self._monitor_collector.record_processed(port=str(port), emit_ts_ms=int(ts), now_ts_ms=now_ts)
+        self._monitor_collector.record_emit_completed(node_id=str(node_id), now_ts_ms=now_ts)
+
+    def _record_wait_metrics_enabled(self, wait_ms: float) -> None:
+        self._monitor_collector.record_wait_ms(wait_ms=wait_ms)
+
+    def _record_input_metrics_enabled(self, node_id: str, port: str, ts: int) -> None:
+        self._monitor_collector.record_observed(port=str(port))
+        self._monitor_collector.record_input_sample_ts(node_id=str(node_id), sample_ts_ms=int(ts))
+
+    def _record_drop_metrics_enabled(self, dropped_count: int) -> None:
+        self._monitor_collector.record_dropped(dropped_count=int(dropped_count))
 
     def set_data_delivery(self, value: Any, *, source: str = "service") -> None:
         """
@@ -391,7 +448,11 @@ class ServiceBus:
         return await self._transport.subscribe(str(subject), queue=queue, cb=cb)
 
     async def emit_data(self, node_id: str, port: str, value: Any, *, ts_ms: int | None = None) -> None:
-        await _emit_data_impl(self, node_id, port, value, ts_ms=ts_ms)
+        node_id_s = ensure_token(node_id, label="node_id")
+        port_s = ensure_token(port, label="port_id")
+        await _emit_data_impl(self, node_id_s, port_s, value, ts_ms=ts_ms)
 
     async def pull_data(self, node_id: str, port: str, *, ctx_id: str | int | None = None) -> Any:
-        return await _pull_data_impl(self, node_id, port, ctx_id=ctx_id)
+        node_id_s = ensure_token(node_id, label="node_id")
+        port_s = ensure_token(port, label="port_id")
+        return await _pull_data_impl(self, node_id_s, port_s, ctx_id=ctx_id)

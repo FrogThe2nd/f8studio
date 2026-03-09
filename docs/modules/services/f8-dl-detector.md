@@ -21,26 +21,24 @@ pixi run f8pydl_detector
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `shmName` | `rw` | `false` | `true` | `string / default=` | Video SHM mapping name (e.g. shm.implayer.video). |
-| `weightsDir` | `rw` | `false` | `true` | `string / default=services/f8/dl/weights` | Directory containing *.yaml + *.onnx model files. |
-| `modelId` | `rw` | `false` | `true` | `string / default=` | Model id selected from weightsDir (ignored if modelYamlPath is set). |
-| `modelYamlPath` | `rw` | `false` | `false` | `string / default=` | Optional explicit model yaml path (overrides modelId). |
-| `ortProvider` | `rw` | `false` | `true` | `string / enum[auto, cuda, cpu] / default=auto` | auto prefers CUDAExecutionProvider when available. |
-| `autoDownloadWeights` | `rw` | `false` | `false` | `boolean / default=True` | When model file is missing, download from onnxUrl in model yaml. |
-| `inferEveryN` | `rw` | `false` | `true` | `integer / default=1` | Run model inference every N frames (>=1). |
-| `confThreshold` | `rw` | `false` | `false` | `number / default=-1.0` | Override confidence threshold (negative uses model yaml). |
-| `iouThreshold` | `rw` | `false` | `false` | `number / default=-1.0` | Override IoU threshold for NMS (negative uses model yaml). |
-| `enabledClasses` | `rw` | `false` | `false` | `array[string]` | Optional class whitelist for output. Empty means all classes. |
-| `perClassK` | `rw` | `false` | `true` | `integer / default=0` | Per-class top-K by score (<=0 means unlimited). |
-| `modelClasses` | `ro` | `false` | `false` | `array[string]` | Current loaded model class labels. |
-| `availableModels` | `ro` | `false` | `false` | `array[string]` | List of model ids discovered from weightsDir. |
-| `loadedModel` | `ro` | `false` | `false` | `string / default=` | Current loaded model id/task. |
-| `ortActiveProviders` | `ro` | `false` | `false` | `string / default=` | JSON list of active ONNX Runtime providers for this session. |
-| `lastError` | `ro` | `false` | `false` | `string / default=` | Last runtime error string (best-effort). |
-| `telemetryIntervalMs` | `wo` | `false` | `false` | `integer / default=1000` | Emit telemetry summaries every N milliseconds (0 disables). |
-| `telemetryWindowMs` | `wo` | `false` | `false` | `integer / default=2000` | Rolling window for telemetry averages (ms). |
-| `active` | `rw` | `false` | `true` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
-| `svcId` | `ro` | `false` | `false` | `string` | Readonly: current service instance id (svcId). |
+| `shmName` | `rw` | `true` | `true` | `string / default=` | Video SHM mapping name (e.g. shm.implayer.video). |
+| `weightsDir` | `rw` | `true` | `true` | `string / default=services/f8/dl/weights` | Directory containing *.yaml + *.onnx model files. |
+| `modelId` | `rw` | `true` | `true` | `string / default=` | Model id selected from weightsDir (ignored if modelYamlPath is set). |
+| `modelYamlPath` | `rw` | `true` | `false` | `string / default=` | Optional explicit model yaml path (overrides modelId). |
+| `ortProvider` | `rw` | `true` | `true` | `string / enum[auto, cuda, cpu] / default=auto` | auto prefers CUDAExecutionProvider when available. |
+| `autoDownloadWeights` | `rw` | `true` | `false` | `boolean / default=True` | When model file is missing, download from onnxUrl in model yaml. |
+| `inferEveryN` | `rw` | `true` | `true` | `integer / default=1` | Run model inference every N frames (>=1). |
+| `confThreshold` | `rw` | `true` | `false` | `number / default=-1.0` | Override confidence threshold (negative uses model yaml). |
+| `iouThreshold` | `rw` | `true` | `false` | `number / default=-1.0` | Override IoU threshold for NMS (negative uses model yaml). |
+| `enabledClasses` | `rw` | `true` | `false` | `array[string]` | Optional class whitelist for output. Empty means all classes. |
+| `perClassK` | `rw` | `true` | `true` | `integer / default=0` | Per-class top-K by score (<=0 means unlimited). |
+| `modelClasses` | `ro` | `true` | `false` | `array[string]` | Current loaded model class labels. |
+| `availableModels` | `ro` | `true` | `false` | `array[string]` | List of model ids discovered from weightsDir. |
+| `loadedModel` | `ro` | `true` | `false` | `string / default=` | Current loaded model id/task. |
+| `ortActiveProviders` | `ro` | `true` | `false` | `string / default=` | JSON list of active ONNX Runtime providers for this session. |
+| `lastError` | `ro` | `true` | `false` | `string / default=` | Last runtime error string (best-effort). |
+| `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
+| `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 
 ## Service Commands
 
@@ -54,32 +52,45 @@ _None_
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
-| `detections` | `true` | `true` | `any` | Detection output in schema f8visionDetections/1. |
-| `telemetry` | `true` | `true` | `any` | Periodic telemetry summaries (fps + timings). |
+| `detections` | `true` | `true` | `object{detections, frameId, height, model, ...}` | Detection output in schema f8visionDetections/1. |
+| `monitor` | `true` | `false` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
 
 ## Operators
 
 _None_
 
-## Usage Guide (Manual)
+## When to Use
 
-### Recommended Use Cases
+- Use `f8.dl.detector` when you need object detections with boxes or class-specific regions.
+- It is the general DL detection path for scenes that are broader than human-only use cases.
 
-- Primary object detection service for tracking and control workflows.
-- Foundation block for scenario pipelines using bounding boxes.
+## Typical Inputs / Outputs
 
-### Minimal Run Example
+- Data inputs: none
+- Data outputs: `detections`, `monitor`
+- Commands: none
 
-```bash
-pixi run -e onnx dl_detector
-```
+## Common Wiring Patterns
 
-### Common Pitfalls
+- Feed it from a video producer, then inspect detections via `TextViz`, overlays, or handoff into `f8.pyengine` logic.
+- Keep the raw video source available in parallel for side-by-side validation.
 
-- Model confidence thresholds set too high can hide all detections.
-- Wrong skeleton protocol assumptions break downstream visualizers.
+## Key Fields That Matter
 
-### Troubleshooting
+- `shmName` (Video SHM, `rw`): Video SHM mapping name (e.g. shm.implayer.video). Schema: `string / default=`.
+- `weightsDir` (Weights Dir, `rw`): Directory containing *.yaml + *.onnx model files. Schema: `string / default=services/f8/dl/weights`.
+- `modelId` (Model Id, `rw`): Model id selected from weightsDir (ignored if modelYamlPath is set). Schema: `string / default=`.
+- `modelYamlPath` (Model YAML Path, `rw`): Optional explicit model yaml path (overrides modelId). Schema: `string / default=`.
+- `ortProvider` (ONNX Runtime Provider, `rw`): auto prefers CUDAExecutionProvider when available. Schema: `string / enum[auto, cuda, cpu] / default=auto`.
+- `autoDownloadWeights` (Auto Download Weights, `rw`): When model file is missing, download from onnxUrl in model yaml. Schema: `boolean / default=True`.
+- `inferEveryN` (Infer Every N Frames, `rw`): Run model inference every N frames (>=1). Schema: `integer / default=1`.
+- `confThreshold` (Conf Threshold Override, `rw`): Override confidence threshold (negative uses model yaml). Schema: `number / default=-1.0`.
 
-- Adjust confidence thresholds incrementally.
-- Confirm `model.skeletonProtocol` in weight YAML matches consumer expectations.
+## Pitfalls / Gotchas
+
+- Threshold tuning is meaningless until the correct model and input resolution are confirmed.
+- Detection-heavy graphs can look sluggish if inference cost is ignored during release packaging.
+
+## Related Scenarios
+
+- No bundled scenario references this node yet.

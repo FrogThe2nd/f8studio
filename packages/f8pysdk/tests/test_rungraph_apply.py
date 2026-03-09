@@ -2,6 +2,8 @@ import os
 import sys
 import unittest
 
+import msgspec
+
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
@@ -34,6 +36,42 @@ class RungraphApplyTests(unittest.IsolatedAsyncioTestCase):
 
         await bus.set_rungraph(graph)
         self.assertIsNotNone(bus._graph)
+
+    async def test_apply_rungraph_accepts_service_node_with_unset_operator_class(self) -> None:
+        harness = ServiceBusHarness()
+        bus = harness.create_bus("svc")
+
+        service_node = F8RuntimeNode(
+            nodeId="svc",
+            serviceId="svc",
+            serviceClass="svc",
+            operatorClass=msgspec.UNSET,
+            stateFields=[
+                F8StateSpec(name="svcId", valueSchema=string_schema(), access=F8StateAccess.ro),
+            ],
+        )
+        graph = F8RuntimeGraph(graphId="g2", revision="r1", nodes=[service_node], edges=[])
+
+        await bus.set_rungraph(graph)
+        self.assertIsNotNone(bus._graph)
+
+    async def test_apply_rungraph_rejects_unset_service_node_id_mismatch(self) -> None:
+        harness = ServiceBusHarness()
+        bus = harness.create_bus("svc")
+
+        service_node = F8RuntimeNode(
+            nodeId="not-svc",
+            serviceId="svc",
+            serviceClass="svc",
+            operatorClass=msgspec.UNSET,
+            stateFields=[
+                F8StateSpec(name="svcId", valueSchema=string_schema(), access=F8StateAccess.ro),
+            ],
+        )
+        graph = F8RuntimeGraph(graphId="g3", revision="r1", nodes=[service_node], edges=[])
+
+        with self.assertRaises(RuntimeError):
+            await bus.set_rungraph(graph)
 
 
 if __name__ == "__main__":

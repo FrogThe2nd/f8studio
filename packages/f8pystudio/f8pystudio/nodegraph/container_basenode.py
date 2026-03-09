@@ -83,8 +83,7 @@ class F8StudioContainerBaseNode(F8StudioBaseNode):
             t = ""
 
         try:
-            root = value_schema.root
-            enum_items = list(root.enum or [])
+            enum_items = list(value_schema.enum or [])
         except Exception:
             enum_items = []
         if enum_items:

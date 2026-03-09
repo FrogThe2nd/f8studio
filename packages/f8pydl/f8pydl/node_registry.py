@@ -9,9 +9,9 @@ from f8pysdk import (
     F8ServiceSpec,
     F8StateAccess,
     F8StateSpec,
-    any_schema,
     array_schema,
     boolean_schema,
+    complex_object_schema,
     integer_schema,
     number_schema,
     string_schema,
@@ -24,6 +24,71 @@ from .constants import OPTFLOW_SERVICE_CLASS, TCNWAVE_SERVICE_CLASS
 from .optflow_service_node import OnnxOptflowServiceNode
 from .service_node import OnnxVisionServiceNode
 from .tcnwave_service_node import OnnxTcnWaveServiceNode
+
+
+def _classification_item_schema():
+    return complex_object_schema(
+        properties={
+            "cls": string_schema(),
+            "score": number_schema(),
+        }
+    )
+
+
+def _classifications_payload_schema():
+    return complex_object_schema(
+        properties={
+            "schemaVersion": string_schema(),
+            "frameId": integer_schema(),
+            "tsMs": integer_schema(),
+            "model": string_schema(),
+            "top1": _classification_item_schema(),
+            "topk": array_schema(items=_classification_item_schema()),
+        }
+    )
+
+
+def _keypoint_schema():
+    return complex_object_schema(
+        properties={
+            "x": number_schema(),
+            "y": number_schema(),
+            "score": number_schema(),
+        }
+    )
+
+
+def _obb_point_schema():
+    return array_schema(items=number_schema())
+
+
+def _detection_item_schema():
+    return complex_object_schema(
+        properties={
+            "cls": string_schema(),
+            "score": number_schema(),
+            "bbox": array_schema(items=integer_schema()),
+            "keypoints": array_schema(items=_keypoint_schema()),
+            "obb": array_schema(items=_obb_point_schema()),
+            "skeletonProtocol": string_schema(),
+        }
+    )
+
+
+def _detections_payload_schema():
+    return complex_object_schema(
+        properties={
+            "schemaVersion": string_schema(),
+            "frameId": integer_schema(),
+            "tsMs": integer_schema(),
+            "width": integer_schema(),
+            "height": integer_schema(),
+            "model": string_schema(),
+            "task": string_schema(),
+            "skeletonProtocol": string_schema(),
+            "detections": array_schema(items=_detection_item_schema()),
+        }
+    )
 
 
 def _common_state_fields(
@@ -39,6 +104,7 @@ def _common_state_fields(
             description="Video SHM mapping name (e.g. shm.implayer.video).",
             valueSchema=string_schema(default=""),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=True,
         ),
         F8StateSpec(
@@ -47,6 +113,7 @@ def _common_state_fields(
             description="Directory containing *.yaml + *.onnx model files.",
             valueSchema=string_schema(default="services/f8/dl/weights"),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=True,
         ),
         F8StateSpec(
@@ -55,6 +122,7 @@ def _common_state_fields(
             description="Model id selected from weightsDir (ignored if modelYamlPath is set).",
             valueSchema=string_schema(default=""),
             access=F8StateAccess.rw,
+            required=True,
             uiControl="select:[availableModels]",
             showOnNode=True,
         ),
@@ -64,6 +132,7 @@ def _common_state_fields(
             description="Optional explicit model yaml path (overrides modelId).",
             valueSchema=string_schema(default=""),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -72,6 +141,7 @@ def _common_state_fields(
             description="auto prefers CUDAExecutionProvider when available.",
             valueSchema=string_schema(default="auto", enum=["auto", "cuda", "cpu"]),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=True,
         ),
         F8StateSpec(
@@ -80,6 +150,7 @@ def _common_state_fields(
             description="When model file is missing, download from onnxUrl in model yaml.",
             valueSchema=boolean_schema(default=True),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -88,6 +159,7 @@ def _common_state_fields(
             description="Run model inference every N frames (>=1).",
             valueSchema=integer_schema(default=1, minimum=1, maximum=10000),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=True,
         ),
     ]
@@ -100,6 +172,7 @@ def _common_state_fields(
                     description="Override confidence threshold (negative uses model yaml).",
                     valueSchema=number_schema(default=-1.0),
                     access=F8StateAccess.rw,
+                    required=True,
                     showOnNode=False,
                 ),
                 F8StateSpec(
@@ -108,6 +181,7 @@ def _common_state_fields(
                     description="Override IoU threshold for NMS (negative uses model yaml).",
                     valueSchema=number_schema(default=-1.0),
                     access=F8StateAccess.rw,
+                    required=True,
                     showOnNode=False,
                 ),
             ]
@@ -120,6 +194,7 @@ def _common_state_fields(
                 description="Number of top classes to emit.",
                 valueSchema=integer_schema(default=5, minimum=1, maximum=100),
                 access=F8StateAccess.rw,
+                required=True,
                 showOnNode=True,
             )
         )
@@ -132,6 +207,7 @@ def _common_state_fields(
                     description="Optional class whitelist for output. Empty means all classes.",
                     valueSchema=array_schema(items=string_schema()),
                     access=F8StateAccess.rw,
+                    required=True,
                     uiControl="multiselect:[modelClasses]",
                     showOnNode=False,
                 ),
@@ -141,6 +217,7 @@ def _common_state_fields(
                     description="Per-class top-K by score (<=0 means unlimited).",
                     valueSchema=integer_schema(default=0, minimum=0, maximum=10000),
                     access=F8StateAccess.rw,
+                    required=True,
                     showOnNode=True,
                 ),
                 F8StateSpec(
@@ -149,6 +226,7 @@ def _common_state_fields(
                     description="Current loaded model class labels.",
                     valueSchema=array_schema(items=string_schema()),
                     access=F8StateAccess.ro,
+                    required=True,
                     showOnNode=False,
                 )
             ]
@@ -160,6 +238,7 @@ def _common_state_fields(
             description="List of model ids discovered from weightsDir.",
             valueSchema=array_schema(items=string_schema()),
             access=F8StateAccess.ro,
+            required=True,
             showOnNode=False,
         )
     )
@@ -172,6 +251,7 @@ def _common_state_fields(
                 description="Current loaded model id/task.",
                 valueSchema=string_schema(default=""),
                 access=F8StateAccess.ro,
+                required=True,
                 showOnNode=False,
             ),
             F8StateSpec(
@@ -180,6 +260,7 @@ def _common_state_fields(
                 description="JSON list of active ONNX Runtime providers for this session.",
                 valueSchema=string_schema(default=""),
                 access=F8StateAccess.ro,
+                required=True,
                 showOnNode=False,
             ),
             F8StateSpec(
@@ -188,22 +269,7 @@ def _common_state_fields(
                 description="Last runtime error string (best-effort).",
                 valueSchema=string_schema(default=""),
                 access=F8StateAccess.ro,
-                showOnNode=False,
-            ),
-            F8StateSpec(
-                name="telemetryIntervalMs",
-                label="Telemetry Interval (ms)",
-                description="Emit telemetry summaries every N milliseconds (0 disables).",
-                valueSchema=integer_schema(default=1000, minimum=0, maximum=60000),
-                access=F8StateAccess.wo,
-                showOnNode=False,
-            ),
-            F8StateSpec(
-                name="telemetryWindowMs",
-                label="Telemetry Window (ms)",
-                description="Rolling window for telemetry averages (ms).",
-                valueSchema=integer_schema(default=2000, minimum=100, maximum=60000),
-                access=F8StateAccess.wo,
+                required=True,
                 showOnNode=False,
             ),
         ]
@@ -219,6 +285,7 @@ def _optflow_state_fields() -> list[F8StateSpec]:
             description="Input SHM name (e.g. shm.xxx.video).",
             valueSchema=string_schema(default=""),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=True,
         ),
         F8StateSpec(
@@ -227,6 +294,7 @@ def _optflow_state_fields() -> list[F8StateSpec]:
             description="Compute optical flow once per N new frames.",
             valueSchema=integer_schema(default=2, minimum=1, maximum=120),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -235,6 +303,7 @@ def _optflow_state_fields() -> list[F8StateSpec]:
             description="Directory containing *.yaml + *.onnx model files.",
             valueSchema=string_schema(default="services/f8/dl/weights"),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -243,6 +312,7 @@ def _optflow_state_fields() -> list[F8StateSpec]:
             description="Model id selected from weightsDir (ignored if modelYamlPath is set).",
             valueSchema=string_schema(default=""),
             access=F8StateAccess.rw,
+            required=True,
             uiControl="select:[availableModels]",
             showOnNode=False,
         ),
@@ -252,6 +322,7 @@ def _optflow_state_fields() -> list[F8StateSpec]:
             description="Optional explicit model yaml path (overrides modelId).",
             valueSchema=string_schema(default=""),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -260,6 +331,7 @@ def _optflow_state_fields() -> list[F8StateSpec]:
             description="auto prefers CUDAExecutionProvider when available.",
             valueSchema=string_schema(default="auto", enum=["auto", "cuda", "cpu"]),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -268,6 +340,7 @@ def _optflow_state_fields() -> list[F8StateSpec]:
             description="When model file is missing, download from onnxUrl in model yaml.",
             valueSchema=boolean_schema(default=True),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -276,6 +349,7 @@ def _optflow_state_fields() -> list[F8StateSpec]:
             description="List of model ids discovered from weightsDir.",
             valueSchema=array_schema(items=string_schema()),
             access=F8StateAccess.ro,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -284,6 +358,7 @@ def _optflow_state_fields() -> list[F8StateSpec]:
             description="Current loaded model id/task.",
             valueSchema=string_schema(default=""),
             access=F8StateAccess.ro,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -292,6 +367,7 @@ def _optflow_state_fields() -> list[F8StateSpec]:
             description="JSON list of active ONNX Runtime providers for this session.",
             valueSchema=string_schema(default=""),
             access=F8StateAccess.ro,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -300,6 +376,7 @@ def _optflow_state_fields() -> list[F8StateSpec]:
             description="Output flow SHM name.",
             valueSchema=string_schema(default=""),
             access=F8StateAccess.ro,
+            required=True,
             showOnNode=True,
         ),
         F8StateSpec(
@@ -308,6 +385,7 @@ def _optflow_state_fields() -> list[F8StateSpec]:
             description="Flow payload format. Fixed to flow2_f16.",
             valueSchema=string_schema(default="flow2_f16"),
             access=F8StateAccess.ro,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -316,22 +394,7 @@ def _optflow_state_fields() -> list[F8StateSpec]:
             description="Last runtime error string (best-effort).",
             valueSchema=string_schema(default=""),
             access=F8StateAccess.ro,
-            showOnNode=False,
-        ),
-        F8StateSpec(
-            name="telemetryIntervalMs",
-            label="Telemetry Interval (ms)",
-            description="Emit telemetry summaries every N milliseconds (0 disables).",
-            valueSchema=integer_schema(default=1000, minimum=0, maximum=60000),
-            access=F8StateAccess.wo,
-            showOnNode=False,
-        ),
-        F8StateSpec(
-            name="telemetryWindowMs",
-            label="Telemetry Window (ms)",
-            description="Rolling window for telemetry averages (ms).",
-            valueSchema=integer_schema(default=2000, minimum=100, maximum=60000),
-            access=F8StateAccess.wo,
+            required=True,
             showOnNode=False,
         ),
     ]
@@ -351,6 +414,7 @@ def _tcn_wave_state_fields() -> list[F8StateSpec]:
                 description="Denormalization scale applied to raw model output values.",
                 valueSchema=number_schema(default=10.0),
                 access=F8StateAccess.rw,
+                required=True,
                 showOnNode=False,
             ),
             F8StateSpec(
@@ -359,6 +423,7 @@ def _tcn_wave_state_fields() -> list[F8StateSpec]:
                 description="Denormalization bias applied after outputScale.",
                 valueSchema=number_schema(default=0.0),
                 access=F8StateAccess.rw,
+                required=True,
                 showOnNode=False,
             ),
         ]
@@ -373,6 +438,7 @@ def _tcn_wave_state_fields() -> list[F8StateSpec]:
             ),
             valueSchema=boolean_schema(default=False),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=False,
         )
     )
@@ -398,12 +464,7 @@ def _register_classifier(reg: RuntimeNodeRegistry) -> None:
                 F8DataPortSpec(
                     name="classifications",
                     description="Classification output in schema f8visionClassifications/1.",
-                    valueSchema=any_schema(),
-                ),
-                F8DataPortSpec(
-                    name="telemetry",
-                    description="Periodic telemetry summaries (fps + timings).",
-                    valueSchema=any_schema(),
+                    valueSchema=_classifications_payload_schema(),
                 ),
             ],
             editableStateFields=False,
@@ -447,12 +508,7 @@ def _register_detector(reg: RuntimeNodeRegistry) -> None:
                 F8DataPortSpec(
                     name="detections",
                     description="Detection output in schema f8visionDetections/1.",
-                    valueSchema=any_schema(),
-                ),
-                F8DataPortSpec(
-                    name="telemetry",
-                    description="Periodic telemetry summaries (fps + timings).",
-                    valueSchema=any_schema(),
+                    valueSchema=_detections_payload_schema(),
                 ),
             ],
             editableStateFields=False,
@@ -496,12 +552,7 @@ def _register_human_detector(reg: RuntimeNodeRegistry) -> None:
                 F8DataPortSpec(
                     name="detections",
                     description="Detection output in schema f8visionDetections/1.",
-                    valueSchema=any_schema(),
-                ),
-                F8DataPortSpec(
-                    name="telemetry",
-                    description="Periodic telemetry summaries (fps + timings).",
-                    valueSchema=any_schema(),
+                    valueSchema=_detections_payload_schema(),
                 ),
             ],
             editableStateFields=False,
@@ -537,13 +588,7 @@ def _register_optflow(reg: RuntimeNodeRegistry) -> None:
             tags=["onnx", "vision", "optical_flow", "flow_shm"],
             rendererClass="default_svc",
             stateFields=_optflow_state_fields(),
-            dataOutPorts=[
-                F8DataPortSpec(
-                    name="telemetry",
-                    description="Periodic telemetry summaries (fps + timings).",
-                    valueSchema=any_schema(),
-                ),
-            ],
+            dataOutPorts=[],
             editableStateFields=False,
             editableDataInPorts=False,
             editableDataOutPorts=False,
@@ -580,11 +625,6 @@ def _register_tcn_wave(reg: RuntimeNodeRegistry) -> None:
                     name="predictedChange",
                     description="Temporal model output value per frame.",
                     valueSchema=number_schema(),
-                ),
-                F8DataPortSpec(
-                    name="telemetry",
-                    description="Periodic telemetry summaries (fps + timings).",
-                    valueSchema=any_schema(),
                 ),
             ],
             editableStateFields=False,

@@ -21,10 +21,8 @@ from NodeGraphQt.constants import (
     LayoutDirectionEnum,
     NodeEnum,
     PortEnum,
-    PortTypeEnum,
     NodePropWidgetEnum,
 )
-from NodeGraphQt.errors import NodeWidgetError
 from NodeGraphQt.qgraphics.node_abstract import AbstractNodeItem
 from NodeGraphQt.qgraphics.node_overlay_disabled import XDisabledItem
 from NodeGraphQt.qgraphics.node_text_item import NodeTextItem
@@ -38,6 +36,17 @@ from .items.node_item_core import (
     StateFieldInfo as _StateFieldInfo,
     port_name as _port_name,
     state_field_info as _state_field_info,
+)
+from .items.service_toolbar_host import (
+    current_service_id as _toolbar_current_service_id_impl,
+    ensure_service_toolbar as _ensure_service_toolbar_impl,
+    position_service_toolbar as _position_service_toolbar_impl,
+    refresh_service_identity_bindings as _refresh_service_identity_bindings_impl,
+)
+from .items.embedded_resize_contract import (
+    ResizableEmbeddedWidget,
+    clamp_content_size,
+    content_rect_with_minimum,
 )
 from .items.inline_command_panel import (
     ensure_inline_command_widget as _ensure_inline_command_widget_impl,
@@ -54,12 +63,101 @@ from .items.inline_state_panel import (
     refresh_option_pool_for_changed_field as _refresh_option_pool_for_changed_field_impl,
     set_inline_state_control_read_only as _set_inline_state_control_read_only_impl,
 )
+from .items.service_node_port_schema_actions import (
+    data_port_tooltip as _data_port_tooltip_impl,
+    display_port_label as _display_port_label_impl,
+    find_data_port_spec as _find_data_port_spec_impl,
+    find_effective_state_field as _find_effective_state_field_impl,
+    find_state_field_spec as _find_state_field_spec_impl,
+    on_port_right_click as _on_port_right_click_impl,
+    open_data_port_editor_dialog as _open_data_port_editor_dialog_impl,
+    open_data_port_schema_dialog as _open_data_port_schema_dialog_impl,
+    open_state_field_editor_dialog as _open_state_field_editor_dialog_impl,
+    open_state_field_schema_dialog as _open_state_field_schema_dialog_impl,
+    parse_schema_port_view_name as _parse_schema_port_view_name_impl,
+    port_group as _port_group_impl,
+    port_tooltip_text as _port_tooltip_text_impl,
+    refresh_port_tooltips as _refresh_port_tooltips_impl,
+    schema_brief as _schema_brief_impl,
+    schema_enum_items as _schema_enum_items_impl,
+    schema_numeric_range as _schema_numeric_range_impl,
+    state_port_tooltip as _state_port_tooltip_impl,
+)
+from .items.service_node_graph_hooks import (
+    backend_node as _backend_node_impl,
+    bridge as _bridge_impl,
+    current_service_id as _current_service_id_impl,
+    ensure_bridge_process_hook as _ensure_bridge_process_hook_impl,
+    ensure_graph_property_hook as _ensure_graph_property_hook_impl,
+    graph as _graph_impl,
+    is_service_running as _is_service_running_impl,
+    on_bridge_service_process_state as _on_bridge_service_process_state_impl,
+    select_node_from_embedded_widget as _select_node_from_embedded_widget_impl,
+    viewer_safe as _viewer_safe_impl,
+)
+from .items.service_node_ports import (
+    add_input as _add_input_impl,
+    add_output as _add_output_impl,
+    add_port as _add_port_impl,
+    add_widget as _add_widget_impl,
+    delete_input as _delete_input_impl,
+    delete_output as _delete_output_impl,
+    delete_port as _delete_port_impl,
+    from_dict as _ports_from_dict_impl,
+    get_input_text_item as _get_input_text_item_impl,
+    get_output_text_item as _get_output_text_item_impl,
+    get_widget as _get_widget_impl,
+    has_widget as _has_widget_impl,
+    widgets as _widgets_impl,
+)
+from .service_spec_sync import (
+    build_data_port as _build_data_port_impl,
+    build_state_port as _build_state_port_impl,
+    build_state_properties as _build_state_properties_impl,
+    ensure_state_property_metadata as _ensure_state_property_metadata_impl,
+    state_widget_for_schema as _state_widget_for_schema_impl,
+    sync_from_spec as _sync_from_spec_impl,
+)
 from ..widgets.state_controls.schema_introspect import (
     schema_enum_items as _shared_schema_enum_items,
     schema_numeric_range as _shared_schema_numeric_range,
 )
+from ..widgets.schema_builder import SchemaBuilderDialog, schema_from_json_obj as _schema_from_json_obj
 
 logger = logging.getLogger(__name__)
+
+
+class _F8PortMouseMixin:
+    """
+    Shared right-click behavior for node ports.
+
+    - Right click on a port should never start live pipe creation.
+    - Data ports may show a schema-focused context menu handled by the node item.
+    """
+
+    def _on_right_click(self, screen_pos: QtCore.QPoint) -> None:
+        node_item = self.parentItem()
+        if isinstance(node_item, F8StudioServiceNodeItem):
+            node_item._on_port_right_click(self, screen_pos)
+
+    def mousePressEvent(self, event):  # type: ignore[override]
+        if event.button() == QtCore.Qt.RightButton:
+            self._on_right_click(event.screenPos())
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def contextMenuEvent(self, event):  # type: ignore[override]
+        self._on_right_click(event.screenPos())
+        event.accept()
+
+
+class F8StudioPortItem(_F8PortMouseMixin, PortItem):
+    pass
+
+
+class F8StudioCustomPortItem(_F8PortMouseMixin, CustomPortItem):
+    pass
 
 
 class F8StudioServiceBaseNode(F8StudioBaseNode):
@@ -89,81 +187,13 @@ class F8StudioServiceBaseNode(F8StudioBaseNode):
         self._build_state_properties()
 
     def _build_data_port(self):
-
-        for p in self.spec.dataInPorts:
-            if not self.data_port_show_on_node(str(p.name or ""), is_in=True):
-                continue
-            self.add_input(
-                f"[D]{p.name}",
-                multi_input=False,
-                color=DATA_PORT_COLOR,
-            )
-
-        for p in self.spec.dataOutPorts:
-            if not self.data_port_show_on_node(str(p.name or ""), is_in=False):
-                continue
-            self.add_output(
-                f"{p.name}[D]",
-                multi_output=True,
-                color=DATA_PORT_COLOR,
-            )
+        _build_data_port_impl(self)
 
     def _build_state_port(self):
-
-        for s in self.effective_state_fields():
-            info = _state_field_info(s)
-            if info is None or not info.show_on_node:
-                continue
-
-            if info.access in [F8StateAccess.rw, F8StateAccess.wo] or info.access_str in {"rw", "wo"}:
-                self.add_input(
-                    f"[S]{info.name}",
-                    multi_input=False,
-                    color=STATE_PORT_COLOR,
-                    painter_func=draw_square_port,
-                )
-
-            if info.access in [F8StateAccess.rw, F8StateAccess.ro] or info.access_str in {"rw", "ro"}:
-                self.add_output(
-                    f"{info.name}[S]",
-                    multi_output=True,
-                    color=STATE_PORT_COLOR,
-                    painter_func=draw_square_port,
-                )
+        _build_state_port_impl(self)
 
     def _build_state_properties(self) -> None:
-        for s in self.effective_state_fields() or []:
-            info = _state_field_info(s)
-            if info is None:
-                continue
-            try:
-                default_value = schema_default(info.value_schema)
-            except Exception:
-                default_value = None
-            widget_type, items, prop_range = self._state_widget_for_schema(info.value_schema)
-            tooltip = info.tooltip or None
-            has_prop = False
-            try:
-                has_prop = bool(self.has_property(info.name))  # type: ignore[attr-defined]
-            except (AttributeError, RuntimeError, TypeError):
-                has_prop = False
-            if not has_prop:
-                self.create_property(
-                    info.name,
-                    default_value,
-                    items=items,
-                    range=prop_range,
-                    widget_type=widget_type,
-                    widget_tooltip=tooltip,
-                    tab="State",
-                )
-            self._ensure_state_property_metadata(
-                name=info.name,
-                widget_type=widget_type,
-                items=items,
-                prop_range=prop_range,
-                tooltip=tooltip,
-            )
+        _build_state_properties_impl(self)
 
     def _ensure_state_property_metadata(
         self,
@@ -174,253 +204,21 @@ class F8StudioServiceBaseNode(F8StudioBaseNode):
         prop_range: tuple[float, float] | None,
         tooltip: str | None,
     ) -> None:
-        graph_model = self.graph.model if self.graph is not None else None
-        if graph_model is None:
-            return
-        attrs: dict[str, dict[str, dict[str, Any]]] = {
-            self.type_: {
-                name: {
-                    "widget_type": widget_type,
-                    "tab": "State",
-                }
-            }
-        }
-        if items:
-            attrs[self.type_][name]["items"] = list(items)
-        if prop_range is not None:
-            attrs[self.type_][name]["range"] = prop_range
-        if tooltip:
-            attrs[self.type_][name]["tooltip"] = tooltip
-        try:
-            graph_model.set_node_common_properties(attrs)
-        except Exception:
-            logger.exception("Failed to ensure service state property metadata: node=%s field=%s", self.type_, name)
+        _ensure_state_property_metadata_impl(
+            self,
+            name=name,
+            widget_type=widget_type,
+            items=items,
+            prop_range=prop_range,
+            tooltip=tooltip,
+        )
 
     @staticmethod
     def _state_widget_for_schema(value_schema) -> tuple[int, list[str] | None, tuple[float, float] | None]:
-        """
-        Best-effort mapping from F8DataTypeSchema -> NodeGraphQt property widget.
-        """
-        if value_schema is None:
-            return NodePropWidgetEnum.QTEXT_EDIT.value, None, None
-        t = schema_type(value_schema) or ""
-
-        # enum choice.
-        try:
-            root = value_schema.root
-            enum_items = list(root.enum or [])
-        except Exception:
-            enum_items = []
-        if enum_items:
-            return NodePropWidgetEnum.QCOMBO_BOX.value, [str(x) for x in enum_items], None
-
-        if t == "boolean":
-            return NodePropWidgetEnum.QCHECK_BOX.value, None, None
-        if t == "integer":
-            # Avoid QSpinBox widgets due to PySide6 incompatibilities in NodeGraphQt's PropSpinBox.
-            return NodePropWidgetEnum.QLINE_EDIT.value, None, None
-        if t == "number":
-            # Avoid QDoubleSpinBox widgets due to PySide6 incompatibilities in NodeGraphQt's PropDoubleSpinBox.
-            return NodePropWidgetEnum.QLINE_EDIT.value, None, None
-        if t == "string":
-            return NodePropWidgetEnum.QLINE_EDIT.value, None, None
-
-        # object/array/any (and unknowns) edited as JSON-ish text.
-        return NodePropWidgetEnum.QTEXT_EDIT.value, None, None
+        return _state_widget_for_schema_impl(value_schema)
 
     def sync_from_spec(self) -> None:
-        """
-        Rebuild runtime aspects derived from `self.spec`:
-        - ports (exec/data/state)
-        - state properties (adds any missing fields)
-        """
-        if not self.port_deletion_allowed():
-            self.set_port_deletion_allowed(True)
-
-        # Sync ports from spec.
-        #
-        # Important: NodeGraphQt `delete_input/delete_output` does not clear
-        # pipes. If ports are removed while still connected, NodeGraphQt can
-        # leave "dangling" pipes in the scene, crashing during paint.
-        desired_inputs: dict[str, dict[str, Any]] = {}
-        desired_outputs: dict[str, dict[str, Any]] = {}
-
-        def _port_has_connections(port: Any) -> bool:
-            if port is None:
-                return False
-            try:
-                return bool(port.connected_ports())
-            except Exception:
-                try:
-                    return bool(port.connected_ports)
-                except Exception:
-                    return False
-
-        for p in list(self.spec.dataInPorts or []):
-            try:
-                n = str(p.name or "").strip()
-            except Exception:
-                n = ""
-            if not n:
-                continue
-            port_name = f"[D]{n}"
-            show_on_node = self.data_port_show_on_node(n, is_in=True)
-            if not show_on_node:
-                try:
-                    if _port_has_connections(self.get_input(port_name)):
-                        show_on_node = True
-                except (AttributeError, RuntimeError, TypeError):
-                    pass
-            if show_on_node:
-                desired_inputs[port_name] = {"color": DATA_PORT_COLOR, "multi_input": False}
-
-        for p in list(self.spec.dataOutPorts or []):
-            try:
-                n = str(p.name or "").strip()
-            except Exception:
-                n = ""
-            if not n:
-                continue
-            port_name = f"{n}[D]"
-            show_on_node = self.data_port_show_on_node(n, is_in=False)
-            if not show_on_node:
-                try:
-                    if _port_has_connections(self.get_output(port_name)):
-                        show_on_node = True
-                except (AttributeError, RuntimeError, TypeError):
-                    pass
-            if show_on_node:
-                desired_outputs[port_name] = {"color": DATA_PORT_COLOR, "multi_output": True}
-
-        for s in list(self.effective_state_fields() or []):
-            info = _state_field_info(s)
-            if info is None or not info.show_on_node:
-                continue
-            if info.access in [F8StateAccess.rw, F8StateAccess.wo] or info.access_str in {"rw", "wo"}:
-                desired_inputs[f"[S]{info.name}"] = {
-                    "color": STATE_PORT_COLOR,
-                    "painter_func": draw_square_port,
-                    "multi_input": False,
-                }
-            if info.access in [F8StateAccess.rw, F8StateAccess.ro] or info.access_str in {"rw", "ro"}:
-                desired_outputs[f"{info.name}[S]"] = {
-                    "color": STATE_PORT_COLOR,
-                    "painter_func": draw_square_port,
-                    "multi_output": True,
-                }
-
-        # Remove ports that no longer exist in spec (disconnect first).
-        current_input_names = set(self.inputs().keys())
-        current_output_names = set(self.outputs().keys())
-        desired_input_names = set(desired_inputs.keys())
-        desired_output_names = set(desired_outputs.keys())
-
-        for name in sorted(current_input_names - desired_input_names):
-            try:
-                port = self.get_input(name)
-                if port is not None:
-                    try:
-                        port.clear_connections(push_undo=False, emit_signal=False)
-                    except (AttributeError, RuntimeError, TypeError):
-                        pass
-                self.delete_input(name)
-            except Exception as e:
-                logger.warning("Failed to delete input port %r: %s", name, e)
-
-        for name in sorted(current_output_names - desired_output_names):
-            try:
-                port = self.get_output(name)
-                if port is not None:
-                    try:
-                        port.clear_connections(push_undo=False, emit_signal=False)
-                    except (AttributeError, RuntimeError, TypeError):
-                        pass
-                self.delete_output(name)
-            except Exception as e:
-                logger.warning("Failed to delete output port %r: %s", name, e)
-
-        # Add new ports from spec.
-        current_input_names = set(self.inputs().keys())
-        current_output_names = set(self.outputs().keys())
-
-        for name in sorted(desired_input_names - current_input_names):
-            meta = desired_inputs.get(name) or {}
-            try:
-                self.add_input(
-                    name,
-                    multi_input=bool(meta.get("multi_input", False)),
-                    color=meta.get("color"),
-                    painter_func=meta.get("painter_func"),
-                )
-            except Exception as e:
-                logger.warning("Failed to add input port %r: %s", name, e)
-
-        for name in sorted(desired_output_names - current_output_names):
-            meta = desired_outputs.get(name) or {}
-            try:
-                self.add_output(
-                    name,
-                    multi_output=bool(meta.get("multi_output", True)),
-                    color=meta.get("color"),
-                    painter_func=meta.get("painter_func"),
-                )
-            except Exception as e:
-                logger.warning("Failed to add output port %r: %s", name, e)
-
-        # Best-effort cleanup for any orphaned port items left on the QGraphics node.
-        try:
-            view = self.view
-            valid_in_views = {p.view for p in self.input_ports()}
-            valid_out_views = {p.view for p in self.output_ports()}
-
-            try:
-                input_items = view._input_items
-            except Exception:
-                input_items = None
-            if isinstance(input_items, dict):
-                for port_item in list(input_items.keys()):
-                    if port_item in valid_in_views:
-                        continue
-                    text_item = input_items.pop(port_item, None)
-                    if text_item is None:
-                        continue
-                    try:
-                        port_item.setParentItem(None)
-                        text_item.setParentItem(None)
-                        if view.scene() is not None:
-                            view.scene().removeItem(port_item)
-                            view.scene().removeItem(text_item)
-                    except RuntimeError:
-                        pass
-
-            try:
-                output_items = view._output_items
-            except Exception:
-                output_items = None
-            if isinstance(output_items, dict):
-                for port_item in list(output_items.keys()):
-                    if port_item in valid_out_views:
-                        continue
-                    text_item = output_items.pop(port_item, None)
-                    if text_item is None:
-                        continue
-                    try:
-                        port_item.setParentItem(None)
-                        text_item.setParentItem(None)
-                        if view.scene() is not None:
-                            view.scene().removeItem(port_item)
-                            view.scene().removeItem(text_item)
-                    except RuntimeError:
-                        pass
-        except Exception:
-            logger.debug("sync_from_spec orphan port-item cleanup failed", exc_info=True)
-
-        self._build_state_properties()
-
-        try:
-            self.view.draw_node()
-        except Exception:
-            logger.debug("sync_from_spec draw_node failed", exc_info=True)
+        _sync_from_spec_impl(self)
 
 
 class F8StudioServiceNodeItem(AbstractNodeItem):
@@ -470,24 +268,11 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         self._svc_toolbar_proxy: QtWidgets.QGraphicsProxyWidget | None = None
         self._ports_end_y: float | None = None
         self._open_code_editors: list[QtWidgets.QDialog] = []
+        self._deferred_layout_pending: bool = False
+        self._in_draw_node: bool = False
 
     def _backend_node(self) -> Any | None:
-        """
-        Best-effort access to the backing BaseNode object for this view item.
-        """
-        g = self._graph()
-        if g is None:
-            return None
-        try:
-            node_id = str(self.id or "").strip()
-        except Exception:
-            node_id = ""
-        if not node_id:
-            return None
-        try:
-            return g.get_node_by_id(node_id)
-        except KeyError:
-            return None
+        return _backend_node_impl(self)
 
     def _inline_state_input_is_connected(self, field_name: str) -> bool:
         return _inline_state_input_is_connected_impl(self, field_name)
@@ -500,131 +285,31 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         _refresh_inline_state_read_only_impl(self)
 
     def _graph(self) -> Any | None:
-        viewer = self._viewer_safe()
-        if not isinstance(viewer, F8StudioNodeViewer):
-            return None
-        return viewer.f8_graph
+        return _graph_impl(self)
 
     def _viewer_safe(self) -> Any | None:
-        try:
-            return self.viewer()
-        except RuntimeError:
-            return None
+        return _viewer_safe_impl(self)
 
     def _ensure_graph_property_hook(self) -> None:
-        if self._graph_prop_hooked:
-            return
-        g = self._graph()
-        if g is None:
-            return
-        try:
-            g.property_changed.connect(self._on_graph_property_changed)  # type: ignore[attr-defined]
-        except (AttributeError, RuntimeError, TypeError):
-            self._graph_prop_hooked = False
-            return
-        self._graph_prop_hooked = True
+        _ensure_graph_property_hook_impl(self)
 
     def _select_node_from_embedded_widget(self) -> None:
-        """
-        Ensure node selection + property panel update when clicking embedded widgets.
-
-        QGraphicsProxyWidget-hosted controls (eg. state inline toggle headers)
-        can consume mouse events so the viewer never emits `node_selected`.
-        This makes parts of the node unselectable, and the properties panel will
-        not update. Call this from embedded widget handlers to keep behavior
-        consistent: clicking anywhere on the node selects it and updates props.
-        """
-        node = self._backend_node()
-        g = self._graph()
-        if node is None or g is None:
-            return
-        scene = None
-        try:
-            scene = self.scene()
-        except Exception:
-            scene = None
-
-        try:
-            mods = QtWidgets.QApplication.keyboardModifiers()
-        except Exception:
-            mods = QtCore.Qt.NoModifier
-        multi = bool(mods & (QtCore.Qt.ControlModifier | QtCore.Qt.ShiftModifier))
-
-        if scene is not None and not multi:
-            try:
-                scene.clearSelection()
-            except (AttributeError, RuntimeError, TypeError):
-                pass
-        try:
-            self.setSelected(True)
-        except (AttributeError, RuntimeError, TypeError):
-            pass
-
-        # Drive the studio properties panel (listens to graph signals).
-        try:
-            g.node_selected.emit(node)  # type: ignore[attr-defined]
-        except (AttributeError, RuntimeError, TypeError):
-            pass
-        try:
-            g.node_selection_changed.emit([node], [])  # type: ignore[attr-defined]
-        except (AttributeError, RuntimeError, TypeError):
-            pass
+        _select_node_from_embedded_widget_impl(self)
 
     def _bridge(self) -> ServiceBridge | None:
-        g = self._graph()
-        try:
-            return g.service_bridge if g is not None else None
-        except Exception:
-            return None
+        return _bridge_impl(self)
 
     def _ensure_bridge_process_hook(self) -> None:
-        if self._bridge_proc_hooked:
-            return
-        bridge = self._bridge()
-        if bridge is None:
-            return
-        try:
-            bridge.service_process_state.connect(self._on_bridge_service_process_state)  # type: ignore[attr-defined]
-        except Exception:
-            self._bridge_proc_hooked = False
-            return
-        self._bridge_proc_hooked = True
+        _ensure_bridge_process_hook_impl(self)
 
     def _is_service_running(self) -> bool:
-        bridge = self._bridge()
-        sid = self._service_id()
-        if bridge is None or not sid:
-            return False
-        try:
-            return bool(bridge.is_service_running(sid))
-        except Exception:
-            return False
+        return _is_service_running_impl(self)
 
     def _on_bridge_service_process_state(self, service_id: str, running: bool) -> None:
-        if str(service_id or "").strip() != self._service_id():
-            return
-        enabled = bool(running)
-        for b in list(self._cmd_buttons):
-            try:
-                b.setEnabled(enabled)
-                if not enabled:
-                    b.setToolTip(
-                        (b.toolTip() or "").strip()
-                        + ("\nService not running" if b.toolTip() else "Service not running")
-                    )
-            except (AttributeError, RuntimeError, TypeError):
-                continue
-        try:
-            QtCore.QTimer.singleShot(0, self.draw_node)
-        except (AttributeError, RuntimeError, TypeError):
-            pass
+        _on_bridge_service_process_state_impl(self, service_id, running)
 
     def _service_id(self) -> str:
-        # For service nodes, nodeId == serviceId.
-        try:
-            return str(self.id or "").strip()
-        except Exception:
-            return ""
+        return _current_service_id_impl(self)
 
     def _invoke_command(self, cmd: Any) -> None:
         _invoke_command_impl(self, cmd)
@@ -646,54 +331,140 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
 
     @staticmethod
     def _port_group(name: str) -> str:
-        n = str(name or "")
-        if n.startswith("[E]") or n.endswith("[E]"):
-            return "exec"
-        if n.startswith("[D]") or n.endswith("[D]"):
-            return "data"
-        if n.startswith("[S]") or n.endswith("[S]"):
-            return "state"
-        return "other"
+        return _port_group_impl(name)
 
     @staticmethod
     def _display_port_label(name: str, *, max_chars: int | None = None) -> str:
-        """
-        Display-friendly label for port text items.
-
-        Strip `[E]/[D]/[S]` markers (color already conveys kind), and optionally
-        elide to keep the state-field area compact.
-        """
-        n = str(name or "")
-        if n.startswith("[E]"):
-            n = n[3:]
-        elif n.endswith("[E]"):
-            n = n[:-3]
-        elif n.startswith("[D]"):
-            n = n[3:]
-        elif n.endswith("[D]"):
-            n = n[:-3]
-        elif n.startswith("[S]"):
-            n = n[3:]
-        elif n.endswith("[S]"):
-            n = n[:-3]
-        n = n.strip()
-        if max_chars is not None and max_chars > 0 and len(n) > max_chars:
-            return n[: max(1, max_chars - 1)] + "..."
-        return n
+        return _display_port_label_impl(name, max_chars=max_chars)
 
     @staticmethod
     def _schema_enum_items(value_schema: Any) -> list[str]:
-        return _shared_schema_enum_items(value_schema)
+        return _schema_enum_items_impl(value_schema)
 
     @staticmethod
     def _schema_numeric_range(value_schema: Any) -> tuple[float | None, float | None]:
-        return _shared_schema_numeric_range(value_schema)
+        return _schema_numeric_range_impl(value_schema)
 
-    def _make_state_inline_control(self, state_field: _StateFieldInfo) -> QtWidgets.QWidget:
-        return _make_state_inline_control_impl(self, state_field)
+    @staticmethod
+    def _parse_schema_port_view_name(view_name: str) -> tuple[str, bool, str] | None:
+        return _parse_schema_port_view_name_impl(view_name)
 
-    def _ensure_inline_state_widgets(self) -> None:
-        _ensure_inline_state_widgets_impl(self)
+    @staticmethod
+    def _schema_brief(value_schema: Any) -> str:
+        return _schema_brief_impl(value_schema)
+
+    def _find_data_port_spec(self, *, is_in: bool, port_name: str) -> tuple[Any, int] | None:
+        return _find_data_port_spec_impl(self, is_in=is_in, port_name=port_name)
+
+    def _data_port_tooltip(self, *, is_in: bool, port_name: str) -> str:
+        return _data_port_tooltip_impl(self, is_in=is_in, port_name=port_name)
+
+    def _find_state_field_spec(self, *, field_name: str) -> tuple[Any, int] | None:
+        return _find_state_field_spec_impl(self, field_name=field_name)
+
+    def _state_port_tooltip(self, *, is_in: bool, field_name: str) -> str:
+        return _state_port_tooltip_impl(self, is_in=is_in, field_name=field_name)
+
+    def _port_tooltip_text(self, view_name: str) -> str:
+        return _port_tooltip_text_impl(self, view_name)
+
+    def _refresh_port_tooltips(self) -> None:
+        _refresh_port_tooltips_impl(self)
+
+    def _open_data_port_schema_dialog(self, *, is_in: bool, port_name: str) -> None:
+        _open_data_port_schema_dialog_impl(self, is_in=is_in, port_name=port_name)
+
+    def _open_state_field_schema_dialog(self, *, field_name: str) -> None:
+        _open_state_field_schema_dialog_impl(self, field_name=field_name)
+
+    def _open_data_port_editor_dialog(self, *, is_in: bool, port_name: str) -> None:
+        _open_data_port_editor_dialog_impl(self, is_in=is_in, port_name=port_name)
+
+    def _find_effective_state_field(self, *, field_name: str) -> Any | None:
+        return _find_effective_state_field_impl(self, field_name=field_name)
+
+    def _open_state_field_editor_dialog(self, *, field_name: str) -> None:
+        _open_state_field_editor_dialog_impl(self, field_name=field_name)
+
+    def _on_port_right_click(self, port: Any, screen_pos: QtCore.QPoint) -> None:
+        _on_port_right_click_impl(self, port, screen_pos)
+
+    def _make_state_inline_control(
+        self,
+        state_field: _StateFieldInfo,
+        *,
+        parent: QtWidgets.QWidget | None = None,
+    ) -> QtWidgets.QWidget:
+        return _make_state_inline_control_impl(self, state_field, parent=parent)
+
+    def _ensure_inline_state_widgets(self) -> bool:
+        return bool(_ensure_inline_state_widgets_impl(self))
+
+    def _schedule_deferred_draw_node(self) -> None:
+        if self._deferred_layout_pending:
+            return
+        self._deferred_layout_pending = True
+
+        def _run() -> None:
+            self._deferred_layout_pending = False
+            if self._in_draw_node:
+                self._schedule_deferred_draw_node()
+                return
+            try:
+                self.draw_node()
+            except Exception:
+                logger.exception("Deferred draw_node failed for node item id=%s", str(self.id or ""))
+
+        try:
+            QtCore.QTimer.singleShot(0, _run)
+        except (AttributeError, RuntimeError, TypeError):
+            self._deferred_layout_pending = False
+            _run()
+
+    def _measure_state_panel_height(
+        self,
+        state_name: str,
+        *,
+        default_header_h: float,
+        target_inner_w: float | None = None,
+    ) -> float:
+        panel_h = float(default_header_h)
+        proxy = self._state_inline_proxies.get(str(state_name or ""))
+        if proxy is None:
+            return panel_h
+        try:
+            if not proxy.isVisible():
+                return panel_h
+        except (AttributeError, RuntimeError, TypeError):
+            return panel_h
+
+        inner_w = target_inner_w
+        if inner_w is None:
+            try:
+                inner_w = float(max(10.0, self.boundingRect().width() - 8.0))
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                inner_w = 10.0
+        try:
+            widget = proxy.widget()
+            if widget is not None:
+                widget.setFixedWidth(int(max(10.0, float(inner_w))))
+                layout = widget.layout()
+                if layout is not None:
+                    layout.activate()
+                widget.adjustSize()
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            pass
+        try:
+            proxy.updateGeometry()
+        except (AttributeError, RuntimeError, TypeError):
+            pass
+        try:
+            measured = float(proxy.boundingRect().height())
+            if measured > panel_h:
+                panel_h = measured
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            pass
+        return panel_h
 
     def post_init(self, viewer=None, pos=None):
         """
@@ -766,7 +537,7 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         zoom = None
         try:
             zoom = float(v.get_zoom()) if v is not None else None
-        except Exception:
+        except (AttributeError, RuntimeError, TypeError, ValueError, KeyError, ImportError, OSError):
             zoom = None
         pen.setCosmetic(bool(zoom is not None and zoom < 0.0))
         path = QtGui.QPainterPath()
@@ -822,7 +593,7 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         zoom = None
         try:
             zoom = float(v.get_zoom()) if v is not None else None
-        except Exception:
+        except (AttributeError, RuntimeError, TypeError, ValueError, KeyError, ImportError, OSError):
             zoom = None
         pen.setCosmetic(bool(zoom is not None and zoom < 0.0))
         painter.setBrush(QtCore.Qt.NoBrush)
@@ -925,7 +696,7 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         old_rect = None
         try:
             old_rect = self.boundingRect()
-        except Exception:
+        except (AttributeError, RuntimeError, TypeError, ValueError, KeyError, ImportError, OSError):
             old_rect = None
 
         w, h = self.calc_size(add_w, add_h)
@@ -937,7 +708,7 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         changed = True
         try:
             changed = bool(abs(float(w) - float(self._width)) > 0.01 or abs(float(h) - float(self._height)) > 0.01)
-        except Exception:
+        except (AttributeError, RuntimeError, TypeError, ValueError, KeyError, ImportError, OSError):
             changed = True
 
         if changed:    
@@ -1010,7 +781,7 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         for port in ports:
             try:
                 connected_pipes = list(port.connected_pipes)
-            except Exception:
+            except (AttributeError, RuntimeError, TypeError, ValueError, KeyError, ImportError, OSError):
                 continue
             for pipe in connected_pipes:
                 pipe_key = id(pipe)
@@ -1019,20 +790,20 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
                 seen_pipe_ids.add(pipe_key)
                 try:
                     pipe.update()
-                except Exception:
+                except (AttributeError, RuntimeError, TypeError, ValueError, KeyError, ImportError, OSError):
                     continue
 
         scene = self.scene()
         if scene is not None:
             try:
                 scene.update()
-            except Exception:
+            except (AttributeError, RuntimeError, TypeError, ValueError, KeyError, ImportError, OSError):
                 pass
         viewer = self._viewer_safe()
         if viewer is not None:
             try:
                 viewer.viewport().update()
-            except Exception:
+            except (AttributeError, RuntimeError, TypeError, ValueError, KeyError, ImportError, OSError):
                 pass
 
     def _calc_size_horizontal(self):
@@ -1141,28 +912,9 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
                         header = self._state_inline_headers.get(sname)
                         if header is not None:
                             header_h = float(max(port_height, header.sizeHint().height()))
-                    except Exception:
+                    except (AttributeError, RuntimeError, TypeError, ValueError, KeyError, ImportError, OSError):
                         header_h = port_height
-                    # Size hint for the expanded body depends on width (options wrap).
-                    # Use the proxy widget bounding rect after forcing a best-effort width.
-                    panel_h = header_h
-                    try:
-                        proxy = self._state_inline_proxies.get(sname)
-                        if proxy is not None and proxy.isVisible():
-                            try:
-                                w = proxy.widget()
-                                if w is not None:
-                                    rect_w = max(10, int(self.boundingRect().width() - 8.0))
-                                    w.setFixedWidth(rect_w)
-                                    w.adjustSize()
-                            except (AttributeError, RuntimeError, TypeError, ValueError):
-                                pass
-                            try:
-                                panel_h = float(max(header_h, proxy.boundingRect().height()))
-                            except Exception:
-                                panel_h = header_h
-                    except Exception:
-                        panel_h = header_h
+                    panel_h = self._measure_state_panel_height(sname, default_header_h=header_h)
                     ports_h += panel_h + spacing
                 ports_h = max(0.0, ports_h - spacing)  # remove trailing row spacing
 
@@ -1178,9 +930,11 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         widget_height = 0.0
         # Ensure state inline widgets exist so we can account for width.
         try:
-            self._ensure_inline_state_widgets()
+            layout_dirty = bool(self._ensure_inline_state_widgets())
         except (AttributeError, RuntimeError, TypeError):
-            pass
+            layout_dirty = False
+        if layout_dirty:
+            self._schedule_deferred_draw_node()
         try:
             self._ensure_inline_command_widget()
         except (AttributeError, RuntimeError, TypeError):
@@ -1339,6 +1093,61 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         else:
             raise RuntimeError("Node graph layout direction not valid!")
 
+    def _content_rect_for_widgets(self, *, top_y: float) -> tuple[float, float, float, float]:
+        """
+        Compute available node-inner content rect for embedded widgets.
+        """
+        rect = self.boundingRect()
+        return content_rect_with_minimum(
+            x=rect.left() + 4.0,
+            y=top_y,
+            width=rect.width() - 8.0,
+            height=rect.bottom() - top_y - 4.0,
+            minimum=(10, 10),
+        )
+
+    def _apply_widget_resize_policy(
+        self,
+        widget_proxy: Any,
+        *,
+        content_rect: tuple[float, float, float, float],
+    ) -> bool:
+        """
+        Apply optional node->widget resize contract.
+
+        Returns:
+            bool: True when resize was applied via `ResizableEmbeddedWidget`.
+        """
+        if not isinstance(widget_proxy, ResizableEmbeddedWidget):
+            return False
+
+        try:
+            min_size = widget_proxy.minimum_content_size()
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return False
+        target_w, target_h = clamp_content_size(
+            width=float(content_rect[2]),
+            height=float(content_rect[3]),
+            minimum=min_size,
+        )
+        try:
+            widget_proxy.apply_content_rect(target_w, target_h)
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return False
+
+        try:
+            widget_proxy.prepareGeometryChange()
+        except (AttributeError, RuntimeError, TypeError):
+            pass
+        try:
+            qwidget = widget_proxy.widget()
+            if qwidget is None:
+                return True
+            qwidget.adjustSize()
+        except (AttributeError, RuntimeError, TypeError):
+            return True
+        return True
+
     def _align_widgets_horizontal(self, v_offset):
         rect = self.boundingRect()
         inputs = [p for p in self.inputs if p.isVisible()]
@@ -1348,7 +1157,6 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         cmd_bottom = None
         if self._cmd_proxy is not None and self._cmd_proxy.isVisible():
             try:
-                rect = self.boundingRect()
                 y = float(self._ports_end_y or (rect.y() + v_offset))
                 # Force the underlying QWidget to take the full available width.
                 try:
@@ -1361,7 +1169,7 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
                 x = rect.left() + 4.0
                 self._cmd_proxy.setPos(x, y + 6.0)
                 cmd_bottom = y + 6.0 + w_rect.height()
-            except Exception:
+            except (AttributeError, RuntimeError, TypeError, ValueError):
                 cmd_bottom = None
 
         if not self._widgets:
@@ -1377,8 +1185,13 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         for widget in self._widgets.values():
             if not widget.isVisible():
                 continue
+            content_rect = self._content_rect_for_widgets(top_y=y)
+            resized = self._apply_widget_resize_policy(widget, content_rect=content_rect)
             widget_rect = widget.boundingRect()
-            if not inputs:
+            if resized:
+                x = float(content_rect[0])
+                widget.widget().setTitleAlign("center")
+            elif not inputs:
                 x = rect.left() + 10
                 widget.widget().setTitleAlign("left")
             elif not outputs:
@@ -1406,9 +1219,15 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         for widget in self._widgets.values():
             if not widget.isVisible():
                 continue
+            content_rect = self._content_rect_for_widgets(top_y=y)
+            resized = self._apply_widget_resize_policy(widget, content_rect=content_rect)
             widget_rect = widget.boundingRect()
-            x = rect.center().x() - (widget_rect.width() / 2)
-            widget.widget().setTitleAlign("center")
+            if resized:
+                x = float(content_rect[0])
+                widget.widget().setTitleAlign("center")
+            else:
+                x = rect.center().x() - (widget_rect.width() / 2)
+                widget.widget().setTitleAlign("center")
             widget.setPos(x, y)
             y += widget_rect.height()
 
@@ -1434,9 +1253,11 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
 
         # Ensure inline widgets exist before aligning so sizing + rows match.
         try:
-            self._ensure_inline_state_widgets()
+            layout_dirty = bool(self._ensure_inline_state_widgets())
         except (AttributeError, RuntimeError, TypeError):
-            pass
+            layout_dirty = False
+        if layout_dirty:
+            self._schedule_deferred_draw_node()
 
         node = self._backend_node()
         if node is None:
@@ -1444,17 +1265,17 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         else:
             try:
                 spec = node.spec
-            except Exception:
+            except (AttributeError, RuntimeError, TypeError):
                 spec = None
         try:
             eff_states = list(node.effective_state_fields() or []) if node is not None else []
-        except Exception:
+        except (AttributeError, RuntimeError, TypeError, ValueError):
             if spec is None:
                 eff_states = []
             else:
                 try:
                     eff_states = list(spec.stateFields or [])
-                except Exception:
+                except (AttributeError, RuntimeError, TypeError, ValueError):
                     eff_states = []
 
         # Build ordered port name lists per group.
@@ -1475,7 +1296,7 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
                     port_name = f"{p.name}[D]"
                     if node.data_port_show_on_node(str(p.name or ""), is_in=False) or port_name in existing_out:
                         data_out_names.append(port_name)
-            except Exception:
+            except (AttributeError, RuntimeError, TypeError, ValueError):
                 data_in_names = []
                 data_out_names = []
 
@@ -1583,7 +1404,7 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
                 state_key = state_names[i] if i < len(state_names) else None
                 panel_proxy = self._state_inline_proxies.get(state_key) if state_key else None
                 header_h = port_height
-                body_h = 0.0
+                panel_h = header_h
                 if state_key and panel_proxy is not None:
                     # Ensure width is up to date before measuring heights (option rows wrap by width).
                     try:
@@ -1598,14 +1419,13 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
                             header_h = float(
                                 max(port_height, self._state_inline_headers[state_key].sizeHint().height())
                             )
-                    except Exception:
+                    except (AttributeError, RuntimeError, TypeError, ValueError):
                         header_h = port_height
-                    try:
-                        body_w = self._state_inline_bodies.get(state_key)
-                        if body_w is not None and body_w.isVisible():
-                            body_h = float(max(0.0, body_w.sizeHint().height()))
-                    except Exception:
-                        body_h = 0.0
+                    panel_h = self._measure_state_panel_height(
+                        state_key,
+                        default_header_h=header_h,
+                        target_inner_w=float(inner_w),
+                    )
                     try:
                         # Center panels using their *actual* width. Some controls
                         # can enforce minimum sizes that override our target width,
@@ -1635,9 +1455,7 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
 
                 port_y = y + (header_h - port_height) / 2.0
                 place_row(in_name, out_name, y=port_y)
-                y += header_h + spacing
-                if body_h > 0.0:
-                    y += body_h + spacing
+                y += panel_h + spacing
             # group gap (except after last visible group)
             # determine if any later group has rows.
             has_later = False
@@ -1710,9 +1528,11 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
 
     def _draw_node_horizontal(self):
         try:
-            self._ensure_inline_state_widgets()
+            layout_dirty = bool(self._ensure_inline_state_widgets())
         except (AttributeError, RuntimeError, TypeError):
-            pass
+            layout_dirty = False
+        if layout_dirty:
+            self._schedule_deferred_draw_node()
         try:
             self._ensure_inline_command_widget()
         except (AttributeError, RuntimeError, TypeError):
@@ -1787,13 +1607,20 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         Re-draw the node item in the scene with proper
         calculated size and widgets aligned.
         """
-        if self.layout_direction is LayoutDirectionEnum.HORIZONTAL.value:
-            self._draw_node_horizontal()
-        elif self.layout_direction is LayoutDirectionEnum.VERTICAL.value:
-            self._draw_node_vertical()
-        else:
-            raise RuntimeError("Node graph layout direction not valid!")
-        self._position_service_toolbar()
+        if self._in_draw_node:
+            return
+        self._in_draw_node = True
+        try:
+            if self.layout_direction is LayoutDirectionEnum.HORIZONTAL.value:
+                self._draw_node_horizontal()
+            elif self.layout_direction is LayoutDirectionEnum.VERTICAL.value:
+                self._draw_node_vertical()
+            else:
+                raise RuntimeError("Node graph layout direction not valid!")
+            self._refresh_port_tooltips()
+            self._position_service_toolbar()
+        finally:
+            self._in_draw_node = False
 
     def post_init(self, viewer=None, pos=None):
         """
@@ -1814,107 +1641,16 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
             self._position_service_toolbar()
 
     def _ensure_service_toolbar(self, viewer: Any | None) -> None:
-        if self._svc_toolbar_proxy is not None:
-            return
-        service_id = self._current_service_id()
-        if not service_id:
-            return
-
-        def _resolve_graph() -> Any | None:
-            # Prefer the viewer passed by NodeGraphQt (more reliable than self.viewer() during init).
-            try:
-                if isinstance(viewer, F8StudioNodeViewer) and viewer.f8_graph is not None:
-                    return viewer.f8_graph
-            except (AttributeError, RuntimeError, TypeError):
-                pass
-            return self._graph()
-
-        def _get_bridge() -> ServiceBridge | None:
-            g = _resolve_graph()
-            try:
-                return g.service_bridge if g is not None else None
-            except Exception:
-                return None
-
-        def _get_node() -> Any | None:
-            g = _resolve_graph()
-            if g is None:
-                return None
-            try:
-                return g.get_node_by_id(self._current_service_id())
-            except Exception:
-                return None
-
-        def _get_service_class() -> str:
-            try:
-                n = _get_node() or self._backend_node()
-                if n is None:
-                    return ""
-                spec = n.spec
-                return str(spec.serviceClass or "")
-            except Exception:
-                return ""
-
-        def _get_compiled_graphs() -> Any | None:
-            try:
-                g = _resolve_graph() or self._graph()
-                if g is None:
-                    return None
-                from .runtime_compiler import compile_runtime_graphs_from_studio
-
-                return compile_runtime_graphs_from_studio(g)
-            except Exception:
-                return None
-
-        try:
-            w = ServiceProcessToolbar(
-                service_id=service_id,
-                get_bridge=_get_bridge,
-                get_node=_get_node,
-                get_service_class=_get_service_class,
-                get_compiled_graphs=_get_compiled_graphs,
-            )
-            proxy = QtWidgets.QGraphicsProxyWidget(self)
-            proxy.setWidget(w)
-            proxy.setZValue(10_000)
-            proxy.setCacheMode(QtWidgets.QGraphicsItem.DeviceCoordinateCache)
-            self._svc_toolbar_proxy = proxy
-        except Exception:
-            self._svc_toolbar_proxy = None
+        _ensure_service_toolbar_impl(self, viewer)
 
     def _current_service_id(self) -> str:
-        try:
-            return str(self.id or "").strip()
-        except (AttributeError, RuntimeError, TypeError):
-            return ""
+        return _toolbar_current_service_id_impl(self)
 
     def refresh_service_identity_bindings(self) -> None:
-        proxy = self._svc_toolbar_proxy
-        if proxy is None:
-            return
-        try:
-            widget = proxy.widget()
-        except (AttributeError, RuntimeError, TypeError):
-            widget = None
-        if isinstance(widget, ServiceProcessToolbar):
-            widget.set_service_id(self._current_service_id())
-        self._position_service_toolbar()
+        _refresh_service_identity_bindings_impl(self)
 
     def _position_service_toolbar(self) -> None:
-        proxy = self._svc_toolbar_proxy
-        if proxy is None:
-            return
-        try:
-            rect = self.boundingRect()
-            w = float(proxy.size().width() or 0.0)
-            h = float(proxy.size().height() or 0.0)
-        except (AttributeError, RuntimeError, TypeError, ValueError):
-            return
-
-        try:
-            proxy.setPos(rect.right() - w, rect.top() - h)
-        except (AttributeError, RuntimeError, TypeError):
-            pass
+        _position_service_toolbar_impl(self)
 
     def auto_switch_mode(self):
         """
@@ -1977,7 +1713,7 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         for port, text in self._input_items.items():
             try:
                 is_state = self._port_group(_port_name(port)) == "state"
-            except Exception:
+            except (AttributeError, RuntimeError, TypeError, ValueError):
                 is_state = False
             should_show = bool(port_text_visible and port.display_name and not is_state)
             text.setVisible(should_show)
@@ -1986,7 +1722,7 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         for port, text in self._output_items.items():
             try:
                 is_state = self._port_group(_port_name(port)) == "state"
-            except Exception:
+            except (AttributeError, RuntimeError, TypeError, ValueError):
                 is_state = False
             should_show = bool(port_text_visible and port.display_name and not is_state)
             text.setVisible(should_show)
@@ -2113,164 +1849,60 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         return list(self._output_items.keys())
 
     def _add_port(self, port):
-        """
-        Adds a port qgraphics item into the node.
-
-        Args:
-            port (PortItem): port item.
-
-        Returns:
-            PortItem: port qgraphics item.
-        """
-        full_name = str(port.name or "")
-        group = self._port_group(full_name)
-        # Aggressively elide state port labels to reduce width usage.
-        max_chars = 10 if group == "state" else 18
-        label = self._display_port_label(full_name, max_chars=max_chars)
-        text = QtWidgets.QGraphicsTextItem(label, self)
-        text.font().setPointSize(8)
-        text.setFont(text.font())
-        text.setVisible(port.display_name)
-        text.setCacheMode(ITEM_CACHE_MODE)
-        try:
-            text.setToolTip(full_name)
-        except (AttributeError, RuntimeError, TypeError):
-            pass
-        if port.port_type == PortTypeEnum.IN.value:
-            self._input_items[port] = text
-        elif port.port_type == PortTypeEnum.OUT.value:
-            self._output_items[port] = text
-        if self.scene():
-            self.post_init()
-        return port
+        return _add_port_impl(self, port)
 
     def add_input(self, name="input", multi_port=False, display_name=True, locked=False, painter_func=None):
-        """
-        Adds a port qgraphics item into the node with the "port_type" set as
-        IN_PORT.
-
-        Args:
-            name (str): name for the port.
-            multi_port (bool): allow multiple connections.
-            display_name (bool): display the port name.
-            locked (bool): locked state.
-            painter_func (function): custom paint function.
-
-        Returns:
-            PortItem: input port qgraphics item.
-        """
-        if painter_func:
-            port = CustomPortItem(self, painter_func)
-        else:
-            port = PortItem(self)
-        port.name = name
-        port.port_type = PortTypeEnum.IN.value
-        port.multi_connection = multi_port
-        port.display_name = display_name
-        port.locked = locked
-        return self._add_port(port)
+        return _add_input_impl(
+            self,
+            port_name=name,
+            multi_port=multi_port,
+            display_name=display_name,
+            locked=locked,
+            painter_func=painter_func,
+            port_item_cls=F8StudioPortItem,
+            custom_port_item_cls=F8StudioCustomPortItem,
+        )
 
     def add_output(self, name="output", multi_port=False, display_name=True, locked=False, painter_func=None):
-        """
-        Adds a port qgraphics item into the node with the "port_type" set as
-        OUT_PORT.
-
-        Args:
-            name (str): name for the port.
-            multi_port (bool): allow multiple connections.
-            display_name (bool): display the port name.
-            locked (bool): locked state.
-            painter_func (function): custom paint function.
-
-        Returns:
-            PortItem: output port qgraphics item.
-        """
-        if painter_func:
-            port = CustomPortItem(self, painter_func)
-        else:
-            port = PortItem(self)
-        port.name = name
-        port.port_type = PortTypeEnum.OUT.value
-        port.multi_connection = multi_port
-        port.display_name = display_name
-        port.locked = locked
-        return self._add_port(port)
+        return _add_output_impl(
+            self,
+            port_name=name,
+            multi_port=multi_port,
+            display_name=display_name,
+            locked=locked,
+            painter_func=painter_func,
+            port_item_cls=F8StudioPortItem,
+            custom_port_item_cls=F8StudioCustomPortItem,
+        )
 
     def _delete_port(self, port, text):
-        """
-        Removes port item and port text from node.
-
-        Args:
-            port (PortItem): port object.
-            text (QtWidgets.QGraphicsTextItem): port text object.
-        """
-        port.setParentItem(None)
-        text.setParentItem(None)
-        scene = self.scene()
-        if scene is not None:
-            scene.removeItem(port)
-            scene.removeItem(text)
-        del port
-        del text
+        _delete_port_impl(self, port=port, text=text)
 
     def delete_input(self, port):
-        """
-        Remove input port from node.
-
-        Args:
-            port (PortItem): port object.
-        """
-        self._delete_port(port, self._input_items.pop(port))
+        _delete_input_impl(self, port)
 
     def delete_output(self, port):
-        """
-        Remove output port from node.
-
-        Args:
-            port (PortItem): port object.
-        """
-        self._delete_port(port, self._output_items.pop(port))
+        _delete_output_impl(self, port)
 
     def get_input_text_item(self, port_item):
-        """
-        Args:
-            port_item (PortItem): port item.
-
-        Returns:
-            QGraphicsTextItem: graphic item used for the port text.
-        """
-        return self._input_items[port_item]
+        return _get_input_text_item_impl(self, port_item)
 
     def get_output_text_item(self, port_item):
-        """
-        Args:
-            port_item (PortItem): port item.
-
-        Returns:
-            QGraphicsTextItem: graphic item used for the port text.
-        """
-        return self._output_items[port_item]
+        return _get_output_text_item_impl(self, port_item)
 
     @property
     def widgets(self):
-        return self._widgets.copy()
+        return _widgets_impl(self)
 
     def add_widget(self, widget):
-        self._widgets[widget.get_name()] = widget
+        _add_widget_impl(self, widget)
 
     def get_widget(self, name):
-        widget = self._widgets.get(name)
-        if widget:
-            return widget
-        raise NodeWidgetError('node has no widget "{}"'.format(name))
+        return _get_widget_impl(self, name)
 
     def has_widget(self, name):
-        return name in self._widgets.keys()
+        return _has_widget_impl(self, name)
 
     def from_dict(self, node_dict):
         super().from_dict(node_dict)
-        custom_prop = node_dict.get("custom") or {}
-        for prop_name, value in custom_prop.items():
-            prop_widget = self._widgets.get(prop_name)
-            if prop_widget:
-                prop_widget.set_value(value)
+        _ports_from_dict_impl(self, node_dict)

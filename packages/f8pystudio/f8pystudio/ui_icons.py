@@ -16,12 +16,14 @@ class StudioIcon(Enum):
     PLAY = "play.svg"
     PAUSE = "pause.svg"
     REFRESH = "refresh.svg"
-    REDO = "redo.svg"
+    TRANSFER = "transfer.svg"
+    RESTART = "rotate-clockwise-2.svg"
     TOGGLE_ON = "toggle-on.svg"
     TOGGLE_OFF = "toggle-off.svg"
     CODE = "code.svg"
     EYE = "eye.svg"
     EYE_SLASH = "eye-slash.svg"
+    AUTOMATION = "automation.svg"
 
 
 def icon_for(widget: QtWidgets.QWidget, token: StudioIcon) -> QtGui.QIcon:

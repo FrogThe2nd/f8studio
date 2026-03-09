@@ -3,7 +3,9 @@ from __future__ import annotations
 from f8pystudio.constants import SERVICE_CLASS as STUDIO_SERVICE_CLASS
 from f8pystudio.nodegraph.operator_basenode import F8StudioOperatorBaseNode
 from f8pystudio.nodegraph.service_basenode import F8StudioServiceBaseNode
+from f8pystudio.operators.note import OPERATOR_CLASS as NOTE_OPERATOR_CLASS
 from f8pystudio.pystudio_node_registry import register_pystudio_specs
+from f8pystudio.render_nodes.note import NoteRenderNode
 from f8pystudio.render_nodes.registry import RenderNodeRegistry
 from f8pysdk.service_runtime_tools.catalog import ServiceCatalog
 from f8pysdk.service_runtime_tools.discovery import load_discovery_into_catalog
@@ -70,3 +72,28 @@ def test_renderer_registry_fallback_service_and_operator() -> None:
     op = reg.get("not_registered_operator_renderer", node_kind="operator")
     assert svc is F8StudioServiceBaseNode
     assert op is F8StudioOperatorBaseNode
+
+
+def test_discovery_registers_note_operator_spec() -> None:
+    catalog = _reset_service_catalog()
+    load_discovery_into_catalog(
+        roots=[],
+        catalog=catalog,
+        builtin_injectors=(_inject_builtin_pystudio_specs,),
+    )
+
+    note = next((op for op in catalog.operators.all() if op.operatorClass == NOTE_OPERATOR_CLASS), None)
+    assert note is not None
+    assert list(note.dataInPorts or []) == []
+    assert list(note.dataOutPorts or []) == []
+    assert list(note.execInPorts or []) == []
+    assert list(note.execOutPorts or []) == []
+    state_fields = list(note.stateFields or [])
+    assert len(state_fields) == 1
+    assert state_fields[0].name == "content"
+
+
+def test_renderer_registry_resolves_note_renderer() -> None:
+    reg = RenderNodeRegistry()
+    renderer = reg.get("note_markdown", node_kind="operator")
+    assert renderer is NoteRenderNode

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from f8pysdk.msgspec_codec import dump_json, validate_as
 import concurrent.futures
 import json
 import logging
@@ -17,6 +18,7 @@ import yaml
 
 from f8pysdk.generated import F8ServiceDescribe, F8ServiceEntry
 from f8pysdk.builtin_state_fields import normalize_describe_payload_dict
+from f8pysdk.monitor_schema import MonitorContractError, validate_describe_monitor_contract
 
 from .catalog import ServiceCatalog
 
@@ -130,7 +132,7 @@ def find_service_dirs(roots: Iterable[Path]) -> list[Path]:
 
 def _absolutize_entry_paths(entry: F8ServiceEntry, *, service_dir: Path) -> F8ServiceEntry:
     service_dir = Path(service_dir).resolve()
-    payload = entry.model_dump(mode="json")
+    payload = dump_json(entry, mode="json")
 
     launch = dict(payload.get("launch") or {})
     wd = str(launch.get("workdir") or "./")
@@ -153,7 +155,7 @@ def _absolutize_entry_paths(entry: F8ServiceEntry, *, service_dir: Path) -> F8Se
         pass
 
     payload["launch"] = launch
-    return F8ServiceEntry.model_validate(payload)
+    return validate_as(F8ServiceEntry, payload)
 
 
 def load_service_entry(service_dir: Path) -> F8ServiceEntry:
@@ -203,7 +205,7 @@ def load_service_entry(service_dir: Path) -> F8ServiceEntry:
         raise ValueError(f"{service_dir} is missing a service entry YAML (tried: {tried})")
 
     if "launch" not in data and "command" in data:
-        launch = F8ServiceEntry.model_validate(
+        launch = validate_as(F8ServiceEntry, 
             {
                 "command": data.get("command"),
                 "args": data.get("args") or [],
@@ -212,10 +214,10 @@ def load_service_entry(service_dir: Path) -> F8ServiceEntry:
             }
         )
         data = dict(data)
-        data["launch"] = launch.model_dump(mode="json")
+        data["launch"] = dump_json(launch, mode="json")
 
     try:
-        entry = F8ServiceEntry.model_validate(data)
+        entry = validate_as(F8ServiceEntry, data)
     except Exception as exc:
         raise ValueError(f"Invalid service entry in {service_dir}: {exc}") from exc
 
@@ -395,10 +397,17 @@ def _describe_entry(service_dir: Path, entry: F8ServiceEntry) -> dict[str, Any] 
     if not isinstance(data, dict):
         return None
     data = normalize_describe_payload_dict(data)
+    try:
+        validate_describe_monitor_contract(data)
+    except MonitorContractError as exc:
+        msg = f"describe monitor contract invalid for {service_dir}: {exc}"
+        _discovery_add_error(msg)
+        logger.error(msg)
+        return None
 
     try:
-        payload = F8ServiceDescribe.model_validate(data)
-        data = payload.model_dump(mode="json")
+        payload = validate_as(F8ServiceDescribe, data)
+        data = dump_json(payload, mode="json")
     except Exception:
         if "service" not in data:
             msg = f"describe JSON missing required key 'service' for {service_dir}: {' '.join(cmd)}"
@@ -411,7 +420,7 @@ def _describe_entry(service_dir: Path, entry: F8ServiceEntry) -> dict[str, Any] 
     try:
         service_payload = data.get("service") or {}
         if isinstance(service_payload, dict) and not service_payload.get("launch"):
-            service_payload["launch"] = entry.launch.model_dump(mode="json")
+            service_payload["launch"] = dump_json(entry.launch, mode="json")
             data["service"] = service_payload
     except (AttributeError, RuntimeError, TypeError, ValueError):
         pass

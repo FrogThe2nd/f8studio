@@ -76,6 +76,7 @@ json state_field(std::string name, const json& value_schema, std::string access,
   sf["name"] = std::move(name);
   sf["valueSchema"] = value_schema;
   sf["access"] = std::move(access);
+  sf["required"] = true;
   if (!label.empty())
     sf["label"] = std::move(label);
   if (!description.empty())
@@ -645,17 +646,6 @@ void ImPlayerService::tick() {
   if (now - last_state_pub_ms_ >= 200) {
     publish_dynamic_state();
     last_state_pub_ms_ = now;
-  }
-
-  // High-frequency signals go through the data bus, not KV state.
-  if (shm_) {
-    const auto frame_id = shm_->frameId();
-    if (frame_id != last_frame_id_published_) {
-      last_frame_id_published_ = frame_id;
-      if (bus_) {
-        (void)f8::cppsdk::publish_data(bus_->nats(), cfg_.service_id, cfg_.service_id, "frameId", frame_id, now);
-      }
-    }
   }
 
   if (now - last_playback_data_pub_ms_ >= 200) {
@@ -1425,14 +1415,6 @@ bool ImPlayerService::open_media_internal(const std::string& url, bool keep_play
     player_->pause();
   }
 
-  json media_evt;
-  {
-    std::lock_guard<std::mutex> lock(state_mu_);
-    media_evt = json{{"videoId", video_id_}, {"url", media_url_}};
-  }
-  if (bus_) {
-    (void)f8::cppsdk::publish_data(bus_->nats(), cfg_.service_id, cfg_.service_id, "media", media_evt);
-  }
   return true;
 }
 
@@ -1801,25 +1783,14 @@ json ImPlayerService::describe() {
   });
 
   service["dataOutPorts"] = json::array({
-      json{{"name", "media"},
-           {"valueSchema", schema_object(json{{"videoId", schema_string()}, {"url", schema_string()}},
-                                         json::array({"videoId", "url"}))},
-           {"description", "Emitted when a new media is opened (videoId + url)."},
-           {"required", false},
-           {"showOnNode", false}},
       json{{"name", "playback"},
            {"valueSchema", schema_object(json{{"videoId", schema_string()},
                                               {"position", schema_number()},
                                               {"duration", schema_number()},
                                               {"playing", schema_boolean()}},
                                          json::array({"videoId", "position"}))},
-           {"description", "Playback telemetry stream (position/duration/playing)."},
-           {"required", false},
-           {"showOnNode", false}},
-      json{{"name", "frameId"},
-           {"valueSchema", schema_integer()},
-           {"description", "Monotonic frame counter for new shm frames."},
-           {"required", false},
+           {"description", "Playback state stream (position/duration/playing)."},
+           {"required", true},
            {"showOnNode", false}},
   });
   service["commands"] = json::array({

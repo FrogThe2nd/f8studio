@@ -1,60 +1,39 @@
 # Studio (GUI)
 
-`f8pystudio` is the interactive node-graph environment for assembling and operating service graphs.
+`f8pystudio` is the visual node-graph environment for building, debugging, and deploying Feel8 service graphs.
 
 ## Launch
 
 ```bash
-pixi run -e default studio
+pixi run -e default f8pystudio
 ```
 
-Force live describe discovery (ignore static `describe.json`):
+For live discovery during development:
 
 ```bash
 python -m f8pystudio.main --discovery-live
 ```
 
-## Typical Workflow
+## 5-Minute Workflow
 
-1. Start Studio.
-2. Add service nodes from the service library.
-3. Configure service state fields in the property panel.
-4. Add operator nodes where needed (primarily in `f8.pyengine`).
-5. Wire state/data/exec edges.
-6. Save session JSON for reuse in headless mode.
+1. Place a runtime host such as `PyEngine`
+2. Place service producers/consumers such as `IM Player` or `CVKit Tracking`
+3. Place operators and set each operator `Service Id` to the host service node `id`
+4. Configure required state fields
+5. Wire `Exec`, `Data`, and `State` edges
+6. Use `Ctrl+R` to compile and `F5` to deploy
 
-## Edge Rules
+## Where To Go Next
 
-Studio enforces 3 independent edge kinds:
+- [PyStudio Guide](../pystudio/index.md) for the full editor manual
+- [Node Atlas](../node-atlas/index.md) for node-by-node usage guidance
+- [Modules Overview](../modules/index.md) for canonical service/operator specs
+- [Scenarios](../scenarios/index.md) for complete runnable examples
 
-- `exec` (white, thick line)
-- `data` (gray line)
-- `state` (yellow line)
+## Common First Problems
 
-Rules:
+1. Operator does not run: check `Service Id`
+2. Ports do not connect: check edge type and schema intent
+3. Deploy is rejected: check required state fields and disabled nodes
+4. Graph looks right in canvas but not at runtime: check actual service lifecycle state
 
-- `exec` can only connect `exec -> exec`.
-- `exec` endpoints must both be operator nodes in the same `svcId` (same engine instance).
-- `exec` is single-in and single-out per port (reconnect replaces the old edge).
-- `data` can only connect `data -> data`.
-- `state` can only connect `state -> state`.
-- `data`/`state` are `multiple-out, single-in`, and allow cross-service links.
-
-Legacy sessions:
-
-- Invalid connections are stripped automatically on load, with warning logs.
-
-Toolbar visibility:
-
-- Use `Exec Lines`, `Data Lines`, `State Lines` toggle actions to show/hide each edge kind independently.
-
-## When to Use Studio
-
-Use Studio when you need:
-
-- visual graph editing,
-- interactive debugging,
-- quick field tuning,
-- operator composition experiments.
-
-Use headless Runner when you need unattended execution without GUI.

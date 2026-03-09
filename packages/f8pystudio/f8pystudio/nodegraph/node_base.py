@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from f8pysdk.msgspec_codec import copy_model, dump_json, validate_as
 import copy
 import json
 from typing import Any
@@ -38,14 +39,14 @@ class F8StudioBaseNode(BaseNode):
             raise RuntimeError(f"{self.__class__.__name__} must define `SPEC_TEMPLATE`.")
 
         if isinstance(template, F8OperatorSpec):
-            spec = F8OperatorSpec.model_validate(template.model_dump(mode="json"))
+            spec = validate_as(F8OperatorSpec, dump_json(template, mode="json"))
         elif isinstance(template, F8ServiceSpec):
-            spec = F8ServiceSpec.model_validate(template.model_dump(mode="json"))
+            spec = validate_as(F8ServiceSpec, dump_json(template, mode="json"))
         elif isinstance(template, dict):
             if "operatorClass" in template:
-                spec = F8OperatorSpec.model_validate(template)
+                spec = validate_as(F8OperatorSpec, template)
             else:
-                spec = F8ServiceSpec.model_validate(template)
+                spec = validate_as(F8ServiceSpec, template)
         else:
             spec = copy.deepcopy(template)
 
@@ -129,7 +130,7 @@ class F8StudioBaseNode(BaseNode):
                 out.append(f)
                 continue
             patch = {k: ov.get(k) for k in allowed_keys if k in ov}
-            out.append(f.model_copy(update=patch))
+            out.append(copy_model(f, update=patch))
         return out
 
     def effective_commands(self):
@@ -157,7 +158,7 @@ class F8StudioBaseNode(BaseNode):
                 out.append(c)
                 continue
             patch = {k: ov.get(k) for k in allowed_keys if k in ov}
-            out.append(c.model_copy(update=patch))
+            out.append(copy_model(c, update=patch))
         return out
 
     def data_port_show_on_node(self, name: str, *, is_in: bool) -> bool:
@@ -210,7 +211,7 @@ class F8StudioBaseNode(BaseNode):
     @property
     def spec(self) -> F8OperatorSpec | F8ServiceSpec:
         """
-        Runtime view of the persisted model spec (pydantic object).
+        Runtime view of the persisted model spec.
         """
         spec = self.model.f8_spec
         if not isinstance(spec, (F8OperatorSpec, F8ServiceSpec)):
@@ -243,6 +244,15 @@ class F8StudioBaseNode(BaseNode):
     def sync_from_spec(self) -> None:
         """
         Hook for subclasses to rebuild ports/properties derived from `self.spec`.
+        """
+        return
+
+    def on_graph_teardown(self) -> None:
+        """
+        Hook called before this node is removed from a graph session.
+
+        Subclasses should release external resources (timers, windows, workers)
+        and must keep this method idempotent.
         """
         return
 

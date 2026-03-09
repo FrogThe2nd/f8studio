@@ -2,14 +2,19 @@ from __future__ import annotations
 
 from typing import Any
 
-from .generated import F8OperatorSpec, F8ServiceSpec, F8StateAccess, F8StateSpec
+from .generated import F8DataPortSpec, F8OperatorSpec, F8ServiceSpec, F8StateAccess, F8StateSpec
 from .schema_helpers import boolean_schema, string_schema
+from .monitor_schema import (
+    LEGACY_TELEMETRY_PORT_NAME,
+    MONITOR_PORT_NAME,
+    monitor_snapshot_data_port,
+    monitor_snapshot_schema_dict,
+)
 
 
 ACTIVE_FIELD_NAME = "active"
 SVC_ID_FIELD_NAME = "svcId"
 OPERATOR_ID_FIELD_NAME = "operatorId"
-
 
 def _service_active_state_spec() -> F8StateSpec:
     return F8StateSpec(
@@ -18,7 +23,8 @@ def _service_active_state_spec() -> F8StateSpec:
         description="Service lifecycle state (activate/deactivate).",
         valueSchema=boolean_schema(default=True),
         access=F8StateAccess.rw,
-        showOnNode=True,
+        required=True,
+        showOnNode=False,
     )
 
 
@@ -29,6 +35,7 @@ def _svc_id_state_spec() -> F8StateSpec:
         description="Readonly: current service instance id (svcId).",
         valueSchema=string_schema(),
         access=F8StateAccess.ro,
+        required=True,
         showOnNode=False,
     )
 
@@ -40,6 +47,7 @@ def _operator_id_state_spec() -> F8StateSpec:
         description="Readonly: current operator/node id (operatorId).",
         valueSchema=string_schema(),
         access=F8StateAccess.ro,
+        required=True,
         showOnNode=False,
     )
 
@@ -56,6 +64,18 @@ def _copy_state_specs_without_names(
     return filtered
 
 
+def _copy_data_port_specs_without_names(
+    ports: list[F8DataPortSpec] | None, *, names_to_remove: set[str]
+) -> list[F8DataPortSpec]:
+    filtered: list[F8DataPortSpec] = []
+    for port in list(ports or []):
+        port_name = str(port.name or "").strip()
+        if port_name in names_to_remove:
+            continue
+        filtered.append(port)
+    return filtered
+
+
 def service_state_fields_with_builtins(state_fields: list[F8StateSpec] | None) -> list[F8StateSpec]:
     fields = _copy_state_specs_without_names(
         state_fields,
@@ -64,6 +84,15 @@ def service_state_fields_with_builtins(state_fields: list[F8StateSpec] | None) -
     fields.append(_service_active_state_spec())
     fields.append(_svc_id_state_spec())
     return fields
+
+
+def service_data_out_ports_with_builtins(data_out_ports: list[F8DataPortSpec] | None) -> list[F8DataPortSpec]:
+    ports = _copy_data_port_specs_without_names(
+        data_out_ports,
+        names_to_remove={MONITOR_PORT_NAME, LEGACY_TELEMETRY_PORT_NAME},
+    )
+    ports.append(monitor_snapshot_data_port())
+    return ports
 
 
 def operator_state_fields_with_builtins(state_fields: list[F8StateSpec] | None) -> list[F8StateSpec]:
@@ -78,6 +107,7 @@ def operator_state_fields_with_builtins(state_fields: list[F8StateSpec] | None) 
 
 def upsert_builtin_state_fields_for_service_spec(service_spec: F8ServiceSpec) -> None:
     service_spec.stateFields = service_state_fields_with_builtins(list(service_spec.stateFields or []))
+    service_spec.dataOutPorts = service_data_out_ports_with_builtins(list(service_spec.dataOutPorts or []))
 
 
 def upsert_builtin_state_fields_for_operator_spec(operator_spec: F8OperatorSpec) -> None:
@@ -91,7 +121,8 @@ def _service_active_field_dict() -> dict[str, Any]:
         "description": "Service lifecycle state (activate/deactivate).",
         "valueSchema": {"type": "boolean", "default": True},
         "access": "rw",
-        "showOnNode": True,
+        "required": True,
+        "showOnNode": False,
     }
 
 
@@ -102,6 +133,7 @@ def _svc_id_field_dict() -> dict[str, Any]:
         "description": "Readonly: current service instance id (svcId).",
         "valueSchema": {"type": "string"},
         "access": "ro",
+        "required": True,
         "showOnNode": False,
     }
 
@@ -113,7 +145,18 @@ def _operator_id_field_dict() -> dict[str, Any]:
         "description": "Readonly: current operator/node id (operatorId).",
         "valueSchema": {"type": "string"},
         "access": "ro",
+        "required": True,
         "showOnNode": False,
+    }
+
+
+def _monitor_port_dict() -> dict[str, Any]:
+    return {
+        "name": MONITOR_PORT_NAME,
+        "description": "Unified runtime monitor snapshots (health/resource/perf/error).",
+        "required": True,
+        "showOnNode": False,
+        "valueSchema": monitor_snapshot_schema_dict(),
     }
 
 
@@ -137,6 +180,26 @@ def _state_field_dicts_with_builtins(
     return normalized
 
 
+def _data_port_dicts_with_builtins(
+    data_ports: Any,
+    *,
+    names_to_remove: set[str],
+    builtin_ports: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    if isinstance(data_ports, list):
+        for item in data_ports:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or "").strip()
+            if name in names_to_remove:
+                continue
+            normalized.append(dict(item))
+    for port in builtin_ports:
+        normalized.append(dict(port))
+    return normalized
+
+
 def normalize_describe_payload_dict(payload: dict[str, Any]) -> dict[str, Any]:
     out = dict(payload)
 
@@ -147,6 +210,11 @@ def normalize_describe_payload_dict(payload: dict[str, Any]) -> dict[str, Any]:
             service_spec.get("stateFields"),
             names_to_remove={ACTIVE_FIELD_NAME, SVC_ID_FIELD_NAME},
             builtin_fields=[_service_active_field_dict(), _svc_id_field_dict()],
+        )
+        service_spec["dataOutPorts"] = _data_port_dicts_with_builtins(
+            service_spec.get("dataOutPorts"),
+            names_to_remove={MONITOR_PORT_NAME, LEGACY_TELEMETRY_PORT_NAME},
+            builtin_ports=[_monitor_port_dict()],
         )
         out["service"] = service_spec
 
@@ -173,5 +241,10 @@ def normalize_describe_payload_dict(payload: dict[str, Any]) -> dict[str, Any]:
             out.get("stateFields"),
             names_to_remove={ACTIVE_FIELD_NAME, SVC_ID_FIELD_NAME},
             builtin_fields=[_service_active_field_dict(), _svc_id_field_dict()],
+        )
+        out["dataOutPorts"] = _data_port_dicts_with_builtins(
+            out.get("dataOutPorts"),
+            names_to_remove={MONITOR_PORT_NAME, LEGACY_TELEMETRY_PORT_NAME},
+            builtin_ports=[_monitor_port_dict()],
         )
     return out

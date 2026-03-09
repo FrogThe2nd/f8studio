@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 import platform
+import signal
 import shutil
 import socket
 import subprocess
@@ -10,6 +12,7 @@ import tempfile
 import time
 import urllib.request
 import zipfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 from urllib.parse import urlparse
@@ -19,6 +22,13 @@ def _log(log_cb: Callable[[str], None] | None, message: str) -> None:
     if log_cb is None:
         return
     log_cb(str(message))
+
+
+@dataclass(frozen=True)
+class NatsServerBootstrapResult:
+    reachable: bool
+    started_by_current_process: bool
+    started_pid: int | None
 
 
 def _parse_nats_host_port(nats_url: str) -> tuple[str, int]:
@@ -170,7 +180,7 @@ def _resolve_nats_server_binary(log_cb: Callable[[str], None] | None) -> Path:
         return _install_downloaded_binary(source_binary=source_binary, log_cb=log_cb)
 
 
-def _spawn_nats_server(binary: Path, *, log_cb: Callable[[str], None] | None) -> None:
+def _spawn_nats_server(binary: Path, *, log_cb: Callable[[str], None] | None) -> int:
     cmd = [str(binary), "-js"]
     kwargs: dict[str, object] = {
         "stdin": subprocess.DEVNULL,
@@ -183,8 +193,106 @@ def _spawn_nats_server(binary: Path, *, log_cb: Callable[[str], None] | None) ->
         )
     else:
         kwargs["start_new_session"] = True
-    subprocess.Popen(cmd, **kwargs)
-    _log(log_cb, f"NATS bootstrap: started {' '.join(cmd)}")
+    proc = subprocess.Popen(cmd, **kwargs)
+    pid = int(proc.pid)
+    _log(log_cb, f"NATS bootstrap: started {' '.join(cmd)} (pid={pid})")
+    return pid
+
+
+def _is_pid_running(pid: int) -> bool:
+    if int(pid) <= 0:
+        return False
+    try:
+        os.kill(int(pid), 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+
+
+def stop_nats_server_process(pid: int, *, log_cb: Callable[[str], None] | None = None) -> bool:
+    target_pid = int(pid)
+    if target_pid <= 0:
+        return False
+    if not _is_pid_running(target_pid):
+        _log(log_cb, f"NATS bootstrap: pid {target_pid} is not running")
+        return True
+
+    is_windows = platform.system().lower().startswith("win")
+    try:
+        if is_windows:
+            proc = subprocess.run(
+                ["taskkill", "/PID", str(target_pid), "/T", "/F"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+            if int(proc.returncode) == 0:
+                _log(log_cb, f"NATS bootstrap: stopped pid {target_pid}")
+                return True
+            if not _is_pid_running(target_pid):
+                _log(log_cb, f"NATS bootstrap: pid {target_pid} already exited")
+                return True
+            _log(log_cb, f"NATS bootstrap: failed to stop pid {target_pid} (taskkill rc={proc.returncode})")
+            return False
+
+        os.kill(target_pid, signal.SIGTERM)
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            if not _is_pid_running(target_pid):
+                _log(log_cb, f"NATS bootstrap: stopped pid {target_pid}")
+                return True
+            time.sleep(0.05)
+        os.kill(target_pid, signal.SIGKILL)
+        deadline_kill = time.monotonic() + 2.0
+        while time.monotonic() < deadline_kill:
+            if not _is_pid_running(target_pid):
+                _log(log_cb, f"NATS bootstrap: killed pid {target_pid}")
+                return True
+            time.sleep(0.05)
+    except (OSError, RuntimeError, ValueError) as exc:
+        _log(log_cb, f"NATS bootstrap: failed to stop pid {target_pid}: {type(exc).__name__}: {exc}")
+        return False
+    return not _is_pid_running(target_pid)
+
+
+def ensure_nats_server_with_result(
+    nats_url: str, *, log_cb: Callable[[str], None] | None = None
+) -> NatsServerBootstrapResult:
+    """
+    Ensure a NATS server is reachable and return ownership metadata.
+
+    `started_by_current_process=True` means this function spawned the NATS process.
+    """
+    host, port = _parse_nats_host_port(nats_url)
+
+    if _is_tcp_reachable(host, port):
+        return NatsServerBootstrapResult(reachable=True, started_by_current_process=False, started_pid=None)
+
+    if not _is_local_host(host):
+        _log(log_cb, f"NATS bootstrap: {host}:{port} is unreachable and not local, skip auto-start")
+        return NatsServerBootstrapResult(reachable=False, started_by_current_process=False, started_pid=None)
+
+    started_pid: int | None = None
+    try:
+        binary = _resolve_nats_server_binary(log_cb)
+        started_pid = _spawn_nats_server(binary, log_cb=log_cb)
+    except (ConnectionError, OSError, RuntimeError, ValueError) as exc:
+        _log(log_cb, f"NATS bootstrap failed: {type(exc).__name__}: {exc}")
+        return NatsServerBootstrapResult(reachable=False, started_by_current_process=False, started_pid=None)
+
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:
+        if _is_tcp_reachable(host, port, timeout_s=0.3):
+            _log(log_cb, f"NATS bootstrap: {host}:{port} is reachable")
+            return NatsServerBootstrapResult(reachable=True, started_by_current_process=True, started_pid=started_pid)
+        time.sleep(0.1)
+
+    _log(log_cb, f"NATS bootstrap: started process but {host}:{port} is still unreachable")
+    return NatsServerBootstrapResult(reachable=False, started_by_current_process=True, started_pid=started_pid)
 
 
 def ensure_nats_server(nats_url: str, *, log_cb: Callable[[str], None] | None = None) -> bool:
@@ -197,28 +305,4 @@ def ensure_nats_server(nats_url: str, *, log_cb: Callable[[str], None] | None = 
     - If `nats-server` executable is missing: download latest release for this platform and install to
       `~/.f8/nats-server/nats-server/`.
     """
-    host, port = _parse_nats_host_port(nats_url)
-
-    if _is_tcp_reachable(host, port):
-        return True
-
-    if not _is_local_host(host):
-        _log(log_cb, f"NATS bootstrap: {host}:{port} is unreachable and not local, skip auto-start")
-        return False
-
-    try:
-        binary = _resolve_nats_server_binary(log_cb)
-        _spawn_nats_server(binary, log_cb=log_cb)
-    except (ConnectionError, OSError, RuntimeError, ValueError) as exc:
-        _log(log_cb, f"NATS bootstrap failed: {type(exc).__name__}: {exc}")
-        return False
-
-    deadline = time.monotonic() + 5.0
-    while time.monotonic() < deadline:
-        if _is_tcp_reachable(host, port, timeout_s=0.3):
-            _log(log_cb, f"NATS bootstrap: {host}:{port} is reachable")
-            return True
-        time.sleep(0.1)
-
-    _log(log_cb, f"NATS bootstrap: started process but {host}:{port} is still unreachable")
-    return False
+    return bool(ensure_nats_server_with_result(nats_url, log_cb=log_cb).reachable)

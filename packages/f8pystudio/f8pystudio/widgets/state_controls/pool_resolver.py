@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 from typing import Any, Callable
 
-from ..f8_editor_widgets import parse_multiselect_pool as _parse_multiselect_pool
-from ..f8_editor_widgets import parse_select_pool as _parse_select_pool
+from ..editor_controls import parse_multiselect_pool as _parse_multiselect_pool
+from ..editor_controls import parse_select_pool as _parse_select_pool
 
 
 def resolve_pool_items(value: Any) -> list[str]:

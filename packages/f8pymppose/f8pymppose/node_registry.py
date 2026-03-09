@@ -3,22 +3,91 @@ from __future__ import annotations
 from typing import Any
 
 from f8pysdk import (
+    array_schema,
     F8DataPortSpec,
     F8RuntimeNode,
     F8ServiceSchemaVersion,
     F8ServiceSpec,
     F8StateAccess,
     F8StateSpec,
-    any_schema,
+    complex_object_schema,
     integer_schema,
     number_schema,
     string_schema,
+    any_schema,
 )
 from f8pysdk.runtime_node import RuntimeNode
 from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
 
 from .constants import POSE_SERVICE_CLASS
 from .service_node import MediaPipePoseServiceNode
+
+
+def _keypoint_schema():
+    return complex_object_schema(
+        properties={
+            "x": any_schema(),
+            "y": any_schema(),
+            "z": any_schema(),
+            "score": number_schema(),
+        }
+    )
+
+
+def _detection_schema():
+    return complex_object_schema(
+        properties={
+            "id": integer_schema(),
+            "cls": string_schema(),
+            "score": number_schema(),
+            "bbox": array_schema(items=integer_schema()),
+            "keypoints": array_schema(items=_keypoint_schema()),
+            "skeletonProtocol": string_schema(),
+        }
+    )
+
+
+def _detections_payload_schema():
+    return complex_object_schema(
+        properties={
+            "schemaVersion": string_schema(),
+            "frameId": integer_schema(),
+            "tsMs": integer_schema(),
+            "width": integer_schema(),
+            "height": integer_schema(),
+            "model": string_schema(),
+            "task": string_schema(),
+            "skeletonProtocol": string_schema(),
+            "detections": array_schema(items=_detection_schema()),
+        }
+    )
+
+
+def _skeleton_bone_schema():
+    return complex_object_schema(
+        properties={
+            "name": string_schema(),
+            "pos": array_schema(items=number_schema()),
+            "rot": array_schema(items=number_schema()),
+        }
+    )
+
+
+def _skeleton_payload_schema():
+    return complex_object_schema(
+        properties={
+            "type": string_schema(),
+            "schema": string_schema(),
+            "modelName": string_schema(),
+            "name": string_schema(),
+            "timestampMs": integer_schema(),
+            "frameId": integer_schema(),
+            "boneCount": integer_schema(),
+            "bones": array_schema(items=_skeleton_bone_schema()),
+            "trailer": any_schema(),
+            "skeletonProtocol": string_schema(),
+        }
+    )
 
 
 def _state_fields() -> list[F8StateSpec]:
@@ -29,6 +98,7 @@ def _state_fields() -> list[F8StateSpec]:
             description="Video SHM mapping name (e.g. shm.implayer.video).",
             valueSchema=string_schema(default=""),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=True,
         ),
         F8StateSpec(
@@ -37,7 +107,8 @@ def _state_fields() -> list[F8StateSpec]:
             description="Run pose inference every N frames (>=1).",
             valueSchema=integer_schema(default=1, minimum=1, maximum=10000),
             access=F8StateAccess.rw,
-            showOnNode=True,
+            showOnNode=False,
+            required=True
         ),
         F8StateSpec(
             name="modelComplexity",
@@ -45,8 +116,9 @@ def _state_fields() -> list[F8StateSpec]:
             description="MediaPipe pose model variant.",
             valueSchema=string_schema(default="full", enum=["lite", "full", "heavy"]),
             access=F8StateAccess.rw,
+            required=True,
             uiControl="select",
-            showOnNode=True,
+            showOnNode=False,
         ),
         F8StateSpec(
             name="minDetectionConfidence",
@@ -54,7 +126,8 @@ def _state_fields() -> list[F8StateSpec]:
             description="Minimum confidence threshold for pose detection.",
             valueSchema=number_schema(default=0.5, minimum=0.0, maximum=1.0),
             access=F8StateAccess.rw,
-            showOnNode=True,
+            required=True,
+            showOnNode=False,
         ),
         F8StateSpec(
             name="minTrackingConfidence",
@@ -62,7 +135,8 @@ def _state_fields() -> list[F8StateSpec]:
             description="Minimum confidence threshold for pose tracking.",
             valueSchema=number_schema(default=0.5, minimum=0.0, maximum=1.0),
             access=F8StateAccess.rw,
-            showOnNode=True,
+            required=True,
+            showOnNode=False,
         ),
         F8StateSpec(
             name="visibilityThreshold",
@@ -70,7 +144,8 @@ def _state_fields() -> list[F8StateSpec]:
             description="Landmark visibility threshold (below threshold => hidden point).",
             valueSchema=number_schema(default=0.5, minimum=0.0, maximum=1.0),
             access=F8StateAccess.rw,
-            showOnNode=True,
+            required=True,
+            showOnNode=False,
         ),
         F8StateSpec(
             name="lastError",
@@ -78,22 +153,7 @@ def _state_fields() -> list[F8StateSpec]:
             description="Last runtime error string (best-effort).",
             valueSchema=string_schema(default=""),
             access=F8StateAccess.ro,
-            showOnNode=False,
-        ),
-        F8StateSpec(
-            name="telemetryIntervalMs",
-            label="Telemetry Interval (ms)",
-            description="Emit telemetry summaries every N milliseconds (0 disables).",
-            valueSchema=integer_schema(default=1000, minimum=0, maximum=60000),
-            access=F8StateAccess.wo,
-            showOnNode=False,
-        ),
-        F8StateSpec(
-            name="telemetryWindowMs",
-            label="Telemetry Window (ms)",
-            description="Rolling window for telemetry averages (ms).",
-            valueSchema=integer_schema(default=2000, minimum=100, maximum=60000),
-            access=F8StateAccess.wo,
+            required=True,
             showOnNode=False,
         ),
     ]
@@ -115,17 +175,12 @@ def register_specs(registry: RuntimeNodeRegistry | None = None) -> RuntimeNodeRe
                 F8DataPortSpec(
                     name="detections",
                     description="Detection output in schema f8visionDetections/1.",
-                    valueSchema=any_schema(),
+                    valueSchema=_detections_payload_schema(),
                 ),
                 F8DataPortSpec(
                     name="skeletons",
                     description="List of UDP-skeleton-compatible JSON payloads for skeleton3d.",
-                    valueSchema=any_schema(),
-                ),
-                F8DataPortSpec(
-                    name="telemetry",
-                    description="Periodic telemetry summaries (fps + timings).",
-                    valueSchema=any_schema(),
+                    valueSchema=array_schema(items=_skeleton_payload_schema()),
                 ),
             ],
             editableStateFields=False,

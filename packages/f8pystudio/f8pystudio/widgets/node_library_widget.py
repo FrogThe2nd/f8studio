@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from f8pysdk.msgspec_codec import dump_json
 from collections import defaultdict
 from typing import Any
 
@@ -12,9 +13,10 @@ from NodeGraphQt.custom_widgets.nodes_tree import _BaseNodeTreeItem, TYPE_CATEGO
 from ..nodegraph.spec_visibility import is_hidden_spec_node_class, typed_spec_template_or_none
 from f8pysdk import F8OperatorSpec, F8ServiceSpec
 from ..ui_notifications import show_warning
-from ..variants.variant_ids import build_variant_node_type
-from ..variants.variant_repository import delete_variant, list_variants_for_base
+from ..variants.variant_ids import build_variant_node_type, is_variant_node_type, parse_variant_node_type
+from ..variants.variant_repository import delete_variant, list_variants_for_base, variant_exists
 from ..variants.variant_events import subscribe_variants_changed
+from .json_text_editor import attach_json_enhancements
 
 
 class _F8StudioNodesTreeWidget(NodesTreeWidget):
@@ -136,7 +138,7 @@ class _F8StudioNodesTreeWidget(NodesTreeWidget):
         if schema_obj is None:
             return "{}"
         try:
-            payload = schema_obj.model_dump(mode="json", by_alias=True)
+            payload = dump_json(schema_obj, mode="json", by_alias=True)
         except Exception:
             payload = schema_obj
         try:
@@ -261,13 +263,14 @@ class _F8StudioNodesTreeWidget(NodesTreeWidget):
         raw = QtWidgets.QPlainTextEdit(dialog)
         raw.setReadOnly(True)
         raw.setLineWrapMode(QtWidgets.QPlainTextEdit.NoWrap)
+        attach_json_enhancements(raw, read_only=True)
 
         if isinstance(spec, F8OperatorSpec):
             overview.setMarkdown(self._render_operator_doc(spec))
         else:
             overview.setMarkdown(self._render_service_doc(spec))
 
-        raw.setPlainText(json.dumps(spec.model_dump(mode="json", by_alias=True), ensure_ascii=False, indent=2, default=str))
+        raw.setPlainText(json.dumps(dump_json(spec, mode="json", by_alias=True), ensure_ascii=False, indent=2, default=str))
 
         tabs.addTab(overview, "Overview")
         tabs.addTab(raw, "Raw JSON")
@@ -492,6 +495,10 @@ class F8StudioNodeLibraryWidget(QtWidgets.QWidget):
     """
     Tree-based nodes browser with keyword search for Studio.
     """
+    _SETTINGS_ORGANIZATION = "Feel8"
+    _SETTINGS_APPLICATION = "F8PyStudio"
+    _SETTINGS_GROUP = "node_library/preferences/v1"
+    _SEARCH_VARIANTS_ENABLED_KEY = "search_variants_enabled"
 
     def __init__(self, parent: QtWidgets.QWidget | None = None, node_graph: Any | None = None) -> None:
         super().__init__(parent)
@@ -502,8 +509,9 @@ class F8StudioNodeLibraryWidget(QtWidgets.QWidget):
         self._search = QtWidgets.QLineEdit(self)
         self._search.setPlaceholderText("Search nodes (name, tags, description)")
         self._search_variants = QtWidgets.QCheckBox("Search Variants", self)
-        self._search_variants.setChecked(False)
+        self._search_variants.setChecked(self._read_saved_search_variants_enabled())
         self._tree = _F8StudioNodesTreeWidget(self, node_graph=node_graph)
+        self._tree.set_search_variants_enabled(self._search_variants.isChecked())
 
         search_row = QtWidgets.QHBoxLayout()
         search_row.setContentsMargins(0, 0, 0, 0)
@@ -528,7 +536,9 @@ class F8StudioNodeLibraryWidget(QtWidgets.QWidget):
         self._tree.set_search_text(str(text or ""))
 
     def _on_search_variants_toggled(self, enabled: bool) -> None:
-        self._tree.set_search_variants_enabled(bool(enabled))
+        enabled_flag = bool(enabled)
+        self._tree.set_search_variants_enabled(enabled_flag)
+        self._write_saved_search_variants_enabled(enabled=enabled_flag)
 
     def _on_nodes_registered(self, _nodes: list[Any]) -> None:
         self._tree.update()
@@ -542,6 +552,32 @@ class F8StudioNodeLibraryWidget(QtWidgets.QWidget):
 
     def _on_variants_changed(self) -> None:
         self._tree.update()
+        self._cancel_invalid_variant_placement_if_needed()
+
+    def _cancel_invalid_variant_placement_if_needed(self) -> None:
+        graph = self._node_graph
+        if graph is None:
+            return
+        try:
+            pending_node_type = graph.pending_node_placement_type()
+        except (AttributeError, RuntimeError, TypeError):
+            return
+        if pending_node_type is None:
+            return
+        pending_value = str(pending_node_type).strip()
+        if not pending_value:
+            return
+        if not is_variant_node_type(pending_value):
+            return
+        variant_id = parse_variant_node_type(pending_value)
+        if variant_id is None:
+            return
+        if variant_exists(variant_id):
+            return
+        try:
+            graph.cancel_node_placement()
+        except (AttributeError, RuntimeError, TypeError):
+            return
 
     def _on_destroyed(self, _obj: Any) -> None:
         unsubscribe = self._unsubscribe_variants_changed
@@ -557,3 +593,37 @@ class F8StudioNodeLibraryWidget(QtWidgets.QWidget):
 
     def update(self) -> None:
         self._tree.update()
+
+    def _settings(self) -> QtCore.QSettings:
+        return QtCore.QSettings(self._SETTINGS_ORGANIZATION, self._SETTINGS_APPLICATION)
+
+    @staticmethod
+    def _coerce_bool_setting(raw: Any, *, default: bool) -> bool:
+        if isinstance(raw, bool):
+            return raw
+        if isinstance(raw, (int, float)):
+            return bool(raw)
+        text = str(raw or "").strip().lower()
+        if text in {"1", "true", "yes", "on"}:
+            return True
+        if text in {"0", "false", "no", "off"}:
+            return False
+        return bool(default)
+
+    def _read_saved_search_variants_enabled(self) -> bool:
+        settings = self._settings()
+        settings.beginGroup(self._SETTINGS_GROUP)
+        try:
+            raw = settings.value(self._SEARCH_VARIANTS_ENABLED_KEY, False)
+        finally:
+            settings.endGroup()
+        return self._coerce_bool_setting(raw, default=False)
+
+    def _write_saved_search_variants_enabled(self, *, enabled: bool) -> None:
+        settings = self._settings()
+        settings.beginGroup(self._SETTINGS_GROUP)
+        try:
+            settings.setValue(self._SEARCH_VARIANTS_ENABLED_KEY, bool(enabled))
+            settings.sync()
+        finally:
+            settings.endGroup()

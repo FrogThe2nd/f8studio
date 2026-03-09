@@ -10,6 +10,7 @@
 #include <unordered_set>
 #include <memory>
 #include <mutex>
+#include <thread>
 #include <string>
 #include <vector>
 
@@ -56,6 +57,10 @@ class ServiceBus final : public ServiceControlHandler {
     std::string service_class;
     bool publish_all_data = true;
     DataDeliveryMode data_delivery = DataDeliveryMode::kBoth;
+    bool monitor_enabled = true;
+    std::int64_t monitor_interval_ms = 1000;
+    std::int64_t monitor_window_ms = 30000;
+    bool monitor_gpu_enabled = true;
   };
 
   explicit ServiceBus(Config cfg);
@@ -129,10 +134,21 @@ class ServiceBus final : public ServiceControlHandler {
                            const json& meta, bool allow_state_fanout);
   void route_intra_state_edges(const std::string& from_node_id, const std::string& from_field, const json& value,
                                std::int64_t ts_ms);
+  void start_monitor_thread();
+  void stop_monitor_thread();
+  void monitor_loop();
+  void monitor_record_observed(const std::string& port);
+  void monitor_record_processed(const std::string& port, std::int64_t emit_ts_ms, std::int64_t now_ts_ms);
+  void monitor_record_wait_ms(double wait_ms);
+  void monitor_record_dropped(std::int64_t dropped_count);
+  void monitor_record_error(const std::string& code, const std::string& message, std::int64_t ts_ms = 0);
+  std::size_t monitor_queue_depth() const;
 
   Config cfg_;
   std::atomic<bool> active_{true};
+  std::atomic<bool> ready_{false};
   std::atomic<bool> terminate_{false};
+  std::atomic<bool> monitor_running_{false};
 
   mutable std::mutex term_mu_;
   std::condition_variable term_cv_;
@@ -233,6 +249,19 @@ class ServiceBus final : public ServiceControlHandler {
   std::unordered_set<_NodeFieldKey, _NodeFieldKeyHash> cross_state_targets_;
   std::unordered_map<std::string, std::unique_ptr<KvStore>> peer_kv_by_service_id_;
   bool has_rungraph_ = false;
+
+  std::thread monitor_thread_;
+  mutable std::mutex monitor_mu_;
+  std::deque<std::pair<std::int64_t, double>> monitor_wait_ms_;
+  std::deque<std::pair<std::int64_t, double>> monitor_process_ms_;
+  std::deque<std::int64_t> monitor_error_ts_ms_;
+  std::int64_t monitor_started_ts_ms_ = 0;
+  std::uint64_t monitor_observed_ = 0;
+  std::uint64_t monitor_processed_ = 0;
+  std::uint64_t monitor_dropped_ = 0;
+  std::string monitor_last_error_code_;
+  std::string monitor_last_error_message_;
+  std::optional<std::int64_t> monitor_last_error_ts_ms_;
 };
 
 }  // namespace f8::cppsdk

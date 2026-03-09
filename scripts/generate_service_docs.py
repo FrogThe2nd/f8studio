@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -92,7 +95,27 @@ class ServiceDocBundle:
     entry: ServiceEntry
     describe: ServiceDescribe
     slug: str
-    manual_text: str
+    service_manual: "ManualSections"
+    operator_manuals: dict[str, "ManualSections"]
+
+
+@dataclass(frozen=True)
+class ManualSections:
+    when_to_use: str
+    common_wiring_patterns: str
+    pitfalls_gotchas: str
+
+
+@dataclass(frozen=True)
+class ScenarioRef:
+    title: str
+    page_path: Path
+
+
+@dataclass(frozen=True)
+class ScenarioIndex:
+    services: dict[str, list[ScenarioRef]]
+    operators: dict[str, list[ScenarioRef]]
 
 
 def _as_dict(value: Any, *, ctx: str) -> dict[str, Any]:
@@ -264,13 +287,39 @@ def _slugify_service_class(service_class: str) -> str:
     return service_class.strip().replace(".", "-")
 
 
-def _load_service_entry(service_dir: Path) -> ServiceEntry:
-    service_path = service_dir / "service.yml"
-    if not service_path.exists():
-        raise ValueError(f"missing service.yml for service directory: {service_dir}")
+def _slugify_identifier(identifier: str) -> str:
+    return identifier.strip().replace(".", "-").replace("_", "-").replace(" ", "-")
 
+
+def _platform_service_yml_names() -> list[str]:
+    if os.name == "nt" or sys.platform.startswith("win"):
+        return ["service.win.yml"]
+    if sys.platform.startswith("darwin"):
+        return ["service.mac.yml"]
+    return ["service.linux.yml"]
+
+
+def _service_yml_candidates(service_dir: Path) -> list[Path]:
+    platform_names = _platform_service_yml_names()
+    return [service_dir / name for name in platform_names] + [service_dir / "service.yml"]
+
+
+def _load_service_entry_raw(service_path: Path) -> dict[str, Any]:
     raw = yaml.safe_load(service_path.read_text(encoding="utf-8"))
-    service_obj = _as_dict(raw, ctx=str(service_path))
+    return _as_dict(raw, ctx=str(service_path))
+
+
+def _find_service_entry_path(service_dir: Path) -> Path:
+    for candidate in _service_yml_candidates(service_dir):
+        if candidate.exists():
+            return candidate
+    tried = ", ".join(candidate.name for candidate in _service_yml_candidates(service_dir))
+    raise ValueError(f"missing service entry YAML for service directory: {service_dir} (tried: {tried})")
+
+
+def _load_service_entry(service_dir: Path) -> ServiceEntry:
+    service_path = _find_service_entry_path(service_dir)
+    service_obj = _load_service_entry_raw(service_path)
 
     service_class = _req_str(service_obj, "serviceClass", ctx=str(service_path))
     label = _req_str(service_obj, "label", ctx=str(service_path))
@@ -354,11 +403,18 @@ def _discover_service_dirs(services_root: Path) -> list[Path]:
         raise ValueError(f"services root does not exist: {services_root}")
 
     service_dirs: list[Path] = []
-    for service_path in sorted(services_root.rglob("service.yml")):
-        service_dirs.append(service_path.parent)
+    patterns = ["service.yml", "service.win.yml", "service.linux.yml", "service.mac.yml"]
+    found_dirs: set[Path] = set()
+    for pattern in patterns:
+        for service_path in sorted(services_root.rglob(pattern)):
+            found_dirs.add(service_path.parent)
+    service_dirs.extend(sorted(found_dirs))
 
     if not service_dirs:
-        raise ValueError(f"no service.yml files found under: {services_root}")
+        raise ValueError(
+            f"no service entry YAML files found under: {services_root} "
+            "(expected one of service.yml/service.win.yml/service.linux.yml/service.mac.yml)"
+        )
     return service_dirs
 
 
@@ -486,6 +542,132 @@ def _render_command_table(commands: list[CommandSpec]) -> str:
     return "\n".join(lines).strip() + "\n"
 
 
+def _parse_manual_sections(text: str, *, ctx: str) -> ManualSections:
+    expected_titles = (
+        "When to Use",
+        "Common Wiring Patterns",
+        "Pitfalls / Gotchas",
+    )
+    section_lines: dict[str, list[str]] = {title: [] for title in expected_titles}
+    current_title: str | None = None
+
+    for raw_line in text.splitlines():
+        stripped = raw_line.strip()
+        heading_match = re.match(r"^#{1,6}\s+(.*)$", stripped)
+        if heading_match is not None:
+            title = heading_match.group(1).strip()
+            if title in section_lines:
+                current_title = title
+                continue
+        if current_title is None:
+            if stripped:
+                raise ValueError(f"{ctx}: content must be placed under expected section headings")
+            continue
+        section_lines[current_title].append(raw_line)
+
+    missing_titles = [title for title in expected_titles if not "\n".join(section_lines[title]).strip()]
+    if missing_titles:
+        raise ValueError(f"{ctx}: missing content for section(s): {', '.join(missing_titles)}")
+
+    return ManualSections(
+        when_to_use="\n".join(section_lines["When to Use"]).strip(),
+        common_wiring_patterns="\n".join(section_lines["Common Wiring Patterns"]).strip(),
+        pitfalls_gotchas="\n".join(section_lines["Pitfalls / Gotchas"]).strip(),
+    )
+
+
+def _render_markdown_section(title: str, body: str, *, level: int) -> str:
+    hashes = "#" * level
+    return f"{hashes} {title}\n\n{body.strip()}\n"
+
+
+def _pick_key_fields(fields: list[FieldSpec]) -> list[FieldSpec]:
+    important = [field for field in fields if field.required or field.show_on_node or field.access in {"rw", "wo"}]
+    if important:
+        return important[:8]
+    return fields[:5]
+
+
+def _render_key_fields(fields: list[FieldSpec]) -> str:
+    selected = _pick_key_fields(fields)
+    if not selected:
+        return "- This node is mostly driven by ports or built-in defaults.\n"
+
+    lines: list[str] = []
+    for field in selected:
+        label = field.label or field.name
+        description = field.description or field.label or "No description."
+        schema = _schema_summary(field.value_schema)
+        lines.append(f"- `{field.name}` ({label}, `{field.access}`): {description} Schema: `{schema}`.")
+    return "\n".join(lines) + "\n"
+
+
+def _render_io_summary(
+    *,
+    exec_in_ports: list[str],
+    exec_out_ports: list[str],
+    data_in_ports: list[PortSpec],
+    data_out_ports: list[PortSpec],
+    commands: list[CommandSpec] | None = None,
+) -> str:
+    lines: list[str] = []
+    if exec_in_ports:
+        lines.append(f"- Exec inputs: {', '.join(f'`{name}`' for name in exec_in_ports)}")
+    if exec_out_ports:
+        lines.append(f"- Exec outputs: {', '.join(f'`{name}`' for name in exec_out_ports)}")
+    lines.append(
+        f"- Data inputs: {', '.join(f'`{port.name}`' for port in data_in_ports) if data_in_ports else 'none'}"
+    )
+    lines.append(
+        f"- Data outputs: {', '.join(f'`{port.name}`' for port in data_out_ports) if data_out_ports else 'none'}"
+    )
+    if commands is not None:
+        lines.append(f"- Commands: {', '.join(f'`{command.name}`' for command in commands) if commands else 'none'}")
+    return "\n".join(lines) + "\n"
+
+
+def _render_related_scenarios(refs: list[ScenarioRef], *, link_prefix: str) -> str:
+    if not refs:
+        return "- No bundled scenario references this node yet.\n"
+
+    lines: list[str] = []
+    for ref in refs:
+        lines.append(f"- [{ref.title}]({link_prefix}{ref.page_path.as_posix()})")
+    return "\n".join(lines) + "\n"
+
+
+def _load_scenario_title(page_path: Path) -> str:
+    for raw_line in page_path.read_text(encoding="utf-8").splitlines():
+        stripped = raw_line.strip()
+        if stripped.startswith("# "):
+            return stripped[2:].strip()
+    return page_path.stem.replace("-", " ").replace("_", " ").title()
+
+
+def _build_scenario_index(scenarios_root: Path, scenario_scripts_root: Path) -> ScenarioIndex:
+    services: dict[str, list[ScenarioRef]] = {}
+    operators: dict[str, list[ScenarioRef]] = {}
+
+    if not scenarios_root.exists() or not scenario_scripts_root.exists():
+        return ScenarioIndex(services=services, operators=operators)
+
+    for script_path in sorted(scenario_scripts_root.glob("*.json")):
+        page_path = scenarios_root / f"{script_path.stem}.md"
+        if not page_path.exists():
+            continue
+        title = _load_scenario_title(page_path)
+        raw = script_path.read_text(encoding="utf-8")
+        ref = ScenarioRef(title=title, page_path=Path("scenarios") / page_path.name)
+        service_classes = sorted(set(re.findall(r'"serviceClass"\s*:\s*"([^"]+)"', raw)))
+        operator_classes = sorted(set(re.findall(r'"operatorClass"\s*:\s*"([^"]+)"', raw)))
+        for service_class in service_classes:
+            services.setdefault(service_class, []).append(ref)
+        for operator_class in operator_classes:
+            operators.setdefault(operator_class, []).append(ref)
+
+    return ScenarioIndex(services=services, operators=operators)
+
+
 def _render_launch_block(entry: ServiceEntry) -> str:
     args_text = " ".join(entry.launch.args)
     command_line = entry.launch.command
@@ -510,13 +692,21 @@ def _render_launch_block(entry: ServiceEntry) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _render_operator_section(operators: list[OperatorSpec]) -> str:
+def _render_operator_section(
+    operators: list[OperatorSpec],
+    *,
+    service_slug: str,
+    operator_manuals: dict[str, ManualSections],
+    scenario_index: ScenarioIndex,
+) -> str:
     if not operators:
         return "## Operators\n\n_None_\n"
 
     parts: list[str] = ["## Operators", ""]
     for operator in operators:
         title = operator.label or operator.operator_class
+        operator_anchor = _slugify_identifier(operator.operator_class)
+        parts.append(f"<a id=\"operator-{operator_anchor}\"></a>")
         parts.append(f"### {title} (`{operator.operator_class}`)")
         parts.append(operator.description or "No description.")
         parts.append("")
@@ -537,11 +727,52 @@ def _render_operator_section(operators: list[OperatorSpec]) -> str:
         parts.append("")
         parts.append(_render_port_table(operator.data_out_ports).rstrip())
         parts.append("")
+        manual = operator_manuals.get(operator.operator_class)
+        if manual is None:
+            operator_slug = _slugify_identifier(operator.operator_class)
+            raise ValueError(
+                "missing operator manual section for "
+                f"{operator.operator_class}: docs/modules/manual/operators/{service_slug}/{operator_slug}.md"
+            )
+        related = scenario_index.operators.get(operator.operator_class, [])
+        parts.append(_render_markdown_section("When to Use", manual.when_to_use, level=4).rstrip())
+        parts.append("")
+        parts.append(
+            _render_markdown_section(
+                "Typical Inputs / Outputs",
+                _render_io_summary(
+                    exec_in_ports=operator.exec_in_ports,
+                    exec_out_ports=operator.exec_out_ports,
+                    data_in_ports=operator.data_in_ports,
+                    data_out_ports=operator.data_out_ports,
+                ),
+                level=4,
+            ).rstrip()
+        )
+        parts.append("")
+        parts.append(
+            _render_markdown_section("Common Wiring Patterns", manual.common_wiring_patterns, level=4).rstrip()
+        )
+        parts.append("")
+        parts.append(
+            _render_markdown_section("Key Fields That Matter", _render_key_fields(operator.state_fields), level=4).rstrip()
+        )
+        parts.append("")
+        parts.append(_render_markdown_section("Pitfalls / Gotchas", manual.pitfalls_gotchas, level=4).rstrip())
+        parts.append("")
+        parts.append(
+            _render_markdown_section(
+                "Related Scenarios",
+                _render_related_scenarios(related, link_prefix="../../"),
+                level=4,
+            ).rstrip()
+        )
+        parts.append("")
 
     return "\n".join(parts).rstrip() + "\n"
 
 
-def _render_service_page(bundle: ServiceDocBundle, services_root: Path) -> str:
+def _render_service_page(bundle: ServiceDocBundle, services_root: Path, *, scenario_index: ScenarioIndex) -> str:
     entry = bundle.entry
     describe = bundle.describe
 
@@ -581,11 +812,46 @@ def _render_service_page(bundle: ServiceDocBundle, services_root: Path) -> str:
         "",
         _render_port_table(describe.data_out_ports).rstrip(),
         "",
-        _render_operator_section(describe.operators).rstrip(),
+        _render_operator_section(
+            describe.operators,
+            service_slug=bundle.slug,
+            operator_manuals=bundle.operator_manuals,
+            scenario_index=scenario_index,
+        ).rstrip(),
         "",
-        "## Usage Guide (Manual)",
+        _render_markdown_section("When to Use", bundle.service_manual.when_to_use, level=2).rstrip(),
         "",
-        bundle.manual_text.strip(),
+        _render_markdown_section(
+            "Typical Inputs / Outputs",
+            _render_io_summary(
+                exec_in_ports=[],
+                exec_out_ports=[],
+                data_in_ports=describe.data_in_ports,
+                data_out_ports=describe.data_out_ports,
+                commands=describe.commands,
+            ),
+            level=2,
+        ).rstrip(),
+        "",
+        _render_markdown_section(
+            "Common Wiring Patterns",
+            bundle.service_manual.common_wiring_patterns,
+            level=2,
+        ).rstrip(),
+        "",
+        _render_markdown_section(
+            "Key Fields That Matter",
+            _render_key_fields(describe.state_fields),
+            level=2,
+        ).rstrip(),
+        "",
+        _render_markdown_section("Pitfalls / Gotchas", bundle.service_manual.pitfalls_gotchas, level=2).rstrip(),
+        "",
+        _render_markdown_section(
+            "Related Scenarios",
+            _render_related_scenarios(scenario_index.services.get(entry.service_class, []), link_prefix="../../"),
+            level=2,
+        ).rstrip(),
         "",
     ]
 
@@ -612,8 +878,8 @@ def _render_modules_index(bundles: list[ServiceDocBundle]) -> str:
         "<!-- AUTO-GENERATED by scripts/generate_service_docs.py. DO NOT EDIT DIRECTLY. -->",
         "# Modules Overview",
         "",
-        "Service pages are generated from `services/**/service.yml` and `services/**/describe.json`.",
-        "Manual usage guidance is merged from `docs/modules/manual/*.md`.",
+        "Service pages are generated from `services/**/service*.yml` and `services/**/describe.json`.",
+        "Manual usage guidance is merged from `docs/modules/manual/*.md` and `docs/modules/manual/operators/**`.",
         "",
     ]
 
@@ -652,7 +918,18 @@ def _load_manual_text(manual_root: Path, slug: str, service_class: str) -> str:
     return text
 
 
-def _build_bundles(services_root: Path, manual_root: Path) -> list[ServiceDocBundle]:
+def _load_operator_manual_sections(operator_manual_root: Path, *, service_slug: str, operator_class: str) -> ManualSections:
+    operator_slug = _slugify_identifier(operator_class)
+    manual_path = operator_manual_root / service_slug / f"{operator_slug}.md"
+    if not manual_path.exists():
+        raise ValueError(f"missing operator manual section for {operator_class}: {manual_path}")
+    text = manual_path.read_text(encoding="utf-8").strip()
+    if not text:
+        raise ValueError(f"empty operator manual section for {operator_class}: {manual_path}")
+    return _parse_manual_sections(text, ctx=str(manual_path))
+
+
+def _build_bundles(services_root: Path, manual_root: Path, operator_manual_root: Path) -> list[ServiceDocBundle]:
     bundles: list[ServiceDocBundle] = []
     service_dirs = _discover_service_dirs(services_root)
 
@@ -665,9 +942,25 @@ def _build_bundles(services_root: Path, manual_root: Path) -> list[ServiceDocBun
                 f"entry={entry.service_class} describe={describe.service_class} path={service_dir}"
             )
         slug = _slugify_service_class(entry.service_class)
-        manual_text = _load_manual_text(manual_root, slug, entry.service_class)
+        service_manual = _parse_manual_sections(
+            _load_manual_text(manual_root, slug, entry.service_class),
+            ctx=str(manual_root / f"{slug}.md"),
+        )
+        operator_manuals: dict[str, ManualSections] = {}
+        for operator in describe.operators:
+            operator_manuals[operator.operator_class] = _load_operator_manual_sections(
+                operator_manual_root,
+                service_slug=slug,
+                operator_class=operator.operator_class,
+            )
         bundles.append(
-            ServiceDocBundle(entry=entry, describe=describe, slug=slug, manual_text=manual_text)
+            ServiceDocBundle(
+                entry=entry,
+                describe=describe,
+                slug=slug,
+                service_manual=service_manual,
+                operator_manuals=operator_manuals,
+            )
         )
 
     return sorted(bundles, key=lambda item: item.entry.service_class)
@@ -679,11 +972,12 @@ def _build_expected_files(
     services_root: Path,
     output_root: Path,
     index_path: Path,
+    scenario_index: ScenarioIndex,
 ) -> dict[Path, str]:
     expected: dict[Path, str] = {}
     for bundle in bundles:
         output_path = output_root / f"{bundle.slug}.md"
-        expected[output_path] = _render_service_page(bundle, services_root)
+        expected[output_path] = _render_service_page(bundle, services_root, scenario_index=scenario_index)
     expected[index_path] = _render_modules_index(bundles)
     return expected
 
@@ -732,15 +1026,20 @@ def build_docs(
     services_root: Path,
     output_root: Path,
     manual_root: Path,
+    operator_manual_root: Path,
     index_path: Path,
+    scenarios_root: Path,
+    scenario_scripts_root: Path,
     check: bool,
 ) -> int:
-    bundles = _build_bundles(services_root, manual_root)
+    bundles = _build_bundles(services_root, manual_root, operator_manual_root)
+    scenario_index = _build_scenario_index(scenarios_root, scenario_scripts_root)
     expected = _build_expected_files(
         bundles,
         services_root=services_root,
         output_root=output_root,
         index_path=index_path,
+        scenario_index=scenario_index,
     )
 
     if check:
@@ -756,7 +1055,18 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--services-root", default="services", help="Root containing service directories")
     parser.add_argument("--output-root", default="docs/modules/services", help="Output directory for generated pages")
     parser.add_argument("--manual-root", default="docs/modules/manual", help="Directory with per-service manual sections")
+    parser.add_argument(
+        "--operator-manual-root",
+        default="docs/modules/manual/operators",
+        help="Directory with per-operator manual sections",
+    )
     parser.add_argument("--index-path", default="docs/modules/index.md", help="Output path for generated module index")
+    parser.add_argument("--scenarios-root", default="docs/scenarios", help="Directory with scenario markdown pages")
+    parser.add_argument(
+        "--scenario-scripts-root",
+        default="docs/scenarios/scripts",
+        help="Directory with scenario JSON session files",
+    )
     parser.add_argument("--check", action="store_true", help="Validate generated files without writing")
     return parser.parse_args(argv)
 
@@ -768,7 +1078,10 @@ def main(argv: list[str] | None = None) -> int:
             services_root=Path(args.services_root).resolve(),
             output_root=Path(args.output_root).resolve(),
             manual_root=Path(args.manual_root).resolve(),
+            operator_manual_root=Path(args.operator_manual_root).resolve(),
             index_path=Path(args.index_path).resolve(),
+            scenarios_root=Path(args.scenarios_root).resolve(),
+            scenario_scripts_root=Path(args.scenario_scripts_root).resolve(),
             check=bool(args.check),
         )
     except ValueError as exc:

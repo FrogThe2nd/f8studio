@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from f8pysdk.msgspec_codec import dump_json
 from typing import Any
 
 
@@ -18,17 +19,11 @@ def coerce_json_value(value: Any) -> Any:
         return out
 
     try:
-        dumped = value.model_dump(mode="json")
+        dumped = dump_json(value, mode="json")
         return coerce_json_value(dumped)
     except AttributeError:
         pass
     except TypeError:
-        pass
-
-    try:
-        inner = value.root
-        return coerce_json_value(inner)
-    except AttributeError:
         pass
 
     return str(value)

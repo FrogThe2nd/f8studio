@@ -4,6 +4,8 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
+import msgspec
+
 from .generated import F8RuntimeGraph, F8RuntimeNode
 from .json_unwrap import unwrap_json_value
 from .runtime_node import OperatorNode, RuntimeNode
@@ -87,7 +89,9 @@ class ServiceHost:
         for n in graph.nodes:
             if service_class and str(n.serviceClass) != service_class:
                 continue
-            if n.operatorClass is None:
+            operator_class = n.operatorClass
+            is_service_node = operator_class is None or isinstance(operator_class, msgspec.UnsetType)
+            if is_service_node:
                 # Service/container node snapshot (state only).
                 if n.nodeId == str(self._bus.service_id):
                     service_snapshot = n

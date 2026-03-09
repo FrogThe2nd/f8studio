@@ -32,11 +32,17 @@ from .operators.python_script import register_operator as register_python_script
 from .operators.expr import register_operator as register_expr_operator
 from .operators.lovense_mock_server import register_operator as register_lovense_mock_server_operator
 from .operators.lovense_program_adapter import register_operator as register_lovense_program_adapter_operator
-from .operators.buttplug_bridge import register_operator as register_buttplug_bridge_operator
+from .operators.lovense_out import register_operator as register_lovense_out_operator
+from .operators.buttplug_out import register_operator as register_buttplug_out_operator
 from .operators.mix_silence_fill import register_operator as register_mix_silence_fill_operator
 from .operators.sequence_player import register_operator as register_sequence_player_operator
 from .operators.playback_sync import register_operator as register_playback_sync_operator
 from .operators.handy_out import register_operator as register_handy_out_operator
+from .operators.state_trigger import register_operator as register_state_trigger_operator
+from .operators.bone_filter import register_operator as register_bone_filter_operator
+from .operators.quat_to_euler import register_operator as register_quat_to_euler_operator
+from .operators.udp_vmc import register_operator as register_udp_vmc_operator
+from .operators.bone_selector import register_operator as register_bone_selector_operator
 from .pyengine_service_node import PyEngineServiceNode
 
 
@@ -64,6 +70,7 @@ def register_pyengine_specs(registry: RuntimeNodeRegistry | None = None) -> Runt
                     description="How data inputs are delivered to nodes: pull (default), push, or both.",
                     valueSchema=string_schema(default="pull", enum=["pull", "push", "both"]),
                     access=F8StateAccess.rw,
+                    required=True,
                     showOnNode=True,
                 ),
             ],
@@ -96,11 +103,17 @@ def register_pyengine_specs(registry: RuntimeNodeRegistry | None = None) -> Runt
     register_tcode_operator(reg)
     register_python_script_operator(reg)
     register_expr_operator(reg)
-    register_buttplug_bridge_operator(reg)
+    register_lovense_out_operator(reg)
+    register_buttplug_out_operator(reg)
     register_lovense_mock_server_operator(reg)
     register_lovense_program_adapter_operator(reg)
     register_sequence_player_operator(reg)
     register_mix_silence_fill_operator(reg)
     register_playback_sync_operator(reg)
     register_handy_out_operator(reg)
+    register_state_trigger_operator(reg)
+    register_bone_filter_operator(reg)
+    register_quat_to_euler_operator(reg)
+    register_udp_vmc_operator(reg)
+    register_bone_selector_operator(reg)
     return reg

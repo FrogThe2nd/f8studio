@@ -2744,7 +2744,7 @@
               "showOnNode":true
             },
             {
-              "name":"telemetry",
+              "name":"monitor",
               "valueSchema":{
                 "title":null,
                 "description":null,
@@ -2869,7 +2869,7 @@
                 "required":[],
                 "additionalProperties":false
               },
-              "description":"Runtime telemetry: fps/process time/dropped frames.",
+              "description":"Unified runtime monitor snapshots (health/resource/perf/error).",
               "required":false,
               "showOnNode":true
             }
@@ -3296,7 +3296,7 @@
               "showOnNode":true
             },
             {
-              "name":"telemetry",
+              "name":"monitor",
               "valueSchema":{
                 "title":null,
                 "description":null,
@@ -3421,7 +3421,7 @@
                 "required":[],
                 "additionalProperties":false
               },
-              "description":"Runtime telemetry: fps/process time/dropped frames.",
+              "description":"Unified runtime monitor snapshots (health/resource/perf/error).",
               "required":false,
               "showOnNode":true
             }
@@ -4894,7 +4894,7 @@
                 ],
                 "additionalProperties":false
               },
-              "description":"Playback telemetry stream (position/duration/playing).",
+              "description":"Playback state stream (position/duration/playing).",
               "required":false,
               "showOnNode":false
             },

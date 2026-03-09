@@ -24,9 +24,6 @@ def wrap_layout_for_save(layout: dict[str, Any]) -> dict[str, Any]:
 
 
 def extract_layout(payload: Any) -> dict[str, Any]:
-    """
-    Accept only the v2 session envelope payload.
-    """
     if not isinstance(payload, dict):
         raise ValueError("session payload must be a JSON object")
 

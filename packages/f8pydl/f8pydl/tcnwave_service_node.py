@@ -315,7 +315,7 @@ class OnnxTcnWaveServiceNode(ServiceNode):
         super().__init__(
             node_id=ensure_token(node_id, label="node_id"),
             data_in_ports=[],
-            data_out_ports=["predictedChange", "telemetry"],
+            data_out_ports=["predictedChange"],
             state_fields=[s.name for s in (node.stateFields or [])],
         )
         self._initial_state = dict(initial_state or {})
@@ -356,7 +356,6 @@ class OnnxTcnWaveServiceNode(ServiceNode):
         self._last_processed_frame_id: int | None = None
         self._last_infer_frame_id: int | None = None
         self._dup_skipped_since_last_processed = 0
-        self._telemetry = _Telemetry()
 
     def attach(self, bus: Any) -> None:
         super().attach(bus)
@@ -451,30 +450,6 @@ class OnnxTcnWaveServiceNode(ServiceNode):
             )
             return
 
-        if name == "telemetryIntervalMs":
-            self._telemetry.set_config(
-                interval_ms=_coerce_int(
-                    await self.get_state_value("telemetryIntervalMs"),
-                    default=self._telemetry.interval_ms,
-                    minimum=0,
-                    maximum=60000,
-                ),
-                window_ms=self._telemetry.window_ms,
-            )
-            return
-
-        if name == "telemetryWindowMs":
-            self._telemetry.set_config(
-                interval_ms=self._telemetry.interval_ms,
-                window_ms=_coerce_int(
-                    await self.get_state_value("telemetryWindowMs"),
-                    default=self._telemetry.window_ms,
-                    minimum=100,
-                    maximum=60000,
-                ),
-            )
-            return
-
     async def _ensure_config_loaded(self) -> None:
         if self._config_loaded:
             return
@@ -514,21 +489,6 @@ class OnnxTcnWaveServiceNode(ServiceNode):
             default=bool(self._initial_state.get("autoDownloadWeights", True)),
         )
         self._shm_name = _coerce_str(await self.get_state_value("shmName"), default=str(self._initial_state.get("shmName") or ""))
-        self._telemetry.set_config(
-            interval_ms=_coerce_int(
-                await self.get_state_value("telemetryIntervalMs"),
-                default=int(self._initial_state.get("telemetryIntervalMs") or 1000),
-                minimum=0,
-                maximum=60000,
-            ),
-            window_ms=_coerce_int(
-                await self.get_state_value("telemetryWindowMs"),
-                default=int(self._initial_state.get("telemetryWindowMs") or 2000),
-                minimum=100,
-                maximum=60000,
-            ),
-        )
-
         self._config_loaded = True
         await self._publish_model_index()
 
@@ -585,23 +545,6 @@ class OnnxTcnWaveServiceNode(ServiceNode):
 
     async def _handle_missing_shm_name(self, *, now_ms: int) -> None:
         await self._set_last_error("missing shmName")
-        await self._emit_idle_telemetry(now_ms=int(now_ms), shm_name="")
-
-    async def _emit_idle_telemetry(self, *, now_ms: int, shm_name: str) -> None:
-        if not self._telemetry.should_emit(now_ms):
-            return
-        payload = self._telemetry.summary(
-            now_ms=now_ms,
-            node_id=self.node_id,
-            service_class=self._service_class,
-            model=self._model,
-            ort_provider=self._ort_provider,
-            shm_name=shm_name,
-            frame_id_last_seen=self._last_processed_frame_id,
-            frame_id_last_processed=self._last_processed_frame_id,
-        )
-        await self.emit("telemetry", payload, ts_ms=now_ms)
-        self._telemetry.mark_emitted(now_ms)
 
     async def _record_exception(self, *, where: str, exc: Exception) -> None:
         signature = f"{type(exc).__name__}:{exc}"
@@ -815,16 +758,12 @@ class OnnxTcnWaveServiceNode(ServiceNode):
                 self._shm.wait_new_frame(timeout_ms=10)
                 header, payload = self._shm.read_latest_bgra()
                 if header is None or payload is None:
-                    await self._emit_idle_telemetry(now_ms=int(time.time() * 1000), shm_name=shm_name)
                     continue
 
                 frame_id_seen = int(header.frame_id)
                 if self._last_processed_frame_id is not None and frame_id_seen == int(self._last_processed_frame_id):
                     self._dup_skipped_since_last_processed += 1
-                    now_ms_dup = int(header.ts_ms or time.time() * 1000)
-                    await self._emit_idle_telemetry(now_ms=now_ms_dup, shm_name=shm_name)
                     continue
-                dup_skipped = int(self._dup_skipped_since_last_processed)
                 self._dup_skipped_since_last_processed = 0
 
                 width = int(header.width)
@@ -854,14 +793,12 @@ class OnnxTcnWaveServiceNode(ServiceNode):
                     await self._set_last_error(
                         f"warming up temporal window: {len(self._window)}/{self._runtime.sequence_length}"
                     )
-                    await self._emit_idle_telemetry(now_ms=int(header.ts_ms), shm_name=shm_name)
                     continue
 
                 do_infer = self._last_infer_frame_id is None or (
                     int(self._new_frame_counter) % int(self._infer_every_n)
                 ) == 0
                 if not do_infer:
-                    await self._emit_idle_telemetry(now_ms=int(header.ts_ms), shm_name=shm_name)
                     continue
 
                 sequence = np.stack(tuple(self._window), axis=0)
@@ -878,30 +815,12 @@ class OnnxTcnWaveServiceNode(ServiceNode):
 
                 t_infer1 = time.perf_counter()
                 self._last_infer_frame_id = frame_id_seen
-                now_ms = int(header.ts_ms)
-                self._telemetry.observe_frame(
-                    ts_ms=now_ms,
-                    infer_ms=(t_infer1 - t_infer0) * 1000.0,
-                    total_ms=(time.perf_counter() - t0) * 1000.0,
-                    dup_skipped=dup_skipped,
-                )
                 if self._runtime_warning:
                     await self._set_last_error(self._runtime_warning)
                 elif self._last_error:
                     await self._set_last_error("")
-                if self._telemetry.should_emit(now_ms):
-                    payload = self._telemetry.summary(
-                        now_ms=now_ms,
-                        node_id=self.node_id,
-                        service_class=self._service_class,
-                        model=self._model,
-                        ort_provider=self._ort_provider,
-                        shm_name=str(self._shm_open_name or shm_name),
-                        frame_id_last_seen=frame_id_seen,
-                        frame_id_last_processed=self._last_processed_frame_id,
-                    )
-                    await self.emit("telemetry", payload, ts_ms=now_ms)
-                    self._telemetry.mark_emitted(now_ms)
+                _ = t0
+                _ = t_infer1
             except asyncio.CancelledError:
                 raise
             except Exception as exc:

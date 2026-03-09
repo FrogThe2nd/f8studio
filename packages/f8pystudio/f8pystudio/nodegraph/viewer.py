@@ -5,6 +5,7 @@ from typing import Any
 
 from Qt import QtCore, QtGui, QtWidgets
 from NodeGraphQt.constants import PortTypeEnum
+from NodeGraphQt.qgraphics.port import PortItem
 from NodeGraphQt.widgets.viewer import NodeViewer
 
 from .edge_rules import (
@@ -19,6 +20,12 @@ from .edge_rules import (
 from .pipe_item import F8StudioPipeItem
 
 logger = logging.getLogger(__name__)
+_TEXT_INPUT_TYPES: tuple[type[QtWidgets.QWidget], ...] = (
+    QtWidgets.QLineEdit,
+    QtWidgets.QTextEdit,
+    QtWidgets.QPlainTextEdit,
+    QtWidgets.QAbstractSpinBox,
+)
 
 
 class F8StudioNodeViewer(NodeViewer):
@@ -148,6 +155,15 @@ class F8StudioNodeViewer(NodeViewer):
 
     def is_node_placement_active(self) -> bool:
         return self._pending_node_type is not None
+
+    def pending_node_type(self) -> str | None:
+        pending = self._pending_node_type
+        if pending is None:
+            return None
+        value = str(pending).strip()
+        if not value:
+            return None
+        return value
 
     def begin_graph_placement(self, request: Any, label: str) -> None:
         if request is None:
@@ -299,15 +315,111 @@ class F8StudioNodeViewer(NodeViewer):
     def _is_text_input_focus(widget: QtWidgets.QWidget | None) -> bool:
         if widget is None:
             return False
-        return isinstance(
-            widget,
-            (
-                QtWidgets.QLineEdit,
-                QtWidgets.QTextEdit,
-                QtWidgets.QPlainTextEdit,
-                QtWidgets.QAbstractSpinBox,
-            ),
-        )
+        return isinstance(widget, _TEXT_INPUT_TYPES)
+
+    @staticmethod
+    def _is_or_contains_text_input(widget: QtWidgets.QWidget | None) -> bool:
+        current = widget
+        while current is not None:
+            if isinstance(current, _TEXT_INPUT_TYPES):
+                return True
+            current = current.parentWidget()
+        if widget is None:
+            return False
+        return any(widget.findChild(widget_type) is not None for widget_type in _TEXT_INPUT_TYPES)
+
+    def _event_pos_point(self, event: QtGui.QWheelEvent) -> QtCore.QPoint:
+        try:
+            return event.position().toPoint()
+        except AttributeError:
+            return event.pos()
+
+    def _wheel_over_text_input_proxy(self, event: QtGui.QWheelEvent) -> bool:
+        view_pos = self._event_pos_point(event)
+
+        global_pos = self.mapToGlobal(view_pos)
+        hovered_widget = QtWidgets.QApplication.widgetAt(global_pos)
+        if self._is_or_contains_text_input(hovered_widget):
+            return True
+
+        item = self.itemAt(view_pos)
+        while item is not None:
+            if isinstance(item, QtWidgets.QGraphicsProxyWidget):
+                proxy_widget = item.widget()
+                if self._is_or_contains_text_input(proxy_widget):
+                    return True
+            item = item.parentItem()
+        return False
+
+    def wheelEvent(self, event):  # type: ignore[override]
+        if self._wheel_over_text_input_proxy(event):
+            QtWidgets.QGraphicsView.wheelEvent(self, event)
+            return
+        super().wheelEvent(event)
+
+    @staticmethod
+    def _proxy_ancestor(
+        item: QtWidgets.QGraphicsItem | None,
+    ) -> QtWidgets.QGraphicsProxyWidget | None:
+        current = item
+        while current is not None:
+            if isinstance(current, QtWidgets.QGraphicsProxyWidget):
+                return current
+            current = current.parentItem()
+        return None
+
+    def _is_proxy_widget_item(self, item: QtWidgets.QGraphicsItem | None) -> bool:
+        proxy = self._proxy_ancestor(item)
+        if proxy is None:
+            return False
+        widget = proxy.widget()
+        if widget is None:
+            return False
+        if not proxy.isVisible():
+            return False
+        if not widget.isVisible():
+            return False
+        if widget.testAttribute(QtCore.Qt.WA_TransparentForMouseEvents):
+            return False
+        return True
+
+    def _is_proxy_widget_hit(self, scene_pos: QtCore.QPointF) -> bool:
+        view_pos = self.mapFromScene(scene_pos)
+        if self._is_proxy_widget_item(self.itemAt(view_pos)):
+            return True
+
+        scene = self.scene()
+        if scene is None:
+            return False
+        for item in scene.items(scene_pos):
+            if self._is_proxy_widget_item(item):
+                return True
+        return False
+
+    def _is_port_hit(self, scene_pos: QtCore.QPointF) -> bool:
+        view_pos = self.mapFromScene(scene_pos)
+        item = self.itemAt(view_pos)
+        if isinstance(item, PortItem):
+            return True
+        scene = self.scene()
+        if scene is None:
+            return False
+        for hit_item in scene.items(scene_pos):
+            if isinstance(hit_item, PortItem):
+                return True
+        return False
+
+    def sceneMousePressEvent(self, event):  # type: ignore[override]
+        if event.button() == QtCore.Qt.RightButton and self._is_port_hit(event.scenePos()):
+            if self._LIVE_PIPE.isVisible():
+                self.end_live_connection()
+            event.accept()
+            return
+        if self._is_proxy_widget_hit(event.scenePos()):
+            if self._LIVE_PIPE.isVisible():
+                self.end_live_connection()
+            return
+        super().sceneMousePressEvent(event)
 
     def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
         if event.key() == QtCore.Qt.Key_Escape:

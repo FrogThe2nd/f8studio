@@ -1,20 +1,15 @@
-### Recommended Use Cases
+## When to Use
 
-- Desktop capture input for live detection and tracking workflows.
-- Fast prototyping without camera hardware dependencies.
+- Use `f8.screencap` when the graph should read the desktop, a monitor, or a region as a live video SHM source.
+- It is the usual producer for screen-driven CV and UI automation scenarios.
 
-### Minimal Run Example
+## Common Wiring Patterns
 
-```bash
-services/f8/screencap/linux/f8screencap_service
-```
+- Feed its video SHM into CVKit, DL, pose, or `f8.viz.video` consumers.
+- Keep a parallel visualization branch while locking capture region, scale, and frame timing.
 
-### Common Pitfalls
+## Pitfalls / Gotchas
 
-- Linux Wayland sessions are not supported by current backend.
-- Capture permissions can block frame acquisition.
+- Wrong monitor, region, or permission setup can look like a dead downstream graph.
+- Release builds should validate the same capture mode used in the final scenario, not just any available screen source.
 
-### Troubleshooting
-
-- On Linux, run under X11 and validate `DISPLAY`.
-- Test display enumeration before starting full scenario graph.

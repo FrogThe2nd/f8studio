@@ -1,20 +1,15 @@
-### Recommended Use Cases
+## When to Use
 
-- Compute real-time base audio descriptors from `f8.audiocap` shared memory.
-- Feed rhythm/beat services with reusable onset envelope features.
+- Use `f8.audiofeat.core` for low-level descriptors such as loudness, spectrum-derived features, and general audio activity.
+- It is the default feature block for audio-reactive graphs that later map values into motion or visualization.
 
-### Minimal Run Example
+## Common Wiring Patterns
 
-```bash
-pixi run f8pyaudiofeat_core --service-id audiofeat_core
-```
+- Feed it from `f8.audiocap`, then branch outputs to `TextViz`, `Python Expr Service`, or `f8.pyengine` operators.
+- Keep `windowMs` and `hopMs` aligned with the responsiveness you need before adding extra smoothing in `f8.pyengine`.
 
-### Common Pitfalls
+## Pitfalls / Gotchas
 
-- `audioShmName` not set or pointing to a non-existing segment.
-- Window/hop configuration too small can create unstable centroid/onset output.
+- Forgetting to wire the correct `audioShmName` makes the service appear idle rather than explicitly broken.
+- Oversized windows improve stability but can make the final motion path feel delayed.
 
-### Troubleshooting
-
-- Confirm upstream `f8.audiocap` reports non-zero `writeSeq`.
-- Start with defaults (`windowMs=768`, `hopMs=64`) before tuning.

@@ -1,0 +1,213 @@
+from __future__ import annotations
+
+import json
+import os
+from copy import deepcopy
+from dataclasses import dataclass, field
+from typing import Any
+
+from qtpy import QtCore
+
+from .insert_layout_utils import (
+    GraphBounds,
+    IdRemapPlan,
+    build_insert_id_remap,
+    coerce_layout_pos,
+    compute_layout_bbox,
+    next_unique_suffix_id,
+    remap_identity_fields_on_node,
+    remap_insert_layout,
+    shift_insert_layout_nodes,
+)
+from .viewer import F8StudioNodeViewer
+from ..session_migration import extract_layout as _extract_session_layout
+from ..ui_notifications import show_warning
+
+
+@dataclass(frozen=True)
+class GraphInsertRequest:
+    source_path: str
+    layout_data: dict[str, Any]
+    source_bbox: GraphBounds
+    node_count: int
+    connection_count: int
+    dropped_invalid_connections: int = 0
+
+
+@dataclass(frozen=True)
+class InsertResult:
+    inserted_node_ids: list[str] = field(default_factory=list)
+    inserted_connection_count: int = 0
+    inserted_bbox: GraphBounds = field(default_factory=lambda: GraphBounds(0.0, 0.0, 0.0, 0.0))
+    id_remap_plan: IdRemapPlan = field(default_factory=IdRemapPlan)
+    dropped_invalid_connections: int = 0
+
+
+class GraphInsertFlowMixin:
+    @staticmethod
+    def _coerce_layout_pos(node_data: dict[str, Any]) -> tuple[float, float] | None:
+        return coerce_layout_pos(node_data)
+
+    @classmethod
+    def _compute_layout_bbox(cls, layout_data: dict[str, Any]) -> GraphBounds:
+        _ = cls
+        return compute_layout_bbox(layout_data)
+
+    def _normalize_insert_layout(self, raw_layout_data: dict[str, Any]) -> tuple[dict[str, Any], int]:
+        layout_data = deepcopy(raw_layout_data)
+        self._inject_node_ids(layout_data)
+        layout_data = self._restore_missing_session_nodes(layout_data)
+        layout_data = self._coerce_missing_session_nodes(layout_data)
+        layout_data = self._merge_session_specs(layout_data)
+        layout_data = self._strip_port_restore_data(layout_data)
+        layout_data = self._strip_unknown_session_custom_properties(layout_data)
+        before_connections = 0
+        connections_obj = layout_data.get("connections")
+        if isinstance(connections_obj, list):
+            before_connections = len(connections_obj)
+        layout_data = self._strip_invalid_connections(layout_data)
+        after_connections = 0
+        connections_obj = layout_data.get("connections")
+        if isinstance(connections_obj, list):
+            after_connections = len(connections_obj)
+        dropped = max(0, int(before_connections - after_connections))
+        return layout_data, dropped
+
+    def prepare_insert_graph_from_file(self, path: str) -> GraphInsertRequest:
+        file_path = str(path or "").strip()
+        if not file_path:
+            raise ValueError("insert graph path is empty")
+        if not os.path.isfile(file_path):
+            raise IOError(f"file does not exist: {file_path}")
+        with open(file_path, encoding="utf-8-sig") as data_file:
+            payload = json.load(data_file)
+        raw_layout_data = _extract_session_layout(payload)
+        layout_data, dropped_invalid_connections = self._normalize_insert_layout(raw_layout_data)
+
+        node_count = 0
+        nodes_obj = layout_data.get("nodes")
+        if isinstance(nodes_obj, dict):
+            node_count = len(nodes_obj)
+
+        connection_count = 0
+        connections_obj = layout_data.get("connections")
+        if isinstance(connections_obj, list):
+            connection_count = len(connections_obj)
+
+        source_bbox = self._compute_layout_bbox(layout_data)
+        return GraphInsertRequest(
+            source_path=file_path,
+            layout_data=layout_data,
+            source_bbox=source_bbox,
+            node_count=int(node_count),
+            connection_count=int(connection_count),
+            dropped_invalid_connections=int(dropped_invalid_connections),
+        )
+
+    def _existing_node_ids(self) -> set[str]:
+        existing: set[str] = set()
+        for node in list(self.all_nodes() or []):
+            try:
+                node_id = str(node.id or "").strip()
+            except (AttributeError, RuntimeError, TypeError):
+                node_id = ""
+            if node_id:
+                existing.add(node_id)
+        return existing
+
+    @staticmethod
+    def _next_unique_suffix_id(base_id: str, used_ids: set[str]) -> str:
+        return next_unique_suffix_id(base_id, used_ids)
+
+    def _build_insert_id_remap(self, import_node_ids: list[str]) -> IdRemapPlan:
+        return build_insert_id_remap(import_node_ids, existing_node_ids=self._existing_node_ids())
+
+    @staticmethod
+    def _remap_identity_fields_on_node(node_data: dict[str, Any], remap: dict[str, str]) -> None:
+        remap_identity_fields_on_node(node_data, remap)
+
+    @classmethod
+    def _remap_insert_layout(cls, layout_data: dict[str, Any], remap_plan: IdRemapPlan) -> dict[str, Any]:
+        _ = cls
+        return remap_insert_layout(layout_data, remap_plan)
+
+    @classmethod
+    def _shift_insert_layout_nodes(cls, layout_data: dict[str, Any], *, dx: float, dy: float) -> None:
+        _ = cls
+        shift_insert_layout_nodes(layout_data, dx=dx, dy=dy)
+
+    def _focus_graph_bounds(self, bounds: GraphBounds) -> None:
+        viewer = self.viewer()
+        if not isinstance(viewer, F8StudioNodeViewer):
+            return
+        width = max(1.0, float(bounds.width))
+        height = max(1.0, float(bounds.height))
+        target = QtCore.QRectF(float(bounds.min_x), float(bounds.min_y), width, height).adjusted(-80, -60, 80, 60)
+        try:
+            viewer.fitInView(target, QtCore.Qt.KeepAspectRatio)
+            viewer.centerOn(target.center())
+        except (AttributeError, RuntimeError, TypeError):
+            return
+
+    def apply_insert_graph(self, request: GraphInsertRequest, *, anchor_x: float, anchor_y: float) -> InsertResult:
+        source_layout = deepcopy(request.layout_data)
+        nodes_obj = source_layout.get("nodes")
+        if not isinstance(nodes_obj, dict) or not nodes_obj:
+            raise ValueError("insert graph contains no nodes")
+
+        import_node_ids = [str(node_id or "").strip() for node_id in list(nodes_obj.keys())]
+        remap_plan = self._build_insert_id_remap(import_node_ids)
+        remapped_layout = self._remap_insert_layout(source_layout, remap_plan)
+
+        dx = float(anchor_x) - float(request.source_bbox.min_x)
+        dy = float(anchor_y) - float(request.source_bbox.min_y)
+        self._shift_insert_layout_nodes(remapped_layout, dx=dx, dy=dy)
+        inserted_bbox = self._compute_layout_bbox(remapped_layout)
+
+        before_connections = 0
+        connections_obj = remapped_layout.get("connections")
+        if isinstance(connections_obj, list):
+            before_connections = len(connections_obj)
+        remapped_layout = self._strip_invalid_connections(remapped_layout)
+        after_connections = 0
+        connections_obj = remapped_layout.get("connections")
+        if isinstance(connections_obj, list):
+            after_connections = len(connections_obj)
+        dropped_invalid_connections = max(0, int(before_connections - after_connections))
+
+        prev_loading = bool(self._loading_session)
+        self._loading_session = True
+        try:
+            super().deserialize_session(remapped_layout, clear_session=False, clear_undo_stack=False)
+        finally:
+            self._loading_session = prev_loading
+        self._rebind_container_children()
+        self._schedule_node_layout_stabilization()
+        self._refresh_all_inline_state_read_only()
+
+        inserted_node_ids = [remap_plan.mapping.get(src, src) for src in import_node_ids]
+        all_nodes = list(self.all_nodes() or [])
+        selected_ids = set(inserted_node_ids)
+        for node in all_nodes:
+            try:
+                node.set_property("selected", bool(str(node.id or "") in selected_ids), push_undo=False)
+            except (AttributeError, RuntimeError, TypeError):
+                continue
+        self._focus_graph_bounds(inserted_bbox)
+
+        total_dropped = int(request.dropped_invalid_connections) + int(dropped_invalid_connections)
+        if total_dropped > 0:
+            show_warning(
+                self._notification_parent(),
+                "Insert Graph",
+                f"Dropped {total_dropped} invalid connection(s) while inserting graph.",
+            )
+
+        return InsertResult(
+            inserted_node_ids=inserted_node_ids,
+            inserted_connection_count=int(after_connections),
+            inserted_bbox=inserted_bbox,
+            id_remap_plan=remap_plan,
+            dropped_invalid_connections=int(total_dropped),
+        )
+

@@ -51,9 +51,9 @@ class PythonScriptVideoShmTests(unittest.IsolatedAsyncioTestCase):
         try:
             code = (
                 f"def onStart(ctx):\n"
-                f"    ctx['subscribe_video_shm']('flow', '{shm_name}', decode='auto')\n\n"
-                f"async def onExec(ctx, execIn, inputs):\n"
-                f"    pkt = ctx['get_video_shm']('flow')\n"
+                f"    ctx.subscribe_video_shm('flow', '{shm_name}', decode='auto')\n\n"
+                f"async def onExec(ctx, exec_in, inputs):\n"
+                f"    pkt = ctx.get_video_shm('flow')\n"
                 f"    if pkt is None:\n"
                 f"        return {{'outputs': {{'out': {{'frameId': 0}}}}}}\n"
                 f"    dec = pkt.get('decoded')\n"
@@ -112,9 +112,9 @@ class PythonScriptVideoShmTests(unittest.IsolatedAsyncioTestCase):
         try:
             code = (
                 f"def onStart(ctx):\n"
-                f"    ctx['subscribe_video_shm']('video', '{shm_name}', decode='none')\n\n"
-                f"async def onExec(ctx, execIn, inputs):\n"
-                f"    pkt = ctx['get_video_shm']('video')\n"
+                f"    ctx.subscribe_video_shm('video', '{shm_name}', decode='none')\n\n"
+                f"async def onExec(ctx, exec_in, inputs):\n"
+                f"    pkt = ctx.get_video_shm('video')\n"
                 f"    if pkt is None:\n"
                 f"        return {{'outputs': {{'out': {{'ok': False}}}}}}\n"
                 f"    return {{'outputs': {{'out': {{\n"
@@ -161,10 +161,10 @@ class PythonScriptVideoShmTests(unittest.IsolatedAsyncioTestCase):
         shm_a = f"test.shm.ps.a.{uuid.uuid4().hex}"
         code = (
             f"def onStart(ctx):\n"
-            f"    ctx['subscribe_video_shm']('k', '{shm_a}', decode='none')\n"
-            f"    ctx['subscribe_video_shm']('k', '{shm_b}', decode='none')\n\n"
-            f"def onExec(ctx, execIn, inputs):\n"
-            f"    items = ctx['list_video_shm_subscriptions']()\n"
+            f"    ctx.subscribe_video_shm('k', '{shm_a}', decode='none')\n"
+            f"    ctx.subscribe_video_shm('k', '{shm_b}', decode='none')\n\n"
+            f"def onExec(ctx, exec_in, inputs):\n"
+            f"    items = ctx.list_video_shm_subscriptions()\n"
             f"    return {{'outputs': {{'out': items}}}}\n"
         )
         try:
@@ -202,8 +202,8 @@ class PythonScriptVideoShmTests(unittest.IsolatedAsyncioTestCase):
         writer.write_frame_bgra(width=2, height=2, pitch=8, payload=bytes((i % 251 for i in range(16))))
         code = (
             f"def onStart(ctx):\n"
-            f"    ctx['subscribe_video_shm']('k', '{shm_name}', decode='none')\n\n"
-            f"def onExec(ctx, execIn, inputs):\n"
+            f"    ctx.subscribe_video_shm('k', '{shm_name}', decode='none')\n\n"
+            f"def onExec(ctx, exec_in, inputs):\n"
             f"    return {{'outputs': {{'out': 1}}}}\n"
         )
         try:

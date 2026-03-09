@@ -54,6 +54,8 @@ async def start(bus: "ServiceBus") -> None:
     # Reset termination latch for a fresh run.
     bus._terminate_event = asyncio.Event()
     await bus._transport.connect()
+    if bus._monitor_collector.enabled:
+        await bus._monitor_collector.start()
     # Clear any stale ready flag from a previous run as early as possible.
     await announce_ready(bus, False, reason="starting")
     if bus._micro_endpoints is None:
@@ -90,6 +92,17 @@ async def stop(bus: "ServiceBus") -> None:
     bus._intra_data_in.clear()
     bus._cross_out_subjects.clear()
     bus._data_inputs.clear()
+    bus._on_data_push_queue.clear()
+    flush_task = bus._on_data_flush_task
+    bus._on_data_flush_task = None
+    if flush_task is not None:
+        flush_task.cancel()
+        try:
+            await flush_task
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:
+            log.error("on_data flush task stop failed", exc_info=exc)
 
     bus._cross_state_in_by_key.clear()
     for (sid, key), watch in list(bus._remote_state_watches.items()):
@@ -117,6 +130,8 @@ async def stop(bus: "ServiceBus") -> None:
 
     bus._state_cache.clear()
 
+    if bus._monitor_collector.enabled:
+        await bus._monitor_collector.stop()
     await bus._transport.close()
     await notify_after_stop(bus)
     bus._rungraph_hooks.clear()
@@ -124,6 +139,9 @@ async def stop(bus: "ServiceBus") -> None:
 
 
 async def announce_ready(bus: "ServiceBus", ready: bool, *, reason: str) -> None:
+    bus._ready = bool(ready)
+    if bus._monitor_collector.enabled:
+        bus._monitor_collector.record_ready(bool(ready))
     payload = {
         "serviceId": bus.service_id,
         "ready": bool(ready),

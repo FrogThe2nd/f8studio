@@ -72,7 +72,7 @@ class VideoStabService final : public f8::cppsdk::LifecycleNode,
 
   void publish_state_if_changed(const std::string& field, const json& value, const std::string& source,
                                 const json& meta);
-  void emit_telemetry(std::int64_t ts_ms, std::uint64_t frame_id, double process_ms);
+  void emit_monitor_snapshot(std::int64_t ts_ms, std::uint64_t frame_id, double process_ms);
   bool ensure_input_open();
   bool ensure_output_open();
   void process_frame_once();
@@ -137,14 +137,14 @@ class VideoStabService final : public f8::cppsdk::LifecycleNode,
   int consecutive_failures_ = 0;
   int scene_cut_cooldown_remaining_ = 0;
 
-  std::uint64_t telemetry_observed_frames_ = 0;
-  std::uint64_t telemetry_processed_frames_ = 0;
-  std::uint64_t telemetry_window_processed_frames_ = 0;
-  std::uint64_t telemetry_fail_frames_ = 0;
-  std::int64_t telemetry_window_start_ms_ = 0;
-  double telemetry_last_process_ms_ = 0.0;
-  double telemetry_total_process_ms_ = 0.0;
-  double telemetry_fps_ = 0.0;
+  std::uint64_t monitor_observed_frames_ = 0;
+  std::uint64_t monitor_processed_frames_ = 0;
+  std::uint64_t monitor_window_processed_frames_ = 0;
+  std::uint64_t monitor_fail_frames_ = 0;
+  std::int64_t monitor_window_start_ms_ = 0;
+  double monitor_last_process_ms_ = 0.0;
+  double monitor_total_process_ms_ = 0.0;
+  double monitor_fps_ = 0.0;
 };
 
 }  // namespace f8::cvkit::video_stab

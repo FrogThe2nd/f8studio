@@ -3,21 +3,20 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <cctype>
-#include <exception>
 #include <utility>
 #include <vector>
 
+#include <spdlog/spdlog.h>
 #include <nlohmann/json.hpp>
 #include <opencv2/calib3d.hpp>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/video/tracking.hpp>
-#include <spdlog/spdlog.h>
 
 #include "f8cppsdk/shm/naming.h"
 #include "f8cppsdk/shm/sizing.h"
 #include "f8cppsdk/state_kv.h"
 #include "f8cppsdk/time_utils.h"
+#include "../common/service_runtime_utils.h"
 
 namespace f8::cvkit::video_stab {
 
@@ -25,10 +24,18 @@ using json = nlohmann::json;
 
 namespace {
 
-json schema_string() { return json{{"type", "string"}}; }
-json schema_boolean() { return json{{"type", "boolean"}}; }
-json schema_integer() { return json{{"type", "integer"}}; }
-json schema_number() { return json{{"type", "number"}}; }
+json schema_string() {
+  return json{{"type", "string"}};
+}
+json schema_boolean() {
+  return json{{"type", "boolean"}};
+}
+json schema_integer() {
+  return json{{"type", "integer"}};
+}
+json schema_number() {
+  return json{{"type", "number"}};
+}
 json schema_number(double default_value, double minimum, double maximum) {
   json s{{"type", "number"}};
   s["default"] = default_value;
@@ -57,7 +64,8 @@ json schema_object(const json& props, const json& required = json::array()) {
   json obj;
   obj["type"] = "object";
   obj["properties"] = props;
-  if (required.is_array()) obj["required"] = required;
+  if (required.is_array())
+    obj["required"] = required;
   obj["additionalProperties"] = false;
   return obj;
 }
@@ -68,36 +76,30 @@ json state_field(std::string name, const json& value_schema, std::string access,
   sf["name"] = std::move(name);
   sf["valueSchema"] = value_schema;
   sf["access"] = std::move(access);
-  if (!label.empty()) sf["label"] = std::move(label);
-  if (!description.empty()) sf["description"] = std::move(description);
-  if (show_on_node) sf["showOnNode"] = true;
-  if (!ui_control.empty()) sf["uiControl"] = std::move(ui_control);
+  sf["required"] = true;
+  if (!label.empty())
+    sf["label"] = std::move(label);
+  if (!description.empty())
+    sf["description"] = std::move(description);
+  if (show_on_node)
+    sf["showOnNode"] = true;
+  if (!ui_control.empty())
+    sf["uiControl"] = std::move(ui_control);
   return sf;
 }
 
-std::string trim_copy(const std::string& s) {
-  std::string out = s;
-  while (!out.empty() && std::isspace(static_cast<unsigned char>(out.front()))) out.erase(out.begin());
-  while (!out.empty() && std::isspace(static_cast<unsigned char>(out.back()))) out.pop_back();
-  return out;
-}
-
-std::string to_lower_copy(std::string s) {
-  for (char& c : s) {
-    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-  }
-  return s;
-}
-
 int count_inliers(const cv::Mat& inlier_mask) {
-  if (inlier_mask.empty()) return 0;
-  if (inlier_mask.type() != CV_8UC1) return 0;
+  if (inlier_mask.empty())
+    return 0;
+  if (inlier_mask.type() != CV_8UC1)
+    return 0;
   return cv::countNonZero(inlier_mask);
 }
 
 VideoStabService::MotionParams motion_from_affine(const cv::Mat& affine_2x3) {
   VideoStabService::MotionParams out;
-  if (affine_2x3.empty() || affine_2x3.rows != 2 || affine_2x3.cols != 3) return out;
+  if (affine_2x3.empty() || affine_2x3.rows != 2 || affine_2x3.cols != 3)
+    return out;
   const double a = affine_2x3.at<double>(0, 0);
   const double b = affine_2x3.at<double>(0, 1);
   const double c = affine_2x3.at<double>(1, 0);
@@ -111,7 +113,8 @@ VideoStabService::MotionParams motion_from_affine(const cv::Mat& affine_2x3) {
 
 VideoStabService::MotionParams motion_from_homography(const cv::Mat& homography_3x3) {
   VideoStabService::MotionParams out;
-  if (homography_3x3.empty() || homography_3x3.rows != 3 || homography_3x3.cols != 3) return out;
+  if (homography_3x3.empty() || homography_3x3.rows != 3 || homography_3x3.cols != 3)
+    return out;
   const double h00 = homography_3x3.at<double>(0, 0);
   const double h10 = homography_3x3.at<double>(1, 0);
   out.tx = homography_3x3.at<double>(0, 2);
@@ -129,7 +132,8 @@ VideoStabService::MotionParams lerp_motion(const VideoStabService::MotionParams&
   out.ty = alpha * curr.ty + (1.0 - alpha) * prev.ty;
   out.angle_deg = alpha * curr.angle_deg + (1.0 - alpha) * prev.angle_deg;
   out.scale = alpha * curr.scale + (1.0 - alpha) * prev.scale;
-  if (out.scale <= 1e-6) out.scale = 1.0;
+  if (out.scale <= 1e-6)
+    out.scale = 1.0;
   return out;
 }
 
@@ -172,10 +176,13 @@ cv::Mat affine_2x3_to_homography_3x3(const cv::Mat& affine_2x3) {
 
 VideoStabService::VideoStabService(Config cfg) : cfg_(std::move(cfg)) {}
 
-VideoStabService::~VideoStabService() { stop(); }
+VideoStabService::~VideoStabService() {
+  stop();
+}
 
 bool VideoStabService::start() {
-  if (running_.load(std::memory_order_acquire)) return true;
+  if (running_.load(std::memory_order_acquire))
+    return true;
 
   f8::cppsdk::ServiceBus::Config bus_cfg;
   bus_cfg.service_id = cfg_.service_id;
@@ -194,7 +201,7 @@ bool VideoStabService::start() {
     return false;
   }
 
-      output_shm_name_ = f8::cppsdk::shm::video_shm_name(cfg_.service_id);
+  output_shm_name_ = f8::cppsdk::shm::video_shm_name(cfg_.service_id);
   input_shm_name_.clear();
   input_video_.close();
   output_initialized_ = false;
@@ -214,14 +221,14 @@ bool VideoStabService::start() {
   input_last_open_attempt_ms_ = 0;
   output_last_open_attempt_ms_ = 0;
 
-  telemetry_observed_frames_ = 0;
-  telemetry_processed_frames_ = 0;
-  telemetry_window_processed_frames_ = 0;
-  telemetry_fail_frames_ = 0;
-  telemetry_window_start_ms_ = 0;
-  telemetry_last_process_ms_ = 0.0;
-  telemetry_total_process_ms_ = 0.0;
-  telemetry_fps_ = 0.0;
+  monitor_observed_frames_ = 0;
+  monitor_processed_frames_ = 0;
+  monitor_window_processed_frames_ = 0;
+  monitor_fail_frames_ = 0;
+  monitor_window_start_ms_ = 0;
+  monitor_last_process_ms_ = 0.0;
+  monitor_total_process_ms_ = 0.0;
+  monitor_fps_ = 0.0;
 
   publish_state_if_changed("serviceClass", cfg_.service_class, "init", json::object());
   publish_state_if_changed("inputShmName", input_shm_name_, "init", json::object());
@@ -249,7 +256,8 @@ bool VideoStabService::start() {
 
 void VideoStabService::stop() {
   stop_requested_.store(true, std::memory_order_release);
-  if (!running_.exchange(false, std::memory_order_acq_rel)) return;
+  if (!running_.exchange(false, std::memory_order_acq_rel))
+    return;
   if (bus_) {
     bus_->stop();
   }
@@ -262,7 +270,8 @@ void VideoStabService::stop() {
 }
 
 void VideoStabService::tick() {
-  if (!running()) return;
+  if (!running())
+    return;
   if (bus_) {
     (void)bus_->drain_main_thread();
     if (bus_->terminate_requested()) {
@@ -270,56 +279,43 @@ void VideoStabService::tick() {
       return;
     }
   }
-  if (!active_.load(std::memory_order_acquire)) return;
+  if (!active_.load(std::memory_order_acquire))
+    return;
   process_frame_once();
 }
 
 void VideoStabService::publish_state_if_changed(const std::string& field, const json& value, const std::string& source,
                                                 const json& meta) {
-  std::lock_guard<std::mutex> lock(state_mu_);
-  auto it = published_state_.find(field);
-  if (it != published_state_.end() && it->second == value) return;
-  published_state_[field] = value;
-  if (bus_) {
-    (void)f8::cppsdk::kv_set_node_state(bus_->kv(), cfg_.service_id, cfg_.service_id, field, value, source, meta);
-  }
+  service_runtime::publish_state_if_changed(state_mu_, published_state_, bus_.get(), cfg_.service_id, field, value,
+                                            source, meta);
 }
 
-void VideoStabService::emit_telemetry(std::int64_t ts_ms, std::uint64_t frame_id, double process_ms) {
-  if (!bus_) return;
-  if (telemetry_window_start_ms_ <= 0) {
-    telemetry_window_start_ms_ = ts_ms;
+void VideoStabService::emit_monitor_snapshot(std::int64_t ts_ms, std::uint64_t frame_id, double process_ms) {
+  if (!bus_)
+    return;
+  (void)frame_id;
+  if (monitor_window_start_ms_ <= 0) {
+    monitor_window_start_ms_ = ts_ms;
   }
-  ++telemetry_processed_frames_;
-  ++telemetry_window_processed_frames_;
-  telemetry_last_process_ms_ = process_ms;
-  telemetry_total_process_ms_ += process_ms;
+  ++monitor_processed_frames_;
+  ++monitor_window_processed_frames_;
+  monitor_last_process_ms_ = process_ms;
+  monitor_total_process_ms_ += process_ms;
 
-  const std::int64_t elapsed = ts_ms - telemetry_window_start_ms_;
+  const std::int64_t elapsed = ts_ms - monitor_window_start_ms_;
   if (elapsed >= 1000) {
-    telemetry_fps_ = static_cast<double>(telemetry_window_processed_frames_) * 1000.0 / static_cast<double>(elapsed);
-    telemetry_window_start_ms_ = ts_ms;
-    telemetry_window_processed_frames_ = 0;
+    monitor_fps_ = static_cast<double>(monitor_window_processed_frames_) * 1000.0 / static_cast<double>(elapsed);
+    monitor_window_start_ms_ = ts_ms;
+    monitor_window_processed_frames_ = 0;
   }
 
-  const std::uint64_t dropped_frames = telemetry_observed_frames_ > telemetry_processed_frames_
-                                           ? (telemetry_observed_frames_ - telemetry_processed_frames_)
-                                           : 0;
-  const double avg_process_ms = telemetry_processed_frames_ > 0
-                                    ? (telemetry_total_process_ms_ / static_cast<double>(telemetry_processed_frames_))
+  const std::uint64_t dropped_frames =
+      monitor_observed_frames_ > monitor_processed_frames_ ? (monitor_observed_frames_ - monitor_processed_frames_) : 0;
+  const double avg_process_ms = monitor_processed_frames_ > 0
+                                    ? (monitor_total_process_ms_ / static_cast<double>(monitor_processed_frames_))
                                     : 0.0;
-
-  json telemetry = json::object();
-  telemetry["tsMs"] = ts_ms;
-  telemetry["frameId"] = frame_id;
-  telemetry["fps"] = telemetry_fps_;
-  telemetry["processMs"] = telemetry_last_process_ms_;
-  telemetry["avgProcessMs"] = avg_process_ms;
-  telemetry["observedFrames"] = telemetry_observed_frames_;
-  telemetry["processedFrames"] = telemetry_processed_frames_;
-  telemetry["droppedFrames"] = dropped_frames;
-  telemetry["failFrames"] = telemetry_fail_frames_;
-  (void)bus_->emit_data(cfg_.service_id, "telemetry", telemetry);
+  (void)avg_process_ms;
+  (void)dropped_frames;
 }
 
 void VideoStabService::on_lifecycle(bool active, const json& meta) {
@@ -328,39 +324,15 @@ void VideoStabService::on_lifecycle(bool active, const json& meta) {
 }
 
 bool VideoStabService::parse_double_field(const json& value, double& out) const {
-  if (value.is_number_float()) {
-    out = value.get<double>();
-    return true;
-  }
-  if (value.is_number_integer()) {
-    out = static_cast<double>(value.get<int>());
-    return true;
-  }
-  if (value.is_number_unsigned()) {
-    out = static_cast<double>(value.get<unsigned int>());
-    return true;
-  }
-  return false;
+  return service_runtime::parse_json_double(value, out);
 }
 
 bool VideoStabService::parse_int_field(const json& value, int& out) const {
-  if (value.is_number_integer()) {
-    out = value.get<int>();
-    return true;
-  }
-  if (value.is_number_unsigned()) {
-    out = static_cast<int>(value.get<unsigned int>());
-    return true;
-  }
-  if (value.is_number_float()) {
-    out = static_cast<int>(std::lround(value.get<double>()));
-    return true;
-  }
-  return false;
+  return service_runtime::parse_json_int(value, out);
 }
 
 void VideoStabService::set_input_shm_name(const std::string& shm_name, const json& meta) {
-  const std::string trimmed = trim_copy(shm_name);
+  const std::string trimmed = service_runtime::trim_copy(shm_name);
   if (trimmed == input_shm_name_) {
     publish_state_if_changed("inputShmName", input_shm_name_, "state", meta);
     return;
@@ -380,7 +352,7 @@ void VideoStabService::set_input_shm_name(const std::string& shm_name, const jso
 }
 
 void VideoStabService::set_motion_model(const std::string& model, const json& meta) {
-  const std::string normalized = to_lower_copy(trim_copy(model));
+  const std::string normalized = service_runtime::to_lower_ascii_copy(service_runtime::trim_copy(model));
   if (normalized == "affine") {
     motion_model_ = MotionModel::Affine;
     motion_model_state_ = "affine";
@@ -397,7 +369,7 @@ void VideoStabService::set_motion_model(const std::string& model, const json& me
 }
 
 void VideoStabService::set_stabilization_mode(const std::string& mode, const json& meta) {
-  const std::string normalized = to_lower_copy(trim_copy(mode));
+  const std::string normalized = service_runtime::to_lower_ascii_copy(service_runtime::trim_copy(mode));
   if (normalized == "trajectory") {
     stabilization_mode_ = StabilizationMode::Trajectory;
     stabilization_mode_state_ = "trajectory";
@@ -416,7 +388,8 @@ void VideoStabService::set_stabilization_mode(const std::string& mode, const jso
 void VideoStabService::on_state(const std::string& node_id, const std::string& field, const json& value,
                                 std::int64_t ts_ms, const json& meta) {
   (void)ts_ms;
-  if (node_id != cfg_.service_id) return;
+  if (node_id != cfg_.service_id)
+    return;
 
   if (field == "inputShmName" && value.is_string()) {
     set_input_shm_name(value.get<std::string>(), meta);
@@ -621,7 +594,8 @@ bool VideoStabService::ensure_input_open() {
 }
 
 bool VideoStabService::ensure_output_open() {
-  if (output_initialized_) return true;
+  if (output_initialized_)
+    return true;
 
   const std::int64_t now = f8::cppsdk::now_ms();
   if (output_last_open_attempt_ms_ > 0 && (now - output_last_open_attempt_ms_) < 1000) {
@@ -643,7 +617,8 @@ bool VideoStabService::ensure_output_open() {
 }
 
 void VideoStabService::process_frame_once() {
-  if (!bus_) return;
+  if (!bus_)
+    return;
 
   std::lock_guard<std::mutex> lock(io_mu_);
 
@@ -668,23 +643,23 @@ void VideoStabService::process_frame_once() {
     return;
   }
 
-  ++telemetry_observed_frames_;
+  ++monitor_observed_frames_;
   input_last_frame_id_ = hdr.frame_id;
   const std::int64_t process_start_ms = f8::cppsdk::now_ms();
 
   if (hdr.format != 1 || hdr.width == 0 || hdr.height == 0 || hdr.pitch == 0) {
-    ++telemetry_fail_frames_;
+    ++monitor_fail_frames_;
     publish_state_if_changed("lastError", "unsupported video shm format", "runtime", json::object());
     return;
   }
   const std::size_t row_bytes = static_cast<std::size_t>(hdr.pitch);
   if (row_bytes < static_cast<std::size_t>(hdr.width) * 4) {
-    ++telemetry_fail_frames_;
+    ++monitor_fail_frames_;
     publish_state_if_changed("lastError", "invalid video shm pitch", "runtime", json::object());
     return;
   }
   if (input_frame_bgra_.size() < row_bytes * static_cast<std::size_t>(hdr.height)) {
-    ++telemetry_fail_frames_;
+    ++monitor_fail_frames_;
     publish_state_if_changed("lastError", "video shm frame too small", "runtime", json::object());
     return;
   }
@@ -696,8 +671,9 @@ void VideoStabService::process_frame_once() {
   try {
     cv::cvtColor(src_bgra, gray, cv::COLOR_BGRA2GRAY);
   } catch (const cv::Exception& ex) {
-    ++telemetry_fail_frames_;
-    publish_state_if_changed("lastError", std::string("opencv cvtColor failed: ") + ex.what(), "runtime", json::object());
+    ++monitor_fail_frames_;
+    publish_state_if_changed("lastError", std::string("opencv cvtColor failed: ") + ex.what(), "runtime",
+                             json::object());
     return;
   }
 
@@ -730,7 +706,7 @@ void VideoStabService::process_frame_once() {
         cv::calcOpticalFlowPyrLK(prev_gray_, gray, prev_pts, curr_pts, status, err);
       }
     } catch (const cv::Exception& ex) {
-      ++telemetry_fail_frames_;
+      ++monitor_fail_frames_;
       ++consecutive_failures_;
       publish_state_if_changed("lastError", std::string("opencv optical flow failed: ") + ex.what(), "runtime",
                                json::object());
@@ -749,11 +725,14 @@ void VideoStabService::process_frame_once() {
     const int h = static_cast<int>(hdr.height);
 
     for (std::size_t i = 0; i < prev_pts.size() && i < curr_pts.size() && i < status.size(); ++i) {
-      if (status[i] == 0) continue;
+      if (status[i] == 0)
+        continue;
       const cv::Point2f p0 = prev_pts[i];
       const cv::Point2f p1 = curr_pts[i];
-      if (p0.x < 0.0f || p0.y < 0.0f || p0.x >= static_cast<float>(w) || p0.y >= static_cast<float>(h)) continue;
-      if (p1.x < 0.0f || p1.y < 0.0f || p1.x >= static_cast<float>(w) || p1.y >= static_cast<float>(h)) continue;
+      if (p0.x < 0.0f || p0.y < 0.0f || p0.x >= static_cast<float>(w) || p0.y >= static_cast<float>(h))
+        continue;
+      if (p1.x < 0.0f || p1.y < 0.0f || p1.x >= static_cast<float>(w) || p1.y >= static_cast<float>(h))
+        continue;
       prev_valid.push_back(p0);
       curr_valid.push_back(p1);
     }
@@ -790,15 +769,16 @@ void VideoStabService::process_frame_once() {
       cv::Mat inliers;
       try {
         if (motion_model_ == MotionModel::Affine) {
-          cv::Mat affine = cv::estimateAffinePartial2D(prev_valid, curr_valid, inliers, cv::RANSAC,
-                                                       ransac_reproj_threshold_);
+          cv::Mat affine =
+              cv::estimateAffinePartial2D(prev_valid, curr_valid, inliers, cv::RANSAC, ransac_reproj_threshold_);
           if (!affine.empty() && affine.rows == 2 && affine.cols == 3) {
             raw_params = motion_from_affine(affine);
             inlier_count = count_inliers(inliers);
             motion_valid = true;
           }
         } else {
-          cv::Mat homography = cv::findHomography(prev_valid, curr_valid, cv::RANSAC, ransac_reproj_threshold_, inliers);
+          cv::Mat homography =
+              cv::findHomography(prev_valid, curr_valid, cv::RANSAC, ransac_reproj_threshold_, inliers);
           if (!homography.empty() && homography.rows == 3 && homography.cols == 3) {
             raw_params = motion_from_homography(homography);
             inlier_count = count_inliers(inliers);
@@ -806,7 +786,7 @@ void VideoStabService::process_frame_once() {
           }
         }
       } catch (const cv::Exception& ex) {
-        ++telemetry_fail_frames_;
+        ++monitor_fail_frames_;
         ++consecutive_failures_;
         publish_state_if_changed("lastError", std::string("opencv transform estimate failed: ") + ex.what(), "runtime",
                                  json::object());
@@ -824,8 +804,7 @@ void VideoStabService::process_frame_once() {
           trajectory_raw_params_.ty += raw_params.ty;
           trajectory_raw_params_.angle_deg += raw_params.angle_deg;
           trajectory_raw_params_.scale *= raw_params.scale;
-          trajectory_smooth_params_ =
-              lerp_motion(trajectory_smooth_params_, trajectory_raw_params_, smooth_alpha_);
+          trajectory_smooth_params_ = lerp_motion(trajectory_smooth_params_, trajectory_raw_params_, smooth_alpha_);
         }
         correction_raw_params = trajectory_raw_params_;
         correction_smooth_params = trajectory_smooth_params_;
@@ -845,9 +824,8 @@ void VideoStabService::process_frame_once() {
       const double base_scale = std::max(correction_raw_params.scale, 1e-6);
       corr_params.scale = correction_smooth_params.scale / base_scale;
 
-      const cv::Mat correction_affine =
-          correction_affine_2x3(correction_raw_params, correction_smooth_params, static_cast<int>(hdr.width),
-                                static_cast<int>(hdr.height));
+      const cv::Mat correction_affine = correction_affine_2x3(
+          correction_raw_params, correction_smooth_params, static_cast<int>(hdr.width), static_cast<int>(hdr.height));
       try {
         if (motion_model_ == MotionModel::Affine) {
           cv::warpAffine(src_bgra, stabilized, correction_affine,
@@ -860,9 +838,10 @@ void VideoStabService::process_frame_once() {
                               cv::BORDER_CONSTANT, cv::Scalar(0, 0, 0, 255));
         }
       } catch (const cv::Exception& ex) {
-        ++telemetry_fail_frames_;
+        ++monitor_fail_frames_;
         ++consecutive_failures_;
-        publish_state_if_changed("lastError", std::string("opencv warp failed: ") + ex.what(), "runtime", json::object());
+        publish_state_if_changed("lastError", std::string("opencv warp failed: ") + ex.what(), "runtime",
+                                 json::object());
         stabilized = src_bgra.clone();
         motion_valid = false;
       }
@@ -870,7 +849,7 @@ void VideoStabService::process_frame_once() {
 
     if (!motion_valid) {
       if (!scene_changed) {
-        ++telemetry_fail_frames_;
+        ++monitor_fail_frames_;
         ++consecutive_failures_;
         if (consecutive_failures_ >= reset_on_failure_frames_) {
           reset_stabilizer_internal(json::object(), "consecutive_failures");
@@ -886,13 +865,13 @@ void VideoStabService::process_frame_once() {
   }
 
   if (!output_video_ || !output_video_->ensureConfiguration(hdr.width, hdr.height)) {
-    ++telemetry_fail_frames_;
+    ++monitor_fail_frames_;
     publish_state_if_changed("lastError", "output shm ensureConfiguration failed", "runtime", json::object());
     return;
   }
 
   if (!output_video_->writeFrame(stabilized.data, static_cast<unsigned>(stabilized.step[0]))) {
-    ++telemetry_fail_frames_;
+    ++monitor_fail_frames_;
     publish_state_if_changed("lastError", "output shm writeFrame failed", "runtime", json::object());
     return;
   }
@@ -934,55 +913,43 @@ void VideoStabService::process_frame_once() {
   (void)bus_->emit_data(cfg_.service_id, "motion", motion);
 
   const std::int64_t end_ts_ms = f8::cppsdk::now_ms();
-  emit_telemetry(end_ts_ms, hdr.frame_id, static_cast<double>(end_ts_ms - process_start_ms));
+  emit_monitor_snapshot(end_ts_ms, hdr.frame_id, static_cast<double>(end_ts_ms - process_start_ms));
 }
 
 json VideoStabService::describe() {
-  const json motion_schema = schema_object(
-      json{{"frameId", schema_integer()},
-           {"tsMs", schema_integer()},
-           {"width", schema_integer()},
-           {"height", schema_integer()},
-           {"model", schema_string()},
-           {"stabilizationMode", schema_string()},
-           {"valid", schema_boolean()},
-           {"sceneChanged", schema_boolean()},
-           {"sceneChangeCount", schema_integer()},
-           {"sceneCutFrameDiff", schema_number()},
-           {"sceneCutTrackRatio", schema_number()},
-           {"inlierCount", schema_integer()},
-           {"trackedPoints", schema_integer()},
-           {"rawTx", schema_number()},
-           {"rawTy", schema_number()},
-           {"rawAngleDeg", schema_number()},
-           {"rawScale", schema_number()},
-           {"smoothTx", schema_number()},
-           {"smoothTy", schema_number()},
-           {"smoothAngleDeg", schema_number()},
-           {"smoothScale", schema_number()},
-           {"corrTx", schema_number()},
-           {"corrTy", schema_number()},
-           {"corrAngleDeg", schema_number()},
-           {"corrScale", schema_number()},
-           {"trajRawTx", schema_number()},
-           {"trajRawTy", schema_number()},
-           {"trajRawAngleDeg", schema_number()},
-           {"trajRawScale", schema_number()},
-           {"trajSmoothTx", schema_number()},
-           {"trajSmoothTy", schema_number()},
-           {"trajSmoothAngleDeg", schema_number()},
-           {"trajSmoothScale", schema_number()}});
-
-  const json telemetry_schema = schema_object(
-      json{{"tsMs", schema_integer()},
-           {"frameId", schema_integer()},
-           {"fps", schema_number()},
-           {"processMs", schema_number()},
-           {"avgProcessMs", schema_number()},
-           {"observedFrames", schema_integer()},
-           {"processedFrames", schema_integer()},
-           {"droppedFrames", schema_integer()},
-           {"failFrames", schema_integer()}});
+  const json motion_schema = schema_object(json{{"frameId", schema_integer()},
+                                                {"tsMs", schema_integer()},
+                                                {"width", schema_integer()},
+                                                {"height", schema_integer()},
+                                                {"model", schema_string()},
+                                                {"stabilizationMode", schema_string()},
+                                                {"valid", schema_boolean()},
+                                                {"sceneChanged", schema_boolean()},
+                                                {"sceneChangeCount", schema_integer()},
+                                                {"sceneCutFrameDiff", schema_number()},
+                                                {"sceneCutTrackRatio", schema_number()},
+                                                {"inlierCount", schema_integer()},
+                                                {"trackedPoints", schema_integer()},
+                                                {"rawTx", schema_number()},
+                                                {"rawTy", schema_number()},
+                                                {"rawAngleDeg", schema_number()},
+                                                {"rawScale", schema_number()},
+                                                {"smoothTx", schema_number()},
+                                                {"smoothTy", schema_number()},
+                                                {"smoothAngleDeg", schema_number()},
+                                                {"smoothScale", schema_number()},
+                                                {"corrTx", schema_number()},
+                                                {"corrTy", schema_number()},
+                                                {"corrAngleDeg", schema_number()},
+                                                {"corrScale", schema_number()},
+                                                {"trajRawTx", schema_number()},
+                                                {"trajRawTy", schema_number()},
+                                                {"trajRawAngleDeg", schema_number()},
+                                                {"trajRawScale", schema_number()},
+                                                {"trajSmoothTx", schema_number()},
+                                                {"trajSmoothTy", schema_number()},
+                                                {"trajSmoothAngleDeg", schema_number()},
+                                                {"trajSmoothScale", schema_number()}});
 
   json service;
   service["schemaVersion"] = "f8service/1";
@@ -993,9 +960,10 @@ json VideoStabService::describe() {
   service["tags"] = json::array({"cv", "stabilization", "video"});
 
   service["stateFields"] = json::array({
-      state_field("inputShmName", schema_string(), "rw", "Input Video SHM", "Input SHM name (e.g. shm.xxx.video).", true),
-      state_field("outputShmName", schema_string(), "ro", "Output Video SHM", "Output SHM name generated from serviceId.",
+      state_field("inputShmName", schema_string(), "rw", "Input Video SHM", "Input SHM name (e.g. shm.xxx.video).",
                   true),
+      state_field("outputShmName", schema_string(), "ro", "Output Video SHM",
+                  "Output SHM name generated from serviceId.", true),
       state_field("motionModel", schema_string_enum({"affine", "homography"}, "affine"), "rw", "Motion Model",
                   "Global motion model used by stabilizer.", false),
       state_field("stabilizationMode", schema_string_enum({"trajectory", "instant"}, "trajectory"), "rw",
@@ -1037,11 +1005,8 @@ json VideoStabService::describe() {
       json{{"name", "motion"},
            {"valueSchema", motion_schema},
            {"description", "Per-frame estimated and smoothed motion parameters."},
-           {"required", false}},
-      json{{"name", "telemetry"},
-           {"valueSchema", telemetry_schema},
-           {"description", "Runtime telemetry: fps/process time/dropped/fail frames."},
-           {"required", false}},
+           {"required", true},
+           {"showOnNode", true}},
   });
   service["editableDataInPorts"] = false;
   service["editableDataOutPorts"] = false;

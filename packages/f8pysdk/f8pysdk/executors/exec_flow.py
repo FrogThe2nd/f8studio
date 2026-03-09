@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-import time
+import logging
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -11,8 +11,10 @@ from ..nats_naming import ensure_token
 from ..service_bus.bus import ServiceBus
 from ..time_utils import now_ms
 
+logger = logging.getLogger(__name__)
 
-def _entrypoint_node_id_or_raise(graph: F8RuntimeGraph, *, service_id: str) -> str | None:
+
+def _entrypoint_node_ids(graph: F8RuntimeGraph, *, service_id: str) -> tuple[str, ...]:
     entrypoint_ids: list[str] = []
     for node in list(graph.nodes or []):
         if str(node.serviceId or "") != str(service_id):
@@ -21,11 +23,7 @@ def _entrypoint_node_id_or_raise(graph: F8RuntimeGraph, *, service_id: str) -> s
         out_n = len(list(node.execOutPorts or []))
         if in_n == 0 and out_n > 0:
             entrypoint_ids.append(str(node.nodeId))
-    if not entrypoint_ids:
-        return None
-    if len(entrypoint_ids) > 1:
-        raise ValueError(f"graph has multiple exec entrypoints: {entrypoint_ids}")
-    return entrypoint_ids[0]
+    return tuple(sorted(entrypoint_ids))
 
 
 def validate_exec_topology_or_raise(
@@ -61,8 +59,18 @@ def validate_exec_topology_or_raise(
         adj.setdefault(from_key[0], set()).add(to_key[0])
 
     ExecFlowExecutor._ensure_exec_acyclic(adj)
-    _entrypoint_node_id_or_raise(graph, service_id=sid)
+    for node_id in _entrypoint_node_ids(graph, service_id=sid):
+        ensure_token(node_id, label="node_id")
     return out_map
+
+
+@dataclass(frozen=True)
+class _ExecTrigger:
+    seq: int
+    node_id: str
+    out_port: str
+    exec_id: str | int
+    done: asyncio.Future[None] | None
 
 
 @dataclass
@@ -91,7 +99,7 @@ class EntrypointContext:
 
         `exec_id` is a per-trigger execution id (used as an evaluation/cache key across a single propagation).
         """
-        await self.executor.trigger_exec(self.node_id, out_port, exec_id=exec_id)
+        await self.executor.trigger_exec_nowait(self.node_id, out_port, exec_id=exec_id)
 
     async def cancel(self) -> None:
         for t in list(self._tasks):
@@ -112,8 +120,9 @@ class ExecFlowExecutor:
     Constraints:
     - Exec edges are strictly intra-process: only when `fromServiceId == toServiceId == bus.service_id`.
     - Cross-process "triggering" must be modeled via data/state edges and handled in nodes.
-    - Exactly one entrypoint node is allowed per graph activation.
+    - Multiple entrypoint nodes are allowed per graph activation.
     - Exec ports are single-connection (UE-style): each exec in/out port can connect to at most 1 edge.
+    - Trigger delivery is serialized through a global FIFO queue per service.
     - Scheduling is depth-first (LIFO stack) to keep branching order predictable (e.g., Sequence).
     """
 
@@ -126,8 +135,11 @@ class ExecFlowExecutor:
         self._nodes: dict[str, Any] = {}
 
         self._exec_out: dict[tuple[str, str], tuple[str, str]] = {}
-        self._entrypoint_ctx: EntrypointContext | None = None
+        self._entrypoint_ctx_by_node_id: dict[str, EntrypointContext] = {}
         self._half_out_ports: dict[str, set[str]] = {}
+        self._trigger_queue: asyncio.Queue[_ExecTrigger] = asyncio.Queue()
+        self._trigger_worker_task: asyncio.Task[None] | None = None
+        self._trigger_seq = 0
 
     @property
     def service_id(self) -> str:
@@ -142,7 +154,7 @@ class ExecFlowExecutor:
         Activate/deactivate exec processing.
 
         When inactive:
-        - entrypoint is stopped (best-effort)
+        - entrypoints are stopped (best-effort)
         - new exec triggers are ignored
         """
         active = bool(active)
@@ -150,11 +162,20 @@ class ExecFlowExecutor:
             return
         self._active = active
         if not active:
-            await self.stop_entrypoint()
+            await self._stop_trigger_worker()
+            await self.stop_all_entrypoints()
+            self._drain_trigger_queue()
             return
         graph = self._graph
         if graph is not None:
-            await self._restart_entrypoint_if_needed(graph)
+            try:
+                await self._start_trigger_worker()
+                await self._start_entrypoints_for_graph(graph)
+            except Exception:
+                await self.stop_all_entrypoints()
+                await self._stop_trigger_worker()
+                self._drain_trigger_queue()
+                raise
 
     # ---- node registry --------------------------------------------------
     def register_node(self, node: BusAttachableNode) -> None:
@@ -172,16 +193,31 @@ class ExecFlowExecutor:
             return None
         return self._nodes.get(node_id)
 
+    def current_entrypoint_node_ids(self) -> tuple[str, ...]:
+        return tuple(sorted(self._entrypoint_ctx_by_node_id.keys()))
+
     def current_entrypoint_node_id(self) -> str | None:
-        return self._entrypoint_ctx.node_id if self._entrypoint_ctx else None
+        # Compatibility helper kept for callers not yet migrated to multi-entrypoint APIs.
+        ids = self.current_entrypoint_node_ids()
+        return ids[0] if ids else None
 
     # ---- rungraph -------------------------------------------------------
     async def apply_rungraph(self, graph: F8RuntimeGraph) -> None:
         self._graph = graph
+        await self._stop_trigger_worker()
+        await self.stop_all_entrypoints()
+        self._drain_trigger_queue()
         self._rebuild_exec_routes(graph)
         self._rebuild_half_out_ports(graph)
         if self._active:
-            await self._restart_entrypoint_if_needed(graph)
+            try:
+                await self._start_trigger_worker()
+                await self._start_entrypoints_for_graph(graph)
+            except Exception:
+                await self.stop_all_entrypoints()
+                await self._stop_trigger_worker()
+                self._drain_trigger_queue()
+                raise
 
     def _rebuild_half_out_ports(self, graph: F8RuntimeGraph) -> None:
         out: dict[str, set[str]] = {}
@@ -255,37 +291,53 @@ class ExecFlowExecutor:
         for n in sorted(adj.keys()):
             _visit(n)
 
-    async def _restart_entrypoint_if_needed(self, graph: F8RuntimeGraph) -> None:
-        new_source = _entrypoint_node_id_or_raise(graph, service_id=self._service_id)
-        cur = self._entrypoint_ctx.node_id if self._entrypoint_ctx else None
-        if new_source == cur:
+    async def _start_entrypoints_for_graph(self, graph: F8RuntimeGraph) -> None:
+        entrypoint_ids = _entrypoint_node_ids(graph, service_id=self._service_id)
+        if not entrypoint_ids:
             return
-        await self.stop_entrypoint()
-        if new_source:
-            await self.start_entrypoint(new_source)
+        for node_id in entrypoint_ids:
+            node = self._nodes.get(node_id)
+            if node is None:
+                raise KeyError(f"entrypoint node not registered: {node_id}")
+            if not isinstance(node, EntrypointNode):
+                raise ValueError(f"exec entrypoint node must implement EntrypointNode: {node_id}")
+        for node_id in entrypoint_ids:
+            await self.start_entrypoint(node_id)
 
     # ---- source lifecycle ----------------------------------------------
     async def start_entrypoint(self, node_id: str) -> None:
         node_id = ensure_token(node_id, label="node_id")
         if not self._active:
             return
+        if node_id in self._entrypoint_ctx_by_node_id:
+            return
         node = self._nodes.get(node_id)
         if node is None:
             raise KeyError(f"entrypoint node not registered: {node_id}")
         if not isinstance(node, EntrypointNode):
-            return
+            raise ValueError(f"exec entrypoint node must implement EntrypointNode: {node_id}")
         ctx = EntrypointContext(executor=self, node_id=node_id)
-        self._entrypoint_ctx = ctx
+        self._entrypoint_ctx_by_node_id[node_id] = ctx
         try:
             await node.start_entrypoint(ctx)  # type: ignore[misc]
         except Exception:
             await ctx.cancel()
-            self._entrypoint_ctx = None
+            self._entrypoint_ctx_by_node_id.pop(node_id, None)
             raise
 
     async def stop_entrypoint(self) -> None:
-        ctx = self._entrypoint_ctx
-        self._entrypoint_ctx = None
+        # Compatibility helper: stop the first active entrypoint, if any.
+        ids = self.current_entrypoint_node_ids()
+        if not ids:
+            return
+        await self._stop_entrypoint(ids[0])
+
+    async def stop_all_entrypoints(self) -> None:
+        for node_id in self.current_entrypoint_node_ids():
+            await self._stop_entrypoint(node_id)
+
+    async def _stop_entrypoint(self, node_id: str) -> None:
+        ctx = self._entrypoint_ctx_by_node_id.pop(node_id, None)
         if ctx is None:
             return
         try:
@@ -293,10 +345,81 @@ class ExecFlowExecutor:
             if node is not None and isinstance(node, EntrypointNode):
                 try:
                     await node.stop_entrypoint()  # type: ignore[misc]
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.exception("stop_entrypoint failed for node=%s", node_id, exc_info=exc)
         finally:
             await ctx.cancel()
+
+    # ---- trigger worker -------------------------------------------------
+    async def _start_trigger_worker(self) -> None:
+        task = self._trigger_worker_task
+        if task is not None and not task.done():
+            return
+        self._trigger_worker_task = asyncio.create_task(
+            self._trigger_worker_loop(),
+            name=f"exec_flow:trigger_worker:{self._service_id}",
+        )
+
+    async def _stop_trigger_worker(self) -> None:
+        task = self._trigger_worker_task
+        self._trigger_worker_task = None
+        if task is None:
+            return
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            return
+        except Exception as exc:
+            logger.exception("trigger worker stop failed for service=%s", self._service_id, exc_info=exc)
+
+    def _drain_trigger_queue(self) -> None:
+        while True:
+            try:
+                trigger = self._trigger_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                return
+            if trigger.done is not None and not trigger.done.done():
+                trigger.done.set_result(None)
+            self._trigger_queue.task_done()
+
+    async def _trigger_worker_loop(self) -> None:
+        while True:
+            trigger = await self._trigger_queue.get()
+            try:
+                if self._active and self._bus.active:
+                    await self._propagate_exec_dfs(
+                        trigger.node_id,
+                        trigger.out_port,
+                        exec_id=trigger.exec_id,
+                    )
+            finally:
+                if trigger.done is not None and not trigger.done.done():
+                    trigger.done.set_result(None)
+                self._trigger_queue.task_done()
+
+    async def trigger_exec_nowait(
+        self,
+        node_id: str,
+        out_port: str,
+        *,
+        exec_id: str | int,
+    ) -> None:
+        if not self._active:
+            return
+        if (node_id, out_port) not in self._exec_out:
+            return
+        if self._trigger_worker_task is None or self._trigger_worker_task.done():
+            await self._start_trigger_worker()
+        self._trigger_seq += 1
+        trigger = _ExecTrigger(
+            seq=int(self._trigger_seq),
+            node_id=node_id,
+            out_port=out_port,
+            exec_id=exec_id,
+            done=None,
+        )
+        await self._trigger_queue.put(trigger)
 
     # ---- triggering -----------------------------------------------------
     async def trigger_exec(
@@ -307,7 +430,7 @@ class ExecFlowExecutor:
         exec_id: str | int,
     ) -> None:
         """
-        Inject an exec trigger from (node_id, out_port) and propagate intra-service exec edges.
+        Enqueue an exec trigger from (node_id, out_port) for serialized propagation.
         """
         # `exec_id` is a per-trigger execution id (used as an evaluation/cache key across a single propagation).
 
@@ -315,7 +438,30 @@ class ExecFlowExecutor:
             return
         node_id = ensure_token(node_id, label="node_id")
         out_port = str(out_port)
+        if (node_id, out_port) not in self._exec_out:
+            return
+        if self._trigger_worker_task is None or self._trigger_worker_task.done():
+            await self._start_trigger_worker()
+        loop = asyncio.get_running_loop()
+        done: asyncio.Future[None] = loop.create_future()
+        self._trigger_seq += 1
+        trigger = _ExecTrigger(
+            seq=int(self._trigger_seq),
+            node_id=node_id,
+            out_port=out_port,
+            exec_id=exec_id,
+            done=done,
+        )
+        await self._trigger_queue.put(trigger)
+        await done
 
+    async def _propagate_exec_dfs(
+        self,
+        node_id: str,
+        out_port: str,
+        *,
+        exec_id: str | int,
+    ) -> None:
         stack: list[tuple[str, str]] = []
         nxt = self._exec_out.get((node_id, out_port))
         if nxt is not None:
@@ -338,7 +484,13 @@ class ExecFlowExecutor:
             await self._emit_half_edge_outputs(to_node, exec_id=exec_id)
 
             # DFS scheduling: push in reverse so earlier ports run first.
-            for p in reversed(list(out_ports or [])):
+            if isinstance(out_ports, (list, tuple)):
+                route_ports = out_ports
+            elif out_ports is None:
+                route_ports = ()
+            else:
+                route_ports = tuple(out_ports)
+            for p in reversed(route_ports):
                 nxt = self._exec_out.get((to_node, str(p)))
                 if nxt is not None:
                     stack.append(nxt)

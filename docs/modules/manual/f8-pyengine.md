@@ -1,27 +1,15 @@
-### Recommended Use Cases
+## When to Use
 
-- Build operator pipelines for signal processing and device control.
-- Bridge service outputs into composable runtime logic.
+- Use `f8.pyengine` as the main runtime host for `f8.*` operators, signal transforms, protocol adapters, and custom control logic.
+- It is the default choice when a graph needs composable operator chains rather than a standalone service.
 
-### Minimal Run Example
+## Common Wiring Patterns
 
-```bash
-pixi run -e default engine
-```
+- Create one or more `PyEngine` host nodes, then bind each operator `Service Id` to the correct host node `id`.
+- Separate timing/wave generation, mapping, and device-output branches so release debugging stays tractable.
 
-### Operator Composition Notes
+## Pitfalls / Gotchas
 
-- Keep time-base generation (`tick`, `phase`, `program_wave`) separated from mapping stages (`range_map`, `smooth_filter`, `rate_limiter`).
-- Use dedicated adapter operators (`lovense_program_adapter`, `buttplug_bridge`) to isolate protocol translation from signal logic.
-- `f8.expr` is an operator inside `f8.pyengine`; if you need a standalone service-level expression runtime, use `f8.pyexpr`.
-- For reusable chains, keep clear input/output contracts and avoid hidden side effects.
+- Missing or wrong `Service Id` is the most common reason an operator graph looks correct but does nothing.
+- Overloading one host with too many unrelated responsibilities makes runtime diagnosis and reuse harder.
 
-### Common Pitfalls
-
-- Mixed push/pull data delivery can cause unintended ordering assumptions.
-- Overly dense operator graphs make runtime diagnosis difficult.
-
-### Troubleshooting
-
-- Start with a minimal chain and add one operator at a time.
-- Inspect service and operator state ports to locate stale or invalid values.

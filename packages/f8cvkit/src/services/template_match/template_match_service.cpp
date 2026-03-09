@@ -1,20 +1,19 @@
 #include "template_match_service.h"
 
-#include <cmath>
-#include <cctype>
 #include <algorithm>
-#include <exception>
+#include <cmath>
 #include <utility>
 
+#include <spdlog/spdlog.h>
 #include <nlohmann/json.hpp>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
-#include <spdlog/spdlog.h>
 
-#include "f8cppsdk/state_kv.h"
 #include "f8cppsdk/shm/sizing.h"
+#include "f8cppsdk/state_kv.h"
 #include "f8cppsdk/time_utils.h"
 #include "f8cvkit/base64.h"
+#include "../common/service_runtime_utils.h"
 
 namespace f8::cvkit::template_match {
 
@@ -22,8 +21,12 @@ using json = nlohmann::json;
 
 namespace {
 
-json schema_string() { return json{{"type", "string"}}; }
-json schema_number() { return json{{"type", "number"}}; }
+json schema_string() {
+  return json{{"type", "string"}};
+}
+json schema_number() {
+  return json{{"type", "number"}};
+}
 json schema_number(double default_value, double minimum, double maximum) {
   json s{{"type", "number"}};
   s["default"] = default_value;
@@ -31,7 +34,9 @@ json schema_number(double default_value, double minimum, double maximum) {
   s["maximum"] = maximum;
   return s;
 }
-json schema_integer() { return json{{"type", "integer"}}; }
+json schema_integer() {
+  return json{{"type", "integer"}};
+}
 json schema_integer(std::int64_t default_value, std::int64_t minimum, std::int64_t maximum) {
   json s{{"type", "integer"}};
   s["default"] = default_value;
@@ -44,7 +49,8 @@ json schema_object(const json& props, const json& required = json::array()) {
   json obj;
   obj["type"] = "object";
   obj["properties"] = props;
-  if (required.is_array()) obj["required"] = required;
+  if (required.is_array())
+    obj["required"] = required;
   obj["additionalProperties"] = false;
   return obj;
 }
@@ -62,25 +68,23 @@ json state_field(std::string name, const json& value_schema, std::string access,
   sf["name"] = std::move(name);
   sf["valueSchema"] = value_schema;
   sf["access"] = std::move(access);
-  if (!label.empty()) sf["label"] = std::move(label);
-  if (!description.empty()) sf["description"] = std::move(description);
-  if (show_on_node) sf["showOnNode"] = true;
-  if (!ui_control.empty()) sf["uiControl"] = std::move(ui_control);
+  sf["required"] = true;
+  if (!label.empty())
+    sf["label"] = std::move(label);
+  if (!description.empty())
+    sf["description"] = std::move(description);
+  if (show_on_node)
+    sf["showOnNode"] = true;
+  if (!ui_control.empty())
+    sf["uiControl"] = std::move(ui_control);
   return sf;
 }
 
-std::string to_lower_copy(std::string s) {
-  for (char& ch : s) {
-    if (ch >= 'A' && ch <= 'Z') {
-      ch = static_cast<char>(ch - 'A' + 'a');
-    }
-  }
-  return s;
-}
-
 int clamp_int(int v, int lo, int hi) {
-  if (v < lo) return lo;
-  if (v > hi) return hi;
+  if (v < lo)
+    return lo;
+  if (v > hi)
+    return hi;
   return v;
 }
 
@@ -127,7 +131,7 @@ EncodedImage encode_image_b64(const cv::Mat& bgr, std::string format, int qualit
     }
   }
 
-  std::string fmt = to_lower_copy(std::move(format));
+  std::string fmt = service_runtime::to_lower_ascii_copy(std::move(format));
   if (fmt != "jpg" && fmt != "png") {
     out.error = "invalid format (expected jpg|png)";
     return out;
@@ -181,8 +185,8 @@ EncodedImage encode_image_b64(const cv::Mat& bgr, std::string format, int qualit
     img = std::move(resized);
   }
 
-  out.error = "encoded image exceeds maxBytes=" + std::to_string(max_b64_bytes) + " (b64 len=" +
-              std::to_string(last_b64.size()) + " raw=" + std::to_string(last_raw) + ")";
+  out.error = "encoded image exceeds maxBytes=" + std::to_string(max_b64_bytes) +
+              " (b64 len=" + std::to_string(last_b64.size()) + " raw=" + std::to_string(last_raw) + ")";
   return out;
 }
 
@@ -190,10 +194,13 @@ EncodedImage encode_image_b64(const cv::Mat& bgr, std::string format, int qualit
 
 TemplateMatchService::TemplateMatchService(Config cfg) : cfg_(std::move(cfg)) {}
 
-TemplateMatchService::~TemplateMatchService() { stop(); }
+TemplateMatchService::~TemplateMatchService() {
+  stop();
+}
 
 bool TemplateMatchService::start() {
-  if (running_.load(std::memory_order_acquire)) return true;
+  if (running_.load(std::memory_order_acquire))
+    return true;
 
   f8::cppsdk::ServiceBus::Config bus_cfg;
   bus_cfg.service_id = cfg_.service_id;
@@ -234,13 +241,13 @@ bool TemplateMatchService::start() {
   last_frame_id_ = 0;
   last_notify_seq_ = 0;
   last_video_open_attempt_ms_ = 0;
-  telemetry_observed_frames_ = 0;
-  telemetry_processed_frames_ = 0;
-  telemetry_window_processed_frames_ = 0;
-  telemetry_window_start_ms_ = 0;
-  telemetry_last_process_ms_ = 0.0;
-  telemetry_total_process_ms_ = 0.0;
-  telemetry_fps_ = 0.0;
+  monitor_observed_frames_ = 0;
+  monitor_processed_frames_ = 0;
+  monitor_window_processed_frames_ = 0;
+  monitor_window_start_ms_ = 0;
+  monitor_last_process_ms_ = 0.0;
+  monitor_total_process_ms_ = 0.0;
+  monitor_fps_ = 0.0;
 
   running_.store(true, std::memory_order_release);
   stop_requested_.store(false, std::memory_order_release);
@@ -250,7 +257,8 @@ bool TemplateMatchService::start() {
 
 void TemplateMatchService::stop() {
   stop_requested_.store(true, std::memory_order_release);
-  if (!running_.exchange(false, std::memory_order_acq_rel)) return;
+  if (!running_.exchange(false, std::memory_order_acq_rel))
+    return;
   if (bus_) {
     bus_->stop();
   }
@@ -258,7 +266,8 @@ void TemplateMatchService::stop() {
 }
 
 void TemplateMatchService::tick() {
-  if (!running()) return;
+  if (!running())
+    return;
   if (bus_) {
     (void)bus_->drain_main_thread();
     if (bus_->terminate_requested()) {
@@ -272,15 +281,10 @@ void TemplateMatchService::tick() {
   detect_once();
 }
 
-void TemplateMatchService::publish_state_if_changed(const std::string& field, const json& value, const std::string& source,
-                                                    const json& meta) {
-  std::lock_guard<std::mutex> lock(state_mu_);
-  auto it = published_state_.find(field);
-  if (it != published_state_.end() && it->second == value) return;
-  published_state_[field] = value;
-  if (bus_) {
-    (void)f8::cppsdk::kv_set_node_state(bus_->kv(), cfg_.service_id, cfg_.service_id, field, value, source, meta);
-  }
+void TemplateMatchService::publish_state_if_changed(const std::string& field, const json& value,
+                                                    const std::string& source, const json& meta) {
+  service_runtime::publish_state_if_changed(state_mu_, published_state_, bus_.get(), cfg_.service_id, field, value,
+                                            source, meta);
 }
 
 void TemplateMatchService::on_lifecycle(bool active, const json& meta) {
@@ -291,7 +295,8 @@ void TemplateMatchService::on_lifecycle(bool active, const json& meta) {
 void TemplateMatchService::on_state(const std::string& node_id, const std::string& field, const json& value,
                                     std::int64_t ts_ms, const json& meta) {
   (void)ts_ms;
-  if (node_id != cfg_.service_id) return;
+  if (node_id != cfg_.service_id)
+    return;
   if (field == "templateImagePngB64" && value.is_string()) {
     set_template_png_b64(value.get<std::string>(), meta);
     return;
@@ -308,35 +313,25 @@ void TemplateMatchService::on_state(const std::string& node_id, const std::strin
     return;
   }
   if (field == "matchThreshold") {
-    try {
-      const double v = value.is_number() ? value.get<double>() : std::stod(value.dump());
-      match_threshold_ = std::min(1.0, std::max(0.0, v));
-      publish_state_if_changed("matchThreshold", match_threshold_, "state", meta);
-    } catch (const std::exception& ex) {
-      const std::string msg = std::string("invalid matchThreshold: ") + ex.what();
-      spdlog::warn("{}", msg);
-      publish_state_if_changed("lastError", msg, "state", meta);
-    } catch (...) {
-      const std::string msg = "invalid matchThreshold: unknown exception";
-      spdlog::warn("{}", msg);
-      publish_state_if_changed("lastError", msg, "state", meta);
+    double v = 0.0;
+    if (!service_runtime::parse_json_double(value, v)) {
+      publish_state_if_changed("lastError", "invalid matchThreshold", "state", meta);
+      return;
     }
+    match_threshold_ = std::clamp(v, 0.0, 1.0);
+    publish_state_if_changed("matchThreshold", match_threshold_, "state", meta);
+    publish_state_if_changed("lastError", "", "state", meta);
     return;
   }
   if (field == "matchingIntervalMs") {
-    try {
-      const std::int64_t v = value.is_number_integer() ? value.get<std::int64_t>() : std::stoll(value.dump());
-      matching_interval_ms_ = std::max<std::int64_t>(0, std::min<std::int64_t>(60000, v));
-      publish_state_if_changed("matchingIntervalMs", matching_interval_ms_, "state", meta);
-    } catch (const std::exception& ex) {
-      const std::string msg = std::string("invalid matchingIntervalMs: ") + ex.what();
-      spdlog::warn("{}", msg);
-      publish_state_if_changed("lastError", msg, "state", meta);
-    } catch (...) {
-      const std::string msg = "invalid matchingIntervalMs: unknown exception";
-      spdlog::warn("{}", msg);
-      publish_state_if_changed("lastError", msg, "state", meta);
+    int v = 0;
+    if (!service_runtime::parse_json_int(value, v)) {
+      publish_state_if_changed("lastError", "invalid matchingIntervalMs", "state", meta);
+      return;
     }
+    matching_interval_ms_ = std::clamp<std::int64_t>(static_cast<std::int64_t>(v), 0, 60000);
+    publish_state_if_changed("matchingIntervalMs", matching_interval_ms_, "state", meta);
+    publish_state_if_changed("lastError", "", "state", meta);
     return;
   }
 }
@@ -352,9 +347,7 @@ void TemplateMatchService::on_data(const std::string& node_id, const std::string
 }
 
 void TemplateMatchService::set_template_png_b64(const std::string& b64, const json& meta) {
-  std::string s = b64;
-  while (!s.empty() && std::isspace(static_cast<unsigned char>(s.front()))) s.erase(s.begin());
-  while (!s.empty() && std::isspace(static_cast<unsigned char>(s.back()))) s.pop_back();
+  std::string s = service_runtime::trim_copy(b64);
 
   if (s == template_png_b64_) {
     publish_state_if_changed("templateImagePngB64", template_png_b64_, "state", meta);
@@ -423,7 +416,8 @@ bool TemplateMatchService::ensure_video_open() {
 }
 
 void TemplateMatchService::detect_once() {
-  if (!bus_) return;
+  if (!bus_)
+    return;
   if (!template_loaded_) {
     if (!template_error_.empty()) {
       publish_state_if_changed("lastError", template_error_, "runtime", json::object());
@@ -457,7 +451,7 @@ void TemplateMatchService::detect_once() {
     if (hdr.frame_id == 0 || hdr.frame_id == last_frame_id_) {
       return;
     }
-    ++telemetry_observed_frames_;
+    ++monitor_observed_frames_;
     last_frame_id_ = hdr.frame_id;
     last_header_ = hdr;
 
@@ -492,7 +486,8 @@ void TemplateMatchService::detect_once() {
     try {
       cv::cvtColor(bgra_mat, bgr, cv::COLOR_BGRA2BGR);
     } catch (const cv::Exception& ex) {
-      publish_state_if_changed("lastError", std::string("opencv cvtColor failed: ") + ex.what(), "runtime", json::object());
+      publish_state_if_changed("lastError", std::string("opencv cvtColor failed: ") + ex.what(), "runtime",
+                               json::object());
       return;
     }
 
@@ -547,42 +542,36 @@ void TemplateMatchService::detect_once() {
     last_match_ts_ms_ = now_ms;
     (void)bus_->emit_data(cfg_.service_id, "detections", out);
     const std::int64_t end_ts_ms = f8::cppsdk::now_ms();
-    emit_telemetry(end_ts_ms, hdr.frame_id, static_cast<double>(end_ts_ms - now_ms));
+    emit_monitor_snapshot(end_ts_ms, hdr.frame_id, static_cast<double>(end_ts_ms - now_ms));
   }
 }
 
-void TemplateMatchService::emit_telemetry(std::int64_t ts_ms, std::uint64_t frame_id, double process_ms) {
-  if (!bus_) return;
-  if (telemetry_window_start_ms_ <= 0) {
-    telemetry_window_start_ms_ = ts_ms;
+void TemplateMatchService::emit_monitor_snapshot(std::int64_t ts_ms, std::uint64_t frame_id, double process_ms) {
+  if (!bus_)
+    return;
+  (void)frame_id;
+  if (monitor_window_start_ms_ <= 0) {
+    monitor_window_start_ms_ = ts_ms;
   }
-  ++telemetry_processed_frames_;
-  ++telemetry_window_processed_frames_;
-  telemetry_last_process_ms_ = process_ms;
-  telemetry_total_process_ms_ += process_ms;
+  ++monitor_processed_frames_;
+  ++monitor_window_processed_frames_;
+  monitor_last_process_ms_ = process_ms;
+  monitor_total_process_ms_ += process_ms;
 
-  const std::int64_t elapsed = ts_ms - telemetry_window_start_ms_;
+  const std::int64_t elapsed = ts_ms - monitor_window_start_ms_;
   if (elapsed >= 1000) {
-    telemetry_fps_ = static_cast<double>(telemetry_window_processed_frames_) * 1000.0 / static_cast<double>(elapsed);
-    telemetry_window_start_ms_ = ts_ms;
-    telemetry_window_processed_frames_ = 0;
+    monitor_fps_ = static_cast<double>(monitor_window_processed_frames_) * 1000.0 / static_cast<double>(elapsed);
+    monitor_window_start_ms_ = ts_ms;
+    monitor_window_processed_frames_ = 0;
   }
 
   const std::uint64_t dropped_frames =
-      telemetry_observed_frames_ > telemetry_processed_frames_ ? (telemetry_observed_frames_ - telemetry_processed_frames_) : 0;
-  const double avg_process_ms =
-      telemetry_processed_frames_ > 0 ? (telemetry_total_process_ms_ / static_cast<double>(telemetry_processed_frames_)) : 0.0;
-
-  json telemetry = json::object();
-  telemetry["tsMs"] = ts_ms;
-  telemetry["frameId"] = frame_id;
-  telemetry["fps"] = telemetry_fps_;
-  telemetry["processMs"] = telemetry_last_process_ms_;
-  telemetry["avgProcessMs"] = avg_process_ms;
-  telemetry["observedFrames"] = telemetry_observed_frames_;
-  telemetry["processedFrames"] = telemetry_processed_frames_;
-  telemetry["droppedFrames"] = dropped_frames;
-  (void)bus_->emit_data(cfg_.service_id, "telemetry", telemetry);
+      monitor_observed_frames_ > monitor_processed_frames_ ? (monitor_observed_frames_ - monitor_processed_frames_) : 0;
+  const double avg_process_ms = monitor_processed_frames_ > 0
+                                    ? (monitor_total_process_ms_ / static_cast<double>(monitor_processed_frames_))
+                                    : 0.0;
+  (void)avg_process_ms;
+  (void)dropped_frames;
 }
 
 bool TemplateMatchService::on_command(const std::string& call, const json& args, const json& meta, json& result,
@@ -696,35 +685,23 @@ bool TemplateMatchService::on_command(const std::string& call, const json& args,
 }
 
 json TemplateMatchService::describe() {
-  const json keypoint_schema = schema_object(
-      json{{"x", schema_number()}, {"y", schema_number()}, {"score", schema_number()}});
-  const json detection_schema = schema_object(
-      json{{"cls", schema_string()},
-           {"score", schema_number()},
-           {"bbox", schema_array(schema_integer())},
-           {"keypoints", schema_array(keypoint_schema)},
-           {"obb", schema_array(schema_array(schema_number()))},
-           {"skeletonProtocol", schema_string()}});
-  const json detections_schema = schema_object(
-      json{{"schemaVersion", schema_string()},
-           {"frameId", schema_integer()},
-           {"tsMs", schema_integer()},
-           {"width", schema_integer()},
-           {"height", schema_integer()},
-           {"model", schema_string()},
-           {"task", schema_string()},
-           {"skeletonProtocol", schema_string()},
-           {"detections", schema_array(detection_schema)}});
-  const json telemetry_schema = schema_object(
-      json{{"frameId", schema_integer()},
-           {"tsMs", schema_integer()},
-           {"fps", schema_number()},
-           {"processMs", schema_number()},
-           {"avgProcessMs", schema_number()},
-           {"observedFrames", schema_integer()},
-           {"processedFrames", schema_integer()},
-           {"droppedFrames", schema_integer()}});
-
+  const json keypoint_schema =
+      schema_object(json{{"x", schema_number()}, {"y", schema_number()}, {"score", schema_number()}});
+  const json detection_schema = schema_object(json{{"cls", schema_string()},
+                                                   {"score", schema_number()},
+                                                   {"bbox", schema_array(schema_integer())},
+                                                   {"keypoints", schema_array(keypoint_schema)},
+                                                   {"obb", schema_array(schema_array(schema_number()))},
+                                                   {"skeletonProtocol", schema_string()}});
+  const json detections_schema = schema_object(json{{"schemaVersion", schema_string()},
+                                                    {"frameId", schema_integer()},
+                                                    {"tsMs", schema_integer()},
+                                                    {"width", schema_integer()},
+                                                    {"height", schema_integer()},
+                                                    {"model", schema_string()},
+                                                    {"task", schema_string()},
+                                                    {"skeletonProtocol", schema_string()},
+                                                    {"detections", schema_array(detection_schema)}});
   json service;
   service["schemaVersion"] = "f8service/1";
   service["serviceClass"] = "f8.cvkit.templatematch";
@@ -733,12 +710,14 @@ json TemplateMatchService::describe() {
   service["rendererClass"] = "template_match_capture";
   service["tags"] = json::array({"cv", "template_match"});
   service["stateFields"] = json::array({
-      state_field("templateImagePngB64", schema_string(), "rw", "Template PNG (Base64)", "PNG bytes encoded as base64.", false),
+      state_field("templateImagePngB64", schema_string(), "rw", "Template PNG (Base64)", "PNG bytes encoded as base64.",
+                  false),
       state_field("matchThreshold", schema_number(0.5, 0.0, 1.0), "rw", "Match Threshold",
                   "0..1 score threshold used to emit detections.", true, "slider"),
       state_field("matchingIntervalMs", schema_integer(200, 0, 60000), "rw", "Matching Interval (ms)",
                   "Minimum milliseconds between template matching passes.", false),
-      state_field("shmName", schema_string(), "rw", "Video SHM", "Optional SHM name override (e.g. shm.xxx.video).", true),
+      state_field("shmName", schema_string(), "rw", "Video SHM", "Optional SHM name override (e.g. shm.xxx.video).",
+                  true),
       state_field("lastError", schema_string(), "ro", "Last Error", "Last error message.", false),
   });
   service["editableStateFields"] = false;
@@ -747,14 +726,13 @@ json TemplateMatchService::describe() {
            {"description", "Capture current SHM frame as an encoded image (base64)."},
            {"required", true},
            {"showOnNode", true},
-           {"params",
-            json::array({
-                json{{"name", "format"}, {"valueSchema", schema_string()}, {"required", false}},
-                json{{"name", "quality"}, {"valueSchema", schema_integer()}, {"required", false}},
-                json{{"name", "maxBytes"}, {"valueSchema", schema_integer()}, {"required", false}},
-                json{{"name", "maxWidth"}, {"valueSchema", schema_integer()}, {"required", false}},
-                json{{"name", "maxHeight"}, {"valueSchema", schema_integer()}, {"required", false}},
-            })}},
+           {"params", json::array({
+                          json{{"name", "format"}, {"valueSchema", schema_string()}, {"required", true}},
+                          json{{"name", "quality"}, {"valueSchema", schema_integer()}, {"required", true}},
+                          json{{"name", "maxBytes"}, {"valueSchema", schema_integer()}, {"required", true}},
+                          json{{"name", "maxWidth"}, {"valueSchema", schema_integer()}, {"required", true}},
+                          json{{"name", "maxHeight"}, {"valueSchema", schema_integer()}, {"required", true}},
+                      })}},
       json{{"name", "ping"}, {"description", "Health check."}, {"required", true}, {"showOnNode", false}},
   });
   service["editableCommands"] = false;
@@ -763,11 +741,8 @@ json TemplateMatchService::describe() {
       json{{"name", "detections"},
            {"valueSchema", detections_schema},
            {"description", "Detection output in schema f8visionDetections/1 (single best match as 0/1 detection)."},
-           {"required", false}},
-      json{{"name", "telemetry"},
-           {"valueSchema", telemetry_schema},
-           {"description", "Runtime telemetry: fps/process time/dropped frames."},
-           {"required", false}},
+           {"required", true},
+           {"showOnNode", true}},
   });
   service["editableDataInPorts"] = false;
   service["editableDataOutPorts"] = false;

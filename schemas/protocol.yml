@@ -26,6 +26,97 @@ components:
         - type: array
           items: {}
         - type: "null"
+    F8DynamicBindingsInputsSpec:
+      title: F8DynamicBindingsInputsSpec
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        source:
+          type: string
+          enum:
+            - data_in_ports
+        type_name:
+          type: string
+        module_name:
+          type: string
+        schema_mode:
+          type: string
+          enum:
+            - basic_recursive
+        access_mode:
+          type: string
+          enum:
+            - object_and_mapping
+      required:
+        - enabled
+        - source
+      additionalProperties: false
+    F8DynamicBindingsStatesSpec:
+      title: F8DynamicBindingsStatesSpec
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        source:
+          type: string
+          enum:
+            - state_fields
+        type_name:
+          type: string
+        module_name:
+          type: string
+        schema_mode:
+          type: string
+          enum:
+            - basic_recursive
+        access_mode:
+          type: string
+          enum:
+            - object_and_mapping
+      required:
+        - enabled
+        - source
+      additionalProperties: false
+    F8DynamicBindingsSpec:
+      title: F8DynamicBindingsSpec
+      type: object
+      properties:
+        inputs:
+          $ref: "#/components/schemas/F8DynamicBindingsInputsSpec"
+        states:
+          $ref: "#/components/schemas/F8DynamicBindingsStatesSpec"
+      additionalProperties: false
+    F8PythonEditorAssistSpec:
+      title: F8PythonEditorAssistSpec
+      type: object
+      properties:
+        support_files:
+          type: object
+          additionalProperties:
+            type: string
+        overlay_prefix:
+          type: string
+        dynamic_bindings:
+          $ref: "#/components/schemas/F8DynamicBindingsSpec"
+      required:
+        - support_files
+        - overlay_prefix
+      additionalProperties: false
+    F8EditorAssistSpec:
+      title: F8EditorAssistSpec
+      type: object
+      properties:
+        version:
+          type: integer
+        language:
+          type: string
+        python:
+          $ref: "#/components/schemas/F8PythonEditorAssistSpec"
+      required:
+        - version
+        - language
+      additionalProperties: false
     F8StateSpec:
       title: F8StateSpec
       type: object
@@ -49,7 +140,7 @@ components:
         required:
           type: boolean
           default: false
-          description: If true, this state must be provided
+          description: If true, this state is protected and cannot be deleted from editable state field lists.
         uiControl:
           type: string
           description: Optional UI hint (slider, spinbox, select, etc.)
@@ -60,6 +151,8 @@ components:
           type: boolean
           default: false
           description: If true, render this control inline on the node body; otherwise only in the inspector
+        editorAssist:
+          $ref: "#/components/schemas/F8EditorAssistSpec"
       required:
         - name
         - valueSchema
@@ -78,7 +171,7 @@ components:
         required:
           type: boolean
           default: true
-          description: Whether the port must be connected/provided
+          description: If true, this data port is protected and cannot be deleted from editable data port lists.
         showOnNode:
           type: boolean
           default: true
@@ -124,6 +217,7 @@ components:
         required:
           type: boolean
           default: false
+          description: If true, this parameter is required when invoking the command.
         uiControl:
           type: string
           description: Optional UI hint (slider, select, etc.)
@@ -180,10 +274,6 @@ components:
           default: {}
           additionalProperties:
             $ref: "#/components/schemas/F8JsonValue"
-        timeoutMs:
-          type: integer
-          minimum: 0
-          description: Optional runtime-side timeout hint (client still enforces NATS request timeout).
         meta:
           type: object
           description: Optional metadata (traceId, actor, etc.).
@@ -191,7 +281,10 @@ components:
           additionalProperties:
             $ref: "#/components/schemas/F8JsonValue"
       required:
+        - reqId
         - call
+        - args
+        - meta
       additionalProperties: false
 
     F8CommandInvokeReply:
@@ -213,7 +306,110 @@ components:
             - type: "null"
           default: null
       required:
+        - reqId
         - ok
+        - result
+        - error
+      additionalProperties: false
+
+    F8EmptyArgs:
+      title: F8EmptyArgs
+      type: object
+      additionalProperties: false
+
+    F8StatusRequest:
+      title: F8StatusRequest
+      type: object
+      properties:
+        reqId:
+          type: string
+        args:
+          $ref: "#/components/schemas/F8EmptyArgs"
+        meta:
+          type: object
+          default: {}
+          additionalProperties:
+            $ref: "#/components/schemas/F8JsonValue"
+      required:
+        - reqId
+        - args
+        - meta
+      additionalProperties: false
+
+    F8StatusReplyResult:
+      title: F8StatusReplyResult
+      type: object
+      properties:
+        serviceId:
+          type: string
+        active:
+          type: boolean
+      required:
+        - serviceId
+        - active
+      additionalProperties: false
+
+    F8StatusReply:
+      title: F8StatusReply
+      type: object
+      properties:
+        reqId:
+          type: string
+        ok:
+          type: boolean
+        result:
+          anyOf:
+            - $ref: "#/components/schemas/F8StatusReplyResult"
+            - type: "null"
+          default: null
+        error:
+          anyOf:
+            - $ref: "#/components/schemas/F8CommandError"
+            - type: "null"
+          default: null
+      required:
+        - reqId
+        - ok
+        - result
+        - error
+      additionalProperties: false
+
+    F8ActivateRequest:
+      title: F8ActivateRequest
+      type: object
+      properties:
+        reqId:
+          type: string
+        args:
+          $ref: "#/components/schemas/F8EmptyArgs"
+        meta:
+          type: object
+          default: {}
+          additionalProperties:
+            $ref: "#/components/schemas/F8JsonValue"
+      required:
+        - reqId
+        - args
+        - meta
+      additionalProperties: false
+
+    F8DeactivateRequest:
+      title: F8DeactivateRequest
+      type: object
+      properties:
+        reqId:
+          type: string
+        args:
+          $ref: "#/components/schemas/F8EmptyArgs"
+        meta:
+          type: object
+          default: {}
+          additionalProperties:
+            $ref: "#/components/schemas/F8JsonValue"
+      required:
+        - reqId
+        - args
+        - meta
       additionalProperties: false
 
     F8SetActiveArgs:
@@ -225,6 +421,60 @@ components:
           type: boolean
       required:
         - active
+      additionalProperties: false
+
+    F8SetActiveRequest:
+      title: F8SetActiveRequest
+      type: object
+      properties:
+        reqId:
+          type: string
+        args:
+          $ref: "#/components/schemas/F8SetActiveArgs"
+        meta:
+          type: object
+          default: {}
+          additionalProperties:
+            $ref: "#/components/schemas/F8JsonValue"
+      required:
+        - reqId
+        - args
+        - meta
+      additionalProperties: false
+
+    F8ActiveReplyResult:
+      title: F8ActiveReplyResult
+      type: object
+      properties:
+        active:
+          type: boolean
+      required:
+        - active
+      additionalProperties: false
+
+    F8ActiveReply:
+      title: F8ActiveReply
+      type: object
+      properties:
+        reqId:
+          type: string
+        ok:
+          type: boolean
+        result:
+          anyOf:
+            - $ref: "#/components/schemas/F8ActiveReplyResult"
+            - type: "null"
+          default: null
+        error:
+          anyOf:
+            - $ref: "#/components/schemas/F8CommandError"
+            - type: "null"
+          default: null
+      required:
+        - reqId
+        - ok
+        - result
+        - error
       additionalProperties: false
 
     F8SetStateArgs:
@@ -244,6 +494,63 @@ components:
         - value
       additionalProperties: false
 
+    F8SetStateRequest:
+      title: F8SetStateRequest
+      type: object
+      properties:
+        reqId:
+          type: string
+        args:
+          $ref: "#/components/schemas/F8SetStateArgs"
+        meta:
+          type: object
+          default: {}
+          additionalProperties:
+            $ref: "#/components/schemas/F8JsonValue"
+      required:
+        - reqId
+        - args
+        - meta
+      additionalProperties: false
+
+    F8SetStateReplyResult:
+      title: F8SetStateReplyResult
+      type: object
+      properties:
+        nodeId:
+          type: string
+        field:
+          type: string
+      required:
+        - nodeId
+        - field
+      additionalProperties: false
+
+    F8SetStateReply:
+      title: F8SetStateReply
+      type: object
+      properties:
+        reqId:
+          type: string
+        ok:
+          type: boolean
+        result:
+          anyOf:
+            - $ref: "#/components/schemas/F8SetStateReplyResult"
+            - type: "null"
+          default: null
+        error:
+          anyOf:
+            - $ref: "#/components/schemas/F8CommandError"
+            - type: "null"
+          default: null
+      required:
+        - reqId
+        - ok
+        - result
+        - error
+      additionalProperties: false
+
     F8SetRungraphArgs:
       title: F8SetRungraphArgs
       type: object
@@ -253,6 +560,114 @@ components:
           $ref: "#/components/schemas/F8RuntimeGraph"
       required:
         - graph
+      additionalProperties: false
+
+    F8SetRungraphRequest:
+      title: F8SetRungraphRequest
+      type: object
+      properties:
+        reqId:
+          type: string
+        args:
+          $ref: "#/components/schemas/F8SetRungraphArgs"
+        meta:
+          type: object
+          default: {}
+          additionalProperties:
+            $ref: "#/components/schemas/F8JsonValue"
+      required:
+        - reqId
+        - args
+        - meta
+      additionalProperties: false
+
+    F8SetRungraphReplyResult:
+      title: F8SetRungraphReplyResult
+      type: object
+      properties:
+        graphId:
+          type: string
+      required:
+        - graphId
+      additionalProperties: false
+
+    F8SetRungraphReply:
+      title: F8SetRungraphReply
+      type: object
+      properties:
+        reqId:
+          type: string
+        ok:
+          type: boolean
+        result:
+          anyOf:
+            - $ref: "#/components/schemas/F8SetRungraphReplyResult"
+            - type: "null"
+          default: null
+        error:
+          anyOf:
+            - $ref: "#/components/schemas/F8CommandError"
+            - type: "null"
+          default: null
+      required:
+        - reqId
+        - ok
+        - result
+        - error
+      additionalProperties: false
+
+    F8TerminateRequest:
+      title: F8TerminateRequest
+      type: object
+      properties:
+        reqId:
+          type: string
+        args:
+          $ref: "#/components/schemas/F8EmptyArgs"
+        meta:
+          type: object
+          default: {}
+          additionalProperties:
+            $ref: "#/components/schemas/F8JsonValue"
+      required:
+        - reqId
+        - args
+        - meta
+      additionalProperties: false
+
+    F8TerminateReplyResult:
+      title: F8TerminateReplyResult
+      type: object
+      properties:
+        terminating:
+          type: boolean
+      required:
+        - terminating
+      additionalProperties: false
+
+    F8TerminateReply:
+      title: F8TerminateReply
+      type: object
+      properties:
+        reqId:
+          type: string
+        ok:
+          type: boolean
+        result:
+          anyOf:
+            - $ref: "#/components/schemas/F8TerminateReplyResult"
+            - type: "null"
+          default: null
+        error:
+          anyOf:
+            - $ref: "#/components/schemas/F8CommandError"
+            - type: "null"
+          default: null
+      required:
+        - reqId
+        - ok
+        - result
+        - error
       additionalProperties: false
     F8DataTypeSchemaCommonMetadata:
       title: F8DataTypeSchemaCommonMetadata
@@ -268,21 +683,34 @@ components:
           items: {}
         $comment:
           type: string
-    F8PrimitiveTypeSchema:
-      title: F8PrimitiveTypeSchema
+    F8StringTypeSchema:
+      title: F8StringTypeSchema
       allOf:
         - $ref: "#/components/schemas/F8DataTypeSchemaCommonMetadata"
         - type: object
           properties:
             type:
-              title: F8PrimitiveTypeEnum
+              title: F8StringTypeKind
               type: string
-              enum:
-                - string
-                - number
-                - integer
-                - boolean
-                - "null"
+              const: string
+              default: string
+            enum:
+              type: array
+              items: {}
+          required:
+            - type
+          additionalProperties: false
+    F8NumberTypeSchema:
+      title: F8NumberTypeSchema
+      allOf:
+        - $ref: "#/components/schemas/F8DataTypeSchemaCommonMetadata"
+        - type: object
+          properties:
+            type:
+              title: F8NumberTypeKind
+              type: string
+              const: number
+              default: number
             enum:
               type: array
               items: {}
@@ -305,6 +733,73 @@ components:
           required:
             - type
           additionalProperties: false
+    F8IntegerTypeSchema:
+      title: F8IntegerTypeSchema
+      allOf:
+        - $ref: "#/components/schemas/F8DataTypeSchemaCommonMetadata"
+        - type: object
+          properties:
+            type:
+              title: F8IntegerTypeKind
+              type: string
+              const: integer
+              default: integer
+            enum:
+              type: array
+              items: {}
+            minimum:
+              type: number
+              description: Optional lower bound for numeric types
+            maximum:
+              type: number
+              description: Optional upper bound for numeric types
+            exclusiveMinimum:
+              type: number
+              description: Exclusive lower bound for numeric types
+            exclusiveMaximum:
+              type: number
+              description: Exclusive upper bound for numeric types
+            multipleOf:
+              type: number
+              exclusiveMinimum: 0
+              description: Optional step/increment (e.g., for sliders or spinboxes)
+          required:
+            - type
+          additionalProperties: false
+    F8BooleanTypeSchema:
+      title: F8BooleanTypeSchema
+      allOf:
+        - $ref: "#/components/schemas/F8DataTypeSchemaCommonMetadata"
+        - type: object
+          properties:
+            type:
+              title: F8BooleanTypeKind
+              type: string
+              const: boolean
+              default: boolean
+            enum:
+              type: array
+              items: {}
+          required:
+            - type
+          additionalProperties: false
+    F8NullTypeSchema:
+      title: F8NullTypeSchema
+      allOf:
+        - $ref: "#/components/schemas/F8DataTypeSchemaCommonMetadata"
+        - type: object
+          properties:
+            type:
+              title: F8NullTypeKind
+              type: string
+              const: "null"
+              default: "null"
+            enum:
+              type: array
+              items: {}
+          required:
+            - type
+          additionalProperties: false
     F8ComplexObjectTypeSchema:
       title: F8ComplexObjectTypeSchema
       allOf:
@@ -314,8 +809,8 @@ components:
             type:
               title: F8ComplexTypeKind
               type: string
-              enum:
-                - object
+              const: object
+              default: object
             properties:
               type: object
               additionalProperties:
@@ -339,8 +834,8 @@ components:
             type:
               title: F8ArrayTypeKind
               type: string
-              enum:
-                - array
+              const: array
+              default: array
             items:
               $ref: "#/components/schemas/F8DataTypeSchema"
           required:
@@ -357,8 +852,8 @@ components:
             type:
               title: F8AnyTypeKind
               type: string
-              enum:
-                - any
+              const: any
+              default: any
           required:
             - type
           additionalProperties: false
@@ -367,10 +862,25 @@ components:
         A strict JSON Schema subset for data flow systems, supporting primitive types, objects,
         arrays, and a wildcard type.
       oneOf:
-        - $ref: "#/components/schemas/F8PrimitiveTypeSchema"
+        - $ref: "#/components/schemas/F8StringTypeSchema"
+        - $ref: "#/components/schemas/F8NumberTypeSchema"
+        - $ref: "#/components/schemas/F8IntegerTypeSchema"
+        - $ref: "#/components/schemas/F8BooleanTypeSchema"
+        - $ref: "#/components/schemas/F8NullTypeSchema"
         - $ref: "#/components/schemas/F8ComplexObjectTypeSchema"
         - $ref: "#/components/schemas/F8ArrayTypeSchema"
         - $ref: "#/components/schemas/F8AnyTypeSchema"
+      discriminator:
+        propertyName: type
+        mapping:
+          string: "#/components/schemas/F8StringTypeSchema"
+          number: "#/components/schemas/F8NumberTypeSchema"
+          integer: "#/components/schemas/F8IntegerTypeSchema"
+          boolean: "#/components/schemas/F8BooleanTypeSchema"
+          "null": "#/components/schemas/F8NullTypeSchema"
+          object: "#/components/schemas/F8ComplexObjectTypeSchema"
+          array: "#/components/schemas/F8ArrayTypeSchema"
+          any: "#/components/schemas/F8AnyTypeSchema"
     F8ServiceSpec:
       title: F8ServiceSpec
       type: object
@@ -815,3 +1325,318 @@ components:
           type: string
           description: Optional origin label for this rungraph snapshot.
       additionalProperties: true
+
+    F8MonitorCpu:
+      title: F8MonitorCpu
+      type: object
+      properties:
+        processPercent:
+          anyOf:
+            - type: number
+            - type: "null"
+          default: null
+        systemPercent:
+          anyOf:
+            - type: number
+            - type: "null"
+          default: null
+      required: [processPercent, systemPercent]
+      additionalProperties: false
+
+    F8MonitorMemory:
+      title: F8MonitorMemory
+      type: object
+      properties:
+        rssBytes:
+          type: integer
+          minimum: 0
+          default: 0
+        vmsBytes:
+          type: integer
+          minimum: 0
+          default: 0
+      required: [rssBytes, vmsBytes]
+      additionalProperties: false
+
+    F8MonitorGpu:
+      title: F8MonitorGpu
+      type: object
+      properties:
+        vendor:
+          type: string
+          default: ""
+        deviceIndex:
+          anyOf:
+            - type: integer
+            - type: "null"
+          default: null
+        utilPercent:
+          anyOf:
+            - type: number
+            - type: "null"
+          default: null
+        memoryUsedBytes:
+          anyOf:
+            - type: integer
+              minimum: 0
+            - type: "null"
+          default: null
+        memoryTotalBytes:
+          anyOf:
+            - type: integer
+              minimum: 0
+            - type: "null"
+          default: null
+        available:
+          type: boolean
+          default: false
+      required: [vendor, deviceIndex, utilPercent, memoryUsedBytes, memoryTotalBytes, available]
+      additionalProperties: false
+
+    F8MonitorFrame:
+      title: F8MonitorFrame
+      type: object
+      properties:
+        observed:
+          type: integer
+          minimum: 0
+          default: 0
+        processed:
+          type: integer
+          minimum: 0
+          default: 0
+        dropped:
+          type: integer
+          minimum: 0
+          default: 0
+      required: [observed, processed, dropped]
+      additionalProperties: false
+
+    F8MonitorTiming:
+      title: F8MonitorTiming
+      type: object
+      properties:
+        processMsAvg:
+          anyOf:
+            - type: number
+            - type: "null"
+          default: null
+        processMsP95:
+          anyOf:
+            - type: number
+            - type: "null"
+          default: null
+        waitMsAvg:
+          anyOf:
+            - type: number
+            - type: "null"
+          default: null
+        waitMsP95:
+          anyOf:
+            - type: number
+            - type: "null"
+          default: null
+        latencyMsAvg:
+          anyOf:
+            - type: number
+            - type: "null"
+          default: null
+        latencyMsP95:
+          anyOf:
+            - type: number
+            - type: "null"
+          default: null
+      required: [processMsAvg, processMsP95, waitMsAvg, waitMsP95, latencyMsAvg, latencyMsP95]
+      additionalProperties: false
+
+    F8MonitorQueue:
+      title: F8MonitorQueue
+      type: object
+      properties:
+        depth:
+          type: integer
+          minimum: 0
+          default: 0
+      required: [depth]
+      additionalProperties: false
+
+    F8MonitorError:
+      title: F8MonitorError
+      type: object
+      properties:
+        countWindow:
+          type: integer
+          minimum: 0
+          default: 0
+        lastCode:
+          type: string
+          default: ""
+        lastMessage:
+          type: string
+          default: ""
+        lastTsMs:
+          anyOf:
+            - type: integer
+            - type: "null"
+          default: null
+      required: [countWindow, lastCode, lastMessage, lastTsMs]
+      additionalProperties: false
+
+    F8MonitorSnapshot:
+      title: F8MonitorSnapshot
+      type: object
+      properties:
+        schemaVersion:
+          type: string
+          enum: [f8monitor/1]
+        serviceId:
+          type: string
+        serviceClass:
+          type: string
+        nodeId:
+          type: string
+        tsMs:
+          type: integer
+          format: int64
+        alive:
+          type: boolean
+        ready:
+          type: boolean
+        active:
+          type: boolean
+        uptimeMs:
+          type: integer
+          minimum: 0
+        cpu:
+          $ref: "#/components/schemas/F8MonitorCpu"
+        memory:
+          $ref: "#/components/schemas/F8MonitorMemory"
+        gpu:
+          $ref: "#/components/schemas/F8MonitorGpu"
+        frame:
+          $ref: "#/components/schemas/F8MonitorFrame"
+        timing:
+          $ref: "#/components/schemas/F8MonitorTiming"
+        queue:
+          $ref: "#/components/schemas/F8MonitorQueue"
+        error:
+          $ref: "#/components/schemas/F8MonitorError"
+      required:
+        - schemaVersion
+        - serviceId
+        - serviceClass
+        - nodeId
+        - tsMs
+        - alive
+        - ready
+        - active
+        - uptimeMs
+        - cpu
+        - memory
+        - gpu
+        - frame
+        - timing
+        - queue
+        - error
+      additionalProperties: false
+
+    F8MonitorHotspotEntry:
+      title: F8MonitorHotspotEntry
+      type: object
+      properties:
+        serviceId:
+          type: string
+        value:
+          type: number
+      required: [serviceId, value]
+      additionalProperties: false
+
+    F8MonitorErrorSummary:
+      title: F8MonitorErrorSummary
+      type: object
+      properties:
+        serviceId:
+          type: string
+        count:
+          type: integer
+          minimum: 0
+        lastCode:
+          type: string
+        lastMessage:
+          type: string
+        lastTsMs:
+          anyOf:
+            - type: integer
+            - type: "null"
+          default: null
+      required: [serviceId, count, lastCode, lastMessage, lastTsMs]
+      additionalProperties: false
+
+    F8MonitorServiceSummary:
+      title: F8MonitorServiceSummary
+      type: object
+      properties:
+        serviceId:
+          type: string
+        serviceClass:
+          type: string
+        alive:
+          type: boolean
+        ready:
+          type: boolean
+        active:
+          type: boolean
+        latest:
+          $ref: "#/components/schemas/F8MonitorSnapshot"
+      required: [serviceId, serviceClass, alive, ready, active, latest]
+      additionalProperties: false
+
+    F8MonitorHotspots:
+      title: F8MonitorHotspots
+      type: object
+      properties:
+        cpuTop:
+          type: array
+          items:
+            $ref: "#/components/schemas/F8MonitorHotspotEntry"
+          default: []
+        gpuTop:
+          type: array
+          items:
+            $ref: "#/components/schemas/F8MonitorHotspotEntry"
+          default: []
+        waitTop:
+          type: array
+          items:
+            $ref: "#/components/schemas/F8MonitorHotspotEntry"
+          default: []
+      required: [cpuTop, gpuTop, waitTop]
+      additionalProperties: false
+
+    F8MonitorReport:
+      title: F8MonitorReport
+      type: object
+      properties:
+        schemaVersion:
+          type: string
+          enum: [f8monitorReport/1]
+        generatedAtMs:
+          type: integer
+          format: int64
+        windowMs:
+          type: integer
+          minimum: 1
+        services:
+          type: array
+          items:
+            $ref: "#/components/schemas/F8MonitorServiceSummary"
+          default: []
+        hotspots:
+          $ref: "#/components/schemas/F8MonitorHotspots"
+        errors:
+          type: array
+          items:
+            $ref: "#/components/schemas/F8MonitorErrorSummary"
+          default: []
+      required: [schemaVersion, generatedAtMs, windowMs, services, hotspots, errors]
+      additionalProperties: false

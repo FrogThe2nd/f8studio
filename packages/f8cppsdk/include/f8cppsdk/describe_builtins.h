@@ -11,8 +11,11 @@ namespace f8::cppsdk {
 // - f8service/1 payload:  {"serviceClass": "...", ...}
 //
 // Builtins:
-// - service:  active(rw,bool,default=true,showOnNode=true), svcId(ro,string,showOnNode=false)
-// - operator: svcId(ro,string,showOnNode=false), operatorId(ro,string,showOnNode=false)
+// - service:  active(rw,bool,required=true,default=true,showOnNode=false),
+//             svcId(ro,string,required=true,showOnNode=false),
+//             monitor(dataOut,required=true,showOnNode=false)
+// - operator: svcId(ro,string,required=true,showOnNode=false),
+//             operatorId(ro,string,required=true,showOnNode=false)
 nlohmann::json normalize_describe_with_builtin_state_fields(const nlohmann::json& payload);
 
 }  // namespace f8::cppsdk

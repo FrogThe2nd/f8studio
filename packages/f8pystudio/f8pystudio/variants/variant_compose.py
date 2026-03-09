@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from f8pysdk.msgspec_codec import dump_json, validate_as
 from copy import deepcopy
 from typing import Any
 
@@ -120,7 +121,7 @@ def compose_variant_spec(
     description: str | None = None,
     tags: list[str] | None = None,
 ) -> dict[str, Any]:
-    base = spec_obj.model_dump(mode="json")
+    base = dump_json(spec_obj, mode="json")
     out = deepcopy(base)
     _apply_state_ui_overrides(out, ui_overrides)
     _apply_data_port_ui_overrides(out, ui_overrides)
@@ -134,8 +135,8 @@ def compose_variant_spec(
         out["tags"] = [str(t) for t in list(tags or []) if str(t).strip()]
     _locked_identity(base, out)
     if isinstance(spec_obj, F8OperatorSpec):
-        return F8OperatorSpec.model_validate(out).model_dump(mode="json")
-    return F8ServiceSpec.model_validate(out).model_dump(mode="json")
+        return dump_json(validate_as(F8OperatorSpec, out), mode="json")
+    return dump_json(validate_as(F8ServiceSpec, out), mode="json")
 
 
 def build_variant_record_from_node(

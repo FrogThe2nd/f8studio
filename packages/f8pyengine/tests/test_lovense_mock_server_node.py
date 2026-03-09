@@ -5,6 +5,8 @@ import os
 import socket
 import sys
 import unittest
+from dataclasses import dataclass
+from typing import Any
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 SDK_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "f8pysdk"))
@@ -13,12 +15,21 @@ if ROOT not in sys.path:
 if SDK_ROOT not in sys.path:
     sys.path.insert(0, SDK_ROOT)
 
-from f8pysdk.generated import F8RuntimeGraph, F8RuntimeNode  # noqa: E402
+from f8pysdk.generated import (  # noqa: E402
+    F8Edge,
+    F8EdgeKindEnum,
+    F8EdgeStrategyEnum,
+    F8RuntimeGraph,
+    F8RuntimeNode,
+)
+from f8pysdk.runtime_node import OperatorNode  # noqa: E402
 from f8pysdk.runtime_node_registry import RuntimeNodeRegistry  # noqa: E402
 from f8pysdk.service_host import ServiceHost, ServiceHostConfig  # noqa: E402
 from f8pysdk.testing import ServiceBusHarness  # noqa: E402
 
 from f8pyengine.constants import SERVICE_CLASS  # noqa: E402
+from f8pyengine.pyengine_node_registry import register_pyengine_specs  # noqa: E402
+from f8pyengine.pyengine_service import PyEngineService  # noqa: E402
 from f8pyengine.operators.lovense_mock_server import (  # noqa: E402
     LovenseMockServerRuntimeNode,
     register_operator,
@@ -97,6 +108,48 @@ async def _ws_open_and_send_large_text(*, host: str, port: int, path: str, paylo
             await writer.wait_closed()
         except Exception:
             pass
+
+
+def _exec_edge(*, edge_id: str, from_node: str, from_port: str, to_node: str, to_port: str) -> F8Edge:
+    return F8Edge(
+        edgeId=edge_id,
+        fromServiceId="svcA",
+        fromOperatorId=from_node,
+        fromPort=from_port,
+        toServiceId="svcA",
+        toOperatorId=to_node,
+        toPort=to_port,
+        kind=F8EdgeKindEnum.exec,
+        strategy=F8EdgeStrategyEnum.latest,
+    )
+
+
+@dataclass
+class _RuntimeStub:
+    bus: object
+
+
+class _ProbeExecRuntimeNode(OperatorNode):
+    def __init__(self, *, node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any] | None = None) -> None:
+        del initial_state
+        super().__init__(
+            node_id=node_id,
+            data_in_ports=[p.name for p in (node.dataInPorts or [])],
+            data_out_ports=[p.name for p in (node.dataOutPorts or [])],
+            state_fields=[s.name for s in (node.stateFields or [])],
+            exec_in_ports=list(node.execInPorts or []),
+            exec_out_ports=list(node.execOutPorts or []),
+        )
+        self.calls = 0
+        self.exec_ids: list[str] = []
+        self.delay_s = 0.05
+
+    async def on_exec(self, exec_id: str | int, in_port: str | None = None) -> list[str]:
+        _ = in_port
+        self.calls += 1
+        self.exec_ids.append(str(exec_id))
+        await asyncio.sleep(float(self.delay_s))
+        return []
 
 
 class LovenseMockServerNodeTests(unittest.IsolatedAsyncioTestCase):
@@ -214,6 +267,145 @@ class LovenseMockServerNodeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(node, LovenseMockServerRuntimeNode)
         if isinstance(node, LovenseMockServerRuntimeNode):
             await node.close()
+
+
+class LovenseMockServerExecTriggerTests(unittest.IsolatedAsyncioTestCase):
+    async def _setup_exec_runtime(self, *, port: int) -> tuple[object, PyEngineService, _RuntimeStub]:
+        harness = ServiceBusHarness()
+        bus = harness.create_bus("svcA")
+        reg = RuntimeNodeRegistry.instance()
+        register_pyengine_specs(reg)
+        reg.register(
+            SERVICE_CLASS,
+            "f8.test_probe_exec",
+            lambda node_id, node, initial_state: _ProbeExecRuntimeNode(
+                node_id=node_id, node=node, initial_state=initial_state
+            ),
+            overwrite=True,
+        )
+        _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
+        service = PyEngineService()
+        runtime = _RuntimeStub(bus=bus)
+        await service.setup(runtime)  # type: ignore[arg-type]
+
+        lov = F8RuntimeNode(
+            nodeId="lov_exec",
+            serviceId="svcA",
+            serviceClass=SERVICE_CLASS,
+            operatorClass=LovenseMockServerRuntimeNode.SPEC.operatorClass,
+            stateFields=list(LovenseMockServerRuntimeNode.SPEC.stateFields or []),
+            stateValues={"bindAddress": "127.0.0.1", "port": port},
+            execInPorts=list(LovenseMockServerRuntimeNode.SPEC.execInPorts or []),
+            execOutPorts=list(LovenseMockServerRuntimeNode.SPEC.execOutPorts or []),
+        )
+        probe = F8RuntimeNode(
+            nodeId="probe_exec",
+            serviceId="svcA",
+            serviceClass=SERVICE_CLASS,
+            operatorClass="f8.test_probe_exec",
+            execInPorts=["exec"],
+            execOutPorts=[],
+        )
+        graph = F8RuntimeGraph(
+            graphId="g_exec",
+            revision="r1",
+            nodes=[lov, probe],
+            edges=[_exec_edge(edge_id="e1", from_node="lov_exec", from_port="event", to_node="probe_exec", to_port="exec")],
+        )
+        await bus.set_rungraph(graph)  # type: ignore[attr-defined]
+        for _ in range(50):
+            st = await bus.get_state("lov_exec", "listening")
+            if st.found and st.value is True:
+                break
+            await asyncio.sleep(0.02)
+        return bus, service, runtime
+
+    async def _teardown_exec_runtime(self, service: PyEngineService, runtime: _RuntimeStub) -> None:
+        bus = runtime.bus
+        node = bus.get_node("lov_exec")
+        if isinstance(node, LovenseMockServerRuntimeNode):
+            await node.close()
+        await service.teardown(runtime)  # type: ignore[arg-type]
+
+    async def test_event_exec_trigger_and_ping_no_exec(self) -> None:
+        port = _free_port()
+        bus, service, runtime = await self._setup_exec_runtime(port=port)
+        try:
+            code, _ = await _http_post_json(
+                host="127.0.0.1",
+                port=port,
+                path="/command",
+                payload={"command": "Function", "toy": "lush", "timeSec": 1, "action": "Vibrate:4", "apiVer": 1},
+            )
+            self.assertEqual(code, 200)
+
+            probe_node = bus.get_node("probe_exec")
+            self.assertIsInstance(probe_node, _ProbeExecRuntimeNode)
+            assert isinstance(probe_node, _ProbeExecRuntimeNode)
+            for _ in range(100):
+                if probe_node.calls >= 1:
+                    break
+                await asyncio.sleep(0.01)
+            self.assertEqual(probe_node.calls, 1)
+
+            code, _ = await _http_post_json(
+                host="127.0.0.1",
+                port=port,
+                path="/command",
+                payload={"type": "ping"},
+            )
+            self.assertEqual(code, 200)
+            await asyncio.sleep(0.2)
+            self.assertEqual(probe_node.calls, 1)
+        finally:
+            await self._teardown_exec_runtime(service, runtime)
+
+    async def test_event_exec_burst_coalesces_to_latest(self) -> None:
+        port = _free_port()
+        bus, service, runtime = await self._setup_exec_runtime(port=port)
+        try:
+            tasks = []
+            for i in range(20):
+                task = asyncio.create_task(
+                    _http_post_json(
+                        host="127.0.0.1",
+                        port=port,
+                        path="/command",
+                        payload={
+                            "command": "Function",
+                            "toy": "lush",
+                            "timeSec": 1,
+                            "action": f"Vibrate:{(i % 20) + 1}",
+                            "apiVer": 1,
+                        },
+                    )
+                )
+                tasks.append(task)
+            results = await asyncio.gather(*tasks)
+            self.assertTrue(all(code == 200 for code, _ in results))
+
+            probe_node = bus.get_node("probe_exec")
+            self.assertIsInstance(probe_node, _ProbeExecRuntimeNode)
+            assert isinstance(probe_node, _ProbeExecRuntimeNode)
+            # Wait until call count settles, instead of sleeping a fixed long window.
+            end = asyncio.get_running_loop().time() + 1.2
+            last_calls = -1
+            stable_ticks = 0
+            while asyncio.get_running_loop().time() < end:
+                current = probe_node.calls
+                if current > 0 and current == last_calls:
+                    stable_ticks += 1
+                    if stable_ticks >= 5:
+                        break
+                else:
+                    stable_ticks = 0
+                    last_calls = current
+                await asyncio.sleep(0.02)
+            self.assertGreater(probe_node.calls, 0)
+            self.assertLess(probe_node.calls, 20)
+            self.assertTrue(probe_node.exec_ids[-1].endswith(":20"))
+        finally:
+            await self._teardown_exec_runtime(service, runtime)
 
 
 if __name__ == "__main__":

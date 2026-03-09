@@ -79,6 +79,65 @@ HUMAN36M_17_EDGES: list[tuple[int, int]] = [
     (15, 16),
 ]
 
+UNITY_HUMANOID_NAME_EDGES: list[tuple[str, str]] = [
+    ("Hips", "Spine"),
+    ("Spine", "Chest"),
+    ("Chest", "UpperChest"),
+    ("UpperChest", "Neck"),
+    ("Neck", "Head"),
+    ("Head", "LeftEye"),
+    ("Head", "RightEye"),
+    ("Head", "Jaw"),
+    ("Hips", "LeftUpperLeg"),
+    ("LeftUpperLeg", "LeftLowerLeg"),
+    ("LeftLowerLeg", "LeftFoot"),
+    ("LeftFoot", "LeftToes"),
+    ("Hips", "RightUpperLeg"),
+    ("RightUpperLeg", "RightLowerLeg"),
+    ("RightLowerLeg", "RightFoot"),
+    ("RightFoot", "RightToes"),
+    ("UpperChest", "LeftShoulder"),
+    ("LeftShoulder", "LeftUpperArm"),
+    ("LeftUpperArm", "LeftLowerArm"),
+    ("LeftLowerArm", "LeftHand"),
+    ("UpperChest", "RightShoulder"),
+    ("RightShoulder", "RightUpperArm"),
+    ("RightUpperArm", "RightLowerArm"),
+    ("RightLowerArm", "RightHand"),
+    ("LeftHand", "LeftThumbMetacarpal"),
+    ("LeftThumbMetacarpal", "LeftThumbProximal"),
+    ("LeftThumbProximal", "LeftThumbIntermediate"),
+    ("LeftThumbIntermediate", "LeftThumbDistal"),
+    ("LeftHand", "LeftIndexProximal"),
+    ("LeftIndexProximal", "LeftIndexIntermediate"),
+    ("LeftIndexIntermediate", "LeftIndexDistal"),
+    ("LeftHand", "LeftMiddleProximal"),
+    ("LeftMiddleProximal", "LeftMiddleIntermediate"),
+    ("LeftMiddleIntermediate", "LeftMiddleDistal"),
+    ("LeftHand", "LeftRingProximal"),
+    ("LeftRingProximal", "LeftRingIntermediate"),
+    ("LeftRingIntermediate", "LeftRingDistal"),
+    ("LeftHand", "LeftLittleProximal"),
+    ("LeftLittleProximal", "LeftLittleIntermediate"),
+    ("LeftLittleIntermediate", "LeftLittleDistal"),
+    ("RightHand", "RightThumbMetacarpal"),
+    ("RightThumbMetacarpal", "RightThumbProximal"),
+    ("RightThumbProximal", "RightThumbIntermediate"),
+    ("RightThumbIntermediate", "RightThumbDistal"),
+    ("RightHand", "RightIndexProximal"),
+    ("RightIndexProximal", "RightIndexIntermediate"),
+    ("RightIndexIntermediate", "RightIndexDistal"),
+    ("RightHand", "RightMiddleProximal"),
+    ("RightMiddleProximal", "RightMiddleIntermediate"),
+    ("RightMiddleIntermediate", "RightMiddleDistal"),
+    ("RightHand", "RightRingProximal"),
+    ("RightRingProximal", "RightRingIntermediate"),
+    ("RightRingIntermediate", "RightRingDistal"),
+    ("RightHand", "RightLittleProximal"),
+    ("RightLittleProximal", "RightLittleIntermediate"),
+    ("RightLittleIntermediate", "RightLittleDistal"),
+]
+
 _SKELETON_EDGES_BY_PROTOCOL: dict[str, list[tuple[int, int]]] = {
     "coco17": COCO17_EDGES,
     "mediapipe_pose_33": MEDIAPIPE_POSE_33_EDGES,
@@ -94,3 +153,27 @@ def skeleton_edges_for_protocol(skeleton_protocol: str) -> list[tuple[int, int]]
     if edges is None:
         return None
     return list(edges)
+
+
+def skeleton_edges_for_nodes(skeleton_protocol: str, node_names: list[str]) -> list[tuple[int, int]] | None:
+    protocol = str(skeleton_protocol or "").strip().lower()
+    if protocol == "unity_humanoid":
+        index_by_name: dict[str, int] = {}
+        for node_index, node_name in enumerate(node_names):
+            canonical_name = str(node_name or "").strip()
+            if not canonical_name:
+                continue
+            if canonical_name in index_by_name:
+                continue
+            index_by_name[canonical_name] = int(node_index)
+
+        edges: list[tuple[int, int]] = []
+        for parent_name, child_name in UNITY_HUMANOID_NAME_EDGES:
+            parent_index = index_by_name.get(parent_name)
+            child_index = index_by_name.get(child_name)
+            if parent_index is None or child_index is None:
+                continue
+            edges.append((int(parent_index), int(child_index)))
+        return edges
+
+    return skeleton_edges_for_protocol(protocol)

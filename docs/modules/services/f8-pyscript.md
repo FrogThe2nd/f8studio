@@ -21,17 +21,12 @@ pixi run f8pyscript
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `code` | `rw` | `false` | `false` | `string / default=# Hooks (all optional):<br># - onStart(ctx)<br># - onStop(ctx)<br># - onPause(ctx, meta=None)<br># - onResume(ctx, meta=None)<br># - onState(ctx, field, value, tsMs=None)<br># - onData(ctx, port, value, tsMs=None)<br># - onTick(ctx, tick)<br># - onCommand(ctx, name, args, meta=None)<br>#<br># Tick payload: {'seq': int, 'tsMs': int, 'deltaMs': int}<br># State read:<br># - await ctx['get_state'](field)                # freshest path<br># - ctx['get_state_cached'](field, default=None) # sync cached snapshot, may be stale<br># Permission: ctx['permission'] -> {'localExecGranted', 'expiresTsMs'}<br>#<br>def onStart(ctx):<br>    ctx['log']('pyscript started')<br><br>def onStop(ctx):<br>    ctx['log']('pyscript stopped')<br>` | Python source code. |
-| `lastError` | `ro` | `false` | `false` | `string / default=` | Last script compile/runtime error. |
-| `tickEnabled` | `rw` | `false` | `true` | `boolean / default=False` | Enable onTick scheduler. |
-| `tickMs` | `rw` | `false` | `true` | `integer / default=100` | onTick interval in milliseconds. |
-| `commands` | `rw` | `false` | `false` | `array[any]` | Optional UI command declaration list. |
-| `localExecGranted` | `ro` | `false` | `true` | `boolean / default=False` | Readonly local execution grant state. |
-| `localExecGrantTsMs` | `ro` | `false` | `false` | `integer / default=0` | Grant timestamp in milliseconds. |
-| `execCount` | `ro` | `false` | `false` | `integer / default=0` | Total local exec invocations. |
-| `lastExecTsMs` | `ro` | `false` | `false` | `integer / default=0` | Last local exec timestamp. |
-| `active` | `rw` | `false` | `true` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
-| `svcId` | `ro` | `false` | `false` | `string` | Readonly: current service instance id (svcId). |
+| `code` | `rw` | `true` | `false` | `string / default=# Hooks template (uncomment what you need):<br># - onStart(ctx)<br># - onStop(ctx)<br># - onPause(ctx, meta=None)<br># - onResume(ctx, meta=None)<br># - onState(ctx, field, value, ts_ms=None)<br># - onData(ctx, port, value, ts_ms=None)<br># - onTick(ctx, tick)<br># - onCommand(ctx, name, args, meta=None)<br>#<br># Useful context helpers:<br># - ctx.states.<field> reads cached rw/ro/wo state snapshot<br>#   - example: ctx.states.tickEnabled / ctx.states.lastError<br># - await ctx.read_state(field)  # fresh runtime read<br># - ctx.states.get(field)  # cached snapshot<br># - ctx.set_state(field, value)<br># - await ctx.set_state_async(field, value)<br># - ctx.emit(port, value)<br># - ctx.permission.local_exec_granted / ctx.permission.expires_ts_ms<br># - TypeGuard helpers are available from f8_dynamic_inputs<br>#   - example: from f8_dynamic_inputs import is_port_in<br>#   - optional: from f8_dynamic_inputs import *<br>#   - then: if is_port_in(value, port): ...<br># - State TypeGuard helpers are available from f8_dynamic_states<br>#   - example: from f8_dynamic_states import is_state_tickEnabled<br>#   - then: if is_state_tickEnabled(value, field): ...<br>#<br>from typing import TYPE_CHECKING, Any<br>if TYPE_CHECKING:<br>    from f8_script_api import F8PyScriptContext, F8States, F8Tick<br>#<br>def onStart(ctx: 'F8PyScriptContext') -> None:<br>    ctx.log('pyscript started')<br><br># def onStop(ctx: 'F8PyScriptContext') -> None:<br>#     ctx.log('pyscript stopped')<br>#<br># def onPause(ctx: 'F8PyScriptContext', meta: dict[str, Any] \| None = None) -> None:<br>#     ctx.log(f'paused: {meta}')<br>#<br># def onResume(ctx: 'F8PyScriptContext', meta: dict[str, Any] \| None = None) -> None:<br>#     ctx.log(f'resumed: {meta}')<br>#<br># def onState(<br>#     ctx: 'F8PyScriptContext',<br>#     field: str,<br>#     value: Any,<br>#     ts_ms: int \| None = None,<br># ) -> None:<br>#     ctx.log(f'state {field}={value} ts_ms={ts_ms}')<br>#<br># def onData(<br>#     ctx: 'F8PyScriptContext',<br>#     port: str,<br>#     value: Any,<br>#     ts_ms: int \| None = None,<br># ) -> None:<br>#     ctx.log(f'data port={port} value={value} ts_ms={ts_ms}')<br>#<br># def onTick(ctx: 'F8PyScriptContext', tick: 'F8Tick') -> None:<br>#     ctx.log(f'tick seq={tick.seq} tsMs={tick.tsMs} deltaMs={tick.deltaMs}')<br>#<br># def onCommand(<br>#     ctx: 'F8PyScriptContext',<br>#     name: str,<br>#     args: dict[str, Any],<br>#     meta: dict[str, Any] \| None = None,<br># ) -> dict[str, Any]:<br>#     if name == 'ping':<br>#         return {'ok': True, 'result': {'pong': True}}<br>#     return {'ok': False, 'error': f'unknown command: {name}'}<br>` | Python source code. |
+| `lastError` | `ro` | `true` | `false` | `string / default=` | Last script compile/runtime error. |
+| `tickEnabled` | `rw` | `true` | `false` | `boolean / default=False` | Enable onTick scheduler. |
+| `tickMs` | `rw` | `true` | `false` | `integer / default=100` | onTick interval in milliseconds. |
+| `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
+| `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 
 ## Service Commands
 
@@ -50,50 +45,124 @@ Revoke local execution grant.
 - Show on node: `true`
 - Params: none
 
-### `restart_script`
-Recompile and restart script.
-
-- Show on node: `false`
-- Params: none
-
-### `status`
-Get runtime status.
-
-- Show on node: `false`
-- Params: none
-
 ## Service Data Input Ports
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
-| `in` | `true` | `true` | `any` | Default data input |
+| `in` | `false` | `true` | `any` | Default data input |
 
 ## Service Data Output Ports
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
-| `out` | `true` | `true` | `any` | Default data output |
+| `out` | `false` | `true` | `any` | Default data output |
+| `monitor` | `true` | `false` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
 
 ## Operators
 
 _None_
 
-## Usage Guide (Manual)
+## When to Use
 
-### Script Hooks
+- Use `f8.pyscript` when a graph needs custom lifecycle hooks or bespoke glue logic as a standalone service.
+- It is the most flexible service-level integration point in the repo.
 
-`f8.pyscript` provides one in-process script runtime per service instance.
+## Typical Inputs / Outputs
 
-Supported hooks:
-- `onStart(ctx)` / `onStop(ctx)`
-- `onPause(ctx, meta)` / `onResume(ctx, meta)`
-- `onState(ctx, field, value, tsMs)`
-- `onData(ctx, port, value, tsMs)`
-- `onTick(ctx, tick)`
-- `onCommand(ctx, name, args, meta)`
+- Data inputs: `in`
+- Data outputs: `out`, `monitor`
+- Commands: `grant_local_exec`, `revoke_local_exec`
 
-`ctx['exec_local'](...)` is gated by command `grant_local_exec` and can be revoked via `revoke_local_exec`.
+## Common Wiring Patterns
 
-State helpers:
-- `await ctx['get_state'](field)` for freshest reads.
-- `ctx['get_state_cached'](field, default=None)` for sync cached snapshots in hot paths.
+- Use it for orchestration, protocol glue, or custom data shaping that does not fit cleanly into declarative service config.
+- Keep its state/port schema explicit so Studio tooling and future readers still understand the contract.
+
+## Key Fields That Matter
+
+- `code` (Code, `rw`): Python source code. Schema: `string / default=# Hooks template (uncomment what you need):
+# - onStart(ctx)
+# - onStop(ctx)
+# - onPause(ctx, meta=None)
+# - onResume(ctx, meta=None)
+# - onState(ctx, field, value, ts_ms=None)
+# - onData(ctx, port, value, ts_ms=None)
+# - onTick(ctx, tick)
+# - onCommand(ctx, name, args, meta=None)
+#
+# Useful context helpers:
+# - ctx.states.<field> reads cached rw/ro/wo state snapshot
+#   - example: ctx.states.tickEnabled / ctx.states.lastError
+# - await ctx.read_state(field)  # fresh runtime read
+# - ctx.states.get(field)  # cached snapshot
+# - ctx.set_state(field, value)
+# - await ctx.set_state_async(field, value)
+# - ctx.emit(port, value)
+# - ctx.permission.local_exec_granted / ctx.permission.expires_ts_ms
+# - TypeGuard helpers are available from f8_dynamic_inputs
+#   - example: from f8_dynamic_inputs import is_port_in
+#   - optional: from f8_dynamic_inputs import *
+#   - then: if is_port_in(value, port): ...
+# - State TypeGuard helpers are available from f8_dynamic_states
+#   - example: from f8_dynamic_states import is_state_tickEnabled
+#   - then: if is_state_tickEnabled(value, field): ...
+#
+from typing import TYPE_CHECKING, Any
+if TYPE_CHECKING:
+    from f8_script_api import F8PyScriptContext, F8States, F8Tick
+#
+def onStart(ctx: 'F8PyScriptContext') -> None:
+    ctx.log('pyscript started')
+
+# def onStop(ctx: 'F8PyScriptContext') -> None:
+#     ctx.log('pyscript stopped')
+#
+# def onPause(ctx: 'F8PyScriptContext', meta: dict[str, Any] | None = None) -> None:
+#     ctx.log(f'paused: {meta}')
+#
+# def onResume(ctx: 'F8PyScriptContext', meta: dict[str, Any] | None = None) -> None:
+#     ctx.log(f'resumed: {meta}')
+#
+# def onState(
+#     ctx: 'F8PyScriptContext',
+#     field: str,
+#     value: Any,
+#     ts_ms: int | None = None,
+# ) -> None:
+#     ctx.log(f'state {field}={value} ts_ms={ts_ms}')
+#
+# def onData(
+#     ctx: 'F8PyScriptContext',
+#     port: str,
+#     value: Any,
+#     ts_ms: int | None = None,
+# ) -> None:
+#     ctx.log(f'data port={port} value={value} ts_ms={ts_ms}')
+#
+# def onTick(ctx: 'F8PyScriptContext', tick: 'F8Tick') -> None:
+#     ctx.log(f'tick seq={tick.seq} tsMs={tick.tsMs} deltaMs={tick.deltaMs}')
+#
+# def onCommand(
+#     ctx: 'F8PyScriptContext',
+#     name: str,
+#     args: dict[str, Any],
+#     meta: dict[str, Any] | None = None,
+# ) -> dict[str, Any]:
+#     if name == 'ping':
+#         return {'ok': True, 'result': {'pong': True}}
+#     return {'ok': False, 'error': f'unknown command: {name}'}
+`.
+- `lastError` (Last Error, `ro`): Last script compile/runtime error. Schema: `string / default=`.
+- `tickEnabled` (Tick Enabled, `rw`): Enable onTick scheduler. Schema: `boolean / default=False`.
+- `tickMs` (Tick Interval (ms), `rw`): onTick interval in milliseconds. Schema: `integer / default=100`.
+- `active` (Active, `rw`): Service lifecycle state (activate/deactivate). Schema: `boolean / default=True`.
+- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
+
+## Pitfalls / Gotchas
+
+- Poorly scoped scripts become opaque mini-applications and are hard to debug during release prep.
+- Silent assumptions about input shape or timing are more dangerous here than in declarative nodes.
+
+## Related Scenarios
+
+- No bundled scenario references this node yet.

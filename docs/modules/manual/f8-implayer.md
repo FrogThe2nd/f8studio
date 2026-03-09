@@ -1,50 +1,20 @@
-### Recommended Use Cases
+## When to Use
 
-- Feed local media into shared memory for detection/pose services.
-- Validate end-to-end pipelines with deterministic playback.
+- Use `f8.implayer` to turn local media files or supported URLs into a stable video SHM producer.
+- It is the easiest deterministic source for demos, QA passes, and replayable scenarios.
 
-### Minimal Run Example
+## Common Wiring Patterns
 
-```bash
-services/f8/implayer/linux/f8implayer_service
-```
+- Feed its SHM output into CVKit, DL, pose, or `f8.viz.video` consumers.
+- Keep one `implayer` node as the canonical media producer for a scenario and branch from there.
 
-### Common Pitfalls
+### Cookie/Auth Notes
 
-- Missing codec/runtime libraries on target host.
-- Wrong SHM name wiring disconnects downstream consumers.
-- For website URLs, guest mode may provide lower quality streams if auth cookies are not configured.
+- Use browser or cookies-file auth only when URL playback truly needs it.
+- Treat auth-related state as sensitive runtime configuration, not a value to casually share in example sessions.
 
-### Cookie Auth For Online URLs
+## Pitfalls / Gotchas
 
-`f8.implayer` supports cookie-based auth for `yt-dlp/mpv` via state fields:
+- Missing codecs or URL auth problems can look like empty downstream graphs rather than explicit load failures.
+- SHM-name mismatches are a more common problem than actual playback failure.
 
-- `authMode`: `none | browser | cookiesFile` (default `none`)
-- `authBrowser`: `chrome | chromium | edge | firefox | safari`
-- `authBrowserProfile`: optional profile name for browser mode
-- `authCookiesFile`: cookies.txt path for `cookiesFile` mode
-
-Examples:
-
-- Browser cookies (Chrome default profile):
-  - `authMode=browser`
-  - `authBrowser=chrome`
-- Browser cookies (explicit profile):
-  - `authMode=browser`
-  - `authBrowser=chrome`
-  - `authBrowserProfile=Default`
-- cookies.txt file:
-  - `authMode=cookiesFile`
-  - `authCookiesFile=/path/to/cookies.txt`
-
-Security and persistence:
-
-- `authBrowserProfile` and `authCookiesFile` are treated as sensitive runtime values.
-- They are not written back through the service KV endpoint path and are not applied from rungraph snapshots.
-
-### Troubleshooting
-
-- Verify media playback locally before integrating downstream nodes.
-- Confirm `shmName` is identical across producer and consumers.
-- Browser mode requires a logged-in browser profile on the same machine.
-- cookies file mode requires a valid, existing cookies file path.

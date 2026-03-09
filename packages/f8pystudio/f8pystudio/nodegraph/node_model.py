@@ -1,6 +1,9 @@
 from __future__ import annotations
+from f8pysdk.msgspec_codec import dump_json, validate_as
 import json
 import logging
+
+import msgspec
 
 from NodeGraphQt.base.model import NodeModel
 
@@ -35,8 +38,8 @@ class F8StudioNodeModel(NodeModel):
             return value
         if isinstance(value, dict):
             if "operatorClass" in value:
-                return F8OperatorSpec.model_validate(value)
-            return F8ServiceSpec.model_validate(value)
+                return validate_as(F8OperatorSpec, value)
+            return validate_as(F8ServiceSpec, value)
         raise TypeError(f"Unsupported `f8_spec` type: {type(value)!r}")
 
     def set_property(self, name, value):
@@ -78,7 +81,7 @@ class F8StudioNodeModel(NodeModel):
         """
         Override serialization to:
           1) omit port restore definitions (ports are derived from spec)
-          2) serialize pydantic spec to plain JSON dict
+          2) serialize structured spec to plain JSON dict
         """
         data = super().to_dict
         ((node_id, node_dict),) = data.items()
@@ -88,12 +91,15 @@ class F8StudioNodeModel(NodeModel):
 
         spec = node_dict.get("f8_spec")
         if isinstance(spec, (F8OperatorSpec, F8ServiceSpec)):
-            node_dict["f8_spec"] = spec.model_dump(mode="json")
+            node_dict["f8_spec"] = dump_json(spec, mode="json")
 
         if isinstance(self.f8_ui, dict) and self.f8_ui:
             node_dict["f8_ui"] = self.f8_ui
 
-        return {node_id: node_dict}
+        safe_node_dict = self._json_safe_value(node_dict, seen=set())
+        if not isinstance(safe_node_dict, dict):
+            safe_node_dict = {}
+        return {node_id: safe_node_dict}
 
     @property
     def serial(self):
@@ -110,6 +116,40 @@ class F8StudioNodeModel(NodeModel):
         model_dict[self.id].pop("input_ports", None)
         model_dict[self.id].pop("output_ports", None)
         return json.dumps(model_dict)
+
+    @classmethod
+    def _json_safe_value(cls, value: object, *, seen: set[int]) -> object:
+        if value is None or isinstance(value, (str, int, float, bool)):
+            return value
+        if isinstance(value, msgspec.UnsetType):
+            return None
+        if isinstance(value, dict):
+            value_id = id(value)
+            if value_id in seen:
+                return None
+            seen.add(value_id)
+            out: dict[str, object] = {}
+            for key, item in value.items():
+                out[str(key)] = cls._json_safe_value(item, seen=seen)
+            seen.discard(value_id)
+            return out
+        if isinstance(value, (list, tuple, set)):
+            value_id = id(value)
+            if value_id in seen:
+                return None
+            seen.add(value_id)
+            out_list: list[object] = []
+            for item in value:
+                out_list.append(cls._json_safe_value(item, seen=seen))
+            seen.discard(value_id)
+            return out_list
+        try:
+            dumped = dump_json(value, mode="json")
+        except (AttributeError, TypeError, ValueError):
+            return str(value)
+        if dumped is value:
+            return str(value)
+        return cls._json_safe_value(dumped, seen=seen)
 
     @property
     def svcId(self) -> object | None:

@@ -10,38 +10,67 @@ strict: true
 
 nav:
   - Home: index.md
-  - Getting Started:
-      - Installation and Deployment: getting-started/install-deploy.md
+  - For Users:
+      - Overview: for-users/index.md
+      - Install on Windows: getting-started/install-deploy.md
+      - First Launch and Sample Graphs: for-users/first-launch-and-sample-graphs.md
+      - Studio Quickstart: getting-started/studio.md
+  - For Graph Authors:
+      - Overview: graph-authors/index.md
       - Studio (GUI): getting-started/studio.md
+      - PyStudio Guide: pystudio/index.md
+      - Editor Layout: pystudio/editor-layout.md
+      - Node Categories and Wiring: pystudio/node-categories.md
+      - Lifecycle and Monitoring: pystudio/lifecycle-and-monitoring.md
+      - Schema and Code Editors: pystudio/schema-and-code-editors.md
+      - Node Library and Sessions: pystudio/node-library-and-sessions.md
+      - Debugging and Runner: pystudio/debugging-and-runner.md
+      - Node Atlas: node-atlas/index.md
+      - Scenario Library: scenarios/index.md
       - Runner (Headless): getting-started/runner.md
-  - Modules:
-      - Overview: modules/index.md
-      - Services:
-          - Audio Capture: modules/services/f8-audiocap.md
-          - CVKit Dense Optical Flow: modules/services/f8-cvkit-denseoptflow.md
-          - CVKit Template Match: modules/services/f8-cvkit-templatematch.md
-          - CVKit Tracking: modules/services/f8-cvkit-tracking.md
-          - CVKit Video Stabilizer: modules/services/f8-cvkit-videostab.md
-          - DL Classifier: modules/services/f8-dl-classifier.md
-          - DL Detector: modules/services/f8-dl-detector.md
-          - DL Human Detector: modules/services/f8-dl-humandetector.md
-          - PyEngine: modules/services/f8-pyengine.md
-          - IM Player: modules/services/f8-implayer.md
-          - MediaPipe Pose: modules/services/f8-mp-pose.md
-          - Screen Capture: modules/services/f8-screencap.md
+  - For Developers:
+      - Overview: developers/index.md
+      - Build from Source: developers/build-from-source.md
+      - Service Development: developers/service-development.md
+      - PyStudio Plugin Development: developers/pystudio-plugin-development.md
+      - Docs Tooling: developers/docs-tooling.md
   - Scenarios:
       - Overview: scenarios/index.md
       - "Scene 01: CVKit Template Tracking": scenarios/scene-01-cvkit_template_tracking.md
       - "Scene 02: GameMod Skeleton": scenarios/scene-02-gamemod_skeleton.md
       - "Scene 03: Audio Driven TCode": scenarios/scene-03-audio_driven.md
       - "Scene 04: Functional TCode Generation": scenarios/scene-04-functional_tcode.md
+  - Reference:
+      - Modules Overview: modules/index.md
+      - Services:
+          - Audio Feature Core: modules/services/f8-audiofeat-core.md
+          - Audio Feature Rhythm: modules/services/f8-audiofeat-rhythm.md
+          - CVKit Flow Metric: modules/services/f8-cvkit-flowmetric.md
+          - DL Classifier: modules/services/f8-dl-classifier.md
+          - DL Detector: modules/services/f8-dl-detector.md
+          - DL Human Detector: modules/services/f8-dl-humandetector.md
+          - DL Optical Flow: modules/services/f8-dl-optflow.md
+          - DL TCN Wave: modules/services/f8-dl-tcnwave.md
+          - PyEngine: modules/services/f8-pyengine.md
+          - MediaPipe Pose: modules/services/f8-mp-pose.md
+          - Python Expr Service: modules/services/f8-pyexpr.md
+          - Python Script Service: modules/services/f8-pyscript.md
+      - Node Atlas Overview: node-atlas/index.md
+      - Service Nodes: node-atlas/service-nodes.md
+      - PyEngine Operators: node-atlas/pyengine-operators.md
+      - PyStudio Nodes: node-atlas/pystudio-nodes.md
+      - TCodeViz Plugin Node: node-atlas/f8-viz-tcode.md
+      - Plugin Workflows: node-atlas/plugin-workflows.md
   - Deep Dives:
-      - Lovense Local API: LovenseLocalAPI.md
-      - Lovense Mock Server: LovenseMockServer.md
+      - System Architecture: deepdives/system_architecture.md
+      - Lovense Local API: deepdives/LovenseLocalAPI.md
+      - Lovense Mock Server: deepdives/LovenseMockServer.md
 
 theme:
   name: material
   language: en
+  logo: media/images/branding/logo_transparent.png
+  favicon: media/images/branding/icon.png
   features:
     - navigation.tabs
     - navigation.sections
@@ -53,6 +82,19 @@ theme:
 
 plugins:
   - search
+  - i18n:
+      docs_structure: folder
+      fallback_to_default: true
+      reconfigure_material: true
+      reconfigure_search: true
+      languages:
+        - locale: en
+          name: English
+          default: true
+          build: true
+        - locale: zh
+          name: Chinese (Simplified)
+          build: true
 
 markdown_extensions:
   - admonition
@@ -65,3 +107,21 @@ markdown_extensions:
   - pymdownx.inlinehilite
   - pymdownx.snippets
   - pymdownx.superfences
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+
+extra_javascript:
+  - javascripts/mermaid.mjs
+  - javascripts/i18n-switcher.mjs
+
+extra:
+  alternate:
+    - name: English
+      lang: en
+      link: /
+    - name: Chinese (Simplified)
+      lang: zh
+      link: /zh/

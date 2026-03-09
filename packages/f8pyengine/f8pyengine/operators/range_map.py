@@ -204,6 +204,7 @@ RangeMapRuntimeNode.SPEC = F8OperatorSpec(
             description="Input range minimum.",
             valueSchema=number_schema(default=0.0),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -212,6 +213,7 @@ RangeMapRuntimeNode.SPEC = F8OperatorSpec(
             description="Input range maximum.",
             valueSchema=number_schema(default=1.0),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -220,6 +222,7 @@ RangeMapRuntimeNode.SPEC = F8OperatorSpec(
             description="Output range minimum.",
             valueSchema=number_schema(default=0.0),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=True,
         ),
         F8StateSpec(
@@ -228,6 +231,7 @@ RangeMapRuntimeNode.SPEC = F8OperatorSpec(
             description="Output range maximum.",
             valueSchema=number_schema(default=1.0),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=True,
         ),
         F8StateSpec(
@@ -236,6 +240,7 @@ RangeMapRuntimeNode.SPEC = F8OperatorSpec(
             description="Mapping curve.",
             valueSchema=string_schema(default=CURVE_LINEAR, enum=list(CURVE_CHOICES)),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=True,
         ),
     ],

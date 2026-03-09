@@ -1,20 +1,15 @@
-### Recommended Use Cases
+## When to Use
 
-- Sequence-to-wave regression from motion feature windows.
-- Producing scalar prediction streams for downstream control mapping.
+- Use `f8.dl.tcnwave` when a temporal model should infer a waveform or control trace from a sequence of upstream signals.
+- It is most useful when hand-built mappings are too brittle or too limited.
 
-### Minimal Run Example
+## Common Wiring Patterns
 
-```bash
-pixi run -e onnx f8pydl_tcnwave
-```
+- Feed it normalized sequential features, then inspect the generated output with `WaveViz`, `TCodeViz`, or device-output branches.
+- Keep the pre-model feature branch visible so release tuning can separate model issues from input issues.
 
-### Common Pitfalls
+## Pitfalls / Gotchas
 
-- Model input window length mismatch causes runtime validation errors.
-- Wrong weights YAML path prevents ONNX session initialization.
+- Temporal models depend heavily on input normalization and window assumptions.
+- Model output can look unstable if the graph does not match the training-time timing expectations.
 
-### Troubleshooting
-
-- Verify `weights` points to a valid config under `services/f8/dl/weights`.
-- Check `predictedChange` output updates while input windows are arriving.

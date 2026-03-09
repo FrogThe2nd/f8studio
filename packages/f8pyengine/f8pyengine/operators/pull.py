@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from f8pysdk.msgspec_codec import dump_json
 import asyncio
 import logging
 import time
@@ -181,12 +182,8 @@ def _unwrap_json_value(value: Any) -> Any:
     if isinstance(value, dict):
         return {str(k): _unwrap_json_value(v) for k, v in value.items()}
     try:
-        return _unwrap_json_value(value.root)
-    except Exception:
-        pass
-    try:
-        return _unwrap_json_value(value.model_dump(mode="json"))
-    except Exception:
+        return _unwrap_json_value(dump_json(value, mode="json"))
+    except (AttributeError, TypeError, ValueError):
         pass
     return value
 
@@ -214,6 +211,7 @@ PullRuntimeNode.SPEC = F8OperatorSpec(
             description="When enabled, periodically pull all data inputs without exec.",
             valueSchema=boolean_schema(default=False),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=True,
         ),
         F8StateSpec(
@@ -222,6 +220,7 @@ PullRuntimeNode.SPEC = F8OperatorSpec(
             description="Periodic pull frequency in Hz when Auto Trigger is enabled.",
             valueSchema=integer_schema(default=10, minimum=1, maximum=120),
             access=F8StateAccess.rw,
+            required=True,
             showOnNode=True,
         ),
     ],

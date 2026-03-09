@@ -3,13 +3,36 @@ from __future__ import annotations
 import logging
 from typing import Any, TYPE_CHECKING
 
+import msgspec
 from nats.micro import ServiceConfig, add_service  # type: ignore[import-not-found]
 from nats.micro.service import EndpointConfig  # type: ignore[import-not-found]
 
 from ...capabilities import CommandableNode
-from ...generated import F8RuntimeGraph
+from ...generated import (
+    Code,
+    F8ActivateRequest,
+    F8ActiveReply,
+    F8ActiveReplyResult,
+    F8CommandError,
+    F8CommandInvokeReply,
+    F8CommandInvokeRequest,
+    F8DeactivateRequest,
+    F8SetActiveRequest,
+    F8SetRungraphReply,
+    F8SetRungraphReplyResult,
+    F8SetRungraphRequest,
+    F8SetStateReply,
+    F8SetStateReplyResult,
+    F8SetStateRequest,
+    F8StatusReply,
+    F8StatusReplyResult,
+    F8StatusRequest,
+    F8TerminateReply,
+    F8TerminateReplyResult,
+    F8TerminateRequest,
+)
 from ...nats_naming import cmd_channel_subject, ensure_token, new_id, svc_endpoint_subject, svc_micro_name
-from ..codec import decode_obj, encode_obj
+from ..codec import decode_as, encode_obj
 from ..state_write import StateWriteError, StateWriteSource
 
 if TYPE_CHECKING:
@@ -56,117 +79,273 @@ class _ServiceBusMicroEndpoints:
             log.error("failed to stop micro service service_id=%s", self._bus.service_id, exc_info=exc)
         self._micro = None
 
-    def _parse_envelope(self, data: bytes) -> tuple[str, dict[str, Any], dict[str, Any], dict[str, Any]]:
-        req: dict[str, Any] = {}
-        if data:
-            try:
-                req = decode_obj(data)
-            except ValueError:
-                req = {}
-        if not isinstance(req, dict):
-            req = {}
-        req_id = str(req.get("reqId") or "") or new_id()
-        args = req.get("args") if isinstance(req.get("args"), dict) else {}
-        meta = req.get("meta") if isinstance(req.get("meta"), dict) else {}
-        return req_id, req, dict(args), dict(meta)
+    @staticmethod
+    def _req_id(req_id: str) -> str:
+        out = str(req_id or "").strip()
+        return out or new_id()
 
-    async def _respond(
-        self, req: Any, *, req_id: str, ok: bool, result: Any = None, error: dict[str, Any] | None = None
+    @staticmethod
+    def _error(*, code: str, message: str, details: Any = None) -> F8CommandError:
+        code_text = str(code or "").strip()
+        try:
+            enum_code = Code(code_text)
+        except ValueError:
+            enum_code = Code.INTERNAL
+        return F8CommandError(code=enum_code, message=str(message), details=details or {})
+
+    @staticmethod
+    def _meta_dict(meta: dict[str, Any] | msgspec.UnsetType | None, *, cmd: str | None = None) -> dict[str, Any]:
+        out: dict[str, Any] = {}
+        if cmd:
+            out["cmd"] = str(cmd)
+        if meta is None or isinstance(meta, msgspec.UnsetType):
+            return out
+        for key, value in dict(meta).items():
+            out[str(key)] = value
+        return out
+
+    async def _set_active_req(
+        self,
+        req: Any,
+        *,
+        req_id: str,
+        active: bool,
+        cmd: str,
+        meta: dict[str, Any] | msgspec.UnsetType | None,
     ) -> None:
-        payload = {
-            "reqId": req_id,
-            "ok": bool(ok),
-            "result": result if ok else None,
-            "error": error if not ok else None,
-        }
-        await req.respond(encode_obj(payload))
-
-    async def _set_active_req(self, req: Any, active: bool, *, cmd: str) -> None:
-        req_id, _raw, _args, meta = self._parse_envelope(req.data)
         want_active = bool(active)
-        await self._bus.set_active(want_active, source=StateWriteSource.cmd, meta={"cmd": cmd, **meta})
-        await self._respond(req, req_id=req_id, ok=True, result={"active": self._bus.active})
+        await self._bus.set_active(want_active, source=StateWriteSource.cmd, meta=self._meta_dict(meta, cmd=cmd))
+        await req.respond(
+            encode_obj(
+                F8ActiveReply(
+                    reqId=req_id,
+                    ok=True,
+                    result=F8ActiveReplyResult(active=self._bus.active),
+                    error=None,
+                )
+            )
+        )
 
     async def _activate(self, req: Any) -> None:
-        await self._set_active_req(req, True, cmd="activate")
-
-    async def _deactivate(self, req: Any) -> None:
-        await self._set_active_req(req, False, cmd="deactivate")
-
-    async def _set_active(self, req: Any) -> None:
-        req_id, raw, args, _meta = self._parse_envelope(req.data)
-        want_active = args.get("active")
-        if want_active is None:
-            want_active = raw.get("active")
-        if want_active is None:
-            await self._respond(
-                req, req_id=req_id, ok=False, error={"code": "INVALID_ARGS", "message": "missing active"}
+        try:
+            payload = decode_as(req.data, F8ActivateRequest)
+        except ValueError as exc:
+            await req.respond(
+                encode_obj(
+                    F8ActiveReply(
+                        reqId=new_id(),
+                        ok=False,
+                        result=None,
+                        error=self._error(code="INVALID_ARGS", message=str(exc)),
+                    )
+                )
             )
             return
-        await self._set_active_req(req, bool(want_active), cmd="set_active")
+        await self._set_active_req(
+            req,
+            req_id=self._req_id(payload.reqId),
+            active=True,
+            cmd="activate",
+            meta=payload.meta,
+        )
+
+    async def _deactivate(self, req: Any) -> None:
+        try:
+            payload = decode_as(req.data, F8DeactivateRequest)
+        except ValueError as exc:
+            await req.respond(
+                encode_obj(
+                    F8ActiveReply(
+                        reqId=new_id(),
+                        ok=False,
+                        result=None,
+                        error=self._error(code="INVALID_ARGS", message=str(exc)),
+                    )
+                )
+            )
+            return
+        await self._set_active_req(
+            req,
+            req_id=self._req_id(payload.reqId),
+            active=False,
+            cmd="deactivate",
+            meta=payload.meta,
+        )
+
+    async def _set_active(self, req: Any) -> None:
+        try:
+            payload = decode_as(req.data, F8SetActiveRequest)
+        except ValueError as exc:
+            await req.respond(
+                encode_obj(
+                    F8ActiveReply(
+                        reqId=new_id(),
+                        ok=False,
+                        result=None,
+                        error=self._error(code="INVALID_ARGS", message=str(exc)),
+                    )
+                )
+            )
+            return
+        await self._set_active_req(
+            req,
+            req_id=self._req_id(payload.reqId),
+            active=payload.args.active,
+            cmd="set_active",
+            meta=payload.meta,
+        )
 
     async def _status(self, req: Any) -> None:
-        req_id, _raw, _args, _meta = self._parse_envelope(req.data)
-        await self._respond(
-            req, req_id=req_id, ok=True, result={"serviceId": self._bus.service_id, "active": self._bus.active}
+        try:
+            payload = decode_as(req.data, F8StatusRequest)
+            req_id = self._req_id(payload.reqId)
+        except ValueError:
+            req_id = new_id()
+        await req.respond(
+            encode_obj(
+                F8StatusReply(
+                    reqId=req_id,
+                    ok=True,
+                    result=F8StatusReplyResult(serviceId=self._bus.service_id, active=self._bus.active),
+                    error=None,
+                )
+            )
         )
 
     async def _terminate(self, req: Any) -> None:
-        req_id, _raw, _args, meta = self._parse_envelope(req.data)
-        log.info("terminate requested serviceId=%s meta=%s", self._bus.service_id, dict(meta or {}))
+        try:
+            payload = decode_as(req.data, F8TerminateRequest)
+            req_id = self._req_id(payload.reqId)
+            meta = payload.meta
+        except ValueError:
+            req_id = new_id()
+            meta = None
+        log.info("terminate requested serviceId=%s meta=%s", self._bus.service_id, self._meta_dict(meta))
         self._bus._terminate_event.set()
-        await self._respond(req, req_id=req_id, ok=True, result={"terminating": True})
+        await req.respond(
+            encode_obj(
+                F8TerminateReply(
+                    reqId=req_id,
+                    ok=True,
+                    result=F8TerminateReplyResult(terminating=True),
+                    error=None,
+                )
+            )
+        )
 
     async def _cmd(self, req: Any) -> None:
-        req_id, raw, args, meta = self._parse_envelope(req.data)
-        call = str(raw.get("call") or "").strip()
+        try:
+            payload = decode_as(req.data, F8CommandInvokeRequest)
+        except ValueError as exc:
+            await req.respond(
+                encode_obj(
+                    F8CommandInvokeReply(
+                        reqId=new_id(),
+                        ok=False,
+                        result=None,
+                        error=self._error(code="INVALID_ARGS", message=str(exc)),
+                    )
+                )
+            )
+            return
+        req_id = self._req_id(payload.reqId)
+        call = str(payload.call or "").strip()
         if not call:
-            await self._respond(
-                req, req_id=req_id, ok=False, error={"code": "INVALID_ARGS", "message": "missing call"}
+            await req.respond(
+                encode_obj(
+                    F8CommandInvokeReply(
+                        reqId=req_id,
+                        ok=False,
+                        result=None,
+                        error=self._error(code="INVALID_ARGS", message="missing call"),
+                    )
+                )
             )
             return
         service_node = self._bus.get_node(self._bus.service_id)
         if service_node is None or not isinstance(service_node, CommandableNode):
-            await self._respond(
-                req, req_id=req_id, ok=False, error={"code": "UNKNOWN_CALL", "message": f"unknown call: {call}"}
+            await req.respond(
+                encode_obj(
+                    F8CommandInvokeReply(
+                        reqId=req_id,
+                        ok=False,
+                        result=None,
+                        error=self._error(code="UNKNOWN_CALL", message=f"unknown call: {call}"),
+                    )
+                )
             )
             return
+        meta_dict = self._meta_dict(payload.meta)
+        args_obj: dict[str, Any]
+        if isinstance(payload.args, dict):
+            args_obj = dict(payload.args)
+        else:
+            args_obj = {}
         try:
-            out = await service_node.on_command(call, args, meta=meta)  # type: ignore[misc]
+            out = await service_node.on_command(call, args_obj, meta=meta_dict)  # type: ignore[misc]
         except Exception as exc:
-            await self._respond(req, req_id=req_id, ok=False, error={"code": "INTERNAL", "message": str(exc)})
+            await req.respond(
+                encode_obj(
+                    F8CommandInvokeReply(
+                        reqId=req_id,
+                        ok=False,
+                        result=None,
+                        error=self._error(code="INTERNAL", message=str(exc)),
+                    )
+                )
+            )
             return
-        await self._respond(req, req_id=req_id, ok=True, result=out)
+        await req.respond(encode_obj(F8CommandInvokeReply(reqId=req_id, ok=True, result=out, error=None)))
 
     async def _set_state(self, req: Any) -> None:
-        req_id, raw, args, meta = self._parse_envelope(req.data)
-        node_id = args.get("nodeId") or raw.get("nodeId")
-        field = args.get("field") or raw.get("field")
-        value = args.get("value") if "value" in args else raw.get("value")
-        if node_id is None or field is None:
-            await self._respond(
-                req, req_id=req_id, ok=False, error={"code": "INVALID_ARGS", "message": "missing nodeId/field"}
+        try:
+            payload = decode_as(req.data, F8SetStateRequest)
+        except ValueError as exc:
+            await req.respond(
+                encode_obj(
+                    F8SetStateReply(
+                        reqId=new_id(),
+                        ok=False,
+                        result=None,
+                        error=self._error(code="INVALID_ARGS", message=str(exc)),
+                    )
+                )
             )
             return
-        node_id_s = str(node_id).strip()
-        field_s = str(field).strip()
+        req_id = self._req_id(payload.reqId)
+        node_id_s = str(payload.args.nodeId or "").strip()
+        field_s = str(payload.args.field or "").strip()
+        value = payload.args.value
         if not node_id_s or not field_s:
-            await self._respond(
-                req, req_id=req_id, ok=False, error={"code": "INVALID_ARGS", "message": "empty nodeId/field"}
+            await req.respond(
+                encode_obj(
+                    F8SetStateReply(
+                        reqId=req_id,
+                        ok=False,
+                        result=None,
+                        error=self._error(code="INVALID_ARGS", message="empty nodeId/field"),
+                    )
+                )
             )
             return
 
         try:
             node_id_s = ensure_token(node_id_s, label="node_id")
         except ValueError:
-            await self._respond(
-                req, req_id=req_id, ok=False, error={"code": "INVALID_ARGS", "message": "invalid nodeId"}
+            await req.respond(
+                encode_obj(
+                    F8SetStateReply(
+                        reqId=req_id,
+                        ok=False,
+                        result=None,
+                        error=self._error(code="INVALID_ARGS", message="invalid nodeId"),
+                    )
+                )
             )
             return
 
-        user_meta = dict(meta)
+        user_meta = self._meta_dict(payload.meta)
         user_meta.pop("source", None)
-        user_meta.pop("origin", None)
         try:
             await self._bus.publish_state_external(
                 node_id_s,
@@ -176,41 +355,82 @@ class _ServiceBusMicroEndpoints:
                 meta=user_meta,
             )
         except StateWriteError as exc:
-            await self._respond(
-                req,
-                req_id=req_id,
-                ok=False,
-                error={"code": exc.code, "message": exc.message, "details": exc.details},
+            await req.respond(
+                encode_obj(
+                    F8SetStateReply(
+                        reqId=req_id,
+                        ok=False,
+                        result=None,
+                        error=self._error(code=exc.code, message=exc.message, details=exc.details),
+                    )
+                )
             )
             return
         except Exception as exc:
-            await self._respond(req, req_id=req_id, ok=False, error={"code": "INTERNAL", "message": str(exc)})
+            await req.respond(
+                encode_obj(
+                    F8SetStateReply(
+                        reqId=req_id,
+                        ok=False,
+                        result=None,
+                        error=self._error(code="INTERNAL", message=str(exc)),
+                    )
+                )
+            )
             return
-        await self._respond(req, req_id=req_id, ok=True, result={"nodeId": node_id_s, "field": field_s})
+        await req.respond(
+            encode_obj(
+                F8SetStateReply(
+                    reqId=req_id,
+                    ok=True,
+                    result=F8SetStateReplyResult(nodeId=node_id_s, field=field_s),
+                    error=None,
+                )
+            )
+        )
 
     async def _set_rungraph(self, req: Any) -> None:
-        req_id, raw, args, _meta = self._parse_envelope(req.data)
-        graph_obj = args.get("graph") if isinstance(args.get("graph"), dict) else raw.get("graph")
-        if graph_obj is None and isinstance(raw, dict):
-            graph_obj = raw if "nodes" in raw and "edges" in raw else None
-        if not isinstance(graph_obj, dict):
-            await self._respond(
-                req, req_id=req_id, ok=False, error={"code": "INVALID_ARGS", "message": "missing graph"}
+        try:
+            decoded_req = decode_as(req.data, F8SetRungraphRequest)
+            graph = decoded_req.args.graph
+        except ValueError as exc:
+            await req.respond(
+                encode_obj(
+                    F8SetRungraphReply(
+                        reqId=new_id(),
+                        ok=False,
+                        result=None,
+                        error=self._error(code="INVALID_RUNGRAPH", message=str(exc)),
+                    )
+                )
             )
             return
-
-        try:
-            graph = F8RuntimeGraph.model_validate(graph_obj)
-        except Exception as exc:
-            await self._respond(req, req_id=req_id, ok=False, error={"code": "INVALID_RUNGRAPH", "message": str(exc)})
-            return
+        req_id = self._req_id(decoded_req.reqId)
 
         try:
             await self._bus.set_rungraph(graph)
         except Exception as exc:
-            await self._respond(req, req_id=req_id, ok=False, error={"code": "INTERNAL", "message": str(exc)})
+            await req.respond(
+                encode_obj(
+                    F8SetRungraphReply(
+                        reqId=req_id,
+                        ok=False,
+                        result=None,
+                        error=self._error(code="INTERNAL", message=str(exc)),
+                    )
+                )
+            )
             return
-        await self._respond(req, req_id=req_id, ok=True, result={"graphId": str(graph.graphId)})
+        await req.respond(
+            encode_obj(
+                F8SetRungraphReply(
+                    reqId=req_id,
+                    ok=True,
+                    result=F8SetRungraphReplyResult(graphId=str(graph.graphId)),
+                    error=None,
+                )
+            )
+        )
 
     async def _register_endpoints(self) -> None:
         micro = self._micro

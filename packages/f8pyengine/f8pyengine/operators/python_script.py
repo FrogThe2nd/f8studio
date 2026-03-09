@@ -5,7 +5,8 @@ import inspect
 import logging
 import time
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
+import numpy as np
 
 from f8pysdk import (
     F8DataPortSpec,
@@ -25,14 +26,22 @@ from f8pysdk.shm.video import VIDEO_FORMAT_BGRA32, VIDEO_FORMAT_FLOW2_F16, Video
 
 from ..constants import SERVICE_CLASS
 from ._ports import exec_out_ports
+from .script_utils.input_binding import (
+    INPUT_MODE_INPUT_VIEW,
+    INPUT_MODE_MSGSPEC_STRUCT,
+    INPUT_MODE_RAW_DICT,
+    InputBinding,
+    infer_script_input_style,
+    parse_input_mode,
+    script_uses_inputs_object_access,
+)
+from .script_utils.python_editor_assist import python_script_field_editor_assist_payload
+from .script_utils.result_binding import normalize_script_output_value, normalize_script_output_value_fast
+from .script_utils.script_runtime import HookSet, ScriptRuntimeCompiler
+from .script_utils.state_binding import PyEngineStatesView
 
 OPERATOR_CLASS = "f8.python_script"
 logger = logging.getLogger(__name__)
-
-try:
-    import numpy as np
-except ModuleNotFoundError:
-    np = None  # type: ignore[assignment]
 
 
 @dataclass
@@ -50,48 +59,184 @@ class _VideoShmSubscription:
     error_count: int = 0
 
 
+def _script_uses_inputs_object_access(code: str) -> bool:
+    # Backward compatible helper for tests and call-sites.
+    return script_uses_inputs_object_access(code)
+
+
+@dataclass(slots=True)
+class PyEngineContext:
+    _node: "PythonScriptRuntimeNode"
+    node_id: str
+    locals: dict[str, Any]
+    _state_keys: tuple[str, ...]
+    exec_in: str | None = None
+
+    def with_exec_in(self, exec_in: str | None) -> "PyEngineContext":
+        if self.exec_in == exec_in:
+            return self
+        return PyEngineContext(
+            _node=self._node,
+            node_id=self.node_id,
+            locals=self.locals,
+            _state_keys=self._state_keys,
+            exec_in=exec_in,
+        )
+
+    @property
+    def states(self) -> PyEngineStatesView:
+        return self._node._build_states_view(self._state_keys)
+
+    @property
+    def input_mode(self) -> str:
+        return str(self._node._input_binding.mode)
+
+    def log(self, message: object) -> None:
+        self._node._log(str(message))
+
+    async def emit_async(self, port: str, value: Any) -> None:
+        await self._node.emit(str(port), value)
+
+    def emit(self, port: str, value: Any) -> None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError as exc:
+            logger.error("[%s:python_script] emit without running loop", self.node_id, exc_info=exc)
+            return
+        loop.create_task(self.emit_async(str(port), value), name=f"python_script:emit:{self.node_id}:{port}")
+
+    async def set_state_async(self, field: str, value: Any) -> None:
+        self._node._self_state_writes[str(field)] = value
+        await self._node.set_state(str(field), value)
+
+    def set_state(self, field: str, value: Any) -> None:
+        self._node._self_state_writes[str(field)] = value
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError as exc:
+            logger.error("[%s:python_script] set_state without running loop", self.node_id, exc_info=exc)
+            return
+        loop.create_task(
+            self.set_state_async(str(field), value),
+            name=f"python_script:set_state:{self.node_id}:{field}",
+        )
+
+    async def read_state(self, field: str) -> Any:
+        return await self._node.get_state_value(str(field))
+
+    def subscribe_video_shm(self, key: str, shm_name: str, *, decode: str = "auto", use_event: bool = False) -> None:
+        key_name = str(key or "").strip()
+        shm = str(shm_name or "").strip()
+        if not key_name or not shm:
+            return
+        decode_mode = self._node._normalize_decode_mode(decode)
+        self._node._unsubscribe_video_shm_sync(key_name)
+        sub = _VideoShmSubscription(
+            key=key_name,
+            shm_name=shm,
+            decode_mode=decode_mode,
+            use_event=bool(use_event),
+        )
+        self._node._video_subscriptions[key_name] = sub
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            sub.task = None
+            return
+        sub.task = loop.create_task(
+            self._node._run_video_shm_subscription(key_name),
+            name=f"python_script:video_sub:{self.node_id}:{key_name}",
+        )
+
+    def get_video_shm(self, key: str) -> dict[str, Any] | None:
+        key_name = str(key or "").strip()
+        if not key_name:
+            return None
+        sub = self._node._video_subscriptions.get(key_name)
+        if sub is None:
+            return None
+        return self._node._copy_packet_for_script(sub.latest_packet)
+
+    def unsubscribe_video_shm(self, key: str) -> None:
+        self._node._unsubscribe_video_shm_sync(str(key or "").strip())
+
+    def list_video_shm_subscriptions(self) -> list[dict[str, Any]]:
+        items: list[dict[str, Any]] = []
+        for key_name in sorted(self._node._video_subscriptions.keys()):
+            sub = self._node._video_subscriptions.get(key_name)
+            if sub is None:
+                continue
+            items.append(
+                {
+                    "key": sub.key,
+                    "shmName": sub.shm_name,
+                    "decodeMode": sub.decode_mode,
+                    "hasPacket": sub.latest_packet is not None,
+                    "lastFrameId": int(sub.last_frame_id),
+                    "errorCount": int(sub.error_count),
+                }
+            )
+        return items
+
+
 DEFAULT_CODE = (
-    "# Define hooks (any subset is ok):\n"
+    "# Hooks template (uncomment what you need):\n"
     "# - onStart(ctx)\n"
-    "# - onState(ctx, field, value, tsMs=None)      # called on state updates (except 'code')\n"
-    "# - onMsg(ctx, inputs)                        # called on data arrival (push mode) or as fallback for exec\n"
-    "# - onExec(ctx, execIn, inputs)               # called on exec trigger (pull mode)\n"
+    "# - onState(ctx, field, value, ts_ms=None)\n"
+    "# - onMsg(ctx, inputs)\n"
+    "# - onExec(ctx, exec_in, inputs)\n"
     "# - onStop(ctx)\n"
-    "# - ctx['locals'] is preserved between calls (script-local memory)\n"
-    "# - ctx['execIn'] is set for exec-triggered calls\n"
-    "# - State helpers:\n"
-    "#   - await ctx['get_state'](field)           # read state value\n"
-    "#   - ctx['get_state_cached'](field, default=None)  # sync cached snapshot (may be stale)\n"
-    "#   - ctx['set_state'](field, value)          # write state (fire-and-forget)\n"
-    "#   - await ctx['set_state_async'](field, value)\n"
+    "#\n"
+    "# Notes:\n"
+    "# - ctx.locals is preserved between calls (script-local memory)\n"
+    "# - ctx.exec_in is set only for exec-triggered calls\n"
+    "# - ctx.states.<field> reads cached rw/ro/wo state snapshot\n"
+    "#   - example: ctx.states.foo / ctx.states.pose.x\n"
+    "# - await ctx.read_state(field)  # fresh runtime read\n"
+    "# - ctx.states.get(field)  # cached snapshot\n"
+    "# - ctx.set_state(field, value)\n"
+    "#   - await ctx.set_state_async(field, value)\n"
+    "# - inputs binding mode is configured by state `inputMode`:\n"
+    "#   - input_view (default): supports dot and mapping access\n"
+    "#   - raw_dict: plain dict only\n"
+    "#   - msgspec_struct: typed struct from dataIn schema\n"
+    "# - State TypeGuard helpers are available from f8_dynamic_states\n"
+    "#   - example: from f8_dynamic_states import is_state_lastError\n"
+    "#   - then: if is_state_lastError(value, field): ...\n"
     "# - Video SHM helpers:\n"
-    "#   - ctx['subscribe_video_shm'](key, shm_name, decode='auto', use_event=False)\n"
-    "#   - pkt = ctx['get_video_shm'](key)          # latest cached packet or None\n"
-    "#   - ctx['unsubscribe_video_shm'](key)\n"
-    "#   - ctx['list_video_shm_subscriptions']()\n"
-    "#   Note: for best UI/graph support, add the target state fields on the node (editableStateFields=True).\n"
-    "# - inputs is a dict keyed by input port names\n"
+    "#   - ctx.subscribe_video_shm(key, shm_name, decode='auto', use_event=False)\n"
+    "#   - pkt = ctx.get_video_shm(key)\n"
+    "#   - ctx.unsubscribe_video_shm(key)\n"
+    "#   - ctx.list_video_shm_subscriptions()\n"
+    "#\n"
     "# Return value protocol:\n"
-    "# - onMsg: return {'outputs': {...}} or any value (emits to 'out' if present)\n"
-    "# - onExec: return {'exec': ['exec','exec2'], 'outputs': {...}}\n"
-    "#   - 'exec' selects exec out port(s) to trigger (defaults to pass-through)\n"
-    "#   - 'outputs' is a dict mapping dataOutPort -> value\n\n"
-    "def onStart(ctx):\n"
-    "    ctx['log']('python_script started')\n\n"
-    "def onState(ctx, field, value, tsMs=None):\n"
-    "    # Example: react to a state change.\n"
-    "    # ctx['log'](f'state {field}={value} tsMs={tsMs}')\n"
-    "    return\n\n"
-    "def onMsg(ctx, inputs):\n"
-    "    msg = inputs.get('msg')\n"
-    "    return {'outputs': {'out': msg}}\n\n"
-    "def onExec(ctx, execIn, inputs):\n"
-    "    # Example: choose different exec outputs by execIn port name.\n"
-    "    if execIn == 'exec2':\n"
-    "        return {'exec': ['exec2'], 'outputs': {'out': inputs.get('msg')}}\n"
-    "    return {'exec': ['exec'], 'outputs': {'out': inputs.get('msg')}}\n\n"
-    "def onStop(ctx):\n"
-    "    ctx['log']('python_script stopped')\n"
+    "# - onMsg: {'outputs': {...}} or any value (emits to 'out' if present)\n"
+    "# - onExec: {'exec': ['exec', ...], 'outputs': {...}}\n"
+    "\n"
+    "from typing import TYPE_CHECKING, Any\n"
+    "if TYPE_CHECKING:\n"
+    "    from f8_script_api import F8Inputs, F8PyEngineContext, F8States\n\n"
+    "def onStart(ctx: 'F8PyEngineContext') -> None:\n"
+    "    ctx.log('python_script started')\n\n"
+    "# def onState(\n"
+    "#     ctx: 'F8PyEngineContext',\n"
+    "#     field: str,\n"
+    "#     value: Any,\n"
+    "#     ts_ms: int | None = None,\n"
+    "# ) -> None:\n"
+    "#     ctx.log(f'state {field}={value} ts_ms={ts_ms}')\n"
+    "#\n"
+    "# def onMsg(ctx: 'F8PyEngineContext', inputs: 'F8Inputs') -> dict[str, Any]:\n"
+    "#     msg = inputs.msg\n"
+    "#     return {'outputs': {'out': msg}}\n"
+    "#\n"
+    "# def onExec(ctx: 'F8PyEngineContext', exec_in: str, inputs: 'F8Inputs') -> dict[str, Any]:\n"
+    "#     if exec_in == 'exec2':\n"
+    "#         return {'exec': ['exec2'], 'outputs': {'out': inputs.msg}}\n"
+    "#     return {'exec': ['exec'], 'outputs': {'out': inputs.msg}}\n"
+    "#\n"
+    "# def onStop(ctx: 'F8PyEngineContext') -> None:\n"
+    "#     ctx.log('python_script stopped')\n"
 )
 
 
@@ -100,7 +245,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
     Execute user-provided python code with lifecycle hooks:
 
     - onStart(ctx): invoked on construction (best-effort) and after recompiles
-    - onState(ctx, field, value, tsMs=None): invoked on state updates (except 'code')
+    - onState(ctx, field, value, ts_ms=None): invoked on state updates (except 'code')
     - onMsg(ctx, inputs): invoked on exec or data arrival
     - onStop(ctx): invoked on close() (best-effort) and before recompiles
     """
@@ -112,13 +257,26 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
             data_out_ports=[p.name for p in (node.dataOutPorts or [])],
             state_fields=[s.name for s in (node.stateFields or [])],
         )
+        self._readable_state_names = self._collect_readable_state_names(node)
         self._initial_state = dict(initial_state or {})
         self._exec_out_ports = exec_out_ports(node, default=["exec"])
         self._locals: dict[str, Any] = {}
+        self._ctx: PyEngineContext = self._build_ctx()
 
         self._code = str(self._initial_state.get("code") or DEFAULT_CODE)
-        self._runtime: dict[str, Callable[..., Any]] = {}
-        self._ctx: dict[str, Any] = {}
+        self._script_runtime = ScriptRuntimeCompiler(set_error=self._set_error)
+        self._hooks = HookSet(
+            runtime={},
+            on_msg=None,
+            on_exec=None,
+            on_state=None,
+            on_msg_is_async=False,
+            on_exec_is_async=False,
+            on_state_is_async=False,
+            on_msg_maybe_awaitable=False,
+            on_exec_maybe_awaitable=False,
+            on_state_maybe_awaitable=False,
+        )
         self._started = False
         self._closing = False
         self._last_error: str | None = None
@@ -127,6 +285,24 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         self._pull_cache_outputs: dict[str, Any] = {}
         self._state_key_hint_logged = False
         self._video_subscriptions: dict[str, _VideoShmSubscription] = {}
+        self._data_out_port_set: set[str] = set()
+        self._single_data_out_port: str | None = None
+        self._has_out_port = False
+        self._input_mode = parse_input_mode(self._initial_state.get("inputMode"), default=INPUT_MODE_INPUT_VIEW)
+        self._input_binding = InputBinding(
+            node_id=self.node_id,
+            data_in_ports=list(node.dataInPorts or []),
+            mode=self._input_mode,
+        )
+        self._input_decode_mode_logged: str | None = None
+        self._metric_input_decode_time_us: float = 0.0
+        self._metric_input_decode_errors = 0
+        self._metric_hook_exec_time_us: float = 0.0
+        self._metric_output_normalize_time_us: float = 0.0
+        self._metrics_enabled = logger.isEnabledFor(logging.DEBUG)
+        self._metrics_sample_mask = 0x7F
+        self._metrics_sample_counter = 0
+        self._refresh_data_out_port_cache()
 
         self._compile_and_start()
 
@@ -156,12 +332,44 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
     def _log(self, message: str) -> None:
         logger.info("[%s:python_script] %s", self.node_id, message)
 
+    def get_performance_counters(self) -> dict[str, float | int]:
+        return {
+            "input_decode_time_us": float(self._metric_input_decode_time_us),
+            "input_decode_errors": int(self._metric_input_decode_errors),
+            "hook_exec_time_us": float(self._metric_hook_exec_time_us),
+            "output_normalize_time_us": float(self._metric_output_normalize_time_us),
+        }
+
+    def _metrics_start(self) -> float | None:
+        if not self._metrics_enabled:
+            return None
+        self._metrics_sample_counter = (int(self._metrics_sample_counter) + 1) & int(self._metrics_sample_mask)
+        if self._metrics_sample_counter != 0:
+            return None
+        return time.perf_counter()
+
+    def _metrics_add_hook_time(self, started_at: float | None) -> None:
+        if started_at is None:
+            return
+        self._metric_hook_exec_time_us += (time.perf_counter() - started_at) * 1_000_000.0
+
+    def _metrics_add_decode_time(self, started_at: float | None) -> None:
+        if started_at is None:
+            return
+        self._metric_input_decode_time_us += (time.perf_counter() - started_at) * 1_000_000.0
+
+    def _metrics_add_output_norm_time(self, started_at: float | None) -> None:
+        if started_at is None:
+            return
+        self._metric_output_normalize_time_us += (time.perf_counter() - started_at) * 1_000_000.0
+
     def _set_error(self, stage: str, exc: BaseException) -> None:
         msg = f"{stage}: {exc}"
         self._last_error = msg
         logger.error("[%s:python_script] error %s", self.node_id, msg, exc_info=exc)
         try:
             loop = asyncio.get_running_loop()
+
             async def _set_last_error() -> None:
                 try:
                     await self.set_state("lastError", msg)
@@ -175,6 +383,31 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
     @staticmethod
     def _now_ms() -> int:
         return int(time.time() * 1000.0)
+
+    @staticmethod
+    def _collect_readable_state_names(node: F8RuntimeNode) -> tuple[str, ...]:
+        raw_states = getattr(node, "stateFields", None)
+        if not isinstance(raw_states, list):
+            raw_states = getattr(node, "state_fields", None)
+        if not isinstance(raw_states, list):
+            return ()
+        out: list[str] = []
+        seen: set[str] = set()
+        for state in raw_states:
+            if isinstance(state, dict):
+                name = str(state.get("name") or "").strip()
+                access_raw = state.get("access")
+            else:
+                name = str(getattr(state, "name", "") or "").strip()
+                access_raw = getattr(state, "access", None)
+            if not name or name in seen:
+                continue
+            access = str(getattr(access_raw, "value", access_raw) or "").strip().lower()
+            if access not in ("rw", "ro", "wo"):
+                continue
+            seen.add(name)
+            out.append(name)
+        return tuple(out)
 
     @staticmethod
     def _normalize_decode_mode(decode: Any) -> str:
@@ -409,120 +642,73 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
                 self._close_video_sub_reader(sub)
                 await asyncio.sleep(0.2)
 
-    def _build_ctx(self) -> dict[str, Any]:
-        async def _emit_async(port: str, value: Any) -> None:
-            await self.emit(str(port), value)
+    def _build_ctx(self) -> PyEngineContext:
+        return PyEngineContext(
+            _node=self,
+            node_id=self.node_id,
+            locals=self._locals,
+            _state_keys=self._readable_state_names,
+            exec_in=None,
+        )
 
-        def _emit(port: str, value: Any) -> None:
-            try:
-                loop = asyncio.get_running_loop()
-                loop.create_task(_emit_async(str(port), value), name=f"python_script:emit:{self.node_id}:{port}")
-            except Exception:
-                pass
+    def _refresh_data_out_port_cache(self) -> None:
+        self._data_out_port_set = {str(name) for name in self.data_out_ports}
+        if len(self._data_out_port_set) == 1:
+            self._single_data_out_port = next(iter(self._data_out_port_set))
+        else:
+            self._single_data_out_port = None
+        self._has_out_port = "out" in self._data_out_port_set
 
-        async def _set_state_async(field: str, value: Any) -> None:
-            self._self_state_writes[str(field)] = value
-            await self.set_state(str(field), value)
+    async def _await_msg_result(self, result: Any) -> Any:
+        if self._hooks.on_msg_is_async:
+            return await result
+        if not self._hooks.on_msg_maybe_awaitable:
+            return result
+        if inspect.isawaitable(result):
+            return await result
+        self._hooks.on_msg_maybe_awaitable = False
+        return result
 
-        def _set_state(field: str, value: Any) -> None:
-            try:
-                self._self_state_writes[str(field)] = value
-                loop = asyncio.get_running_loop()
-                loop.create_task(
-                    _set_state_async(str(field), value), name=f"python_script:set_state:{self.node_id}:{field}"
-                )
-            except Exception:
-                pass
+    async def _await_exec_result(self, result: Any) -> Any:
+        if self._hooks.on_exec_is_async:
+            return await result
+        if not self._hooks.on_exec_maybe_awaitable:
+            return result
+        if inspect.isawaitable(result):
+            return await result
+        self._hooks.on_exec_maybe_awaitable = False
+        return result
 
-        async def _get_state(field: str) -> Any:
-            return await self.get_state_value(str(field))
+    async def _await_state_result(self, result: Any) -> Any:
+        if self._hooks.on_state_is_async:
+            return await result
+        if not self._hooks.on_state_maybe_awaitable:
+            return result
+        if inspect.isawaitable(result):
+            return await result
+        self._hooks.on_state_maybe_awaitable = False
+        return result
 
-        def _get_state_cached(field: str, default: Any = None) -> Any:
-            return self.get_state_cached(str(field), default)
-
-        def _subscribe_video_shm(key: str, shm_name: str, *, decode: str = "auto", use_event: bool = False) -> None:
-            key_name = str(key or "").strip()
-            shm = str(shm_name or "").strip()
-            if not key_name or not shm:
-                return
-            decode_mode = self._normalize_decode_mode(decode)
-            self._unsubscribe_video_shm_sync(key_name)
-            sub = _VideoShmSubscription(
-                key=key_name,
-                shm_name=shm,
-                decode_mode=decode_mode,
-                use_event=bool(use_event),
-            )
-            self._video_subscriptions[key_name] = sub
-            try:
-                loop = asyncio.get_running_loop()
-                sub.task = loop.create_task(
-                    self._run_video_shm_subscription(key_name),
-                    name=f"python_script:video_sub:{self.node_id}:{key_name}",
-                )
-            except RuntimeError:
-                sub.task = None
-
-        def _get_video_shm(key: str) -> dict[str, Any] | None:
-            key_name = str(key or "").strip()
-            if not key_name:
-                return None
-            sub = self._video_subscriptions.get(key_name)
-            if sub is None:
-                return None
-            return self._copy_packet_for_script(sub.latest_packet)
-
-        def _unsubscribe_video_shm(key: str) -> None:
-            self._unsubscribe_video_shm_sync(str(key or "").strip())
-
-        def _list_video_shm_subscriptions() -> list[dict[str, Any]]:
-            items: list[dict[str, Any]] = []
-            for key_name in sorted(self._video_subscriptions.keys()):
-                sub = self._video_subscriptions.get(key_name)
-                if sub is None:
+    def _build_states_view(self, state_keys: tuple[str, ...]) -> PyEngineStatesView:
+        resolved_keys = [str(key) for key in state_keys if str(key)]
+        if not resolved_keys:
+            bus = self._bus
+            state_access_map = getattr(bus, "_state_access_by_node_field", {}) if bus is not None else {}
+            for raw_key, raw_access in dict(state_access_map).items():
+                if not isinstance(raw_key, tuple) or len(raw_key) != 2:
                     continue
-                items.append(
-                    {
-                        "key": sub.key,
-                        "shmName": sub.shm_name,
-                        "decodeMode": sub.decode_mode,
-                        "hasPacket": sub.latest_packet is not None,
-                        "lastFrameId": int(sub.last_frame_id),
-                        "errorCount": int(sub.error_count),
-                    }
-                )
-            return items
-
-        return {
-            "nodeId": self.node_id,
-            "locals": self._locals,
-            "execIn": None,
-            "log": self._log,
-            "emit": _emit,
-            "emit_async": _emit_async,
-            "set_state": _set_state,
-            "set_state_async": _set_state_async,
-            "get_state": _get_state,
-            "get_state_cached": _get_state_cached,
-            "subscribe_video_shm": _subscribe_video_shm,
-            "get_video_shm": _get_video_shm,
-            "unsubscribe_video_shm": _unsubscribe_video_shm,
-            "list_video_shm_subscriptions": _list_video_shm_subscriptions,
-        }
-
-    def _compile_script(self, code: str) -> dict[str, Callable[..., Any]]:
-        env: dict[str, Any] = {"__builtins__": __builtins__}
-        try:
-            exec(code, env, env)
-        except Exception as exc:
-            self._set_error("compile", exc)
-            return {}
-        runtime: dict[str, Callable[..., Any]] = {}
-        for hook in ("onStart", "onState", "onMsg", "onExec", "onStop"):
-            fn = env.get(hook)
-            if callable(fn):
-                runtime[hook] = fn
-        return runtime
+                node_id, field = raw_key
+                if str(node_id) != self.node_id:
+                    continue
+                access = str(getattr(raw_access, "value", raw_access) or "").strip().lower()
+                if access not in ("rw", "ro", "wo"):
+                    continue
+                resolved_keys.append(str(field))
+        unique_keys = tuple(sorted({key for key in resolved_keys if key}))
+        snapshot: dict[str, Any] = {}
+        for key in unique_keys:
+            snapshot[str(key)] = self.get_state_cached(str(key), None)
+        return PyEngineStatesView(snapshot)
 
     def _compile_and_start(self) -> None:
         if self._started:
@@ -534,26 +720,44 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         code = str(self._code or "")
         code = code.replace("\r\n", "\n").replace("\r", "\n")
         code = code.expandtabs(4)
-        self._runtime = self._compile_script(code)
-        if not self._runtime:
+        self._input_decode_mode_logged = None
+        self._hooks = self._script_runtime.compile(code)
+        if self._input_binding.warnings:
+            self._set_error("inputModel", ValueError("; ".join(self._input_binding.warnings)))
+
+        style = infer_script_input_style(code)
+        mode = self._input_binding.mode
+        if style == "dot" and mode == "raw_dict":
+            logger.warning(
+                "[%s:python_script] script appears to use dot inputs, but inputMode=%s",
+                self.node_id,
+                mode,
+            )
+        elif style == "mapping" and mode == "msgspec_struct":
+            logger.warning(
+                "[%s:python_script] script appears to use mapping inputs, but inputMode=%s",
+                self.node_id,
+                mode,
+            )
+
+        if not self._hooks.runtime:
             self._started = False
             return
         self._invoke_hook_sync("onStart")
 
-    def _build_invoke_ctx(self, *, exec_in: str | None) -> dict[str, Any]:
+    def _build_invoke_ctx(self, *, exec_in: str | None) -> PyEngineContext:
         """
         Build a per-invocation context.
 
-        `self._ctx` holds shared utilities/state references, while `execIn`
+        `self._ctx` holds shared utilities/state references, while `exec_in`
         must be invocation-scoped to avoid cross-call leakage under concurrency.
         """
-        base = self._ctx if isinstance(self._ctx, dict) else {}
-        invoke_ctx = dict(base)
-        invoke_ctx["execIn"] = exec_in
-        return invoke_ctx
+        if exec_in is None:
+            return self._ctx
+        return self._ctx.with_exec_in(exec_in)
 
     def _invoke_hook_sync(self, name: str, *args: Any) -> None:
-        fn = self._runtime.get(name)
+        fn = self._hooks.runtime.get(name)
         if not callable(fn):
             if name == "onStart":
                 self._started = True
@@ -561,6 +765,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
                 self._started = False
             return
         try:
+            t0 = self._metrics_start()
             r = fn(self._ctx, *args)
             if inspect.isawaitable(r):
                 try:
@@ -568,6 +773,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
                     loop.create_task(r, name=f"python_script:{name}:{self.node_id}")
                 except Exception:
                     pass
+            self._metrics_add_hook_time(t0)
         except Exception as exc:
             self._set_error(name, exc)
         finally:
@@ -577,7 +783,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
                 self._started = False
 
     async def _invoke_hook_async(self, name: str, *args: Any) -> None:
-        fn = self._runtime.get(name)
+        fn = self._hooks.runtime.get(name)
         if not callable(fn):
             if name == "onStart":
                 self._started = True
@@ -585,9 +791,11 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
                 self._started = False
             return
         try:
+            t0 = self._metrics_start()
             r = fn(self._ctx, *args)
             if inspect.isawaitable(r):
                 await r
+            self._metrics_add_hook_time(t0)
         except Exception as exc:
             self._set_error(name, exc)
         finally:
@@ -599,21 +807,29 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
     async def on_state(self, field: str, value: Any, *, ts_ms: int | None = None) -> None:
         name = str(field)
         if name == "code":
-            self._code = str(value or "")
+            next_code = str(value or "")
+            if next_code == self._code:
+                return
+            self._code = next_code
             self._compile_and_start()
             return
+        if name == "inputMode":
+            self._input_mode = parse_input_mode(value, default=INPUT_MODE_INPUT_VIEW)
+            self._input_binding.set_mode(self._input_mode)
+            self._input_decode_mode_logged = None
 
-        # Best-effort loop prevention for state writes originating from this node (via ctx['set_state']).
+        # Best-effort loop prevention for state writes originating from this node (via ctx.set_state()).
         if name in self._self_state_writes and self._self_state_writes.get(name) == value:
             return
 
-        fn = self._runtime.get("onState")
+        fn = self._hooks.on_state
         if not callable(fn):
             return
         try:
             r = fn(self._ctx, name, value, ts_ms)
-            if inspect.isawaitable(r):
-                await r
+            t0 = self._metrics_start()
+            r = await self._await_state_result(r)
+            self._metrics_add_hook_time(t0)
         except Exception as exc:
             self._set_error("onState", exc)
 
@@ -622,20 +838,25 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         name = str(field or "").strip()
         if name == "code":
             return str(value or "")
+        if name == "inputMode":
+            mode = parse_input_mode(value, default=INPUT_MODE_INPUT_VIEW)
+            if str(value or "").strip().lower().replace("-", "_") not in ("raw_dict", "input_view", "msgspec_struct"):
+                raise ValueError(f"invalid inputMode: {value}")
+            return mode
         return value
 
     async def on_data(self, port: str, value: Any, *, ts_ms: int | None = None) -> None:
         # Push-mode: treat incoming data as a message.
-        if not self._runtime:
+        if not self._hooks.runtime:
             return
         await self._run_on_msg({str(port): value}, exec_in=None)
 
     async def on_exec(self, exec_id: str | int, in_port: str | None = None) -> list[str]:
         # Exec-driven: pull current values for all inputs.
-        if not self._runtime:
+        if not self._hooks.runtime:
             return list(self._exec_out_ports)
         inputs: dict[str, Any] = {}
-        for p in list(self.data_in_ports):
+        for p in self.data_in_ports:
             try:
                 inputs[str(p)] = await self.pull(str(p), ctx_id=exec_id)
             except Exception:
@@ -645,9 +866,9 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
 
     async def compute_output(self, port: str, ctx_id: str | int | None = None) -> Any:
         out_port = str(port or "")
-        if out_port not in self.data_out_ports:
+        if out_port not in self._data_out_port_set:
             return None
-        if not self._runtime:
+        if not self._hooks.runtime:
             return None
 
         if ctx_id is not None and ctx_id == self._pull_cache_ctx_id:
@@ -655,7 +876,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
                 return self._pull_cache_outputs.get(out_port)
 
         inputs: dict[str, Any] = {}
-        for in_port in list(self.data_in_ports):
+        for in_port in self.data_in_ports:
             try:
                 inputs[str(in_port)] = await self.pull(str(in_port), ctx_id=ctx_id)
             except Exception:
@@ -671,13 +892,17 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         return outputs.get(out_port)
 
     async def _run_on_exec(self, inputs: dict[str, Any], *, exec_in: str | None) -> list[str]:
-        fn = self._runtime.get("onExec")
+        fn = self._hooks.on_exec
         if callable(fn):
+            inputs_obj = self._decode_inputs(inputs, stage="onExec")
+            if inputs_obj is None:
+                return list(self._exec_out_ports)
             try:
                 invoke_ctx = self._build_invoke_ctx(exec_in=exec_in)
-                r = fn(invoke_ctx, str(exec_in or ""), dict(inputs))
-                if inspect.isawaitable(r):
-                    r = await r
+                r = fn(invoke_ctx, str(exec_in or ""), inputs_obj)
+                t0 = self._metrics_start()
+                r = await self._await_exec_result(r)
+                self._metrics_add_hook_time(t0)
             except Exception as exc:
                 self._set_error("onExec", exc)
                 return list(self._exec_out_ports)
@@ -688,26 +913,43 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         return list(self._exec_out_ports)
 
     async def _compute_outputs_for_pull(self, inputs: dict[str, Any], *, exec_in: str | None) -> dict[str, Any]:
-        fn_exec = self._runtime.get("onExec")
+        fn_msg = self._hooks.on_msg
+        fn_exec = self._hooks.on_exec
+        inputs_obj = self._decode_inputs(inputs, stage="compute")
+        if inputs_obj is None:
+            return {}
+        if self._hooks.on_msg_only_mode and callable(fn_msg):
+            try:
+                invoke_ctx = self._build_invoke_ctx(exec_in=exec_in)
+                result = fn_msg(invoke_ctx, inputs_obj)
+                t0 = self._metrics_start()
+                result = await self._await_msg_result(result)
+                self._metrics_add_hook_time(t0)
+            except Exception as exc:
+                self._set_error("onMsg", exc)
+                return {}
+            return self._extract_outputs(result)
+
         if callable(fn_exec):
             try:
                 invoke_ctx = self._build_invoke_ctx(exec_in=exec_in)
-                result = fn_exec(invoke_ctx, str(exec_in or ""), dict(inputs))
-                if inspect.isawaitable(result):
-                    result = await result
+                result = fn_exec(invoke_ctx, str(exec_in or ""), inputs_obj)
+                t0 = self._metrics_start()
+                result = await self._await_exec_result(result)
+                self._metrics_add_hook_time(t0)
             except Exception as exc:
                 self._set_error("onExec", exc)
                 return {}
             return self._extract_outputs(result)
 
-        fn_msg = self._runtime.get("onMsg")
         if not callable(fn_msg):
             return {}
         try:
             invoke_ctx = self._build_invoke_ctx(exec_in=exec_in)
-            result = fn_msg(invoke_ctx, dict(inputs))
-            if inspect.isawaitable(result):
-                result = await result
+            result = fn_msg(invoke_ctx, inputs_obj)
+            t0 = self._metrics_start()
+            result = await self._await_msg_result(result)
+            self._metrics_add_hook_time(t0)
         except Exception as exc:
             self._set_error("onMsg", exc)
             return {}
@@ -717,37 +959,73 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         if result is None:
             return {}
 
+        data_out_ports = self._data_out_port_set
         outputs: dict[str, Any] = {}
         if isinstance(result, dict):
             raw_outputs = result.get("outputs")
             if isinstance(raw_outputs, dict):
+                single_out_port = self._single_data_out_port
+                if single_out_port is not None and len(raw_outputs) == 1:
+                    value = raw_outputs.get(single_out_port, None)
+                    if single_out_port in raw_outputs:
+                        t0 = self._metrics_start()
+                        normalized = normalize_script_output_value_fast(value)
+                        self._metrics_add_output_norm_time(t0)
+                        return {single_out_port: normalized}
+                # Fast-path for dominant script pattern: {"outputs": {"tcode": value}}.
+                if len(raw_outputs) == 1:
+                    for raw_key, raw_value in raw_outputs.items():
+                        if isinstance(raw_key, str):
+                            if raw_key in data_out_ports:
+                                t0 = self._metrics_start()
+                                normalized = normalize_script_output_value_fast(raw_value)
+                                self._metrics_add_output_norm_time(t0)
+                                return {raw_key: normalized}
+                            return {}
+                        key_s = str(raw_key)
+                        if key_s in data_out_ports:
+                            t0 = self._metrics_start()
+                            normalized = normalize_script_output_value_fast(raw_value)
+                            self._metrics_add_output_norm_time(t0)
+                            return {key_s: normalized}
+                        return {}
                 for k, v in raw_outputs.items():
                     k_s = str(k)
-                    if k_s in self.data_out_ports:
-                        outputs[k_s] = v
+                    if k_s in data_out_ports:
+                        t0 = self._metrics_start()
+                        outputs[k_s] = normalize_script_output_value_fast(v)
+                        self._metrics_add_output_norm_time(t0)
                 return outputs
 
             for k, v in result.items():
                 k_s = str(k)
                 if k_s in ("exec", "outputs"):
                     continue
-                if k_s in self.data_out_ports:
-                    outputs[k_s] = v
+                if k_s in data_out_ports:
+                    t0 = self._metrics_start()
+                    outputs[k_s] = normalize_script_output_value_fast(v)
+                    self._metrics_add_output_norm_time(t0)
             return outputs
 
-        if "out" in self.data_out_ports:
-            outputs["out"] = result
+        if "out" in data_out_ports:
+            t0 = self._metrics_start()
+            outputs["out"] = normalize_script_output_value_fast(result)
+            self._metrics_add_output_norm_time(t0)
         return outputs
 
     async def _run_on_msg(self, inputs: dict[str, Any], *, exec_in: str | None) -> None:
-        fn = self._runtime.get("onMsg")
+        fn = self._hooks.on_msg
         if not callable(fn):
+            return
+        inputs_obj = self._decode_inputs(inputs, stage="onMsg")
+        if inputs_obj is None:
             return
         try:
             invoke_ctx = self._build_invoke_ctx(exec_in=exec_in)
-            r = fn(invoke_ctx, dict(inputs))
-            if inspect.isawaitable(r):
-                r = await r
+            r = fn(invoke_ctx, inputs_obj)
+            t0 = self._metrics_start()
+            r = await self._await_msg_result(r)
+            self._metrics_add_hook_time(t0)
         except Exception as exc:
             self._set_error("onMsg", exc)
             return
@@ -769,11 +1047,11 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         if isinstance(r, dict):
             exec_sel = r.get("exec") if "exec" in r else None
             outputs = self._extract_outputs(r)
-            for k, v in outputs.items():
-                try:
+            try:
+                for k, v in outputs.items():
                     await self.emit(str(k), v)
-                except Exception:
-                    continue
+            except Exception:
+                return None
 
             if exec_sel is None:
                 return None
@@ -784,12 +1062,36 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
             return None
 
         # Non-dict: send to default data output if present.
-        if "out" in self.data_out_ports:
+        if self._has_out_port:
             try:
-                await self.emit("out", r)
+                t0 = self._metrics_start()
+                out_value = normalize_script_output_value(r)
+                self._metrics_add_output_norm_time(t0)
+                await self.emit("out", out_value)
             except Exception:
                 pass
         return None
+
+    def _decode_inputs(self, inputs: dict[str, Any], *, stage: str) -> Any | None:
+        decode_mode = self._input_binding.mode
+        if self._input_decode_mode_logged != decode_mode:
+            logger.debug("[%s:python_script] input decode mode=%s", self.node_id, decode_mode)
+            self._input_decode_mode_logged = decode_mode
+        try:
+            t0 = self._metrics_start()
+            decoded = self._input_binding.decode(inputs)
+            self._metrics_add_decode_time(t0)
+            return decoded
+        except Exception as exc:
+            self._metric_input_decode_errors += 1
+            logger.debug(
+                "[%s:python_script] input decode failed mode=%s sample_types=%s",
+                self.node_id,
+                decode_mode,
+                {str(k): type(v).__name__ for k, v in list(inputs.items())[:3]},
+            )
+            self._set_error(f"{stage}:inputs", exc)
+            return None
 
 
 PythonScriptRuntimeNode.SPEC = F8OperatorSpec(
@@ -804,8 +1106,8 @@ PythonScriptRuntimeNode.SPEC = F8OperatorSpec(
     execOutPorts=["exec"],
     editableExecInPorts=True,
     editableExecOutPorts=True,
-    dataInPorts=[F8DataPortSpec(name="msg", description="Message input", valueSchema=any_schema())],
-    dataOutPorts=[F8DataPortSpec(name="out", description="Script output", valueSchema=any_schema())],
+    dataInPorts=[F8DataPortSpec(name="msg", description="Message input", valueSchema=any_schema(), required=False)],
+    dataOutPorts=[F8DataPortSpec(name="out", description="Script output", valueSchema=any_schema(), required=False)],
     editableDataInPorts=True,
     editableDataOutPorts=True,
     stateFields=[
@@ -817,6 +1119,20 @@ PythonScriptRuntimeNode.SPEC = F8OperatorSpec(
             uiLanguage="python",
             valueSchema=string_schema(default=DEFAULT_CODE),
             access=F8StateAccess.rw,
+            required=True,
+            showOnNode=False,
+            editorAssist=python_script_field_editor_assist_payload(),
+        ),
+        F8StateSpec(
+            name="inputMode",
+            label="Input Mode",
+            description="Input binding mode: input_view | raw_dict | msgspec_struct.",
+            valueSchema=string_schema(
+                default=INPUT_MODE_INPUT_VIEW,
+                enum=[INPUT_MODE_INPUT_VIEW, INPUT_MODE_RAW_DICT, INPUT_MODE_MSGSPEC_STRUCT],
+            ),
+            access=F8StateAccess.rw,
+            required=True,
             showOnNode=False,
         ),
         F8StateSpec(
@@ -825,6 +1141,7 @@ PythonScriptRuntimeNode.SPEC = F8OperatorSpec(
             description="Last script error (compile/runtime).",
             valueSchema=string_schema(default=""),
             access=F8StateAccess.wo,
+            required=True,
             showOnNode=False,
         ),
     ],
