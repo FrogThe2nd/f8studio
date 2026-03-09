@@ -5,10 +5,12 @@ import os
 import shutil
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 
 PIXI_INSTALL_DOCS_URL = "https://pixi.prefix.dev/latest/installation/"
+LAUNCHER_RUNTIME_FEATURE = "launcher-runtime"
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -60,22 +62,59 @@ def _find_pixi_executable() -> str | None:
     return None
 
 
-def _has_installed_pixi_environment(workspace_root: Path) -> bool:
+def _installed_pixi_environment_names(workspace_root: Path) -> set[str]:
     envs_dir = workspace_root / ".pixi" / "envs"
     if not envs_dir.is_dir():
-        return False
+        return set()
+    installed_environment_names: set[str] = set()
     for candidate in envs_dir.iterdir():
         if candidate.is_dir():
-            return True
-    return False
+            installed_environment_names.add(candidate.name)
+    return installed_environment_names
 
 
-def _install_workspace_environments(pixi_executable: str, workspace_root: Path) -> bool:
-    install_command = [pixi_executable, "install", "-a"]
+def _discover_launcher_install_environments(workspace_root: Path) -> list[str]:
+    pixi_toml_path = workspace_root / "pixi.toml"
+    with pixi_toml_path.open("rb") as pixi_file:
+        manifest = tomllib.load(pixi_file)
+
+    environments_table = manifest.get("environments")
+    if not isinstance(environments_table, dict):
+        raise ValueError("pixi.toml does not define [environments]")
+
+    launcher_environment_names: list[str] = []
+    for environment_name, environment_spec in environments_table.items():
+        if not isinstance(environment_name, str):
+            raise ValueError("Environment names in [environments] must be strings")
+        if not isinstance(environment_spec, dict):
+            continue
+
+        features = environment_spec.get("features")
+        if not isinstance(features, list):
+            continue
+        if LAUNCHER_RUNTIME_FEATURE in features:
+            launcher_environment_names.append(environment_name)
+
+    if not launcher_environment_names:
+        raise ValueError(
+            f"No launcher runtime environments found. "
+            f"Add feature '{LAUNCHER_RUNTIME_FEATURE}' to at least one [environments] entry."
+        )
+    return launcher_environment_names
+
+
+def _install_workspace_environments(
+    pixi_executable: str, workspace_root: Path, environment_names: list[str]
+) -> bool:
+    install_command = [pixi_executable, "install"]
+    for environment_name in environment_names:
+        install_command.extend(["-e", environment_name])
+
     completed = subprocess.run(install_command, cwd=workspace_root, check=False)
     if completed.returncode != 0:
         return False
-    return _has_installed_pixi_environment(workspace_root)
+    installed_environment_names = _installed_pixi_environment_names(workspace_root)
+    return all(environment_name in installed_environment_names for environment_name in environment_names)
 
 
 def _install_pixi() -> bool:
@@ -118,18 +157,40 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 2
 
-    install_command = [pixi_executable, "install", "-a"]
+    try:
+        launcher_environment_names = _discover_launcher_install_environments(workspace_root)
+    except (FileNotFoundError, tomllib.TOMLDecodeError, ValueError) as exc:
+        _show_error_dialog(
+            "f8studio launcher",
+            f"Failed to read launcher runtime environments from pixi.toml.\n{exc}",
+        )
+        return 4
+
+    installed_environment_names = _installed_pixi_environment_names(workspace_root)
+    missing_environments = [
+        environment_name
+        for environment_name in launcher_environment_names
+        if environment_name not in installed_environment_names
+    ]
+    install_command = [pixi_executable, "install"]
+    for environment_name in missing_environments:
+        install_command.extend(["-e", environment_name])
     launch_command = [pixi_executable, "run", "f8pystudio"]
-    should_install_environments = not _has_installed_pixi_environment(workspace_root)
+    should_install_environments = len(missing_environments) > 0
     if args.dry_run:
         print("workspace:", workspace_root)
         print("environments_installed:", not should_install_environments)
+        print("launcher_environments:", ", ".join(launcher_environment_names))
+        if should_install_environments:
+            print("missing_environments:", ", ".join(missing_environments))
         if should_install_environments:
             print("install_command:", " ".join(install_command))
         print("launch_command:", " ".join(launch_command))
         return 0
 
-    if should_install_environments and not _install_workspace_environments(pixi_executable, workspace_root):
+    if should_install_environments and not _install_workspace_environments(
+        pixi_executable, workspace_root, missing_environments
+    ):
         _show_error_dialog(
             "f8studio launcher",
             "Pixi environments are missing and installation failed.\n"

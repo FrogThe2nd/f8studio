@@ -126,18 +126,30 @@ cpp_build_release = "python scripts/cpp_ci.py build"
 [feature.ci.dependencies]
 python = ">=3.13,<3.14"
 pip = ">=26.0.1,<27"
-nuitka = ">=2.7.17,<3"
 hatchling = ">=1.28.0,<2"
 datamodel-code-generator = ">=0.35.0,<1"
 
 [feature.ci.tasks]
-build_studio_launcher = "python scripts/build_studio_launcher.py"
 dist_ci = "python scripts/dist_ci.py"
 
+[feature.launcher.dependencies]
+python = ">=3.13,<3.14"
+pip = ">=26.0.1,<27"
+
+[feature.launcher.pypi-dependencies]
+nuitka = ">=2.7.17,<3"
+hatchling = ">=1.28.0,<2"
+
+[feature.launcher.tasks]
+build_studio_launcher = "python scripts/build_studio_launcher.py"
+
+[feature.launcher-runtime]
+
 [environments]
-default = { features = ["python", "sdk", "engine", "studio", "vision", "audio", "test"], solve-group = "default" }
-onnx = { features = ["python", "sdk", "onnx", "vision"], solve-group = "onnx" }
-mediapipe = { features = ["python", "sdk", "vision", "mediapipe"], solve-group = "mediapipe" }
+default = { features = ["python", "sdk", "engine", "studio", "vision", "audio", "test", "launcher-runtime"], solve-group = "default" }
+onnx = { features = ["python", "sdk", "onnx", "vision", "launcher-runtime"], solve-group = "onnx" }
+mediapipe = { features = ["python", "sdk", "vision", "mediapipe", "launcher-runtime"], solve-group = "mediapipe" }
 doc = { features = ["python", "doc"] }
 cpp = { features = ["cpp"], solve-group = "cpp" }
 ci = { features = ["ci"], solve-group = "ci" }
+launcher = { features = ["launcher"], solve-group = "launcher" }

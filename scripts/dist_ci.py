@@ -8,6 +8,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 
@@ -15,26 +16,11 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 PIXI_TOML_PATH = REPO_ROOT / "pixi.toml"
 CPP_PRESET_PATH = REPO_ROOT / "build" / "Release" / "generators" / "CMakePresets.json"
 CPP_PRESET_FALLBACK_PATH = REPO_ROOT / "build" / "generators" / "CMakePresets.json"
-
-PYTHON_PACKAGE_DIRS: dict[str, str] = {
-    "f8pysdk": "packages/f8pysdk",
-    "f8pyengine": "packages/f8pyengine",
-    "f8pyscript": "packages/f8pyscript",
-    "f8pyaudiofeat": "packages/f8pyaudiofeat",
-    "f8pystudio": "packages/f8pystudio",
-    "f8pydl": "packages/f8pydl",
-    "f8pymppose": "packages/f8pymppose",
-}
-
-CPP_DEPLOY_TARGETS: tuple[str, ...] = (
-    "f8implayer_service_deploy_runtime",
-    "f8cvkit_template_match_service_deploy_runtime",
-    "f8cvkit_dense_optflow_service_deploy_runtime",
-    "f8cvkit_tracking_service_deploy_runtime",
-    "f8cvkit_video_stab_service_deploy_runtime",
-    "f8screencap_service_deploy_runtime",
-    "f8audiocap_service_deploy_runtime",
-)
+PACKAGE_PATH_PREFIX = "packages/"
+# C++ runtime deploy targets are owned by CMake's f8_deploy_all_runtime aggregator.
+CPP_DEPLOY_ALL_TARGET = "f8_deploy_all_runtime"
+LAUNCHER_ENVIRONMENT_NAME = "launcher"
+LAUNCHER_RUNTIME_FEATURE = "launcher-runtime"
 
 
 def _run(command: list[str]) -> None:
@@ -63,18 +49,107 @@ def _find_wheel_for_distribution(wheels_dir: Path, distribution: str) -> Path:
     normalized = _normalize_dist_name(distribution)
     wheels = sorted(wheels_dir.glob("*.whl"))
     for wheel in wheels:
-        wheel_name = wheel.name.lower()
-        if wheel_name.startswith(f"{normalized}-"):
+        wheel_distribution_token = wheel.name.split("-", 1)[0]
+        if _normalize_dist_name(wheel_distribution_token) == normalized:
             return wheel
     raise FileNotFoundError(f"Wheel for distribution '{distribution}' was not found in {wheels_dir}")
 
 
-def _build_python_wheels(wheels_dir: Path) -> dict[str, str]:
+def _discover_local_editable_package_dirs(
+    *,
+    pixi_toml_path: Path = PIXI_TOML_PATH,
+    repo_root: Path = REPO_ROOT,
+) -> dict[str, str]:
+    with pixi_toml_path.open("rb") as pixi_file:
+        manifest = tomllib.load(pixi_file)
+
+    feature_table = manifest.get("feature")
+    if not isinstance(feature_table, dict):
+        raise ValueError(f"Expected [feature] table in {pixi_toml_path}")
+
+    dependency_to_package_dir: dict[str, str] = {}
+    dependency_to_feature: dict[str, str] = {}
+    for feature_name, feature_spec in feature_table.items():
+        if not isinstance(feature_name, str):
+            raise ValueError(f"Feature name must be a string in {pixi_toml_path}")
+        if not isinstance(feature_spec, dict):
+            continue
+
+        pypi_dependencies = feature_spec.get("pypi-dependencies")
+        if not isinstance(pypi_dependencies, dict):
+            continue
+
+        for dependency_name, dependency_spec in pypi_dependencies.items():
+            if not isinstance(dependency_name, str):
+                raise ValueError(f"Dependency name must be a string in feature '{feature_name}'")
+            if not isinstance(dependency_spec, dict):
+                continue
+
+            dependency_path = dependency_spec.get("path")
+            editable_value = dependency_spec.get("editable")
+            if not isinstance(dependency_path, str) or editable_value is not True:
+                continue
+            if not dependency_path.startswith(PACKAGE_PATH_PREFIX):
+                continue
+            if dependency_name in dependency_to_package_dir:
+                first_feature = dependency_to_feature[dependency_name]
+                raise ValueError(
+                    "Duplicate local editable package dependency "
+                    f"'{dependency_name}' in features '{first_feature}' and '{feature_name}'"
+                )
+
+            package_dir = repo_root / dependency_path
+            if not package_dir.is_dir():
+                raise FileNotFoundError(
+                    f"Package directory for '{dependency_name}' was not found: {package_dir}"
+                )
+
+            pyproject_path = package_dir / "pyproject.toml"
+            if not pyproject_path.is_file():
+                raise FileNotFoundError(
+                    f"pyproject.toml for '{dependency_name}' was not found: {pyproject_path}"
+                )
+
+            dependency_to_package_dir[dependency_name] = dependency_path
+            dependency_to_feature[dependency_name] = feature_name
+
+    return dependency_to_package_dir
+
+
+def _discover_launcher_runtime_environments(*, pixi_toml_path: Path = PIXI_TOML_PATH) -> list[str]:
+    with pixi_toml_path.open("rb") as pixi_file:
+        manifest = tomllib.load(pixi_file)
+
+    environments_table = manifest.get("environments")
+    if not isinstance(environments_table, dict):
+        raise ValueError(f"Expected [environments] table in {pixi_toml_path}")
+
+    runtime_environment_names: list[str] = []
+    for environment_name, environment_spec in environments_table.items():
+        if not isinstance(environment_name, str):
+            raise ValueError(f"Environment name must be a string in {pixi_toml_path}")
+        if not isinstance(environment_spec, dict):
+            continue
+        features = environment_spec.get("features")
+        if not isinstance(features, list):
+            continue
+        if LAUNCHER_RUNTIME_FEATURE in features:
+            runtime_environment_names.append(environment_name)
+
+    if not runtime_environment_names:
+        raise ValueError(
+            f"No runtime environments were marked with feature '{LAUNCHER_RUNTIME_FEATURE}' in {pixi_toml_path}"
+        )
+
+    return runtime_environment_names
+
+
+def _build_python_wheels(wheels_dir: Path, dependency_to_package_dir: dict[str, str]) -> dict[str, str]:
     if wheels_dir.exists():
         shutil.rmtree(wheels_dir)
     wheels_dir.mkdir(parents=True, exist_ok=True)
 
-    for package_dir in PYTHON_PACKAGE_DIRS.values():
+    for package_dir in dependency_to_package_dir.values():
         _run(
             [
                 "python",
@@ -90,7 +165,7 @@ def _build_python_wheels(wheels_dir: Path) -> dict[str, str]:
         )
 
     dependency_to_wheel: dict[str, str] = {}
-    for dependency_name in PYTHON_PACKAGE_DIRS:
+    for dependency_name in dependency_to_package_dir:
         wheel_path = _find_wheel_for_distribution(wheels_dir, dependency_name)
         dependency_to_wheel[dependency_name] = f"wheels/{wheel_path.name}"
     return dependency_to_wheel
@@ -100,7 +175,7 @@ def _render_dist_pixi_toml(dependency_to_wheel: dict[str, str]) -> str:
     pixi_text = PIXI_TOML_PATH.read_text(encoding="utf-8")
     for dependency_name, wheel_rel_path in dependency_to_wheel.items():
         pattern = re.compile(
-            rf'^{dependency_name}\s*=\s*\{{\s*path\s*=\s*"[^"]+"\s*,\s*editable\s*=\s*true\s*\}}\s*$',
+            rf'^{re.escape(dependency_name)}\s*=\s*\{{\s*path\s*=\s*"[^"]+"\s*,\s*editable\s*=\s*true\s*\}}\s*$',
             flags=re.MULTILINE,
         )
         replacement = f'{dependency_name} = {{ path = "{wheel_rel_path}" }}'
@@ -124,33 +199,38 @@ def _env_install_script_name() -> str:
     return "install_env.sh"
 
 
-def _env_install_script_text() -> str:
+def _env_install_script_text(runtime_environment_names: list[str]) -> str:
+    install_command_parts = ["pixi", "install"]
+    for environment_name in runtime_environment_names:
+        install_command_parts.extend(["-e", environment_name])
+    install_command = " ".join(install_command_parts)
+
     if os.name == "nt":
         return (
             "@echo off\r\n"
             "setlocal\r\n"
             "cd /d \"%~dp0\"\r\n"
-            "pixi install -a\r\n"
+            f"{install_command}\r\n"
         )
     return (
         "#!/usr/bin/env sh\n"
         "set -eu\n"
         "SCRIPT_DIR=$(CDPATH= cd -- \"$(dirname -- \"$0\")\" && pwd)\n"
         "cd \"$SCRIPT_DIR\"\n"
-        "pixi install -a\n"
+        f"{install_command}\n"
     )
 
 
-def _write_env_install_script(dist_dir: Path) -> Path:
+def _write_env_install_script(dist_dir: Path, runtime_environment_names: list[str]) -> Path:
     script_path = dist_dir / _env_install_script_name()
-    script_path.write_text(_env_install_script_text(), encoding="utf-8")
+    script_path.write_text(_env_install_script_text(runtime_environment_names), encoding="utf-8")
     if os.name != "nt":
         script_path.chmod(0o755)
     return script_path
 
 
-def _is_running_inside_ci_env() -> bool:
-    if os.environ.get("PIXI_ENVIRONMENT_NAME") != "ci":
+def _is_running_inside_pixi_environment(environment_name: str) -> bool:
+    if os.environ.get("PIXI_ENVIRONMENT_NAME") != environment_name:
         return False
     project_root = os.environ.get("PIXI_PROJECT_ROOT")
     if project_root is None:
@@ -159,12 +239,12 @@ def _is_running_inside_ci_env() -> bool:
 
 
 def _bundle_studio_launcher(dist_dir: Path) -> None:
-    if _is_running_inside_ci_env():
-        print("Building studio launcher in current ci Pixi environment")
+    if _is_running_inside_pixi_environment(LAUNCHER_ENVIRONMENT_NAME):
+        print("Building studio launcher in current launcher Pixi environment")
         _run(["python", "scripts/build_studio_launcher.py"])
     else:
-        print("Building studio launcher via pixi ci environment")
-        _run(["pixi", "run", "--frozen", "-e", "ci", "build_studio_launcher"])
+        print("Building studio launcher via isolated launcher Pixi environment")
+        _run(["pixi", "run", "--frozen", "-e", LAUNCHER_ENVIRONMENT_NAME, "build_studio_launcher"])
 
     launcher_path = REPO_ROOT / "build" / "dist" / _launcher_binary_name()
     if not launcher_path.is_file():
@@ -207,22 +287,27 @@ def _build_cpp_runtime() -> None:
 
     preset_name = _resolve_conan_build_preset_name()
     _run(["pixi", "run", "--frozen", "-e", "cpp", "cpp_configure_release"])
-    _run(
-        [
-            "pixi",
-            "run",
-            "--frozen",
-            "-e",
-            "cpp",
-            "cmake",
-            "--build",
-            "--preset",
-            preset_name,
-            "--target",
-            *CPP_DEPLOY_TARGETS,
-            "--parallel",
-        ]
-    )
+    deploy_build_command = [
+        "pixi",
+        "run",
+        "--frozen",
+        "-e",
+        "cpp",
+        "cmake",
+        "--build",
+        "--preset",
+        preset_name,
+        "--target",
+        CPP_DEPLOY_ALL_TARGET,
+        "--parallel",
+    ]
+    try:
+        _run(deploy_build_command)
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(
+            f"Failed to build C++ deploy target '{CPP_DEPLOY_ALL_TARGET}'. "
+            "Ensure each service is registered via f8_deploy_service_runtime(...) in CMake."
+        ) from exc
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -253,14 +338,16 @@ def main() -> int:
     shutil.copytree(REPO_ROOT / "services", dist_dir / "services", dirs_exist_ok=True)
 
     wheels_dir = dist_dir / "wheels"
-    dependency_to_wheel = _build_python_wheels(wheels_dir)
+    dependency_to_package_dir = _discover_local_editable_package_dirs()
+    runtime_environment_names = _discover_launcher_runtime_environments()
+    dependency_to_wheel = _build_python_wheels(wheels_dir, dependency_to_package_dir)
     dist_pixi_text = _render_dist_pixi_toml(dependency_to_wheel)
     dist_manifest_path = dist_dir / "pixi.toml"
     dist_manifest_path.write_text(dist_pixi_text, encoding="utf-8")
 
     _run(["pixi", "lock", "--manifest-path", str(dist_manifest_path), "--no-install"])
     _bundle_studio_launcher(dist_dir)
-    env_install_script_path = _write_env_install_script(dist_dir)
+    env_install_script_path = _write_env_install_script(dist_dir, runtime_environment_names)
 
     readme_text = (
         "# f8 Runtime Dist\n\n"
