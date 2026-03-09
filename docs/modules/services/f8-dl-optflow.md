@@ -21,21 +21,21 @@ pixi run f8pydl_optflow
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `inputShmName` | `rw` | `false` | `true` | `string / default=` | Input SHM name (e.g. shm.xxx.video). |
-| `computeEveryNFrames` | `rw` | `false` | `false` | `integer / default=2` | Compute optical flow once per N new frames. |
-| `weightsDir` | `rw` | `false` | `false` | `string / default=services/f8/dl/weights` | Directory containing *.yaml + *.onnx model files. |
-| `modelId` | `rw` | `false` | `false` | `string / default=` | Model id selected from weightsDir (ignored if modelYamlPath is set). |
-| `modelYamlPath` | `rw` | `false` | `false` | `string / default=` | Optional explicit model yaml path (overrides modelId). |
-| `ortProvider` | `rw` | `false` | `false` | `string / enum[auto, cuda, cpu] / default=auto` | auto prefers CUDAExecutionProvider when available. |
-| `autoDownloadWeights` | `rw` | `false` | `false` | `boolean / default=True` | When model file is missing, download from onnxUrl in model yaml. |
-| `availableModels` | `ro` | `false` | `false` | `array[string]` | List of model ids discovered from weightsDir. |
-| `loadedModel` | `ro` | `false` | `false` | `string / default=` | Current loaded model id/task. |
-| `ortActiveProviders` | `ro` | `false` | `false` | `string / default=` | JSON list of active ONNX Runtime providers for this session. |
-| `flowShmName` | `ro` | `false` | `true` | `string / default=` | Output flow SHM name. |
-| `flowShmFormat` | `ro` | `false` | `false` | `string / default=flow2_f16` | Flow payload format. Fixed to flow2_f16. |
-| `lastError` | `ro` | `false` | `false` | `string / default=` | Last runtime error string (best-effort). |
-| `active` | `rw` | `false` | `true` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
-| `svcId` | `ro` | `false` | `false` | `string` | Readonly: current service instance id (svcId). |
+| `inputShmName` | `rw` | `true` | `true` | `string / default=` | Input SHM name (e.g. shm.xxx.video). |
+| `computeEveryNFrames` | `rw` | `true` | `false` | `integer / default=2` | Compute optical flow once per N new frames. |
+| `weightsDir` | `rw` | `true` | `false` | `string / default=services/f8/dl/weights` | Directory containing *.yaml + *.onnx model files. |
+| `modelId` | `rw` | `true` | `false` | `string / default=` | Model id selected from weightsDir (ignored if modelYamlPath is set). |
+| `modelYamlPath` | `rw` | `true` | `false` | `string / default=` | Optional explicit model yaml path (overrides modelId). |
+| `ortProvider` | `rw` | `true` | `false` | `string / enum[auto, cuda, cpu] / default=auto` | auto prefers CUDAExecutionProvider when available. |
+| `autoDownloadWeights` | `rw` | `true` | `false` | `boolean / default=True` | When model file is missing, download from onnxUrl in model yaml. |
+| `availableModels` | `ro` | `true` | `false` | `array[string]` | List of model ids discovered from weightsDir. |
+| `loadedModel` | `ro` | `true` | `false` | `string / default=` | Current loaded model id/task. |
+| `ortActiveProviders` | `ro` | `true` | `false` | `string / default=` | JSON list of active ONNX Runtime providers for this session. |
+| `flowShmName` | `ro` | `true` | `true` | `string / default=` | Output flow SHM name. |
+| `flowShmFormat` | `ro` | `true` | `false` | `string / default=flow2_f16` | Flow payload format. Fixed to flow2_f16. |
+| `lastError` | `ro` | `true` | `false` | `string / default=` | Last runtime error string (best-effort). |
+| `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
+| `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 
 ## Service Commands
 
@@ -49,31 +49,44 @@ _None_
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
-| `monitor` | `false` | `true` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
+| `monitor` | `true` | `false` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
 
 ## Operators
 
 _None_
 
-## Usage Guide (Manual)
+## When to Use
 
-### Recommended Use Cases
+- Use `f8.dl.optflow` when learned flow quality is preferred over the classical CV implementation.
+- It is a strong option for motion-sensitive graphs when model-backed flow is already part of the deployment stack.
 
-- GPU optical-flow inference with NeuFlowV2 ONNX models.
-- Dense motion SHM generation for downstream script/operator consumption.
+## Typical Inputs / Outputs
 
-### Minimal Run Example
+- Data inputs: none
+- Data outputs: `monitor`
+- Commands: none
 
-```bash
-pixi run f8pydl_optflow
-```
+## Common Wiring Patterns
 
-### Common Pitfalls
+- Feed it from video producers, then inspect outputs through `f8.viz.video` or reduce them with `f8.cvkit.flowmetric`.
+- Compare it against the CVKit flow path before committing a release pipeline.
 
-- `inputShmName` mismatch causes no output flow frames.
-- Missing `.onnx` model file or wrong `task` in weights YAML prevents runtime init.
+## Key Fields That Matter
 
-### Troubleshooting
+- `inputShmName` (Input Video SHM, `rw`): Input SHM name (e.g. shm.xxx.video). Schema: `string / default=`.
+- `computeEveryNFrames` (Compute Every N Frames, `rw`): Compute optical flow once per N new frames. Schema: `integer / default=2`.
+- `weightsDir` (Weights Dir, `rw`): Directory containing *.yaml + *.onnx model files. Schema: `string / default=services/f8/dl/weights`.
+- `modelId` (Model Id, `rw`): Model id selected from weightsDir (ignored if modelYamlPath is set). Schema: `string / default=`.
+- `modelYamlPath` (Model YAML Path, `rw`): Optional explicit model yaml path (overrides modelId). Schema: `string / default=`.
+- `ortProvider` (ONNX Runtime Provider, `rw`): auto prefers CUDAExecutionProvider when available. Schema: `string / enum[auto, cuda, cpu] / default=auto`.
+- `autoDownloadWeights` (Auto Download Weights, `rw`): When model file is missing, download from onnxUrl in model yaml. Schema: `boolean / default=True`.
+- `availableModels` (Available Models, `ro`): List of model ids discovered from weightsDir. Schema: `array[string]`.
 
-- Verify `flowShmName` is populated and `flowShmFormat` is `flow2_f16`.
-- Start with `computeEveryNFrames=2`, then tune throughput/latency.
+## Pitfalls / Gotchas
+
+- GPU/runtime availability matters; validate packaging and device selection early.
+- Flow quality problems are often input-quality problems rather than model bugs.
+
+## Related Scenarios
+
+- No bundled scenario references this node yet.

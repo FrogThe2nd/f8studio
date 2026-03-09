@@ -11,7 +11,7 @@ No description.
 ## How to Run
 
 ```bash
-../linux/f8cvkit_dense_optflow_service
+../win/f8cvkit_dense_optflow_service.exe
 ```
 
 - Workdir: `./`
@@ -21,14 +21,14 @@ No description.
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `inputShmName` | `rw` | `false` | `true` | `string` | Input SHM name (e.g. shm.xxx.video). |
-| `computeEveryNFrames` | `rw` | `false` | `false` | `integer / default=2` | Compute flow once per N new frames. |
-| `flowShmName` | `ro` | `false` | `true` | `string` | Output SHM name for UV flow field. |
-| `flowShmFormat` | `ro` | `false` | `false` | `string` | Flow payload format. Fixed to flow2_f16. |
-| `computeScale` | `rw` | `false` | `false` | `number / default=0.5` | Farneback compute scale, flow is upscaled back to full size. |
-| `lastError` | `ro` | `false` | `false` | `string` | Last error message. |
-| `active` | `rw` | `false` | `true` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
-| `svcId` | `ro` | `false` | `false` | `string` | Readonly: current service instance id (svcId). |
+| `inputShmName` | `rw` | `true` | `true` | `string` | Input SHM name (e.g. shm.xxx.video). |
+| `computeEveryNFrames` | `rw` | `true` | `false` | `integer / default=2` | Compute flow once per N new frames. |
+| `flowShmName` | `ro` | `true` | `true` | `string` | Output SHM name for UV flow field. |
+| `flowShmFormat` | `ro` | `true` | `false` | `string` | Flow payload format. Fixed to flow2_f16. |
+| `computeScale` | `rw` | `true` | `false` | `number / default=0.5` | Farneback compute scale, flow is upscaled back to full size. |
+| `lastError` | `ro` | `true` | `false` | `string` | Last error message. |
+| `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
+| `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 
 ## Service Commands
 
@@ -42,31 +42,44 @@ _None_
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
-| `monitor` | `false` | `true` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
+| `monitor` | `true` | `false` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
 
 ## Operators
 
 _None_
 
-## Usage Guide (Manual)
+## When to Use
 
-### Recommended Use Cases
+- Use `f8.cvkit.denseoptflow` when you need per-pixel motion vectors from a video stream.
+- It is the classical CV path for motion-derived control and visual flow inspection.
 
-- Motion field extraction for gesture/velocity-aware interactions.
-- Preprocessing stage before higher-level temporal analytics.
+## Typical Inputs / Outputs
 
-### Minimal Run Example
+- Data inputs: none
+- Data outputs: `monitor`
+- Commands: none
 
-```bash
-services/f8/cvkit/linux/f8cvkit_dense_optflow_service
-```
+## Common Wiring Patterns
 
-### Common Pitfalls
+- Feed video from `f8.implayer` or `f8.screencap`, then branch flow output to `f8.viz.video` overlays or `f8.cvkit.flowmetric`.
+- Keep this service close to the producer so frame timing and resolution assumptions stay obvious.
 
-- Large frame sizes increase latency.
-- Unstable input frame rates reduce flow quality.
+## Key Fields That Matter
 
-### Troubleshooting
+- `inputShmName` (Input Video SHM, `rw`): Input SHM name (e.g. shm.xxx.video). Schema: `string`.
+- `computeEveryNFrames` (Compute Every N Frames, `rw`): Compute flow once per N new frames. Schema: `integer / default=2`.
+- `flowShmName` (Flow SHM Name, `ro`): Output SHM name for UV flow field. Schema: `string`.
+- `flowShmFormat` (Flow SHM Format, `ro`): Flow payload format. Fixed to flow2_f16. Schema: `string`.
+- `computeScale` (Compute Scale, `rw`): Farneback compute scale, flow is upscaled back to full size. Schema: `number / default=0.5`.
+- `lastError` (Last Error, `ro`): Last error message. Schema: `string`.
+- `active` (Active, `rw`): Service lifecycle state (activate/deactivate). Schema: `boolean / default=True`.
+- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
 
-- Start with smaller resolutions.
-- Confirm upstream frame source timestamps are monotonic.
+## Pitfalls / Gotchas
+
+- If the input SHM name is wrong, downstream flow consumers will look empty even though the graph compiles.
+- Dense flow is sensitive to source quality, scale changes, and noisy screen capture inputs.
+
+## Related Scenarios
+
+- No bundled scenario references this node yet.

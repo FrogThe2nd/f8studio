@@ -103,10 +103,10 @@ pyyaml = ">=6.0.3,<7"
 mkdocs-static-i18n = ">=1.2.3,<2"
 
 [feature.doc.tasks]
-doc_gen = "python scripts/generate_service_docs.py"
+doc_gen = "python scripts/generate_service_docs.py && python scripts/generate_node_atlas.py"
 doc_build = "zensical build"
 doc_serve = "zensical serve"
-doc_check = "python scripts/generate_service_docs.py --check && python scripts/check_docs_nav.py && python scripts/check_docs_links.py"
+doc_check = "python scripts/generate_service_docs.py --check && python scripts/generate_node_atlas.py --check && python scripts/check_docs_nav.py && python scripts/check_docs_links.py"
 
 [feature.cpp.dependencies]
 pip = ">=26.0.1,<27"

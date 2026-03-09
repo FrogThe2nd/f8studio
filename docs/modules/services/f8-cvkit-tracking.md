@@ -11,7 +11,7 @@ No description.
 ## How to Run
 
 ```bash
-../linux/f8cvkit_tracking_service
+../win/f8cvkit_tracking_service.exe
 ```
 
 - Workdir: `./`
@@ -21,13 +21,13 @@ No description.
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `shmName` | `rw` | `false` | `true` | `string` | Optional SHM name override (e.g. shm.xxx.video). |
-| `initSelect` | `rw` | `false` | `true` | `string / enum[closest_center, largest_area, highest_score] / default=closest_center` | Init bbox selection strategy: closest_center \| largest_area \| highest_score. |
-| `isTracking` | `ro` | `false` | `true` | `boolean` | True when tracker is running. |
-| `isNotTracking` | `ro` | `false` | `true` | `boolean` | Negation of isTracking. |
-| `lastError` | `ro` | `false` | `true` | `string` | Last error message. |
-| `active` | `rw` | `false` | `true` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
-| `svcId` | `ro` | `false` | `false` | `string` | Readonly: current service instance id (svcId). |
+| `shmName` | `rw` | `true` | `true` | `string` | Optional SHM name override (e.g. shm.xxx.video). |
+| `initSelect` | `rw` | `true` | `true` | `string / enum[closest_center, largest_area, highest_score] / default=closest_center` | Init bbox selection strategy: closest_center \| largest_area \| highest_score. |
+| `isTracking` | `ro` | `true` | `true` | `boolean` | True when tracker is running. |
+| `isNotTracking` | `ro` | `true` | `true` | `boolean` | Negation of isTracking. |
+| `lastError` | `ro` | `true` | `true` | `string` | Last error message. |
+| `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
+| `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 
 ## Service Commands
 
@@ -41,38 +41,50 @@ Stop current tracking and return to waiting for initBox.
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
-| `initBox` | `false` | `true` | `any` | Init payload (single bbox or nested detection tree). Recursively extracts bbox candidates and uses the one closest to image center. |
+| `initBox` | `true` | `true` | `object{bbox, bottom, conf, confidence, ...}` | Init payload (single bbox or nested detection tree). Recursively extracts bbox candidates and uses the one closest to image center. |
 
 ## Service Data Output Ports
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
-| `tracking` | `false` | `true` | `object{bbox, frameId, height, status, ...}` | Tracking output stream. |
-| `monitor` | `false` | `true` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
+| `tracking` | `true` | `true` | `object{bbox, frameId, height, status, ...}` | Tracking output stream. |
+| `monitor` | `true` | `false` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
 
 ## Operators
 
 _None_
 
-## Usage Guide (Manual)
+## When to Use
 
-### Recommended Use Cases
+- Use `f8.cvkit.tracking` when you need a continuously updated ROI after initialization.
+- It fits graphs where the target keeps moving but still stays visually trackable frame to frame.
 
-- Follow detector-provided bounding boxes through time.
-- Build persistent target state for downstream control chains.
+## Typical Inputs / Outputs
 
-### Minimal Run Example
+- Data inputs: `initBox`
+- Data outputs: `tracking`, `monitor`
+- Commands: `stopTracking`
 
-```bash
-services/f8/cvkit/linux/f8cvkit_tracking_service
-```
+## Common Wiring Patterns
 
-### Common Pitfalls
+- Start with `f8.cvkit.templatematch` or a capture workflow for initialization, then keep `f8.viz.track` attached for monitoring.
+- Feed tracked regions into `f8.pyengine` or downstream CV services when graph logic depends on target position.
 
-- Invalid `initBox` schema prevents tracker startup.
-- Frequent detector resets can fight tracker state.
+## Key Fields That Matter
 
-### Troubleshooting
+- `shmName` (Video SHM, `rw`): Optional SHM name override (e.g. shm.xxx.video). Schema: `string`.
+- `initSelect` (Init Select, `rw`): Init bbox selection strategy: closest_center | largest_area | highest_score. Schema: `string / enum[closest_center, largest_area, highest_score] / default=closest_center`.
+- `isTracking` (Is Tracking, `ro`): True when tracker is running. Schema: `boolean`.
+- `isNotTracking` (Is Not Tracking, `ro`): Negation of isTracking. Schema: `boolean`.
+- `lastError` (Last Error, `ro`): Last error message. Schema: `string`.
+- `active` (Active, `rw`): Service lifecycle state (activate/deactivate). Schema: `boolean / default=True`.
+- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
 
-- Validate detector output shape before routing to `initBox`.
-- Use `stopTracking` command to recover from stale state.
+## Pitfalls / Gotchas
+
+- Tracker drift is easy to miss if you only inspect terminal outputs and not the overlay node.
+- Startup order matters when the tracker expects a ready input stream and valid initial region.
+
+## Related Scenarios
+
+- [Scene 01: CVKit Template Tracking](../../scenarios/scene-01-cvkit_template_tracking.md)

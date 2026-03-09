@@ -21,14 +21,14 @@ pixi run f8pyaudiofeat_core
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `audioShmName` | `rw` | `false` | `true` | `string / default=` | Audio SHM mapping name (e.g. shm.audiocap.audio). |
-| `channelMode` | `rw` | `false` | `true` | `string / enum[mono_mix, left, right] / default=mono_mix` | Channel selection for analysis. |
-| `windowMs` | `rw` | `false` | `true` | `integer / default=768` | Feature analysis window size in milliseconds. |
-| `hopMs` | `rw` | `false` | `true` | `integer / default=64` | Feature analysis hop size in milliseconds. |
-| `emitEveryHops` | `rw` | `false` | `true` | `integer / default=1` | Emit one coreFeatures payload every N analysis hops. |
-| `lastError` | `ro` | `false` | `false` | `string / default=` | Last runtime error string. |
-| `active` | `rw` | `false` | `true` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
-| `svcId` | `ro` | `false` | `false` | `string` | Readonly: current service instance id (svcId). |
+| `audioShmName` | `rw` | `true` | `true` | `string / default=` | Audio SHM mapping name (e.g. shm.audiocap.audio). |
+| `channelMode` | `rw` | `true` | `true` | `string / enum[mono_mix, left, right] / default=mono_mix` | Channel selection for analysis. |
+| `windowMs` | `rw` | `true` | `true` | `integer / default=768` | Feature analysis window size in milliseconds. |
+| `hopMs` | `rw` | `true` | `true` | `integer / default=64` | Feature analysis hop size in milliseconds. |
+| `emitEveryHops` | `rw` | `true` | `true` | `integer / default=1` | Emit one coreFeatures payload every N analysis hops. |
+| `lastError` | `ro` | `true` | `false` | `string / default=` | Last runtime error string. |
+| `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
+| `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 
 ## Service Commands
 
@@ -42,32 +42,45 @@ _None_
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
-| `coreFeatures` | `true` | `true` | `any` | Core feature payload with onset envelope history. |
-| `monitor` | `false` | `true` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
+| `coreFeatures` | `true` | `true` | `object{hopLength, onsetEnvelope, onsetStrength, rms, ...}` | Core feature payload with onset envelope history. |
+| `monitor` | `true` | `false` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
 
 ## Operators
 
 _None_
 
-## Usage Guide (Manual)
+## When to Use
 
-### Recommended Use Cases
+- Use `f8.audiofeat.core` for low-level descriptors such as loudness, spectrum-derived features, and general audio activity.
+- It is the default feature block for audio-reactive graphs that later map values into motion or visualization.
 
-- Compute real-time base audio descriptors from `f8.audiocap` shared memory.
-- Feed rhythm/beat services with reusable onset envelope features.
+## Typical Inputs / Outputs
 
-### Minimal Run Example
+- Data inputs: none
+- Data outputs: `coreFeatures`, `monitor`
+- Commands: none
 
-```bash
-pixi run f8pyaudiofeat_core --service-id audiofeat_core
-```
+## Common Wiring Patterns
 
-### Common Pitfalls
+- Feed it from `f8.audiocap`, then branch outputs to `TextViz`, `Python Expr Service`, or `f8.pyengine` operators.
+- Keep `windowMs` and `hopMs` aligned with the responsiveness you need before adding extra smoothing in `f8.pyengine`.
 
-- `audioShmName` not set or pointing to a non-existing segment.
-- Window/hop configuration too small can create unstable centroid/onset output.
+## Key Fields That Matter
 
-### Troubleshooting
+- `audioShmName` (Audio SHM, `rw`): Audio SHM mapping name (e.g. shm.audiocap.audio). Schema: `string / default=`.
+- `channelMode` (Channel Mode, `rw`): Channel selection for analysis. Schema: `string / enum[mono_mix, left, right] / default=mono_mix`.
+- `windowMs` (Window (ms), `rw`): Feature analysis window size in milliseconds. Schema: `integer / default=768`.
+- `hopMs` (Hop (ms), `rw`): Feature analysis hop size in milliseconds. Schema: `integer / default=64`.
+- `emitEveryHops` (Emit Every Hops, `rw`): Emit one coreFeatures payload every N analysis hops. Schema: `integer / default=1`.
+- `lastError` (Last Error, `ro`): Last runtime error string. Schema: `string / default=`.
+- `active` (Active, `rw`): Service lifecycle state (activate/deactivate). Schema: `boolean / default=True`.
+- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
 
-- Confirm upstream `f8.audiocap` reports non-zero `writeSeq`.
-- Start with defaults (`windowMs=768`, `hopMs=64`) before tuning.
+## Pitfalls / Gotchas
+
+- Forgetting to wire the correct `audioShmName` makes the service appear idle rather than explicitly broken.
+- Oversized windows improve stability but can make the final motion path feel delayed.
+
+## Related Scenarios
+
+- [Scene 03: Audio Driven TCode](../../scenarios/scene-03-audio_driven.md)

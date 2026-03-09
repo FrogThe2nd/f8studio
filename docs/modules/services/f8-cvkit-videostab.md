@@ -11,7 +11,7 @@ No description.
 ## How to Run
 
 ```bash
-../linux/f8cvkit_video_stab_service
+../win/f8cvkit_video_stab_service.exe
 ```
 
 - Workdir: `./`
@@ -21,24 +21,24 @@ No description.
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `inputShmName` | `rw` | `false` | `true` | `string` | Input SHM name (e.g. shm.xxx.video). |
-| `outputShmName` | `ro` | `false` | `true` | `string` | Output SHM name generated from serviceId. |
-| `motionModel` | `rw` | `false` | `false` | `string / enum[affine, homography] / default=affine` | Global motion model used by stabilizer. |
-| `stabilizationMode` | `rw` | `false` | `false` | `string / enum[trajectory, instant] / default=trajectory` | trajectory=smooth accumulated path; instant=smooth per-frame motion. |
-| `smoothAlpha` | `rw` | `false` | `false` | `number / default=0.15` | EMA alpha used for motion smoothing. |
-| `maxCornerCount` | `rw` | `false` | `false` | `integer / default=300` | LK feature count. |
-| `qualityLevel` | `rw` | `false` | `false` | `number / default=0.01` | goodFeaturesToTrack quality level. |
-| `minDistance` | `rw` | `false` | `false` | `number / default=8.0` | Minimum corner distance. |
-| `ransacReprojThreshold` | `rw` | `false` | `false` | `number / default=3.0` | RANSAC reprojection threshold. |
-| `resetOnFailureFrames` | `rw` | `false` | `false` | `integer / default=5` | Reset internal stabilizer state after N consecutive failures. |
-| `sceneCutEnabled` | `rw` | `false` | `false` | `boolean` | Enable scene cut detection and reset-on-cut behavior. |
-| `sceneCutFrameDiffThreshold` | `rw` | `false` | `false` | `number / default=18.0` | Scene cut threshold for mean(abs(gray-prevGray)). |
-| `sceneCutTrackRatioThreshold` | `rw` | `false` | `false` | `number / default=0.25` | Scene cut threshold for trackedPoints/max(prevPoints,1). |
-| `sceneCutCooldownFrames` | `rw` | `false` | `false` | `integer / default=5` | Suppress repeated scene cut triggers for N frames after a cut. |
-| `sceneChangeCount` | `ro` | `false` | `false` | `integer` | Monotonic counter incremented when a scene cut is detected. |
-| `lastError` | `ro` | `false` | `false` | `string` | Last error message. |
-| `active` | `rw` | `false` | `true` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
-| `svcId` | `ro` | `false` | `false` | `string` | Readonly: current service instance id (svcId). |
+| `inputShmName` | `rw` | `true` | `true` | `string` | Input SHM name (e.g. shm.xxx.video). |
+| `outputShmName` | `ro` | `true` | `true` | `string` | Output SHM name generated from serviceId. |
+| `motionModel` | `rw` | `true` | `false` | `string / enum[affine, homography] / default=affine` | Global motion model used by stabilizer. |
+| `stabilizationMode` | `rw` | `true` | `false` | `string / enum[trajectory, instant] / default=trajectory` | trajectory=smooth accumulated path; instant=smooth per-frame motion. |
+| `smoothAlpha` | `rw` | `true` | `false` | `number / default=0.15` | EMA alpha used for motion smoothing. |
+| `maxCornerCount` | `rw` | `true` | `false` | `integer / default=300` | LK feature count. |
+| `qualityLevel` | `rw` | `true` | `false` | `number / default=0.01` | goodFeaturesToTrack quality level. |
+| `minDistance` | `rw` | `true` | `false` | `number / default=8.0` | Minimum corner distance. |
+| `ransacReprojThreshold` | `rw` | `true` | `false` | `number / default=3.0` | RANSAC reprojection threshold. |
+| `resetOnFailureFrames` | `rw` | `true` | `false` | `integer / default=5` | Reset internal stabilizer state after N consecutive failures. |
+| `sceneCutEnabled` | `rw` | `true` | `false` | `boolean` | Enable scene cut detection and reset-on-cut behavior. |
+| `sceneCutFrameDiffThreshold` | `rw` | `true` | `false` | `number / default=18.0` | Scene cut threshold for mean(abs(gray-prevGray)). |
+| `sceneCutTrackRatioThreshold` | `rw` | `true` | `false` | `number / default=0.25` | Scene cut threshold for trackedPoints/max(prevPoints,1). |
+| `sceneCutCooldownFrames` | `rw` | `true` | `false` | `integer / default=5` | Suppress repeated scene cut triggers for N frames after a cut. |
+| `sceneChangeCount` | `ro` | `true` | `false` | `integer` | Monotonic counter incremented when a scene cut is detected. |
+| `lastError` | `ro` | `true` | `false` | `string` | Last error message. |
+| `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
+| `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 
 ## Service Commands
 
@@ -56,32 +56,45 @@ _None_
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
-| `motion` | `false` | `true` | `object{corrAngleDeg, corrScale, corrTx, corrTy, ...}` | Per-frame estimated and smoothed motion parameters. |
-| `monitor` | `false` | `true` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
+| `motion` | `true` | `true` | `object{corrAngleDeg, corrScale, corrTx, corrTy, ...}` | Per-frame estimated and smoothed motion parameters. |
+| `monitor` | `true` | `false` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
 
 ## Operators
 
 _None_
 
-## Usage Guide (Manual)
+## When to Use
 
-### Recommended Use Cases
+- Use `f8.cvkit.videostab` when camera or capture jitter hurts downstream CV quality.
+- It is most useful when stabilization is part of preprocessing, not as a cosmetic final pass.
 
-- Stabilize shaky input before detection and pose inference.
-- Improve downstream consistency in handheld or moving-camera feeds.
+## Typical Inputs / Outputs
 
-### Minimal Run Example
+- Data inputs: none
+- Data outputs: `motion`, `monitor`
+- Commands: `resetStabilizer`
 
-```bash
-services/f8/cvkit/linux/f8cvkit_video_stab_service
-```
+## Common Wiring Patterns
 
-### Common Pitfalls
+- Feed it from `f8.implayer` or `f8.screencap`, then hand the stabilized output to detection, tracking, or pose services.
+- Validate the stabilizer before tuning downstream models, otherwise quality issues get misattributed.
 
-- Over-aggressive settings can introduce lag artifacts.
-- Scene cuts can break temporal assumptions.
+## Key Fields That Matter
 
-### Troubleshooting
+- `inputShmName` (Input Video SHM, `rw`): Input SHM name (e.g. shm.xxx.video). Schema: `string`.
+- `outputShmName` (Output Video SHM, `ro`): Output SHM name generated from serviceId. Schema: `string`.
+- `motionModel` (Motion Model, `rw`): Global motion model used by stabilizer. Schema: `string / enum[affine, homography] / default=affine`.
+- `stabilizationMode` (Stabilization Mode, `rw`): trajectory=smooth accumulated path; instant=smooth per-frame motion. Schema: `string / enum[trajectory, instant] / default=trajectory`.
+- `smoothAlpha` (Smooth Alpha, `rw`): EMA alpha used for motion smoothing. Schema: `number / default=0.15`.
+- `maxCornerCount` (Max Corner Count, `rw`): LK feature count. Schema: `integer / default=300`.
+- `qualityLevel` (Quality Level, `rw`): goodFeaturesToTrack quality level. Schema: `number / default=0.01`.
+- `minDistance` (Min Distance, `rw`): Minimum corner distance. Schema: `number / default=8.0`.
 
-- Tune smoothing windows conservatively first.
-- Reset state around hard scene transitions.
+## Pitfalls / Gotchas
+
+- Stabilization can add crop, lag, or edge artifacts that later services still need to tolerate.
+- A wrong output SHM assumption can make downstream consumers silently keep reading the unstabilized source.
+
+## Related Scenarios
+
+- No bundled scenario references this node yet.

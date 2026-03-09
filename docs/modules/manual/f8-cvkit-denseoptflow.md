@@ -1,20 +1,15 @@
-### Recommended Use Cases
+## When to Use
 
-- Motion field extraction for gesture/velocity-aware interactions.
-- Preprocessing stage before higher-level temporal analytics.
+- Use `f8.cvkit.denseoptflow` when you need per-pixel motion vectors from a video stream.
+- It is the classical CV path for motion-derived control and visual flow inspection.
 
-### Minimal Run Example
+## Common Wiring Patterns
 
-```bash
-services/f8/cvkit/linux/f8cvkit_dense_optflow_service
-```
+- Feed video from `f8.implayer` or `f8.screencap`, then branch flow output to `f8.viz.video` overlays or `f8.cvkit.flowmetric`.
+- Keep this service close to the producer so frame timing and resolution assumptions stay obvious.
 
-### Common Pitfalls
+## Pitfalls / Gotchas
 
-- Large frame sizes increase latency.
-- Unstable input frame rates reduce flow quality.
+- If the input SHM name is wrong, downstream flow consumers will look empty even though the graph compiles.
+- Dense flow is sensitive to source quality, scale changes, and noisy screen capture inputs.
 
-### Troubleshooting
-
-- Start with smaller resolutions.
-- Confirm upstream frame source timestamps are monotonic.

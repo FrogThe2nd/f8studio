@@ -21,15 +21,15 @@ pixi run f8pymppose
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `shmName` | `rw` | `false` | `true` | `string / default=` | Video SHM mapping name (e.g. shm.implayer.video). |
-| `inferEveryN` | `rw` | `false` | `true` | `integer / default=1` | Run pose inference every N frames (>=1). |
-| `modelComplexity` | `rw` | `false` | `true` | `string / enum[lite, full, heavy] / default=full` | MediaPipe pose model variant. |
-| `minDetectionConfidence` | `rw` | `false` | `true` | `number / default=0.5` | Minimum confidence threshold for pose detection. |
-| `minTrackingConfidence` | `rw` | `false` | `true` | `number / default=0.5` | Minimum confidence threshold for pose tracking. |
-| `visibilityThreshold` | `rw` | `false` | `true` | `number / default=0.5` | Landmark visibility threshold (below threshold => hidden point). |
-| `lastError` | `ro` | `false` | `false` | `string / default=` | Last runtime error string (best-effort). |
-| `active` | `rw` | `false` | `true` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
-| `svcId` | `ro` | `false` | `false` | `string` | Readonly: current service instance id (svcId). |
+| `shmName` | `rw` | `true` | `true` | `string / default=` | Video SHM mapping name (e.g. shm.implayer.video). |
+| `inferEveryN` | `rw` | `true` | `false` | `integer / default=1` | Run pose inference every N frames (>=1). |
+| `modelComplexity` | `rw` | `true` | `false` | `string / enum[lite, full, heavy] / default=full` | MediaPipe pose model variant. |
+| `minDetectionConfidence` | `rw` | `true` | `false` | `number / default=0.5` | Minimum confidence threshold for pose detection. |
+| `minTrackingConfidence` | `rw` | `true` | `false` | `number / default=0.5` | Minimum confidence threshold for pose tracking. |
+| `visibilityThreshold` | `rw` | `true` | `false` | `number / default=0.5` | Landmark visibility threshold (below threshold => hidden point). |
+| `lastError` | `ro` | `true` | `false` | `string / default=` | Last runtime error string (best-effort). |
+| `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
+| `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 
 ## Service Commands
 
@@ -43,33 +43,46 @@ _None_
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
-| `detections` | `true` | `true` | `any` | Detection output in schema f8visionDetections/1. |
-| `skeletons` | `true` | `true` | `any` | List of UDP-skeleton-compatible JSON payloads for skeleton3d. |
-| `monitor` | `false` | `true` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
+| `detections` | `true` | `true` | `object{detections, frameId, height, model, ...}` | Detection output in schema f8visionDetections/1. |
+| `skeletons` | `true` | `true` | `array[object]` | List of UDP-skeleton-compatible JSON payloads for skeleton3d. |
+| `monitor` | `true` | `false` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
 
 ## Operators
 
 _None_
 
-## Usage Guide (Manual)
+## When to Use
 
-### Recommended Use Cases
+- Use `f8.mp.pose` when a graph needs lightweight body pose estimation from a video stream.
+- It is a practical choice for skeleton-driven demos and authoring workflows before adopting heavier custom models.
 
-- Realtime single-person pose extraction for control pipelines.
-- 2D/3D skeleton feed for visualizers and mapping operators.
+## Typical Inputs / Outputs
 
-### Minimal Run Example
+- Data inputs: none
+- Data outputs: `detections`, `skeletons`, `monitor`
+- Commands: none
 
-```bash
-pixi run -e mediapipe mp_pose
-```
+## Common Wiring Patterns
 
-### Common Pitfalls
+- Feed it from `f8.implayer` or `f8.screencap`, then inspect outputs with `f8.viz.three_d` or `f8.pyengine` bone-processing operators.
+- Keep the original video path visible during tuning so pose failures are easier to diagnose.
 
-- Source frames not mapped into expected SHM channel.
-- Confidence thresholds too strict for low-light scenes.
+## Key Fields That Matter
 
-### Troubleshooting
+- `shmName` (Video SHM, `rw`): Video SHM mapping name (e.g. shm.implayer.video). Schema: `string / default=`.
+- `inferEveryN` (Infer Every N Frames, `rw`): Run pose inference every N frames (>=1). Schema: `integer / default=1`.
+- `modelComplexity` (Model Complexity, `rw`): MediaPipe pose model variant. Schema: `string / enum[lite, full, heavy] / default=full`.
+- `minDetectionConfidence` (Min Detection Confidence, `rw`): Minimum confidence threshold for pose detection. Schema: `number / default=0.5`.
+- `minTrackingConfidence` (Min Tracking Confidence, `rw`): Minimum confidence threshold for pose tracking. Schema: `number / default=0.5`.
+- `visibilityThreshold` (Visibility Threshold, `rw`): Landmark visibility threshold (below threshold => hidden point). Schema: `number / default=0.5`.
+- `lastError` (Last Error, `ro`): Last runtime error string (best-effort). Schema: `string / default=`.
+- `active` (Active, `rw`): Service lifecycle state (activate/deactivate). Schema: `boolean / default=True`.
 
-- Verify `shmName` and input frame producer are active.
-- Lower detection/tracking thresholds and profile CPU load.
+## Pitfalls / Gotchas
+
+- Pose quality is strongly tied to framing, subject scale, and source quality.
+- Downstream graphs should not assume a stable skeleton until the pose stream itself is visually validated.
+
+## Related Scenarios
+
+- No bundled scenario references this node yet.

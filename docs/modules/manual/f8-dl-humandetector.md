@@ -1,20 +1,15 @@
-### Recommended Use Cases
+## When to Use
 
-- Specialized human detection pipeline for person-centric interactions.
-- Front-end filtering before pose or identity stages.
+- Use `f8.dl.humandetector` when the graph only cares about people and not general object classes.
+- It is a cleaner release choice than a broader detector when the downstream logic is human-specific.
 
-### Minimal Run Example
+## Common Wiring Patterns
 
-```bash
-pixi run -e onnx dl_humandetector
-```
+- Feed it from `f8.implayer` or `f8.screencap`, then branch detections to overlays, skeleton-related logic, or state summaries.
+- Keep it paired with a visual validation branch during threshold tuning.
 
-### Common Pitfalls
+## Pitfalls / Gotchas
 
-- Running on unsupported GPU stack may fallback unexpectedly.
-- Inconsistent input aspect ratio can reduce accuracy.
+- Human-only detectors still depend on source framing and input scale; low-quality inputs reduce confidence quickly.
+- Users often tune downstream logic before verifying that the detector itself sees the subject reliably.
 
-### Troubleshooting
-
-- Validate ONNX Runtime GPU availability in the selected environment.
-- Normalize input resolution/aspect ratio before inference.

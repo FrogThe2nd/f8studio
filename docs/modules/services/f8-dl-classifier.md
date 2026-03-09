@@ -21,20 +21,20 @@ pixi run f8pydl_classifier
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `shmName` | `rw` | `false` | `true` | `string / default=` | Video SHM mapping name (e.g. shm.implayer.video). |
-| `weightsDir` | `rw` | `false` | `true` | `string / default=services/f8/dl/weights` | Directory containing *.yaml + *.onnx model files. |
-| `modelId` | `rw` | `false` | `true` | `string / default=` | Model id selected from weightsDir (ignored if modelYamlPath is set). |
-| `modelYamlPath` | `rw` | `false` | `false` | `string / default=` | Optional explicit model yaml path (overrides modelId). |
-| `ortProvider` | `rw` | `false` | `true` | `string / enum[auto, cuda, cpu] / default=auto` | auto prefers CUDAExecutionProvider when available. |
-| `autoDownloadWeights` | `rw` | `false` | `false` | `boolean / default=True` | When model file is missing, download from onnxUrl in model yaml. |
-| `inferEveryN` | `rw` | `false` | `true` | `integer / default=1` | Run model inference every N frames (>=1). |
-| `topK` | `rw` | `false` | `true` | `integer / default=5` | Number of top classes to emit. |
-| `availableModels` | `ro` | `false` | `false` | `array[string]` | List of model ids discovered from weightsDir. |
-| `loadedModel` | `ro` | `false` | `false` | `string / default=` | Current loaded model id/task. |
-| `ortActiveProviders` | `ro` | `false` | `false` | `string / default=` | JSON list of active ONNX Runtime providers for this session. |
-| `lastError` | `ro` | `false` | `false` | `string / default=` | Last runtime error string (best-effort). |
-| `active` | `rw` | `false` | `true` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
-| `svcId` | `ro` | `false` | `false` | `string` | Readonly: current service instance id (svcId). |
+| `shmName` | `rw` | `true` | `true` | `string / default=` | Video SHM mapping name (e.g. shm.implayer.video). |
+| `weightsDir` | `rw` | `true` | `true` | `string / default=services/f8/dl/weights` | Directory containing *.yaml + *.onnx model files. |
+| `modelId` | `rw` | `true` | `true` | `string / default=` | Model id selected from weightsDir (ignored if modelYamlPath is set). |
+| `modelYamlPath` | `rw` | `true` | `false` | `string / default=` | Optional explicit model yaml path (overrides modelId). |
+| `ortProvider` | `rw` | `true` | `true` | `string / enum[auto, cuda, cpu] / default=auto` | auto prefers CUDAExecutionProvider when available. |
+| `autoDownloadWeights` | `rw` | `true` | `false` | `boolean / default=True` | When model file is missing, download from onnxUrl in model yaml. |
+| `inferEveryN` | `rw` | `true` | `true` | `integer / default=1` | Run model inference every N frames (>=1). |
+| `topK` | `rw` | `true` | `true` | `integer / default=5` | Number of top classes to emit. |
+| `availableModels` | `ro` | `true` | `false` | `array[string]` | List of model ids discovered from weightsDir. |
+| `loadedModel` | `ro` | `true` | `false` | `string / default=` | Current loaded model id/task. |
+| `ortActiveProviders` | `ro` | `true` | `false` | `string / default=` | JSON list of active ONNX Runtime providers for this session. |
+| `lastError` | `ro` | `true` | `false` | `string / default=` | Last runtime error string (best-effort). |
+| `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
+| `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 
 ## Service Commands
 
@@ -48,32 +48,45 @@ _None_
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
-| `classifications` | `true` | `true` | `any` | Classification output in schema f8visionClassifications/1. |
-| `monitor` | `false` | `true` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
+| `classifications` | `true` | `true` | `object{frameId, model, schemaVersion, top1, ...}` | Classification output in schema f8visionClassifications/1. |
+| `monitor` | `true` | `false` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
 
 ## Operators
 
 _None_
 
-## Usage Guide (Manual)
+## When to Use
 
-### Recommended Use Cases
+- Use `f8.dl.classifier` when each frame should map to one label or class distribution.
+- It is best for scene labels, coarse state estimation, or discrete control cues.
 
-- Category classification over selected regions or full frames.
-- Semantic labeling step after detection/tracking.
+## Typical Inputs / Outputs
 
-### Minimal Run Example
+- Data inputs: none
+- Data outputs: `classifications`, `monitor`
+- Commands: none
 
-```bash
-pixi run -e onnx dl_classifier
-```
+## Common Wiring Patterns
 
-### Common Pitfalls
+- Feed it from `f8.implayer` or `f8.screencap`, then inspect outputs with `TextViz`, `Python Expr`, or downstream state mappings.
+- Keep a visualization or logging branch attached while tuning thresholds and class interpretation.
 
-- Wrong model YAML path or schema mismatch blocks startup.
-- Preprocessing mismatch (size/normalization) degrades outputs.
+## Key Fields That Matter
 
-### Troubleshooting
+- `shmName` (Video SHM, `rw`): Video SHM mapping name (e.g. shm.implayer.video). Schema: `string / default=`.
+- `weightsDir` (Weights Dir, `rw`): Directory containing *.yaml + *.onnx model files. Schema: `string / default=services/f8/dl/weights`.
+- `modelId` (Model Id, `rw`): Model id selected from weightsDir (ignored if modelYamlPath is set). Schema: `string / default=`.
+- `modelYamlPath` (Model YAML Path, `rw`): Optional explicit model yaml path (overrides modelId). Schema: `string / default=`.
+- `ortProvider` (ONNX Runtime Provider, `rw`): auto prefers CUDAExecutionProvider when available. Schema: `string / enum[auto, cuda, cpu] / default=auto`.
+- `autoDownloadWeights` (Auto Download Weights, `rw`): When model file is missing, download from onnxUrl in model yaml. Schema: `boolean / default=True`.
+- `inferEveryN` (Infer Every N Frames, `rw`): Run model inference every N frames (>=1). Schema: `integer / default=1`.
+- `topK` (Top K, `rw`): Number of top classes to emit. Schema: `integer / default=5`.
 
-- Verify `f8onnxModel/1` YAML fields and model file paths.
-- Start with known-good weights from `services/f8/dl/weights`.
+## Pitfalls / Gotchas
+
+- Wrong model assets or label assumptions can look like logic bugs in downstream nodes.
+- Classification outputs need explicit business rules before they drive devices or actuator logic.
+
+## Related Scenarios
+
+- No bundled scenario references this node yet.

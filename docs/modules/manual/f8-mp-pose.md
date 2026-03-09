@@ -1,20 +1,15 @@
-### Recommended Use Cases
+## When to Use
 
-- Realtime single-person pose extraction for control pipelines.
-- 2D/3D skeleton feed for visualizers and mapping operators.
+- Use `f8.mp.pose` when a graph needs lightweight body pose estimation from a video stream.
+- It is a practical choice for skeleton-driven demos and authoring workflows before adopting heavier custom models.
 
-### Minimal Run Example
+## Common Wiring Patterns
 
-```bash
-pixi run -e mediapipe mp_pose
-```
+- Feed it from `f8.implayer` or `f8.screencap`, then inspect outputs with `f8.viz.three_d` or `f8.pyengine` bone-processing operators.
+- Keep the original video path visible during tuning so pose failures are easier to diagnose.
 
-### Common Pitfalls
+## Pitfalls / Gotchas
 
-- Source frames not mapped into expected SHM channel.
-- Confidence thresholds too strict for low-light scenes.
+- Pose quality is strongly tied to framing, subject scale, and source quality.
+- Downstream graphs should not assume a stable skeleton until the pose stream itself is visually validated.
 
-### Troubleshooting
-
-- Verify `shmName` and input frame producer are active.
-- Lower detection/tracking thresholds and profile CPU load.

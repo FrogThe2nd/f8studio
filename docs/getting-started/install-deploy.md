@@ -1,104 +1,46 @@
-# Installation and Deployment
+# Install on Windows
 
-This guide sets up the project, runtime dependencies, and documentation tooling.
+For most readers, the correct way to install F8Studio is to download the prebuilt Windows package.
 
-## Prerequisites
+[Download Windows Prebuilt from GitHub Releases](https://github.com/feel8-fun/f8studio/releases){ .md-button .md-button--primary }
 
-- Git
-- Python 3.10+ (3.13 recommended)
-- `pixi` for runtime environments
-- Optional: C++ toolchain for native services
+## Recommended Path
 
-## Clone and Bootstrap
+1. Open the [GitHub Releases](https://github.com/feel8-fun/f8studio/releases) page
+2. Download the latest Windows prebuilt package
+3. Extract the archive to a normal user-writable folder
+4. Launch the packaged Studio application
 
-```bash
-git clone <your-repo-url>
-cd f8studio
-```
+If your goal is simply to try F8Studio, stop here and continue to the sample-graph flow.
 
-Use pixi tasks for runtime commands:
+## Open a Predefined Graph
 
-```bash
-pixi run -e default f8pystudio
-pixi run -e default runner --help
-```
+The fastest way to learn the product is to load one of the existing scenario JSON files:
 
-Build a Studio launcher with repo icon `assets/icon.ico`:
+1. [Scene 01: CVKit Template Tracking](../scenarios/scene-01-cvkit_template_tracking.md)
+2. [Scene 02: GameMod Skeleton](../scenarios/scene-02-gamemod_skeleton.md)
+3. [Scene 03: Audio Driven TCode](../scenarios/scene-03-audio_driven.md)
+4. [Scene 04: Functional TCode Generation](../scenarios/scene-04-functional_tcode.md)
 
-```bash
-pixi run -e ci build_studio_launcher
-```
-- Output is a Nuitka-built executable under `build/dist/` (platform-specific extension/name).
+Then follow:
 
-## Service Runtime Basics
+- [First Launch and Sample Graphs](../for-users/first-launch-and-sample-graphs.md)
+- [Studio Quickstart](studio.md)
 
-Service launch entries are defined in `services/**/service.yml`.
+## Who Should Build from Source?
 
-Static discovery metadata is stored in `services/**/describe.json` and can be regenerated:
+Build from source only if you are one of these:
 
-```bash
-pixi run -e default update_describes
-```
+- developing new services
+- developing `f8pystudio` plugins
+- working on packaging, native services, or docs tooling
 
-## C++ Build (Pixi + Conan + CMake)
+For that path, go here:
 
-Bootstrap dependencies and configure/build C++ services:
+- [Build from Source](../developers/build-from-source.md)
 
-```bash
-pixi run -e cpp cpp_bootstrap
-pixi run -e cpp cpp_configure_release
-pixi run -e cpp cpp_build_release
-```
+## Notes
 
-Refresh lockfiles when dependency versions change:
+- This page intentionally puts the Windows prebuilt path first.
+- Linux/macOS and source-build workflows are treated as advanced/developer routes in this documentation pass.
 
-```bash
-pixi lock
-pixi run -e cpp cpp_lock_refresh
-```
-
-Build a distributable runtime bundle (`pixi.toml + pixi.lock + services/** + wheels/**`):
-
-```bash
-pixi run -e ci dist_ci
-```
-
-- Output directory is `build/dist/f8studio-<platform-tag>`.
-- Optional archive output can be enabled with `pixi run -e ci dist_ci --archive`.
-
-Notes:
-
-- CI on Windows uses GitHub-hosted runner images plus `msvc-dev-cmd`; no manual Visual Studio setup is needed in CI.
-- Local Windows development still requires Visual Studio Build Tools for native compilation.
-
-## Documentation Toolchain
-
-Install docs dependencies:
-
-```bash
-python -m pip install -r docs/requirements.txt
-```
-
-Generate and validate docs:
-
-```bash
-python scripts/check_docs_nav.py
-python scripts/check_docs_links.py
-zensical build
-zensical serve
-```
-
-## Cloudflare Pages Build Settings
-
-Recommended settings in Cloudflare Pages:
-
-- **Framework preset**: None
-- **Build command**:
-  `python -m pip install -r docs/requirements.txt && python scripts/check_docs_nav.py && python scripts/check_docs_links.py && zensical build`
-- **Build output directory**: `site`
-- **Root directory**: repository root
-
-## Note on Generated Service Pages
-
-Service reference pages under `docs/modules/services/*.md` are generated offline from `service.yml` + `describe.json`.
-Do not run generation in GitHub Pages build, because CI does not have runtime artifacts needed to produce `describe.json`.

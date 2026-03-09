@@ -11,7 +11,7 @@ No description.
 ## How to Run
 
 ```bash
-linux/f8screencap_service
+win/f8screencap_service.exe
 ```
 
 - Workdir: `./`
@@ -21,22 +21,22 @@ linux/f8screencap_service
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `videoShmName` | `ro` | `false` | `true` | `string` | Shared memory region name |
-| `videoShmEvent` | `ro` | `false` | `false` | `string` | Shared memory event name |
-| `mode` | `rw` | `false` | `false` | `string / enum[display, window, region]` | display\|window\|region |
-| `fps` | `rw` | `false` | `true` | `number` | Capture rate |
-| `displayId` | `ro` | `false` | `false` | `integer` | 0..N-1 (see listDisplays) |
-| `windowId` | `ro` | `false` | `false` | `string` | backend-specific (e.g. win32:hwnd:0x... or x11:win:0x...) |
-| `window` | `ro` | `false` | `false` | `object{backend, id, pid, rect, ...}` | Resolved window metadata (best-effort) |
-| `region` | `ro` | `false` | `false` | `object{h, w, x, y}` | Virtual desktop coordinates |
-| `scale` | `ro` | `false` | `false` | `object{h, w}` | Optional output size (0 disables) |
-| `captureRunning` | `ro` | `false` | `false` | `boolean` | Is capture currently running |
-| `lastError` | `ro` | `false` | `false` | `string` | Last error message |
-| `videoWidth` | `ro` | `false` | `true` | `integer` | Width of the video frame in pixels |
-| `videoHeight` | `ro` | `false` | `true` | `integer` | Height of the video frame in pixels |
-| `videoPitch` | `ro` | `false` | `false` | `integer` | Number of bytes per row of the video frame |
-| `active` | `rw` | `false` | `true` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
-| `svcId` | `ro` | `false` | `false` | `string` | Readonly: current service instance id (svcId). |
+| `videoShmName` | `ro` | `true` | `true` | `string` | Shared memory region name |
+| `videoShmEvent` | `ro` | `true` | `false` | `string` | Shared memory event name |
+| `mode` | `rw` | `true` | `false` | `string / enum[display, window, region]` | display\|window\|region |
+| `fps` | `rw` | `true` | `true` | `number` | Capture rate |
+| `displayId` | `ro` | `true` | `false` | `integer` | 0..N-1 (see listDisplays) |
+| `windowId` | `ro` | `true` | `false` | `string` | backend-specific (e.g. win32:hwnd:0x... or x11:win:0x...) |
+| `window` | `ro` | `true` | `false` | `object{backend, id, pid, rect, ...}` | Resolved window metadata (best-effort) |
+| `region` | `ro` | `true` | `false` | `object{h, w, x, y}` | Virtual desktop coordinates |
+| `scale` | `ro` | `true` | `false` | `object{h, w}` | Optional output size (0 disables) |
+| `captureRunning` | `ro` | `true` | `false` | `boolean` | Is capture currently running |
+| `lastError` | `ro` | `true` | `false` | `string` | Last error message |
+| `videoWidth` | `ro` | `true` | `true` | `integer` | Width of the video frame in pixels |
+| `videoHeight` | `ro` | `true` | `true` | `integer` | Height of the video frame in pixels |
+| `videoPitch` | `ro` | `true` | `false` | `integer` | Number of bytes per row of the video frame |
+| `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
+| `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 
 ## Service Commands
 
@@ -72,32 +72,44 @@ _None_
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
-| `frameId` | `false` | `false` | `integer` | Monotonic frame counter. |
-| `monitor` | `false` | `true` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
+| `monitor` | `true` | `false` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
 
 ## Operators
 
 _None_
 
-## Usage Guide (Manual)
+## When to Use
 
-### Recommended Use Cases
+- Use `f8.screencap` when the graph should read the desktop, a monitor, or a region as a live video SHM source.
+- It is the usual producer for screen-driven CV and UI automation scenarios.
 
-- Desktop capture input for live detection and tracking workflows.
-- Fast prototyping without camera hardware dependencies.
+## Typical Inputs / Outputs
 
-### Minimal Run Example
+- Data inputs: none
+- Data outputs: `monitor`
+- Commands: `listDisplays`, `pickDisplay`, `pickWindow`, `pickRegion`
 
-```bash
-services/f8/screencap/linux/f8screencap_service
-```
+## Common Wiring Patterns
 
-### Common Pitfalls
+- Feed its video SHM into CVKit, DL, pose, or `f8.viz.video` consumers.
+- Keep a parallel visualization branch while locking capture region, scale, and frame timing.
 
-- Linux Wayland sessions are not supported by current backend.
-- Capture permissions can block frame acquisition.
+## Key Fields That Matter
 
-### Troubleshooting
+- `videoShmName` (Video SHM, `ro`): Shared memory region name Schema: `string`.
+- `videoShmEvent` (Video Event, `ro`): Shared memory event name Schema: `string`.
+- `mode` (Mode, `rw`): display|window|region Schema: `string / enum[display, window, region]`.
+- `fps` (FPS, `rw`): Capture rate Schema: `number`.
+- `displayId` (Display ID, `ro`): 0..N-1 (see listDisplays) Schema: `integer`.
+- `windowId` (Window ID, `ro`): backend-specific (e.g. win32:hwnd:0x... or x11:win:0x...) Schema: `string`.
+- `window` (Window, `ro`): Resolved window metadata (best-effort) Schema: `object{backend, id, pid, rect, ...}`.
+- `region` (Region, `ro`): Virtual desktop coordinates Schema: `object{h, w, x, y}`.
 
-- On Linux, run under X11 and validate `DISPLAY`.
-- Test display enumeration before starting full scenario graph.
+## Pitfalls / Gotchas
+
+- Wrong monitor, region, or permission setup can look like a dead downstream graph.
+- Release builds should validate the same capture mode used in the final scenario, not just any available screen source.
+
+## Related Scenarios
+
+- No bundled scenario references this node yet.

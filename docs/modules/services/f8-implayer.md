@@ -11,7 +11,7 @@ C++ MPV-based player service with shared-memory video output.
 ## How to Run
 
 ```bash
-linux/f8implayer_service
+win/f8implayer_service.exe
 ```
 
 - Workdir: `./`
@@ -21,28 +21,28 @@ linux/f8implayer_service
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `loop` | `rw` | `false` | `false` | `boolean` | Repeat playlist when reaching EOF. |
-| `mediaUrl` | `rw` | `false` | `true` | `string` | URI or file path to open. |
-| `volume` | `rw` | `false` | `true` | `number / default=1.0` | Volume |
-| `playing` | `ro` | `false` | `false` | `boolean` | Playback state. |
-| `duration` | `ro` | `false` | `true` | `number` | Duration (seconds). |
-| `lastError` | `ro` | `false` | `false` | `string` | Last error message. |
-| `videoShmName` | `ro` | `false` | `true` | `string` | Shared memory region name. |
-| `videoShmEvent` | `ro` | `false` | `false` | `string` | Optional named event to signal new frames. |
-| `videoShmMaxWidth` | `rw` | `false` | `false` | `integer` | Downsample limit (0 = auto). |
-| `videoShmMaxHeight` | `rw` | `false` | `false` | `integer` | Downsample limit (0 = auto). |
-| `videoShmMaxFps` | `rw` | `false` | `false` | `number` | Copy rate limit (0 = unlimited). |
-| `authMode` | `rw` | `false` | `false` | `string / enum[none, browser, cookiesFile]` | Cookie auth mode: none\|browser\|cookiesFile (default: none). |
-| `authBrowser` | `rw` | `false` | `false` | `string / enum[chrome, chromium, edge, firefox, safari]` | Browser name for authMode=browser: chrome\|chromium\|edge\|firefox\|safari. |
-| `authBrowserProfile` | `rw` | `false` | `false` | `string` | Optional browser profile for authMode=browser. Sensitive: runtime-only; not persisted. |
-| `authCookiesFile` | `rw` | `false` | `false` | `string` | cookies.txt path for authMode=cookiesFile. Sensitive: runtime-only; not persisted. |
-| `decodedWidth` | `ro` | `false` | `false` | `integer` | Decoded/source video width (on-screen uses this). |
-| `decodedHeight` | `ro` | `false` | `false` | `integer` | Decoded/source video height (on-screen uses this). |
-| `videoWidth` | `ro` | `false` | `false` | `integer` | Width of the video frame. |
-| `videoHeight` | `ro` | `false` | `false` | `integer` | Height of the video frame. |
-| `videoPitch` | `ro` | `false` | `false` | `integer` | Pitch of the video frame. |
-| `active` | `rw` | `false` | `true` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
-| `svcId` | `ro` | `false` | `false` | `string` | Readonly: current service instance id (svcId). |
+| `loop` | `rw` | `true` | `false` | `boolean` | Repeat playlist when reaching EOF. |
+| `mediaUrl` | `rw` | `true` | `true` | `string` | URI or file path to open. |
+| `volume` | `rw` | `true` | `true` | `number / default=1.0` | Volume |
+| `playing` | `ro` | `true` | `false` | `boolean` | Playback state. |
+| `duration` | `ro` | `true` | `true` | `number` | Duration (seconds). |
+| `lastError` | `ro` | `true` | `false` | `string` | Last error message. |
+| `videoShmName` | `ro` | `true` | `true` | `string` | Shared memory region name. |
+| `videoShmEvent` | `ro` | `true` | `false` | `string` | Optional named event to signal new frames. |
+| `videoShmMaxWidth` | `rw` | `true` | `false` | `integer` | Downsample limit (0 = auto). |
+| `videoShmMaxHeight` | `rw` | `true` | `false` | `integer` | Downsample limit (0 = auto). |
+| `videoShmMaxFps` | `rw` | `true` | `false` | `number` | Copy rate limit (0 = unlimited). |
+| `authMode` | `rw` | `true` | `false` | `string / enum[none, browser, cookiesFile]` | Cookie auth mode: none\|browser\|cookiesFile (default: none). |
+| `authBrowser` | `rw` | `true` | `false` | `string / enum[chrome, chromium, edge, firefox, safari]` | Browser name for authMode=browser: chrome\|chromium\|edge\|firefox\|safari. |
+| `authBrowserProfile` | `rw` | `true` | `false` | `string` | Optional browser profile for authMode=browser. Sensitive: runtime-only; not persisted. |
+| `authCookiesFile` | `rw` | `true` | `false` | `string` | cookies.txt path for authMode=cookiesFile. Sensitive: runtime-only; not persisted. |
+| `decodedWidth` | `ro` | `true` | `false` | `integer` | Decoded/source video width (on-screen uses this). |
+| `decodedHeight` | `ro` | `true` | `false` | `integer` | Decoded/source video height (on-screen uses this). |
+| `videoWidth` | `ro` | `true` | `false` | `integer` | Width of the video frame. |
+| `videoHeight` | `ro` | `true` | `false` | `integer` | Height of the video frame. |
+| `videoPitch` | `ro` | `true` | `false` | `integer` | Pitch of the video frame. |
+| `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
+| `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 
 ## Service Commands
 
@@ -99,64 +99,50 @@ _None_
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
-| `media` | `false` | `false` | `object{url, videoId}` | Emitted when a new media is opened (videoId + url). |
-| `playback` | `false` | `false` | `object{duration, playing, position, videoId}` | Playback state stream (position/duration/playing). |
-| `frameId` | `false` | `false` | `integer` | Monotonic frame counter for new shm frames. |
-| `monitor` | `false` | `true` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
+| `playback` | `true` | `false` | `object{duration, playing, position, videoId}` | Playback state stream (position/duration/playing). |
+| `monitor` | `true` | `false` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
 
 ## Operators
 
 _None_
 
-## Usage Guide (Manual)
+## When to Use
 
-### Recommended Use Cases
+- Use `f8.implayer` to turn local media files or supported URLs into a stable video SHM producer.
+- It is the easiest deterministic source for demos, QA passes, and replayable scenarios.
 
-- Feed local media into shared memory for detection/pose services.
-- Validate end-to-end pipelines with deterministic playback.
+## Typical Inputs / Outputs
 
-### Minimal Run Example
+- Data inputs: none
+- Data outputs: `playback`, `monitor`
+- Commands: `open`, `play`, `pause`, `stop`, `seek`, `setVolume`
 
-```bash
-services/f8/implayer/linux/f8implayer_service
-```
+## Common Wiring Patterns
 
-### Common Pitfalls
+- Feed its SHM output into CVKit, DL, pose, or `f8.viz.video` consumers.
+- Keep one `implayer` node as the canonical media producer for a scenario and branch from there.
 
-- Missing codec/runtime libraries on target host.
-- Wrong SHM name wiring disconnects downstream consumers.
-- For website URLs, guest mode may provide lower quality streams if auth cookies are not configured.
+### Cookie/Auth Notes
 
-### Cookie Auth For Online URLs
+- Use browser or cookies-file auth only when URL playback truly needs it.
+- Treat auth-related state as sensitive runtime configuration, not a value to casually share in example sessions.
 
-`f8.implayer` supports cookie-based auth for `yt-dlp/mpv` via state fields:
+## Key Fields That Matter
 
-- `authMode`: `none | browser | cookiesFile` (default `none`)
-- `authBrowser`: `chrome | chromium | edge | firefox | safari`
-- `authBrowserProfile`: optional profile name for browser mode
-- `authCookiesFile`: cookies.txt path for `cookiesFile` mode
+- `loop` (Loop, `rw`): Repeat playlist when reaching EOF. Schema: `boolean`.
+- `mediaUrl` (Media URL, `rw`): URI or file path to open. Schema: `string`.
+- `volume` (Volume, `rw`): Volume Schema: `number / default=1.0`.
+- `playing` (Playing, `ro`): Playback state. Schema: `boolean`.
+- `duration` (Duration, `ro`): Duration (seconds). Schema: `number`.
+- `lastError` (Last Error, `ro`): Last error message. Schema: `string`.
+- `videoShmName` (Video SHM, `ro`): Shared memory region name. Schema: `string`.
+- `videoShmEvent` (Video Event, `ro`): Optional named event to signal new frames. Schema: `string`.
 
-Examples:
+## Pitfalls / Gotchas
 
-- Browser cookies (Chrome default profile):
-  - `authMode=browser`
-  - `authBrowser=chrome`
-- Browser cookies (explicit profile):
-  - `authMode=browser`
-  - `authBrowser=chrome`
-  - `authBrowserProfile=Default`
-- cookies.txt file:
-  - `authMode=cookiesFile`
-  - `authCookiesFile=/path/to/cookies.txt`
+- Missing codecs or URL auth problems can look like empty downstream graphs rather than explicit load failures.
+- SHM-name mismatches are a more common problem than actual playback failure.
 
-Security and persistence:
+## Related Scenarios
 
-- `authBrowserProfile` and `authCookiesFile` are treated as sensitive runtime values.
-- They are not written back through the service KV endpoint path and are not applied from rungraph snapshots.
-
-### Troubleshooting
-
-- Verify media playback locally before integrating downstream nodes.
-- Confirm `shmName` is identical across producer and consumers.
-- Browser mode requires a logged-in browser profile on the same machine.
-- cookies file mode requires a valid, existing cookies file path.
+- [Scene 01: CVKit Template Tracking](../../scenarios/scene-01-cvkit_template_tracking.md)

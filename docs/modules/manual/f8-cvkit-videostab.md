@@ -1,20 +1,15 @@
-### Recommended Use Cases
+## When to Use
 
-- Stabilize shaky input before detection and pose inference.
-- Improve downstream consistency in handheld or moving-camera feeds.
+- Use `f8.cvkit.videostab` when camera or capture jitter hurts downstream CV quality.
+- It is most useful when stabilization is part of preprocessing, not as a cosmetic final pass.
 
-### Minimal Run Example
+## Common Wiring Patterns
 
-```bash
-services/f8/cvkit/linux/f8cvkit_video_stab_service
-```
+- Feed it from `f8.implayer` or `f8.screencap`, then hand the stabilized output to detection, tracking, or pose services.
+- Validate the stabilizer before tuning downstream models, otherwise quality issues get misattributed.
 
-### Common Pitfalls
+## Pitfalls / Gotchas
 
-- Over-aggressive settings can introduce lag artifacts.
-- Scene cuts can break temporal assumptions.
+- Stabilization can add crop, lag, or edge artifacts that later services still need to tolerate.
+- A wrong output SHM assumption can make downstream consumers silently keep reading the unstabilized source.
 
-### Troubleshooting
-
-- Tune smoothing windows conservatively first.
-- Reset state around hard scene transitions.

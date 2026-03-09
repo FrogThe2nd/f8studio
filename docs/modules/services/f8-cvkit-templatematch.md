@@ -11,7 +11,7 @@ No description.
 ## How to Run
 
 ```bash
-../linux/f8cvkit_template_match_service
+../win/f8cvkit_template_match_service.exe
 ```
 
 - Workdir: `./`
@@ -21,13 +21,13 @@ No description.
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `templateImagePngB64` | `rw` | `false` | `false` | `string` | PNG bytes encoded as base64. |
-| `matchThreshold` | `rw` | `false` | `true` | `number / default=0.5` | 0..1 score threshold used to emit detections. |
-| `matchingIntervalMs` | `rw` | `false` | `false` | `integer / default=200` | Minimum milliseconds between template matching passes. |
-| `shmName` | `rw` | `false` | `true` | `string` | Optional SHM name override (e.g. shm.xxx.video). |
-| `lastError` | `ro` | `false` | `false` | `string` | Last error message. |
-| `active` | `rw` | `false` | `true` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
-| `svcId` | `ro` | `false` | `false` | `string` | Readonly: current service instance id (svcId). |
+| `templateImagePngB64` | `rw` | `true` | `false` | `string` | PNG bytes encoded as base64. |
+| `matchThreshold` | `rw` | `true` | `true` | `number / default=0.5` | 0..1 score threshold used to emit detections. |
+| `matchingIntervalMs` | `rw` | `true` | `false` | `integer / default=200` | Minimum milliseconds between template matching passes. |
+| `shmName` | `rw` | `true` | `true` | `string` | Optional SHM name override (e.g. shm.xxx.video). |
+| `lastError` | `ro` | `true` | `false` | `string` | Last error message. |
+| `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
+| `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 
 ## Service Commands
 
@@ -38,11 +38,11 @@ Capture current SHM frame as an encoded image (base64).
 
 | Param | Required | Schema | Description |
 | --- | --- | --- | --- |
-| `format` | `false` | `string` |  |
-| `quality` | `false` | `integer` |  |
-| `maxBytes` | `false` | `integer` |  |
-| `maxWidth` | `false` | `integer` |  |
-| `maxHeight` | `false` | `integer` |  |
+| `format` | `true` | `string` |  |
+| `quality` | `true` | `integer` |  |
+| `maxBytes` | `true` | `integer` |  |
+| `maxWidth` | `true` | `integer` |  |
+| `maxHeight` | `true` | `integer` |  |
 
 ### `ping`
 Health check.
@@ -58,32 +58,49 @@ _None_
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
-| `detections` | `false` | `true` | `object{detections, frameId, height, model, ...}` | Detection output in schema f8visionDetections/1 (single best match as 0/1 detection). |
-| `monitor` | `false` | `true` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
+| `detections` | `true` | `true` | `object{detections, frameId, height, model, ...}` | Detection output in schema f8visionDetections/1 (single best match as 0/1 detection). |
+| `monitor` | `true` | `false` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
 
 ## Operators
 
 _None_
 
-## Usage Guide (Manual)
+## When to Use
 
-### Recommended Use Cases
+- Use `f8.cvkit.templatematch` when the target appearance is stable and you need quick region matching.
+- It is a strong fit for UI markers, anchored screen regions, or controlled camera scenes.
 
-- Fast region matching when target appearance is relatively stable.
-- UI element or marker tracking in controlled scenes.
+## Typical Inputs / Outputs
 
-### Minimal Run Example
+- Data inputs: none
+- Data outputs: `detections`, `monitor`
+- Commands: `captureTemplateFrame`, `ping`
 
-```bash
-services/f8/cvkit/linux/f8cvkit_template_match_service
-```
+## Common Wiring Patterns
 
-### Common Pitfalls
+- Pair it with `f8.screencap` or `f8.implayer`, then inspect results through `f8.viz.track`.
+- Use the repo-local `template_match_capture` plugin workflow to acquire the initial template directly inside Studio.
 
-- Poor template initialization leads to drift.
-- Significant scale/rotation changes reduce matching confidence.
+### Template Capture Workflow
 
-### Troubleshooting
+- Initialize the template from Studio, then keep the runtime service and tracking visualization nodes in the graph.
+- Re-capture only when the target appearance changes enough to invalidate the original template.
 
-- Reinitialize template when confidence drops.
-- Restrict search area if scene context is known.
+## Key Fields That Matter
+
+- `templateImagePngB64` (Template PNG (Base64), `rw`): PNG bytes encoded as base64. Schema: `string`.
+- `matchThreshold` (Match Threshold, `rw`): 0..1 score threshold used to emit detections. Schema: `number / default=0.5`.
+- `matchingIntervalMs` (Matching Interval (ms), `rw`): Minimum milliseconds between template matching passes. Schema: `integer / default=200`.
+- `shmName` (Video SHM, `rw`): Optional SHM name override (e.g. shm.xxx.video). Schema: `string`.
+- `lastError` (Last Error, `ro`): Last error message. Schema: `string`.
+- `active` (Active, `rw`): Service lifecycle state (activate/deactivate). Schema: `boolean / default=True`.
+- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
+
+## Pitfalls / Gotchas
+
+- Poor initial template quality is the fastest way to get drift and low confidence.
+- Large scale or rotation changes are usually a sign to switch to a different tracking strategy.
+
+## Related Scenarios
+
+- [Scene 01: CVKit Template Tracking](../../scenarios/scene-01-cvkit_template_tracking.md)

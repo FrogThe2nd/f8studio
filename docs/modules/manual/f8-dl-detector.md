@@ -1,20 +1,15 @@
-### Recommended Use Cases
+## When to Use
 
-- Primary object detection service for tracking and control workflows.
-- Foundation block for scenario pipelines using bounding boxes.
+- Use `f8.dl.detector` when you need object detections with boxes or class-specific regions.
+- It is the general DL detection path for scenes that are broader than human-only use cases.
 
-### Minimal Run Example
+## Common Wiring Patterns
 
-```bash
-pixi run -e onnx dl_detector
-```
+- Feed it from a video producer, then inspect detections via `TextViz`, overlays, or handoff into `f8.pyengine` logic.
+- Keep the raw video source available in parallel for side-by-side validation.
 
-### Common Pitfalls
+## Pitfalls / Gotchas
 
-- Model confidence thresholds set too high can hide all detections.
-- Wrong skeleton protocol assumptions break downstream visualizers.
+- Threshold tuning is meaningless until the correct model and input resolution are confirmed.
+- Detection-heavy graphs can look sluggish if inference cost is ignored during release packaging.
 
-### Troubleshooting
-
-- Adjust confidence thresholds incrementally.
-- Confirm `model.skeletonProtocol` in weight YAML matches consumer expectations.

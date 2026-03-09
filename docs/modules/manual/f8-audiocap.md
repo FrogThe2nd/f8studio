@@ -1,20 +1,15 @@
-### Recommended Use Cases
+## When to Use
 
-- Capture microphone or loopback/system audio for downstream analysis.
-- Publish waveform features to visualization or control operators.
+- Use `f8.audiocap` when a graph needs live microphone or loopback audio as its timing and feature source.
+- Keep it near the front of audio-driven graphs so downstream services can share one stable Audio SHM producer.
 
-### Minimal Run Example
+## Common Wiring Patterns
 
-```bash
-build/bin/f8audiocap_service.exe --service-id audiocap --mode capture --backend wasapi
-```
+- Pair it with `f8.audiofeat.core`, `f8.audiofeat.rhythm`, and `f8.viz.audio`.
+- Reuse the same audio SHM name across capture, feature extraction, and visualization branches.
 
-### Common Pitfalls
+## Pitfalls / Gotchas
 
-- Wrong backend/device selection causes silent capture.
-- Loopback capture may require platform-specific permissions.
+- Wrong input device or host API selection looks like a dead graph even when deploy succeeds.
+- Mismatched sample-rate expectations downstream can make feature services look unstable or empty.
 
-### Troubleshooting
-
-- Use `--list-devices` first to identify valid input device IDs.
-- Verify service state fields for sample rate and channel configuration.

@@ -1,20 +1,15 @@
-### Recommended Use Cases
+## When to Use
 
-- Derive tempo and pulse clarity from `coreFeatures` output.
-- Build rungraph controls synced with music beat intensity.
+- Use `f8.audiofeat.rhythm` when beat, onset, or tempo-like cues matter more than raw energy.
+- It complements `f8.audiofeat.core` rather than replacing it.
 
-### Minimal Run Example
+## Common Wiring Patterns
 
-```bash
-pixi run f8pyaudiofeat_rhythm --service-id audiofeat_rhythm
-```
+- Feed the same Audio SHM from `f8.audiocap` into both `core` and `rhythm` services.
+- Visualize rhythm outputs with `TextViz` or map them into `Tick`, `Envelope`, or `Range Map` driven logic.
 
-### Common Pitfalls
+## Pitfalls / Gotchas
 
-- No incoming `coreFeatures` edge means rhythm node stays idle.
-- Too-short `tempoWindowSec` may produce unstable BPM estimates.
+- Rhythm features can look sparse if the source material lacks sharp transients.
+- Users often overfit downstream thresholds before checking whether the input audio itself is strong enough.
 
-### Troubleshooting
-
-- Verify rungraph edge: `f8.audiofeat.core/coreFeatures -> f8.audiofeat.rhythm/coreFeatures`.
-- Increase `tempoWindowSec` when BPM jumps too frequently.

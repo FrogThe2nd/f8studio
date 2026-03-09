@@ -11,7 +11,7 @@ No description.
 ## How to Run
 
 ```bash
-linux/f8audiocap_service
+win/f8audiocap_service.exe
 ```
 
 - Workdir: `./`
@@ -21,19 +21,19 @@ linux/f8audiocap_service
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `audioShmName` | `ro` | `false` | `true` | `string` | Name of the audio shared memory segment |
-| `audioDevice` | `ro` | `false` | `false` | `string` | Name of the audio capture device in use |
-| `audioSampleRate` | `ro` | `false` | `false` | `integer` | Sample rate of the audio capture device |
-| `audioChannels` | `ro` | `false` | `false` | `integer` | Number of audio channels |
-| `audioFormat` | `ro` | `false` | `false` | `string` | Format of the audio data |
-| `audioFramesPerChunk` | `ro` | `false` | `false` | `integer` | Number of audio frames per chunk |
-| `audioChunkCount` | `ro` | `false` | `false` | `integer` | Number of audio chunks |
-| `writeSeq` | `ro` | `false` | `false` | `integer` | Sequence number of the last written audio chunk |
-| `mode` | `rw` | `false` | `false` | `string` | Current mode of the audio capture service |
-| `toneHz` | `rw` | `false` | `false` | `number` | Frequency of the generated tone |
-| `gain` | `rw` | `false` | `false` | `number` | Gain applied to the audio signal |
-| `active` | `rw` | `false` | `true` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
-| `svcId` | `ro` | `false` | `false` | `string` | Readonly: current service instance id (svcId). |
+| `audioShmName` | `ro` | `true` | `true` | `string` | Name of the audio shared memory segment |
+| `audioDevice` | `ro` | `true` | `false` | `string` | Name of the audio capture device in use |
+| `audioSampleRate` | `ro` | `true` | `false` | `integer` | Sample rate of the audio capture device |
+| `audioChannels` | `ro` | `true` | `false` | `integer` | Number of audio channels |
+| `audioFormat` | `ro` | `true` | `false` | `string` | Format of the audio data |
+| `audioFramesPerChunk` | `ro` | `true` | `false` | `integer` | Number of audio frames per chunk |
+| `audioChunkCount` | `ro` | `true` | `false` | `integer` | Number of audio chunks |
+| `writeSeq` | `ro` | `true` | `false` | `integer` | Sequence number of the last written audio chunk |
+| `mode` | `rw` | `true` | `false` | `string` | Current mode of the audio capture service |
+| `toneHz` | `rw` | `true` | `false` | `number` | Frequency of the generated tone |
+| `gain` | `rw` | `true` | `false` | `number` | Gain applied to the audio signal |
+| `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
+| `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 
 ## Service Commands
 
@@ -47,31 +47,44 @@ _None_
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
-| `monitor` | `false` | `true` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
+| `monitor` | `true` | `false` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
 
 ## Operators
 
 _None_
 
-## Usage Guide (Manual)
+## When to Use
 
-### Recommended Use Cases
+- Use `f8.audiocap` when a graph needs live microphone or loopback audio as its timing and feature source.
+- Keep it near the front of audio-driven graphs so downstream services can share one stable Audio SHM producer.
 
-- Capture microphone or loopback/system audio for downstream analysis.
-- Publish waveform features to visualization or control operators.
+## Typical Inputs / Outputs
 
-### Minimal Run Example
+- Data inputs: none
+- Data outputs: `monitor`
+- Commands: none
 
-```bash
-build/bin/f8audiocap_service.exe --service-id audiocap --mode capture --backend wasapi
-```
+## Common Wiring Patterns
 
-### Common Pitfalls
+- Pair it with `f8.audiofeat.core`, `f8.audiofeat.rhythm`, and `f8.viz.audio`.
+- Reuse the same audio SHM name across capture, feature extraction, and visualization branches.
 
-- Wrong backend/device selection causes silent capture.
-- Loopback capture may require platform-specific permissions.
+## Key Fields That Matter
 
-### Troubleshooting
+- `audioShmName` (Audio SHM, `ro`): Name of the audio shared memory segment Schema: `string`.
+- `audioDevice` (Audio Device, `ro`): Name of the audio capture device in use Schema: `string`.
+- `audioSampleRate` (Audio Sample Rate, `ro`): Sample rate of the audio capture device Schema: `integer`.
+- `audioChannels` (Audio Channels, `ro`): Number of audio channels Schema: `integer`.
+- `audioFormat` (Audio Format, `ro`): Format of the audio data Schema: `string`.
+- `audioFramesPerChunk` (Audio Frames Per Chunk, `ro`): Number of audio frames per chunk Schema: `integer`.
+- `audioChunkCount` (Audio Chunk Count, `ro`): Number of audio chunks Schema: `integer`.
+- `writeSeq` (Write Sequence, `ro`): Sequence number of the last written audio chunk Schema: `integer`.
 
-- Use `--list-devices` first to identify valid input device IDs.
-- Verify service state fields for sample rate and channel configuration.
+## Pitfalls / Gotchas
+
+- Wrong input device or host API selection looks like a dead graph even when deploy succeeds.
+- Mismatched sample-rate expectations downstream can make feature services look unstable or empty.
+
+## Related Scenarios
+
+- [Scene 03: Audio Driven TCode](../../scenarios/scene-03-audio_driven.md)
