@@ -1,10 +1,13 @@
 name: dist-windows
 
 on:
+  push:
+    tags:
+      - "v*"
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build-windows-dist:
@@ -31,17 +34,32 @@ jobs:
         run: pixi lock --check
 
       - name: Build runtime distribution
-        run: pixi run --frozen -e ci dist_ci
+        run: pixi run --frozen -e ci dist_ci --archive
 
-      - name: Resolve short SHA
-        id: sha
+      - name: Resolve build version
+        id: version
         shell: pwsh
         run: |
-          $shortSha = $env:GITHUB_SHA.Substring(0, 7)
-          "sha7=$shortSha" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          if ($env:GITHUB_REF_TYPE -eq "tag") {
+            $version = $env:GITHUB_REF_NAME
+          }
+          else {
+            $version = $env:GITHUB_SHA.Substring(0, 7)
+          }
+          "value=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
       - name: Upload Windows dist artifact
         uses: actions/upload-artifact@v4
         with:
-          name: f8studio-windows-${{ steps.sha.outputs.sha7 }}
-          path: build/dist/f8studio-windows-x86_64
+          name: f8studio-windows-${{ steps.version.outputs.value }}
+          path: |
+            build/dist/f8studio-windows-x86_64
+            build/dist/f8studio-windows-x86_64.zip
+
+      - name: Attach archive to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          generate_release_notes: true
+          files: build/dist/f8studio-windows-x86_64.zip
