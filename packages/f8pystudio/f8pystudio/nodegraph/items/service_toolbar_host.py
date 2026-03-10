@@ -151,7 +151,7 @@ def ensure_service_toolbar(node_item: object, viewer: object | None) -> None:
         proxy = QtWidgets.QGraphicsProxyWidget(node_item)  # type: ignore[arg-type]
         proxy.setWidget(widget)
         proxy.setZValue(10_000)
-        proxy.setCacheMode(QtWidgets.QGraphicsItem.DeviceCoordinateCache)
+        proxy.setCacheMode(QtWidgets.QGraphicsItem.NoCache)
         node_item._svc_toolbar_proxy = proxy  # type: ignore[attr-defined]
     except (AttributeError, RuntimeError, TypeError, ValueError):
         node_item._svc_toolbar_proxy = None  # type: ignore[attr-defined]

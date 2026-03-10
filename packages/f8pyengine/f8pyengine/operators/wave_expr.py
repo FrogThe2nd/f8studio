@@ -296,7 +296,7 @@ class WaveExprRuntimeNode(OperatorNode):
             return
 
         try:
-            t_preview = np.linspace(0.0, 1.0, num=_PREVIEW_SAMPLES, endpoint=False, dtype=np.float64)
+            t_preview = np.linspace(0.0, float(self._max_t), num=_PREVIEW_SAMPLES, endpoint=False, dtype=np.float64)
             preview_raw = eval_compiled(
                 compiled,
                 t=t_preview,
@@ -395,7 +395,7 @@ WaveExprRuntimeNode.SPEC = F8OperatorSpec(
     operatorClass=OPERATOR_CLASS,
     version="0.0.1",
     label="Wave Expr",
-    description="Template-based waveform expression with scalar t input and live one-cycle preview.",
+    description="Template-based waveform expression with scalar t input and live 0..maxT preview.",
     tags=["expr", "wave", "template", "signal"],
     dataInPorts=[
         F8DataPortSpec(
@@ -467,7 +467,7 @@ WaveExprRuntimeNode.SPEC = F8OperatorSpec(
         F8StateSpec(
             name="previewCycle",
             label="Preview Cycle",
-            description="Internal one-cycle preview samples.",
+            description="Internal preview samples over t in [0, maxT).",
             valueSchema={"type": "array", "items": {"type": "number"}, "default": []},
             access=F8StateAccess.ro,
             required=True,

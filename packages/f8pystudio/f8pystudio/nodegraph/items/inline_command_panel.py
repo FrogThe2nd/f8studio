@@ -540,7 +540,7 @@ def ensure_inline_command_widget(node_item: Any) -> None:
     if node_item._cmd_proxy is None:
         proxy = QtWidgets.QGraphicsProxyWidget(node_item)
         proxy.setWidget(widget)
-        proxy.setCacheMode(QtWidgets.QGraphicsItem.DeviceCoordinateCache)
+        proxy.setCacheMode(QtWidgets.QGraphicsItem.NoCache)
         node_item._cmd_proxy = proxy
     else:
         old = None

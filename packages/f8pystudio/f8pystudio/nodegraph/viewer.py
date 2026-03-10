@@ -48,7 +48,17 @@ class F8StudioNodeViewer(NodeViewer):
 
     def __init__(self, parent=None, undo_stack=None):
         super().__init__(parent=parent, undo_stack=undo_stack)
+        # Stability-first: force full viewport updates for embedded proxy
+        # editors (caret/selection refresh).
+        self.setViewportUpdateMode(QtWidgets.QGraphicsView.FullViewportUpdate)
+        self.setCacheMode(QtWidgets.QGraphicsView.CacheNone)
+        self.setOptimizationFlags(QtWidgets.QGraphicsView.OptimizationFlags())
+        self._ensure_cursor_flash_enabled()
         self.setFocusPolicy(QtCore.Qt.StrongFocus)
+        self._inline_editor_refresh_timer = QtCore.QTimer(self)
+        self._inline_editor_refresh_timer.setInterval(250)
+        self._inline_editor_refresh_timer.timeout.connect(self._tick_inline_editor_refresh)  # type: ignore[arg-type]
+        self._inline_editor_refresh_timer.start()
         self._f8_graph: Any | None = None
         # NOTE: NodeGraphQt's NodeViewer already uses internal attributes like
         # `MMB_state`, `_origin_pos`, `_previous_pos` for selection, tab-search,
@@ -79,6 +89,37 @@ class F8StudioNodeViewer(NodeViewer):
         self._shortcut_backspace = QtWidgets.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key_Backspace), self)
         self._shortcut_backspace.setContext(QtCore.Qt.WidgetShortcut)
         self._shortcut_backspace.activated.connect(self._delete_selected_nodes)  # type: ignore[attr-defined]
+
+    @staticmethod
+    def _ensure_cursor_flash_enabled() -> None:
+        app = QtWidgets.QApplication.instance()
+        if app is None:
+            return
+        try:
+            flash_ms = int(app.cursorFlashTime())
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return
+        if flash_ms > 0:
+            return
+        try:
+            app.setCursorFlashTime(1000)
+        except (AttributeError, RuntimeError, TypeError):
+            return
+
+    def _tick_inline_editor_refresh(self) -> None:
+        if not self.isVisible():
+            return
+        window = self.window()
+        if window is not None:
+            try:
+                if not window.isActiveWindow():
+                    return
+            except (AttributeError, RuntimeError, TypeError):
+                return
+        try:
+            self.viewport().update()
+        except (AttributeError, RuntimeError, TypeError):
+            return
 
     @property
     def f8_graph(self) -> Any | None:
@@ -485,7 +526,6 @@ class F8StudioNodeViewer(NodeViewer):
             return
 
     def mousePressEvent(self, event):
-        self.setFocus()
         if self.is_graph_placement_active():
             if event.button() == QtCore.Qt.RightButton:
                 self.cancel_graph_placement()

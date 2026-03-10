@@ -4,6 +4,7 @@ import json
 import logging
 from typing import Any
 
+import numpy as np
 from qtpy import QtCore, QtGui, QtWidgets
 
 from f8pysdk.schema_helpers import schema_type
@@ -21,16 +22,60 @@ from ...widgets.editor_controls import (
     parse_select_pool,
 )
 from ...widgets.state_controls.pool_resolver import resolve_pool_items
-from ...widgets.property_value_widgets import F8NumberPropLineEdit, open_code_editor_window
+from ...widgets.property_value_widgets import open_code_editor_window
 from .node_item_core import StateFieldInfo, state_field_info
 from .proxy_widget_utils import dispose_detached_proxy_widget
 from .service_toolbar_host import F8ElideToolButton, F8ForceGlobalToolTipFilter
 
 logger = logging.getLogger(__name__)
 
+try:
+    import pyqtgraph as pg  # type: ignore[import-not-found]
+except ModuleNotFoundError:
+    pg = None  # type: ignore[assignment]
+
 
 def _dispose_proxy_widget(widget: QtWidgets.QWidget | None) -> None:
     dispose_detached_proxy_widget(widget, context="inline_state")
+
+
+def _request_inline_repaint(node_item: Any) -> None:
+    """
+    Schedule inline-control repaint without forcing synchronous redraw churn.
+    Keeps editor caret blinking smooth while still updating node visuals.
+    """
+    try:
+        node_item._schedule_deferred_draw_node()
+    except (AttributeError, RuntimeError, TypeError):
+        try:
+            node_item.draw_node()
+        except (AttributeError, RuntimeError, TypeError):
+            pass
+
+    def _update_scene() -> None:
+        try:
+            scene = node_item.scene()
+        except (AttributeError, RuntimeError, TypeError):
+            scene = None
+        if scene is not None:
+            try:
+                scene.update()
+            except (AttributeError, RuntimeError, TypeError):
+                pass
+        try:
+            viewer = node_item.viewer()
+        except (AttributeError, RuntimeError, TypeError):
+            viewer = None
+        if viewer is not None:
+            try:
+                viewer.viewport().update()
+            except (AttributeError, RuntimeError, TypeError):
+                pass
+
+    try:
+        QtCore.QTimer.singleShot(0, _update_scene)
+    except (RuntimeError, TypeError):
+        _update_scene()
 
 
 def _editor_assist_context(node_item: Any, *, state_field_name: str) -> EditorAssistContext | None:
@@ -85,6 +130,16 @@ def set_inline_state_control_read_only(control: QtWidgets.QWidget, *, read_only:
     if isinstance(control, QtWidgets.QPlainTextEdit):
         control.setEnabled(True)
         control.setReadOnly(bool(read_only))
+        try:
+            if read_only:
+                control.setTextInteractionFlags(
+                    QtCore.Qt.TextInteractionFlag.TextSelectableByMouse
+                    | QtCore.Qt.TextInteractionFlag.TextSelectableByKeyboard
+                )
+            else:
+                control.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextEditorInteraction)
+        except (AttributeError, RuntimeError, TypeError):
+            pass
         return
     if isinstance(control, QtWidgets.QTextEdit):
         control.setEnabled(True)
@@ -139,18 +194,45 @@ def on_graph_property_changed(node_item: Any, node: Any, name: str, value: Any) 
     key = str(name or "").strip()
     if not key:
         return
+    preview_updater = None
+    if key in {"previewCycle", "minValue", "maxValue", "maxT"}:
+        preview_updater = node_item._state_inline_updaters.get("express")
+
     updater = node_item._state_inline_updaters.get(key)
-    if not updater:
-        refresh_option_pool_for_changed_field(node_item, key)
-        return
-    try:
-        updater(value)
-    except Exception:
+    if updater:
         try:
-            node_id = str(node_item.id or "")
+            updater(value)
         except Exception:
-            node_id = ""
-        logger.exception("inline state updater failed nodeId=%s key=%s", node_id, key)
+            try:
+                node_id = str(node_item.id or "")
+            except Exception:
+                node_id = ""
+            logger.exception("inline state updater failed nodeId=%s key=%s", node_id, key)
+
+    if preview_updater is not None and preview_updater is not updater:
+        try:
+            express_value = node.get_property("express")
+        except Exception:
+            express_value = None
+        try:
+            preview_updater(express_value)
+        except Exception:
+            try:
+                node_id = str(node_item.id or "")
+            except Exception:
+                node_id = ""
+            logger.exception("inline wave preview updater failed nodeId=%s key=%s", node_id, key)
+
+    should_repaint = updater is not None or preview_updater is not None
+    if should_repaint:
+        ctrl = node_item._state_inline_controls.get(key)
+        if isinstance(ctrl, (QtWidgets.QLineEdit, QtWidgets.QPlainTextEdit, QtWidgets.QTextEdit)) and ctrl.hasFocus():
+            # Avoid repaint churn while actively typing; external fields (e.g. preview)
+            # still trigger redraw through their own property updates.
+            should_repaint = False
+    if should_repaint:
+        _request_inline_repaint(node_item)
+
     refresh_option_pool_for_changed_field(node_item, key)
 
 
@@ -271,6 +353,7 @@ def make_state_inline_control(
                 border: 1px solid rgba(255, 255, 255, 55);
                 border-radius: 3px;
                 padding: 1px 4px;
+                selection-color: rgb(255, 255, 255);
             }
             QPlainTextEdit, QTextEdit {
                 selection-background-color: rgb(80, 130, 180);
@@ -293,6 +376,14 @@ def make_state_inline_control(
             """
         )
 
+    def _apply_text_palette(widget: QtWidgets.QWidget) -> None:
+        palette = widget.palette()
+        palette.setColor(QtGui.QPalette.ColorRole.Base, QtGui.QColor(26, 26, 26))
+        palette.setColor(QtGui.QPalette.ColorRole.Text, QtGui.QColor(235, 235, 235))
+        palette.setColor(QtGui.QPalette.ColorRole.Highlight, QtGui.QColor(80, 130, 180))
+        palette.setColor(QtGui.QPalette.ColorRole.HighlightedText, QtGui.QColor(255, 255, 255))
+        widget.setPalette(palette)
+
     def _set_node_value(value: Any, *, push_undo: bool) -> None:
         node = node_item._backend_node()
         if node is None or not name:
@@ -302,14 +393,19 @@ def make_state_inline_control(
         except TypeError:
             node.set_property(name, value)
 
-    def _get_node_value() -> Any:
+    def _get_node_property(prop_name: str) -> Any:
         node = node_item._backend_node()
-        if node is None or not name:
+        if node is None:
             return None
         try:
-            return node.get_property(name)
+            return node.get_property(prop_name)
         except KeyError:
             return None
+
+    def _get_node_value() -> Any:
+        if not name:
+            return None
+        return _get_node_property(name)
 
     def _pool_items(pool_field: str | None) -> list[str]:
         if not pool_field:
@@ -325,6 +421,124 @@ def make_state_inline_control(
 
     # Create control.
     read_only = access_s == "ro" or node_item._inline_state_input_is_connected(name)
+
+    if ui in {"wave_expr_preview"}:
+        container = QtWidgets.QWidget(parent)
+        root = QtWidgets.QVBoxLayout(container)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(2)
+
+        expr_text = QtWidgets.QLabel("")
+        expr_text.setObjectName("wave_expr_text")
+        expr_text.setTextInteractionFlags(
+            QtCore.Qt.TextInteractionFlag.TextSelectableByMouse
+            | QtCore.Qt.TextInteractionFlag.TextSelectableByKeyboard
+        )
+        expr_text.setStyleSheet("color: rgb(200, 210, 220);")
+        expr_text.setWordWrap(False)
+        expr_text.setMaximumHeight(20)
+        root.addWidget(expr_text)
+
+        empty = QtWidgets.QLabel("No preview data")
+        empty.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        empty.setStyleSheet("color: rgb(185, 185, 185);")
+
+        plot_widget: Any = None
+        curve_item: Any = None
+        if pg is not None:
+            plot_widget = pg.PlotWidget()
+            plot_widget.setBackground((16, 16, 16))
+            try:
+                plot_widget.hideAxis("bottom")
+                plot_widget.hideAxis("left")
+            except (AttributeError, RuntimeError, TypeError):
+                pass
+            curve_item = plot_widget.plot([], [], pen=pg.mkPen((120, 210, 255), width=2))
+            plot_widget.setMinimumWidth(0)
+            plot_widget.setMinimumHeight(40)
+            plot_widget.setMaximumHeight(50)
+            plot_widget.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+            root.addWidget(plot_widget)
+        else:
+            root.addWidget(empty)
+
+        container.setMinimumWidth(0)
+        container.setMaximumHeight(80)
+        container.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+        container.setObjectName(f"inline_state:{name}:container")
+        if field_tooltip:
+            container.setToolTip(field_tooltip)
+
+        def _normalize_preview(raw_value: Any) -> list[float]:
+            if not isinstance(raw_value, list):
+                return []
+            out: list[float] = []
+            for item in raw_value:
+                try:
+                    out.append(float(item))
+                except (TypeError, ValueError):
+                    continue
+            return out
+
+        def _preview_y_range() -> tuple[float, float] | None:
+            min_raw = _get_node_property("minValue")
+            max_raw = _get_node_property("maxValue")
+            if min_raw is None or max_raw is None:
+                return None
+            try:
+                lo = float(min_raw)
+                hi = float(max_raw)
+            except (TypeError, ValueError):
+                return None
+            if not np.isfinite(lo) or not np.isfinite(hi) or lo >= hi:
+                return None
+            return lo, hi
+
+        def _preview_x_max() -> float:
+            raw = _get_node_property("maxT")
+            try:
+                value = float(raw)
+            except (TypeError, ValueError):
+                return 1.0
+            if not np.isfinite(value) or value <= 0.0:
+                return 1.0
+            return float(value)
+
+        def _apply_value(value: Any) -> None:
+            expr_text.setText("" if value is None else str(value))
+            preview_raw = _get_node_property("previewCycle")
+            points = _normalize_preview(preview_raw)
+            if pg is None or plot_widget is None or curve_item is None:
+                if points:
+                    empty.setText(f"{len(points)} samples")
+                else:
+                    empty.setText("No preview data")
+                return
+
+            if not points:
+                curve_item.setData([], [])
+                return
+
+            x_max = _preview_x_max()
+            xs = np.linspace(0.0, x_max, num=len(points), endpoint=False, dtype=np.float64)
+            ys = np.asarray(points, dtype=np.float64)
+            curve_item.setData(xs, ys)
+            try:
+                plot_widget.setXRange(0.0, x_max, padding=0.0)
+                y_range = _preview_y_range()
+                if y_range is None:
+                    plot_widget.enableAutoRange(axis="y", enable=True)
+                else:
+                    plot_widget.enableAutoRange(axis="y", enable=False)
+                    plot_widget.setYRange(y_range[0], y_range[1], padding=0.0)
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                pass
+            plot_widget.update()
+            container.update()
+
+        _apply_value(_get_node_value())
+        node_item._state_inline_updaters[name] = _apply_value
+        return container
 
     if ui in {"wrapline"}:
 
@@ -342,7 +556,8 @@ def make_state_inline_control(
 
             def focusInEvent(self, event):  # type: ignore[override]
                 super().focusInEvent(event)
-                self._prev = str(self.toPlainText() or "")
+                txt = self._normalize(str(self.toPlainText() or ""))
+                self._prev = txt
 
             def focusOutEvent(self, event):  # type: ignore[override]
                 super().focusOutEvent(event)
@@ -379,7 +594,10 @@ def make_state_inline_control(
                 return
 
         edit = _InlineWrapLineEdit(parent)
+        edit.setObjectName(f"inline_state:{name}:wrapline")
         edit.setLineWrapMode(QtWidgets.QPlainTextEdit.LineWrapMode.WidgetWidth)
+        edit.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextEditorInteraction)
+        edit.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
         edit.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         edit.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         edit.setTabStopDistance(4 * edit.fontMetrics().horizontalAdvance(" "))
@@ -393,13 +611,18 @@ def make_state_inline_control(
         edit.setMinimumHeight(38)
         edit.setMaximumHeight(64)
         _common_style(edit)
+        _apply_text_palette(edit)
+        edit.setCursorWidth(2)
         edit.document().setDocumentMargin(4.0)
         if field_tooltip:
             edit.setToolTip(field_tooltip)
-
         def _apply_value(value: Any) -> None:
             text = "" if value is None else str(value)
             text_normalized = _InlineWrapLineEdit._normalize(text)
+            if edit.hasFocus():
+                current_text = _InlineWrapLineEdit._normalize(str(edit.toPlainText() or ""))
+                if current_text == text_normalized:
+                    return
             with QtCore.QSignalBlocker(edit):
                 edit.setPlainText(text_normalized)
             try:
@@ -445,6 +668,8 @@ def make_state_inline_control(
 
         edit = _InlineExprEdit(parent)
         edit.setLineWrapMode(QtWidgets.QPlainTextEdit.LineWrapMode.WidgetWidth)
+        edit.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextEditorInteraction)
+        edit.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
         edit.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         edit.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         edit.setTabStopDistance(4 * edit.fontMetrics().horizontalAdvance(" "))
@@ -457,6 +682,7 @@ def make_state_inline_control(
         edit.setMinimumHeight(44)
         edit.setMaximumHeight(88)
         _common_style(edit)
+        _apply_text_palette(edit)
         edit.document().setDocumentMargin(4.0)
         if field_tooltip:
             edit.setToolTip(field_tooltip)
@@ -654,69 +880,143 @@ def make_state_inline_control(
         return bar
 
     if schema_type_value == "integer" or ui in {"spinbox", "int"}:
-        line = F8NumberPropLineEdit(parent, data_type=int)
-        line.set_name(name)
-        _common_style(line)
+        line = QtWidgets.QLineEdit(parent)
+        line.setObjectName(f"inline_state:{name}:int")
         line.setMinimumWidth(90)
-        if lo is not None:
-            line.set_min(int(lo))
-        if hi is not None:
-            line.set_max(int(hi))
+        line.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
+        _common_style(line)
+        _apply_text_palette(line)
         if field_tooltip:
             line.setToolTip(field_tooltip)
+        prev_text = ""
 
         def _apply_value(value: Any) -> None:
-            line.set_value(value)
+            nonlocal prev_text
+            text = "" if value is None else str(int(value))
+            if line.hasFocus():
+                return
+            with QtCore.QSignalBlocker(line):
+                line.setText(text)
+            prev_text = text
+
+        def _commit() -> None:
+            nonlocal prev_text
+            raw = str(line.text() or "").strip()
+            if raw == "":
+                if prev_text != "":
+                    prev_text = ""
+                    _set_node_value(None, push_undo=True)
+                return
+            try:
+                number = int(round(float(raw)))
+            except ValueError:
+                with QtCore.QSignalBlocker(line):
+                    line.setText(prev_text)
+                return
+            if lo is not None:
+                number = max(number, int(lo))
+            if hi is not None:
+                number = min(number, int(hi))
+            text = str(number)
+            with QtCore.QSignalBlocker(line):
+                line.setText(text)
+            if text != prev_text:
+                prev_text = text
+                _set_node_value(number, push_undo=True)
 
         _apply_value(_get_node_value())
         node_item._state_inline_updaters[name] = _apply_value
         if read_only:
             line.setReadOnly(True)
         else:
-            line.value_changing.connect(lambda _field_name, value: _set_node_value(value, push_undo=False))  # type: ignore[attr-defined]
-            line.value_changed.connect(lambda _field_name, value: _set_node_value(value, push_undo=True))  # type: ignore[attr-defined]
+            line.editingFinished.connect(_commit)
         return line
 
     if schema_type_value == "number" or ui in {"doublespinbox", "float"}:
-        line = F8NumberPropLineEdit(parent, data_type=float)
-        line.set_name(name)
-        _common_style(line)
+        line = QtWidgets.QLineEdit(parent)
+        line.setObjectName(f"inline_state:{name}:float")
         line.setMinimumWidth(90)
-        if lo is not None:
-            line.set_min(float(lo))
-        if hi is not None:
-            line.set_max(float(hi))
+        line.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
+        _common_style(line)
+        _apply_text_palette(line)
         if field_tooltip:
             line.setToolTip(field_tooltip)
+        prev_text = ""
 
         def _apply_value(value: Any) -> None:
-            line.set_value(value)
+            nonlocal prev_text
+            text = "" if value is None else str(float(value))
+            if line.hasFocus():
+                return
+            with QtCore.QSignalBlocker(line):
+                line.setText(text)
+            prev_text = text
+
+        def _commit() -> None:
+            nonlocal prev_text
+            raw = str(line.text() or "").strip()
+            if raw == "":
+                if prev_text != "":
+                    prev_text = ""
+                    _set_node_value(None, push_undo=True)
+                return
+            try:
+                number = float(raw)
+            except ValueError:
+                with QtCore.QSignalBlocker(line):
+                    line.setText(prev_text)
+                return
+            if lo is not None:
+                number = max(number, float(lo))
+            if hi is not None:
+                number = min(number, float(hi))
+            text = str(number)
+            with QtCore.QSignalBlocker(line):
+                line.setText(text)
+            if text != prev_text:
+                prev_text = text
+                _set_node_value(number, push_undo=True)
 
         _apply_value(_get_node_value())
         node_item._state_inline_updaters[name] = _apply_value
         if read_only:
             line.setReadOnly(True)
         else:
-            line.value_changing.connect(lambda _field_name, value: _set_node_value(value, push_undo=False))  # type: ignore[attr-defined]
-            line.value_changed.connect(lambda _field_name, value: _set_node_value(value, push_undo=True))  # type: ignore[attr-defined]
+            line.editingFinished.connect(_commit)
         return line
 
     # default: text input.
     line = QtWidgets.QLineEdit(parent)
+    line.setObjectName(f"inline_state:{name}:text")
     line.setMinimumWidth(90)
+    line.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
     _common_style(line)
+    _apply_text_palette(line)
+    line_prev = str(_get_node_value() or "")
 
     def _apply_value(value: Any) -> None:
+        nonlocal line_prev
         text = "" if value is None else str(value)
+        if line.hasFocus() and str(line.text() or "") == text:
+            return
+        if line.hasFocus():
+            return
         with QtCore.QSignalBlocker(line):
             line.setText(text)
+        line_prev = text
 
     _apply_value(_get_node_value())
     node_item._state_inline_updaters[name] = _apply_value
     if read_only:
         line.setReadOnly(True)
     else:
-        line.editingFinished.connect(lambda: _set_node_value(line.text(), push_undo=True))
+        def _commit_line_edit() -> None:
+            nonlocal line_prev
+            text = str(line.text() or "")
+            if text != line_prev:
+                line_prev = text
+                _set_node_value(text, push_undo=True)
+        line.editingFinished.connect(_commit_line_edit)
     return line
 
 
@@ -869,9 +1169,15 @@ def ensure_inline_state_widgets(node_item: Any) -> bool:
         proxy = node_item._state_inline_proxies.get(name)
         if proxy is None:
             proxy = QtWidgets.QGraphicsProxyWidget(node_item)
-            proxy.setCacheMode(QtWidgets.QGraphicsItem.DeviceCoordinateCache)
             node_item._state_inline_proxies[name] = proxy
             layout_dirty = True
+        try:
+            proxy.setCacheMode(QtWidgets.QGraphicsItem.NoCache)
+            proxy.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
+            proxy.setFlag(QtWidgets.QGraphicsItem.ItemIsFocusable, True)
+            proxy.setAcceptHoverEvents(True)
+        except (AttributeError, RuntimeError, TypeError):
+            pass
         old = None
         try:
             old = proxy.widget()
@@ -885,6 +1191,7 @@ def ensure_inline_state_widgets(node_item: Any) -> bool:
         panel_lay.setSpacing(0)
         panel.setProperty("_f8_state_panel", True)
         panel.setAttribute(QtCore.Qt.WA_StyledBackground, True)
+        panel.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
         panel.setStyleSheet("background: transparent;")
         proxy.setWidget(panel)
         layout_dirty = True

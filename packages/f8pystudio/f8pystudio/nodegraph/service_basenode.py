@@ -232,6 +232,9 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
 
     def __init__(self, name="node", parent=None):
         super(F8StudioServiceNodeItem, self).__init__(name, parent)
+        # NodeGraphQt item caching can freeze embedded editor caret/selection
+        # (refresh only on zoom/pan). Disable cache for interactive node editing.
+        self.setCacheMode(QtWidgets.QGraphicsItem.NoCache)
         self.setFlag(QtWidgets.QGraphicsItem.ItemSendsGeometryChanges, True)
         self.setFlag(QtWidgets.QGraphicsItem.ItemSendsScenePositionChanges, True)
 
@@ -1657,6 +1660,15 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         Decide whether to draw the node with proxy mode.
         (this is called at the start in the "self.paint()" function.)
         """
+        # Inline state editors rely on live QWidget painting (caret blink,
+        # selection, IME updates). NodeGraphQt proxy mode swaps them out at
+        # low zoom, which can leave stale editor visuals after zoom roundtrips.
+        # Keep proxy mode disabled for nodes that have inline state controls.
+        if self._has_inline_state_controls():
+            if self._proxy_mode:
+                self.set_proxy_mode(False)
+            return
+
         if ITEM_CACHE_MODE is QtWidgets.QGraphicsItem.ItemCoordinateCache:
             return
 
@@ -1680,6 +1692,8 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         Args:
             mode (bool): true to enable proxy mode.
         """
+        if bool(mode) and self._has_inline_state_controls():
+            mode = False
         if mode is self._proxy_mode:
             return
         self._proxy_mode = mode
@@ -1729,6 +1743,26 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
 
         self._text_item.setVisible(visible)
         self._icon_item.setVisible(visible)
+
+    def _has_inline_state_controls(self) -> bool:
+        if bool(self._state_inline_proxies):
+            return True
+        node = self._backend_node()
+        if node is None:
+            return False
+        try:
+            fields = list(node.effective_state_fields() or [])
+        except Exception:
+            try:
+                spec = node.spec
+                fields = list(spec.stateFields or []) if spec is not None else []
+            except Exception:
+                fields = []
+        for field in fields:
+            info = _state_field_info(field)
+            if info is not None and info.show_on_node:
+                return True
+        return False
 
     @property
     def icon(self):

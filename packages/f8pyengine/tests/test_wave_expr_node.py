@@ -272,7 +272,7 @@ class WaveExprNodeTests(unittest.IsolatedAsyncioTestCase):
         output = await runtime.compute_output("value", ctx_id=5)
         self.assertEqual(output, 3.0)
 
-    async def test_preview_cycle_uses_single_period_domain(self) -> None:
+    async def test_preview_cycle_uses_zero_to_max_t_domain(self) -> None:
         bus = self._setup_bus(service_id="svcA")
         graph = F8RuntimeGraph(
             graphId="g5",
@@ -281,7 +281,7 @@ class WaveExprNodeTests(unittest.IsolatedAsyncioTestCase):
                 _build_wave_expr_runtime_node(
                     node_id="w1",
                     service_id="svcA",
-                    template="cond(t > 0.5, 1, 2)",
+                    template="cond(t > 5.0, 1, 2)",
                     max_t=10.0,
                 )
             ],
