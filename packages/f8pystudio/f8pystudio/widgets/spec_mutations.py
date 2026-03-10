@@ -131,10 +131,11 @@ def set_ports(
         existing: list[F8DataPortSpec],
         requested: list[F8DataPortSpec],
     ) -> list[F8DataPortSpec]:
-        # Keep required ports stable at the front (existing order), while preserving
-        # requested order for the editable portion (rename/reorder UX).
         requested_by_name: dict[str, F8DataPortSpec] = {}
         requested_order: list[str] = []
+        out: list[F8DataPortSpec] = []
+        consumed: set[str] = set()
+
         for port in requested:
             name = _port_name(port)
             if not name:
@@ -143,29 +144,27 @@ def set_ports(
                 requested_order.append(name)
             requested_by_name[name] = port
 
-        out: list[F8DataPortSpec] = []
-        seen: set[str] = set()
-        existing_required_names: set[str] = set()
-
         for port in existing:
             name = _port_name(port)
             if not name:
                 continue
-            if not bool(port.required):
+            requested_port = requested_by_name.get(name)
+            if requested_port is not None:
+                out.append(requested_port)
+                consumed.add(name)
                 continue
-            existing_required_names.add(name)
-            chosen = requested_by_name.get(name, port)
-            out.append(chosen)
-            seen.add(name)
+            if bool(port.required):
+                out.append(port)
+                consumed.add(name)
 
         for name in requested_order:
+            if name in consumed:
+                continue
             requested_port = requested_by_name.get(name)
             if requested_port is None:
                 continue
-            if name in existing_required_names:
-                continue
             out.append(requested_port)
-            seen.add(name)
+            consumed.add(name)
 
         return out
 

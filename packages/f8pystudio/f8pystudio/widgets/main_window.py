@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any, Iterable
 
 from qtpy import QtCore, QtGui, QtWidgets
@@ -44,101 +43,6 @@ from .main_window_prefs import (
 logger = logging.getLogger(__name__)
 
 
-class _WindowFlashTraceFilter(QtCore.QObject):
-    """
-    Runtime tracer for transient top-level windows that may flash during graph
-    load / node switch.
-    """
-
-    def __init__(self, *, main_window: QtWidgets.QMainWindow, parent: QtCore.QObject | None = None) -> None:
-        super().__init__(parent)
-        self._main_window = main_window
-
-    def eventFilter(self, watched: QtCore.QObject, event: QtCore.QEvent) -> bool:  # type: ignore[override]
-        event_type = event.type()
-        if event_type not in (QtCore.QEvent.Type.Show, QtCore.QEvent.Type.Hide):
-            return super().eventFilter(watched, event)
-        phase = "SHOW" if event_type == QtCore.QEvent.Type.Show else "HIDE"
-        if isinstance(watched, QtWidgets.QWidget):
-            widget = watched
-            if not widget.isWindow():
-                return super().eventFilter(watched, event)
-            if widget is self._main_window:
-                return super().eventFilter(watched, event)
-            if isinstance(widget, QtWidgets.QMenu):
-                return super().eventFilter(watched, event)
-
-            flags = widget.windowFlags()
-            geom = widget.frameGeometry()
-            width = int(geom.width())
-            height = int(geom.height())
-            title = str(widget.windowTitle() or "")
-            class_name = str(widget.metaObject().className() or widget.__class__.__name__)
-            parent_widget = widget.parentWidget()
-            parent_class = (
-                str(parent_widget.metaObject().className() or parent_widget.__class__.__name__)
-                if parent_widget is not None
-                else "None"
-            )
-
-            is_suspicious = bool((width <= 520 and height <= 260) or not title.strip())
-            if is_suspicious:
-                logger.warning(
-                    "[WindowTrace] %s QWidget class=%s title=%r size=%dx%d pos=(%d,%d) flags=0x%x parent=%s object=%s",
-                    phase,
-                    class_name,
-                    title,
-                    width,
-                    height,
-                    int(geom.x()),
-                    int(geom.y()),
-                    int(flags),
-                    parent_class,
-                    hex(id(widget)),
-                )
-            return super().eventFilter(watched, event)
-
-        if isinstance(watched, QtGui.QWindow):
-            window = watched
-            main_window_handle = self._main_window.windowHandle()
-            if main_window_handle is not None and window is main_window_handle:
-                return super().eventFilter(watched, event)
-            try:
-                parent_window = window.parent()
-            except (AttributeError, RuntimeError, TypeError):
-                parent_window = None
-            if parent_window is not None:
-                return super().eventFilter(watched, event)
-
-            try:
-                flags = int(window.flags())
-            except (AttributeError, RuntimeError, TypeError):
-                flags = 0
-            geom = window.geometry()
-            width = int(geom.width())
-            height = int(geom.height())
-            title = str(window.title() or "")
-            class_name = str(window.metaObject().className() or window.__class__.__name__)
-            parent_class = parent_window.__class__.__name__ if parent_window is not None else "None"
-
-            is_suspicious = bool((width <= 520 and height <= 260) or not title.strip())
-            if is_suspicious:
-                logger.warning(
-                    "[WindowTrace] %s QWindow class=%s title=%r size=%dx%d pos=(%d,%d) flags=0x%x parent=%s object=%s",
-                    phase,
-                    class_name,
-                    title,
-                    width,
-                    height,
-                    int(geom.x()),
-                    int(geom.y()),
-                    flags,
-                    parent_class,
-                    hex(id(window)),
-                )
-        return super().eventFilter(watched, event)
-
-
 class F8StudioMainWin(QtWidgets.QMainWindow):
     _WINDOW_LAYOUT_SETTINGS_ORGANIZATION = "Feel8"
     _WINDOW_LAYOUT_SETTINGS_APPLICATION = "F8PyStudio"
@@ -179,8 +83,6 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
 
     def __init__(self, node_classes: Iterable[type], parent=None):
         super().__init__(parent)
-        self._window_flash_trace_filter: _WindowFlashTraceFilter | None = None
-        self._install_window_flash_trace_filter()
         self.setWindowTitle("F8PyStudio")
         self.resize(1920, 980)
 
@@ -252,17 +154,6 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
 
         QtCore.QTimer.singleShot(0, self._auto_load_session)
         QtWidgets.QApplication.instance().aboutToQuit.connect(self._auto_save_session)  # type: ignore[attr-defined]
-
-    def _install_window_flash_trace_filter(self) -> None:
-        raw = str(os.environ.get("F8_STUDIO_TRACE_WINDOW_FLASH", "0") or "").strip().lower()
-        if raw in {"0", "false", "off", "no"}:
-            return
-        app = QtWidgets.QApplication.instance()
-        if app is None:
-            return
-        self._window_flash_trace_filter = _WindowFlashTraceFilter(main_window=self, parent=self)
-        app.installEventFilter(self._window_flash_trace_filter)
-        logger.warning("[WindowTrace] top-level window trace enabled via F8_STUDIO_TRACE_WINDOW_FLASH")
 
     @QtCore.Slot(str, str)
     def _on_service_output(self, service_id: str, line: str) -> None:
@@ -787,8 +678,7 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         try:
             if isinstance(node, UiCommandApplier):
                 node.apply_ui_command(cmd)
-        except Exception as exc:
-            self._log_dock.report_exception("studio", f"apply_ui_command failed nodeId={node_id}", exc)
+        except (AttributeError, RuntimeError, TypeError, ValueError):
             return
 
     def _on_ui_property_changed(self, node: Any, name: str, value: Any) -> None:

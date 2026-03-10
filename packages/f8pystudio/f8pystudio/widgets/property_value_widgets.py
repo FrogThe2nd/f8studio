@@ -1179,7 +1179,7 @@ class F8CodePropWidget(QtWidgets.QWidget):
         self._preview.setReadOnly(True)
         self._preview.setClearButtonEnabled(False)
 
-        self._btn = QtWidgets.QPushButton("Edit...", self)
+        self._btn = QtWidgets.QPushButton("Edit...")
         self._btn.clicked.connect(self._on_edit_clicked)
 
         layout = QtWidgets.QHBoxLayout(self)
@@ -1266,7 +1266,7 @@ class F8CodeButtonPropWidget(QtWidgets.QWidget):
         self._assist_context_provider: Callable[[], EditorAssistContext | None] | None = None
         self._editor_window: QtWidgets.QDialog | None = None
 
-        self._btn = QtWidgets.QPushButton("Edit...", self)
+        self._btn = QtWidgets.QPushButton("Edit...")
         self._btn.setIcon(icon_for(self._btn, StudioIcon.CODE))
         self._btn.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred)
         self._btn.clicked.connect(self._on_edit_clicked)  # type: ignore[attr-defined]

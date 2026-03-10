@@ -271,8 +271,6 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         self._svc_toolbar_proxy: QtWidgets.QGraphicsProxyWidget | None = None
         self._ports_end_y: float | None = None
         self._open_code_editors: list[QtWidgets.QDialog] = []
-        self._deferred_layout_pending: bool = False
-        self._in_draw_node: bool = False
 
     def _backend_node(self) -> Any | None:
         return _backend_node_impl(self)
@@ -392,82 +390,11 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
     def _on_port_right_click(self, port: Any, screen_pos: QtCore.QPoint) -> None:
         _on_port_right_click_impl(self, port, screen_pos)
 
-    def _make_state_inline_control(
-        self,
-        state_field: _StateFieldInfo,
-        *,
-        parent: QtWidgets.QWidget | None = None,
-    ) -> QtWidgets.QWidget:
-        return _make_state_inline_control_impl(self, state_field, parent=parent)
+    def _make_state_inline_control(self, state_field: _StateFieldInfo) -> QtWidgets.QWidget:
+        return _make_state_inline_control_impl(self, state_field)
 
-    def _ensure_inline_state_widgets(self) -> bool:
-        return bool(_ensure_inline_state_widgets_impl(self))
-
-    def _schedule_deferred_draw_node(self) -> None:
-        if self._deferred_layout_pending:
-            return
-        self._deferred_layout_pending = True
-
-        def _run() -> None:
-            self._deferred_layout_pending = False
-            if self._in_draw_node:
-                self._schedule_deferred_draw_node()
-                return
-            try:
-                self.draw_node()
-            except Exception:
-                logger.exception("Deferred draw_node failed for node item id=%s", str(self.id or ""))
-
-        try:
-            QtCore.QTimer.singleShot(0, _run)
-        except (AttributeError, RuntimeError, TypeError):
-            self._deferred_layout_pending = False
-            _run()
-
-    def _measure_state_panel_height(
-        self,
-        state_name: str,
-        *,
-        default_header_h: float,
-        target_inner_w: float | None = None,
-    ) -> float:
-        panel_h = float(default_header_h)
-        proxy = self._state_inline_proxies.get(str(state_name or ""))
-        if proxy is None:
-            return panel_h
-        try:
-            if not proxy.isVisible():
-                return panel_h
-        except (AttributeError, RuntimeError, TypeError):
-            return panel_h
-
-        inner_w = target_inner_w
-        if inner_w is None:
-            try:
-                inner_w = float(max(10.0, self.boundingRect().width() - 8.0))
-            except (AttributeError, RuntimeError, TypeError, ValueError):
-                inner_w = 10.0
-        try:
-            widget = proxy.widget()
-            if widget is not None:
-                widget.setFixedWidth(int(max(10.0, float(inner_w))))
-                layout = widget.layout()
-                if layout is not None:
-                    layout.activate()
-                widget.adjustSize()
-        except (AttributeError, RuntimeError, TypeError, ValueError):
-            pass
-        try:
-            proxy.updateGeometry()
-        except (AttributeError, RuntimeError, TypeError):
-            pass
-        try:
-            measured = float(proxy.boundingRect().height())
-            if measured > panel_h:
-                panel_h = measured
-        except (AttributeError, RuntimeError, TypeError, ValueError):
-            pass
-        return panel_h
+    def _ensure_inline_state_widgets(self) -> None:
+        _ensure_inline_state_widgets_impl(self)
 
     def post_init(self, viewer=None, pos=None):
         """
@@ -917,7 +844,26 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
                             header_h = float(max(port_height, header.sizeHint().height()))
                     except (AttributeError, RuntimeError, TypeError, ValueError, KeyError, ImportError, OSError):
                         header_h = port_height
-                    panel_h = self._measure_state_panel_height(sname, default_header_h=header_h)
+                    # Size hint for the expanded body depends on width (options wrap).
+                    # Use the proxy widget bounding rect after forcing a best-effort width.
+                    panel_h = header_h
+                    try:
+                        proxy = self._state_inline_proxies.get(sname)
+                        if proxy is not None and proxy.isVisible():
+                            try:
+                                w = proxy.widget()
+                                if w is not None:
+                                    rect_w = max(10, int(self.boundingRect().width() - 8.0))
+                                    w.setFixedWidth(rect_w)
+                                    w.adjustSize()
+                            except (AttributeError, RuntimeError, TypeError, ValueError):
+                                pass
+                            try:
+                                panel_h = float(max(header_h, proxy.boundingRect().height()))
+                            except (AttributeError, RuntimeError, TypeError, ValueError, KeyError, ImportError, OSError):
+                                panel_h = header_h
+                    except (AttributeError, RuntimeError, TypeError, ValueError, KeyError, ImportError, OSError):
+                        panel_h = header_h
                     ports_h += panel_h + spacing
                 ports_h = max(0.0, ports_h - spacing)  # remove trailing row spacing
 
@@ -933,11 +879,9 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         widget_height = 0.0
         # Ensure state inline widgets exist so we can account for width.
         try:
-            layout_dirty = bool(self._ensure_inline_state_widgets())
+            self._ensure_inline_state_widgets()
         except (AttributeError, RuntimeError, TypeError):
-            layout_dirty = False
-        if layout_dirty:
-            self._schedule_deferred_draw_node()
+            pass
         try:
             self._ensure_inline_command_widget()
         except (AttributeError, RuntimeError, TypeError):
@@ -1256,11 +1200,9 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
 
         # Ensure inline widgets exist before aligning so sizing + rows match.
         try:
-            layout_dirty = bool(self._ensure_inline_state_widgets())
+            self._ensure_inline_state_widgets()
         except (AttributeError, RuntimeError, TypeError):
-            layout_dirty = False
-        if layout_dirty:
-            self._schedule_deferred_draw_node()
+            pass
 
         node = self._backend_node()
         if node is None:
@@ -1407,7 +1349,7 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
                 state_key = state_names[i] if i < len(state_names) else None
                 panel_proxy = self._state_inline_proxies.get(state_key) if state_key else None
                 header_h = port_height
-                panel_h = header_h
+                body_h = 0.0
                 if state_key and panel_proxy is not None:
                     # Ensure width is up to date before measuring heights (option rows wrap by width).
                     try:
@@ -1424,11 +1366,12 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
                             )
                     except (AttributeError, RuntimeError, TypeError, ValueError):
                         header_h = port_height
-                    panel_h = self._measure_state_panel_height(
-                        state_key,
-                        default_header_h=header_h,
-                        target_inner_w=float(inner_w),
-                    )
+                    try:
+                        body_w = self._state_inline_bodies.get(state_key)
+                        if body_w is not None and body_w.isVisible():
+                            body_h = float(max(0.0, body_w.sizeHint().height()))
+                    except (AttributeError, RuntimeError, TypeError, ValueError):
+                        body_h = 0.0
                     try:
                         # Center panels using their *actual* width. Some controls
                         # can enforce minimum sizes that override our target width,
@@ -1458,7 +1401,9 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
 
                 port_y = y + (header_h - port_height) / 2.0
                 place_row(in_name, out_name, y=port_y)
-                y += panel_h + spacing
+                y += header_h + spacing
+                if body_h > 0.0:
+                    y += body_h + spacing
             # group gap (except after last visible group)
             # determine if any later group has rows.
             has_later = False
@@ -1531,11 +1476,9 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
 
     def _draw_node_horizontal(self):
         try:
-            layout_dirty = bool(self._ensure_inline_state_widgets())
+            self._ensure_inline_state_widgets()
         except (AttributeError, RuntimeError, TypeError):
-            layout_dirty = False
-        if layout_dirty:
-            self._schedule_deferred_draw_node()
+            pass
         try:
             self._ensure_inline_command_widget()
         except (AttributeError, RuntimeError, TypeError):
@@ -1610,20 +1553,14 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         Re-draw the node item in the scene with proper
         calculated size and widgets aligned.
         """
-        if self._in_draw_node:
-            return
-        self._in_draw_node = True
-        try:
-            if self.layout_direction is LayoutDirectionEnum.HORIZONTAL.value:
-                self._draw_node_horizontal()
-            elif self.layout_direction is LayoutDirectionEnum.VERTICAL.value:
-                self._draw_node_vertical()
-            else:
-                raise RuntimeError("Node graph layout direction not valid!")
-            self._refresh_port_tooltips()
-            self._position_service_toolbar()
-        finally:
-            self._in_draw_node = False
+        if self.layout_direction is LayoutDirectionEnum.HORIZONTAL.value:
+            self._draw_node_horizontal()
+        elif self.layout_direction is LayoutDirectionEnum.VERTICAL.value:
+            self._draw_node_vertical()
+        else:
+            raise RuntimeError("Node graph layout direction not valid!")
+        self._refresh_port_tooltips()
+        self._position_service_toolbar()
 
     def post_init(self, viewer=None, pos=None):
         """

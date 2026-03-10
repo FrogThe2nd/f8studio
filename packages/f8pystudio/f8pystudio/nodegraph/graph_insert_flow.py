@@ -182,7 +182,6 @@ class GraphInsertFlowMixin:
         finally:
             self._loading_session = prev_loading
         self._rebind_container_children()
-        self._schedule_node_layout_stabilization()
         self._refresh_all_inline_state_read_only()
 
         inserted_node_ids = [remap_plan.mapping.get(src, src) for src in import_node_ids]

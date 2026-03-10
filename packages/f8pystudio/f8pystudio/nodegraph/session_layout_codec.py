@@ -586,7 +586,6 @@ class SessionLayoutCodecMixin:
         finally:
             self._loading_session = False
         self._rebind_container_children()
-        self._schedule_node_layout_stabilization()
         # Session load restores connections after nodes are created/drawn, which can
         # leave inline state widgets with stale editability until the user forces a refresh.
         # Do a post-load pass to apply the "state-edge => readonly" rule.

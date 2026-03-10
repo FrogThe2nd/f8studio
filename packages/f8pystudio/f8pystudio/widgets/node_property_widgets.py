@@ -310,7 +310,7 @@ class _F8StateContainer(QtWidgets.QWidget):
             tooltip (str): custom tooltip.
         """
         label = label or name
-        label_widget = _F8StateContainer._ElideLabel(label, self)
+        label_widget = _F8StateContainer._ElideLabel(label)
         # Keep the label column bounded so value widgets (eg. sliders) remain usable
         # in narrow PropertiesBin panels.
         label_widget.setMaximumWidth(150)
@@ -320,8 +320,6 @@ class _F8StateContainer(QtWidgets.QWidget):
         else:
             widget.setToolTip(name)
             label_widget.setToolTip(name)
-        if widget.parentWidget() is None:
-            widget.setParent(self)
         widget.set_value(value)
         row = self.__layout.rowCount()
         if row > 0:
@@ -356,19 +354,6 @@ class _F8StateContainer(QtWidgets.QWidget):
         """
         return self.__property_widgets
 
-    def clear_widgets(self) -> None:
-        while self.__layout.count():
-            item = self.__layout.takeAt(0)
-            widget = item.widget()
-            if widget is None:
-                continue
-            try:
-                widget.setVisible(False)
-            except (AttributeError, RuntimeError, TypeError):
-                pass
-            widget.deleteLater()
-        self.__property_widgets = {}
-
 
 class _F8StateStackContainer(QtWidgets.QWidget):
     """
@@ -383,8 +368,6 @@ class _F8StateStackContainer(QtWidgets.QWidget):
     delete_state_field_requested = QtCore.Signal(str)
     add_state_field_requested = QtCore.Signal()
     toggle_state_field_show_on_node_requested = QtCore.Signal(str, bool)
-    move_state_field_up_requested = QtCore.Signal(str)
-    move_state_field_down_requested = QtCore.Signal(str)
 
     class _ElideLabel(QtWidgets.QLabel):
         def __init__(self, text: str, parent: QtWidgets.QWidget | None = None):
@@ -417,15 +400,15 @@ class _F8StateStackContainer(QtWidgets.QWidget):
         self._layout.setSpacing(10)
         self._layout.setAlignment(QtCore.Qt.AlignTop)
 
-        self._header = QtWidgets.QWidget(self)
+        self._header = QtWidgets.QWidget()
         h = QtWidgets.QHBoxLayout(self._header)
         h.setContentsMargins(0, 0, 0, 0)
         h.setSpacing(6)
-        title = QtWidgets.QLabel("State Fields", self._header)
+        title = QtWidgets.QLabel("State Fields")
         f = title.font()
         f.setBold(True)
         title.setFont(f)
-        self._btn_add = QtWidgets.QToolButton(self._header)
+        self._btn_add = QtWidgets.QToolButton()
         self._btn_add.setAutoRaise(True)
         self._btn_add.setToolTip("Add state field")
         self._btn_add.setIcon(_icon_from_style(self._btn_add, QtWidgets.QStyle.SP_FileDialogNewFolder, "list-add"))
@@ -447,35 +430,32 @@ class _F8StateStackContainer(QtWidgets.QWidget):
         *,
         allow_delete: bool = False,
         show_on_node: bool = True,
-        allow_reorder: bool = False,
-        allow_move_up: bool = True,
-        allow_move_down: bool = True,
     ):
         label = label or name
 
-        section = QtWidgets.QWidget(self)
+        section = QtWidgets.QWidget()
         v = QtWidgets.QVBoxLayout(section)
         v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(6)
 
-        header = QtWidgets.QWidget(section)
+        header = QtWidgets.QWidget()
         h = QtWidgets.QHBoxLayout(header)
         h.setContentsMargins(0, 0, 0, 0)
         h.setSpacing(6)
 
-        label_widget = _F8StateStackContainer._ElideLabel(label, header)
+        label_widget = _F8StateStackContainer._ElideLabel(label)
         f = label_widget.font()
         f.setBold(True)
         label_widget.setFont(f)
 
-        edit_btn = QtWidgets.QToolButton(header)
+        edit_btn = QtWidgets.QToolButton()
         edit_btn.setAutoRaise(True)
         edit_btn.setToolTip("Edit stateField...")
         edit_btn.setIcon(_icon_from_style(edit_btn, QtWidgets.QStyle.SP_FileDialogDetailedView, "document-edit"))
         edit_btn.setProperty("_state_field_name", str(name or "").strip())
         edit_btn.clicked.connect(self._on_edit_clicked)
 
-        del_btn = QtWidgets.QToolButton(header)
+        del_btn = QtWidgets.QToolButton()
         del_btn.setAutoRaise(True)
         del_btn.setToolTip("Delete stateField")
         del_btn.setIcon(_icon_from_style(del_btn, QtWidgets.QStyle.SP_TrashIcon, "edit-delete"))
@@ -483,7 +463,7 @@ class _F8StateStackContainer(QtWidgets.QWidget):
         del_btn.setProperty("_state_field_name", str(name or "").strip())
         del_btn.clicked.connect(self._on_delete_clicked)
 
-        eye_btn = QtWidgets.QToolButton(header)
+        eye_btn = QtWidgets.QToolButton()
         eye_btn.setAutoRaise(True)
         eye_btn.setCheckable(True)
         eye_btn.setChecked(bool(show_on_node))
@@ -493,27 +473,7 @@ class _F8StateStackContainer(QtWidgets.QWidget):
         eye_btn.setProperty("_state_field_name", str(name or "").strip())
         eye_btn.toggled.connect(self._on_eye_toggled)  # type: ignore[attr-defined]
 
-        move_up_btn = QtWidgets.QToolButton(header)
-        move_up_btn.setAutoRaise(True)
-        move_up_btn.setToolTip("Move stateField up")
-        move_up_btn.setIcon(_icon_from_style(move_up_btn, QtWidgets.QStyle.SP_ArrowUp, "go-up"))
-        move_up_btn.setVisible(bool(allow_reorder))
-        move_up_btn.setEnabled(bool(allow_reorder and allow_move_up))
-        move_up_btn.setProperty("_state_field_name", str(name or "").strip())
-        move_up_btn.clicked.connect(self._on_move_up_clicked)
-
-        move_down_btn = QtWidgets.QToolButton(header)
-        move_down_btn.setAutoRaise(True)
-        move_down_btn.setToolTip("Move stateField down")
-        move_down_btn.setIcon(_icon_from_style(move_down_btn, QtWidgets.QStyle.SP_ArrowDown, "go-down"))
-        move_down_btn.setVisible(bool(allow_reorder))
-        move_down_btn.setEnabled(bool(allow_reorder and allow_move_down))
-        move_down_btn.setProperty("_state_field_name", str(name or "").strip())
-        move_down_btn.clicked.connect(self._on_move_down_clicked)
-
         h.addWidget(label_widget, 1)
-        h.addWidget(move_up_btn, 0)
-        h.addWidget(move_down_btn, 0)
         h.addWidget(edit_btn, 0)
         h.addWidget(eye_btn, 0)
         h.addWidget(del_btn, 0)
@@ -528,12 +488,10 @@ class _F8StateStackContainer(QtWidgets.QWidget):
             label_widget.setToolTip(str(name))
             widget.setToolTip(str(name))
 
-        if widget.parentWidget() is None:
-            widget.setParent(section)
         widget.set_value(value)
         v.addWidget(header)
 
-        body = QtWidgets.QWidget(section)
+        body = QtWidgets.QWidget()
         body_l = QtWidgets.QVBoxLayout(body)
         body_l.setContentsMargins(0, 0, 0, 0)
         body_l.setSpacing(0)
@@ -565,36 +523,11 @@ class _F8StateStackContainer(QtWidgets.QWidget):
             _set_icon(btn, token=token)
         self.toggle_state_field_show_on_node_requested.emit(name, bool(checked))
 
-    def _on_move_up_clicked(self, _checked: bool = False) -> None:
-        btn = self.sender()
-        name = str(btn.property("_state_field_name") or "").strip() if btn is not None else ""
-        if name:
-            self.move_state_field_up_requested.emit(name)
-
-    def _on_move_down_clicked(self, _checked: bool = False) -> None:
-        btn = self.sender()
-        name = str(btn.property("_state_field_name") or "").strip() if btn is not None else ""
-        if name:
-            self.move_state_field_down_requested.emit(name)
-
     def get_widget(self, name):
         return self.__property_widgets.get(name)
 
     def get_all_widgets(self):
         return self.__property_widgets
-
-    def clear_widgets(self) -> None:
-        while self._layout.count() > 1:
-            item = self._layout.takeAt(1)
-            widget = item.widget()
-            if widget is None:
-                continue
-            try:
-                widget.setVisible(False)
-            except (AttributeError, RuntimeError, TypeError):
-                pass
-            widget.deleteLater()
-        self.__property_widgets = {}
 
 
 def _icon_from_style(
@@ -628,12 +561,12 @@ class _F8SpecListSection(QtWidgets.QWidget):
         super().__init__(parent)
         self._title = title
 
-        header_label = QtWidgets.QLabel(title, self)
+        header_label = QtWidgets.QLabel(title)
         f = header_label.font()
         f.setBold(True)
         header_label.setFont(f)
 
-        self._add_btn = QtWidgets.QToolButton(self)
+        self._add_btn = QtWidgets.QToolButton()
         self._add_btn.setAutoRaise(True)
         self._add_btn.setToolTip("Add")
         self._add_btn.setIcon(_icon_from_style(self._add_btn, QtWidgets.QStyle.SP_FileDialogNewFolder, "list-add"))
@@ -670,25 +603,6 @@ class _F8SpecListSection(QtWidgets.QWidget):
     def add_row(self, row: QtWidgets.QWidget) -> None:
         self._list_layout.addWidget(row)
 
-    def remove_row(self, row: QtWidgets.QWidget) -> None:
-        self._list_layout.removeWidget(row)
-        try:
-            row.setVisible(False)
-        except (AttributeError, RuntimeError, TypeError):
-            logger.exception("Failed to hide row during removal")
-
-    def move_row(self, row: QtWidgets.QWidget, delta: int) -> bool:
-        rows = self.rows()
-        if row not in rows:
-            return False
-        src = rows.index(row)
-        dst = src + int(delta)
-        if dst < 0 or dst >= len(rows):
-            return False
-        self._list_layout.removeWidget(row)
-        self._list_layout.insertWidget(dst, row)
-        return True
-
     def rows(self) -> list[QtWidgets.QWidget]:
         out: list[QtWidgets.QWidget] = []
         for i in range(self._list_layout.count()):
@@ -703,82 +617,49 @@ class _F8SpecNameRow(QtWidgets.QWidget):
     delete_clicked = QtCore.Signal()
     name_committed = QtCore.Signal(str)
     show_on_node_changed = QtCore.Signal(bool)
-    move_up_clicked = QtCore.Signal()
-    move_down_clicked = QtCore.Signal()
 
-    def __init__(self, parent=None, *, name: str, placeholder: str, show_eye: bool = False, show_move: bool = False):
+    def __init__(self, parent=None, *, name: str, placeholder: str, show_eye: bool = False):
         super().__init__(parent)
-        self._show_move = bool(show_move)
 
-        self.name_edit = QtWidgets.QLineEdit(name, self)
+        self.name_edit = QtWidgets.QLineEdit(name)
         self.name_edit.setPlaceholderText(placeholder)
         self.name_edit.setClearButtonEnabled(True)
         self.name_edit.editingFinished.connect(self._emit_commit)
 
-        self.edit_btn = QtWidgets.QToolButton(self)
+        self.edit_btn = QtWidgets.QToolButton()
         self.edit_btn.setAutoRaise(True)
         self.edit_btn.setToolTip("Edit")
         self.edit_btn.setIcon(_icon_from_style(self.edit_btn, QtWidgets.QStyle.SP_FileDialogDetailedView, "document-edit"))
         self.edit_btn.clicked.connect(self.edit_clicked.emit)
 
-        self.eye_btn = QtWidgets.QToolButton(self)
+        self.eye_btn = QtWidgets.QToolButton()
         self.eye_btn.setAutoRaise(True)
         self.eye_btn.setCheckable(True)
         self.eye_btn.setToolTip("Show on node")
         self.eye_btn.toggled.connect(self._on_eye_toggled)  # type: ignore[attr-defined]
         self._update_eye_icon(True)
 
-        self.del_btn = QtWidgets.QToolButton(self)
+        self.del_btn = QtWidgets.QToolButton()
         self.del_btn.setAutoRaise(True)
         self.del_btn.setToolTip("Delete")
         self.del_btn.setIcon(_icon_from_style(self.del_btn, QtWidgets.QStyle.SP_TrashIcon, "edit-delete"))
         self.del_btn.clicked.connect(self.delete_clicked.emit)
 
-        self.move_up_btn = QtWidgets.QToolButton(self)
-        self.move_up_btn.setAutoRaise(True)
-        self.move_up_btn.setToolTip("Move up")
-        self.move_up_btn.setIcon(_icon_from_style(self.move_up_btn, QtWidgets.QStyle.SP_ArrowUp, "go-up"))
-        self.move_up_btn.clicked.connect(self.move_up_clicked.emit)
-
-        self.move_down_btn = QtWidgets.QToolButton(self)
-        self.move_down_btn.setAutoRaise(True)
-        self.move_down_btn.setToolTip("Move down")
-        self.move_down_btn.setIcon(_icon_from_style(self.move_down_btn, QtWidgets.QStyle.SP_ArrowDown, "go-down"))
-        self.move_down_btn.clicked.connect(self.move_down_clicked.emit)
-
         layout = QtWidgets.QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
         layout.addWidget(self.name_edit, 1)
-        layout.addWidget(self.move_up_btn)
-        layout.addWidget(self.move_down_btn)
         layout.addWidget(self.edit_btn)
         layout.addWidget(self.eye_btn)
         layout.addWidget(self.del_btn)
         self.eye_btn.setVisible(bool(show_eye))
         self.eye_btn.setEnabled(bool(show_eye))
-        self.move_up_btn.setVisible(bool(show_move))
-        self.move_down_btn.setVisible(bool(show_move))
-        self.move_up_btn.setEnabled(bool(show_move))
-        self.move_down_btn.setEnabled(bool(show_move))
 
-    def set_row_editable(
-        self,
-        *,
-        allow_rename: bool,
-        allow_delete: bool,
-        allow_edit: bool = True,
-        allow_reorder: bool | None = None,
-    ) -> None:
+    def set_row_editable(self, *, allow_rename: bool, allow_delete: bool, allow_edit: bool = True) -> None:
         self.name_edit.setReadOnly(not bool(allow_rename))
         self.del_btn.setVisible(bool(allow_delete))
         self.edit_btn.setVisible(bool(allow_edit))
         self.edit_btn.setEnabled(bool(allow_edit))
-        can_reorder = bool(self._show_move) if allow_reorder is None else bool(self._show_move and allow_reorder)
-        self.move_up_btn.setVisible(can_reorder)
-        self.move_down_btn.setVisible(can_reorder)
-        self.move_up_btn.setEnabled(can_reorder)
-        self.move_down_btn.setEnabled(can_reorder)
 
     def set_show_on_node(self, show: bool) -> None:
         with QtCore.QSignalBlocker(self.eye_btn):
@@ -1079,7 +960,7 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
         self._sec_data_in.add_clicked.connect(lambda: self._add_data(True))
         self._sec_data_out.add_clicked.connect(lambda: self._add_data(False))
 
-        content = QtWidgets.QWidget(self)
+        content = QtWidgets.QWidget()
         v = QtWidgets.QVBoxLayout(content)
         v.setContentsMargins(6, 6, 6, 6)
         v.setSpacing(8)
@@ -1089,7 +970,7 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
         v.addWidget(self._sec_data_out)
         v.addStretch(1)
 
-        scroll = QtWidgets.QScrollArea(self)
+        scroll = QtWidgets.QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
         scroll.setWidget(content)
@@ -1152,36 +1033,22 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
         for p in data_out_ports:
             self._sec_data_out.add_row(self._make_data_row(p, is_in=False))
 
-    def bind_node(self, node: Any, *, on_apply: Callable[[], None] | None = None) -> None:
-        self._node = node
-        self._on_apply = on_apply
-        self._load_from_spec()
-
     def _make_exec_row(self, name: str, *, is_in: bool) -> _F8SpecNameRow:
-        row = _F8SpecNameRow(name=name, placeholder="port name", show_move=True)
+        row = _F8SpecNameRow(name=name, placeholder="port name")
         row.edit_clicked.connect(lambda: self._edit_exec(row))
         row.delete_clicked.connect(lambda: self._delete_row(row))
-        row.move_up_clicked.connect(lambda: self._move_row(row, -1))
-        row.move_down_clicked.connect(lambda: self._move_row(row, 1))
         row.name_committed.connect(lambda _v: self._commit())
         row.setProperty("_port_dir", "exec_in" if is_in else "exec_out")
         editable = bool(self._editable_exec_in if is_in else self._editable_exec_out)
         allow_edit = editable and not self._missing_locked
-        row.set_row_editable(
-            allow_rename=allow_edit,
-            allow_delete=allow_edit,
-            allow_edit=allow_edit,
-            allow_reorder=allow_edit,
-        )
+        row.set_row_editable(allow_rename=allow_edit, allow_delete=allow_edit, allow_edit=allow_edit)
         return row
 
     def _make_data_row(self, port: F8DataPortSpec, *, is_in: bool) -> _F8SpecNameRow:
-        row = _F8SpecNameRow(name=str(port.name or ""), placeholder="port name", show_eye=True, show_move=True)
+        row = _F8SpecNameRow(name=str(port.name or ""), placeholder="port name", show_eye=True)
         row.setProperty("_port", port)
         row.edit_clicked.connect(lambda: self._edit_data(row))
         row.delete_clicked.connect(lambda: self._delete_row(row))
-        row.move_up_clicked.connect(lambda: self._move_row(row, -1))
-        row.move_down_clicked.connect(lambda: self._move_row(row, 1))
         row.name_committed.connect(lambda v: self._rename_data(row, v))
         row.show_on_node_changed.connect(lambda v: self._toggle_data_show_on_node(row, bool(v)))  # type: ignore[attr-defined]
         row.setToolTip(self._data_tooltip(port))
@@ -1197,42 +1064,10 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
             allow_rename=allow_mutate,
             allow_delete=allow_mutate,
             allow_edit=True,
-            allow_reorder=bool(editable and not self._missing_locked),
         )
         show = bool(self._node.data_port_show_on_node(str(port.name or ""), is_in=bool(is_in)))  # type: ignore[attr-defined]
         row.set_show_on_node(bool(show))
         return row
-
-    def _section_for_dir(self, dir_s: str) -> _F8SpecListSection | None:
-        direction = str(dir_s or "").strip()
-        if direction == "exec_in":
-            return self._sec_exec_in
-        if direction == "exec_out":
-            return self._sec_exec_out
-        if direction == "data_in":
-            return self._sec_data_in
-        if direction == "data_out":
-            return self._sec_data_out
-        return None
-
-    def _move_row(self, row: _F8SpecNameRow, delta: int) -> None:
-        if self._missing_locked:
-            return
-        dir_s = str(row.property("_port_dir") or "")
-        if dir_s == "exec_in" and not self._editable_exec_in:
-            return
-        if dir_s == "exec_out" and not self._editable_exec_out:
-            return
-        if dir_s == "data_in" and not self._editable_data_in:
-            return
-        if dir_s == "data_out" and not self._editable_data_out:
-            return
-        section = self._section_for_dir(dir_s)
-        if section is None:
-            return
-        if not section.move_row(row, int(delta)):
-            return
-        self._commit()
 
     def _toggle_data_show_on_node(self, row: _F8SpecNameRow, show_on_node: bool) -> None:
         if self._missing_locked:
@@ -1357,14 +1192,7 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
             return
         if (dir_s == "data_in" or dir_s == "data_out") and self._row_is_required_data_port(row):
             return
-        section = self._section_for_dir(dir_s)
-        if section is not None:
-            section.remove_row(row)
-        else:
-            try:
-                row.setVisible(False)
-            except (AttributeError, RuntimeError, TypeError):
-                logger.exception("Failed to hide port-row widget before delete")
+        row.setParent(None)
         row.deleteLater()
         self._commit()
 
@@ -1688,17 +1516,17 @@ class _F8CommandRow(QtWidgets.QWidget):
         self._name = str(name or "")
         self._base_tooltip = str(description or "").strip()
 
-        self._btn_invoke = QtWidgets.QPushButton(self._name, self)
+        self._btn_invoke = QtWidgets.QPushButton(self._name)
         self._btn_invoke.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
         self._btn_invoke.clicked.connect(self._on_invoke_clicked)
 
-        self._eye_btn = QtWidgets.QToolButton(self)
+        self._eye_btn = QtWidgets.QToolButton()
         self._eye_btn.setAutoRaise(True)
         self._eye_btn.setCheckable(True)
         self._eye_btn.setToolTip("Show on node")
         self._eye_btn.toggled.connect(self._on_eye_toggled)  # type: ignore[attr-defined]
 
-        self._btn_edit = QtWidgets.QToolButton(self)
+        self._btn_edit = QtWidgets.QToolButton()
         self._btn_edit.setAutoRaise(True)
         self._btn_edit.setToolTip("Edit command...")
         self._btn_edit.setIcon(_icon_from_style(self._btn_edit, QtWidgets.QStyle.SP_FileDialogDetailedView, "document-edit"))
@@ -1706,7 +1534,7 @@ class _F8CommandRow(QtWidgets.QWidget):
         self._btn_edit.setVisible(True)
         self._btn_edit.clicked.connect(self._on_edit_clicked)
 
-        self._btn_del = QtWidgets.QToolButton(self)
+        self._btn_del = QtWidgets.QToolButton()
         self._btn_del.setAutoRaise(True)
         self._btn_del.setToolTip("Delete command")
         self._btn_del.setIcon(_icon_from_style(self._btn_del, QtWidgets.QStyle.SP_TrashIcon, "edit-delete"))
@@ -1787,14 +1615,14 @@ class _F8SpecCommandEditor(QtWidgets.QWidget):
         self._sec = _F8SpecListSection(title="Commands")
         self._sec.add_clicked.connect(self._add_command)
 
-        content = QtWidgets.QWidget(self)
+        content = QtWidgets.QWidget()
         v = QtWidgets.QVBoxLayout(content)
         v.setContentsMargins(6, 6, 6, 6)
         v.setSpacing(8)
         v.addWidget(self._sec)
         v.addStretch(1)
 
-        scroll = QtWidgets.QScrollArea(self)
+        scroll = QtWidgets.QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
         scroll.setWidget(content)
@@ -1911,11 +1739,6 @@ class _F8SpecCommandEditor(QtWidgets.QWidget):
                 logger.exception("Failed to apply running-state to command row command=%s", name)
             self._cmd_rows[str(name)] = row
             self._sec.add_row(row)
-
-    def bind_node(self, *, node: Any, on_apply: Callable[[], None] | None = None) -> None:
-        self._node = node
-        self._on_apply = on_apply
-        self._load()
 
     def _toggle_command_show_on_node(self, name: str, show_on_node: bool) -> None:
         if self._missing_locked:
@@ -2239,9 +2062,9 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
 
     def __init__(self, parent=None, node=None):
         super(F8StudioNodePropEditorWidget, self).__init__(parent)
-        self._node = None
-        self.__node_id = ""
-        self.__tab_windows: dict[str, _F8StateContainer | _F8StateStackContainer] = {}
+        self._node = node
+        self.__node_id = node.id
+        self.__tab_windows = {}
         self.__tab = QtWidgets.QTabWidget()
         self._option_pool_dependents: dict[str, list[Any]] = {}
         self._reload_pending = False
@@ -2249,25 +2072,33 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
         self._reload_timer = QtCore.QTimer(self)
         self._reload_timer.setSingleShot(True)
         self._reload_timer.timeout.connect(self._reload_now)
-        self._spec_port_editor: _F8SpecPortEditor | None = None
-        self._spec_command_editor: _F8SpecCommandEditor | None = None
 
-        close_btn = QtWidgets.QPushButton(self)
+        close_btn = QtWidgets.QPushButton()
         close_btn.setIcon(QtGui.QIcon(self.style().standardIcon(QtWidgets.QStyle.SP_DialogCloseButton)))
         close_btn.setMaximumWidth(40)
         close_btn.setToolTip("close property")
         close_btn.clicked.connect(self._on_close)
 
+        pixmap = QtGui.QPixmap()
+        if node.icon():
+            pixmap = QtGui.QPixmap(node.icon())
+
+            if pixmap.size().height() > NodeEnum.ICON_SIZE.value:
+                pixmap = pixmap.scaledToHeight(NodeEnum.ICON_SIZE.value, QtCore.Qt.SmoothTransformation)
+            if pixmap.size().width() > NodeEnum.ICON_SIZE.value:
+                pixmap = pixmap.scaledToWidth(NodeEnum.ICON_SIZE.value, QtCore.Qt.SmoothTransformation)
+
         self.icon_label = QtWidgets.QLabel(self)
-        self.icon_label.setPixmap(QtGui.QPixmap())
+        self.icon_label.setPixmap(pixmap)
         self.icon_label.setStyleSheet("background: transparent;")
 
         self.name_wgt = PropLineEdit()
         self.name_wgt.set_name("name")
         self.name_wgt.setToolTip("name\nSet the node name.")
+        self.name_wgt.set_value(node.name())
         self.name_wgt.value_changed.connect(self._on_property_changed)
 
-        self.type_wgt = QtWidgets.QLabel("")
+        self.type_wgt = QtWidgets.QLabel(node.type_)
         self.type_wgt.setAlignment(QtCore.Qt.AlignRight)
         self.type_wgt.setToolTip("type_\nNode type identifier followed by the class name.")
         font = self.type_wgt.font()
@@ -2280,13 +2111,14 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
         name_layout.addWidget(QtWidgets.QLabel("name"))
         name_layout.addWidget(self.name_wgt)
         name_layout.addWidget(close_btn)
-
+        missing_locked, missing_type = _node_missing_lock_info(node)
         self._missing_banner = QtWidgets.QLabel()
         self._missing_banner.setStyleSheet(
             "color: rgb(255, 224, 138); background: rgba(80, 60, 0, 70); border-radius: 4px; padding: 4px 6px;"
         )
-        self._missing_banner.setVisible(False)
-
+        self._missing_banner.setVisible(bool(missing_locked))
+        if missing_locked:
+            self._missing_banner.setText(f"Missing dependency: {missing_type or 'unknown type'}")
         layout = QtWidgets.QVBoxLayout(self)
         layout.setSpacing(4)
         layout.addLayout(name_layout)
@@ -2294,132 +2126,9 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
         layout.addWidget(self.__tab)
         layout.addWidget(self.type_wgt)
 
-        self._port_connections = None
-        if node is not None:
-            self.bind_node(node)
-
-    @staticmethod
-    def _node_icon_pixmap(node: Any) -> QtGui.QPixmap:
-        pixmap = QtGui.QPixmap()
-        if node is None:
-            return pixmap
-        try:
-            icon_value = node.icon()
-        except Exception:
-            icon_value = None
-        if not icon_value:
-            return pixmap
-        pixmap = QtGui.QPixmap(icon_value)
-        if pixmap.size().height() > NodeEnum.ICON_SIZE.value:
-            pixmap = pixmap.scaledToHeight(NodeEnum.ICON_SIZE.value, QtCore.Qt.SmoothTransformation)
-        if pixmap.size().width() > NodeEnum.ICON_SIZE.value:
-            pixmap = pixmap.scaledToWidth(NodeEnum.ICON_SIZE.value, QtCore.Qt.SmoothTransformation)
-        return pixmap
-
-    def capture_view_state(self) -> dict[str, Any]:
-        state: dict[str, Any] = {"active_tab": "", "scroll_pos": {}}
-        try:
-            idx = int(self.__tab.currentIndex())
-        except (AttributeError, RuntimeError, TypeError, ValueError):
-            idx = -1
-        if idx >= 0:
-            try:
-                state["active_tab"] = str(self.__tab.tabText(idx) or "")
-            except (AttributeError, RuntimeError, TypeError):
-                state["active_tab"] = ""
-        scroll_pos: dict[str, int] = {}
-        for i in range(self.__tab.count()):
-            try:
-                tab_name = str(self.__tab.tabText(i) or "")
-            except (AttributeError, RuntimeError, TypeError):
-                continue
-            w = self.__tab.widget(i)
-            if w is None:
-                continue
-            areas = w.findChildren(QtWidgets.QScrollArea)
-            if not areas:
-                continue
-            try:
-                scroll_pos[tab_name] = int(areas[0].verticalScrollBar().value())
-            except (AttributeError, RuntimeError, TypeError, ValueError):
-                continue
-        state["scroll_pos"] = scroll_pos
-        return state
-
-    def apply_view_state(self, state: dict[str, Any] | None) -> None:
-        if not isinstance(state, dict):
-            return
-        target_tab = str(state.get("active_tab") or "").strip()
-        scroll_pos_raw = state.get("scroll_pos")
-        scroll_pos = scroll_pos_raw if isinstance(scroll_pos_raw, dict) else {}
-        if target_tab:
-            for i in range(self.__tab.count()):
-                try:
-                    if str(self.__tab.tabText(i) or "") != target_tab:
-                        continue
-                except (AttributeError, RuntimeError, TypeError):
-                    continue
-                try:
-                    if self.__tab.isTabVisible(i):  # type: ignore[attr-defined]
-                        self.__tab.setCurrentIndex(i)
-                        break
-                except (AttributeError, RuntimeError, TypeError):
-                    self.__tab.setCurrentIndex(i)
-                    break
-        if not scroll_pos:
-            return
-
-        def _restore() -> None:
-            for i in range(self.__tab.count()):
-                try:
-                    tab_name = str(self.__tab.tabText(i) or "")
-                except (AttributeError, RuntimeError, TypeError):
-                    continue
-                if tab_name not in scroll_pos:
-                    continue
-                w = self.__tab.widget(i)
-                if w is None:
-                    continue
-                areas = w.findChildren(QtWidgets.QScrollArea)
-                if not areas:
-                    continue
-                try:
-                    areas[0].verticalScrollBar().setValue(int(scroll_pos.get(tab_name, 0)))
-                except (AttributeError, RuntimeError, TypeError, ValueError):
-                    continue
-
-        QtCore.QTimer.singleShot(0, _restore)
-
-    def bind_node(self, node: Any, *, view_state: dict[str, Any] | None = None) -> None:
-        if node is None:
-            return
-        self._node = node
-        try:
-            self.__node_id = str(node.id or "")
-        except Exception:
-            self.__node_id = ""
-        with QtCore.QSignalBlocker(self.name_wgt):
-            try:
-                self.name_wgt.set_value(node.name())
-            except Exception:
-                self.name_wgt.set_value("")
-        self.icon_label.setPixmap(self._node_icon_pixmap(node))
-        try:
-            self.type_wgt.setText(str(node.type_ or ""))
-        except Exception:
-            self.type_wgt.setText("")
-        self._option_pool_dependents = {}
         self._port_connections = self._read_node(node)
-        missing_locked, missing_type = _node_missing_lock_info(node)
-        try:
-            self._missing_banner.setVisible(bool(missing_locked))
-            self._missing_banner.setText(f"Missing dependency: {missing_type or 'unknown type'}" if missing_locked else "")
-        except (AttributeError, RuntimeError, TypeError):
-            logger.exception("Failed to update missing banner")
-        self.name_wgt.setDisabled(bool(missing_locked))
         if missing_locked:
             self._apply_missing_lock_read_only()
-        self.apply_view_state(view_state)
 
     def __repr__(self):
         return "<{} object at {}>".format(self.__class__.__name__, hex(id(self)))
@@ -2602,46 +2311,6 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
         self._apply_state_field_spec_delete(name)
         self._on_spec_applied()
 
-    def move_state_field(self, field_name: str, direction: int) -> None:
-        missing_locked, _missing_type = _node_missing_lock_info(self._node)
-        if missing_locked:
-            return
-        delta = int(direction)
-        if delta == 0:
-            return
-        step = -1 if delta < 0 else 1
-        name = str(field_name or "").strip()
-        if not name:
-            return
-        node = self._node
-        if node is None:
-            return
-        spec = _get_node_spec(node)
-        if not isinstance(spec, (F8ServiceSpec, F8OperatorSpec)):
-            return
-        if not bool(spec.editableStateFields):
-            return
-        fields = list(spec.stateFields or [])
-        src = -1
-        for idx, field in enumerate(fields):
-            if str(field.name or "").strip() == name:
-                src = int(idx)
-                break
-        if src < 0:
-            return
-        dst = src + step
-        if dst < 0 or dst >= len(fields):
-            return
-        fields[src], fields[dst] = fields[dst], fields[src]
-        try:
-            spec2 = copy_model(spec, deep=True, update={"stateFields": fields})
-        except (TypeError, ValueError, RuntimeError, AttributeError):
-            logger.exception("Failed to reorder state fields; field=%s delta=%s", name, step)
-            return
-        if spec2 is not spec:
-            node.spec = spec2
-        self._on_spec_applied()
-
     def _apply_state_field_spec_replace(self, old_name: str, new_field: F8StateSpec) -> None:
         node = self._node
         if node is None:
@@ -2713,51 +2382,6 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
         except Exception:
             logger.exception("sync_from_spec failed while applying state-field edits")
 
-    def _set_tab_visible_by_widget(self, widget: QtWidgets.QWidget, *, visible: bool) -> None:
-        idx = self.__tab.indexOf(widget)
-        if idx < 0:
-            return
-        try:
-            self.__tab.setTabVisible(idx, bool(visible))
-        except (AttributeError, RuntimeError, TypeError):
-            if not bool(visible):
-                self.__tab.removeTab(idx)
-
-    def _set_tab_visible_by_name(self, tab_name: str, *, visible: bool) -> None:
-        name = str(tab_name or "").strip()
-        if not name:
-            return
-        for i in range(self.__tab.count()):
-            try:
-                current = str(self.__tab.tabText(i) or "")
-            except (AttributeError, RuntimeError, TypeError):
-                continue
-            if current != name:
-                continue
-            try:
-                self.__tab.setTabVisible(i, bool(visible))
-            except (AttributeError, RuntimeError, TypeError):
-                if not bool(visible):
-                    self.__tab.removeTab(i)
-            return
-
-    def _clear_property_tab_windows(self) -> None:
-        for tab_window in self.__tab_windows.values():
-            try:
-                tab_window.clear_widgets()
-            except (AttributeError, RuntimeError, TypeError):
-                continue
-
-    def _ensure_aux_tab(self, *, tab_name: str, widget: QtWidgets.QWidget) -> None:
-        idx = self.__tab.indexOf(widget)
-        if idx < 0:
-            self.__tab.addTab(widget, tab_name)
-            return
-        try:
-            self.__tab.setTabText(idx, tab_name)
-        except (AttributeError, RuntimeError, TypeError):
-            pass
-
     def _read_node(self, node):
         """
         Populate widget from a node.
@@ -2816,9 +2440,6 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
             tab_name = _tab_name_for_property(str(prop_name))
             tab_mapping[tab_name].append((prop_name, prop_val))
 
-        self._clear_property_tab_windows()
-        visible_property_tabs: set[str] = set()
-
         # add tabs.
         reserved_tabs = ["Node", "Port", "Commands"]
         for tab in sorted(tab_mapping.keys()):
@@ -2833,7 +2454,6 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
         # populate tab properties.
         for tab in sorted(tab_mapping.keys()):
             prop_window = self.__tab_windows[tab]
-            visible_property_tabs.add(str(tab))
             if tab == "State" and isinstance(prop_window, _F8StateStackContainer):
                 # Build the State tab from stateFields so we can attach edit/delete/add UI.
                 if spec is None:
@@ -2850,18 +2470,6 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
                         eff_fields = list(spec.stateFields or [])
                     except Exception:
                         eff_fields = []
-                ordered_state_names: list[str] = []
-                for f in eff_fields:
-                    try:
-                        state_name = str(f.name or "").strip()
-                    except Exception:
-                        state_name = ""
-                    if not state_name or state_name not in values:
-                        continue
-                    if _widget_type_for_property(state_name) == 0:
-                        continue
-                    ordered_state_names.append(state_name)
-                state_index_map = {state_name: idx for idx, state_name in enumerate(ordered_state_names)}
                 for f in eff_fields:
                     try:
                         name = str(f.name or "").strip()
@@ -2895,8 +2503,6 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
                     label_txt = str(f.label or "").strip()
                     desc_txt = str(f.description or "").strip()
                     show_on_node = bool(f.showOnNode)
-                    idx = state_index_map.get(name, -1)
-                    allow_reorder = bool(editable_state and not missing_locked)
                     prop_window.add_widget(
                         name=name,
                         widget=widget,
@@ -2905,9 +2511,6 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
                         tooltip=desc_txt or tooltip,
                         allow_delete=allow_delete,
                         show_on_node=bool(show_on_node),
-                        allow_reorder=allow_reorder,
-                        allow_move_up=bool(idx > 0),
-                        allow_move_down=bool(idx >= 0 and idx < (len(ordered_state_names) - 1)),
                     )
                     widget.value_changed.connect(self._on_property_changed)
                     try:
@@ -2995,7 +2598,6 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
 
         # add "Node" tab properties. (default props)
         self.add_tab("Node")
-        visible_property_tabs.add("Node")
         default_props = {
             "color": "Node base color.",
             "text_color": "Node text color.",
@@ -3041,31 +2643,28 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
         self.type_wgt.setText(model.get_property("type_") or "")
 
         # built-in spec editors (if node has F8 spec).
-        show_commands_tab = False
-        show_port_tab = False
         if isinstance(spec, (F8OperatorSpec, F8ServiceSpec)):
-            show_port_tab = True
-            if self._spec_port_editor is None:
-                self._spec_port_editor = _F8SpecPortEditor(self, node=node, on_apply=self._on_spec_applied)
-            else:
-                self._spec_port_editor.bind_node(node, on_apply=self._on_spec_applied)
-            self._ensure_aux_tab(tab_name="Port", widget=self._spec_port_editor)
             if isinstance(spec, F8ServiceSpec):
-                show_commands_tab = True
-                if self._spec_command_editor is None:
-                    self._spec_command_editor = _F8SpecCommandEditor(self, node=node, on_apply=self._on_spec_applied)
-                else:
-                    self._spec_command_editor.bind_node(node=node, on_apply=self._on_spec_applied)
-                self._ensure_aux_tab(tab_name="Commands", widget=self._spec_command_editor)
-        if self._spec_command_editor is not None:
-            self._set_tab_visible_by_widget(self._spec_command_editor, visible=show_commands_tab)
-        if self._spec_port_editor is not None:
-            self._set_tab_visible_by_widget(self._spec_port_editor, visible=show_port_tab)
+                cmd_editor = _F8SpecCommandEditor(self, node=node, on_apply=self._on_spec_applied)
+                self.__tab.addTab(cmd_editor, "Commands")
+            spec_ports = _F8SpecPortEditor(self, node=node, on_apply=self._on_spec_applied)
+            self.__tab.addTab(spec_ports, "Port")
 
-        # Hide property tabs that are not relevant for the current node.
+        # hide/remove empty tabs with no property widgets.
+        tab_index = {self.__tab.tabText(x): x for x in range(self.__tab.count())}
+        current_idx = None
         for tab_name, prop_window in self.__tab_windows.items():
-            is_visible = str(tab_name) in visible_property_tabs and bool(prop_window.get_all_widgets())
-            self._set_tab_visible_by_name(str(tab_name), visible=is_visible)
+            prop_widgets = prop_window.get_all_widgets()
+            if not prop_widgets:
+                # I prefer to hide the tab but in older version of pyside this
+                # attribute doesn't exist we'll just remove.
+                try:
+                    self.__tab.setTabVisible(tab_index[tab_name], False)
+                except Exception:
+                    self.__tab.removeTab(tab_index[tab_name])
+                continue
+            if current_idx is None:
+                current_idx = tab_index[tab_name]
 
         # Order: State, Commands, Port, Node (Node last).
         _reorder_tabs(self.__tab, ["State", "Commands", "Port", "Node"])
@@ -3074,28 +2673,12 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
         preferred_default = None
         for t in ["State", "Commands", "Port", "Node"]:
             for i in range(self.__tab.count()):
-                try:
-                    is_visible = bool(self.__tab.isTabVisible(i))  # type: ignore[attr-defined]
-                except (AttributeError, RuntimeError, TypeError):
-                    is_visible = True
-                if not is_visible:
-                    continue
                 if self.__tab.tabText(i) == t:
                     preferred_default = i
                     break
             if preferred_default is not None:
                 break
-        if preferred_default is not None:
-            self.__tab.setCurrentIndex(preferred_default)
-        else:
-            for i in range(self.__tab.count()):
-                try:
-                    if bool(self.__tab.isTabVisible(i)):  # type: ignore[attr-defined]
-                        self.__tab.setCurrentIndex(i)
-                        break
-                except (AttributeError, RuntimeError, TypeError):
-                    self.__tab.setCurrentIndex(i)
-                    break
+        self.__tab.setCurrentIndex(preferred_default if preferred_default is not None else 0)
 
         return None
 
@@ -3124,7 +2707,8 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
         self._reload_timer.start(int(self._reload_debounce_ms))
 
     def _clear_tabs(self) -> None:
-        # Fallback-only cleanup. Regular refresh keeps tab containers alive.
+        # `removeTab()` does not delete the widget.
+        # Avoid `setParent(None)` to prevent transient top-level window flashes.
         while self.__tab.count():
             w = self.__tab.widget(0)
             self.__tab.removeTab(0)
@@ -3133,14 +2717,40 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
             try:
                 w.setVisible(False)
             except Exception:
-                logger.exception("Failed to hide tab widget during fallback clear")
+                logger.exception("Failed to hide tab widget before deleteLater")
+            w.deleteLater()
 
     def _reload_now(self) -> None:
         self._reload_pending = False
         node = self._node
         if node is None:
             return
-        view_state = self.capture_view_state()
+        prev_tab = None
+        scroll_pos: dict[str, int] = {}
+        try:
+            idx = self.__tab.currentIndex()
+            if idx >= 0:
+                prev_tab = self.__tab.tabText(idx)
+        except Exception:
+            prev_tab = None
+        try:
+            for i in range(self.__tab.count()):
+                tab_name = self.__tab.tabText(i)
+                w = self.__tab.widget(i)
+                if not w:
+                    continue
+                areas = w.findChildren(QtWidgets.QScrollArea)
+                if not areas:
+                    continue
+                try:
+                    scroll_pos[tab_name] = int(areas[0].verticalScrollBar().value())
+                except (AttributeError, RuntimeError, TypeError, ValueError):
+                    pass
+        except Exception:
+            scroll_pos = {}
+
+        self._clear_tabs()
+        self.__tab_windows = {}
         self._option_pool_dependents = {}
         self._port_connections = self._read_node(node)
         missing_locked, missing_type = _node_missing_lock_info(node)
@@ -3152,7 +2762,33 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
             logger.exception("Failed to update missing banner")
         if missing_locked:
             self._apply_missing_lock_read_only()
-        self.apply_view_state(view_state)
+        if prev_tab:
+            try:
+                for i in range(self.__tab.count()):
+                    if self.__tab.tabText(i) == prev_tab:
+                        self.__tab.setCurrentIndex(i)
+                        break
+            except (AttributeError, RuntimeError, TypeError):
+                pass
+        if scroll_pos:
+
+            def _restore() -> None:
+                for i in range(self.__tab.count()):
+                    tab_name = self.__tab.tabText(i)
+                    if tab_name not in scroll_pos:
+                        continue
+                    w = self.__tab.widget(i)
+                    if not w:
+                        continue
+                    areas = w.findChildren(QtWidgets.QScrollArea)
+                    if not areas:
+                        continue
+                    try:
+                        areas[0].verticalScrollBar().setValue(scroll_pos[tab_name])
+                    except (AttributeError, RuntimeError, TypeError):
+                        pass
+
+            QtCore.QTimer.singleShot(0, _restore)
 
     def node_id(self):
         """
@@ -3194,12 +2830,8 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
         Returns:
             PropListWidget: tab child widget.
         """
-        existing = self.__tab_windows.get(name)
-        if existing is not None:
-            self._ensure_aux_tab(tab_name=str(name), widget=existing)
-            self._set_tab_visible_by_widget(existing, visible=True)
-            return existing
-
+        if name in self.__tab_windows.keys():
+            raise AssertionError("Tab name {} already taken!".format(name))
         window = _F8StateStackContainer(self) if name == "State" else _F8StateContainer(self)
         self.__tab_windows[name] = window
         if name == "State":
@@ -3208,8 +2840,6 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
             window.delete_state_field_requested.connect(self.delete_state_field)
             window.add_state_field_requested.connect(self.add_state_field)
             window.toggle_state_field_show_on_node_requested.connect(self._toggle_state_field_show_on_node)
-            window.move_state_field_up_requested.connect(lambda field_name: self.move_state_field(field_name, -1))
-            window.move_state_field_down_requested.connect(lambda field_name: self.move_state_field(field_name, 1))
         self.__tab.addTab(window, name)
         return window
 
@@ -3297,7 +2927,6 @@ class F8StudioSingleNodePropertiesWidget(QtWidgets.QWidget):
         self._node_graph = node_graph
         self._node_id: str | None = None
         self._editor: F8StudioNodePropEditorWidget | None = None
-        self._node_view_state: dict[str, dict[str, Any]] = {}
         self._block_signal = False
         self._last_node_click_ts: float = 0.0
         self._selection_timer = QtCore.QTimer(self)
@@ -3401,36 +3030,32 @@ class F8StudioSingleNodePropertiesWidget(QtWidgets.QWidget):
             _set_read_only_widget(w, read_only=bool(read_only))
 
     def _clear_editor(self, *, clear_node_id: bool = True) -> None:
-        self._save_current_view_state()
         if clear_node_id:
             self._node_id = None
         editor = self._editor
         if editor is not None:
+            self._editor = None
+            self._container_layout.removeWidget(editor)
             try:
                 editor.setVisible(False)
             except (AttributeError, RuntimeError, TypeError):
-                logger.exception("Failed to hide editor")
+                logger.exception("Failed to hide editor before deleteLater")
+            editor.deleteLater()
         try:
             self._empty.setVisible(True)
         except (AttributeError, RuntimeError, TypeError):
             logger.exception("Failed to show empty editor placeholder")
 
     def _set_editor(self, editor: F8StudioNodePropEditorWidget) -> None:
-        if self._editor is editor:
-            return
-        previous = self._editor
-        if previous is not None and previous is not editor:
-            try:
-                previous.setVisible(False)
-            except (AttributeError, RuntimeError, TypeError):
-                logger.exception("Failed to hide previous editor instance")
+        # Preserve the node id that the caller (set_node) just set. We are
+        # swapping the editor widget, not clearing the selection.
+        self._clear_editor(clear_node_id=False)
         self._editor = editor
         try:
             self._empty.setVisible(False)
         except (AttributeError, RuntimeError, TypeError):
             logger.exception("Failed to hide empty editor placeholder")
-        if self._container_layout.indexOf(editor) < 0:
-            self._container_layout.addWidget(editor, 0)
+        self._container_layout.addWidget(editor, 0)
         self._sync_container_width()
         try:
             editor.property_changed.connect(self._on_editor_property_changed)  # type: ignore[attr-defined]
@@ -3444,21 +3069,6 @@ class F8StudioSingleNodePropertiesWidget(QtWidgets.QWidget):
             editor.property_closed.connect(self._on_editor_closed)  # type: ignore[attr-defined]
         except (AttributeError, RuntimeError, TypeError):
             logger.exception("Failed to connect editor.property_closed")
-
-    def _save_current_view_state(self) -> None:
-        if self._editor is None or not self._node_id:
-            return
-        try:
-            self._node_view_state[self._node_id] = self._editor.capture_view_state()
-        except Exception:
-            logger.exception("Failed to capture property panel view state node=%s", self._node_id)
-
-    def _view_state_for_node(self, node_id: str) -> dict[str, Any] | None:
-        key = str(node_id or "").strip()
-        if not key:
-            return None
-        value = self._node_view_state.get(key)
-        return value if isinstance(value, dict) else None
 
     def set_node(self, node: Any | None, *, force_clear: bool = False) -> None:
         if node is None:
@@ -3475,23 +3085,10 @@ class F8StudioSingleNodePropertiesWidget(QtWidgets.QWidget):
         if not node_id:
             self._clear_editor(clear_node_id=True)
             return
-        if self._editor is None:
-            self._set_editor(F8StudioNodePropEditorWidget(self._container, node=None))
-        if self._editor is None:
+        if self._node_id == node_id and self._editor is not None:
             return
-        if self._node_id == node_id:
-            return
-        self._save_current_view_state()
         self._node_id = node_id
-        self._editor.bind_node(node, view_state=self._view_state_for_node(node_id))
-        try:
-            self._editor.setVisible(True)
-        except (AttributeError, RuntimeError, TypeError):
-            logger.exception("Failed to show property editor")
-        try:
-            self._empty.setVisible(False)
-        except (AttributeError, RuntimeError, TypeError):
-            logger.exception("Failed to hide empty editor placeholder")
+        self._set_editor(F8StudioNodePropEditorWidget(self._container, node=node))
         try:
             self._scroll.verticalScrollBar().setValue(0)
         except (AttributeError, RuntimeError, TypeError):
@@ -3513,12 +3110,9 @@ class F8StudioSingleNodePropertiesWidget(QtWidgets.QWidget):
                 self.set_node(selected[0])
 
     def _on_nodes_deleted(self, node_ids: list[str]) -> None:
-        deleted_ids = {str(x) for x in (node_ids or [])}
-        for deleted in list(deleted_ids):
-            self._node_view_state.pop(deleted, None)
         if not self._node_id:
             return
-        if self._node_id in deleted_ids:
+        if self._node_id in set(str(x) for x in (node_ids or [])):
             self.set_node(None, force_clear=True)
 
     def _on_editor_closed(self, _node_id: str) -> None:
@@ -3549,20 +3143,6 @@ class F8StudioSingleNodePropertiesWidget(QtWidgets.QWidget):
             return
         # No selection: keep current panel content (do not clear).
         return
-
-    def get_property_editor_widget(self, node: Any) -> F8StudioNodePropEditorWidget | None:
-        editor = self._editor
-        if editor is None:
-            return None
-        if node is None:
-            return None
-        try:
-            node_id = str(node.id or "")
-        except Exception:
-            return None
-        if not node_id or node_id != str(self._node_id or ""):
-            return None
-        return editor
 
     def _on_editor_property_changed(self, node_id: str, prop_name: str, prop_value: Any) -> None:
         if self._block_signal:

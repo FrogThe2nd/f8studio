@@ -77,6 +77,7 @@ def _combo_popup_debug_enabled() -> bool:
     raw = str(os.getenv("F8_DEBUG_COMBO_POPUP", "")).strip().lower()
     return raw in {"1", "true", "yes", "on"}
 
+
 def _choose_best_view_for_scene_point(views: list[Any], scene_pos: QtCore.QPointF) -> Any | None:
     visible_views: list[Any] = []
     for view in list(views or []):
@@ -945,7 +946,7 @@ class F8MultiSelect(QtWidgets.QWidget):
         self._context_tooltip = ""
         self._read_only = False
 
-        self._button = QtWidgets.QToolButton(self)
+        self._button = QtWidgets.QToolButton()
         self._button.setToolButtonStyle(QtCore.Qt.ToolButtonTextOnly)
         self._button.setMinimumHeight(22)
         self._button.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
