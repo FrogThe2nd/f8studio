@@ -847,7 +847,33 @@ EnvelopeRuntimeNode.SPEC = F8OperatorSpec(
     operatorClass=OPERATOR_CLASS,
     version="0.0.1",
     label="Envelope",
-    description="Tracks upper/lower envelopes and emits normalized + confidence outputs.",
+    description=(
+        "Track a signal envelope and normalize it into a stable 0..1 range.\n"
+        "\n"
+        "Core\n"
+        "- Input `value` is tracked with lower and upper envelope estimators.\n"
+        "- Outputs are `lower`, `upper`, `normalized`, and `confidence`.\n"
+        "- `normalized` maps the current input between the tracked envelopes, including optional margin and minimum span.\n"
+        "- `confidence` estimates how periodic and stable the recent signal is.\n"
+        "\n"
+        "Envelope Modes\n"
+        "- `EMA`: simple exponential tracking\n"
+        "- `DEMA`: double exponential tracking with faster response\n"
+        "- `SMA`: moving average window smoothing\n"
+        "\n"
+        "Jump Handling\n"
+        "- Optional jump detection can reseed the envelopes after large sustained changes.\n"
+        "- Jump settings control the trigger threshold, consecutive frames, and reseed blend time.\n"
+        "\n"
+        "Confidence\n"
+        "- Optional confidence uses autocorrelation over a sliding window.\n"
+        "- Confidence settings control lag range, peak prominence, smoothing, and noise floor.\n"
+        "\n"
+        "Examples\n"
+        "- Normalize a noisy control signal into `normalized`\n"
+        "- Track changing lower/upper motion bounds\n"
+        "- Use `confidence` as a quality gate for rhythmic or periodic input"
+    ),
     tags=["signal", "envelope", "normalize", "confidence", "transform"],
     dataInPorts=[
         F8DataPortSpec(name="value", description="Input value.", valueSchema=number_schema(), required=False),
@@ -866,7 +892,7 @@ EnvelopeRuntimeNode.SPEC = F8OperatorSpec(
         F8StateSpec(
             name="method",
             label="Method",
-            description="Envelope filter method.",
+            description="Envelope tracking method: `EMA`, `DEMA`, or `SMA`.",
             valueSchema=string_schema(default="EMA", enum=["EMA", "DEMA", "SMA"]),
             access=F8StateAccess.rw,
             required=True,
@@ -875,7 +901,7 @@ EnvelopeRuntimeNode.SPEC = F8OperatorSpec(
         F8StateSpec(
             name="rise_alpha",
             label="Rise Alpha",
-            description="Smoothing factor when moving toward the envelope.",
+            description="Smoothing factor when the estimator moves toward the current envelope edge.",
             valueSchema=number_schema(default=0.4, minimum=0.0, maximum=1.0),
             access=F8StateAccess.rw,
             required=True,
@@ -884,7 +910,7 @@ EnvelopeRuntimeNode.SPEC = F8OperatorSpec(
         F8StateSpec(
             name="fall_alpha",
             label="Fall Alpha",
-            description="Smoothing factor when moving away from the envelope.",
+            description="Smoothing factor when the estimator relaxes away from the current envelope edge.",
             valueSchema=number_schema(default=0.05, minimum=0.0, maximum=1.0),
             access=F8StateAccess.rw,
             required=True,
@@ -893,7 +919,7 @@ EnvelopeRuntimeNode.SPEC = F8OperatorSpec(
         F8StateSpec(
             name="min_span",
             label="Min Span",
-            description="Minimum enforced envelope span.",
+            description="Minimum enforced distance between lower and upper envelopes before normalization.",
             valueSchema=number_schema(default=0.25, minimum=0.0),
             access=F8StateAccess.rw,
             required=True,
@@ -902,7 +928,7 @@ EnvelopeRuntimeNode.SPEC = F8OperatorSpec(
         F8StateSpec(
             name="sma_window",
             label="SMA Window",
-            description="Window size for SMA mode.",
+            description="Moving-average window size used when Method is `SMA`.",
             valueSchema=number_schema(default=10, minimum=1.0),
             access=F8StateAccess.rw,
             required=True,
@@ -911,7 +937,7 @@ EnvelopeRuntimeNode.SPEC = F8OperatorSpec(
         F8StateSpec(
             name="margin",
             label="Margin",
-            description="Extra margin added to envelopes before normalization.",
+            description="Extra padding added outside the envelopes before computing `normalized`.",
             valueSchema=number_schema(default=0.0, minimum=0.0),
             access=F8StateAccess.rw,
             required=True,
@@ -965,7 +991,7 @@ EnvelopeRuntimeNode.SPEC = F8OperatorSpec(
         F8StateSpec(
             name="confidenceEnabled",
             label="Confidence Enabled",
-            description="Enable periodicity confidence estimation.",
+            description="Enable autocorrelation-based periodicity confidence estimation.",
             valueSchema=boolean_schema(default=True),
             access=F8StateAccess.rw,
             required=True,

@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sys
 import unittest
+import math
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 SDK_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "f8pysdk"))
@@ -247,6 +248,171 @@ class WaveExprNodeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(10.0, preview_values)
         self.assertIn(20.0, preview_values)
         self.assertIn(30.0, preview_values)
+
+    async def test_tempest_function_uses_cycle_t_not_radians(self) -> None:
+        bus = self._setup_bus(service_id="svcA")
+        graph = F8RuntimeGraph(
+            graphId="g2e",
+            revision="r1",
+            nodes=[
+                _build_wave_expr_runtime_node(
+                    node_id="w1",
+                    service_id="svcA",
+                    template="tempest(t, 0.5, 0.25)",
+                    max_t=10.0,
+                )
+            ],
+            edges=[],
+        )
+        await bus.set_rungraph(graph)
+
+        runtime = bus.get_node("w1")
+        assert isinstance(runtime, WaveExprRuntimeNode)
+
+        buffer_input(bus, "w1", "t", 0.25, ts_ms=0, edge=None, ctx_id=None)
+        out = await runtime.compute_output("value", ctx_id=35)
+
+        theta = 2.0 * math.pi * 0.25
+        phase = theta + ((math.pi * 0.5) / 2.0)
+        expected = -math.cos(phase + (0.25 * math.sin(phase)))
+        self.assertAlmostEqual(out, expected, places=9)
+
+    async def test_tempest_function_populates_preview(self) -> None:
+        bus = self._setup_bus(service_id="svcA")
+        graph = F8RuntimeGraph(
+            graphId="g2f",
+            revision="r1",
+            nodes=[
+                _build_wave_expr_runtime_node(
+                    node_id="w1",
+                    service_id="svcA",
+                    template="tempest(t, 0.25, 0.5)",
+                    max_t=2.0,
+                )
+            ],
+            edges=[],
+        )
+        await bus.set_rungraph(graph)
+
+        runtime = bus.get_node("w1")
+        assert isinstance(runtime, WaveExprRuntimeNode)
+
+        buffer_input(bus, "w1", "t", 0.0, ts_ms=0, edge=None, ctx_id=None)
+        _ = await runtime.compute_output("value", ctx_id=36)
+
+        preview = list(await runtime.get_state_value("preview") or [])
+        self.assertGreaterEqual(len(preview), 64)
+        first_value = float(preview[0][1])
+        theta = 0.0
+        phase = theta + ((math.pi * 0.25) / 2.0)
+        expected = -math.cos(phase + (0.5 * math.sin(phase)))
+        self.assertAlmostEqual(first_value, expected, places=9)
+
+    async def test_fadein_function_uses_cycle_phase(self) -> None:
+        bus = self._setup_bus(service_id="svcA")
+        graph = F8RuntimeGraph(
+            graphId="g2h",
+            revision="r1",
+            nodes=[
+                _build_wave_expr_runtime_node(
+                    node_id="w1",
+                    service_id="svcA",
+                    template="fadein(0.4)",
+                    max_t=10.0,
+                )
+            ],
+            edges=[],
+        )
+        await bus.set_rungraph(graph)
+
+        runtime = bus.get_node("w1")
+        assert isinstance(runtime, WaveExprRuntimeNode)
+
+        buffer_input(bus, "w1", "t", 0.1, ts_ms=0, edge=None, ctx_id=None)
+        out_a = await runtime.compute_output("value", ctx_id=40)
+        self.assertAlmostEqual(out_a, 0.25, places=9)
+
+        buffer_input(bus, "w1", "t", 0.6, ts_ms=0, edge=None, ctx_id=None)
+        out_b = await runtime.compute_output("value", ctx_id=41)
+        self.assertAlmostEqual(out_b, 1.0, places=9)
+
+        buffer_input(bus, "w1", "t", 1.1, ts_ms=0, edge=None, ctx_id=None)
+        out_c = await runtime.compute_output("value", ctx_id=42)
+        self.assertAlmostEqual(out_c, 1.0, places=9)
+
+    async def test_fadeout_function_uses_cycle_phase(self) -> None:
+        bus = self._setup_bus(service_id="svcA")
+        graph = F8RuntimeGraph(
+            graphId="g2i",
+            revision="r1",
+            nodes=[
+                _build_wave_expr_runtime_node(
+                    node_id="w1",
+                    service_id="svcA",
+                    template="fadeout(0.4)",
+                    max_t=10.0,
+                )
+            ],
+            edges=[],
+        )
+        await bus.set_rungraph(graph)
+
+        runtime = bus.get_node("w1")
+        assert isinstance(runtime, WaveExprRuntimeNode)
+
+        buffer_input(bus, "w1", "t", 9.9, ts_ms=0, edge=None, ctx_id=None)
+        out_a = await runtime.compute_output("value", ctx_id=43)
+        self.assertAlmostEqual(out_a, 0.25, places=9)
+
+        buffer_input(bus, "w1", "t", 9.5, ts_ms=0, edge=None, ctx_id=None)
+        out_b = await runtime.compute_output("value", ctx_id=44)
+        self.assertAlmostEqual(out_b, 1.0, places=9)
+
+        buffer_input(bus, "w1", "t", 8.5, ts_ms=0, edge=None, ctx_id=None)
+        out_c = await runtime.compute_output("value", ctx_id=45)
+        self.assertAlmostEqual(out_c, 1.0, places=9)
+
+    async def test_numeric_state_defaults_feed_express_and_preview(self) -> None:
+        bus = self._setup_bus(service_id="svcA")
+        graph = F8RuntimeGraph(
+            graphId="g2g",
+            revision="r1",
+            nodes=[
+                _build_wave_expr_runtime_node(
+                    node_id="w1",
+                    service_id="svcA",
+                    template="tempest(t, 0, c)",
+                    max_t=4.0,
+                    extra_state_fields=[
+                        F8StateSpec(
+                            name="c",
+                            label="c",
+                            description="",
+                            valueSchema=number_schema(default=0.25),
+                            access=F8StateAccess.rw,
+                            required=False,
+                            showOnNode=True,
+                        )
+                    ],
+                )
+            ],
+            edges=[],
+        )
+        await bus.set_rungraph(graph)
+
+        runtime = bus.get_node("w1")
+        assert isinstance(runtime, WaveExprRuntimeNode)
+
+        buffer_input(bus, "w1", "t", 0.0, ts_ms=0, edge=None, ctx_id=None)
+        _ = await runtime.compute_output("value", ctx_id=37)
+
+        express = str(await runtime.get_state_value("express") or "")
+        preview = list(await runtime.get_state_value("preview") or [])
+        last_error = str(await runtime.get_state_value("lastError") or "")
+
+        self.assertIn("0.25", express)
+        self.assertGreaterEqual(len(preview), 64)
+        self.assertEqual(last_error, "")
 
     async def test_invalid_template_keeps_previous_model_and_value(self) -> None:
         bus = self._setup_bus(service_id="svcA")

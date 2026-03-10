@@ -17,6 +17,7 @@ from f8pysdk import (
     number_schema,
     string_schema,
 )
+from f8pysdk.generated import UNSET
 from f8pysdk.nats_naming import ensure_token
 from f8pysdk.runtime_node import OperatorNode
 from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
@@ -46,6 +47,18 @@ _PROTECTED_STATE_FIELDS = {
 }
 
 logger = logging.getLogger(__name__)
+
+
+def _schema_default_value(schema: Any) -> Any:
+    if isinstance(schema, dict):
+        return schema.get("default")
+    try:
+        default_value = schema.default
+    except AttributeError:
+        return None
+    if default_value is UNSET:
+        return None
+    return default_value
 
 
 def _normalize_template(value: Any) -> str:
@@ -134,7 +147,15 @@ class WaveExprRuntimeNode(OperatorNode):
             if _is_variable_field(field)
         ]
 
-        self._state_values: dict[str, Any] = dict(initial_state or {})
+        self._state_values: dict[str, Any] = {}
+        for field in list(node.stateFields or []):
+            field_name = str(field.name or "").strip()
+            if not field_name:
+                continue
+            default_value = _schema_default_value(field.valueSchema)
+            if default_value is not None:
+                self._state_values[field_name] = default_value
+        self._state_values.update(dict(initial_state or {}))
         self._template = _normalize_template(self._state_values.get("template") or _DEFAULT_TEMPLATE)
 
         max_t_raw = self._state_values.get("maxT", _DEFAULT_MAX_T)
@@ -385,12 +406,39 @@ WaveExprRuntimeNode.SPEC = F8OperatorSpec(
     operatorClass=OPERATOR_CLASS,
     version="0.0.1",
     label="Wave Expr",
-    description="Template-based waveform expression with scalar t input and live 0..maxT preview.",
+    description=(
+        "Template-based waveform expression node.\n"
+        "\n"
+        "Core\n"
+        "- `t` is cycle-domain input, not radians.\n"
+        "- Runtime output evaluates with `t % maxT`.\n"
+        "- Any numeric RW/WO state field can be referenced by name.\n"
+        "- `express` shows the final formula after numeric state substitution.\n"
+        "- `Preview` shows sampled `[t, value]` pairs over `[0, maxT)`.\n"
+        "\n"
+        "Oscillators\n"
+        "- Phase trig: `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`\n"
+        "- Shape helpers: `saw`, `tri`, `pulse`\n"
+        "- Tempest: `tempest(t, p, c)` where `t` is 0..1 circle phase, `p` is phase, `c` is eccentricity\n"
+        "\n"
+        "Utility\n"
+        "- Blend and range: `clamp`, `lerp`, `smoothstep`, `saturate`\n"
+        "- Phase helpers: `frac`, `wrap`\n"
+        "- Selection: `cond(condition, a, b)`\n"
+        "- Sequence: `sequence([a, b, c])` uses `int(t) % len(sequence)`\n"
+        "- Numeric helpers: `abs`, `min`, `max`, `round`, `floor`, `ceil`, `sqrt`, `exp`, `log`, `log10`\n"
+        "\n"
+        "Examples\n"
+        "- `0.5 + 0.5 * cos(t)`\n"
+        "- `sequence([10, 20, 30, 20])`\n"
+        "- `tempest(t, 0, c)`\n"
+        "- `cond(t > 4, 1, 0)`"
+    ),
     tags=["expr", "wave", "template", "signal"],
     dataInPorts=[
         F8DataPortSpec(
             name="t",
-            description="Scalar cycle-domain input. 1.0 means one period.",
+            description="Scalar cycle-domain input. 1.0 means one period; output evaluation uses `t % maxT`.",
             valueSchema=number_schema(),
             required=True,
             showOnNode=True,
@@ -399,7 +447,7 @@ WaveExprRuntimeNode.SPEC = F8OperatorSpec(
     dataOutPorts=[
         F8DataPortSpec(
             name="value",
-            description="Expression output value.",
+            description="Expression output value for the current wrapped `t` sample.",
             valueSchema=number_schema(),
             required=True,
             showOnNode=True,
@@ -409,7 +457,10 @@ WaveExprRuntimeNode.SPEC = F8OperatorSpec(
         F8StateSpec(
             name="template",
             label="Template",
-            description="Waveform expression template. Allowed: math helpers + cond + variables.",
+            description=(
+                "Waveform expression template. `t` is cycle-domain, numeric state fields can be referenced by name, "
+                "and helpers include `cond`, `sequence([...])`, `tempest(t, p, c)`, phase trig, and shaping functions."
+            ),
             valueSchema=string_schema(default=_DEFAULT_TEMPLATE),
             access=F8StateAccess.wo,
             required=True,
@@ -420,7 +471,7 @@ WaveExprRuntimeNode.SPEC = F8OperatorSpec(
         F8StateSpec(
             name="maxT",
             label="Max T",
-            description="Cycle count horizon used for expression context and preview.",
+            description="Cycle horizon for wrapping and preview sampling. Runtime output uses `t % maxT`; preview samples `[0, maxT)`.",
             valueSchema=number_schema(default=_DEFAULT_MAX_T, minimum=1e-6),
             access=F8StateAccess.rw,
             required=True,
@@ -447,16 +498,16 @@ WaveExprRuntimeNode.SPEC = F8OperatorSpec(
         F8StateSpec(
             name="express",
             label="Express",
-            description="Rendered expression after variable replacement (t is preserved).",
+            description="Rendered expression after numeric state substitution. `t` remains symbolic so you can inspect the final formula.",
             valueSchema=string_schema(default=""),
             access=F8StateAccess.ro,
             required=True,
-            showOnNode=True,
+            showOnNode=False,
         ),
         F8StateSpec(
             name="preview",
             label="Preview",
-            description="Preview samples as [t, value] pairs over t in [0, maxT).",
+            description="Preview waveform samples as `[t, value]` pairs over `[0, maxT)`. Changes in preview coordinates trigger redraw.",
             valueSchema={
                 "type": "array",
                 "items": {
@@ -469,13 +520,13 @@ WaveExprRuntimeNode.SPEC = F8OperatorSpec(
             },
             access=F8StateAccess.ro,
             required=True,
-            showOnNode=True,
             uiControl="wave_preview",
+            showOnNode=True,
         ),
         F8StateSpec(
             name="lastError",
             label="Last Error",
-            description="Last template/preview/eval error.",
+            description="Last template compile, preview evaluation, or runtime evaluation error.",
             valueSchema=string_schema(default=""),
             access=F8StateAccess.ro,
             required=True,

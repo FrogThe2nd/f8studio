@@ -269,6 +269,32 @@ def saturate(x: Any) -> Any:
     return clamp(x, 0.0, 1.0)
 
 
+def tempest(t: Any, p: Any, c: Any) -> Any:
+    t_arr = np.asarray(t, dtype=np.float64)
+    p_arr = np.asarray(p, dtype=np.float64)
+    c_arr = np.asarray(c, dtype=np.float64)
+    theta = _TWO_PI * t_arr
+    phase = theta + ((math.pi * p_arr) / 2.0)
+    return -np.cos(phase + (c_arr * np.sin(phase)))
+
+
+def _fadein_value(t: Any, duration: Any) -> Any:
+    duration_arr = np.asarray(duration, dtype=np.float64)
+    if np.any(duration_arr <= 0.0):
+        raise ValueError("fadein expects duration > 0")
+    t_arr = np.asarray(t, dtype=np.float64)
+    return saturate(t_arr / duration_arr)
+
+
+def _fadeout_value(t: Any, duration: Any, maxt: Any) -> Any:
+    duration_arr = np.asarray(duration, dtype=np.float64)
+    if np.any(duration_arr <= 0.0):
+        raise ValueError("fadeout expects duration > 0")
+    t_arr = np.asarray(t, dtype=np.float64)
+    maxt_arr = np.asarray(maxt, dtype=np.float64)
+    return saturate((maxt_arr - t_arr) / duration_arr)
+
+
 def _sequence_value(t: Any, values: Any) -> Any:
     values_arr = np.asarray(values, dtype=np.float64)
     if values_arr.ndim != 1:
@@ -316,6 +342,9 @@ _ALLOWED_DIRECT_FUNCTIONS: dict[str, Callable[..., Any]] = {
     "pulse": pulse,
     "smoothstep": smoothstep,
     "saturate": saturate,
+    "tempest": tempest,
+    "fadein": lambda duration: duration,
+    "fadeout": lambda duration: duration,
     "sequence": lambda values: values,
 }
 
@@ -422,6 +451,8 @@ def _build_eval_locals(
     names["maxT"] = float(maxt)
     names["p"] = frac(t)
     names["cycle"] = np.floor(t)
+    names["fadein"] = lambda duration: _fadein_value(t, duration)
+    names["fadeout"] = lambda duration: _fadeout_value(t, duration, maxt)
     names["sequence"] = lambda values: _sequence_value(t, values)
 
     if variables is not None:
@@ -533,6 +564,9 @@ __all__ = [
     "pulse",
     "smoothstep",
     "saturate",
+    "tempest",
+    "fadein",
+    "fadeout",
     "sequence",
 ]
 

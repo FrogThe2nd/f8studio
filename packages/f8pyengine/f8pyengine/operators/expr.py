@@ -499,7 +499,27 @@ ExprRuntimeNode.SPEC = F8OperatorSpec(
     operatorClass=OPERATOR_CLASS,
     version="0.0.1",
     label="Python Expr",
-    description="Evaluate a small expression using input values (math/logic/extraction).",
+    description=(
+        "Evaluate a small Python expression using input values.\n"
+        "\n"
+        "Core\n"
+        "- The main input is `x`, and any additional input port name can be referenced directly.\n"
+        "- The expression is a single Python expression, not a statement block.\n"
+        "- The result is emitted on `out`.\n"
+        "- If `Unpack Dict Outputs` is enabled and the result is a dict, matching output ports receive matching keys.\n"
+        "\n"
+        "Available\n"
+        "- Builtins: `abs`, `min`, `max`, `round`, `float`, `int`, `len`, `sum`, `sorted`, `range`, `any`, `all`\n"
+        "- Python expressions: indexing, dict/list/tuple literals, comprehensions, conditionals\n"
+        "- Math namespace: `math.*`\n"
+        "- Optional numpy namespace: `np.*` and `numpy.*` when `Allow Numpy` is enabled\n"
+        "\n"
+        "Examples\n"
+        "- `x * 0.5`\n"
+        "- `max(0, x)`\n"
+        "- `{'left': x[0], 'right': x[1]}`\n"
+        "- `[value * 2 for value in x]`"
+    ),
     tags=["expr", "math", "logic", "transform", "lightweight"],
     dataInPorts=[
         F8DataPortSpec(name="x", description="Input value for the expression.", valueSchema=any_schema(), required=False),
@@ -513,7 +533,7 @@ ExprRuntimeNode.SPEC = F8OperatorSpec(
         F8StateSpec(
             name="allowNumpy",
             label="Allow Numpy",
-            description="Enable numpy calls in expressions (np.*, numpy.*).",
+            description="Enable `np.*` and `numpy.*` inside the expression.",
             uiControl="toggle",
             valueSchema=boolean_schema(default=False),
             access=F8StateAccess.rw,
@@ -523,7 +543,7 @@ ExprRuntimeNode.SPEC = F8OperatorSpec(
         F8StateSpec(
             name="unpackDictOutputs",
             label="Unpack Dict Outputs",
-            description="When enabled, dict results are emitted by matching output port names.",
+            description="When enabled, dict results are unpacked into output ports with matching names.",
             uiControl="toggle",
             valueSchema=boolean_schema(default=False),
             access=F8StateAccess.rw,
@@ -533,7 +553,10 @@ ExprRuntimeNode.SPEC = F8OperatorSpec(
         F8StateSpec(
             name="code",
             label="Expr",
-            description="Single-line expression (no statements). Available: abs/min/max/round/float/int, math.*, comprehensions. Numpy (np.*, numpy.*) is available only when Allow Numpy is enabled.",
+            description=(
+                "Single Python expression. Reference `x` and any extra input port names directly. Supports literals, "
+                "indexing, comprehensions, conditionals, `math.*`, and optional `np.*` / `numpy.*` when `Allow Numpy` is enabled."
+            ),
             uiControl="wrapline",
             uiLanguage="python",
             valueSchema=string_schema(default="x"),
