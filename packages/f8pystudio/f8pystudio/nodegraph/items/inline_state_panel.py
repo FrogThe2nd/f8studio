@@ -24,6 +24,7 @@ from ...widgets.state_controls.pool_resolver import resolve_pool_items
 from ...widgets.property_value_widgets import F8NumberPropLineEdit, open_code_editor_window
 from .node_item_core import StateFieldInfo, state_field_info
 from .service_toolbar_host import F8ElideToolButton, F8ForceGlobalToolTipFilter
+from .wave_preview import WAVE_PREVIEW_DEPENDENCY_FIELDS, make_wave_preview_control
 
 logger = logging.getLogger(__name__)
 
@@ -173,18 +174,35 @@ def on_graph_property_changed(node_item: Any, node: Any, name: str, value: Any) 
     key = str(name or "").strip()
     if not key:
         return
+    preview_updater = None
+    if key in WAVE_PREVIEW_DEPENDENCY_FIELDS:
+        preview_updater = node_item._state_inline_updaters.get("preview")
+
     updater = node_item._state_inline_updaters.get(key)
-    if not updater:
-        refresh_option_pool_for_changed_field(node_item, key)
-        return
-    try:
-        updater(value)
-    except Exception:
+    if updater is not None:
         try:
-            node_id = str(node_item.id or "")
+            updater(value)
         except Exception:
-            node_id = ""
-        logger.exception("inline state updater failed nodeId=%s key=%s", node_id, key)
+            try:
+                node_id = str(node_item.id or "")
+            except Exception:
+                node_id = ""
+            logger.exception("inline state updater failed nodeId=%s key=%s", node_id, key)
+
+    if preview_updater is not None and preview_updater is not updater:
+        try:
+            preview_value = node.get_property("preview")
+        except KeyError:
+            preview_value = None
+        try:
+            preview_updater(preview_value)
+        except Exception:
+            try:
+                node_id = str(node_item.id or "")
+            except Exception:
+                node_id = ""
+            logger.exception("inline wave preview updater failed nodeId=%s key=%s", node_id, key)
+
     refresh_option_pool_for_changed_field(node_item, key)
 
 
@@ -345,6 +363,15 @@ def make_state_inline_control(node_item: Any, state_field: StateFieldInfo) -> Qt
         except KeyError:
             return None
 
+    def _get_node_property(field_name: str) -> Any:
+        node = node_item._backend_node()
+        if node is None:
+            return None
+        try:
+            return node.get_property(field_name)
+        except KeyError:
+            return None
+
     def _pool_items(pool_field: str | None) -> list[str]:
         if not pool_field:
             return []
@@ -359,6 +386,15 @@ def make_state_inline_control(node_item: Any, state_field: StateFieldInfo) -> Qt
 
     # Create control.
     read_only = access_s == "ro" or node_item._inline_state_input_is_connected(name)
+
+    if ui in {"wave_preview"}:
+        control, apply_value = make_wave_preview_control(
+            field_tooltip=field_tooltip,
+            preview_value_getter=_get_node_value,
+            property_value_getter=_get_node_property,
+        )
+        node_item._state_inline_updaters[name] = apply_value
+        return control
 
     if ui in {"wrapline"}:
 

@@ -121,9 +121,12 @@ class WaveExprNodeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("0.75", express)
         self.assertIn("5.0", express)
 
-        preview = await runtime.get_state_value("previewCycle")
+        preview = await runtime.get_state_value("preview")
         self.assertIsInstance(preview, list)
         self.assertGreaterEqual(len(preview or []), 32)
+        first_point = list(preview or [])[0]
+        self.assertIsInstance(first_point, list)
+        self.assertEqual(len(first_point), 2)
 
     async def test_compute_output_from_scalar_t(self) -> None:
         bus = self._setup_bus(service_id="svcA")
@@ -152,6 +155,98 @@ class WaveExprNodeTests(unittest.IsolatedAsyncioTestCase):
         buffer_input(bus, "w1", "t", 6.0, ts_ms=0, edge=None, ctx_id=None)
         out2 = await runtime.compute_output("value", ctx_id=2)
         self.assertEqual(out2, 1.0)
+
+    async def test_compute_output_wraps_t_by_max_t(self) -> None:
+        bus = self._setup_bus(service_id="svcA")
+        graph = F8RuntimeGraph(
+            graphId="g2b",
+            revision="r1",
+            nodes=[
+                _build_wave_expr_runtime_node(
+                    node_id="w1",
+                    service_id="svcA",
+                    template="t",
+                    max_t=10.0,
+                )
+            ],
+            edges=[],
+        )
+        await bus.set_rungraph(graph)
+
+        runtime = bus.get_node("w1")
+        assert isinstance(runtime, WaveExprRuntimeNode)
+
+        buffer_input(bus, "w1", "t", 12.5, ts_ms=0, edge=None, ctx_id=None)
+        out = await runtime.compute_output("value", ctx_id=22)
+        self.assertEqual(out, 2.5)
+
+    async def test_sequence_function_uses_integer_t_index(self) -> None:
+        bus = self._setup_bus(service_id="svcA")
+        graph = F8RuntimeGraph(
+            graphId="g2c",
+            revision="r1",
+            nodes=[
+                _build_wave_expr_runtime_node(
+                    node_id="w1",
+                    service_id="svcA",
+                    template="sequence([10, 20, 30, 20, 10])",
+                    max_t=10.0,
+                )
+            ],
+            edges=[],
+        )
+        await bus.set_rungraph(graph)
+
+        runtime = bus.get_node("w1")
+        assert isinstance(runtime, WaveExprRuntimeNode)
+
+        buffer_input(bus, "w1", "t", 0.2, ts_ms=0, edge=None, ctx_id=None)
+        out0 = await runtime.compute_output("value", ctx_id=30)
+        self.assertEqual(out0, 10.0)
+
+        buffer_input(bus, "w1", "t", 1.8, ts_ms=0, edge=None, ctx_id=None)
+        out1 = await runtime.compute_output("value", ctx_id=31)
+        self.assertEqual(out1, 20.0)
+
+        buffer_input(bus, "w1", "t", 4.9, ts_ms=0, edge=None, ctx_id=None)
+        out4 = await runtime.compute_output("value", ctx_id=32)
+        self.assertEqual(out4, 10.0)
+
+        buffer_input(bus, "w1", "t", 5.1, ts_ms=0, edge=None, ctx_id=None)
+        out5 = await runtime.compute_output("value", ctx_id=33)
+        self.assertEqual(out5, 10.0)
+
+    async def test_sequence_function_populates_preview(self) -> None:
+        bus = self._setup_bus(service_id="svcA")
+        graph = F8RuntimeGraph(
+            graphId="g2d",
+            revision="r1",
+            nodes=[
+                _build_wave_expr_runtime_node(
+                    node_id="w1",
+                    service_id="svcA",
+                    template="sequence([10, 20, 30])",
+                    max_t=6.0,
+                )
+            ],
+            edges=[],
+        )
+        await bus.set_rungraph(graph)
+
+        runtime = bus.get_node("w1")
+        assert isinstance(runtime, WaveExprRuntimeNode)
+
+        buffer_input(bus, "w1", "t", 0.0, ts_ms=0, edge=None, ctx_id=None)
+        _ = await runtime.compute_output("value", ctx_id=34)
+
+        preview = list(await runtime.get_state_value("preview") or [])
+        self.assertGreaterEqual(len(preview), 64)
+        self.assertEqual(float(preview[0][1]), 10.0)
+
+        preview_values = {float(point[1]) for point in preview[:128]}
+        self.assertIn(10.0, preview_values)
+        self.assertIn(20.0, preview_values)
+        self.assertIn(30.0, preview_values)
 
     async def test_invalid_template_keeps_previous_model_and_value(self) -> None:
         bus = self._setup_bus(service_id="svcA")
@@ -190,12 +285,12 @@ class WaveExprNodeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(value_before, 3.0)
 
         express_before = str(await runtime.get_state_value("express") or "")
-        preview_before = list(await runtime.get_state_value("previewCycle") or [])
+        preview_before = list(await runtime.get_state_value("preview") or [])
 
         await runtime.on_state("template", "cos((t)", ts_ms=2)
 
         express_after = str(await runtime.get_state_value("express") or "")
-        preview_after = list(await runtime.get_state_value("previewCycle") or [])
+        preview_after = list(await runtime.get_state_value("preview") or [])
         last_error = str(await runtime.get_state_value("lastError") or "")
 
         self.assertEqual(express_after, express_before)
@@ -272,7 +367,7 @@ class WaveExprNodeTests(unittest.IsolatedAsyncioTestCase):
         output = await runtime.compute_output("value", ctx_id=5)
         self.assertEqual(output, 3.0)
 
-    async def test_preview_cycle_uses_zero_to_max_t_domain(self) -> None:
+    async def test_preview_uses_zero_to_max_t_domain(self) -> None:
         bus = self._setup_bus(service_id="svcA")
         graph = F8RuntimeGraph(
             graphId="g5",
@@ -295,15 +390,44 @@ class WaveExprNodeTests(unittest.IsolatedAsyncioTestCase):
         buffer_input(bus, "w1", "t", 0.2, ts_ms=0, edge=None, ctx_id=None)
         _ = await runtime.compute_output("value", ctx_id=6)
 
-        preview = list(await runtime.get_state_value("previewCycle") or [])
+        preview = list(await runtime.get_state_value("preview") or [])
         self.assertGreaterEqual(len(preview), 64)
 
-        low_count = sum(1 for value in preview if float(value) == 2.0)
-        high_count = sum(1 for value in preview if float(value) == 1.0)
+        low_count = sum(1 for point in preview if float(point[1]) == 2.0)
+        high_count = sum(1 for point in preview if float(point[1]) == 1.0)
         total = len(preview)
+
+        self.assertAlmostEqual(float(preview[0][0]), 0.0)
+        self.assertLess(float(preview[-1][0]), 10.0)
 
         self.assertGreaterEqual(low_count, int(total * 0.45))
         self.assertGreaterEqual(high_count, int(total * 0.45))
+
+    async def test_min_and_max_value_allow_auto_zoom_sentinel(self) -> None:
+        bus = self._setup_bus(service_id="svcA")
+        graph = F8RuntimeGraph(
+            graphId="g6",
+            revision="r1",
+            nodes=[
+                _build_wave_expr_runtime_node(
+                    node_id="w1",
+                    service_id="svcA",
+                    template="t",
+                    max_t=10.0,
+                )
+            ],
+            edges=[],
+        )
+        await bus.set_rungraph(graph)
+
+        runtime = bus.get_node("w1")
+        assert isinstance(runtime, WaveExprRuntimeNode)
+
+        min_value = await runtime.validate_state("minValue", 0.0, ts_ms=7, meta={})
+        max_value = await runtime.validate_state("maxValue", 0.0, ts_ms=8, meta={})
+
+        self.assertEqual(min_value, 0.0)
+        self.assertEqual(max_value, 0.0)
 
 
 if __name__ == "__main__":

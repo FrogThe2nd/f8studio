@@ -29,8 +29,8 @@ from ..wave_expr_lang import RESERVED_NAMES, compile_expr, eval_compiled, eval_s
 OPERATOR_CLASS = "f8.wave_expr"
 _DEFAULT_TEMPLATE = "0.5 + 0.5 * cos(t)"
 _DEFAULT_MAX_T = 10.0
-_DEFAULT_MIN_VALUE = -1.0
-_DEFAULT_MAX_VALUE = 1.0
+_DEFAULT_MIN_VALUE = 0.0
+_DEFAULT_MAX_VALUE = 0.0
 _PREVIEW_SAMPLES = 256
 
 _PROTECTED_STATE_FIELDS = {
@@ -39,7 +39,7 @@ _PROTECTED_STATE_FIELDS = {
     "minValue",
     "maxValue",
     "express",
-    "previewCycle",
+    "preview",
     "lastError",
     "svcId",
     "operatorId",
@@ -117,7 +117,7 @@ class WaveExprRuntimeNode(OperatorNode):
             "minValue",
             "maxValue",
             "express",
-            "previewCycle",
+            "preview",
             "lastError",
         ]
 
@@ -146,16 +146,13 @@ class WaveExprRuntimeNode(OperatorNode):
         max_value = _to_float_or_none(max_value_raw)
         self._min_value = float(min_value) if min_value is not None else float(_DEFAULT_MIN_VALUE)
         self._max_value = float(max_value) if max_value is not None else float(_DEFAULT_MAX_VALUE)
-        if self._min_value >= self._max_value:
-            self._min_value = float(_DEFAULT_MIN_VALUE)
-            self._max_value = float(_DEFAULT_MAX_VALUE)
         self._state_values["minValue"] = self._min_value
         self._state_values["maxValue"] = self._max_value
 
         self._compiled = None
         self._eval_variables: dict[str, float] = {}
         self._express = ""
-        self._preview_cycle: list[float] = []
+        self._preview_cycle: list[tuple[float, float]] = []
         self._last_error = ""
         self._last_output: float | None = None
         self._publish_pending = True
@@ -178,15 +175,9 @@ class WaveExprRuntimeNode(OperatorNode):
         if name == "maxT":
             return _coerce_max_t(value)
         if name == "minValue":
-            min_value = _coerce_preview_bound("minValue", value)
-            if min_value >= self._max_value:
-                raise ValueError("minValue must be < maxValue")
-            return min_value
+            return _coerce_preview_bound("minValue", value)
         if name == "maxValue":
-            max_value = _coerce_preview_bound("maxValue", value)
-            if max_value <= self._min_value:
-                raise ValueError("maxValue must be > minValue")
-            return max_value
+            return _coerce_preview_bound("maxValue", value)
         if name in self._variable_field_names:
             numeric = _to_float_or_none(value)
             if numeric is None:
@@ -198,7 +189,7 @@ class WaveExprRuntimeNode(OperatorNode):
         del ts_ms
         name = str(field or "").strip()
 
-        if name in {"express", "previewCycle", "lastError"}:
+        if name in {"express", "preview", "lastError"}:
             return
 
         if name == "template":
@@ -216,18 +207,12 @@ class WaveExprRuntimeNode(OperatorNode):
             await self._publish_public_state(force=False)
             return
         if name == "minValue":
-            min_value = _coerce_preview_bound("minValue", value)
-            if min_value >= self._max_value:
-                raise ValueError("minValue must be < maxValue")
-            self._min_value = min_value
-            self._state_values[name] = min_value
+            self._min_value = _coerce_preview_bound("minValue", value)
+            self._state_values[name] = self._min_value
             return
         if name == "maxValue":
-            max_value = _coerce_preview_bound("maxValue", value)
-            if max_value <= self._min_value:
-                raise ValueError("maxValue must be > minValue")
-            self._max_value = max_value
-            self._state_values[name] = max_value
+            self._max_value = _coerce_preview_bound("maxValue", value)
+            self._state_values[name] = self._max_value
             return
 
         if name in self._variable_field_names:
@@ -324,7 +309,9 @@ class WaveExprRuntimeNode(OperatorNode):
         self._compiled = compiled
         self._eval_variables = variables
         self._express = str(rendered or "")
-        self._preview_cycle = [float(v) for v in np.asarray(preview, dtype=np.float64).tolist()]
+        preview_values = [float(v) for v in np.asarray(preview, dtype=np.float64).tolist()]
+        preview_times = [float(v) for v in np.asarray(t_preview, dtype=np.float64).tolist()]
+        self._preview_cycle = list(zip(preview_times, preview_values, strict=True))
         self._publish_pending = True
         if variable_warnings:
             self._set_last_error("; ".join(variable_warnings[:3]))
@@ -337,7 +324,7 @@ class WaveExprRuntimeNode(OperatorNode):
 
         self._publish_pending = False
         await self._safe_set_state("express", str(self._express))
-        await self._safe_set_state("previewCycle", list(self._preview_cycle))
+        await self._safe_set_state("preview", [list(point) for point in self._preview_cycle])
         await self._safe_set_state("lastError", str(self._last_error))
 
     async def _safe_set_state(self, field: str, value: Any) -> None:
@@ -372,9 +359,12 @@ class WaveExprRuntimeNode(OperatorNode):
             return self._last_output
 
         try:
+            wrapped_t = math.fmod(float(t_value), float(self._max_t))
+            if wrapped_t < 0.0:
+                wrapped_t += float(self._max_t)
             out = eval_scalar(
                 self._compiled,
-                t=float(t_value),
+                t=wrapped_t,
                 maxt=float(self._max_t),
                 variables=self._eval_variables,
             )
@@ -439,7 +429,7 @@ WaveExprRuntimeNode.SPEC = F8OperatorSpec(
         F8StateSpec(
             name="minValue",
             label="Min Value",
-            description="Preview window lower bound (Y-axis).",
+            description="Preview window lower bound (Y-axis). Auto zoom when minValue >= maxValue.",
             valueSchema=number_schema(default=_DEFAULT_MIN_VALUE),
             access=F8StateAccess.rw,
             required=True,
@@ -448,7 +438,7 @@ WaveExprRuntimeNode.SPEC = F8OperatorSpec(
         F8StateSpec(
             name="maxValue",
             label="Max Value",
-            description="Preview window upper bound (Y-axis).",
+            description="Preview window upper bound (Y-axis). Auto zoom when minValue >= maxValue.",
             valueSchema=number_schema(default=_DEFAULT_MAX_VALUE),
             access=F8StateAccess.rw,
             required=True,
@@ -462,16 +452,25 @@ WaveExprRuntimeNode.SPEC = F8OperatorSpec(
             access=F8StateAccess.ro,
             required=True,
             showOnNode=True,
-            uiControl="wave_expr_preview",
         ),
         F8StateSpec(
-            name="previewCycle",
-            label="Preview Cycle",
-            description="Internal preview samples over t in [0, maxT).",
-            valueSchema={"type": "array", "items": {"type": "number"}, "default": []},
+            name="preview",
+            label="Preview",
+            description="Preview samples as [t, value] pairs over t in [0, maxT).",
+            valueSchema={
+                "type": "array",
+                "items": {
+                    "type": "array",
+                    "items": {"type": "number"},
+                    "minItems": 2,
+                    "maxItems": 2,
+                },
+                "default": [],
+            },
             access=F8StateAccess.ro,
             required=True,
-            showOnNode=False,
+            showOnNode=True,
+            uiControl="wave_preview",
         ),
         F8StateSpec(
             name="lastError",

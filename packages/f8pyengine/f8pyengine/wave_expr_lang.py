@@ -269,6 +269,23 @@ def saturate(x: Any) -> Any:
     return clamp(x, 0.0, 1.0)
 
 
+def _sequence_value(t: Any, values: Any) -> Any:
+    values_arr = np.asarray(values, dtype=np.float64)
+    if values_arr.ndim != 1:
+        raise ValueError("sequence expects a 1D list or tuple")
+    if values_arr.shape[0] == 0:
+        raise ValueError("sequence expects at least one value")
+
+    t_arr = np.asarray(t, dtype=np.float64)
+    index_arr = np.trunc(t_arr).astype(np.int64, copy=False)
+    wrapped_index_arr = np.mod(index_arr, values_arr.shape[0])
+    selected = np.take(values_arr, wrapped_index_arr)
+
+    if np.asarray(selected).ndim == 0:
+        return float(selected)
+    return selected
+
+
 _ALLOWED_DIRECT_FUNCTIONS: dict[str, Callable[..., Any]] = {
     "abs": np.abs,
     "float": float,
@@ -299,6 +316,7 @@ _ALLOWED_DIRECT_FUNCTIONS: dict[str, Callable[..., Any]] = {
     "pulse": pulse,
     "smoothstep": smoothstep,
     "saturate": saturate,
+    "sequence": lambda values: values,
 }
 
 _ALLOWED_MATH_NAMES: set[str] = {
@@ -404,6 +422,7 @@ def _build_eval_locals(
     names["maxT"] = float(maxt)
     names["p"] = frac(t)
     names["cycle"] = np.floor(t)
+    names["sequence"] = lambda values: _sequence_value(t, values)
 
     if variables is not None:
         for key, value in variables.items():
@@ -514,6 +533,7 @@ __all__ = [
     "pulse",
     "smoothstep",
     "saturate",
+    "sequence",
 ]
 
 RESERVED_NAMES = _RESERVED_NAMES
