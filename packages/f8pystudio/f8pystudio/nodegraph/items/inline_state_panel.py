@@ -28,6 +28,45 @@ from .service_toolbar_host import F8ElideToolButton, F8ForceGlobalToolTipFilter
 logger = logging.getLogger(__name__)
 
 
+def _refresh_embedded_text_palette(widget: QtWidgets.QWidget) -> None:
+    palette = widget.palette()
+    text_color = QtGui.QColor(235, 235, 235)
+    placeholder_color = QtGui.QColor(200, 200, 200, 140)
+
+    for group in (
+        QtGui.QPalette.ColorGroup.Active,
+        QtGui.QPalette.ColorGroup.Inactive,
+        QtGui.QPalette.ColorGroup.Disabled,
+    ):
+        palette.setColor(group, QtGui.QPalette.ColorRole.Text, text_color)
+        palette.setColor(group, QtGui.QPalette.ColorRole.WindowText, text_color)
+        palette.setColor(group, QtGui.QPalette.ColorRole.ButtonText, text_color)
+        palette.setColor(group, QtGui.QPalette.ColorRole.BrightText, text_color)
+        try:
+            palette.setColor(group, QtGui.QPalette.ColorRole.PlaceholderText, placeholder_color)
+        except AttributeError:
+            pass
+
+    try:
+        palette.setBrush(QtGui.QPalette.ColorRole.PlaceholderText, placeholder_color)
+    except (AttributeError, TypeError):
+        pass
+
+    widget.setPalette(palette)
+    if isinstance(widget, QtWidgets.QAbstractScrollArea):
+        viewport = widget.viewport()
+        if viewport is not None:
+            viewport.setPalette(palette)
+    try:
+        widget.update()
+    except (AttributeError, RuntimeError, TypeError):
+        pass
+
+
+def _apply_text_palette(widget: QtWidgets.QWidget) -> None:
+    _refresh_embedded_text_palette(widget)
+
+
 def _editor_assist_context(node_item: Any, *, state_field_name: str) -> EditorAssistContext | None:
     if str(state_field_name or "").strip() != "code":
         return None
@@ -283,6 +322,11 @@ def make_state_inline_control(node_item: Any, state_field: StateFieldInfo) -> Qt
             """
         )
 
+    def _install_global_tooltip_filter(widget: QtWidgets.QWidget) -> None:
+        tooltip_filter = F8ForceGlobalToolTipFilter(widget)
+        widget.installEventFilter(tooltip_filter)
+        node_item._tooltip_filters.append(tooltip_filter)
+
     def _set_node_value(value: Any, *, push_undo: bool) -> None:
         node = node_item._backend_node()
         if node is None or not name:
@@ -383,9 +427,11 @@ def make_state_inline_control(node_item: Any, state_field: StateFieldInfo) -> Qt
         edit.setMinimumHeight(38)
         edit.setMaximumHeight(64)
         _common_style(edit)
+        _apply_text_palette(edit)
         edit.document().setDocumentMargin(4.0)
         if field_tooltip:
             edit.setToolTip(field_tooltip)
+            _install_global_tooltip_filter(edit)
 
         def _apply_value(value: Any) -> None:
             text = "" if value is None else str(value)
@@ -447,9 +493,11 @@ def make_state_inline_control(node_item: Any, state_field: StateFieldInfo) -> Qt
         edit.setMinimumHeight(44)
         edit.setMaximumHeight(88)
         _common_style(edit)
+        _apply_text_palette(edit)
         edit.document().setDocumentMargin(4.0)
         if field_tooltip:
             edit.setToolTip(field_tooltip)
+            _install_global_tooltip_filter(edit)
 
         def _apply_value(value: Any) -> None:
             text = "" if value is None else str(value)
@@ -647,6 +695,7 @@ def make_state_inline_control(node_item: Any, state_field: StateFieldInfo) -> Qt
         line = F8NumberPropLineEdit(data_type=int)
         line.set_name(name)
         _common_style(line)
+        _apply_text_palette(line)
         line.setMinimumWidth(90)
         if lo is not None:
             line.set_min(int(lo))
@@ -654,6 +703,7 @@ def make_state_inline_control(node_item: Any, state_field: StateFieldInfo) -> Qt
             line.set_max(int(hi))
         if field_tooltip:
             line.setToolTip(field_tooltip)
+            _install_global_tooltip_filter(line)
 
         def _apply_value(value: Any) -> None:
             line.set_value(value)
@@ -671,6 +721,7 @@ def make_state_inline_control(node_item: Any, state_field: StateFieldInfo) -> Qt
         line = F8NumberPropLineEdit(data_type=float)
         line.set_name(name)
         _common_style(line)
+        _apply_text_palette(line)
         line.setMinimumWidth(90)
         if lo is not None:
             line.set_min(float(lo))
@@ -678,6 +729,7 @@ def make_state_inline_control(node_item: Any, state_field: StateFieldInfo) -> Qt
             line.set_max(float(hi))
         if field_tooltip:
             line.setToolTip(field_tooltip)
+            _install_global_tooltip_filter(line)
 
         def _apply_value(value: Any) -> None:
             line.set_value(value)
@@ -695,6 +747,10 @@ def make_state_inline_control(node_item: Any, state_field: StateFieldInfo) -> Qt
     line = QtWidgets.QLineEdit()
     line.setMinimumWidth(90)
     _common_style(line)
+    _apply_text_palette(line)
+    if field_tooltip:
+        line.setToolTip(field_tooltip)
+        _install_global_tooltip_filter(line)
 
     def _apply_value(value: Any) -> None:
         text = "" if value is None else str(value)
@@ -891,6 +947,7 @@ def ensure_inline_state_widgets(node_item: Any) -> None:
         panel_lay.addWidget(body)
         panel.setProperty("_f8_state_panel", True)
         panel.setAttribute(QtCore.Qt.WA_StyledBackground, True)
+        # panel.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
         panel.setStyleSheet("background: transparent;")
 
         # Connect toggle.
@@ -901,7 +958,6 @@ def ensure_inline_state_widgets(node_item: Any) -> None:
         proxy = node_item._state_inline_proxies.get(name)
         if proxy is None:
             proxy = QtWidgets.QGraphicsProxyWidget(node_item)
-            proxy.setCacheMode(QtWidgets.QGraphicsItem.DeviceCoordinateCache)
             node_item._state_inline_proxies[name] = proxy
 
         old = None
@@ -910,6 +966,7 @@ def ensure_inline_state_widgets(node_item: Any) -> None:
         except Exception:
             old = None
         proxy.setWidget(panel)
+        
         if old is not None and old is not panel:
             try:
                 old.setParent(None)

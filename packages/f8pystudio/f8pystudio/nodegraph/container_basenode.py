@@ -263,8 +263,8 @@ class F8StudioContainerNodeItem(AbstractNodeItem):
             )
             proxy = QtWidgets.QGraphicsProxyWidget(self)
             proxy.setWidget(w)
-            proxy.setZValue(10_000)
-            proxy.setCacheMode(QtWidgets.QGraphicsItem.NoCache)
+            # proxy.setZValue(10_000)
+            # proxy.setCacheMode(QtWidgets.QGraphicsItem.NoCache)
             self._svc_toolbar_proxy = proxy
         except Exception:
             self._svc_toolbar_proxy = None

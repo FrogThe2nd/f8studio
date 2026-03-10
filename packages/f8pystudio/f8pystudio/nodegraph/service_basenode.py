@@ -127,6 +127,52 @@ from ..widgets.schema_builder import SchemaBuilderDialog, schema_from_json_obj a
 logger = logging.getLogger(__name__)
 
 
+def _clear_embedded_text_selection(widget: QtWidgets.QWidget | None) -> None:
+    if widget is None:
+        return
+
+    line_edits = widget.findChildren(QtWidgets.QLineEdit)
+    for line_edit in line_edits:
+        try:
+            line_edit.deselect()
+        except (AttributeError, RuntimeError, TypeError):
+            pass
+        try:
+            line_edit.setCursorPosition(len(line_edit.text()))
+        except (AttributeError, RuntimeError, TypeError):
+            pass
+        try:
+            line_edit.clearFocus()
+        except (AttributeError, RuntimeError, TypeError):
+            pass
+
+    plain_text_edits = widget.findChildren(QtWidgets.QPlainTextEdit)
+    for plain_text_edit in plain_text_edits:
+        try:
+            cursor = plain_text_edit.textCursor()
+            cursor.clearSelection()
+            plain_text_edit.setTextCursor(cursor)
+        except (AttributeError, RuntimeError, TypeError):
+            pass
+        try:
+            plain_text_edit.clearFocus()
+        except (AttributeError, RuntimeError, TypeError):
+            pass
+
+    text_edits = widget.findChildren(QtWidgets.QTextEdit)
+    for text_edit in text_edits:
+        try:
+            cursor = text_edit.textCursor()
+            cursor.clearSelection()
+            text_edit.setTextCursor(cursor)
+        except (AttributeError, RuntimeError, TypeError):
+            pass
+        try:
+            text_edit.clearFocus()
+        except (AttributeError, RuntimeError, TypeError):
+            pass
+
+
 class _F8PortMouseMixin:
     """
     Shared right-click behavior for node ports.
@@ -232,9 +278,7 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
 
     def __init__(self, name="node", parent=None):
         super(F8StudioServiceNodeItem, self).__init__(name, parent)
-        # NodeGraphQt item caching can freeze embedded editor caret/selection
-        # (refresh only on zoom/pan). Disable cache for interactive node editing.
-        self.setCacheMode(QtWidgets.QGraphicsItem.NoCache)
+        
         self.setFlag(QtWidgets.QGraphicsItem.ItemSendsGeometryChanges, True)
         self.setFlag(QtWidgets.QGraphicsItem.ItemSendsScenePositionChanges, True)
 
@@ -1597,15 +1641,6 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         Decide whether to draw the node with proxy mode.
         (this is called at the start in the "self.paint()" function.)
         """
-        # Inline state editors rely on live QWidget painting (caret blink,
-        # selection, IME updates). NodeGraphQt proxy mode swaps them out at
-        # low zoom, which can leave stale editor visuals after zoom roundtrips.
-        # Keep proxy mode disabled for nodes that have inline state controls.
-        if self._has_inline_state_controls():
-            if self._proxy_mode:
-                self.set_proxy_mode(False)
-            return
-
         if ITEM_CACHE_MODE is QtWidgets.QGraphicsItem.ItemCoordinateCache:
             return
 
@@ -1629,13 +1664,23 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         Args:
             mode (bool): true to enable proxy mode.
         """
-        if bool(mode) and self._has_inline_state_controls():
-            mode = False
         if mode is self._proxy_mode:
             return
         self._proxy_mode = mode
 
         visible = not mode
+
+        if bool(mode):
+            for proxy in self._state_inline_proxies.values():
+                try:
+                    _clear_embedded_text_selection(proxy.widget())
+                except (AttributeError, RuntimeError, TypeError):
+                    pass
+            if self._cmd_proxy is not None:
+                try:
+                    _clear_embedded_text_selection(self._cmd_proxy.widget())
+                except (AttributeError, RuntimeError, TypeError):
+                    pass
 
         # disable overlay item.
         self._x_item.proxy_mode = self._proxy_mode
@@ -1653,6 +1698,18 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
                 self._cmd_proxy.setVisible(visible)
             except (AttributeError, RuntimeError, TypeError):
                 pass
+
+        if visible:
+            for proxy in self._state_inline_proxies.values():
+                try:
+                    _clear_embedded_text_selection(proxy.widget())
+                except (AttributeError, RuntimeError, TypeError):
+                    pass
+            if self._cmd_proxy is not None:
+                try:
+                    _clear_embedded_text_selection(self._cmd_proxy.widget())
+                except (AttributeError, RuntimeError, TypeError):
+                    pass
 
         # port text is not visible in vertical layout.
         if self.layout_direction is LayoutDirectionEnum.VERTICAL.value:
