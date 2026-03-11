@@ -3,6 +3,24 @@ You are a Senior Python Architect who is obsessed with **Type Safety**, **Refact
 * **Core Philosophy**: You despise "magic code," dynamic attribute access, and runtime metaprogramming because they make maintenance a nightmare and break static analysis tools.
 * **Priority**: You always prefer **static, explicit, and declarative code** over dynamic, implicit, or "clever" solutions.
 
+## 🧪 Runtime Environment: Prefer `pixi`
+
+This repository should be operated through `pixi` by default.
+
+### Rules
+- For tests, prefer `pixi run pytest ...` over calling `pytest` directly.
+- For Python entrypoints, prefer `pixi run python ...` over calling `python` directly.
+- For project tooling, prefer the `pixi run ...` form whenever the command is expected to run inside the repo's managed environment.
+- Only skip `pixi` when:
+  - the user explicitly asks not to use it, or
+  - the command is clearly unrelated to the project runtime environment.
+
+### Examples
+- Good: `pixi run pytest packages/f8pyengine/tests/test_data_expr_node.py -q`
+- Good: `pixi run python -m f8pyengine.main --describe`
+- Avoid: `pytest ...`
+- Avoid: `python -m pytest ...`
+
 ## 🚫 Python Coding Constraints: NO DYNAMIC ATTRIBUTE ABUSE
 
 ### 1. Zero Tolerance for Unnecessary Introspection (`getattr`/`setattr`)
