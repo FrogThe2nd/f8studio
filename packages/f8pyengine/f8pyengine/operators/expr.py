@@ -1,17 +1,9 @@
 from __future__ import annotations
 
-import ast
 import logging
-import math
 import time
-from dataclasses import dataclass
 from types import CodeType
 from typing import Any
-
-try:
-    import numpy as np  # type: ignore
-except ImportError:
-    np = None
 
 from f8pysdk import (
     F8DataPortSpec,
@@ -29,266 +21,21 @@ from f8pysdk.runtime_node import OperatorNode
 from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
 
 from ..constants import SERVICE_CLASS
+from ._py_expr_eval import (
+    coerce_bool as _coerce_bool,
+    compile_expr as _compile_expr,
+    is_identifier as _is_identifier,
+    normalize_expr_code,
+    np,
+    safe_eval_compiled as _safe_eval_compiled,
+    unwrap_wrapped_value,
+    wrap_value as _wrap_value,
+)
 
 
 OPERATOR_CLASS = "f8.expr"
 
 logger = logging.getLogger(__name__)
-
-
-_ALLOWED_GLOBAL_FNS: dict[str, Any] = {
-    "abs": abs,
-    "float": float,
-    "int": int,
-    "min": min,
-    "max": max,
-    "round": round,
-}
-
-_ALLOWED_MATH_FNS: set[str] = {
-    "sin",
-    "cos",
-    "tan",
-    "asin",
-    "acos",
-    "atan",
-    "atan2",
-    "sqrt",
-    "log",
-    "log10",
-    "exp",
-    "floor",
-    "ceil",
-}
-
-
-def _is_identifier(name: str) -> bool:
-    try:
-        return bool(name) and name.isidentifier()
-    except Exception:
-        return False
-
-
-def _coerce_bool(value: Any, *, default: bool) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        return bool(value)
-    text = str(value or "").strip().lower()
-    if text in ("1", "true", "yes", "on"):
-        return True
-    if text in ("0", "false", "no", "off", ""):
-        return False
-    return bool(default)
-
-
-def _wrap_value(v: Any) -> Any:
-    if isinstance(v, (dict, list, tuple)):
-        return _JsonRef(v)
-    return v
-
-
-@dataclass(frozen=True)
-class _JsonRef:
-    """
-    Wrapper for JSON-like values that supports attribute access for dict keys.
-
-    Example:
-      input.center.x  <=>  input["center"]["x"]
-
-    This intentionally blocks dunder/private access to avoid escaping into python internals.
-    """
-
-    value: Any
-
-    def _deny_attr(self, name: str) -> bool:
-        s = str(name or "")
-        return not s or s.startswith("_")
-
-    def __getattr__(self, name: str) -> Any:
-        if self._deny_attr(name):
-            raise AttributeError(name)
-        v = self.value
-        if isinstance(v, dict) and name in v:
-            return _wrap_value(v[name])
-        raise AttributeError(name)
-
-    def __getitem__(self, key: Any) -> Any:
-        v = self.value
-        if isinstance(v, dict):
-            if isinstance(key, str) and key.startswith("_"):
-                raise KeyError(key)
-            return _wrap_value(v[key])
-        if isinstance(v, (list, tuple)):
-            return _wrap_value(v[int(key)])
-        raise TypeError(f"not indexable: {type(v).__name__}")
-
-    def __iter__(self):
-        v = self.value
-        if isinstance(v, dict):
-            for key in v:
-                yield key
-            return
-        if isinstance(v, (list, tuple)):
-            for item in v:
-                yield _wrap_value(item)
-            return
-        raise TypeError(f"not iterable: {type(v).__name__}")
-
-    def unwrap(self) -> Any:
-        v = self.value
-        if isinstance(v, dict):
-            return {str(k): _JsonRef(x).unwrap() for k, x in v.items()}
-        if isinstance(v, list):
-            return [_JsonRef(x).unwrap() for x in v]
-        if isinstance(v, tuple):
-            return tuple(_JsonRef(x).unwrap() for x in v)
-        return v
-
-
-class _ExprValidator(ast.NodeVisitor):
-    """
-    Validate a Python expression AST for safe evaluation.
-
-    Allows:
-    - literals, names, indexing, attribute access (for _JsonRef), arithmetic, boolean ops, comparisons
-    - comprehensions (list/set/dict/generator)
-    - calls to a small allowlist: abs/min/max/round, and math.<fn> (where fn is allowlisted)
-    """
-
-    def __init__(self, *, allow_numpy: bool) -> None:
-        super().__init__()
-        self._errors: list[str] = []
-        self._allow_numpy = bool(allow_numpy)
-
-    def error(self, msg: str) -> None:
-        self._errors.append(str(msg))
-
-    def validate(self, expr: str) -> tuple[ast.Expression | None, str | None]:
-        try:
-            tree = ast.parse(str(expr or ""), mode="eval")
-        except SyntaxError as exc:
-            return None, f"syntax error: {exc.msg}"
-        try:
-            self.visit(tree)
-        except Exception as exc:
-            return None, f"validation error: {exc}"
-        if self._errors:
-            return None, "; ".join(self._errors[:3])
-        if not isinstance(tree, ast.Expression):
-            return None, "not an expression"
-        return tree, None
-
-    def generic_visit(self, node: ast.AST) -> Any:
-        allowed: tuple[type[ast.AST], ...] = (
-            ast.Expression,
-            ast.Name,
-            ast.Load,
-            ast.Constant,
-            ast.Attribute,
-            ast.Subscript,
-            ast.Slice,
-            ast.Tuple,
-            ast.List,
-            ast.Dict,
-            ast.UnaryOp,
-            ast.UAdd,
-            ast.USub,
-            ast.Not,
-            ast.BinOp,
-            ast.Add,
-            ast.Sub,
-            ast.Mult,
-            ast.Div,
-            ast.FloorDiv,
-            ast.Mod,
-            ast.Pow,
-            ast.BoolOp,
-            ast.And,
-            ast.Or,
-            ast.Compare,
-            ast.Eq,
-            ast.NotEq,
-            ast.Lt,
-            ast.LtE,
-            ast.Gt,
-            ast.GtE,
-            ast.Is,
-            ast.IsNot,
-            ast.In,
-            ast.NotIn,
-            ast.IfExp,
-            ast.comprehension,
-            ast.ListComp,
-            ast.SetComp,
-            ast.DictComp,
-            ast.GeneratorExp,
-            ast.Store,
-            ast.Call,
-            ast.keyword,
-        )
-        if not isinstance(node, allowed):
-            self.error(f"disallowed syntax: {type(node).__name__}")
-            return None
-        return super().generic_visit(node)
-
-    def visit_Attribute(self, node: ast.Attribute) -> Any:
-        if str(node.attr or "").startswith("_"):
-            self.error("private/dunder attribute access is not allowed")
-            return None
-        return self.generic_visit(node)
-
-    def visit_Call(self, node: ast.Call) -> Any:
-        # Allow abs/min/max/round(...)
-        if isinstance(node.func, ast.Name):
-            if str(node.func.id) not in _ALLOWED_GLOBAL_FNS:
-                self.error(f"call not allowed: {node.func.id}")
-                return None
-        # Allow math.<fn>(...)
-        elif isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name) and node.func.value.id == "math":
-            fn = str(node.func.attr or "")
-            if fn not in _ALLOWED_MATH_FNS:
-                self.error(f"math call not allowed: math.{fn}")
-                return None
-        # Allow numpy calls: np.<anything>(...) (including chained attributes like np.random.rand(...))
-        elif isinstance(node.func, ast.Attribute):
-            base: ast.AST = node.func.value
-            while isinstance(base, ast.Attribute):
-                base = base.value
-            if not self._allow_numpy:
-                self.error("numpy calls are disabled")
-                return None
-            if not (isinstance(base, ast.Name) and base.id in ("np", "numpy")):
-                self.error("call target not allowed")
-                return None
-        else:
-            self.error("call target not allowed")
-            return None
-        return self.generic_visit(node)
-
-
-def _compile_expr(expr: str, *, allow_numpy: bool) -> tuple[CodeType | None, str | None]:
-    validator = _ExprValidator(allow_numpy=allow_numpy)
-    tree, err = validator.validate(expr)
-    if tree is None:
-        return None, str(err or "invalid expression")
-    try:
-        return compile(tree, "<f8.expr>", "eval"), None
-    except Exception as exc:
-        return None, str(exc)
-
-
-def _safe_eval_compiled(code: CodeType, *, names: dict[str, Any], allow_numpy: bool) -> Any:
-    # No builtins; only allowlisted math/functions.
-    safe_globals: dict[str, Any] = {"__builtins__": {}}
-    safe_globals.update(_ALLOWED_GLOBAL_FNS)
-    safe_globals["math"] = math
-    if allow_numpy:
-        if np is None:
-            raise RuntimeError("numpy is not available")
-        safe_globals["np"] = np
-        safe_globals["numpy"] = np
-    return eval(code, safe_globals, names)  # noqa: S307 (controlled eval)
 
 
 class ExprRuntimeNode(OperatorNode):
@@ -400,12 +147,7 @@ class ExprRuntimeNode(OperatorNode):
         Expr is a single-line expression. Normalize multi-line edits (paste, UI)
         into a single line to avoid hidden '\n' semantics.
         """
-        s = str("" if value is None else value)
-        if "\n" not in s and "\r" not in s:
-            return s.strip()
-        # Join lines with spaces so "a\n+b" behaves like "a +b".
-        parts = [p.strip() for p in s.replace("\r\n", "\n").replace("\r", "\n").split("\n")]
-        return " ".join([p for p in parts if p]).strip()
+        return normalize_expr_code(value)
 
     def _recompile(self) -> None:
         compiled, err = _compile_expr(self._code, allow_numpy=self._allow_numpy)
@@ -429,9 +171,7 @@ class ExprRuntimeNode(OperatorNode):
         return None
 
     def _normalize_output_value(self, value: Any) -> Any:
-        if isinstance(value, _JsonRef):
-            return value.unwrap()
-        return value
+        return unwrap_wrapped_value(value)
 
     def _extract_outputs(self, result: Any) -> dict[str, Any]:
         outputs: dict[str, Any] = {}

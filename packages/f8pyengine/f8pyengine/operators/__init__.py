@@ -23,6 +23,7 @@ from .sequence_player import SequencePlayerRuntimeNode
 from .playback_sync import PlaybackSyncRuntimeNode
 from .handy_out import HandyOutRuntimeNode
 from .state_trigger import StateTriggerRuntimeNode
+from .state_expr import StateExprRuntimeNode
 from .bone_filter import BoneFilterRuntimeNode
 from .quat_to_euler import QuatToEulerRuntimeNode
 from .udp_vmc import UdpVmcRuntimeNode
@@ -55,6 +56,7 @@ __all__ = [
     "PlaybackSyncRuntimeNode",
     "HandyOutRuntimeNode",
     "StateTriggerRuntimeNode",
+    "StateExprRuntimeNode",
     "BoneFilterRuntimeNode",
     "QuatToEulerRuntimeNode",
     "UdpVmcRuntimeNode",
