@@ -35,6 +35,13 @@ logger = logging.getLogger(__name__)
 OPERATOR_CLASS = "f8.viz.three_d"
 RENDERER_CLASS = "viz_three_d"
 
+_LARGE_SKELETON_NODE_THRESHOLD = 192
+_LARGE_SKELETON_BOX_THRESHOLD = 384
+_LARGE_SKELETON_UI_FPS_CAP = 30
+_MEDIUM_SKELETON_LABEL_BUDGET_THRESHOLD = 64
+_MEDIUM_SKELETON_LABEL_BUDGET = 32
+_LARGE_SKELETON_LABEL_BUDGET = 256
+
 
 def _viz_bone_schema():
     return complex_object_schema(
@@ -213,6 +220,13 @@ class VizThreeDRuntimeNode(StudioVizRuntimeNodeBase):
             return
         self._dirty = True
         now_ms = int(time.time() * 1000)
+        if name == "worldUp":
+            emit_ui_command(
+                self.node_id,
+                "viz.three_d.world_up",
+                {"worldUp": str(self._world_up)},
+                ts_ms=int(now_ms),
+            )
         await self._schedule_refresh(now_ms=now_ms)
 
     async def _ensure_config_loaded(self) -> None:
@@ -308,6 +322,7 @@ class VizThreeDRuntimeNode(StudioVizRuntimeNodeBase):
 
     def _build_payload(self, *, now_ms: int, people: list[_PersonViz]) -> dict[str, Any]:
         people_json: list[dict[str, Any]] = []
+        total_nodes = 0
         for person in list(people)[: self._max_people]:
             nodes_json: list[dict[str, Any]] = []
             for node in list(person.nodes)[: self._max_bones_per_person]:
@@ -319,6 +334,7 @@ class VizThreeDRuntimeNode(StudioVizRuntimeNodeBase):
                 if node.rot is not None:
                     item["rot"] = [float(node.rot[0]), float(node.rot[1]), float(node.rot[2]), float(node.rot[3])]
                 nodes_json.append(item)
+            total_nodes += len(nodes_json)
 
             bbox = None
             if person.bbox is not None:
@@ -362,7 +378,33 @@ class VizThreeDRuntimeNode(StudioVizRuntimeNodeBase):
                 "maxPeople": int(self._max_people),
                 "maxBonesPerPerson": int(self._max_bones_per_person),
             },
+            "performanceHints": self._build_performance_hints(total_nodes=total_nodes),
             "people": people_json,
+        }
+
+    def _build_performance_hints(self, *, total_nodes: int) -> dict[str, Any]:
+        rendered_nodes = max(0, int(total_nodes))
+        large_skeleton_mode = rendered_nodes >= _LARGE_SKELETON_NODE_THRESHOLD
+        max_visible_bone_labels: int | None
+        if large_skeleton_mode:
+            max_visible_bone_labels = _LARGE_SKELETON_LABEL_BUDGET
+        elif rendered_nodes >= _MEDIUM_SKELETON_LABEL_BUDGET_THRESHOLD:
+            max_visible_bone_labels = _MEDIUM_SKELETON_LABEL_BUDGET
+        else:
+            max_visible_bone_labels = None
+        return {
+            "totalNodes": rendered_nodes,
+            "largeSkeletonMode": large_skeleton_mode,
+            "suppressBoneAxes": False,
+            "suppressBoneNames": False,
+            "suppressAxisTree": False,
+            "suppressPersonBoxes": rendered_nodes >= _LARGE_SKELETON_BOX_THRESHOLD,
+            "maxVisibleBoneLabels": max_visible_bone_labels,
+            "recommendedFpsCap": (
+                min(int(self._ui_fps_cap), _LARGE_SKELETON_UI_FPS_CAP)
+                if large_skeleton_mode
+                else int(self._ui_fps_cap)
+            ),
         }
 
     def _aggregate_people_by_port(self) -> list[_PersonViz]:
@@ -705,7 +747,7 @@ def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNod
                     name="showBonePoints",
                     label="Show Bone Points",
                     description="Display bone node points.",
-                    valueSchema=boolean_schema(default=False),
+                    valueSchema=boolean_schema(default=True),
                     access=F8StateAccess.rw,
                     required=True,
                     showOnNode=False,
@@ -723,7 +765,7 @@ def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNod
                     name="showBoneAxes",
                     label="Show Bone Axes",
                     description="Display RGB axes per bone node.",
-                    valueSchema=boolean_schema(default=True),
+                    valueSchema=boolean_schema(default=False),
                     access=F8StateAccess.rw,
                     required=True,
                     showOnNode=False,
@@ -759,7 +801,7 @@ def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNod
                     name="autoZoomOnNewPeople",
                     label="Auto Zoom On New People",
                     description="Auto fit view when the person set changes.",
-                    valueSchema=boolean_schema(default=True),
+                    valueSchema=boolean_schema(default=False),
                     access=F8StateAccess.rw,
                     required=True,
                     showOnNode=False,

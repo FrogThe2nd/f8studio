@@ -47,6 +47,8 @@ def _configure_default_webengine_profile() -> None:
 class _ViewerHandle(Protocol):
     def apply_scene(self, payload: dict[str, Any]) -> None: ...
 
+    def apply_world_up(self, world_up: str) -> None: ...
+
     def detach_scene(self) -> None: ...
 
 
@@ -97,6 +99,19 @@ class _Skeleton3DPresenter:
         if viewer is None:
             return
         viewer.apply_scene(payload)
+
+    def on_set_world_up(self, world_up: str) -> None:
+        payload = self.latest_payload
+        if payload is not None:
+            next_payload = dict(payload)
+            next_payload["worldUp"] = str(world_up or "")
+            self.latest_payload = next_payload
+        if not self.viewer_open:
+            return
+        viewer = self._viewer
+        if viewer is None:
+            return
+        viewer.apply_world_up(str(world_up or ""))
 
     def on_detach(self) -> None:
         self.latest_payload = None
@@ -388,6 +403,30 @@ class _Skeleton3DViewerWindow(QtWidgets.QDialog):
         except (AttributeError, RuntimeError, TypeError):
             logger.exception("failed to run Skeleton3D detach javascript")
 
+    def apply_world_up(self, world_up: str) -> None:
+        if not self._is_open:
+            return
+        if self._view is None:
+            return
+        if not self._page_ready:
+            pending = dict(self._pending_payload or {})
+            pending["worldUp"] = str(world_up or "")
+            self._pending_payload = pending
+            return
+        world_up_json = json.dumps(str(world_up or ""), ensure_ascii=False)
+        script = (
+            "if (window.Skeleton3DViewer && window.Skeleton3DViewer.setWorldUp) {"
+            f"window.Skeleton3DViewer.setWorldUp({world_up_json});"
+            "}"
+        )
+        page = self._view.page()
+        if page is None:
+            return
+        try:
+            page.runJavaScript(script)
+        except (AttributeError, RuntimeError, TypeError):
+            logger.exception("failed to run Skeleton3D setWorldUp javascript")
+
 
 class _Skeleton3DControlPane(QtWidgets.QWidget):
     def __init__(self, *, on_open_clicked: Callable[[], None]) -> None:
@@ -573,7 +612,7 @@ class VizThreeDRenderNode(F8StudioOperatorBaseNode):
 
     def apply_ui_command(self, cmd: UiCommand) -> None:
         command = str(cmd.command or "").strip()
-        if command not in ("viz.three_d.set", "viz.three_d.detach"):
+        if command not in ("viz.three_d.set", "viz.three_d.detach", "viz.three_d.world_up"):
             return
 
         if command == "viz.three_d.detach":
@@ -581,6 +620,18 @@ class VizThreeDRenderNode(F8StudioOperatorBaseNode):
             widget = self._get_widget()
             if widget is not None:
                 widget.set_people_count(0)
+            return
+
+        if command == "viz.three_d.world_up":
+            payload_any = cmd.payload or {}
+            try:
+                payload = dict(payload_any)
+            except (AttributeError, TypeError, ValueError):
+                return
+            world_up = str(payload.get("worldUp") or "").strip()
+            if not world_up:
+                return
+            self._presenter.on_set_world_up(world_up)
             return
 
         try:

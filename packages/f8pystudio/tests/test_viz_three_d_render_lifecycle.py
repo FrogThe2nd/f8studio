@@ -6,6 +6,7 @@ from typing import Any
 from qtpy import QtWidgets
 
 from f8pystudio.render_nodes.viz_three_d import _Skeleton3DViewerWindow, VizThreeDRenderNode
+from f8pystudio.ui_bus import UiCommand
 
 
 def _ensure_app() -> QtWidgets.QApplication:
@@ -136,12 +137,16 @@ class _FakePresenter:
     def __init__(self) -> None:
         self.detach_calls = 0
         self.detach_viewer_calls = 0
+        self.world_up_values: list[str] = []
 
     def on_detach(self) -> None:
         self.detach_calls += 1
 
     def detach_viewer(self) -> None:
         self.detach_viewer_calls += 1
+
+    def on_set_world_up(self, world_up: str) -> None:
+        self.world_up_values.append(str(world_up))
 
 
 class _FakeViewerWindow:
@@ -166,3 +171,21 @@ def test_render_node_graph_teardown_is_idempotent() -> None:
     assert node._presenter.detach_viewer_calls == 2
     assert unbind_calls == ["unbind", "unbind"]
     assert node._viewer_window is None
+
+
+def test_render_node_world_up_command_applies_without_reopen() -> None:
+    node = VizThreeDRenderNode.__new__(VizThreeDRenderNode)
+    node._presenter = _FakePresenter()
+    node._viewer_window = None
+    node._get_widget = lambda: None  # type: ignore[method-assign]
+
+    node.apply_ui_command(
+        UiCommand(
+            node_id="viz3d1",
+            command="viz.three_d.world_up",
+            payload={"worldUp": "+z"},
+            ts_ms=123,
+        )
+    )
+
+    assert node._presenter.world_up_values == ["+z"]
