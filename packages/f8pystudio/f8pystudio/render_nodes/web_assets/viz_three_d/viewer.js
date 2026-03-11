@@ -28,6 +28,8 @@
     axisSearchText: '',
     axisVisibilityByKey: new Map(),
     modelAxisVisibilityByName: new Map(),
+    personDisplayNameByName: new Map(),
+    personDisplaySignature: '',
     personLabelByName: new Map(),
     nodeLabelByKey: new Map(),
     personRenderCacheByName: new Map(),
@@ -260,6 +262,112 @@
     return new THREE.CSS2DObject(el);
   }
 
+  function setLabelText(lbl, text) {
+    if (!lbl) return;
+    if (!(lbl.element instanceof Element)) return;
+    lbl.element.textContent = String(text || '');
+  }
+
+  function commonPrefix(names) {
+    if (!Array.isArray(names) || names.length <= 0) return '';
+    let prefix = String(names[0] || '');
+    for (let i = 1; i < names.length; i += 1) {
+      const s = String(names[i] || '');
+      let j = 0;
+      const maxJ = Math.min(prefix.length, s.length);
+      while (j < maxJ && prefix.charCodeAt(j) === s.charCodeAt(j)) j += 1;
+      prefix = prefix.slice(0, j);
+      if (!prefix) break;
+    }
+    return prefix;
+  }
+
+  function commonSuffix(names) {
+    if (!Array.isArray(names) || names.length <= 0) return '';
+    let suffix = String(names[0] || '');
+    for (let i = 1; i < names.length; i += 1) {
+      const s = String(names[i] || '');
+      let j = 0;
+      const maxJ = Math.min(suffix.length, s.length);
+      while (
+        j < maxJ &&
+        suffix.charCodeAt(suffix.length - 1 - j) === s.charCodeAt(s.length - 1 - j)
+      ) {
+        j += 1;
+      }
+      suffix = suffix.slice(suffix.length - j);
+      if (!suffix) break;
+    }
+    return suffix;
+  }
+
+  function normalizeTrimResult(text) {
+    const s = String(text || '');
+    const trimmedStart = s.replace(/^[\s\-_:|/\\]+/, '');
+    return trimmedStart.replace(/[\s\-_:|/\\]+$/, '');
+  }
+
+  function computeDisplayNameMap(names) {
+    const out = new Map();
+    const input = Array.isArray(names) ? names.map((n) => String(n || '')) : [];
+    if (input.length <= 1) {
+      if (input.length === 1) out.set(input[0], input[0]);
+      return out;
+    }
+
+    const MIN_AFFIX = 8;
+    let prefix = commonPrefix(input);
+    let suffix = commonSuffix(input);
+    if (prefix.length < MIN_AFFIX) prefix = '';
+    if (suffix.length < MIN_AFFIX) suffix = '';
+
+    for (const fullName of input) {
+      let next = fullName;
+      if (prefix && next.startsWith(prefix)) next = next.slice(prefix.length);
+      if (suffix && next.endsWith(suffix)) next = next.slice(0, Math.max(0, next.length - suffix.length));
+      next = normalizeTrimResult(next);
+      if (!next || next.length < 2) next = fullName;
+      out.set(fullName, next);
+    }
+
+    const countByDisplay = new Map();
+    for (const display of out.values()) {
+      countByDisplay.set(display, (countByDisplay.get(display) || 0) + 1);
+    }
+    for (const [fullName, display] of out.entries()) {
+      if ((countByDisplay.get(display) || 0) > 1) {
+        out.set(fullName, fullName);
+      }
+    }
+
+    return out;
+  }
+
+  function ensurePersonDisplayNames(payload) {
+    if (!payload || !Array.isArray(payload.people)) {
+      state.personDisplayNameByName.clear();
+      state.personDisplaySignature = '';
+      return;
+    }
+    const people = payload.people;
+    const names = [];
+    for (const person of people) {
+      names.push(String(person && person.name ? person.name : 'Person'));
+    }
+    names.sort();
+    const signature = names.join('|');
+    if (state.personDisplaySignature === signature) {
+      return;
+    }
+    state.personDisplaySignature = signature;
+    state.personDisplayNameByName = computeDisplayNameMap(names);
+  }
+
+  function displayNameForPerson(personName) {
+    const key = String(personName || '');
+    return state.personDisplayNameByName.get(key) || key;
+  }
+
   function mergeBounds(bounds, p) {
     if (!bounds) {
       return {
@@ -374,6 +482,7 @@
       state.axisTreeSignature = '';
       return;
     }
+    ensurePersonDisplayNames(payload);
     const performanceHints = readPerformanceHints(payload);
     const stableMode = !!performanceHints.largeSkeletonMode;
     if (performanceHints.suppressAxisTree) {
@@ -410,8 +519,10 @@
 
     for (const person of payload.people) {
       const personName = String(person && person.name ? person.name : 'Person');
+      const personDisplayName = displayNameForPerson(personName);
       const personNameLower = personName.toLowerCase();
-      const personMatch = !searchText || personNameLower.includes(searchText);
+      const personDisplayNameLower = personDisplayName.toLowerCase();
+      const personMatch = !searchText || personNameLower.includes(searchText) || personDisplayNameLower.includes(searchText);
       const nodes = Array.isArray(person.nodes) ? person.nodes : [];
       nextModelKeys.add(personName);
       state.axisTreeDisplayedModelNames.push(personName);
@@ -464,7 +575,7 @@
         }
       });
       const modelText = document.createElement('span');
-      modelText.textContent = '[Model] ' + personName + ' (' + String(selectedBones) + '/' + String(totalBones) + ')';
+      modelText.textContent = '[Model] ' + personDisplayName + ' (' + String(selectedBones) + '/' + String(totalBones) + ')';
       modelRow.appendChild(modelCk);
       modelRow.appendChild(modelText);
       details.appendChild(modelRow);
@@ -479,7 +590,7 @@
         for (const node of nodes) {
           const nodeName = String(node && node.name ? node.name : 'node');
           const nodeNameLower = nodeName.toLowerCase();
-          if (searchText && !(personMatch || nodeNameLower.includes(searchText))) {
+          if (searchText && !((personMatch || personDisplayNameLower.includes(searchText)) || nodeNameLower.includes(searchText))) {
             continue;
           }
           if (rowCount >= maxRows) {
@@ -530,14 +641,15 @@
     }
   }
 
-  function ensurePersonLabel(personName) {
+  function ensurePersonLabel(personName, displayName) {
     const key = String(personName || '');
     let lbl = state.personLabelByName.get(key);
     if (!lbl) {
-      lbl = createLabel(key);
+      lbl = createLabel(displayName);
       labelsRoot.add(lbl);
       state.personLabelByName.set(key, lbl);
     }
+    setLabelText(lbl, displayName);
     return lbl;
   }
 
@@ -712,7 +824,7 @@
     }
   }
 
-  function updatePersonGeometry(cache, person, renderFlags, activePersonNames, activeNodeKeys, boneLabelBudget, performanceHints) {
+  function updatePersonGeometry(cache, person, renderFlags, activePersonNames, activeNodeKeys, boneLabelBudget, performanceHints, personDisplayName) {
     const name = cache.name;
     const stableMode = !!(performanceHints && performanceHints.largeSkeletonMode);
     const modelEnabled = isModelAxisEnabled(name);
@@ -837,7 +949,7 @@
     }
 
     if (!stableMode && modelEnabled && renderFlags.showPersonNames && boxCenter && boxSize) {
-      const lbl = ensurePersonLabel(name);
+      const lbl = ensurePersonLabel(name, personDisplayName);
       const up = upVectorForWorld().clone().multiplyScalar(Math.max(0.08, boxSize.length() * 0.04));
       lbl.position.copy(boxCenter.clone().add(up));
       activePersonNames.add(name);
@@ -908,6 +1020,7 @@
     const mergedConfig = mergeRenderFlags(payload);
     const performanceHints = mergedConfig.performanceHints;
     const renderFlags = mergedConfig.renderFlags;
+    ensurePersonDisplayNames(payload);
 
     if (performanceHints.largeSkeletonMode && !state.lastLargeSkeletonMode) {
       for (const key of state.axisVisibilityByKey.keys()) {
@@ -942,6 +1055,7 @@
 
     for (const person of people) {
       const personName = String(person && person.name ? person.name : 'Person');
+      const personDisplayName = displayNameForPerson(personName);
       activeRenderPersonNames.add(personName);
       const cache = ensurePersonRenderCache(personName);
       const personBounds = updatePersonGeometry(
@@ -951,7 +1065,8 @@
         activeLabelPersonNames,
         activeNodeKeys,
         boneLabelBudget,
-        performanceHints
+        performanceHints,
+        personDisplayName
       );
       if (personBounds) {
         const b = personBounds;
