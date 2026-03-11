@@ -120,6 +120,7 @@ def _state_input_is_connected(node: Any, field_name: str) -> bool:
             connected.pop(stale_id, None)
         return False
 
+
 def _get_node_spec(node: Any) -> Any | None:
     try:
         return node.spec
@@ -175,7 +176,9 @@ def _to_jsonable(value: Any) -> Any:
         dump = dump_json(value, mode="json")
     except Exception:
         try:
-            dump = dump_json(value, )
+            dump = dump_json(
+                value,
+            )
         except Exception:
             dump = None
     if dump is not None:
@@ -217,10 +220,10 @@ def _schema_to_json_obj(schema: Any) -> Any:
 
 
 def _schema_from_json_obj(obj: Any) -> F8DataTypeSchema:
-    try:
-        schema_kind = _schema_type(obj)
-    except Exception:
-        schema_kind = ""
+    if isinstance(obj, dict):
+        return _schema_from_json_obj_strict(obj)
+
+    schema_kind = _schema_type(obj)
     if schema_kind in {"string", "number", "integer", "boolean", "null", "object", "array", "any"}:
         return obj
     return _schema_from_json_obj_strict(obj)
@@ -629,7 +632,9 @@ class _F8SpecNameRow(QtWidgets.QWidget):
         self.edit_btn = QtWidgets.QToolButton()
         self.edit_btn.setAutoRaise(True)
         self.edit_btn.setToolTip("Edit")
-        self.edit_btn.setIcon(_icon_from_style(self.edit_btn, QtWidgets.QStyle.SP_FileDialogDetailedView, "document-edit"))
+        self.edit_btn.setIcon(
+            _icon_from_style(self.edit_btn, QtWidgets.QStyle.SP_FileDialogDetailedView, "document-edit")
+        )
         self.edit_btn.clicked.connect(self.edit_clicked.emit)
 
         self.eye_btn = QtWidgets.QToolButton()
@@ -1106,7 +1111,9 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
         if self._missing_locked:
             return
         dir_s = str(row.property("_port_dir") or "")
-        if (dir_s == "exec_in" and not self._editable_exec_in) or (dir_s == "exec_out" and not self._editable_exec_out):
+        if (dir_s == "exec_in" and not self._editable_exec_in) or (
+            dir_s == "exec_out" and not self._editable_exec_out
+        ):
             return
         dlg = _F8EditExecPortDialog(self, title="Edit exec port", name=row.name_edit.text())
         if dlg.exec_() != QtWidgets.QDialog.Accepted:
@@ -1166,7 +1173,9 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
         if self._row_is_required_data_port(row):
             return
         dir_s = str(row.property("_port_dir") or "")
-        if (dir_s == "data_in" and not self._editable_data_in) or (dir_s == "data_out" and not self._editable_data_out):
+        if (dir_s == "data_in" and not self._editable_data_in) or (
+            dir_s == "data_out" and not self._editable_data_out
+        ):
             return
         port = row.property("_port")
         if not isinstance(port, F8DataPortSpec):
@@ -1350,7 +1359,9 @@ class _F8EditCommandParamDialog(QtWidgets.QDialog):
         required = bool(self._required.isChecked())
         desc = str(self._desc.toPlainText() or "").strip() or msgspec.UNSET
         ui_control = str(self._ui_control.text() or "").strip() or msgspec.UNSET
-        return F8CommandParam(name=name, required=required, description=desc, uiControl=ui_control, valueSchema=self._schema)
+        return F8CommandParam(
+            name=name, required=required, description=desc, uiControl=ui_control, valueSchema=self._schema
+        )
 
 
 class _F8EditCommandDialog(QtWidgets.QDialog):
@@ -1529,7 +1540,9 @@ class _F8CommandRow(QtWidgets.QWidget):
         self._btn_edit = QtWidgets.QToolButton()
         self._btn_edit.setAutoRaise(True)
         self._btn_edit.setToolTip("Edit command...")
-        self._btn_edit.setIcon(_icon_from_style(self._btn_edit, QtWidgets.QStyle.SP_FileDialogDetailedView, "document-edit"))
+        self._btn_edit.setIcon(
+            _icon_from_style(self._btn_edit, QtWidgets.QStyle.SP_FileDialogDetailedView, "document-edit")
+        )
         self._btn_edit.setEnabled(bool(allow_edit))
         self._btn_edit.setVisible(True)
         self._btn_edit.clicked.connect(self._on_edit_clicked)
@@ -1734,7 +1747,9 @@ class _F8SpecCommandEditor(QtWidgets.QWidget):
             row.delete_clicked.connect(self._delete_command)
             row.show_on_node_changed.connect(lambda v, _n=str(name): self._toggle_command_show_on_node(_n, bool(v)))  # type: ignore[attr-defined]
             try:
-                row.set_invoke_enabled(bool(running) and not self._missing_locked, disabled_reason="Missing dependency")
+                row.set_invoke_enabled(
+                    bool(running) and not self._missing_locked, disabled_reason="Missing dependency"
+                )
             except (AttributeError, RuntimeError, TypeError):
                 logger.exception("Failed to apply running-state to command row command=%s", name)
             self._cmd_rows[str(name)] = row
@@ -2010,7 +2025,9 @@ class _F8SpecCommandEditor(QtWidgets.QWidget):
         except Exception:
             spec = None
         base_show = _base_command_show_on_node(spec, name=n)
-        _set_command_show_on_node_override(node, name=n, show_on_node=bool(show_on_node), base_show_on_node=bool(base_show))
+        _set_command_show_on_node_override(
+            node, name=n, show_on_node=bool(show_on_node), base_show_on_node=bool(base_show)
+        )
 
     def _is_required_command(self, spec: F8ServiceSpec, *, name: str) -> bool:
         n = str(name or "").strip()
@@ -2306,7 +2323,10 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
                     return
             except (AttributeError, TypeError):
                 continue
-        if QtWidgets.QMessageBox.question(self, "Delete state field", f"Delete '{name}'?") != QtWidgets.QMessageBox.Yes:
+        if (
+            QtWidgets.QMessageBox.question(self, "Delete state field", f"Delete '{name}'?")
+            != QtWidgets.QMessageBox.Yes
+        ):
             return
         self._apply_state_field_spec_delete(name)
         self._on_spec_applied()
@@ -2488,7 +2508,9 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
                         prop_name=name,
                         widget_type=wid_type,
                         widget_factory=widget_factory,
-                        register_option_pool_dependent=lambda pool, w: self._option_pool_dependents.setdefault(pool, []).append(w),
+                        register_option_pool_dependent=lambda pool, w: self._option_pool_dependents.setdefault(
+                            pool, []
+                        ).append(w),
                     )
 
                     tooltip = None
@@ -2527,7 +2549,9 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
                     prop_name=prop_name,
                     widget_type=wid_type,
                     widget_factory=widget_factory,
-                    register_option_pool_dependent=lambda pool, w: self._option_pool_dependents.setdefault(pool, []).append(w),
+                    register_option_pool_dependent=lambda pool, w: self._option_pool_dependents.setdefault(
+                        pool, []
+                    ).append(w),
                 )
 
                 tooltip = None
@@ -2558,7 +2582,9 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
                     ui_control = str(ui_control_raw or "").strip().lower()
                     if ui_control == "code":
                         ui_language = _state_field_ui_language(node, prop_name)
-                        widget = _F8CodeButtonPropWidget(title=f"{node.name()} - {prop_name}", language=ui_language or "plaintext")
+                        widget = _F8CodeButtonPropWidget(
+                            title=f"{node.name()} - {prop_name}", language=ui_language or "plaintext"
+                        )
                         widget.set_name(prop_name)
                         widget.set_editor_assist_context(_build_editor_assist_context(node, prop_name=prop_name))
                         widget.set_editor_assist_context_provider(
@@ -3001,7 +3027,12 @@ class F8StudioSingleNodePropertiesWidget(QtWidgets.QWidget):
             out_name = str(_out_port.name() or "")
         except (AttributeError, TypeError):
             return
-        if not (in_name.startswith("[S]") or in_name.endswith("[S]") or out_name.startswith("[S]") or out_name.endswith("[S]")):
+        if not (
+            in_name.startswith("[S]")
+            or in_name.endswith("[S]")
+            or out_name.startswith("[S]")
+            or out_name.endswith("[S]")
+        ):
             return
         if self._editor is None or self._node_id is None:
             return
