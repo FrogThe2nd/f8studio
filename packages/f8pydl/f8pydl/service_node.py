@@ -17,7 +17,7 @@ from .constants import CLASSIFICATION_SCHEMA_VERSION, DETECTION_SCHEMA_VERSION
 from .model_config import ModelSpec, ModelTask, build_model_index, build_model_index_with_errors, load_model_spec
 from .onnx_runtime import OnnxClassifierRuntime, OnnxYoloDetectorRuntime
 from .vision_utils import clamp_xyxy
-from .weights_downloader import ensure_onnx_file
+from .weights_downloader import ensure_onnx_file, onnx_file_matches_sha256
 
 
 def _default_weights_dir() -> Path:
@@ -702,8 +702,14 @@ class OnnxVisionServiceNode(ServiceNode):
 
     async def _ensure_onnx_available(self, spec: ModelSpec) -> None:
         if spec.onnx_path.exists():
-            self._download_retry_at_monotonic = 0.0
-            return
+            if onnx_file_matches_sha256(spec.onnx_path, spec.onnx_sha256):
+                self._download_retry_at_monotonic = 0.0
+                return
+            if not self._auto_download_weights:
+                raise ValueError(
+                    f"Model file SHA256 mismatch: {spec.onnx_path}. "
+                    "Enable autoDownloadWeights or replace the .onnx file manually."
+                )
         if not self._auto_download_weights:
             raise FileNotFoundError(
                 f"Model file not found: {spec.onnx_path}. "

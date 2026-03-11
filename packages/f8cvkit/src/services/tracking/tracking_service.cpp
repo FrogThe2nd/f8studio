@@ -210,6 +210,11 @@ void collect_bbox_candidates(const json& root, std::vector<TrackingInitCandidate
 
 TrackingInitSelectMode parse_init_select_mode(const std::string& raw, std::string& normalized, bool& ok) {
   const std::string s = service_runtime::to_lower_ascii_copy(service_runtime::trim_copy(raw));
+  if (s == "first_box" || s == "first" || s == "ordered_first") {
+    normalized = "first_box";
+    ok = true;
+    return TrackingInitSelectMode::FirstBox;
+  }
   if (s.empty() || s == "closest_center" || s == "closest" || s == "center") {
     normalized = "closest_center";
     ok = true;
@@ -247,6 +252,9 @@ std::optional<cv::Rect> pick_best_bbox(const std::vector<TrackingInitCandidate>&
     const cv::Rect clamped = candidate.bbox & frame_rect;
     if (clamped.width <= 0 || clamped.height <= 0)
       continue;
+    if (mode == TrackingInitSelectMode::FirstBox) {
+      return clamped;
+    }
     const double bx = static_cast<double>(clamped.x) + static_cast<double>(clamped.width) * 0.5;
     const double by = static_cast<double>(clamped.y) + static_cast<double>(clamped.height) * 0.5;
     const double dx = bx - cx;
@@ -603,7 +611,7 @@ void TrackingService::apply_init_box_if_any() {
     return;
   }
 
-  // Clamp to frame and pick center-nearest bbox.
+  // Clamp to frame and pick the configured init bbox candidate.
   cv::Rect frame_rect(0, 0, static_cast<int>(hdr.width), static_cast<int>(hdr.height));
   const std::optional<cv::Rect> selected = pick_best_bbox(candidates, frame_rect, init_select_mode_);
   if (!selected.has_value()) {
@@ -807,8 +815,8 @@ json TrackingService::describe() {
       state_field("shmName", schema_string(), "rw", "Video SHM", "Optional SHM name override (e.g. shm.xxx.video).",
                   true),
       state_field("initSelect",
-                  schema_string_enum({"closest_center", "largest_area", "highest_score"}, "closest_center"), "rw",
-                  "Init Select", "Init bbox selection strategy: closest_center | largest_area | highest_score.", true),
+                  schema_string_enum({"first_box", "closest_center", "largest_area", "highest_score"}, "closest_center"), "rw",
+                  "Init Select", "Init bbox selection strategy: first_box | closest_center | largest_area | highest_score.", true),
       state_field("isTracking", schema_boolean(), "ro", "Is Tracking", "True when tracker is running.", true),
       state_field("isNotTracking", schema_boolean(), "ro", "Is Not Tracking", "Negation of isTracking.", true),
       state_field("lastError", schema_string(), "ro", "Last Error", "Last error message.", true),
@@ -827,7 +835,7 @@ json TrackingService::describe() {
           {"valueSchema", init_box_schema},
           {"description",
            "Init payload (single bbox or nested detection tree). Recursively extracts bbox candidates and uses the one "
-           "closest to image center."},
+           "selected by initSelect."},
           {"required", true},
           {"showOnNode", true}},
   });

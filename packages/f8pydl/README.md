@@ -6,14 +6,23 @@ Service classes:
 - `f8.dl.classifier`
 - `f8.dl.detector`
 - `f8.dl.humandetector`
+- `f8.dl.detsorter`
 - `f8.dl.optflow`
 - `f8.dl.tcnwave`
 
 Output schemas:
 - `f8visionClassifications/1` on `classifications`
 - `f8visionDetections/1` on `detections`
+- `f8visionDetections/1` in/out on `detections` (`f8.dl.detsorter`, reordered by score-map SHM)
 - `flow2_f16` SHM on state `flowShmName` (`f8.dl.optflow`)
 - `number` on `predictedChange` (`f8.dl.tcnwave`)
+
+Detection sorter notes (`f8.dl.detsorter`):
+- Reads score-map SHM from `scoreShmName`.
+- Supports `scalar1_f32` directly and `flow2_f16` by converting flow vectors to magnitude.
+- If detection payload `width`/`height` differs from SHM `width`/`height`, bbox coordinates are rescaled to SHM space before scoring.
+- Sort behavior is controlled by `sortDirection` (`desc` default, or `asc`) and `scoreAggregation` (`mean` default, or `max` / `sum` / `median`).
+- Keeps original detection `score` values and only reorders `detections`.
 
 Weight YAML notes (`f8onnxModel/1`):
 - `model.skeletonProtocol` controls detection payload field `skeletonProtocol`.

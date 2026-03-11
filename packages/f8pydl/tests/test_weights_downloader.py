@@ -11,7 +11,7 @@ if PKG_PYDL not in sys.path:
     sys.path.insert(0, PKG_PYDL)
 
 
-from f8pydl.weights_downloader import ensure_onnx_file  # noqa: E402
+from f8pydl.weights_downloader import ensure_onnx_file, onnx_file_matches_sha256  # noqa: E402
 
 
 class WeightsDownloaderTests(unittest.TestCase):
@@ -59,6 +59,35 @@ class WeightsDownloaderTests(unittest.TestCase):
                 )
 
             self.assertFalse(target.exists())
+
+    def test_existing_mismatched_file_is_replaced_by_redownload(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            source = root / "source.onnx"
+            target = root / "target.onnx"
+            source_payload = b"valid-onnx-content-789"
+            source.write_bytes(source_payload)
+            digest = hashlib.sha256(source_payload).hexdigest()
+            target.write_bytes(b"stale-html-or-corrupt-content")
+
+            ensure_onnx_file(
+                onnx_path=target,
+                onnx_url=source.resolve().as_uri(),
+                onnx_sha256=digest,
+                timeout_s=5.0,
+            )
+
+            self.assertEqual(target.read_bytes(), source_payload)
+            self.assertTrue(onnx_file_matches_sha256(target, digest))
+
+    def test_file_match_helper_returns_false_for_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            target = root / "target.onnx"
+            target.write_bytes(b"corrupt-content")
+            expected = hashlib.sha256(b"expected-content").hexdigest()
+
+            self.assertFalse(onnx_file_matches_sha256(target, expected))
 
 
 if __name__ == "__main__":

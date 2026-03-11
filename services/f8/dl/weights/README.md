@@ -4,6 +4,7 @@ Place model yaml + onnx pairs here for:
 - `f8.dl.classifier`
 - `f8.dl.detector`
 - `f8.dl.humandetector`
+- `f8.dl.detsorter`
 - `f8.dl.optflow`
 - `f8.dl.tcnwave`
 

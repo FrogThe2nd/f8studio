@@ -25,6 +25,7 @@ struct TrackingInitCandidate {
 };
 
 enum class TrackingInitSelectMode {
+  FirstBox,
   ClosestCenter,
   LargestArea,
   HighestScore,
