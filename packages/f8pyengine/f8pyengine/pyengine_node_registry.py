@@ -29,7 +29,7 @@ from .operators.rate_limiter import register_operator as register_rate_limiter_o
 from .operators.udp_skeleton import register_operator as register_udp_skeleton_operator
 from .operators.tcode import register_operator as register_tcode_operator
 from .operators.python_script import register_operator as register_python_script_operator
-from .operators.expr import register_operator as register_expr_operator
+from .operators.data_expr import register_operator as register_data_expr_operator
 from .operators.lovense_mock_server import register_operator as register_lovense_mock_server_operator
 from .operators.lovense_program_adapter import register_operator as register_lovense_program_adapter_operator
 from .operators.lovense_out import register_operator as register_lovense_out_operator
@@ -106,7 +106,7 @@ def register_pyengine_specs(registry: RuntimeNodeRegistry | None = None) -> Runt
     register_serial_out_operator(reg)
     register_tcode_operator(reg)
     register_python_script_operator(reg)
-    register_expr_operator(reg)
+    register_data_expr_operator(reg)
     register_lovense_out_operator(reg)
     register_buttplug_out_operator(reg)
     register_lovense_mock_server_operator(reg)

@@ -16,12 +16,20 @@ from f8pysdk.service_bus.routing_data import buffer_input  # noqa: E402
 from f8pysdk.testing import ServiceBusHarness  # noqa: E402
 
 from f8pyengine.constants import SERVICE_CLASS  # noqa: E402
-from f8pyengine.operators import expr as expr_mod  # noqa: E402
-from f8pyengine.operators.expr import ExprRuntimeNode, register_operator  # noqa: E402
+from f8pyengine.operators import data_expr as data_expr_mod  # noqa: E402
+from f8pyengine.operators.data_expr import DataExprRuntimeNode, register_operator  # noqa: E402
+from f8pyengine.pyengine_node_registry import register_pyengine_specs  # noqa: E402
 from f8pysdk import F8DataPortSpec, any_schema  # noqa: E402
 
 
-class ExprNodeTests(unittest.IsolatedAsyncioTestCase):
+class DataExprNodeTests(unittest.IsolatedAsyncioTestCase):
+    def test_registered_in_pyengine_specs(self) -> None:
+        reg = RuntimeNodeRegistry.instance()
+        register_pyengine_specs(reg)
+        desc = reg.describe(SERVICE_CLASS)
+        operator_classes = {str(spec.operatorClass or "") for spec in list(desc.operators or [])}
+        self.assertIn("f8.data_expr", operator_classes)
+
     async def test_extracts_nested_fields_via_attribute_access(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
@@ -33,8 +41,8 @@ class ExprNodeTests(unittest.IsolatedAsyncioTestCase):
             nodeId="e1",
             serviceId="svcA",
             serviceClass=SERVICE_CLASS,
-            operatorClass=ExprRuntimeNode.SPEC.operatorClass,
-            stateFields=list(ExprRuntimeNode.SPEC.stateFields or []),
+            operatorClass=DataExprRuntimeNode.SPEC.operatorClass,
+            stateFields=list(DataExprRuntimeNode.SPEC.stateFields or []),
             stateValues={"code": "input.center.x"},
             dataInPorts=[
                 F8DataPortSpec(name="input", description="", valueSchema=any_schema(), required=False),
@@ -47,8 +55,8 @@ class ExprNodeTests(unittest.IsolatedAsyncioTestCase):
         await bus.set_rungraph(graph)
 
         node = bus.get_node("e1")
-        self.assertIsInstance(node, ExprRuntimeNode)
-        assert isinstance(node, ExprRuntimeNode)
+        self.assertIsInstance(node, DataExprRuntimeNode)
+        assert isinstance(node, DataExprRuntimeNode)
 
         buffer_input(bus, "e1", "input", {"center": {"x": 3.25, "y": 9}}, ts_ms=0, edge=None, ctx_id=None)
         out = await node.compute_output("out", ctx_id=1)
@@ -65,8 +73,8 @@ class ExprNodeTests(unittest.IsolatedAsyncioTestCase):
             nodeId="e2",
             serviceId="svcA",
             serviceClass=SERVICE_CLASS,
-            operatorClass=ExprRuntimeNode.SPEC.operatorClass,
-            stateFields=list(ExprRuntimeNode.SPEC.stateFields or []),
+            operatorClass=DataExprRuntimeNode.SPEC.operatorClass,
+            stateFields=list(DataExprRuntimeNode.SPEC.stateFields or []),
             stateValues={"code": "a + b - c**2"},
             dataInPorts=[
                 F8DataPortSpec(name="a", description="", valueSchema=any_schema(), required=False),
@@ -81,7 +89,7 @@ class ExprNodeTests(unittest.IsolatedAsyncioTestCase):
         await bus.set_rungraph(graph)
 
         node = bus.get_node("e2")
-        assert isinstance(node, ExprRuntimeNode)
+        assert isinstance(node, DataExprRuntimeNode)
 
         buffer_input(bus, "e2", "a", 2, ts_ms=0, edge=None, ctx_id=None)
         buffer_input(bus, "e2", "b", 3, ts_ms=0, edge=None, ctx_id=None)
@@ -101,8 +109,8 @@ class ExprNodeTests(unittest.IsolatedAsyncioTestCase):
             nodeId="e3",
             serviceId="svcA",
             serviceClass=SERVICE_CLASS,
-            operatorClass=ExprRuntimeNode.SPEC.operatorClass,
-            stateFields=list(ExprRuntimeNode.SPEC.stateFields or []),
+            operatorClass=DataExprRuntimeNode.SPEC.operatorClass,
+            stateFields=list(DataExprRuntimeNode.SPEC.stateFields or []),
             stateValues={"code": "[x * 2 for x in input if x % 2 == 0]"},
             dataInPorts=[
                 F8DataPortSpec(name="input", description="", valueSchema=any_schema(), required=False),
@@ -115,7 +123,7 @@ class ExprNodeTests(unittest.IsolatedAsyncioTestCase):
         await bus.set_rungraph(graph)
 
         node = bus.get_node("e3")
-        assert isinstance(node, ExprRuntimeNode)
+        assert isinstance(node, DataExprRuntimeNode)
 
         buffer_input(bus, "e3", "input", [1, 2, 3, 4], ts_ms=0, edge=None, ctx_id=None)
         out = await node.compute_output("out", ctx_id=3)
@@ -132,8 +140,8 @@ class ExprNodeTests(unittest.IsolatedAsyncioTestCase):
             nodeId="e4",
             serviceId="svcA",
             serviceClass=SERVICE_CLASS,
-            operatorClass=ExprRuntimeNode.SPEC.operatorClass,
-            stateFields=list(ExprRuntimeNode.SPEC.stateFields or []),
+            operatorClass=DataExprRuntimeNode.SPEC.operatorClass,
+            stateFields=list(DataExprRuntimeNode.SPEC.stateFields or []),
             stateValues={"code": "[p.x for p in input.points if p.x >= 0]"},
             dataInPorts=[
                 F8DataPortSpec(name="input", description="", valueSchema=any_schema(), required=False),
@@ -146,7 +154,7 @@ class ExprNodeTests(unittest.IsolatedAsyncioTestCase):
         await bus.set_rungraph(graph)
 
         node = bus.get_node("e4")
-        assert isinstance(node, ExprRuntimeNode)
+        assert isinstance(node, DataExprRuntimeNode)
 
         payload = {"points": [{"x": -1}, {"x": 0}, {"x": 2}]}
         buffer_input(bus, "e4", "input", payload, ts_ms=0, edge=None, ctx_id=None)
@@ -164,8 +172,8 @@ class ExprNodeTests(unittest.IsolatedAsyncioTestCase):
             nodeId="e5",
             serviceId="svcA",
             serviceClass=SERVICE_CLASS,
-            operatorClass=ExprRuntimeNode.SPEC.operatorClass,
-            stateFields=list(ExprRuntimeNode.SPEC.stateFields or []),
+            operatorClass=DataExprRuntimeNode.SPEC.operatorClass,
+            stateFields=list(DataExprRuntimeNode.SPEC.stateFields or []),
             stateValues={"code": "np.clip(input, 0, 1)"},
             dataInPorts=[
                 F8DataPortSpec(name="input", description="", valueSchema=any_schema(), required=False),
@@ -178,12 +186,12 @@ class ExprNodeTests(unittest.IsolatedAsyncioTestCase):
         await bus.set_rungraph(graph)
 
         node = bus.get_node("e5")
-        assert isinstance(node, ExprRuntimeNode)
+        assert isinstance(node, DataExprRuntimeNode)
         buffer_input(bus, "e5", "input", 0.5, ts_ms=0, edge=None, ctx_id=None)
         out = await node.compute_output("out", ctx_id=5)
         self.assertIsNone(out)
 
-    @unittest.skipIf(expr_mod.np is None, "numpy not available in test environment")
+    @unittest.skipIf(data_expr_mod.np is None, "numpy not available in test environment")
     async def test_numpy_enabled_allows_np_calls(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
@@ -195,8 +203,8 @@ class ExprNodeTests(unittest.IsolatedAsyncioTestCase):
             nodeId="e6",
             serviceId="svcA",
             serviceClass=SERVICE_CLASS,
-            operatorClass=ExprRuntimeNode.SPEC.operatorClass,
-            stateFields=list(ExprRuntimeNode.SPEC.stateFields or []),
+            operatorClass=DataExprRuntimeNode.SPEC.operatorClass,
+            stateFields=list(DataExprRuntimeNode.SPEC.stateFields or []),
             stateValues={"allowNumpy": True, "code": "np.clip(input, 0, 1)"},
             dataInPorts=[
                 F8DataPortSpec(name="input", description="", valueSchema=any_schema(), required=False),
@@ -209,7 +217,7 @@ class ExprNodeTests(unittest.IsolatedAsyncioTestCase):
         await bus.set_rungraph(graph)
 
         node = bus.get_node("e6")
-        assert isinstance(node, ExprRuntimeNode)
+        assert isinstance(node, DataExprRuntimeNode)
         buffer_input(bus, "e6", "input", 1.5, ts_ms=0, edge=None, ctx_id=None)
         out = await node.compute_output("out", ctx_id=6)
         self.assertEqual(float(out), 1.0)
@@ -225,8 +233,8 @@ class ExprNodeTests(unittest.IsolatedAsyncioTestCase):
             nodeId="e7",
             serviceId="svcA",
             serviceClass=SERVICE_CLASS,
-            operatorClass=ExprRuntimeNode.SPEC.operatorClass,
-            stateFields=list(ExprRuntimeNode.SPEC.stateFields or []),
+            operatorClass=DataExprRuntimeNode.SPEC.operatorClass,
+            stateFields=list(DataExprRuntimeNode.SPEC.stateFields or []),
             stateValues={"code": "{'a': input + 1, 'b': input + 2}", "unpackDictOutputs": False},
             dataInPorts=[
                 F8DataPortSpec(name="input", description="", valueSchema=any_schema(), required=False),
@@ -240,7 +248,7 @@ class ExprNodeTests(unittest.IsolatedAsyncioTestCase):
         await bus.set_rungraph(graph)
 
         node = bus.get_node("e7")
-        assert isinstance(node, ExprRuntimeNode)
+        assert isinstance(node, DataExprRuntimeNode)
         buffer_input(bus, "e7", "input", 10, ts_ms=0, edge=None, ctx_id=None)
 
         out = await node.compute_output("out", ctx_id=7)
@@ -259,8 +267,8 @@ class ExprNodeTests(unittest.IsolatedAsyncioTestCase):
             nodeId="e8",
             serviceId="svcA",
             serviceClass=SERVICE_CLASS,
-            operatorClass=ExprRuntimeNode.SPEC.operatorClass,
-            stateFields=list(ExprRuntimeNode.SPEC.stateFields or []),
+            operatorClass=DataExprRuntimeNode.SPEC.operatorClass,
+            stateFields=list(DataExprRuntimeNode.SPEC.stateFields or []),
             stateValues={"code": "{'a': input + 1, 'b': input + 2, 'z': 999}", "unpackDictOutputs": True},
             dataInPorts=[
                 F8DataPortSpec(name="input", description="", valueSchema=any_schema(), required=False),
@@ -275,7 +283,7 @@ class ExprNodeTests(unittest.IsolatedAsyncioTestCase):
         await bus.set_rungraph(graph)
 
         node = bus.get_node("e8")
-        assert isinstance(node, ExprRuntimeNode)
+        assert isinstance(node, DataExprRuntimeNode)
         buffer_input(bus, "e8", "input", 20, ts_ms=0, edge=None, ctx_id=None)
 
         out_a = await node.compute_output("a", ctx_id=8)

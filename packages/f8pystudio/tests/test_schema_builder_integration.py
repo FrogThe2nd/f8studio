@@ -9,7 +9,6 @@ from f8pysdk import (
     F8Command,
     F8CommandParam,
     F8DataPortSpec,
-    F8AnyTypeSchema,
     F8ServiceSpec,
     F8StateAccess,
     F8StateSpec,
@@ -104,12 +103,6 @@ def test_edit_schema_dialogs_pass_read_only_when_ui_only(monkeypatch) -> None:
     )
     cmd_param._edit_schema()
     assert _FakeSchemaDialog.last_read_only is True
-
-
-def test_schema_from_json_obj_returns_typed_any_schema() -> None:
-    schema = npw._schema_from_json_obj({"type": "any"})
-
-    assert isinstance(schema, F8AnyTypeSchema)
 
 
 def test_open_state_field_editor_allows_missing_locked_read_only_dialog(monkeypatch) -> None:

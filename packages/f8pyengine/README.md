@@ -40,7 +40,7 @@ Prefer composition over monolithic Lovense wave nodes:
 - `Sequence Player` (`operatorClass=f8.sequence_player`): plays a `sequence` dict over time and outputs the current step `value`.
   - Wiring for Pattern: state edge `lovense_program_adapter.sequence` -> `sequence_player.sequence`.
 - `Cosine` (`operatorClass=f8.cosine`): consumes `phase` (0..1) and generates a waveform sample.
-  - Typical mapping for 0..1 output range: `dc=0.5`, `amp=0.5 * amplitude` (use `f8.expr` or `f8.range_map`).
+  - Typical mapping for 0..1 output range: `dc=0.5`, `amp=0.5 * amplitude` (use `f8.data_expr` or `f8.range_map`).
 
 Pattern->phase wiring example (reusable):
 - `sequence_player.value` (Hz) -> `Phase.hz` (`operatorClass=f8.phase`)

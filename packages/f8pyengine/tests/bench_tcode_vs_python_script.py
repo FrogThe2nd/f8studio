@@ -22,7 +22,7 @@ if PYSCRIPT_ROOT not in sys.path:
 from f8pysdk import F8DataPortSpec, F8RuntimeNode, any_schema, number_schema, string_schema  # noqa: E402
 
 from f8pyengine.constants import SERVICE_CLASS  # noqa: E402
-from f8pyengine.operators.expr import ExprRuntimeNode  # noqa: E402
+from f8pyengine.operators.data_expr import DataExprRuntimeNode  # noqa: E402
 from f8pyengine.operators.python_script import PythonScriptRuntimeNode  # noqa: E402
 from f8pyengine.operators.tcode import AXES, TCodeRuntimeNode  # noqa: E402
 from f8pyscript.script_service_node import PythonScriptServiceNode  # noqa: E402
@@ -222,7 +222,7 @@ def _build_python_script_node(*, node_id: str, code: str, input_mode: str) -> Py
     return PythonScriptRuntimeNode(node_id=node_id, node=node_desc, initial_state={"code": code, "inputMode": input_mode})
 
 
-def _build_expr_node() -> ExprRuntimeNode:
+def _build_data_expr_node() -> DataExprRuntimeNode:
     data_in_ports: list[F8DataPortSpec] = []
     for axis in AXES:
         data_in_ports.append(F8DataPortSpec(name=axis, description=f"Axis {axis}", valueSchema=any_schema(), required=False))
@@ -232,13 +232,13 @@ def _build_expr_node() -> ExprRuntimeNode:
         nodeId="expr",
         serviceId="svcA",
         serviceClass=SERVICE_CLASS,
-        operatorClass=ExprRuntimeNode.SPEC.operatorClass,
+        operatorClass=DataExprRuntimeNode.SPEC.operatorClass,
         dataInPorts=data_in_ports,
         dataOutPorts=data_out_ports,
-        stateFields=list(ExprRuntimeNode.SPEC.stateFields or []),
+        stateFields=list(DataExprRuntimeNode.SPEC.stateFields or []),
         stateValues={"code": EXPR_CODE, "allowNumpy": False, "unpackDictOutputs": False},
     )
-    return ExprRuntimeNode(
+    return DataExprRuntimeNode(
         node_id="expr",
         node=node_desc,
         initial_state={"code": EXPR_CODE, "allowNumpy": False, "unpackDictOutputs": False},
@@ -263,7 +263,7 @@ def _build_pyscript_service_node() -> PythonScriptServiceNode:
     )
 
 
-def _attach_fixed_inputs(node: TCodeRuntimeNode | PythonScriptRuntimeNode | ExprRuntimeNode, inputs: dict[str, Any]) -> None:
+def _attach_fixed_inputs(node: TCodeRuntimeNode | PythonScriptRuntimeNode | DataExprRuntimeNode, inputs: dict[str, Any]) -> None:
     async def pull_impl(self: Any, port: str, *, ctx_id: str | int | None = None) -> Any:
         del ctx_id
         return inputs.get(str(port))
@@ -388,7 +388,7 @@ async def main_async(args: argparse.Namespace) -> None:
         code=SCRIPT_CODE_MAPPING,
         input_mode="raw_dict",
     )
-    expr_node = _build_expr_node()
+    expr_node = _build_data_expr_node()
     pyscript_service_node = _build_pyscript_service_node()
     _attach_fixed_inputs(tcode_node, inputs)
     _attach_fixed_inputs(pyscript_dot_input_view_node, inputs)
@@ -579,7 +579,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
             "Benchmark: f8.tcode vs f8.python_script (dot/msgspec and mapping/raw variants) "
-            "+ f8.expr overhead reference (not functionally equivalent to TCode)."
+            "+ f8.data_expr overhead reference (not functionally equivalent to TCode)."
         )
     )
     parser.add_argument("--iterations", type=int, default=200_000, help="serial benchmark iterations")

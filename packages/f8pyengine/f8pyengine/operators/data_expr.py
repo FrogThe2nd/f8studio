@@ -33,12 +33,12 @@ from ._py_expr_eval import (
 )
 
 
-OPERATOR_CLASS = "f8.expr"
+OPERATOR_CLASS = "f8.data_expr"
 
 logger = logging.getLogger(__name__)
 
 
-class ExprRuntimeNode(OperatorNode):
+class DataExprRuntimeNode(OperatorNode):
     """
     Lightweight expression operator.
 
@@ -185,7 +185,7 @@ class ExprRuntimeNode(OperatorNode):
                 now_ms = int(time.time() * 1000.0)
                 sig = f"unmatched_port:{key_s}"
                 if self._should_log_repeating_error(sig, now_ms=now_ms, kind="unmatched"):
-                    logger.warning("[%s:expr] unpack key has no matching output port: %s", self.node_id, key_s)
+                    logger.warning("[%s:data_expr] unpack key has no matching output port: %s", self.node_id, key_s)
             return outputs
 
         default_port = self._default_output_port()
@@ -210,7 +210,7 @@ class ExprRuntimeNode(OperatorNode):
                 now_ms = int(time.time() * 1000.0)
                 sig = f"{type(exc).__name__}:{exc}:port={p}"
                 if self._should_log_repeating_error(sig, now_ms=now_ms, kind="pull"):
-                    logger.exception("[%s:expr] pull failed (port=%s)", self.node_id, p)
+                    logger.exception("[%s:data_expr] pull failed (port=%s)", self.node_id, p)
 
         try:
             if self._compiled is None:
@@ -224,7 +224,7 @@ class ExprRuntimeNode(OperatorNode):
             now_ms = int(time.time() * 1000.0)
             sig = f"{type(exc).__name__}:{exc}"
             if self._should_log_repeating_error(sig, now_ms=now_ms, kind="eval"):
-                logger.warning("[%s:expr] eval failed: %s", self.node_id, exc)
+                logger.warning("[%s:data_expr] eval failed: %s", self.node_id, exc)
             out = None
 
         self._last_outputs = self._extract_outputs(out)
@@ -233,12 +233,12 @@ class ExprRuntimeNode(OperatorNode):
         return self._last_outputs.get(out_port)
 
 
-ExprRuntimeNode.SPEC = F8OperatorSpec(
+DataExprRuntimeNode.SPEC = F8OperatorSpec(
     schemaVersion=F8OperatorSchemaVersion.f8operator_1,
     serviceClass=SERVICE_CLASS,
     operatorClass=OPERATOR_CLASS,
     version="0.0.1",
-    label="Python Expr",
+    label="Data Expr",
     description=(
         "Evaluate a small Python expression using input values.\n"
         "\n"
@@ -313,8 +313,8 @@ def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNod
     reg = registry or RuntimeNodeRegistry.instance()
 
     def _factory(node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any]) -> OperatorNode:
-        return ExprRuntimeNode(node_id=node_id, node=node, initial_state=initial_state)
+        return DataExprRuntimeNode(node_id=node_id, node=node, initial_state=initial_state)
 
     reg.register(SERVICE_CLASS, OPERATOR_CLASS, _factory, overwrite=True)
-    reg.register_operator_spec(ExprRuntimeNode.SPEC, overwrite=True)
+    reg.register_operator_spec(DataExprRuntimeNode.SPEC, overwrite=True)
     return reg
