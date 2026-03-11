@@ -27,6 +27,7 @@ from .service_toolbar_host import F8ElideToolButton, F8ForceGlobalToolTipFilter
 from .wave_preview import (
     WAVE_PATTERN_EDITOR_DEPENDENCY_FIELDS,
     WAVE_PREVIEW_DEPENDENCY_FIELDS,
+    make_wave_heatmap_control,
     make_wave_pattern_editor_control,
     make_wave_preview_control,
 )
@@ -414,6 +415,14 @@ def make_state_inline_control(node_item: Any, state_field: StateFieldInfo) -> Qt
             field_tooltip=field_tooltip,
             preview_value_getter=_get_node_value,
             property_value_getter=_get_node_property,
+        )
+        node_item._state_inline_updaters[name] = apply_value
+        return control
+
+    if ui in {"wave_heatmap"}:
+        control, apply_value = make_wave_heatmap_control(
+            field_tooltip=field_tooltip,
+            heatmap_value_getter=_get_node_value,
         )
         node_item._state_inline_updaters[name] = apply_value
         return control

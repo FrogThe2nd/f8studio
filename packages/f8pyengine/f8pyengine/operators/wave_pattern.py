@@ -27,6 +27,7 @@ from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
 from f8pysdk.schema_helpers import array_schema, number_schema as helper_number_schema
 
 from ..constants import SERVICE_CLASS
+from .wave_loop_sampler import LoopingLinearSampler
 
 
 OPERATOR_CLASS = "f8.wave_pattern"
@@ -243,6 +244,8 @@ class WavePatternRuntimeNode(OperatorNode):
         default_points = [[0.0, 0.0], [float(self._max_t), 0.0]]
         self._points = _normalize_points(self._state_values.get("points", default_points), max_t=self._max_t)
         self._preview_cycle: list[tuple[float, float]] = []
+        self._linear_sampler = LoopingLinearSampler.from_points([], max_t=self._max_t)
+        self._use_linear_sampler_for_output = False
         self._last_error = ""
         self._last_output: float | None = None
         self._publish_pending = True
@@ -335,6 +338,9 @@ class WavePatternRuntimeNode(OperatorNode):
         self._publish_pending = True
 
     def _rebuild_model(self) -> None:
+        active_points = _active_cycle_points(self._points, max_t=self._max_t)
+        self._linear_sampler = LoopingLinearSampler.from_points(self._points, max_t=self._max_t)
+        self._use_linear_sampler_for_output = self._interp == "linear" or len(active_points) <= 2
         try:
             self._model = _make_periodic_model(self._points, method=self._interp, max_t=self._max_t)
             t_preview = np.linspace(0.0, float(self._max_t), num=_PREVIEW_SAMPLES, endpoint=False, dtype=np.float64)
@@ -402,11 +408,14 @@ class WavePatternRuntimeNode(OperatorNode):
             return self._last_output
 
         try:
-            wrapped_t = math.fmod(float(t_value), float(self._max_t))
-            if wrapped_t < 0.0:
-                wrapped_t += float(self._max_t)
-            out_arr = np.asarray(self._model(np.asarray([wrapped_t], dtype=np.float64)), dtype=np.float64)
-            out = float(out_arr[0]) if out_arr.size else 0.0
+            if self._use_linear_sampler_for_output:
+                out = self._linear_sampler.sample(float(t_value))
+            else:
+                wrapped_t = math.fmod(float(t_value), float(self._max_t))
+                if wrapped_t < 0.0:
+                    wrapped_t += float(self._max_t)
+                out_arr = np.asarray(self._model(np.asarray([wrapped_t], dtype=np.float64)), dtype=np.float64)
+                out = float(out_arr[0]) if out_arr.size else 0.0
         except Exception as exc:
             now_ms = int(time.time() * 1000.0)
             sig = f"{type(exc).__name__}:{exc}"

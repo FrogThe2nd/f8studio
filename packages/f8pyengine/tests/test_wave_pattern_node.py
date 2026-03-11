@@ -111,6 +111,35 @@ class WavePatternNodeTests(unittest.IsolatedAsyncioTestCase):
         out = await runtime.compute_output("value", ctx_id=22)
         self.assertAlmostEqual(float(out), 0.5, places=6)
 
+    async def test_linear_output_uses_cached_sampler(self) -> None:
+        bus = self._setup_bus(service_id='svcLinearCache')
+        graph = F8RuntimeGraph(
+            graphId='g_linear_cache',
+            revision='r1',
+            nodes=[
+                _build_wave_pattern_runtime_node(
+                    node_id='w1',
+                    service_id='svcLinearCache',
+                    points=[[0.0, 0.0], [5.0, 1.0], [10.0, 0.0]],
+                    max_t=10.0,
+                    interp='linear',
+                )
+            ],
+            edges=[],
+        )
+        await bus.set_rungraph(graph)
+        runtime = bus.get_node('w1')
+        assert isinstance(runtime, WavePatternRuntimeNode)
+
+        self.assertTrue(runtime._use_linear_sampler_for_output)
+        buffer_input(bus, 'w1', 't', 1.0, ts_ms=0, edge=None, ctx_id=None)
+        _ = await runtime.compute_output('value', ctx_id=100)
+        first_index = runtime._linear_sampler.last_segment_index
+        buffer_input(bus, 'w1', 't', 1.2, ts_ms=0, edge=None, ctx_id=None)
+        _ = await runtime.compute_output('value', ctx_id=101)
+        self.assertIsNotNone(first_index)
+        self.assertEqual(runtime._linear_sampler.last_segment_index, first_index)
+
     async def test_all_interp_methods_compute(self) -> None:
         methods = ["linear", "pchip", "akima", "cubic_spline"]
         for index, method in enumerate(methods):

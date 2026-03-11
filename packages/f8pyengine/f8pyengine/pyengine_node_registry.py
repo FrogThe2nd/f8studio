@@ -45,6 +45,7 @@ from .operators.udp_vmc import register_operator as register_udp_vmc_operator
 from .operators.bone_selector import register_operator as register_bone_selector_operator
 from .operators.wave_expr import register_operator as register_wave_expr_operator
 from .operators.wave_pattern import register_operator as register_wave_pattern_operator
+from .operators.wave_funscript import register_operator as register_wave_funscript_operator
 from .pyengine_service_node import PyEngineServiceNode
 
 
@@ -120,4 +121,5 @@ def register_pyengine_specs(registry: RuntimeNodeRegistry | None = None) -> Runt
     register_bone_selector_operator(reg)
     register_wave_expr_operator(reg)
     register_wave_pattern_operator(reg)
+    register_wave_funscript_operator(reg)
     return reg

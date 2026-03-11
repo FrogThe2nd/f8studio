@@ -7,7 +7,9 @@ from qtpy import QtCore, QtGui, QtWidgets
 from f8pystudio.nodegraph.items.inline_state_panel import make_state_inline_control, on_graph_property_changed
 from f8pystudio.nodegraph.items.node_item_core import StateFieldInfo
 from f8pystudio.nodegraph.items.service_toolbar_host import F8ForceGlobalToolTipFilter
+from f8pystudio.widgets.editor_controls import F8OptionCombo
 from f8pystudio.nodegraph.items.wave_preview import (
+    WaveHeatmapControl,
     WavePatternEditorControl,
     WavePreviewControl,
     graph_draw_rect,
@@ -92,6 +94,37 @@ def _wave_preview_field() -> StateFieldInfo:
     )
 
 
+
+
+def _wave_heatmap_field() -> StateFieldInfo:
+    return StateFieldInfo(
+        name="heatmap",
+        label="Heatmap",
+        tooltip="Wave heatmap.",
+        show_on_node=True,
+        access="ro",
+        access_str="ro",
+        required=True,
+        ui_control="wave_heatmap",
+        ui_language=None,
+        value_schema=None,
+    )
+
+
+def _selected_axis_field() -> StateFieldInfo:
+    return StateFieldInfo(
+        name="selectedAxis",
+        label="Selected Axis",
+        tooltip="Axis selector.",
+        show_on_node=True,
+        access="rw",
+        access_str="rw",
+        required=True,
+        ui_control="options:[allAxes]",
+        ui_language=None,
+        value_schema=None,
+    )
+
 def _wave_pattern_field() -> StateFieldInfo:
     return StateFieldInfo(
         name="points",
@@ -172,6 +205,51 @@ def test_make_state_inline_control_wave_preview_restores_widget() -> None:
 
     assert isinstance(control, WavePreviewControl)
 
+
+
+
+def test_make_state_inline_control_wave_heatmap_restores_widget() -> None:
+    _ensure_app()
+    node_item = _FakeNodeItem(code_value="")
+    node_item._backend = _FakeBackendNode(
+        {
+            "heatmap": [0.0, 0.5, 1.0],
+            "maxT": 12.0,
+        }
+    )
+
+    control = make_state_inline_control(node_item, _wave_heatmap_field())
+
+    assert isinstance(control, WaveHeatmapControl)
+
+
+def test_make_state_inline_control_selected_axis_uses_option_pool() -> None:
+    _ensure_app()
+    node_item = _FakeNodeItem(code_value="")
+    node_item._backend = _FakeBackendNode(
+        {
+            "selectedAxis": "TopLevel",
+            "allAxes": ["TopLevel", "L1", "R1"],
+        }
+    )
+
+    control = make_state_inline_control(node_item, _selected_axis_field())
+
+    assert isinstance(control, F8OptionCombo)
+
+
+def test_on_graph_property_changed_updates_wave_heatmap() -> None:
+    _ensure_app()
+    node_item = _FakeNodeItem(code_value="")
+    seen: list[Any] = []
+
+    def _record_heatmap(value: Any) -> None:
+        seen.append(value)
+
+    node_item._state_inline_updaters["heatmap"] = _record_heatmap
+    on_graph_property_changed(node_item, node_item._backend, "heatmap", [0.0, 1.0, 0.0])
+
+    assert seen == [[0.0, 1.0, 0.0]]
 
 def test_make_state_inline_control_wave_pattern_restores_widget() -> None:
     _ensure_app()

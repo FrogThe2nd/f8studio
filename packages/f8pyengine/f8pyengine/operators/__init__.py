@@ -29,6 +29,7 @@ from .udp_vmc import UdpVmcRuntimeNode
 from .bone_selector import BoneSelectorRuntimeNode
 from .wave_expr import WaveExprRuntimeNode
 from .wave_pattern import WavePatternRuntimeNode
+from .wave_funscript import WaveFunscriptRuntimeNode
 
 __all__ = [
     "PrintRuntimeNode",
@@ -60,4 +61,5 @@ __all__ = [
     "BoneSelectorRuntimeNode",
     "WaveExprRuntimeNode",
     "WavePatternRuntimeNode",
+    "WaveFunscriptRuntimeNode",
 ]

@@ -610,3 +610,70 @@ def make_wave_pattern_editor_control(
 
     apply_points(points_value_getter())
     return control, apply_points
+
+
+class WaveHeatmapControl(QtWidgets.QWidget):
+    def __init__(self, *, field_tooltip: str = "", parent: QtWidgets.QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._values: list[float] = []
+        self.setMinimumWidth(0)
+        self.setMinimumHeight(28)
+        self.setMaximumHeight(40)
+        self.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+        self.setObjectName("inline_wave_heatmap")
+        if field_tooltip:
+            self.setToolTip(field_tooltip)
+
+    def set_heatmap_data(self, values: Any) -> None:
+        self._values = normalize_heatmap_values(values)
+        self.update()
+
+    def paintEvent(self, event: QtGui.QPaintEvent) -> None:  # type: ignore[override]
+        del event
+        painter = QtGui.QPainter(self)
+        rect = self.rect()
+        painter.fillRect(rect, QtGui.QColor(14, 14, 14, 200))
+        inner = QtCore.QRectF(rect).adjusted(4.0, 4.0, -4.0, -4.0)
+        painter.setPen(QtGui.QPen(QtGui.QColor(65, 65, 65), 1.0))
+        painter.drawRoundedRect(inner, 4.0, 4.0)
+        if not self._values:
+            return
+        peak = max(self._values)
+        if peak <= 0.0:
+            peak = 1.0
+        width = max(inner.width(), 1.0)
+        bar_width = width / float(len(self._values))
+        for index, value in enumerate(self._values):
+            normalized = min(max(float(value) / peak, 0.0), 1.0)
+            color = QtGui.QColor.fromHsvF(0.62 - (0.62 * normalized), 0.85, 0.25 + (0.70 * normalized), 1.0)
+            x_pos = inner.left() + (float(index) * bar_width)
+            bar_rect = QtCore.QRectF(x_pos, inner.top(), max(1.0, bar_width + 0.5), inner.height())
+            painter.fillRect(bar_rect, color)
+
+
+def normalize_heatmap_values(raw_value: Any) -> list[float]:
+    if not isinstance(raw_value, list):
+        return []
+    values: list[float] = []
+    for item in raw_value:
+        try:
+            value = float(item)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(value):
+            values.append(float(value))
+    return values
+
+
+def make_wave_heatmap_control(
+    *,
+    field_tooltip: str,
+    heatmap_value_getter: Callable[[], Any],
+) -> tuple[WaveHeatmapControl, Callable[[Any], None]]:
+    control = WaveHeatmapControl(field_tooltip=field_tooltip)
+
+    def apply_heatmap(value: Any) -> None:
+        control.set_heatmap_data(value)
+
+    apply_heatmap(heatmap_value_getter())
+    return control, apply_heatmap
