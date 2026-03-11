@@ -94,6 +94,7 @@ def _serialize_points(points: list[tuple[float, float]]) -> list[list[float]]:
 
 
 def _normalize_points(value: Any, *, max_t: float) -> list[tuple[float, float]]:
+    del max_t
     if value is None:
         return []
     if not isinstance(value, list):
@@ -107,16 +108,17 @@ def _normalize_points(value: Any, *, max_t: float) -> list[tuple[float, float]]:
         y_value = _to_float_or_none(item[1])
         if t_value is None or y_value is None:
             continue
-        clamped_t = min(max(float(t_value), 0.0), float(max_t))
-        deduped[clamped_t] = (index, float(y_value))
+        deduped[float(t_value)] = (index, float(y_value))
 
     ordered = sorted(deduped.items(), key=lambda item: item[0])
     return [(float(t_value), float(index_and_y[1])) for t_value, index_and_y in ordered]
 
 
-def _cycle_points(points: list[tuple[float, float]], *, max_t: float) -> list[tuple[float, float]]:
+def _active_cycle_points(points: list[tuple[float, float]], *, max_t: float) -> list[tuple[float, float]]:
     deduped: dict[float, float] = {}
     for t_value, y_value in points:
+        if t_value < 0.0 or t_value > float(max_t):
+            continue
         cycle_t = 0.0 if math.isclose(float(t_value), float(max_t), abs_tol=_PERIODIC_EPSILON) else float(t_value)
         deduped[cycle_t] = float(y_value)
     ordered = sorted(deduped.items(), key=lambda item: item[0])
@@ -133,7 +135,7 @@ def _make_constant_model(value: float) -> Callable[[np.ndarray], np.ndarray]:
 
 
 def _make_linear_model(points: list[tuple[float, float]], *, max_t: float) -> Callable[[np.ndarray], np.ndarray]:
-    cycle_points = _cycle_points(points, max_t=max_t)
+    cycle_points = _active_cycle_points(points, max_t=max_t)
     if len(cycle_points) == 0:
         return _make_constant_model(0.0)
     if len(cycle_points) == 1:
@@ -163,7 +165,7 @@ def _make_periodic_model(
     method: str,
     max_t: float,
 ) -> Callable[[np.ndarray], np.ndarray]:
-    cycle_points = _cycle_points(points, max_t=max_t)
+    cycle_points = _active_cycle_points(points, max_t=max_t)
     if len(cycle_points) == 0:
         return _make_constant_model(0.0)
     if len(cycle_points) == 1:

@@ -144,6 +144,14 @@ class WavePatternEditorControl(QtWidgets.QWidget):
             self._drag_index = None
         self.update()
 
+    def _visible_points_with_indices(self) -> list[tuple[int, tuple[float, float]]]:
+        visible: list[tuple[int, tuple[float, float]]] = []
+        for index, point in enumerate(self._points):
+            t_value = point[0]
+            if 0.0 <= t_value <= self._max_t:
+                visible.append((index, point))
+        return visible
+
     def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:  # type: ignore[override]
         if not self._read_only and event.key() in (QtCore.Qt.Key.Key_Delete, QtCore.Qt.Key.Key_Backspace):
             if self._delete_selected_point(push_undo=True):
@@ -256,7 +264,7 @@ class WavePatternEditorControl(QtWidgets.QWidget):
     def _draw_points(self, painter: QtGui.QPainter, rect: QtCore.QRectF, y_range: tuple[float, float] | None) -> None:
         if y_range is None:
             return
-        for index, (t_value, y_value) in enumerate(self._points):
+        for index, (t_value, y_value) in self._visible_points_with_indices():
             pos = point_to_widget_pos(t_value, y_value, rect=rect, max_t=self._max_t, y_range=y_range)
             radius = 4.5 if index == self._selected_index else 3.5
             fill = QtGui.QColor(255, 180, 70) if index == self._selected_index else QtGui.QColor(245, 245, 245)
@@ -268,7 +276,7 @@ class WavePatternEditorControl(QtWidgets.QWidget):
         requested = effective_requested_y_range(self._min_value, self._max_value)
         if requested is not None:
             return requested
-        data_points = list(self._points)
+        data_points = [point for _, point in self._visible_points_with_indices()]
         data_points.extend(self._preview_cycle)
         return auto_y_range_from_points(data_points)
 
@@ -278,7 +286,7 @@ class WavePatternEditorControl(QtWidgets.QWidget):
             return None
         rect = graph_draw_rect(self.rect())
         return find_point_hit_index(
-            self._points,
+            self._visible_points_with_indices(),
             pos,
             rect=rect,
             max_t=self._max_t,
@@ -404,6 +412,7 @@ def coerce_positive_preview_x(raw_value: Any) -> float:
 
 
 def normalize_control_points(raw_value: Any, *, max_t: float) -> list[tuple[float, float]]:
+    del max_t
     if not isinstance(raw_value, list):
         return []
     deduped: dict[float, float] = {}
@@ -417,8 +426,7 @@ def normalize_control_points(raw_value: Any, *, max_t: float) -> list[tuple[floa
             continue
         if not math.isfinite(t_value) or not math.isfinite(y_value):
             continue
-        clamped_t = min(max(t_value, 0.0), max_t)
-        deduped[clamped_t] = y_value
+        deduped[float(t_value)] = float(y_value)
     ordered = sorted(deduped.items(), key=lambda item: item[0])
     return [(float(t_value), float(y_value)) for t_value, y_value in ordered]
 
@@ -471,7 +479,7 @@ def widget_pos_to_point(
 
 
 def find_point_hit_index(
-    points: list[tuple[float, float]],
+    points: list[tuple[int, tuple[float, float]]] | list[tuple[float, float]],
     pos: QtCore.QPointF,
     *,
     rect: QtCore.QRectF,
@@ -480,12 +488,18 @@ def find_point_hit_index(
     radius_px: float,
 ) -> int | None:
     radius_sq = float(radius_px) * float(radius_px)
-    for index, (t_value, y_value) in enumerate(points):
+    for entry in points:
+        if isinstance(entry[0], int) and len(entry) == 2 and isinstance(entry[1], tuple):
+            index = int(entry[0])
+            t_value, y_value = entry[1]
+        else:
+            index = -1
+            t_value, y_value = entry
         point_pos = point_to_widget_pos(t_value, y_value, rect=rect, max_t=max_t, y_range=y_range)
         dx = point_pos.x() - pos.x()
         dy = point_pos.y() - pos.y()
         if (dx * dx) + (dy * dy) <= radius_sq:
-            return index
+            return index if index >= 0 else None
     return None
 
 

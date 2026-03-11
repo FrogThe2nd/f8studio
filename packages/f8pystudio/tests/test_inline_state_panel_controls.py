@@ -239,6 +239,27 @@ def test_on_graph_property_changed_refreshes_wave_pattern_from_preview_dependenc
     assert seen == [[[0.0, 0.0], [10.0, 0.0]]]
 
 
+def test_wave_pattern_editor_preserves_hidden_points_when_max_t_shrinks() -> None:
+    _ensure_app()
+    node_item = _FakeNodeItem(code_value="")
+    node_item._backend = _FakeBackendNode(
+        {
+            "points": [[1.0, 0.1], [6.0, 0.6], [12.0, 1.2]],
+            "preview": [[0.0, 0.1], [2.5, 0.1]],
+            "minValue": 0.0,
+            "maxValue": 2.0,
+            "maxT": 12.0,
+        }
+    )
+
+    control = make_state_inline_control(node_item, _wave_pattern_field())
+    assert isinstance(control, WavePatternEditorControl)
+
+    node_item._backend.set_property("maxT", 5.0)
+    on_graph_property_changed(node_item, node_item._backend, "maxT", 5.0)
+
+    assert node_item._backend.get_property("points") == [[1.0, 0.1], [6.0, 0.6], [12.0, 1.2]]
+
 def test_wave_pattern_editor_add_move_delete_updates_backend_points() -> None:
     _ensure_app()
     node_item = _FakeNodeItem(code_value="")

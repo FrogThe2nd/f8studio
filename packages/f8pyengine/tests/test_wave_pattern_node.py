@@ -196,7 +196,7 @@ class WavePatternNodeTests(unittest.IsolatedAsyncioTestCase):
             out = await runtime.compute_output("value", ctx_id=index)
             self.assertAlmostEqual(float(out), expected, places=6)
 
-    async def test_normalizes_points_on_publish(self) -> None:
+    async def test_preserves_raw_points_while_deduping_and_sorting(self) -> None:
         bus = self._setup_bus(service_id="svcC")
         graph = F8RuntimeGraph(
             graphId="g4",
@@ -215,7 +215,39 @@ class WavePatternNodeTests(unittest.IsolatedAsyncioTestCase):
 
         runtime = bus.get_node("w1")
         assert isinstance(runtime, WavePatternRuntimeNode)
-        self.assertEqual(runtime._state_values["points"], [[0.0, 0.1], [3.0, 0.4], [9.0, 0.5], [10.0, 0.3]])
+        self.assertEqual(runtime._state_values["points"], [[-2.0, 0.1], [3.0, 0.4], [9.0, 0.5], [12.0, 0.3]])
+
+    async def test_shrinking_max_t_preserves_hidden_points(self) -> None:
+        bus = self._setup_bus(service_id="svcHidden")
+        graph = F8RuntimeGraph(
+            graphId="g_hidden",
+            revision="r1",
+            nodes=[
+                _build_wave_pattern_runtime_node(
+                    node_id="w1",
+                    service_id="svcHidden",
+                    points=[[1.0, 0.1], [6.0, 0.6], [12.0, 1.2]],
+                    max_t=12.0,
+                    interp="linear",
+                )
+            ],
+            edges=[],
+        )
+        await bus.set_rungraph(graph)
+        runtime = bus.get_node("w1")
+        assert isinstance(runtime, WavePatternRuntimeNode)
+
+        await runtime.on_state("maxT", 5.0, ts_ms=1)
+        self.assertEqual(runtime._state_values["points"], [[1.0, 0.1], [6.0, 0.6], [12.0, 1.2]])
+
+        buffer_input(bus, "w1", "t", 1.0, ts_ms=0, edge=None, ctx_id=None)
+        out_small = await runtime.compute_output("value", ctx_id=1)
+        self.assertAlmostEqual(float(out_small), 0.1, places=6)
+
+        await runtime.on_state("maxT", 12.0, ts_ms=2)
+        buffer_input(bus, "w1", "t", 6.0, ts_ms=0, edge=None, ctx_id=None)
+        out_restored = await runtime.compute_output("value", ctx_id=2)
+        self.assertAlmostEqual(float(out_restored), 0.6, places=6)
 
     async def test_periodic_extension_keeps_boundary_values_close(self) -> None:
         bus = self._setup_bus(service_id="svcD")
