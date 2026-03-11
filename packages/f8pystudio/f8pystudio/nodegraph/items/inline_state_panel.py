@@ -24,7 +24,12 @@ from ...widgets.state_controls.pool_resolver import resolve_pool_items
 from ...widgets.property_value_widgets import F8NumberPropLineEdit, open_code_editor_window
 from .node_item_core import StateFieldInfo, state_field_info
 from .service_toolbar_host import F8ElideToolButton, F8ForceGlobalToolTipFilter
-from .wave_preview import WAVE_PREVIEW_DEPENDENCY_FIELDS, make_wave_preview_control
+from .wave_preview import (
+    WAVE_PATTERN_EDITOR_DEPENDENCY_FIELDS,
+    WAVE_PREVIEW_DEPENDENCY_FIELDS,
+    make_wave_pattern_editor_control,
+    make_wave_preview_control,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -177,6 +182,9 @@ def on_graph_property_changed(node_item: Any, node: Any, name: str, value: Any) 
     preview_updater = None
     if key in WAVE_PREVIEW_DEPENDENCY_FIELDS:
         preview_updater = node_item._state_inline_updaters.get("preview")
+    pattern_updater = None
+    if key in WAVE_PATTERN_EDITOR_DEPENDENCY_FIELDS:
+        pattern_updater = node_item._state_inline_updaters.get("points")
 
     updater = node_item._state_inline_updaters.get(key)
     if updater is not None:
@@ -202,6 +210,20 @@ def on_graph_property_changed(node_item: Any, node: Any, name: str, value: Any) 
             except Exception:
                 node_id = ""
             logger.exception("inline wave preview updater failed nodeId=%s key=%s", node_id, key)
+
+    if pattern_updater is not None and pattern_updater is not updater:
+        try:
+            points_value = node.get_property("points")
+        except KeyError:
+            points_value = None
+        try:
+            pattern_updater(points_value)
+        except Exception:
+            try:
+                node_id = str(node_item.id or "")
+            except Exception:
+                node_id = ""
+            logger.exception("inline wave pattern updater failed nodeId=%s key=%s", node_id, key)
 
     refresh_option_pool_for_changed_field(node_item, key)
 
@@ -393,6 +415,21 @@ def make_state_inline_control(node_item: Any, state_field: StateFieldInfo) -> Qt
             preview_value_getter=_get_node_value,
             property_value_getter=_get_node_property,
         )
+        node_item._state_inline_updaters[name] = apply_value
+        return control
+
+    if ui in {"wave_pattern_editor"}:
+        def _set_points_value(value: Any, push_undo: bool) -> None:
+            _set_node_value(value, push_undo=push_undo)
+
+        control, apply_value = make_wave_pattern_editor_control(
+            field_tooltip=field_tooltip,
+            points_value_getter=_get_node_value,
+            property_value_getter=_get_node_property,
+            points_setter=_set_points_value,
+        )
+        if read_only:
+            control.set_read_only(True)
         node_item._state_inline_updaters[name] = apply_value
         return control
 

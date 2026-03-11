@@ -2,12 +2,17 @@ from __future__ import annotations
 
 from typing import Any
 
-from qtpy import QtWidgets
+from qtpy import QtCore, QtGui, QtWidgets
 
 from f8pystudio.nodegraph.items.inline_state_panel import make_state_inline_control, on_graph_property_changed
 from f8pystudio.nodegraph.items.node_item_core import StateFieldInfo
 from f8pystudio.nodegraph.items.service_toolbar_host import F8ForceGlobalToolTipFilter
-from f8pystudio.nodegraph.items.wave_preview import WavePreviewControl
+from f8pystudio.nodegraph.items.wave_preview import (
+    WavePatternEditorControl,
+    WavePreviewControl,
+    graph_draw_rect,
+    point_to_widget_pos,
+)
 
 
 class _FakeBackendNode:
@@ -87,6 +92,39 @@ def _wave_preview_field() -> StateFieldInfo:
     )
 
 
+def _wave_pattern_field() -> StateFieldInfo:
+    return StateFieldInfo(
+        name="points",
+        label="Points",
+        tooltip="Editable control points.",
+        show_on_node=True,
+        access="rw",
+        access_str="rw",
+        required=True,
+        ui_control="wave_pattern_editor",
+        ui_language=None,
+        value_schema=None,
+    )
+
+
+def _mouse_event(
+    event_type: QtCore.QEvent.Type,
+    pos: QtCore.QPointF,
+    *,
+    button: QtCore.Qt.MouseButton,
+    buttons: QtCore.Qt.MouseButton,
+) -> QtGui.QMouseEvent:
+    return QtGui.QMouseEvent(
+        event_type,
+        pos,
+        pos,
+        pos,
+        button,
+        buttons,
+        QtCore.Qt.KeyboardModifier.NoModifier,
+    )
+
+
 def test_make_state_inline_control_code_uses_push_button_and_style() -> None:
     _ensure_app()
     node_item = _FakeNodeItem(code_value="a\nb")
@@ -135,6 +173,24 @@ def test_make_state_inline_control_wave_preview_restores_widget() -> None:
     assert isinstance(control, WavePreviewControl)
 
 
+def test_make_state_inline_control_wave_pattern_restores_widget() -> None:
+    _ensure_app()
+    node_item = _FakeNodeItem(code_value="")
+    node_item._backend = _FakeBackendNode(
+        {
+            "points": [[0.0, 0.0], [10.0, 0.0]],
+            "preview": [[0.0, 0.0], [1.0, 0.1], [2.0, 0.0]],
+            "minValue": 0.0,
+            "maxValue": 1.0,
+            "maxT": 10.0,
+        }
+    )
+
+    control = make_state_inline_control(node_item, _wave_pattern_field())
+
+    assert isinstance(control, WavePatternEditorControl)
+
+
 def test_on_graph_property_changed_refreshes_wave_preview_from_bounds_change() -> None:
     _ensure_app()
     node_item = _FakeNodeItem(code_value="")
@@ -157,6 +213,114 @@ def test_on_graph_property_changed_refreshes_wave_preview_from_bounds_change() -
     on_graph_property_changed(node_item, node_item._backend, "maxT", 8.0)
 
     assert seen == [[[0.0, 0.0], [0.1, 1.0]]]
+
+
+def test_on_graph_property_changed_refreshes_wave_pattern_from_preview_dependency() -> None:
+    _ensure_app()
+    node_item = _FakeNodeItem(code_value="")
+    node_item._backend = _FakeBackendNode(
+        {
+            "points": [[0.0, 0.0], [10.0, 0.0]],
+            "preview": [[0.0, 0.0], [0.1, 1.0]],
+            "minValue": 0.0,
+            "maxValue": 1.0,
+            "maxT": 10.0,
+        }
+    )
+    seen: list[Any] = []
+
+    def _record_points(value: Any) -> None:
+        seen.append(value)
+
+    node_item._state_inline_updaters["points"] = _record_points
+
+    on_graph_property_changed(node_item, node_item._backend, "preview", [[0.0, 0.0], [0.2, 0.9]])
+
+    assert seen == [[[0.0, 0.0], [10.0, 0.0]]]
+
+
+def test_wave_pattern_editor_add_move_delete_updates_backend_points() -> None:
+    _ensure_app()
+    node_item = _FakeNodeItem(code_value="")
+    node_item._backend = _FakeBackendNode(
+        {
+            "points": [[0.0, 0.0], [10.0, 0.0]],
+            "preview": [[0.0, 0.0], [5.0, 0.5], [9.0, 0.0]],
+            "minValue": 0.0,
+            "maxValue": 1.0,
+            "maxT": 10.0,
+        }
+    )
+
+    control = make_state_inline_control(node_item, _wave_pattern_field())
+    assert isinstance(control, WavePatternEditorControl)
+    control.resize(240, 84)
+
+    add_pos = QtCore.QPointF(120.0, 18.0)
+    control.mousePressEvent(
+        _mouse_event(
+            QtCore.QEvent.Type.MouseButtonPress,
+            add_pos,
+            button=QtCore.Qt.MouseButton.LeftButton,
+            buttons=QtCore.Qt.MouseButton.LeftButton,
+        )
+    )
+    control.mouseReleaseEvent(
+        _mouse_event(
+            QtCore.QEvent.Type.MouseButtonRelease,
+            add_pos,
+            button=QtCore.Qt.MouseButton.LeftButton,
+            buttons=QtCore.Qt.MouseButton.NoButton,
+        )
+    )
+
+    points_after_add = node_item._backend.get_property("points")
+    assert len(points_after_add) == 3
+
+    rect = graph_draw_rect(control.rect())
+    move_from = point_to_widget_pos(points_after_add[1][0], points_after_add[1][1], rect=rect, max_t=10.0, y_range=(0.0, 1.0))
+    move_to = QtCore.QPointF(move_from.x() + 20.0, move_from.y() + 18.0)
+    control.mousePressEvent(
+        _mouse_event(
+            QtCore.QEvent.Type.MouseButtonPress,
+            move_from,
+            button=QtCore.Qt.MouseButton.LeftButton,
+            buttons=QtCore.Qt.MouseButton.LeftButton,
+        )
+    )
+    control.mouseMoveEvent(
+        _mouse_event(
+            QtCore.QEvent.Type.MouseMove,
+            move_to,
+            button=QtCore.Qt.MouseButton.NoButton,
+            buttons=QtCore.Qt.MouseButton.LeftButton,
+        )
+    )
+    control.mouseReleaseEvent(
+        _mouse_event(
+            QtCore.QEvent.Type.MouseButtonRelease,
+            move_to,
+            button=QtCore.Qt.MouseButton.LeftButton,
+            buttons=QtCore.Qt.MouseButton.NoButton,
+        )
+    )
+
+    points_after_move = node_item._backend.get_property("points")
+    assert points_after_move[1][0] > points_after_add[1][0]
+    assert points_after_move[1][1] < points_after_add[1][1]
+
+    moved_pos = point_to_widget_pos(points_after_move[1][0], points_after_move[1][1], rect=rect, max_t=10.0, y_range=(0.0, 1.0))
+    control.mousePressEvent(
+        _mouse_event(
+            QtCore.QEvent.Type.MouseButtonPress,
+            moved_pos,
+            button=QtCore.Qt.MouseButton.RightButton,
+            buttons=QtCore.Qt.MouseButton.RightButton,
+        )
+    )
+
+    points_after_delete = node_item._backend.get_property("points")
+    assert len(points_after_delete) == 2
 
 
 def test_wave_preview_auto_zoom_when_min_gte_max() -> None:

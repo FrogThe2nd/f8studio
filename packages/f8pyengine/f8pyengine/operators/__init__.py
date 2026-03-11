@@ -28,6 +28,7 @@ from .quat_to_euler import QuatToEulerRuntimeNode
 from .udp_vmc import UdpVmcRuntimeNode
 from .bone_selector import BoneSelectorRuntimeNode
 from .wave_expr import WaveExprRuntimeNode
+from .wave_pattern import WavePatternRuntimeNode
 
 __all__ = [
     "PrintRuntimeNode",
@@ -58,4 +59,5 @@ __all__ = [
     "UdpVmcRuntimeNode",
     "BoneSelectorRuntimeNode",
     "WaveExprRuntimeNode",
+    "WavePatternRuntimeNode",
 ]
