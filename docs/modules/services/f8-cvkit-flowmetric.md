@@ -25,7 +25,6 @@ No description.
 | `computeEveryNFrames` | `rw` | `true` | `false` | `integer / default=1` | Compute selected flow metric once per N new flow frames. |
 | `metricMode` | `rw` | `true` | `false` | `string / enum[divergence, magnitude, curl, strain] / default=divergence` | Flow metric mode: divergence \| magnitude \| curl \| strain. |
 | `metricScale` | `rw` | `true` | `false` | `number / default=1.0` | Scale factor applied to computed metric values before output. |
-| `divergenceScale` | `rw` | `true` | `false` | `number / default=1.0` | Deprecated alias of metricScale for backward compatibility. |
 | `scalarShmName` | `ro` | `true` | `true` | `string` | Output SHM name for scalar metric field. |
 | `scalarShmFormat` | `ro` | `true` | `false` | `string` | Output payload format. Fixed to scalar1_f32. |
 | `lastError` | `ro` | `true` | `false` | `string` | Last error message. |
@@ -72,7 +71,6 @@ _None_
 - `computeEveryNFrames` (Compute Every N Frames, `rw`): Compute selected flow metric once per N new flow frames. Schema: `integer / default=1`.
 - `metricMode` (Metric Mode, `rw`): Flow metric mode: divergence | magnitude | curl | strain. Schema: `string / enum[divergence, magnitude, curl, strain] / default=divergence`.
 - `metricScale` (Metric Scale, `rw`): Scale factor applied to computed metric values before output. Schema: `number / default=1.0`.
-- `divergenceScale` (Divergence Scale (Legacy), `rw`): Deprecated alias of metricScale for backward compatibility. Schema: `number / default=1.0`.
 - `scalarShmName` (Scalar SHM Name, `ro`): Output SHM name for scalar metric field. Schema: `string`.
 - `scalarShmFormat` (Scalar SHM Format, `ro`): Output payload format. Fixed to scalar1_f32. Schema: `string`.
 - `lastError` (Last Error, `ro`): Last error message. Schema: `string`.

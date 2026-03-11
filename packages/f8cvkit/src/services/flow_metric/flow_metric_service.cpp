@@ -160,7 +160,6 @@ bool FlowMetricService::start() {
   publish_state_if_changed("computeEveryNFrames", compute_every_n_frames_, "init", json::object());
   publish_state_if_changed("metricMode", metric_mode_state_, "init", json::object());
   publish_state_if_changed("metricScale", metric_scale_, "init", json::object());
-  publish_state_if_changed("divergenceScale", metric_scale_, "init", json::object());
   publish_state_if_changed("scalarShmName", scalar_shm_name_, "init", json::object());
   publish_state_if_changed("scalarShmFormat", scalar_shm_format_, "init", json::object());
   publish_state_if_changed("lastError", "", "init", json::object());
@@ -311,7 +310,7 @@ void FlowMetricService::on_state(const std::string& node_id, const std::string& 
     return;
   }
 
-  if (field == "metricScale" || field == "divergenceScale") {
+  if (field == "metricScale") {
     double v = 0.0;
     if (!service_runtime::parse_json_double(value, v)) {
       publish_state_if_changed("lastError", "invalid metricScale", "state", meta);
@@ -319,7 +318,6 @@ void FlowMetricService::on_state(const std::string& node_id, const std::string& 
     }
     metric_scale_ = std::max(-1000.0, std::min(1000.0, v));
     publish_state_if_changed("metricScale", metric_scale_, "state", meta);
-    publish_state_if_changed("divergenceScale", metric_scale_, "state", meta);
     publish_state_if_changed("lastError", "", "state", meta);
     return;
   }
@@ -536,7 +534,6 @@ void FlowMetricService::process_frame_once() {
   publish_state_if_changed("metricMode", metric_mode_state_, "runtime", json::object());
   publish_state_if_changed("metricScale", metric_scale_, "runtime", json::object());
   publish_state_if_changed("scalarShmFormat", scalar_shm_format_, "runtime", json::object());
-  publish_state_if_changed("divergenceScale", metric_scale_, "runtime", json::object());
   publish_state_if_changed("lastError", "", "runtime", json::object());
 
   const std::int64_t end_ts_ms = f8::cppsdk::now_ms();
@@ -561,8 +558,6 @@ json FlowMetricService::describe() {
                   "Metric Mode", "Flow metric mode: divergence | magnitude | curl | strain.", false),
       state_field("metricScale", schema_number(1.0, -1000.0, 1000.0), "rw", "Metric Scale",
                   "Scale factor applied to computed metric values before output.", false),
-      state_field("divergenceScale", schema_number(1.0, -1000.0, 1000.0), "rw", "Divergence Scale (Legacy)",
-                  "Deprecated alias of metricScale for backward compatibility.", false),
       state_field("scalarShmName", schema_string(), "ro", "Scalar SHM Name", "Output SHM name for scalar metric field.",
                   true),
       state_field("scalarShmFormat", schema_string(), "ro", "Scalar SHM Format",

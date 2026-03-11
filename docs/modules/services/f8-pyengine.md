@@ -961,8 +961,6 @@ Writes incoming values to a serial port (pyserial).
 | `enabled` | `rw` | `true` | `true` | `boolean / default=True` | Enable/disable serial output. |
 | `port` | `rw` | `true` | `true` | `string / default=COM4` | Serial port name (e.g., COM3). |
 | `baudrate` | `wo` | `true` | `false` | `integer / default=115200` | Serial baud rate. |
-| `encoding` | `rw` | `true` | `false` | `string / default=ascii` | Deprecated. Serial Out always encodes as ASCII for TCode devices. |
-| `newline` | `rw` | `true` | `false` | `string / default=` | Deprecated. Provide newline in the input payload if needed. |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 | `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
@@ -1001,8 +999,6 @@ Writes incoming values to a serial port (pyserial).
 - `enabled` (Enabled, `rw`): Enable/disable serial output. Schema: `boolean / default=True`.
 - `port` (Port, `rw`): Serial port name (e.g., COM3). Schema: `string / default=COM4`.
 - `baudrate` (Baudrate, `wo`): Serial baud rate. Schema: `integer / default=115200`.
-- `encoding` (Encoding (deprecated), `rw`): Deprecated. Serial Out always encodes as ASCII for TCode devices. Schema: `string / default=ascii`.
-- `newline` (Newline (deprecated), `rw`): Deprecated. Provide newline in the input payload if needed. Schema: `string / default=`.
 - `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
 - `operatorId` (Operator Id, `ro`): Readonly: current operator/node id (operatorId). Schema: `string`.
 
