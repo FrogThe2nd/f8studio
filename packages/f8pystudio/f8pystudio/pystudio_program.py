@@ -162,7 +162,7 @@ class PyStudioProgram:
 
     def run(self) -> int:
         # Local import: keep `--describe` fast and avoid importing Qt at module import time.
-        from qtpy import QtGui, QtWidgets
+        from qtpy import QtCore, QtGui, QtWidgets
 
         from .widgets.main_window import F8StudioMainWin
 
@@ -176,6 +176,11 @@ class PyStudioProgram:
         self._apply_plugin_manifests_to_renderers(manifests)
 
         node_classes = self.build_node_classes()
+
+        try:
+            QtCore.QCoreApplication.setAttribute(QtCore.Qt.AA_ShareOpenGLContexts, True)  # type: ignore[attr-defined]
+        except Exception:
+            pass
 
         app = QtWidgets.QApplication([])
         icon_path = self._studio_icon_path()

@@ -11,37 +11,13 @@ from NodeGraphQt.nodes.base_node import NodeBaseWidget
 from ..nodegraph.operator_basenode import F8StudioOperatorBaseNode
 from ..nodegraph.viz_operator_nodeitem import F8StudioVizOperatorNodeItem
 from ..ui_bus import UiCommand
+from ..webengine_utils import (
+    configure_default_webengine_profile,
+    set_webengine_view_background,
+    webengine_termination_status_text,
+)
 
 logger = logging.getLogger(__name__)
-_WEBENGINE_PROFILE_CONFIGURED = False
-
-
-def _configure_default_webengine_profile() -> None:
-    global _WEBENGINE_PROFILE_CONFIGURED
-    if _WEBENGINE_PROFILE_CONFIGURED:
-        return
-    try:
-        from PySide6 import QtWebEngineCore  # type: ignore[import-not-found]
-    except ImportError:
-        logger.exception("failed to import QtWebEngineCore for cache configuration")
-        return
-
-    app_data_dir = QtCore.QStandardPaths.writableLocation(QtCore.QStandardPaths.AppDataLocation)
-    if not app_data_dir:
-        logger.error("Qt AppDataLocation is unavailable; web cache path is not configured")
-        return
-
-    cache_dir = Path(app_data_dir) / "webengine_cache"
-    storage_dir = Path(app_data_dir) / "webengine_storage"
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    storage_dir.mkdir(parents=True, exist_ok=True)
-
-    profile = QtWebEngineCore.QWebEngineProfile.defaultProfile()
-    profile.setHttpCacheType(QtWebEngineCore.QWebEngineProfile.DiskHttpCache)
-    profile.setCachePath(str(cache_dir))
-    profile.setPersistentStoragePath(str(storage_dir))
-    profile.setPersistentCookiesPolicy(QtWebEngineCore.QWebEngineProfile.ForcePersistentCookies)
-    _WEBENGINE_PROFILE_CONFIGURED = True
 
 
 class _ViewerHandle(Protocol):
@@ -175,13 +151,14 @@ class _Skeleton3DViewerWindow(QtWidgets.QDialog):
     def _ensure_web_view(self) -> bool:
         if self._view is not None:
             return True
+        configure_default_webengine_profile()
         view = self._create_web_view()
         if view is None:
             self._show_fallback("QtWebEngine is not available")
             return False
+        set_webengine_view_background(view, "#0f0f12")
         self._hide_fallback()
         self._view = view
-        _configure_default_webengine_profile()
         view.setContextMenuPolicy(QtCore.Qt.NoContextMenu)
         self._enable_remote_asset_access()
         view.loadFinished.connect(self._on_page_loaded)  # type: ignore[attr-defined]
@@ -232,7 +209,7 @@ class _Skeleton3DViewerWindow(QtWidgets.QDialog):
             self._run_set_data(pending)
 
     def _on_render_process_terminated(self, termination_status: Any, exit_code: int) -> None:
-        status_text = self._termination_status_text(termination_status)
+        status_text = webengine_termination_status_text(termination_status)
         logger.error(
             "Skeleton3D render process terminated status=%s exitCode=%s",
             status_text,
@@ -248,19 +225,7 @@ class _Skeleton3DViewerWindow(QtWidgets.QDialog):
 
     @staticmethod
     def _termination_status_text(termination_status: Any) -> str:
-        try:
-            status_value = int(termination_status)
-        except (TypeError, ValueError):
-            return str(termination_status or "unknown")
-        if status_value == 0:
-            return "normal"
-        if status_value == 1:
-            return "abnormal"
-        if status_value == 2:
-            return "crashed"
-        if status_value == 3:
-            return "killed"
-        return f"unknown({status_value})"
+        return webengine_termination_status_text(termination_status)
 
     def open_viewer(self) -> None:
         if not self._ensure_web_view():
