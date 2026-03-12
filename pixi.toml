@@ -70,11 +70,13 @@ scipy = ">=1.17.1,<2"
 scikit-learn = ">=1.8.0,<2"
 f8pyengine = { path = "packages/f8pyengine", editable = true }
 f8pyscript = { path = "packages/f8pyscript", editable = true }
+f8proclauncher = { path = "packages/f8proclauncher", editable = true }
 
 [feature.engine.tasks]
 f8pyengine = "python -m f8pyengine.main"
 f8pyscript = "python -m f8pyscript.main_script"
 f8pyexpr = "python -m f8pyscript.main_expr"
+f8proclauncher = "python -m f8proclauncher.main"
 
 [feature.studio.pypi-dependencies]
 f8pystudio = { path = "packages/f8pystudio", editable = true }
