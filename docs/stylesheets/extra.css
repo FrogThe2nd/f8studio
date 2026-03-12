@@ -1,0 +1,84 @@
+.md-typeset .mermaid {
+  overflow: auto;
+}
+
+.md-typeset .mermaid[data-processed="true"] {
+  cursor: zoom-in;
+}
+
+.md-typeset .mermaid svg {
+  display: block;
+  height: auto;
+  max-width: none;
+}
+
+.f8-mermaid-lightbox-open {
+  overflow: hidden;
+}
+
+.f8-mermaid-lightbox {
+  position: fixed;
+  inset: 0;
+  display: none;
+  z-index: 9999;
+  padding: 1rem;
+  background: rgba(0, 0, 0, 0.65);
+}
+
+.f8-mermaid-lightbox--open {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.f8-mermaid-lightbox__panel {
+  display: flex;
+  flex-direction: column;
+  width: min(1400px, 100%);
+  max-height: min(92vh, 100%);
+  background: var(--md-default-bg-color, #ffffff);
+  color: var(--md-default-fg-color, #111111);
+  border-radius: 0.3rem;
+  overflow: hidden;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+}
+
+.f8-mermaid-lightbox__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.6rem 0.75rem;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.12);
+}
+
+.f8-mermaid-lightbox__title {
+  font-size: 0.9rem;
+  font-weight: 600;
+  opacity: 0.9;
+}
+
+.f8-mermaid-lightbox__close {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.2rem;
+  cursor: pointer;
+}
+
+.f8-mermaid-lightbox__close:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.f8-mermaid-lightbox__body {
+  padding: 0.5rem;
+  overflow: auto;
+}
+
+.f8-mermaid-lightbox__body svg {
+  display: block;
+  height: auto;
+  max-width: none;
+}
+

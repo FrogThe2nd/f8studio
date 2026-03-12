@@ -108,7 +108,8 @@ mkdocs-static-i18n = ">=1.2.3,<2"
 [feature.doc.tasks]
 doc_gen = "python scripts/generate_service_docs.py && python scripts/generate_node_atlas.py"
 doc_build = "zensical build"
-doc_serve = "zensical serve"
+doc_serve = "python scripts/zensical_serve_pretty.py"
+doc_serve_raw = "zensical serve"
 doc_check = "python scripts/generate_service_docs.py --check && python scripts/generate_node_atlas.py --check && python scripts/check_docs_nav.py && python scripts/check_docs_links.py"
 
 [feature.cpp.dependencies]
