@@ -36,7 +36,13 @@ extern "C" SDL_AppResult SDLCALL SDL_AppInit(void** appstate, int argc, char* ar
       "service-id", "Service instance id (required unless --describe)",
       cxxopts::value<std::string>()->default_value(""))(
       "nats-url", "NATS server URL", cxxopts::value<std::string>()->default_value("nats://127.0.0.1:4222"))(
-      "media", "Open media URL/path on startup", cxxopts::value<std::string>()->default_value(""))("help", "Show help");
+      "media", "Open media URL/path on startup", cxxopts::value<std::string>()->default_value(""))(
+      "openxr", "Shorthand for --openxr-mode=on",
+      cxxopts::value<bool>()->default_value("false")->implicit_value("true"))(
+      "openxr-mode", "OpenXR mode: off|on|auto",
+      cxxopts::value<std::string>()->default_value("off"))(
+      "openxr-mirror", "Keep SDL mirror window when using --openxr",
+      cxxopts::value<bool>()->default_value("true")->implicit_value("true"))("help", "Show help");
 
   auto result = options.parse(argc, argv);
   if (result.count("help")) {
@@ -61,6 +67,11 @@ extern "C" SDL_AppResult SDLCALL SDL_AppInit(void** appstate, int argc, char* ar
   cfg.service_id = service_id;
   cfg.nats_url = result["nats-url"].as<std::string>();
   cfg.initial_media_url = result["media"].as<std::string>();
+  cfg.openxr_mirror_window = result["openxr-mirror"].as<bool>();
+  cfg.openxr_mode = result["openxr-mode"].as<std::string>();
+  if (result["openxr"].as<bool>()) {
+    cfg.openxr_mode = "on";
+  }
 
   try {
     auto state = std::make_unique<AppState>();
