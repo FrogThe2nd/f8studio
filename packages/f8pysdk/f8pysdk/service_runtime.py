@@ -36,7 +36,7 @@ class ServiceRuntimeConfig:
         kv_storage: StorageType = StorageType.MEMORY,
         delete_bucket_on_start: bool = False,
         delete_bucket_on_stop: bool = False,
-        data_delivery: DataDeliveryMode = "pull",
+        data_delivery: DataDeliveryMode = "push",
         state_sync_concurrency: int = 8,
         state_cache_max_entries: int = 8192,
         data_input_max_buffers: int = 4096,

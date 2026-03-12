@@ -13,10 +13,11 @@ from f8pysdk.shm.video import VIDEO_FORMAT_FLOW2_F16, VIDEO_FORMAT_SCALAR1_F32, 
 SortDirection = Literal["asc", "desc"]
 ScoreAggregation = Literal["mean", "max", "sum", "median"]
 
-_MAX_FRAME_GAP = 2
-_MAX_TS_GAP_MS = 100
-
 logger = logging.getLogger(__name__)
+
+
+class ScoreShmUnavailableError(RuntimeError):
+    """Raised when score SHM is missing/unreadable/unsupported for sorting."""
 
 
 def _coerce_str(value: Any, *, default: str = "") -> str:
@@ -65,19 +66,6 @@ def _payload_int(payload: dict[str, Any], key: str) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
-
-
-def detections_and_score_map_are_synced(detections_payload: dict[str, Any], score_header: VideoShmHeader) -> bool:
-    detection_frame_id = _payload_int(detections_payload, "frameId")
-    score_frame_id = int(score_header.frame_id) if int(score_header.frame_id) > 0 else None
-    if detection_frame_id is not None and score_frame_id is not None:
-        return abs(detection_frame_id - score_frame_id) <= _MAX_FRAME_GAP
-
-    detection_ts_ms = _payload_int(detections_payload, "tsMs")
-    score_ts_ms = int(score_header.ts_ms) if int(score_header.ts_ms) > 0 else None
-    if detection_ts_ms is not None and score_ts_ms is not None:
-        return abs(detection_ts_ms - score_ts_ms) <= _MAX_TS_GAP_MS
-    return False
 
 
 def decode_score_map_from_frame(*, header: VideoShmHeader, payload: memoryview) -> np.ndarray:
@@ -305,14 +293,22 @@ class DetectionSorterServiceNode(ServiceNode):
         if not isinstance(value, dict):
             await self._set_last_error("detections payload must be an object")
             return
-        self._latest_detections = dict(value)
+        incoming_payload = dict(value)
+        self._latest_detections = incoming_payload
         try:
             output_payload = self._sort_latest_detections()
+        except ScoreShmUnavailableError as exc:
+            await self._set_last_error(self._format_shm_unavailable_error(exc))
+            await self.emit("detections", incoming_payload, ts_ms=_payload_int(incoming_payload, "tsMs"))
+            return
         except Exception as exc:
             logger.exception("detection sorter failed node=%s", self.node_id)
             await self._set_last_error(f"{type(exc).__name__}: {exc}")
+            await self.emit("detections", incoming_payload, ts_ms=_payload_int(incoming_payload, "tsMs"))
             return
         if output_payload is None:
+            await self._set_last_error("")
+            await self.emit("detections", incoming_payload, ts_ms=_payload_int(incoming_payload, "tsMs"))
             return
         await self._set_last_error("")
         await self.emit("detections", output_payload, ts_ms=_payload_int(output_payload, "tsMs"))
@@ -326,12 +322,15 @@ class DetectionSorterServiceNode(ServiceNode):
     def _ensure_score_reader(self) -> VideoShmReader:
         score_shm_name = str(self._score_shm_name).strip()
         if not score_shm_name:
-            raise ValueError("scoreShmName is empty")
+            raise ScoreShmUnavailableError("scoreShmName is empty")
         if self._score_reader is not None and self._score_reader_name == score_shm_name:
             return self._score_reader
         self._close_score_reader()
         reader = VideoShmReader(score_shm_name)
-        reader.open(use_event=False)
+        try:
+            reader.open(use_event=False)
+        except Exception as exc:
+            raise ScoreShmUnavailableError(f"open failed: {type(exc).__name__}: {exc}") from exc
         self._score_reader = reader
         self._score_reader_name = score_shm_name
         return reader
@@ -345,11 +344,12 @@ class DetectionSorterServiceNode(ServiceNode):
         reader = self._ensure_score_reader()
         header, payload = reader.read_latest_frame()
         if header is None or payload is None:
-            raise ValueError("score shm has no readable frame")
+            raise ScoreShmUnavailableError("score shm has no readable frame")
         try:
-            if not detections_and_score_map_are_synced(self._latest_detections, header):
-                return None
-            score_map = decode_score_map_from_frame(header=header, payload=payload)
+            try:
+                score_map = decode_score_map_from_frame(header=header, payload=payload)
+            except ValueError as exc:
+                raise ScoreShmUnavailableError(str(exc)) from exc
             return sort_detection_payload(
                 self._latest_detections,
                 score_map=score_map,
@@ -358,6 +358,15 @@ class DetectionSorterServiceNode(ServiceNode):
             )
         finally:
             payload.release()
+
+    @staticmethod
+    def _format_shm_unavailable_error(exc: ScoreShmUnavailableError) -> str:
+        details = str(exc).strip()
+        if not details:
+            return "score SHM unavailable"
+        if len(details) > 200:
+            details = details[:200] + "..."
+        return f"score SHM unavailable: {details}"
 
     async def _set_last_error(self, message: str) -> None:
         normalized = str(message or "")

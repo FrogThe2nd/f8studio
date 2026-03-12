@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
 from f8pysdk.service_cli import ServiceCliTemplate
+from f8pysdk.service_runtime import ServiceRuntimeConfig
 
 from .constants import DETECTION_SORTER_SERVICE_CLASS
 from .node_registry import register_specs
@@ -11,6 +12,16 @@ class DlDetectionSorterService(ServiceCliTemplate):
     @property
     def service_class(self) -> str:
         return DETECTION_SORTER_SERVICE_CLASS
+
+    def build_runtime_config(self, *, service_id: str, nats_url: str) -> ServiceRuntimeConfig:
+        # This service is purely reactive to inbound data edges (it does not `pull()` inputs),
+        # so it must run with push-based delivery to invoke `node.on_data(...)`.
+        return ServiceRuntimeConfig.from_values(
+            service_id=service_id,
+            service_class=self.service_class,
+            nats_url=nats_url,
+            data_delivery="push",
+        )
 
     def register_specs(self, registry: RuntimeNodeRegistry) -> None:
         register_specs(registry)

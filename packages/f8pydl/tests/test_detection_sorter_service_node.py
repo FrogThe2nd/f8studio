@@ -14,7 +14,6 @@ from f8pydl.detection_sorter_service_node import (
     DetectionSorterServiceNode,
     aggregate_roi_score,
     decode_score_map_from_frame,
-    detections_and_score_map_are_synced,
     rescale_bbox_to_score_map,
     sort_detection_payload,
 )
@@ -237,56 +236,6 @@ class DetectionSorterHelpersTests(unittest.TestCase):
         assert sorted_payload is not None
         self.assertEqual([item["cls"] for item in sorted_payload["detections"]], ["valid", "bad-a", "bad-b"])
 
-    def test_sync_policy_frame_and_ts(self) -> None:
-        payload = _make_detection_payload([], frame_id=10, ts_ms=1000)
-        header_ok = VideoShmHeader(
-            magic=1,
-            version=1,
-            slot_count=2,
-            width=4,
-            height=4,
-            pitch=16,
-            fmt=VIDEO_FORMAT_SCALAR1_F32,
-            frame_id=12,
-            ts_ms=9999,
-            active_slot=0,
-            payload_capacity=64,
-            notify_seq=1,
-        )
-        header_bad = VideoShmHeader(
-            magic=1,
-            version=1,
-            slot_count=2,
-            width=4,
-            height=4,
-            pitch=16,
-            fmt=VIDEO_FORMAT_SCALAR1_F32,
-            frame_id=20,
-            ts_ms=9999,
-            active_slot=0,
-            payload_capacity=64,
-            notify_seq=1,
-        )
-        ts_payload = _make_detection_payload([], frame_id=0, ts_ms=1000)
-        header_ts = VideoShmHeader(
-            magic=1,
-            version=1,
-            slot_count=2,
-            width=4,
-            height=4,
-            pitch=16,
-            fmt=VIDEO_FORMAT_SCALAR1_F32,
-            frame_id=0,
-            ts_ms=1080,
-            active_slot=0,
-            payload_capacity=64,
-            notify_seq=1,
-        )
-
-        self.assertTrue(detections_and_score_map_are_synced(payload, header_ok))
-        self.assertFalse(detections_and_score_map_are_synced(payload, header_bad))
-        self.assertTrue(detections_and_score_map_are_synced(ts_payload, header_ts))
-
 
 class DetectionSorterServiceNodeTests(unittest.IsolatedAsyncioTestCase):
     async def test_service_node_sorts_scalar_map_and_emits(self) -> None:
@@ -393,13 +342,15 @@ class DetectionSorterServiceNodeTests(unittest.IsolatedAsyncioTestCase):
 
             await node.on_data("detections", payload)
 
-            self.assertEqual(bus.emitted, [])
-            self.assertIn("unsupported score shm format", str(bus.state.get("lastError", "")))
+            self.assertEqual(len(bus.emitted), 1)
+            emitted_payload = bus.emitted[0][2]
+            self.assertEqual([item["cls"] for item in emitted_payload["detections"]], ["x"])
+            self.assertIn("score SHM unavailable", str(bus.state.get("lastError", "")))
             node._close_score_reader()
         finally:
             writer.close(unlink=True)
 
-    async def test_service_node_out_of_sync_emits_nothing(self) -> None:
+    async def test_service_node_emits_even_when_frame_id_differs(self) -> None:
         shm_name, writer = _write_scalar_frame(np.ones((2, 2), dtype=np.float32))
         try:
             bus = _BusStub({"scoreShmName": shm_name})
@@ -409,10 +360,32 @@ class DetectionSorterServiceNodeTests(unittest.IsolatedAsyncioTestCase):
 
             await node.on_data("detections", payload)
 
-            self.assertEqual(bus.emitted, [])
+            self.assertEqual(len(bus.emitted), 1)
+            self.assertEqual(bus.state.get("lastError", ""), "")
             node._close_score_reader()
         finally:
             writer.close(unlink=True)
+
+    async def test_service_node_shm_unavailable_pass_through(self) -> None:
+        bus = _BusStub({"scoreShmName": "shm.this.does.not.exist"})
+        node = DetectionSorterServiceNode(node_id="sorterF", node=SimpleNamespace(stateFields=[]), initial_state=None)
+        node.attach(bus)
+        payload = _make_detection_payload(
+            [
+                {"cls": "a", "score": 0.1, "bbox": [0, 0, 2, 2]},
+                {"cls": "b", "score": 0.9, "bbox": [0, 0, 2, 2]},
+            ],
+            frame_id=1,
+            width=2,
+            height=2,
+        )
+
+        await node.on_data("detections", payload)
+
+        self.assertEqual(len(bus.emitted), 1)
+        emitted_payload = bus.emitted[0][2]
+        self.assertEqual([item["cls"] for item in emitted_payload["detections"]], ["a", "b"])
+        self.assertIn("score SHM unavailable", str(bus.state.get("lastError", "")))
 
     def test_decode_score_map_from_frame_scalar(self) -> None:
         values = np.asarray([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)
