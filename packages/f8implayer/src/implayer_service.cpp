@@ -871,7 +871,63 @@ bool ImPlayerService::on_set_state(const std::string& node_id, const std::string
   std::string err;
   bool ok = false;
   if (f == "mediaUrl") {
-    ok = cmd_open(json{{"url", value}}, err);
+    if (!value.is_string()) {
+      err = "mediaUrl must be a string";
+      ok = false;
+    } else {
+      const std::string u = normalize_url(value.get<std::string>());
+      if (u.empty()) {
+        err = "missing url";
+        ok = false;
+      } else {
+        bool inserted = false;
+        int previous_index = -1;
+        {
+          std::lock_guard<std::mutex> lock(state_mu_);
+          previous_index = playlist_index_;
+          int existing_index = -1;
+          for (std::size_t i = 0; i < playlist_.size(); ++i) {
+            if (playlist_[i] == u) {
+              existing_index = static_cast<int>(i);
+              break;
+            }
+          }
+          if (existing_index >= 0) {
+            playlist_index_ = existing_index;
+          } else {
+            playlist_.insert(playlist_.begin(), u);
+            playlist_index_ = 0;
+            inserted = true;
+          }
+        }
+
+        ok = open_media_internal(u, true, err);
+        if (!ok) {
+          std::lock_guard<std::mutex> lock(state_mu_);
+          if (inserted) {
+            if (!playlist_.empty() && playlist_.front() == u) {
+              playlist_.erase(playlist_.begin());
+            } else {
+              for (auto it = playlist_.begin(); it != playlist_.end(); ++it) {
+                if (*it == u) {
+                  playlist_.erase(it);
+                  break;
+                }
+              }
+            }
+          }
+          if (playlist_.empty()) {
+            playlist_index_ = -1;
+          } else if (previous_index < 0) {
+            playlist_index_ = -1;
+          } else if (previous_index >= static_cast<int>(playlist_.size())) {
+            playlist_index_ = static_cast<int>(playlist_.size()) - 1;
+          } else {
+            playlist_index_ = previous_index;
+          }
+        }
+      }
+    }
   } else if (f == "volume") {
     ok = cmd_set_volume(json{{"volume", value}}, err);
   } else if (f == "position") {
