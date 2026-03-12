@@ -41,6 +41,7 @@ class TrackingService final : public f8::cppsdk::LifecycleNode,
     std::string service_class = "f8.cvkit.tracking";
     std::string nats_url = "nats://127.0.0.1:4222";
     std::string shm_name;
+    int stop_tracking_cooldown_ms = 1000;
   };
 
   explicit TrackingService(Config cfg);
@@ -79,6 +80,8 @@ class TrackingService final : public f8::cppsdk::LifecycleNode,
   void stop_tracking_internal(const json& meta);
 
   Config cfg_;
+  std::atomic<int> stop_tracking_cooldown_ms_{1000};
+  std::atomic<std::int64_t> stop_tracking_cooldown_until_ms_{0};
   std::atomic<bool> running_{false};
   std::atomic<bool> stop_requested_{false};
   std::atomic<bool> active_{true};
