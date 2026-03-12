@@ -193,6 +193,34 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
         out = await node.compute_output("out", ctx_id="ctx-1")
         self.assertEqual(out, 123)
 
+    async def test_on_exec_runs_without_on_start(self) -> None:
+        harness = ServiceBusHarness()
+        bus = harness.create_bus("svcA")
+        reg = RuntimeNodeRegistry.instance()
+        register_operator(reg)
+        _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
+
+        state_fields = list(PythonScriptRuntimeNode.SPEC.stateFields or [])
+        state_fields.append(F8StateSpec(name="fired", label="fired", description="", valueSchema=string_schema(), access=F8StateAccess.rw))
+        code = (
+            "async def onExec(ctx, exec_in, inputs):\n"
+            "    await ctx.set_state_async('fired', exec_in or 'missing')\n"
+            "    return {'outputs': {'out': 321}}\n"
+        )
+        op = _runtime_python_script_node(node_id="ps3_exec", code=code, state_fields=state_fields)
+        graph = F8RuntimeGraph(graphId="g3_exec", revision="r1", nodes=[op], edges=[])
+        await bus.set_rungraph(graph)
+
+        node = bus.get_node("ps3_exec")
+        self.assertIsInstance(node, PythonScriptRuntimeNode)
+        assert isinstance(node, PythonScriptRuntimeNode)
+
+        out_ports = await node.on_exec("exec-1", "exec")
+        fired = await node.get_state_value("fired")
+
+        self.assertEqual(out_ports, ["exec"])
+        self.assertEqual(fired, "exec")
+
     async def test_compute_output_falls_back_to_on_msg_when_on_exec_missing(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
@@ -717,6 +745,51 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(out.get("out"), 789)
         counters = node.get_performance_counters()
         self.assertGreaterEqual(float(counters.get("input_decode_time_us", 0.0)), 0.0)
+
+    async def test_no_hooks_sets_last_error(self) -> None:
+        harness = ServiceBusHarness()
+        bus = harness.create_bus("svcA")
+        reg = RuntimeNodeRegistry.instance()
+        register_operator(reg)
+        _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
+
+        code = "x = 1\n"
+        op = _runtime_python_script_node(node_id="ps_no_hooks", code=code)
+        graph = F8RuntimeGraph(graphId="g_no_hooks", revision="r1", nodes=[op], edges=[])
+        await bus.set_rungraph(graph)
+        await asyncio.sleep(0.05)
+
+        node = bus.get_node("ps_no_hooks")
+        self.assertIsInstance(node, PythonScriptRuntimeNode)
+        assert isinstance(node, PythonScriptRuntimeNode)
+        last_error = await node.get_state_value("lastError")
+        error_text = str(last_error or node._last_error or "")
+        self.assertIn("no hooks defined", error_text)
+
+    async def test_last_error_clears_after_successful_recompile(self) -> None:
+        harness = ServiceBusHarness()
+        bus = harness.create_bus("svcA")
+        reg = RuntimeNodeRegistry.instance()
+        register_operator(reg)
+        _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
+
+        bad_code = "def onMsg(ctx, inputs)\\n    return 1\\n"
+        op = _runtime_python_script_node(node_id="ps_err_clear", code=bad_code)
+        graph = F8RuntimeGraph(graphId="g_err_clear", revision="r1", nodes=[op], edges=[])
+        await bus.set_rungraph(graph)
+        await asyncio.sleep(0.05)
+
+        node = bus.get_node("ps_err_clear")
+        self.assertIsInstance(node, PythonScriptRuntimeNode)
+        assert isinstance(node, PythonScriptRuntimeNode)
+        last_error = await node.get_state_value("lastError")
+        self.assertIn("compile:", str(last_error or node._last_error or ""))
+
+        good_code = "def onMsg(ctx, inputs):\\n    return 1\\n"
+        await node.on_state("code", good_code, ts_ms=123)
+        await asyncio.sleep(0.05)
+        cleared = await node.get_state_value("lastError")
+        self.assertEqual(str(cleared or ""), "")
 
     async def test_legacy_ctx_dict_access_sets_last_error(self) -> None:
         harness = ServiceBusHarness()
