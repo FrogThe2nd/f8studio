@@ -2,17 +2,31 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import time
 from typing import Any, Callable
 
 from qtpy import QtCore, QtGui, QtWidgets
 
+from ..ai_assist.llm_bridge import AiLlmBridge
+from ..ai_assist.store import AiProviderStore
 from ..editor_assist.bridge import PythonEditorAssistBridge
 from ..editor_assist.workspace import EditorAssistContext
 from ..ui_notifications import show_warning
+from .ai_quick_panel import AiQuickPanel
 
 logger = logging.getLogger(__name__)
+
+# Shared store instance — one per process so model caches are shared
+_SHARED_AI_STORE: AiProviderStore | None = None
+
+
+def _get_shared_ai_store() -> AiProviderStore:
+    global _SHARED_AI_STORE
+    if _SHARED_AI_STORE is None:
+        _SHARED_AI_STORE = AiProviderStore()
+    return _SHARED_AI_STORE
 
 
 def _assist_context_requires_python(context: EditorAssistContext | None) -> bool:
@@ -146,11 +160,15 @@ class _EditorUiBridge(QtCore.QObject):
 
 class F8MonacoEditorDialog(QtWidgets.QDialog):
     """
-    Monaco-based editor dialog (syntax highlighting, modern keybindings).
+    Monaco-based editor dialog with AI-assisted editing.
 
-    Monaco assets can be loaded from:
-    - `F8_MONACO_BASE_URL` (recommended for packaged/offline builds)
-    - CDN fallback (default) for dev
+    Modes:
+    - Inline suggestions: FIM ghost-text via AI (replaces pure LSP)
+    - Chat: streaming side-panel conversation with code context
+    - Edit: LLM generates patch shown in diff editor
+    - Plan: agent mode with clarifying Q&A before execution
+
+    Monaco assets from ``F8_MONACO_BASE_URL`` env var or CDN fallback.
     """
 
     code_saved = QtCore.Signal(str)
@@ -186,8 +204,14 @@ class F8MonacoEditorDialog(QtWidgets.QDialog):
         self._view.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.NoContextMenu)
         self._ui_bridge = _EditorUiBridge(self)
         self._assist_bridge: PythonEditorAssistBridge | None = None
+
+        # AI assist
+        self._ai_store = _get_shared_ai_store()
+        self._ai_bridge = AiLlmBridge(self._ai_store, self)
+
         self._web_channel: Any = QtWebChannel.QWebChannel(self._view.page())
         self._web_channel.registerObject("f8EditorUi", self._ui_bridge)
+        self._web_channel.registerObject("aiAssist", self._ai_bridge)
         python_assist_enabled = self._language.lower() == "python" and _assist_context_requires_python(assist_context)
         if python_assist_enabled:
             self._assist_bridge = PythonEditorAssistBridge(
@@ -198,6 +222,34 @@ class F8MonacoEditorDialog(QtWidgets.QDialog):
             )
             self._web_channel.registerObject("pyAssist", self._assist_bridge)
         self._view.page().setWebChannel(self._web_channel)
+
+        # Context usage indicator
+        self._ctx_btn = QtWidgets.QToolButton()
+        self._ctx_btn.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextOnly)
+        self._ctx_btn.setText("●")
+        self._ctx_btn.setToolTip("AI context usage")
+        self._ctx_btn.setStyleSheet(
+            "QToolButton { color: #4fc3f7; border: none; font-size: 16px; padding: 0 4px; }"
+            "QToolButton:hover { color: #81d4fa; }"
+        )
+        self._ai_bridge.context_usage_updated.connect(self._on_context_usage_updated)  # type: ignore[attr-defined]
+
+        # AI settings toggle button
+        self._ai_panel_btn = QtWidgets.QToolButton()
+        self._ai_panel_btn.setText("🤖")
+        self._ai_panel_btn.setCheckable(True)
+        self._ai_panel_btn.setToolTip("Toggle AI settings panel")
+        self._ai_panel_btn.setStyleSheet(
+            "QToolButton { border: none; font-size: 16px; padding: 0 4px; }"
+            "QToolButton:checked { background: #2d2d2d; border-radius: 3px; }"
+        )
+        self._ai_panel_btn.toggled.connect(self._on_ai_panel_toggle)  # type: ignore[attr-defined]
+
+        # AI quick panel (hidden by default, floating overlay)
+        self._ai_quick_panel = AiQuickPanel(self._ai_store, self._ai_bridge, self)
+        self._ai_quick_panel.setVisible(False)
+        self._ai_quick_panel.open_full_config_requested.connect(self._open_full_ai_config)  # type: ignore[attr-defined]
+        self._ai_quick_panel.raise_()
 
         buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Save | QtWidgets.QDialogButtonBox.Cancel)
         buttons.accepted.connect(self._on_save_clicked)  # type: ignore[attr-defined]
@@ -216,11 +268,25 @@ class F8MonacoEditorDialog(QtWidgets.QDialog):
         self._close_shortcut.setContext(QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut)
         self._close_shortcut.activated.connect(self.close)
 
-        layout = QtWidgets.QVBoxLayout(self)
-        layout.addWidget(self._view, 1)
-        layout.addWidget(buttons)
+        # Build layout: editor fills the space, AI panel is a floating overlay
+        editor_layout = QtWidgets.QHBoxLayout()
+        editor_layout.setSpacing(0)
+        editor_layout.setContentsMargins(0, 0, 0, 0)
+        editor_layout.addWidget(self._view, 1)
 
-        self.resize(1020, 720)
+        bottom_bar = QtWidgets.QHBoxLayout()
+        bottom_bar.addWidget(self._ctx_btn)
+        bottom_bar.addWidget(self._ai_panel_btn)
+        bottom_bar.addStretch()
+        bottom_bar.addWidget(buttons)
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setSpacing(2)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.addLayout(editor_layout, 1)
+        layout.addLayout(bottom_bar)
+
+        self.resize(1120, 720)
         self._load_page()
         self._start_assist_context_sync()
 
@@ -242,7 +308,7 @@ class F8MonacoEditorDialog(QtWidgets.QDialog):
             "pythonAssistEnabled": bool(self._assist_bridge is not None),
         }
         initial_json = json.dumps(initial, ensure_ascii=False)
-
+        
         html = f"""
 <!doctype html>
 <html>
@@ -898,15 +964,626 @@ class F8MonacoEditorDialog(QtWidgets.QDialog):
         if (typeof QWebChannel !== 'undefined' && window.qt && qt.webChannelTransport) {{
           new QWebChannel(qt.webChannelTransport, function(channel) {{
             window._f8_editorUi = channel.objects.f8EditorUi || null;
+            window._f8_aiAssist = channel.objects.aiAssist || null;
             window._f8_notifyDirty();
             _setupPythonAssist(channel);
+            _setupAiAssist(channel);
           }});
         }}
       }});
     </script>
+
+    <!-- AI Chat Panel Styles -->
+    <style>
+      #f8-ai-panel {{
+        position: fixed;
+        top: 0; right: 0; bottom: 0;
+        width: 320px;
+        min-width: 200px;
+        max-width: 800px;
+        background: #1e1e2e;
+        border-left: 1px solid #313244;
+        display: flex;
+        flex-direction: column;
+        font-family: 'Segoe UI', system-ui, sans-serif;
+        font-size: 13px;
+        color: #cdd6f4;
+        z-index: 100;
+        transform: translateX(100%);
+        transition: transform 0.2s ease;
+        box-shadow: -4px 0 16px rgba(0,0,0,0.4);
+      }}
+      #f8-ai-resizer {{
+        position: absolute;
+        top: 0; left: -4px; bottom: 0;
+        width: 8px;
+        cursor: ew-resize;
+        z-index: 110;
+      }}
+      #f8-ai-resizer:hover {{
+        background: rgba(137, 180, 250, 0.2);
+      }}
+      #f8-ai-panel.open {{ transform: translateX(0); }}
+      #f8-ai-toggle {{
+        position: fixed;
+        top: 8px; right: 8px;
+        z-index: 200;
+        background: #313244;
+        border: none;
+        border-radius: 4px;
+        color: #cba6f7;
+        font-size: 18px;
+        width: 32px; height: 32px;
+        cursor: pointer;
+        display: flex; align-items: center; justify-content: center;
+        transition: background 0.15s;
+      }}
+      #f8-ai-toggle:hover {{ background: #45475a; }}
+      #f8-ai-mode-bar {{
+        display: flex;
+        gap: 4px;
+        padding: 8px 48px 8px 8px;
+        border-bottom: 1px solid #313244;
+        background: #181825;
+      }}
+      .f8-mode-btn {{
+        flex: 1;
+        padding: 4px;
+        border: 1px solid #45475a;
+        border-radius: 4px;
+        background: transparent;
+        color: #a6adc8;
+        font-size: 11px;
+        cursor: pointer;
+        transition: all 0.15s;
+      }}
+      .f8-mode-btn.active {{
+        background: #313244;
+        color: #cba6f7;
+        border-color: #cba6f7;
+      }}
+      .f8-mode-btn:hover:not(.active) {{ background: #313244; color: #cdd6f4; }}
+      .f8-new-chat {{
+        border: 1px solid #45475a;
+        border-radius: 4px;
+        background: #313244;
+        color: #a6adc8;
+        font-size: 16px;
+        width: 32px; height: 32px;
+        cursor: pointer;
+        transition: background 0.15s;
+        display: flex; align-items: center; justify-content: center;
+      }}
+      .f8-new-chat:hover {{ background: #45475a; color: #cdd6f4; }}
+      #f8-ai-messages {{
+        flex: 1;
+        overflow-y: auto;
+        padding: 8px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }}
+      .f8-msg {{ padding: 8px 10px; border-radius: 6px; line-height: 1.5; }}
+      .f8-msg.user {{ background: #313244; align-self: flex-end; max-width: 85%; }}
+      .f8-msg.assistant {{ background: #1e1e2e; border: 1px solid #313244; align-self: flex-start; max-width: 100%; }}
+      .f8-msg pre {{
+        background: #11111b;
+        border: 1px solid #45475a;
+        border-radius: 4px;
+        padding: 8px;
+        overflow-x: auto;
+        position: relative;
+        margin: 6px 0;
+      }}
+      .f8-msg code {{ font-family: 'Fira Code', 'Cascadia Code', monospace; font-size: 12px; }}
+      .f8-copy-btn {{
+        position: absolute; top: 4px; right: 4px;
+        background: #45475a; border: none; border-radius: 3px;
+        color: #cdd6f4; font-size: 10px; padding: 2px 6px;
+        cursor: pointer; opacity: 0; transition: opacity 0.15s;
+      }}
+      .f8-msg pre:hover .f8-copy-btn {{ opacity: 1; }}
+      .f8-copy-btn:hover {{ background: #585b70; }}
+      .f8-diff-bar {{
+        display: none;
+        padding: 6px 8px;
+        background: #181825;
+        border-top: 1px solid #313244;
+        gap: 6px;
+      }}
+      .f8-diff-bar.visible {{ display: flex; }}
+      .f8-diff-accept {{ background: #a6e3a1; color: #1e1e2e; border: none; border-radius: 4px; padding: 4px 12px; cursor: pointer; font-weight: bold; }}
+      .f8-diff-reject {{ background: #f38ba8; color: #1e1e2e; border: none; border-radius: 4px; padding: 4px 12px; cursor: pointer; font-weight: bold; }}
+      #f8-ai-input-area {{
+        display: flex;
+        gap: 6px;
+        padding: 8px;
+        border-top: 1px solid #313244;
+        background: #181825;
+        align-items: flex-end;
+      }}
+      #f8-ai-input {{
+        flex: 1;
+        background: #313244;
+        border: 1px solid #45475a;
+        border-radius: 4px;
+        color: #cdd6f4;
+        padding: 6px 8px;
+        font-size: 12px;
+        resize: none;
+        min-height: 36px;
+        max-height: 120px;
+        outline: none;
+        font-family: inherit;
+      }}
+      #f8-ai-input:focus {{ border-color: #cba6f7; }}
+      #f8-ai-send {{
+        background: #cba6f7;
+        border: none;
+        border-radius: 4px;
+        color: #1e1e2e;
+        font-size: 16px;
+        width: 32px; height: 32px;
+        cursor: pointer;
+        transition: background 0.15s;
+        display: flex; align-items: center; justify-content: center;
+        font-weight: bold;
+      }}
+      #f8-ai-send:hover {{ background: #d0bcff; }}
+      #f8-ai-thinking {{
+        display: none;
+        padding: 4px 8px;
+        color: #6c7086;
+        font-size: 11px;
+        font-style: italic;
+      }}
+      #f8-ai-thinking.visible {{ display: block; }}
+      .f8-plan-confirm {{
+        margin-top: 8px;
+        padding: 6px 12px;
+        background: #89b4fa;
+        color: #1e1e2e;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        font-weight: bold;
+        font-size: 12px;
+      }}
+      .f8-plan-confirm:hover {{ background: #74c7ec; }}
+      #f8-diff-container {{
+        display: none;
+        position: fixed;
+        top: 0; left: 0; right: 0; bottom: 0;
+        z-index: 50;
+        background: #1e1e1e;
+      }}
+      .f8-think {{
+        margin: 8px 0;
+        border-left: 2px solid #585b70;
+        padding-left: 10px;
+      }}
+      .f8-think summary {{
+        color: #a6adc8;
+        cursor: pointer;
+        font-size: 11px;
+        user-select: none;
+        font-style: italic;
+      }}
+      .f8-think summary:hover {{ color: #cdd6f4; }}
+      .f8-think-content {{
+        color: #9399b2;
+        font-size: 12px;
+        margin-top: 6px;
+        white-space: pre-wrap;
+      }}
+    </style>
+
+    <!-- AI JS Layer -->
+    <script>
+      window._f8_aiAssist = null;
+      window._f8_aiMode = 'chat'; // 'chat' | 'edit' | 'plan'
+      window._f8_chatMessages = [];
+      window._f8_diffEditor = null;
+      window._f8_diffOriginalCode = '';
+      window._f8_inlinePending = Object.create(null);
+      window._f8_inlineDebounceTimer = null;
+
+      // ---- simple markdown → HTML (no deps) ----
+      function _f8_md(text) {{
+        let html = String(text || '');
+        
+        // think blocks: <think>...</think>
+        // If streaming and unclosed, keep open. When closed, collapse it.
+        html = html.replace(/<think>([\\s\\S]*?)(<\\/think>|$)/g, function(_, content, end_tag) {{
+          const isOpen = end_tag ? '' : ' open';
+          // Make sure code blocks inside <think> aren't destroyed
+          return '<details class="f8-think"' + isOpen + '><summary>🤔 Thinking Process</summary><div class="f8-think-content">' + content + '</div></details>';
+        }});
+
+        // code blocks
+        html = html.replace(/```(\\w*)\\n?([\\s\\S]*?)```/g, function(_, lang, code) {{
+          const escaped = code.replace(/</g,'&lt;').replace(/>/g,'&gt;');
+          return '<pre><button class="f8-copy-btn" onclick="_f8_copy(this)">copy</button><code class="language-' + (lang||'') + '">' + escaped + '</code></pre>';
+        }});
+        // inline code
+        html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+        // bold
+        html = html.replace(/\\*\\*(.+?)\\*\\*/g, '<b>$1</b>');
+        // italic
+        html = html.replace(/\\*(.+?)\\*/g, '<i>$1</i>');
+        // headings
+        html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+        html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
+        html = html.replace(/^# (.+)$/gm, '<h1>$1</h1>');
+        // line breaks
+        html = html.replace(/\\n/g, '<br>');
+        return html;
+      }}
+
+      function _f8_copy(btn) {{
+        try {{
+          const code = btn.nextElementSibling ? btn.nextElementSibling.textContent : '';
+          navigator.clipboard.writeText(code).catch(function() {{}});
+          btn.textContent = '✓';
+          setTimeout(function() {{ btn.textContent = 'copy'; }}, 1500);
+        }} catch(e) {{}}
+      }}
+
+      function _f8_setupAiPanel() {{
+        const panel = document.getElementById('f8-ai-panel');
+        const toggle = document.getElementById('f8-ai-toggle');
+        const sendBtn = document.getElementById('f8-ai-send');
+        const input = document.getElementById('f8-ai-input');
+        const modeBtns = document.querySelectorAll('.f8-mode-btn');
+        const diffBar = document.getElementById('f8-diff-bar');
+        const acceptBtn = document.getElementById('f8-diff-accept');
+        const rejectBtn = document.getElementById('f8-diff-reject');
+        const thinking = document.getElementById('f8-ai-thinking');
+
+        if (!panel || !toggle) return;
+
+        toggle.addEventListener('click', function() {{
+          panel.classList.toggle('open');
+        }});
+
+        modeBtns.forEach(function(btn) {{
+          btn.addEventListener('click', function() {{
+            modeBtns.forEach(function(b) {{ b.classList.remove('active'); }});
+            btn.classList.add('active');
+            window._f8_aiMode = btn.dataset.mode;
+            if (window._f8_aiMode !== 'edit') {{
+              _f8_closeDiff();
+            }}
+          }});
+        }});
+
+        if (input) {{
+          input.addEventListener('keydown', function(e) {{
+            if (e.key === 'Enter' && !e.shiftKey) {{
+              e.preventDefault();
+              _f8_sendMessage();
+            }}
+          }});
+          input.addEventListener('input', function() {{
+            input.style.height = 'auto';
+            input.style.height = Math.min(input.scrollHeight, 120) + 'px';
+          }});
+        }}
+        if (sendBtn) sendBtn.addEventListener('click', _f8_sendMessage);
+        if (acceptBtn) acceptBtn.addEventListener('click', _f8_acceptDiff);
+        if (rejectBtn) rejectBtn.addEventListener('click', _f8_closeDiff);
+        
+        const newChatBtn = document.querySelector('.f8-new-chat');
+        if (newChatBtn) newChatBtn.addEventListener('click', _f8_newConversation);
+
+        _f8_setupAiResizer();
+      }}
+
+      function _f8_setupAiResizer() {{
+        const panel = document.getElementById('f8-ai-panel');
+        const resizer = document.getElementById('f8-ai-resizer');
+        if (!panel || !resizer) return;
+
+        let isResizing = false;
+        let startX = 0;
+        let startWidth = 0;
+
+        resizer.addEventListener('mousedown', function(e) {{
+          isResizing = true;
+          startX = e.clientX;
+          startWidth = panel.offsetWidth;
+          panel.style.transition = 'none';
+          document.body.style.cursor = 'ew-resize';
+          document.addEventListener('mousemove', _onMouseMove);
+          document.addEventListener('mouseup', _onMouseUp);
+          e.preventDefault();
+        }});
+
+        function _onMouseMove(e) {{
+          if (!isResizing) return;
+          const delta = startX - e.clientX;
+          const newWidth = Math.min(800, Math.max(200, startWidth + delta));
+          panel.style.width = newWidth + 'px';
+        }}
+
+        function _onMouseUp() {{
+          isResizing = false;
+          panel.style.transition = 'transform 0.3s ease';
+          document.body.style.cursor = 'default';
+          document.removeEventListener('mousemove', _onMouseMove);
+          document.removeEventListener('mouseup', _onMouseUp);
+        }}
+      }}
+
+      function _f8_newConversation() {{
+        const msgs = document.getElementById('f8-ai-messages');
+        if (msgs) msgs.innerHTML = '';
+        window._f8_chatMessages = [];
+        if (window._f8_aiAssist && window._f8_aiAssist.reset_chat_history) {{
+          window._f8_aiAssist.reset_chat_history();
+        }}
+        _f8_appendMessage('assistant', 'Chat reset. Context cleared.');
+      }}
+
+      function _f8_sendMessage() {{
+        const input = document.getElementById('f8-ai-input');
+        const text = input ? input.value.trim() : '';
+        if (!text || !window._f8_aiAssist) return;
+        input.value = '';
+        input.style.height = 'auto';
+
+        const code = window._f8_getValue ? window._f8_getValue() : '';
+        const selection = window._f8_editor ? (window._f8_editor.getModel().getValueInRange(window._f8_editor.getSelection()) || '') : '';
+
+        // Notify Python of updated context
+        if (window._f8_aiAssist.update_code_context) window._f8_aiAssist.update_code_context(code);
+
+        _f8_appendMessage('user', text);
+
+        const rid = (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()));
+        const thinking = document.getElementById('f8-ai-thinking');
+
+        if (window._f8_aiMode === 'chat') {{
+          window._f8_chatMessages.push({{role: 'user', content: text}});
+          if (thinking) thinking.classList.add('visible');
+          const assistantEl = _f8_appendMessage('assistant', '');
+          window._f8_aiAssist.chat_chunk_ready.connect(function(id, delta) {{
+            if (id !== rid) return;
+            const cur = assistantEl.dataset.raw || '';
+            assistantEl.dataset.raw = cur + delta;
+            assistantEl.innerHTML = _f8_md(assistantEl.dataset.raw);
+            _f8_scrollBottom();
+          }});
+          window._f8_aiAssist.chat_done.connect(function(id, err) {{
+            if (id !== rid) return;
+            if (thinking) thinking.classList.remove('visible');
+            if (err) _f8_appendMessage('assistant', '⚠ ' + err);
+            else window._f8_chatMessages.push({{role: 'assistant', content: assistantEl.dataset.raw || ''}});
+            if (window._f8_aiAssist.update_chat_context) {{
+              window._f8_aiAssist.update_chat_context(JSON.stringify(window._f8_chatMessages));
+            }}
+          }});
+          window._f8_aiAssist.request_chat(rid, JSON.stringify(window._f8_chatMessages), code, selection);
+
+        }} else if (window._f8_aiMode === 'edit') {{
+          if (thinking) thinking.classList.add('visible');
+          _f8_appendMessage('assistant', 'Generating edit…');
+          window._f8_aiAssist.edit_result_ready.connect(function(id, newCode, err) {{
+            if (id !== rid) return;
+            if (thinking) thinking.classList.remove('visible');
+            if (err) {{ _f8_appendMessage('assistant', '⚠ ' + err); return; }}
+            _f8_showDiff(newCode);
+          }});
+          window._f8_aiAssist.request_edit(rid, code, text);
+
+        }} else if (window._f8_aiMode === 'plan') {{
+          window._f8_chatMessages.push({{role: 'user', content: text}});
+          if (thinking) thinking.classList.add('visible');
+          const assistantEl = _f8_appendMessage('assistant', '');
+          window._f8_aiAssist.plan_step_ready.connect(function(id, delta) {{
+            if (id !== rid) return;
+            const cur = assistantEl.dataset.raw || '';
+            assistantEl.dataset.raw = cur + delta;
+            assistantEl.innerHTML = _f8_md(assistantEl.dataset.raw);
+            _f8_scrollBottom();
+          }});
+          window._f8_aiAssist.plan_done.connect(function(id, err) {{
+            if (id !== rid) return;
+            if (thinking) thinking.classList.remove('visible');
+            if (!err) {{
+              const confirmBtn = document.createElement('button');
+              confirmBtn.className = 'f8-plan-confirm';
+              confirmBtn.textContent = 'Confirm & Execute';
+              confirmBtn.addEventListener('click', function() {{
+                window._f8_aiMode = 'edit';
+                document.querySelectorAll('.f8-mode-btn').forEach(function(b) {{
+                  b.classList.toggle('active', b.dataset.mode === 'edit');
+                }});
+                const input = document.getElementById('f8-ai-input');
+                if (input) input.value = "Implement the plan we just discussed.";
+                _f8_sendMessage();
+              }});
+              assistantEl.appendChild(confirmBtn);
+            }}
+          }});
+          window._f8_aiAssist.request_plan(rid, text, code, JSON.stringify(window._f8_chatMessages));
+        }}
+      }}
+
+      function _f8_appendMessage(role, text) {{
+        const msgs = document.getElementById('f8-ai-messages');
+        if (!msgs) return document.createElement('div');
+        const div = document.createElement('div');
+        div.className = 'f8-msg ' + role;
+        div.dataset.raw = text;
+        div.innerHTML = role === 'assistant' ? _f8_md(text) : _f8_escHtml(text);
+        msgs.appendChild(div);
+        _f8_scrollBottom();
+        return div;
+      }}
+
+      function _f8_escHtml(s) {{
+        return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      }}
+
+      function _f8_scrollBottom() {{
+        const msgs = document.getElementById('f8-ai-messages');
+        if (msgs) msgs.scrollTop = msgs.scrollHeight;
+      }}
+
+      function _f8_showDiff(newCode) {{
+        // Save original code for potential reject
+        window._f8_diffOriginalCode = window._f8_getValue ? window._f8_getValue() : '';
+        // Use the OVERLAY container, never touching #container / the live editor
+        const overlay = document.getElementById('f8-diff-container');
+        if (!overlay) return;
+        overlay.style.display = 'block';
+        // Dispose any previous diff editor
+        if (window._f8_diffEditor) {{
+          window._f8_diffEditor.dispose();
+          window._f8_diffEditor = null;
+        }}
+        window._f8_diffEditor = monaco.editor.createDiffEditor(overlay, {{
+          theme: 'vs-dark',
+          automaticLayout: true,
+          readOnly: false,
+          renderSideBySide: true,
+          originalEditable: false,
+        }});
+        window._f8_diffEditor.setModel({{
+          original: monaco.editor.createModel(window._f8_diffOriginalCode, 'python'),
+          modified: monaco.editor.createModel(newCode, 'python'),
+        }});
+        const diffBar = document.getElementById('f8-diff-bar');
+        if (diffBar) diffBar.classList.add('visible');
+      }}
+
+      function _f8_acceptDiff() {{
+        if (!window._f8_diffEditor) return;
+        const modifiedModel = window._f8_diffEditor.getModifiedEditor().getModel();
+        const newCode = modifiedModel ? modifiedModel.getValue() : '';
+        // Apply as a single undoable edit on the LIVE editor (never disposed)
+        if (window._f8_editor && newCode) {{
+          const model = window._f8_editor.getModel();
+          if (model) {{
+            const fullRange = model.getFullModelRange();
+            // pushEditOperations adds to the undo stack → Ctrl+Z works
+            model.pushEditOperations(
+              [],
+              [{{ range: fullRange, text: newCode }}],
+              function() {{ return null; }}
+            );
+          }}
+        }}
+        _f8_closeDiff();
+        window._f8_notifyDirty();
+      }}
+
+      function _f8_closeDiff() {{
+        if (window._f8_diffEditor) {{
+          window._f8_diffEditor.dispose();
+          window._f8_diffEditor = null;
+        }}
+        const overlay = document.getElementById('f8-diff-container');
+        if (overlay) overlay.style.display = 'none';
+        const diffBar = document.getElementById('f8-diff-bar');
+        if (diffBar) diffBar.classList.remove('visible');
+        // Return focus to the live editor
+        if (window._f8_editor) {{
+          try {{ window._f8_editor.focus(); }} catch(e) {{}}
+        }}
+      }}
+
+      // ---- Inline AI Suggestions (FIM) ----
+      function _f8_setupInlineSuggestions() {{
+        if (typeof monaco === 'undefined') return;
+        const lang = String((window.__F8_INITIAL__ || {{}}).language || '');
+        monaco.languages.registerInlineCompletionsProvider(lang || 'python', {{
+          provideInlineCompletions: function(model, position, context, token) {{
+            return new Promise(function(resolve) {{
+              if (!window._f8_aiAssist) {{ resolve({{ items: [] }}); return; }}
+              if (window._f8_inlineDebounceTimer !== null) {{
+                clearTimeout(window._f8_inlineDebounceTimer);
+              }}
+              window._f8_inlineDebounceTimer = setTimeout(function() {{
+                window._f8_inlineDebounceTimer = null;
+                const fullText = model.getValue();
+                const offset = model.getOffsetAt(position);
+                const prefix = fullText.slice(Math.max(0, offset - 2000), offset);
+                const suffix = fullText.slice(offset, Math.min(fullText.length, offset + 500));
+                const rid = (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()));
+                window._f8_inlinePending[rid] = resolve;
+                setTimeout(function() {{
+                  if (window._f8_inlinePending[rid]) {{
+                    delete window._f8_inlinePending[rid];
+                    resolve({{ items: [] }});
+                  }}
+                }}, 8000);
+                window._f8_aiAssist.request_inline_suggestion(rid, prefix, suffix);
+              }}, 650);
+              token.onCancellationRequested(function() {{
+                if (window._f8_inlineDebounceTimer !== null) {{
+                  clearTimeout(window._f8_inlineDebounceTimer);
+                  window._f8_inlineDebounceTimer = null;
+                }}
+                resolve({{ items: [] }});
+              }});
+            }});
+          }},
+          freeInlineCompletions: function() {{}}
+        }});
+      }}
+
+      function _setupAiAssist(channel) {{
+        const aiAssist = channel.objects.aiAssist || null;
+        window._f8_aiAssist = aiAssist;
+        if (!aiAssist) return;
+
+        // Wire inline suggestion results
+        if (aiAssist.inline_suggestion_ready && aiAssist.inline_suggestion_ready.connect) {{
+          aiAssist.inline_suggestion_ready.connect(function(rid, text) {{
+            const resolver = window._f8_inlinePending[rid];
+            if (!resolver) return;
+            delete window._f8_inlinePending[rid];
+            if (!text) {{ resolver({{ items: [] }}); return; }}
+            resolver({{ items: [{{ insertText: text, range: null }}] }});
+          }});
+        }}
+
+        _f8_setupInlineSuggestions();
+        _f8_setupAiPanel();
+      }}
+    </script>
   </head>
   <body>
     <div id="container"></div>
+    <!-- Diff overlay: separate div keeps #container/live editor alive -->
+    <div id="f8-diff-container"></div>
+
+    <!-- AI Toggle Button (overlaid on monaco) -->
+    <button id="f8-ai-toggle" title="Open AI Chat">✦</button>
+
+    <!-- AI Chat/Edit/Plan Panel -->
+    <div id="f8-ai-panel">
+      <div id="f8-ai-resizer"></div>
+      <div id="f8-ai-mode-bar">
+        <button class="f8-mode-btn active" data-mode="chat">💬 Chat</button>
+        <button class="f8-mode-btn" data-mode="edit">✏ Edit</button>
+        <button class="f8-mode-btn" data-mode="plan">🗺 Plan</button>
+      </div>
+      <div id="f8-ai-messages"></div>
+      <div id="f8-ai-thinking">AI is thinking…</div>
+      <div class="f8-diff-bar" id="f8-diff-bar">
+        <button class="f8-diff-accept" id="f8-diff-accept">✓ Accept</button>
+        <button class="f8-diff-reject" id="f8-diff-reject">✗ Reject</button>
+        <span style="color:#6c7086;font-size:11px;margin-left:6px;">Review proposed changes</span>
+      </div>
+      <div id="f8-ai-input-area">
+        <button class="f8-new-chat" title="New Conversation / Clear Context">♻️</button>
+        <textarea id="f8-ai-input" placeholder="Ask AI… (Enter to send, Shift+Enter for newline)" rows="1"></textarea>
+        <button id="f8-ai-send">↑</button>
+      </div>
+    </div>
   </body>
 </html>
 """
@@ -1035,6 +1712,77 @@ class F8MonacoEditorDialog(QtWidgets.QDialog):
             bridge.shutdown()
         except Exception:
             logger.exception("Failed to shutdown Python editor assist bridge")
+
+    # ------------------------------------------------------------------
+    # AI panel slots
+    # ------------------------------------------------------------------
+
+    @QtCore.Slot(bool)
+    def _on_ai_panel_toggle(self, checked: bool) -> None:
+        self._ai_quick_panel.setVisible(checked)
+        if checked:
+            self._ai_quick_panel.raise_()
+            self._reposition_ai_panel()
+
+    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:  # type: ignore[override]
+        super().resizeEvent(event)
+        self._reposition_ai_panel()
+
+    def _reposition_ai_panel(self) -> None:
+        if not hasattr(self, "_ai_quick_panel"):
+            return
+        # Position floating panel at bottom-left of the editor view
+        rect = self._view.geometry()
+        if rect.width() <= 0:
+            return
+        
+        # We want it to be above the bottom bar, anchored to left
+        self._ai_quick_panel.adjustSize()
+        pw = self._ai_quick_panel.width()
+        ph = self._ai_quick_panel.height()
+        
+        margin = 10
+        x = rect.x() + margin
+        y = rect.y() + rect.height() - ph - margin
+        
+        self._ai_quick_panel.move(x, y)
+
+    @QtCore.Slot(int, int)
+    def _on_context_usage_updated(self, used: int, total: int) -> None:
+        if total > 0:
+            pct = used / total
+            if pct < 0.5:
+                color = "#4fc3f7"
+            elif pct < 0.8:
+                color = "#ffd54f"
+            else:
+                color = "#ef9a9a"
+
+            def _fmt(n: int) -> str:
+                return f"{n / 1000:.0f}k" if n >= 1000 else str(n)
+
+            self._ctx_btn.setText(f"◉ {_fmt(used)}/{_fmt(total)}")
+            self._ctx_btn.setStyleSheet(
+                f"QToolButton {{ color: {color}; border: none; font-size: 11px; padding: 0 4px; }}"
+                f"QToolButton:hover {{ color: white; }}"
+            )
+            try:
+                breakdown = self._ai_bridge.get_context_breakdown()
+                tip = (
+                    f"<b>AI Context Usage</b><br>"
+                    f"System: {breakdown['system_tokens']} tok<br>"
+                    f"Code: {breakdown['code_tokens']} tok<br>"
+                    f"Chat: {breakdown['chat_tokens']} tok<br>"
+                    f"<hr>Used: {breakdown['used_tokens']} / {breakdown['total_tokens']} tok"
+                )
+                self._ctx_btn.setToolTip(tip)
+            except Exception:
+                pass
+
+    def _open_full_ai_config(self) -> None:
+        from .ai_provider_config_dialog import AiProviderConfigDialog
+        dlg = AiProviderConfigDialog(self._ai_store, self)
+        dlg.exec()
 
     @QtCore.Slot(bool)
     def _on_dirty_changed(self, dirty: bool) -> None:

@@ -127,80 +127,6 @@ class _DebugSessionState:
         return self.target.context
 
 
-class MonacoEditorDebugLauncher(QtWidgets.QWidget):
-    def __init__(self, *, target: SessionEditorTarget) -> None:
-        super().__init__()
-        self._state = _DebugSessionState.from_target(target)
-        self._editor_window: QtWidgets.QDialog | None = None
-
-        self.setWindowTitle("F8 Monaco Editor Debug Launcher")
-        self.resize(760, 170)
-
-        self._status_label = QtWidgets.QLabel(self)
-        self._status_label.setWordWrap(True)
-        self._status_label.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
-
-        self._open_button = QtWidgets.QPushButton("Open Monaco Editor", self)
-        self._open_button.clicked.connect(self._open_editor)  # type: ignore[attr-defined]
-
-        self._quit_button = QtWidgets.QPushButton("Quit", self)
-        self._quit_button.clicked.connect(self.close)  # type: ignore[attr-defined]
-
-        button_row = QtWidgets.QHBoxLayout()
-        button_row.addWidget(self._open_button)
-        button_row.addStretch(1)
-        button_row.addWidget(self._quit_button)
-
-        layout = QtWidgets.QVBoxLayout(self)
-        layout.addWidget(self._status_label)
-        layout.addLayout(button_row)
-        layout.addStretch(1)
-
-        self._refresh_status()
-        QtCore.QTimer.singleShot(0, self._open_editor)
-
-    def _refresh_status(self) -> None:
-        target = self._state.target
-        port_names = ", ".join(port.name for port in target.context.data_in_ports) or "(none)"
-        field_names = ", ".join(field.name for field in target.context.state_fields) or "(none)"
-        self._status_label.setText(
-            f"Session: {target.session_path}\n"
-            f"Node: {target.node_id} | {target.spec.serviceClass} / {target.spec.operatorClass}\n"
-            f"Editing state field `{_TARGET_FIELD_NAME}` with Monaco + LSP + editorAssist stubs enabled.\n"
-            f"dataInPorts: {port_names}\n"
-            f"stateFields: {field_names}"
-        )
-
-    def _open_editor(self) -> None:
-        if self._editor_window is not None and self._editor_window.isVisible():
-            self._editor_window.raise_()
-            self._editor_window.activateWindow()
-            return
-        self._editor_window = open_code_editor_window(
-            self,
-            title=f"Monaco Debug - {self._state.target.node_id}.{_TARGET_FIELD_NAME}",
-            code=self._state.code,
-            language="python",
-            on_saved=self._on_code_saved,
-            assist_context=self._state.context(),
-            assist_context_provider=self._state.context,
-        )
-        self._editor_window.destroyed.connect(self._on_editor_destroyed)  # type: ignore[attr-defined]
-
-    def _on_code_saved(self, code: str) -> None:
-        self._state.code = str(code or "")
-        logger.info(
-            "Debug editor saved code length=%d node=%s field=%s",
-            len(self._state.code),
-            self._state.target.node_id,
-            _TARGET_FIELD_NAME,
-        )
-
-    @QtCore.Slot()
-    def _on_editor_destroyed(self) -> None:
-        self._editor_window = None
-
-
 def main(argv: list[str] | None = None) -> int:
     configure_root_logging_from_env()
     parser = argparse.ArgumentParser(description="Standalone Monaco editor debug launcher")
@@ -226,10 +152,26 @@ def main(argv: list[str] | None = None) -> int:
         app = QtWidgets.QApplication([])
     configure_default_webengine_profile()
 
-    launcher = MonacoEditorDebugLauncher(target=target)
-    launcher.show()
-    launcher.raise_()
-    launcher.activateWindow()
+    state = _DebugSessionState.from_target(target)
+
+    def _on_code_saved(code: str) -> None:
+        state.code = str(code or "")
+        logger.info(
+            "Debug editor saved code length=%d node=%s field=%s",
+            len(state.code),
+            state.target.node_id,
+            _TARGET_FIELD_NAME,
+        )
+
+    editor_window = open_code_editor_window(
+        None,
+        title=f"Monaco Debug - {state.target.node_id}.{_TARGET_FIELD_NAME}",
+        code=state.code,
+        language="python",
+        on_saved=_on_code_saved,
+        assist_context=state.context(),
+        assist_context_provider=state.context,
+    )
 
     if owns_app:
         return app.exec()
