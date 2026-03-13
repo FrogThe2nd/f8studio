@@ -231,7 +231,7 @@ class F8MonacoEditorDialog(QtWidgets.QDialog):
         value = str(os.environ.get("F8_MONACO_BASE_URL") or "").strip().rstrip("/")
         if value:
             return value
-        return "https://cdn.jsdelivr.net/npm/monaco-editor@0.50.0/min"
+        return "https://cdn.jsdelivr.net/npm/monaco-editor/min"
 
     def _load_page(self) -> None:
         base = self._monaco_base_url()
