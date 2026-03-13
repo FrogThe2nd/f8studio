@@ -23,6 +23,11 @@ class SdlVideoWindow {
     int height = 720;
     bool resizable = true;
     bool vsync = true;
+    int gl_major = 3;
+    int gl_minor = 3;
+    bool gl_allow_fallback = true;
+    int gl_fallback_major = 3;
+    int gl_fallback_minor = 3;
   };
 
   explicit SdlVideoWindow(Config cfg);

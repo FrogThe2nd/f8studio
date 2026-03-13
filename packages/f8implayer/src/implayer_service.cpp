@@ -24,6 +24,7 @@
 #include "f8cppsdk/video_shared_memory_sink.h"
 #include "implayer_gui.h"
 #include "mpv_player.h"
+#include "openxr_presenter.h"
 #include "sdl_video_window.h"
 
 namespace f8::implayer {
@@ -214,6 +215,23 @@ bool is_supported_auth_mode(const std::string& mode) {
   return parse_auth_mode(mode, normalized);
 }
 
+bool parse_openxr_mode(const std::string& raw, std::string& normalized_mode) {
+  const std::string mode = lowercase_ascii(trim_copy(raw));
+  if (mode == "off" || mode == "0" || mode == "false" || mode == "disabled") {
+    normalized_mode = "off";
+    return true;
+  }
+  if (mode == "on" || mode == "1" || mode == "true" || mode == "enabled") {
+    normalized_mode = "on";
+    return true;
+  }
+  if (mode == "auto") {
+    normalized_mode = "auto";
+    return true;
+  }
+  return false;
+}
+
 bool is_supported_auth_browser(const std::string& browser) {
   return browser == "chrome" || browser == "chromium" || browser == "edge" || browser == "firefox" ||
          browser == "safari";
@@ -333,6 +351,15 @@ bool ImPlayerService::start() {
   wcfg.height = cfg_.window_height;
   wcfg.resizable = cfg_.window_resizable;
   wcfg.vsync = cfg_.window_vsync;
+#if defined(_WIN32)
+  // Create a modern OpenGL context on Windows so OpenXR can be enabled later
+  // via state (Studio), even if it wasn't requested via CLI at startup.
+  wcfg.gl_major = 4;
+  wcfg.gl_minor = 5;
+  wcfg.gl_allow_fallback = true;
+  wcfg.gl_fallback_major = 3;
+  wcfg.gl_fallback_minor = 3;
+#endif
   window_ = std::make_unique<SdlVideoWindow>(wcfg);
   if (!window_->start()) {
     spdlog::error("failed to start SDL video window");
@@ -341,6 +368,38 @@ bool ImPlayerService::start() {
   if (!window_->makeCurrent()) {
     spdlog::error("failed to activate SDL GL context");
     return false;
+  }
+
+  openxr_mirror_window_.store(cfg_.openxr_mirror_window, std::memory_order_release);
+  std::string openxr_mode_startup;
+  {
+    std::string mode;
+    if (!parse_openxr_mode(cfg_.openxr_mode, mode)) {
+      spdlog::error("invalid --openxr-mode: {}", cfg_.openxr_mode);
+      return false;
+    }
+    openxr_mode_startup = mode;
+    std::lock_guard<std::mutex> lock(state_mu_);
+    openxr_mode_ = mode;
+  }
+  openxr_next_retry_ms_ = f8::cppsdk::now_ms();
+
+  const bool want_openxr_now = openxr_mode_startup == "on" || openxr_mode_startup == "auto";
+  if (want_openxr_now) {
+    openxr_ = std::make_unique<OpenXrPresenter>();
+    std::string xr_err;
+    if (!openxr_->start(window_->sdlWindow(), window_->glContext(), xr_err)) {
+      openxr_.reset();
+      if (openxr_mode_startup == "on") {
+        spdlog::error("failed to start OpenXR presenter: {}", xr_err);
+        return false;
+      }
+      {
+        std::lock_guard<std::mutex> lock(state_mu_);
+        openxr_last_start_error_ = xr_err;
+      }
+      spdlog::warn("OpenXR not available at startup (mode=auto): {}", xr_err);
+    }
   }
 
   gui_ = std::make_unique<ImPlayerGui>();
@@ -434,6 +493,10 @@ void ImPlayerService::stop() {
   } catch (...) {}
   bus_.reset();
 
+  if (openxr_)
+    openxr_->stop();
+  openxr_.reset();
+
   if (window_)
     window_->makeCurrent();
   if (player_)
@@ -485,6 +548,11 @@ void ImPlayerService::tick() {
   if (player_ && window_) {
     std::unique_lock<std::mutex> render_lock(render_mu_, std::try_to_lock);
     if (render_lock.owns_lock()) {
+      std::string openxr_mode_snapshot;
+      {
+        std::lock_guard<std::mutex> lock(state_mu_);
+        openxr_mode_snapshot = openxr_mode_;
+      }
       (void)window_->makeCurrent();
       const bool want_clear = clear_video_requested_.exchange(false, std::memory_order_acq_rel);
       bool force_present = false;
@@ -514,7 +582,116 @@ void ImPlayerService::tick() {
 
       player_->setShmViewMode(shm_view_mode_for_vr(vr_mode_, vr_sbs_eye_));
       const bool updated = player_->renderVideoFrame();
-      if (force_present || updated || window_->needsRedraw() || (gui_ && gui_->wantsRepaint())) {
+
+      // OpenXR is controlled by `openxrMode` state; keep the service running even
+      // if the headset/runtime is not available (auto mode).
+      if (openxr_mode_snapshot == "off") {
+        if (openxr_) {
+          openxr_->stop();
+          openxr_.reset();
+        }
+      } else if (!openxr_ && tick_now_ms >= openxr_next_retry_ms_) {
+        openxr_ = std::make_unique<OpenXrPresenter>();
+        std::string xr_err;
+        if (!openxr_->start(window_->sdlWindow(), window_->glContext(), xr_err)) {
+          openxr_.reset();
+          {
+            std::lock_guard<std::mutex> lock(state_mu_);
+            if (xr_err != openxr_last_start_error_) {
+              openxr_last_start_error_ = xr_err;
+              last_error_ = xr_err;
+            }
+          }
+          openxr_next_retry_ms_ = tick_now_ms + 2000;
+        } else {
+          std::lock_guard<std::mutex> lock(state_mu_);
+          openxr_last_start_error_.clear();
+        }
+      }
+
+      const bool mirror_disabled =
+          (openxr_ != nullptr) && !openxr_mirror_window_.load(std::memory_order_acquire);
+      if (openxr_) {
+        OpenXrPresenter::FrameParams fp;
+        fp.src_texture = player_->videoTextureId();
+        fp.src_width = player_->videoWidth();
+        fp.src_height = player_->videoHeight();
+        fp.mode = vr_mode_;
+        fp.sbs_eye = vr_sbs_eye_;
+        fp.playing = playing_.load(std::memory_order_relaxed);
+        fp.position_seconds = position_seconds_.load(std::memory_order_relaxed);
+        fp.duration_seconds = duration_seconds_.load(std::memory_order_relaxed);
+        fp.yaw_offset_deg = vr_yaw_deg_;
+        fp.pitch_offset_deg = vr_pitch_deg_;
+
+        OpenXrPresenter::Events xr_events;
+        std::string xr_err;
+        if (!openxr_->renderFrame(fp, &xr_events, xr_err)) {
+          {
+            std::lock_guard<std::mutex> lock(state_mu_);
+            last_error_ = xr_err.empty() ? "OpenXR presenter failed" : xr_err;
+          }
+          openxr_->stop();
+          openxr_.reset();
+          openxr_next_retry_ms_ = tick_now_ms + 1000;
+        } else if (!xr_err.empty()) {
+          std::lock_guard<std::mutex> lock(state_mu_);
+          last_error_ = xr_err;
+        }
+
+        if (xr_events.cycle_projection_pressed) {
+          if (vr_mode_ == SdlVideoWindow::ProjectionMode::Flat2D) {
+            vr_mode_ = SdlVideoWindow::ProjectionMode::EquirectMono;
+          } else if (vr_mode_ == SdlVideoWindow::ProjectionMode::EquirectMono) {
+            vr_mode_ = SdlVideoWindow::ProjectionMode::EquirectSbs;
+          } else {
+            vr_mode_ = SdlVideoWindow::ProjectionMode::Flat2D;
+          }
+          mark_vr_manual_override();
+        }
+        if (xr_events.play_pause_pressed) {
+          std::string err;
+          if (playing_.load(std::memory_order_acquire)) {
+            (void)cmd_pause(err);
+          } else {
+            (void)cmd_play(err);
+          }
+        }
+        if (xr_events.playlist_next_pressed) {
+          playlist_next();
+        }
+        if (xr_events.playlist_prev_pressed) {
+          playlist_prev();
+        }
+        if (xr_events.seek_absolute_valid && duration_seconds_.load(std::memory_order_relaxed) > 0.0) {
+          const double dur = duration_seconds_.load(std::memory_order_relaxed);
+          const double frac = std::clamp(xr_events.seek_absolute_fraction01, 0.0, 1.0);
+          const double pos = frac * dur;
+          std::string err;
+          (void)cmd_seek(json{{"position", pos}}, err);
+        } else if (std::abs(xr_events.seek_delta_seconds) > 1e-6) {
+          const double cur = position_seconds_.load(std::memory_order_relaxed);
+          const double dur = duration_seconds_.load(std::memory_order_relaxed);
+          double next = cur + xr_events.seek_delta_seconds;
+          if (dur > 0.0) {
+            next = std::clamp(next, 0.0, dur);
+          } else {
+            next = std::max(0.0, next);
+          }
+          std::string err;
+          (void)cmd_seek(json{{"position", next}}, err);
+        }
+
+        did_present = true;
+        if (mirror_disabled) {
+          // Avoid a busy-spin when OpenXR is active but there is no mirror present.
+          if (gui_)
+            gui_->clearRepaintFlag();
+          window_->clearRedrawFlag();
+        }
+      }
+
+      if (!mirror_disabled && (force_present || updated || window_->needsRedraw() || (gui_ && gui_->wantsRepaint()))) {
         ImPlayerGui::Callbacks cb;
         cb.open = [this](const std::string& url) {
           std::string err;
@@ -1053,6 +1230,30 @@ bool ImPlayerService::on_set_state(const std::string& node_id, const std::string
         last_error_.clear();
       }
     }
+  } else if (f == "openxrMode") {
+    if (!value.is_string()) {
+      err = "openxrMode must be a string";
+      ok = false;
+    } else {
+      std::string mode;
+      if (!parse_openxr_mode(value.get<std::string>(), mode)) {
+        err = "openxrMode must be one of: off|on|auto";
+        ok = false;
+      } else {
+        std::lock_guard<std::mutex> lock(state_mu_);
+        openxr_mode_ = mode;
+        ok = true;
+      }
+    }
+  } else if (f == "openxrMirrorWindow") {
+    if (!value.is_boolean()) {
+      err = "openxrMirrorWindow must be boolean";
+      ok = false;
+    } else {
+      const bool mirror = value.get<bool>();
+      openxr_mirror_window_.store(mirror, std::memory_order_release);
+      ok = true;
+    }
   } else {
     error_code = "UNKNOWN_FIELD";
     error_message = "unknown state field";
@@ -1098,6 +1299,11 @@ bool ImPlayerService::on_set_state(const std::string& node_id, const std::string
   } else if (f == "authCookiesFile") {
     std::lock_guard<std::mutex> lock(state_mu_);
     write_value = auth_cookies_file_;
+  } else if (f == "openxrMode") {
+    std::lock_guard<std::mutex> lock(state_mu_);
+    write_value = openxr_mode_;
+  } else if (f == "openxrMirrorWindow") {
+    write_value = openxr_mirror_window_.load(std::memory_order_acquire);
   }
   {
     std::lock_guard<std::mutex> lock(state_mu_);
@@ -1744,6 +1950,8 @@ void ImPlayerService::publish_static_state() {
     want("videoShmMaxFps", cfg_.video_shm_max_fps);
     want("authMode", auth_mode_);
     want("authBrowser", auth_browser_);
+    want("openxrMode", openxr_mode_);
+    want("openxrMirrorWindow", openxr_mirror_window_.load(std::memory_order_acquire));
   }
   for (const auto& [field, v] : updates) {
     if (bus_) {
@@ -1810,6 +2018,10 @@ json ImPlayerService::describe() {
   service["stateFields"] = json::array({
       state_field("loop", schema_boolean(), "rw", "Loop", "Repeat playlist when reaching EOF.", false),
       state_field("mediaUrl", schema_string(), "rw", "Media URL", "URI or file path to open.", true),
+      state_field("openxrMode", schema_string_enum({"off", "on", "auto"}), "rw", "OpenXR Mode",
+                  "PCVR output: off|on|auto (auto retries when headset/runtime becomes available).", true),
+      state_field("openxrMirrorWindow", schema_boolean(), "rw", "OpenXR Mirror",
+                  "When OpenXR is active, also present to the SDL mirror window.", true),
       state_field("volume", schema_number(1.0, 0.0, 1.0), "rw", "Volume", "", true, "slider"),
       state_field("playing", schema_boolean(), "ro", "Playing", "Playback state.", false),
       state_field("duration", schema_number(), "ro", "Duration", "Duration (seconds).", true),

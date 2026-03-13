@@ -26,6 +26,7 @@ namespace f8::implayer {
 
 class MpvPlayer;
 class ImPlayerGui;
+class OpenXrPresenter;
 using VideoSharedMemorySink = ::f8::cppsdk::VideoSharedMemorySink;
 
 class ImPlayerService final : public f8::cppsdk::LifecycleNode,
@@ -49,6 +50,12 @@ class ImPlayerService final : public f8::cppsdk::LifecycleNode,
     int window_height = 720;
     bool window_resizable = true;
     bool window_vsync = true;
+
+    // PCVR: present into an OpenXR HMD runtime (e.g. Quest 3 via Link).
+    // Currently implemented for Windows + OpenGL.
+    std::string openxr_mode = "off";  // off|on|auto
+    // Keep an SDL mirror window visible (useful for debugging).
+    bool openxr_mirror_window = true;
 
     std::string initial_media_url;
   };
@@ -112,9 +119,15 @@ class ImPlayerService final : public f8::cppsdk::LifecycleNode,
   std::unique_ptr<f8::cppsdk::ServiceBus> bus_;
 
   std::unique_ptr<SdlVideoWindow> window_;
+  std::unique_ptr<OpenXrPresenter> openxr_;
   std::unique_ptr<ImPlayerGui> gui_;
   std::unique_ptr<MpvPlayer> player_;
   std::shared_ptr<VideoSharedMemorySink> shm_;
+
+  std::atomic<bool> openxr_mirror_window_{true};
+  std::string openxr_mode_ = "off";
+  std::int64_t openxr_next_retry_ms_ = 0;
+  std::string openxr_last_start_error_;
 
   mutable std::mutex state_mu_;
   std::string media_url_;

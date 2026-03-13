@@ -105,48 +105,78 @@ bool SdlVideoWindow::start() {
     return false;
   }
 
-  SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
-  SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-  SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
-  SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+  auto destroy_window_context = [&]() {
+    if (window_ && gl_context_) {
+      SDL_GL_MakeCurrent(window_, gl_context_);
+    }
+    destroyVrRenderer();
+    if (window_) {
+      SDL_GL_MakeCurrent(window_, nullptr);
+    }
+    if (gl_context_) {
+      SDL_GL_DestroyContext(gl_context_);
+      gl_context_ = nullptr;
+    }
+    if (window_) {
+      SDL_DestroyWindow(window_);
+      window_ = nullptr;
+    }
+  };
 
-  SDL_WindowFlags flags = SDL_WINDOW_OPENGL;
-  if (cfg_.resizable)
-    flags = static_cast<SDL_WindowFlags>(flags | SDL_WINDOW_RESIZABLE);
+  auto try_create = [&](int gl_major, int gl_minor) -> bool {
+    SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, gl_major);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, gl_minor);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
 
-  window_ = SDL_CreateWindow(cfg_.title.c_str(), cfg_.width, cfg_.height, flags);
-  if (!window_) {
-    spdlog::error("SDL_CreateWindow failed: {}", SDL_GetError());
-    SDL_Quit();
-    return false;
+    SDL_WindowFlags flags = SDL_WINDOW_OPENGL;
+    if (cfg_.resizable)
+      flags = static_cast<SDL_WindowFlags>(flags | SDL_WINDOW_RESIZABLE);
+
+    window_ = SDL_CreateWindow(cfg_.title.c_str(), cfg_.width, cfg_.height, flags);
+    if (!window_) {
+      spdlog::error("SDL_CreateWindow failed (GL {}.{}): {}", gl_major, gl_minor, SDL_GetError());
+      return false;
+    }
+
+    gl_context_ = SDL_GL_CreateContext(window_);
+    if (!gl_context_) {
+      spdlog::error("SDL_GL_CreateContext failed (GL {}.{}): {}", gl_major, gl_minor, SDL_GetError());
+      destroy_window_context();
+      return false;
+    }
+
+    if (!SDL_GL_MakeCurrent(window_, gl_context_)) {
+      spdlog::error("SDL_GL_MakeCurrent failed (GL {}.{}): {}", gl_major, gl_minor, SDL_GetError());
+      destroy_window_context();
+      return false;
+    }
+
+    SDL_GL_SetSwapInterval(cfg_.vsync ? 1 : 0);
+
+    if (!EnsureOpenGLFunctionsLoaded()) {
+      spdlog::error("OpenGL function loader failed (glad) (GL {}.{})", gl_major, gl_minor);
+      destroy_window_context();
+      return false;
+    }
+
+    updateDrawableSize();
+    clearBlack();
+    SDL_GL_SwapWindow(window_);
+    return true;
+  };
+
+  if (!try_create(cfg_.gl_major, cfg_.gl_minor)) {
+    const bool can_fallback = cfg_.gl_allow_fallback && (cfg_.gl_major != cfg_.gl_fallback_major ||
+                                                        cfg_.gl_minor != cfg_.gl_fallback_minor);
+    if (!can_fallback || !try_create(cfg_.gl_fallback_major, cfg_.gl_fallback_minor)) {
+      destroy_window_context();
+      SDL_Quit();
+      return false;
+    }
+    spdlog::warn("SDL OpenGL context fell back from {}.{} to {}.{}", cfg_.gl_major, cfg_.gl_minor, cfg_.gl_fallback_major,
+                 cfg_.gl_fallback_minor);
   }
-
-  gl_context_ = SDL_GL_CreateContext(window_);
-  if (!gl_context_) {
-    spdlog::error("SDL_GL_CreateContext failed: {}", SDL_GetError());
-    SDL_DestroyWindow(window_);
-    window_ = nullptr;
-    SDL_Quit();
-    return false;
-  }
-
-  if (!SDL_GL_MakeCurrent(window_, gl_context_)) {
-    spdlog::error("SDL_GL_MakeCurrent failed: {}", SDL_GetError());
-    stop();
-    return false;
-  }
-
-  SDL_GL_SetSwapInterval(cfg_.vsync ? 1 : 0);
-
-  if (!EnsureOpenGLFunctionsLoaded()) {
-    spdlog::error("OpenGL function loader failed (glad)");
-    stop();
-    return false;
-  }
-
-  updateDrawableSize();
-  clearBlack();
-  SDL_GL_SwapWindow(window_);
 
   started_ = true;
   wants_close_ = false;

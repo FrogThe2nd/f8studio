@@ -17,6 +17,7 @@ add_executable(f8implayer_service
   src/sdl_video_window.cpp
   src/gl_loader.cpp
   src/mpv_player.cpp
+  src/openxr_presenter.cpp
   src/imgui_backends/imgui_impl_sdl3.cpp
   src/imgui_backends/imgui_impl_opengl3.cpp
 )
@@ -26,6 +27,7 @@ target_compile_features(f8implayer_service PRIVATE cxx_std_17)
 target_include_directories(f8implayer_service
   PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/openxr/include
 )
 
 find_package(cxxopts REQUIRED)
