@@ -208,6 +208,8 @@ class F8MonacoEditorDialog(QtWidgets.QDialog):
         # AI assist
         self._ai_store = _get_shared_ai_store()
         self._ai_bridge = AiLlmBridge(self._ai_store, self)
+        if assist_context:
+            self._ai_bridge.set_assist_context(assist_context)
 
         self._web_channel: Any = QtWebChannel.QWebChannel(self._view.page())
         self._web_channel.registerObject("f8EditorUi", self._ui_bridge)
@@ -221,6 +223,7 @@ class F8MonacoEditorDialog(QtWidgets.QDialog):
                 parent=self,
             )
             self._web_channel.registerObject("pyAssist", self._assist_bridge)
+            self._ai_bridge.set_lsp_bridge(self._assist_bridge)
         self._view.page().setWebChannel(self._web_channel)
 
         # Context usage indicator
@@ -323,7 +326,49 @@ class F8MonacoEditorDialog(QtWidgets.QDialog):
         overflow: hidden;
         background: #1e1e1e;
       }}
+      .f8-hunk-actions {{
+        background: rgba(37,37,38,0.9);
+        border: 1px solid #454545;
+        border-radius: 4px;
+        padding: 2px;
+        display: flex;
+        flex-direction: row;
+        align-items: center;
+        width: max-content;
+        white-space: nowrap;
+        gap: 2px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+        pointer-events: auto;
+        z-index: 100;
+        backdrop-filter: blur(4px);
+      }}
+      .f8-hunk-btn {{
+        background: transparent;
+        border: 1px solid transparent;
+        color: #cccccc;
+        cursor: pointer;
+        font-size: 13px;
+        font-weight: bold;
+        font-family: inherit;
+        padding: 2px 8px;
+        border-radius: 3px;
+        transition: all 0.2s;
+        line-height: 1;
+      }}
+      .f8-hunk-btn:hover {{
+        color: #ffffff;
+        background: #333333;
+        border-color: #555555;
+      }}
+      .f8-accept:hover {{ background: #235a39; border-color: #2ea043; color: #4aff8a; }}
+      .f8-reject:hover {{ background: #5a2323; border-color: #f85149; color: #ff8a8a; }}
     </style>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-twilight.min.css" rel="stylesheet" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-javascript.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-json.min.js"></script>
     <script>
       window.__F8_INITIAL__ = {initial_json};
     </script>
@@ -1063,9 +1108,10 @@ class F8MonacoEditorDialog(QtWidgets.QDialog):
         flex-direction: column;
         gap: 8px;
       }}
-      .f8-msg {{ padding: 8px 10px; border-radius: 6px; line-height: 1.5; }}
+      .f8-msg {{ padding: 8px 10px; border-radius: 6px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }}
       .f8-msg.user {{ background: #313244; align-self: flex-end; max-width: 85%; }}
       .f8-msg.assistant {{ background: #1e1e2e; border: 1px solid #313244; align-self: flex-start; max-width: 100%; }}
+      .f8-think-content {{ white-space: pre-wrap; }}
       .f8-msg pre {{
         background: #11111b;
         border: 1px solid #45475a;
@@ -1215,18 +1261,54 @@ class F8MonacoEditorDialog(QtWidgets.QDialog):
         html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
         html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
         html = html.replace(/^# (.+)$/gm, '<h1>$1</h1>');
-        // line breaks
-        html = html.replace(/\\n/g, '<br>');
+        
         return html;
       }}
 
       function _f8_copy(btn) {{
         try {{
-          const code = btn.nextElementSibling ? btn.nextElementSibling.textContent : '';
-          navigator.clipboard.writeText(code).catch(function() {{}});
-          btn.textContent = '✓';
-          setTimeout(function() {{ btn.textContent = 'copy'; }}, 1500);
+          const pre = btn.closest('pre');
+          const codeEl = pre ? pre.querySelector('code') : null;
+          const text = codeEl ? codeEl.textContent : '';
+          if (!text) return;
+
+          function done() {{
+            btn.textContent = '✓';
+            setTimeout(function() {{ btn.textContent = 'copy'; }}, 1500);
+          }}
+
+          // Try Python bridge first (most reliable in Qt)
+          if (window._f8_aiAssist && window._f8_aiAssist.copy_to_clipboard) {{
+            window._f8_aiAssist.copy_to_clipboard(text);
+            done();
+            return;
+          }}
+
+          // Fallback to modern navigator.clipboard
+          if (navigator.clipboard && navigator.clipboard.writeText) {{
+            navigator.clipboard.writeText(text).then(done).catch(function() {{
+                if (_f8_fallbackCopy(text)) done();
+            }});
+          }} else {{
+            if (_f8_fallbackCopy(text)) done();
+          }}
         }} catch(e) {{}}
+      }}
+
+      function _f8_fallbackCopy(val) {{
+        try {{
+          const textArea = document.createElement("textarea");
+          textArea.value = val;
+          textArea.style.position = "fixed";
+          textArea.style.left = "-9999px";
+          textArea.style.top = "0";
+          document.body.appendChild(textArea);
+          textArea.focus();
+          textArea.select();
+          const success = document.execCommand('copy');
+          document.body.removeChild(textArea);
+          return success;
+        }} catch (err) {{ return false; }}
       }}
 
       function _f8_setupAiPanel() {{
@@ -1352,6 +1434,7 @@ class F8MonacoEditorDialog(QtWidgets.QDialog):
             const cur = assistantEl.dataset.raw || '';
             assistantEl.dataset.raw = cur + delta;
             assistantEl.innerHTML = _f8_md(assistantEl.dataset.raw);
+            if (window.Prism) {{ try {{ Prism.highlightAllUnder(assistantEl); }} catch(e) {{}} }}
             _f8_scrollBottom();
           }});
           window._f8_aiAssist.chat_done.connect(function(id, err) {{
@@ -1374,7 +1457,7 @@ class F8MonacoEditorDialog(QtWidgets.QDialog):
             if (err) {{ _f8_appendMessage('assistant', '⚠ ' + err); return; }}
             _f8_showDiff(newCode);
           }});
-          window._f8_aiAssist.request_edit(rid, code, text);
+          window._f8_aiAssist.request_edit(rid, code, text, JSON.stringify(window._f8_chatMessages));
 
         }} else if (window._f8_aiMode === 'plan') {{
           window._f8_chatMessages.push({{role: 'user', content: text}});
@@ -1385,6 +1468,7 @@ class F8MonacoEditorDialog(QtWidgets.QDialog):
             const cur = assistantEl.dataset.raw || '';
             assistantEl.dataset.raw = cur + delta;
             assistantEl.innerHTML = _f8_md(assistantEl.dataset.raw);
+            if (window.Prism) {{ try {{ Prism.highlightAllUnder(assistantEl); }} catch(e) {{}} }}
             _f8_scrollBottom();
           }});
           window._f8_aiAssist.plan_done.connect(function(id, err) {{
@@ -1417,6 +1501,9 @@ class F8MonacoEditorDialog(QtWidgets.QDialog):
         div.className = 'f8-msg ' + role;
         div.dataset.raw = text;
         div.innerHTML = role === 'assistant' ? _f8_md(text) : _f8_escHtml(text);
+        if (role === 'assistant' && window.Prism) {{
+          try {{ Prism.highlightAllUnder(div); }} catch(e) {{}}
+        }}
         msgs.appendChild(div);
         _f8_scrollBottom();
         return div;
@@ -1447,7 +1534,7 @@ class F8MonacoEditorDialog(QtWidgets.QDialog):
           theme: 'vs-dark',
           automaticLayout: true,
           readOnly: false,
-          renderSideBySide: true,
+          renderSideBySide: false,
           originalEditable: false,
         }});
         window._f8_diffEditor.setModel({{
@@ -1455,7 +1542,70 @@ class F8MonacoEditorDialog(QtWidgets.QDialog):
           modified: monaco.editor.createModel(newCode, 'python'),
         }});
         const diffBar = document.getElementById('f8-diff-bar');
-        if (diffBar) diffBar.classList.add('visible');
+        if (diffBar) {{
+            diffBar.classList.add('visible');
+            const hint = diffBar.querySelector('.f8-diff-hint') || document.createElement('span');
+            hint.className = 'f8-diff-hint';
+            hint.textContent = 'Review changes';
+            hint.style.marginRight = 'auto';
+            hint.style.color = '#888';
+            if (!diffBar.contains(hint)) diffBar.insertBefore(hint, diffBar.firstChild);
+        }}
+
+        window._f8_hunkWidgets = [];
+        window._f8_diffEditor.onDidUpdateDiff(function() {{
+            const modEditor = window._f8_diffEditor.getModifiedEditor();
+            window._f8_hunkWidgets.forEach(function(w) {{
+                modEditor.removeContentWidget(w);
+            }});
+            window._f8_hunkWidgets = [];
+
+            const changes = window._f8_diffEditor.getLineChanges();
+            if (!changes) return;
+            if (changes.length === 0) {{
+               setTimeout(_f8_acceptDiff, 100);
+               return;
+            }}
+
+            changes.forEach(function(change, index) {{
+                if (change.originalEndLineNumber === 0 && change.modifiedEndLineNumber === 0) return;
+
+                const widgetId = 'hunk-widget-' + index + '-' + Date.now();
+                const domNode = document.createElement('div');
+                domNode.className = 'f8-hunk-actions';
+                
+                const acceptBtn = document.createElement('button');
+                acceptBtn.className = 'f8-hunk-btn f8-accept';
+                acceptBtn.innerHTML = '✓';
+                acceptBtn.title = 'Accept this chunk';
+                acceptBtn.onclick = function() {{ _f8_acceptHunk(change); }};
+                
+                const rejectBtn = document.createElement('button');
+                rejectBtn.className = 'f8-hunk-btn f8-reject';
+                rejectBtn.innerHTML = '✗';
+                rejectBtn.title = 'Reject this chunk';
+                rejectBtn.onclick = function() {{ _f8_rejectHunk(change); }};
+                
+                domNode.appendChild(acceptBtn);
+                domNode.appendChild(rejectBtn);
+
+                let targetLine = Math.max(1, change.modifiedStartLineNumber || change.modifiedEndLineNumber);
+
+                const widget = {{
+                    getId: function() {{ return widgetId; }},
+                    getDomNode: function() {{ return domNode; }},
+                    getPosition: function() {{
+                        return {{
+                            position: {{ lineNumber: targetLine, column: 1 }},
+                            preference: [monaco.editor.ContentWidgetPositionPreference.BELOW, monaco.editor.ContentWidgetPositionPreference.ABOVE]
+                        }};
+                    }}
+                }};
+                
+                modEditor.addContentWidget(widget);
+                window._f8_hunkWidgets.push(widget);
+            }});
+        }});
       }}
 
       function _f8_acceptDiff() {{
@@ -1494,6 +1644,90 @@ class F8MonacoEditorDialog(QtWidgets.QDialog):
         }}
       }}
 
+      function _f8_acceptHunk(change) {{
+          if (!window._f8_diffEditor) return;
+          const origModel = window._f8_diffEditor.getOriginalEditor().getModel();
+          const modModel = window._f8_diffEditor.getModifiedEditor().getModel();
+          if (!origModel || !modModel) return;
+
+          let modText = '';
+          if (change.modifiedEndLineNumber > 0) {{
+              let lines = [];
+              for(let i = change.modifiedStartLineNumber; i <= change.modifiedEndLineNumber; i++) {{
+                  lines.push(modModel.getLineContent(i));
+              }}
+              modText = lines.join(modModel.getEOL());
+          }}
+
+          let range;
+          let origStart = change.originalStartLineNumber;
+          let origEnd = change.originalEndLineNumber;
+          if (change.modifiedEndLineNumber === 0) {{
+              if (origEnd < origModel.getLineCount()) {{
+                  origEnd += 1;
+                  range = new monaco.Range(origStart, 1, origEnd, 1);
+              }} else if (origStart > 1) {{
+                  const prevMax = origModel.getLineMaxColumn(origStart - 1);
+                  range = new monaco.Range(origStart - 1, prevMax, origEnd, origModel.getLineMaxColumn(origEnd));
+              }} else {{
+                  range = new monaco.Range(origStart, 1, origEnd, origModel.getLineMaxColumn(origEnd));
+              }}
+          }} else if (change.originalEndLineNumber === 0) {{
+              if (change.originalStartLineNumber === 0) {{
+                   range = new monaco.Range(1, 1, 1, 1);
+                   modText = modText + origModel.getEOL();
+              }} else {{
+                   range = new monaco.Range(change.originalStartLineNumber, origModel.getLineMaxColumn(change.originalStartLineNumber), change.originalStartLineNumber, origModel.getLineMaxColumn(change.originalStartLineNumber));
+                   modText = origModel.getEOL() + modText;
+              }}
+          }} else {{
+              range = new monaco.Range(origStart, 1, origEnd, origModel.getLineMaxColumn(origEnd));
+          }}
+          origModel.pushEditOperations([], [{{range: range, text: modText}}], () => null);
+      }}
+
+      function _f8_rejectHunk(change) {{
+          if (!window._f8_diffEditor) return;
+          const origModel = window._f8_diffEditor.getOriginalEditor().getModel();
+          const modModel = window._f8_diffEditor.getModifiedEditor().getModel();
+          if (!origModel || !modModel) return;
+
+          let origText = '';
+          if (change.originalEndLineNumber > 0) {{
+              let lines = [];
+              for(let i = change.originalStartLineNumber; i <= change.originalEndLineNumber; i++) {{
+                  lines.push(origModel.getLineContent(i));
+              }}
+              origText = lines.join(origModel.getEOL());
+          }}
+
+          let range;
+          let modStart = change.modifiedStartLineNumber;
+          let modEnd = change.modifiedEndLineNumber;
+          if (change.originalEndLineNumber === 0) {{
+              if (modEnd < modModel.getLineCount()) {{
+                  modEnd += 1;
+                  range = new monaco.Range(modStart, 1, modEnd, 1);
+              }} else if (modStart > 1) {{
+                  const prevMax = modModel.getLineMaxColumn(modStart - 1);
+                  range = new monaco.Range(modStart - 1, prevMax, modEnd, modModel.getLineMaxColumn(modEnd));
+              }} else {{
+                  range = new monaco.Range(modStart, 1, modEnd, modModel.getLineMaxColumn(modEnd));
+              }}
+          }} else if (change.modifiedEndLineNumber === 0) {{
+              if (change.modifiedStartLineNumber === 0) {{
+                   range = new monaco.Range(1, 1, 1, 1);
+                   origText = origText + modModel.getEOL();
+              }} else {{
+                   range = new monaco.Range(change.modifiedStartLineNumber, modModel.getLineMaxColumn(change.modifiedStartLineNumber), change.modifiedStartLineNumber, modModel.getLineMaxColumn(change.modifiedStartLineNumber));
+                   origText = modModel.getEOL() + origText;
+              }}
+          }} else {{
+              range = new monaco.Range(modStart, 1, modEnd, modModel.getLineMaxColumn(modEnd));
+          }}
+          modModel.pushEditOperations([], [{{range: range, text: origText}}], () => null);
+      }}
+
       // ---- Inline AI Suggestions (FIM) ----
       function _f8_setupInlineSuggestions() {{
         if (typeof monaco === 'undefined') return;
@@ -1519,7 +1753,7 @@ class F8MonacoEditorDialog(QtWidgets.QDialog):
                     resolve({{ items: [] }});
                   }}
                 }}, 8000);
-                window._f8_aiAssist.request_inline_suggestion(rid, prefix, suffix);
+                window._f8_aiAssist.request_inline_suggestion(rid, prefix, suffix, Number(position.lineNumber), Number(position.column));
               }}, 650);
               token.onCancellationRequested(function() {{
                 if (window._f8_inlineDebounceTimer !== null) {{
@@ -1530,7 +1764,8 @@ class F8MonacoEditorDialog(QtWidgets.QDialog):
               }});
             }});
           }},
-          freeInlineCompletions: function() {{}}
+          freeInlineCompletions: function() {{}},
+          disposeInlineCompletions: function() {{}}
         }});
       }}
 
@@ -1574,9 +1809,9 @@ class F8MonacoEditorDialog(QtWidgets.QDialog):
       <div id="f8-ai-messages"></div>
       <div id="f8-ai-thinking">AI is thinking…</div>
       <div class="f8-diff-bar" id="f8-diff-bar">
-        <button class="f8-diff-accept" id="f8-diff-accept">✓ Accept</button>
-        <button class="f8-diff-reject" id="f8-diff-reject">✗ Reject</button>
-        <span style="color:#6c7086;font-size:11px;margin-left:6px;">Review proposed changes</span>
+        <button class="f8-diff-accept" id="f8-diff-accept">✓</button>
+        <button class="f8-diff-reject" id="f8-diff-reject">✗</button>
+        <span style="color:#6c7086;font-size:11px;margin-left:6px;"></span>
       </div>
       <div id="f8-ai-input-area">
         <button class="f8-new-chat" title="New Conversation / Clear Context">♻️</button>

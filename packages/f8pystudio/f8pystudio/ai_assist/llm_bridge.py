@@ -18,11 +18,13 @@ import logging
 import math
 from typing import Any
 
-from qtpy import QtCore  # type: ignore[import-not-found]
+from qtpy import QtCore, QtGui  # type: ignore[import-not-found]
 
 from .http_client import AiHttpClient
 from .registry import ModelInfo, ProviderConfig
 from .store import AiProviderStore
+from ..editor_assist.bridge import PythonEditorAssistBridge
+from ..editor_assist.workspace import EditorAssistContext
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +104,47 @@ class AiLlmBridge(QtCore.QObject):
             if cfg:
                 self._chat_model_id = cfg.chat_model_id
 
+        self._assist_context: EditorAssistContext | None = None
+        self._lsp_bridge: PythonEditorAssistBridge | None = None
+
+    def set_lsp_bridge(self, bridge: PythonEditorAssistBridge | None) -> None:
+        """Inject the Python LSP bridge so we can route completions to it."""
+        self._lsp_bridge = bridge
+
+    def set_assist_context(self, context: EditorAssistContext | None) -> None:
+        self._assist_context = context
+
+    def _format_assist_context(self) -> str:
+        if not self._assist_context:
+            return ""
+        ctx = self._assist_context
+        lines = []
+        if ctx.data_in_ports:
+            lines.append("## Input Ports (`dataInPorts`)")
+            for p in ctx.data_in_ports:
+                req = "required" if p.required else "optional"
+                schema_str = json.dumps(p.value_schema) if p.value_schema else "Any"
+                lines.append(f"- `{p.name}` ({req}): {schema_str}")
+        if ctx.state_fields:
+            lines.append("## State Fields (`stateFields`)")
+            for f in ctx.state_fields:
+                req = "required" if f.required else "optional"
+                schema_str = json.dumps(f.value_schema) if f.value_schema else "Any"
+                lines.append(f"- `{f.name}` ({req}, access={f.access}): {schema_str}")
+        if not lines:
+            return ""
+        
+        out = ["\n# Current Node / Component Structure"]
+        out.extend(lines)
+        out.append("\n*Note: Use the above node inputs and states context to guide your logic and typing.*")
+        return "\n".join(out)
+
+    def _get_system_prompt(self, base_prompt: str) -> str:
+        ctx_str = self._format_assist_context()
+        if ctx_str:
+            return f"{base_prompt}\n\n{ctx_str}"
+        return base_prompt
+
     # ------------------------------------------------------------------
     # Configuration slots (called from quick panel via QWebChannel)
     # ------------------------------------------------------------------
@@ -144,6 +187,14 @@ class AiLlmBridge(QtCore.QObject):
             cfg.reasoning_level = str(level or "")
             self._store.save_provider(cfg, emit=False)
 
+    @QtCore.Slot(str)
+    def copy_to_clipboard(self, text: str) -> None:
+        """Robust clipboard copy for chat code blocks, bypassing JS limitations."""
+        clipboard = QtGui.QGuiApplication.clipboard()
+        if clipboard:
+            clipboard.setText(str(text or ""), mode=QtGui.QClipboard.Mode.Clipboard)
+            logger.debug("AI Bridge: copied %d chars to system clipboard", len(text))
+
     @QtCore.Slot()
     def reset_chat_history(self) -> None:
         """Called when user clicks the reset button in UI."""
@@ -156,9 +207,57 @@ class AiLlmBridge(QtCore.QObject):
     # Inline suggestion (FIM)
     # ------------------------------------------------------------------
 
-    @QtCore.Slot(str, str, str)
-    def request_inline_suggestion(self, request_id: str, prefix: str, suffix: str) -> None:
+    @QtCore.Slot(str, str, str, int, int)
+    def request_inline_suggestion(self, request_id: str, prefix: str, suffix: str, line: int, column: int) -> None:
         rid = str(request_id or "")
+
+        # 1. Check if LSP is selected
+        if self._inline_provider_id == "lsp":
+            if self._lsp_bridge:
+                # We reuse the sync logic if possible, or just request completions directly
+                # However, PythonEditorAssistBridge.request_completions returns its result via signals.
+                # Here we need a more direct way or wait for it.
+                # Actually, we can just call _completion_items which is internal but available on bridge.
+                # IT NEEDS TO RUN IN A THREAD if we want to avoid blocking, but the bridge usually handles its own executor.
+                # But request_inline_suggestion is expected to be async (emits signal later).
+                
+                # We'll use the executor to avoid blocking the main thread
+                def _handle_lsp():
+                    try:
+                        # Reconstruct "current code" for LSP - we don't have the full code here, 
+                        # but prefix and suffix usually form it around the cursor.
+                        # Ideally, the caller should have synced the document already.
+                        # Fortunately, PythonEditorAssistBridge.sync_document is called by Monaco on every change.
+                        
+                        # We use _completion_items which is internal but it's what we need.
+                        # It returns a list of dicts: {"label": "...", "insertText": "...", ...}
+                        # We just take the first one.
+                        items = self._lsp_bridge._completion_items(
+                            code="", # already synced
+                            line=int(line),
+                            column=int(column),
+                            request_id="inline-" + rid
+                        )
+                        text = ""
+                        if items:
+                            # Inline suggestions (ghost text) usually want just the tail, 
+                            # monaco-editor-dialog.py JS filter handles prefix matching.
+                            # But FIM usually returns exactly what should be inserted.
+                            text = items[0].get("insertText") or items[0].get("label", "")
+                        
+                        QtCore.QTimer.singleShot(0, lambda: self.inline_suggestion_ready.emit(rid, text))
+                    except Exception:
+                        logger.exception("LSP inline suggestion failed")
+                        QtCore.QTimer.singleShot(0, lambda: self.inline_suggestion_ready.emit(rid, ""))
+
+                import threading
+                threading.Thread(target=_handle_lsp, daemon=True).start()
+                return
+            else:
+                self.inline_suggestion_ready.emit(rid, "")
+                return
+
+        # 2. Otherwise route to LLM
         cfg = self._chat_provider(for_inline=True)
         if cfg is None:
             self.inline_suggestion_ready.emit(rid, "")
@@ -191,9 +290,9 @@ class AiLlmBridge(QtCore.QObject):
         """Strip any accidental markdown fences from inline completions."""
         lines = text.splitlines()
         if lines and lines[0].startswith("```"):
-            lines = lines[1:]
+            lines.pop(0)
         if lines and lines[-1].strip() == "```":
-            lines = lines[:-1]
+            lines.pop()
         return "\n".join(lines)
 
     # ------------------------------------------------------------------
@@ -220,22 +319,23 @@ class AiLlmBridge(QtCore.QObject):
         except json.JSONDecodeError:
             history = []
 
-        messages = self._build_chat_messages(history, code, selection)
+        system_prompt = self._get_system_prompt(_SYSTEM_PROMPT_CODE)
+        messages = self._build_chat_messages(history, code, selection, system_prompt)
         self._update_context_tokens(messages)
 
         self._http.chat_completion_stream(
             cfg,
             model_id=model_id,
             messages=messages,
-            system=_SYSTEM_PROMPT_CODE,
+            system=system_prompt,
             max_tokens=4096,
             on_chunk=lambda delta: self.chat_chunk_ready.emit(rid, delta),
             on_done=lambda _full, err: self.chat_done.emit(rid, str(err or "")),
         )
 
     @staticmethod
-    def _build_chat_messages(history: list[dict], code: str, selection: str) -> list[dict]:
-        messages: list[dict] = [{"role": "system", "content": _SYSTEM_PROMPT_CODE}]
+    def _build_chat_messages(history: list[dict], code: str, selection: str, system_prompt: str) -> list[dict]:
+        messages: list[dict] = [{"role": "system", "content": system_prompt}]
         if code:
             context_content = f"Current file:\n```\n{code}\n```"
             if selection:
@@ -249,8 +349,8 @@ class AiLlmBridge(QtCore.QObject):
     # Edit mode (non-streaming → diff view)
     # ------------------------------------------------------------------
 
-    @QtCore.Slot(str, str, str)
-    def request_edit(self, request_id: str, code: str, instruction: str) -> None:
+    @QtCore.Slot(str, str, str, str)
+    def request_edit(self, request_id: str, code: str, instruction: str, messages_json: str) -> None:
         rid = str(request_id or "")
         cfg = self._chat_provider(for_inline=False)
         if cfg is None:
@@ -262,21 +362,31 @@ class AiLlmBridge(QtCore.QObject):
             self.edit_result_ready.emit(rid, "", "No model selected")
             return
 
-        messages = [
-            {"role": "system", "content": _SYSTEM_PROMPT_EDIT},
-            {
-                "role": "user",
-                "content": (
-                    f"Instruction: {instruction}\n\n"
-                    f"Code:\n```\n{code}\n```"
-                ),
-            },
-        ]
+        system_prompt = self._get_system_prompt(_SYSTEM_PROMPT_EDIT)
+        messages = [{"role": "system", "content": system_prompt}]
+        
+        try:
+            history = json.loads(messages_json) if messages_json else []
+            if isinstance(history, list):
+                # Filter out system prompts from history
+                history = [m for m in history if m.get("role") != "system"]
+                messages.extend(history)
+        except json.JSONDecodeError:
+            pass
+            
+        messages.append({
+            "role": "user",
+            "content": (
+                f"Instruction: {instruction}\n\n"
+                f"Code:\n```\n{code}\n```"
+            ),
+        })
+
         self._http.chat_completion(
             cfg,
             model_id=model_id,
             messages=messages,
-            system=_SYSTEM_PROMPT_EDIT,
+            system=system_prompt,
             max_tokens=8192,
             on_result=lambda text, err: self._on_edit_result(rid, text, err),
         )
@@ -295,15 +405,15 @@ class AiLlmBridge(QtCore.QObject):
         # This handles cases where the model outputs reasoning before the code.
         think_end = text.rfind("</think>")
         if think_end != -1:
-            text = text[think_end + len("</think>"):]
+            text = text[think_end + len("</think>"):]  # type: ignore[index,arg-type]
         text = text.strip()
 
         # 2. Strip surrounding markdown fences if present
         lines = text.splitlines()
         if lines and lines[0].startswith("```"):
-            lines = lines[1:]
+            lines.pop(0)
         if lines and lines[-1].strip() == "```":
-            lines = lines[:-1]
+            lines.pop()
         
         return "\n".join(lines)
 
@@ -331,7 +441,8 @@ class AiLlmBridge(QtCore.QObject):
         except json.JSONDecodeError:
             history = []
 
-        messages: list[dict] = [{"role": "system", "content": _SYSTEM_PROMPT_PLAN}]
+        system_prompt = self._get_system_prompt(_SYSTEM_PROMPT_PLAN)
+        messages: list[dict] = [{"role": "system", "content": system_prompt}]
         if code:
             messages.append({"role": "user", "content": f"Context code:\n```\n{code}\n```"})
             messages.append({"role": "assistant", "content": "I see the code. What would you like me to do?"})
@@ -343,7 +454,7 @@ class AiLlmBridge(QtCore.QObject):
             cfg,
             model_id=model_id,
             messages=messages,
-            system=_SYSTEM_PROMPT_PLAN,
+            system=system_prompt,
             max_tokens=4096,
             on_chunk=lambda delta: self.plan_step_ready.emit(rid, delta),
             on_done=lambda _full, err: self.plan_done.emit(rid, str(err or "")),

@@ -1,7 +1,7 @@
 """
 AiProviderStore — persistent storage for AI provider configurations.
 
-Configs are saved as JSON to ``~/.f8studio/ai_providers.json``. The store also
+Configs are saved as JSON to ``~/.config/Feel8/ai_providers.json``. The store also
 handles asynchronous model list fetching via QNetworkAccessManager so the Qt
 event loop is never blocked.
 """
@@ -443,7 +443,22 @@ class AiProviderStore(QtCore.QObject):
             base = Path(xdg)
         else:
             base = Path.home() / ".config"
-        return base / "f8studio" / "ai_providers.json"
+
+        new_path = base / "Feel8" / "ai_providers.json"
+        old_path = base / "f8studio" / "ai_providers.json"
+
+        # Automatic migration
+        if old_path.exists() and not new_path.exists():
+            try:
+                new_path.parent.mkdir(parents=True, exist_ok=True)
+                import shutil
+                shutil.move(str(old_path), str(new_path))
+                logger.info("Migrated AI providers config from %s to %s", old_path, new_path)
+            except Exception:
+                logger.exception("Failed to migrate AI providers config")
+                return old_path  # Fallback to old path if migration fails
+
+        return new_path
 
     def _load(self) -> None:
         """Load persisted providers. If no config exists, initialize with defaults."""

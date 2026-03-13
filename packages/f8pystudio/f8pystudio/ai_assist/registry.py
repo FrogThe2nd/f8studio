@@ -52,6 +52,11 @@ class ModelInfo:
     """Connectivity status: 'unknown', 'ok', or 'error'."""
 
     @property
+    def health_icon(self) -> str:
+        status_map = {"ok": "🟢", "error": "🔴", "unknown": "⚪"}
+        return status_map.get(self.health_status, "⚪")
+
+    @property
     def display_name_with_icons(self) -> str:
         icons = []
         if self.capabilities.supports_reasoning:
@@ -68,6 +73,11 @@ class ModelInfo:
                 
         info = " ".join(icons)
         return f"{self.display_name} [{info}]" if info else self.display_name
+
+    @property
+    def full_display_label(self) -> str:
+        """Label with health icon and capability icons, e.g. '🟢 GPT-4o [👁️ 128k]'."""
+        return f"{self.health_icon} {self.display_name_with_icons}"
 
 
 @dataclass
@@ -119,6 +129,16 @@ class ProviderConfig:
 
     chat_path: str = ""
     """Path to chat completions. Empty uses protocol default."""
+
+    @property
+    def health_icon(self) -> str:
+        if not self.cached_models:
+            return "⚪"
+        if any(m.health_status == "ok" for m in self.cached_models):
+            return "🟢"
+        if all(m.health_status == "error" for m in self.cached_models):
+            return "🔴"
+        return "⚪"
 
 
 # ---------------------------------------------------------------------------

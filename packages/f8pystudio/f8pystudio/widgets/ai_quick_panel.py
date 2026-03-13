@@ -44,6 +44,7 @@ class AiQuickPanel(QtWidgets.QWidget):
 
         self._store.providers_changed.connect(self._on_providers_changed)  # type: ignore[attr-defined]
         self._store.models_fetched.connect(self._on_models_fetched)  # type: ignore[attr-defined]
+        self._store.model_tested.connect(self._on_model_tested)  # type: ignore[attr-defined]
 
         self.setObjectName("aiQuickPanel")
         self.setStyleSheet(
@@ -155,8 +156,11 @@ class AiQuickPanel(QtWidgets.QWidget):
             self._inline_provider_combo.clear()
             self._chat_provider_combo.clear()
             for p in providers:
-                self._inline_provider_combo.addItem(p.display_name, p.provider_id)
-                self._chat_provider_combo.addItem(p.display_name, p.provider_id)
+                self._inline_provider_combo.addItem(f"{p.health_icon} {p.display_name}", p.provider_id)
+                self._chat_provider_combo.addItem(f"{p.health_icon} {p.display_name}", p.provider_id)
+
+            # Add virtual LSP provider for inline suggestions
+            self._inline_provider_combo.addItem("🧩 Standard Python LSP", "lsp")
 
             # Select the global active provider from bridge
             self._set_combo_by_data(self._inline_provider_combo, self._bridge._inline_provider_id)
@@ -177,6 +181,8 @@ class AiQuickPanel(QtWidgets.QWidget):
                 levels = ["(none)", "low", "medium", "high"]
                 if ch_p.reasoning_level in levels:
                     self._reasoning_combo.setCurrentIndex(levels.index(ch_p.reasoning_level))
+                else:
+                    self._reasoning_combo.setCurrentIndex(0)
         finally:
             self._building = False
 
@@ -186,25 +192,42 @@ class AiQuickPanel(QtWidgets.QWidget):
 
     def _fill_inline_models(self, cfg: ProviderConfig) -> None:
         current_id = self._current_id(self._inline_model_combo)
-        self._inline_model_combo.clear()
-        for m in cfg.cached_models:
-            self._inline_model_combo.addItem(m.display_name_with_icons, m.model_id)
-        if not cfg.cached_models:
-            self._inline_model_combo.addItem("(no models cached — click ⟳)", "")
-        
-        if current_id:
-            self._set_combo_by_data(self._inline_model_combo, current_id)
+        self._inline_model_combo.blockSignals(True)
+        try:
+            self._inline_model_combo.clear()
+            self._inline_model_combo.addItem("(none)", "")
+            for m in cfg.cached_models:
+                if m.health_status == "error":
+                    continue
+                self._inline_model_combo.addItem(m.full_display_label, m.model_id)
+            if not cfg.cached_models:
+                self._inline_model_combo.addItem("(no models cached — click ⟳)", "")
+            
+            if current_id == "lsp":
+                self._inline_model_combo.addItem("Standard Python LSP", "standard")
+                self._inline_model_combo.setCurrentIndex(0)
+            elif current_id:
+                self._set_combo_by_data(self._inline_model_combo, current_id)
+        finally:
+            self._inline_model_combo.blockSignals(False)
 
     def _fill_chat_models(self, cfg: ProviderConfig) -> None:
         current_id = self._current_id(self._chat_model_combo)
-        self._chat_model_combo.clear()
-        for m in cfg.cached_models:
-            self._chat_model_combo.addItem(m.display_name_with_icons, m.model_id)
-        if not cfg.cached_models:
-            self._chat_model_combo.addItem("(no models cached — click ⟳)", "")
-            
-        if current_id:
-            self._set_combo_by_data(self._chat_model_combo, current_id)
+        self._chat_model_combo.blockSignals(True)
+        try:
+            self._chat_model_combo.clear()
+            self._chat_model_combo.addItem("(none)", "")
+            for m in cfg.cached_models:
+                if m.health_status == "error":
+                    continue
+                self._chat_model_combo.addItem(m.full_display_label, m.model_id)
+            if not cfg.cached_models:
+                self._chat_model_combo.addItem("(no models cached — click ⟳)", "")
+                
+            if current_id:
+                self._set_combo_by_data(self._chat_model_combo, current_id)
+        finally:
+            self._chat_model_combo.blockSignals(False)
 
     def _setup_combo_search(self, combo: QtWidgets.QComboBox) -> None:
         combo.setEditable(True)
@@ -221,17 +244,32 @@ class AiQuickPanel(QtWidgets.QWidget):
     def _on_inline_provider_changed(self) -> None:
         if self._building:
             return
-        cfg = self._current_provider(self._inline_provider_combo)
-        if cfg:
-            self._fill_inline_models(cfg)
+        self._building = True
+        try:
+            cfg = self._current_provider(self._inline_provider_combo)
+            if self._current_id(self._inline_provider_combo) == "lsp":
+                self._inline_model_combo.clear()
+                self._inline_model_combo.addItem("Standard Python LSP", "standard")
+            elif cfg:
+                self._fill_inline_models(cfg)
+                if cfg.inline_model_id:
+                    self._set_combo_by_data(self._inline_model_combo, cfg.inline_model_id)
+        finally:
+            self._building = False
         self._on_inline_model_changed()
 
     def _on_chat_provider_changed(self) -> None:
         if self._building:
             return
-        cfg = self._current_provider(self._chat_provider_combo)
-        if cfg:
-            self._fill_chat_models(cfg)
+        self._building = True
+        try:
+            cfg = self._current_provider(self._chat_provider_combo)
+            if cfg:
+                self._fill_chat_models(cfg)
+                if cfg.chat_model_id:
+                    self._set_combo_by_data(self._chat_model_combo, cfg.chat_model_id)
+        finally:
+            self._building = False
         self._on_chat_model_changed()
 
     def _on_inline_model_changed(self) -> None:
@@ -272,6 +310,28 @@ class AiQuickPanel(QtWidgets.QWidget):
         cfg = self._store.provider_by_id(pid)
         if cfg is None:
             return
+        if self._current_id(self._inline_provider_combo) == pid:
+            self._fill_inline_models(cfg)
+        if self._current_id(self._chat_provider_combo) == pid:
+            self._fill_chat_models(cfg)
+
+    def _on_model_tested(self, pid: str, _mid: str, _success: bool, _error: str) -> None:
+        # Refresh current dropdowns if they belong to this provider
+        cfg = self._store.provider_by_id(pid)
+        if cfg is None:
+            return
+            
+        # Update provider combos (health icon might change)
+        self._building = True
+        try:
+            for combo in [self._inline_provider_combo, self._chat_provider_combo]:
+                idx = combo.findData(pid)
+                if idx >= 0:
+                    combo.setItemText(idx, f"{cfg.health_icon} {cfg.display_name}")
+        finally:
+            self._building = False
+
+        # Update model list if visible
         if self._current_id(self._inline_provider_combo) == pid:
             self._fill_inline_models(cfg)
         if self._current_id(self._chat_provider_combo) == pid:

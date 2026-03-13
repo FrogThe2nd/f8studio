@@ -46,11 +46,15 @@ class AiProviderConfigDialog(QtWidgets.QDialog):
     # ------------------------------------------------------------------
 
     def _build_ui(self) -> None:
-        root = QtWidgets.QHBoxLayout(self)
+        root_layout = QtWidgets.QVBoxLayout(self)
+
+        self._splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
+        root_layout.addWidget(self._splitter, 1)
 
         # Left: provider list + add/delete buttons
-        left = QtWidgets.QVBoxLayout()
-        root.addLayout(left, 1)
+        left_widget = QtWidgets.QWidget()
+        left = QtWidgets.QVBoxLayout(left_widget)
+        left.setContentsMargins(0, 0, 0, 0)
 
         left.addWidget(QtWidgets.QLabel("<b>Providers</b>"))
         self._list = QtWidgets.QListWidget()
@@ -67,12 +71,12 @@ class AiProviderConfigDialog(QtWidgets.QDialog):
         add_del.addWidget(self._del_btn)
         left.addLayout(add_del)
 
-        # Divider
-        root.addWidget(_vline())
+        self._splitter.addWidget(left_widget)
 
         # Right: form
-        right = QtWidgets.QVBoxLayout()
-        root.addLayout(right, 2)
+        right_widget = QtWidgets.QWidget()
+        right = QtWidgets.QVBoxLayout(right_widget)
+        right.setContentsMargins(0, 0, 0, 0)
 
         form = QtWidgets.QFormLayout()
         right.addLayout(form)
@@ -114,15 +118,20 @@ class AiProviderConfigDialog(QtWidgets.QDialog):
         fetch_row = QtWidgets.QHBoxLayout()
         self._fetch_btn = QtWidgets.QPushButton("⟳ Fetch Models")
         self._fetch_btn.clicked.connect(self._on_fetch_models)  # type: ignore[attr-defined]
-        self._fetch_status = QtWidgets.QLabel("")
-        self._fetch_status.setStyleSheet("color: gray; font-size: 11px;")
         
         self._test_btn = QtWidgets.QPushButton("Test Models")
         self._test_btn.clicked.connect(self._on_test_models)  # type: ignore[attr-defined]
         
         fetch_row.addWidget(self._fetch_btn)
         fetch_row.addWidget(self._test_btn)
+
+        self._fetch_status = QtWidgets.QLabel("")
+        self._fetch_status.setStyleSheet("color: gray; font-size: 11px;")
+        # Fix layout jumping: Use Ignored policy so long text doesn't push the layout.
+        # We also enable text elision or simply let it overflow while staying compact.
+        self._fetch_status.setSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored, QtWidgets.QSizePolicy.Policy.Preferred)
         fetch_row.addWidget(self._fetch_status, 1)
+
         form.addRow("Models:", fetch_row)
 
         # Model table
@@ -143,6 +152,9 @@ class AiProviderConfigDialog(QtWidgets.QDialog):
         self._chat_model_combo = QtWidgets.QComboBox()
         form.addRow("Chat/Edit Model:", self._chat_model_combo)
 
+        self._setup_combo_search(self._inline_model_combo)
+        self._setup_combo_search(self._chat_model_combo)
+
         self._reasoning_combo = QtWidgets.QComboBox()
         self._reasoning_combo.addItems(["(none)", "low", "medium", "high"])
         form.addRow("Reasoning Level:", self._reasoning_combo)
@@ -157,6 +169,10 @@ class AiProviderConfigDialog(QtWidgets.QDialog):
         btns.button(QtWidgets.QDialogButtonBox.StandardButton.Save).clicked.connect(self._on_save_provider)  # type: ignore[attr-defined]
         btns.button(QtWidgets.QDialogButtonBox.StandardButton.Close).clicked.connect(self.close)  # type: ignore[attr-defined]
         right.addWidget(btns)
+
+        self._splitter.addWidget(right_widget)
+        # Set initial sizes: 1/3 for list, 2/3 for form
+        self._splitter.setSizes([260, 520])
 
         self._form_widgets: list[QtWidgets.QWidget] = [
             self._name_edit, self._protocol_combo, self._endpoint_edit,
@@ -176,7 +192,7 @@ class AiProviderConfigDialog(QtWidgets.QDialog):
         self._list.blockSignals(True)
         self._list.clear()
         for cfg in self._store.providers():
-            item = QtWidgets.QListWidgetItem(cfg.display_name)
+            item = QtWidgets.QListWidgetItem(f"{cfg.health_icon} {cfg.display_name}")
             item.setData(QtCore.Qt.ItemDataRole.UserRole, cfg.provider_id)
             self._list.addItem(item)
         self._list.blockSignals(False)
@@ -232,42 +248,49 @@ class AiProviderConfigDialog(QtWidgets.QDialog):
 
     def _refresh_model_combos(self, cfg: ProviderConfig) -> None:
         self._model_table.setRowCount(0)
-        self._inline_model_combo.clear()
-        self._chat_model_combo.clear()
-        self._inline_model_combo.addItem("(none)", "")
-        self._chat_model_combo.addItem("(none)", "")
-        
-        for m in cfg.cached_models:
-            row = self._model_table.rowCount()
-            self._model_table.insertRow(row)
+        self._inline_model_combo.blockSignals(True)
+        self._chat_model_combo.blockSignals(True)
+        try:
+            self._inline_model_combo.clear()
+            self._chat_model_combo.clear()
+            self._inline_model_combo.addItem("(none)", "")
+            self._chat_model_combo.addItem("(none)", "")
             
-            # Status
-            status_map = {"ok": "🟢", "error": "🔴", "unknown": "⚪"}
-            status_item = QtWidgets.QTableWidgetItem(status_map.get(m.health_status, "⚪"))
-            status_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-            self._model_table.setItem(row, 0, status_item)
-            
-            # Name
-            self._model_table.setItem(row, 1, QtWidgets.QTableWidgetItem(m.display_name_with_icons))
-            
-            # ID
-            id_item = QtWidgets.QTableWidgetItem(m.model_id)
-            id_item.setForeground(QtGui.QColor("#888888"))
-            self._model_table.setItem(row, 2, id_item)
-            
-            self._inline_model_combo.addItem(m.display_name_with_icons, m.model_id)
-            self._chat_model_combo.addItem(m.display_name_with_icons, m.model_id)
+            for m in cfg.cached_models:
+                row = self._model_table.rowCount()
+                self._model_table.insertRow(row)
+                
+                # Status
+                status_map = {"ok": "🟢", "error": "🔴", "unknown": "⚪"}
+                status_item = QtWidgets.QTableWidgetItem(status_map.get(m.health_status, "⚪"))
+                status_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+                self._model_table.setItem(row, 0, status_item)
+                
+                # Name
+                self._model_table.setItem(row, 1, QtWidgets.QTableWidgetItem(m.display_name_with_icons))
+                
+                # ID
+                id_item = QtWidgets.QTableWidgetItem(m.model_id)
+                id_item.setForeground(QtGui.QColor("#888888"))
+                self._model_table.setItem(row, 2, id_item)
+                
+                if m.health_status != "error":
+                    self._inline_model_combo.addItem(m.full_display_label, m.model_id)
+                    self._chat_model_combo.addItem(m.full_display_label, m.model_id)
 
-        # Restore selection
-        for i in range(self._inline_model_combo.count()):
-            if self._inline_model_combo.itemData(i) == cfg.inline_model_id:
-                self._inline_model_combo.setCurrentIndex(i)
-                break
+            # Restore selection
+            for i in range(self._inline_model_combo.count()):
+                if self._inline_model_combo.itemData(i) == cfg.inline_model_id:
+                    self._inline_model_combo.setCurrentIndex(i)
+                    break
 
-        for i in range(self._chat_model_combo.count()):
-            if self._chat_model_combo.itemData(i) == cfg.chat_model_id:
-                self._chat_model_combo.setCurrentIndex(i)
-                break
+            for i in range(self._chat_model_combo.count()):
+                if self._chat_model_combo.itemData(i) == cfg.chat_model_id:
+                    self._chat_model_combo.setCurrentIndex(i)
+                    break
+        finally:
+            self._inline_model_combo.blockSignals(False)
+            self._chat_model_combo.blockSignals(False)
 
         levels = ["(none)", "low", "medium", "high"]
         try:
@@ -376,6 +399,7 @@ class AiProviderConfigDialog(QtWidgets.QDialog):
                 self._refresh_model_combos(cfg)
         else:
             self._fetch_status.setText(f"Error: {error}")
+            self._fetch_status.setToolTip(error)
 
     def _on_test_models(self) -> None:
         pid = self._current_provider_id
@@ -412,12 +436,17 @@ class AiProviderConfigDialog(QtWidgets.QDialog):
                     status_item.setToolTip(error)
                 break
         
-        # Check if all pending tests are done? 
-        # For simplicity, we just enable the button back after a timeout or 
-        # we could track count. Let's just enable it after 1s or if we want to be precise, 
-        # we'd need more state. Let's just re-enable it for now.
+        # Immediate sync for combos
+        cfg = self._store.provider_by_id(pid)
+        if cfg:
+            self._refresh_model_combos(cfg)
+
         self._test_btn.setEnabled(True)
         self._fetch_status.setText("Test complete." if success else f"Error: {error}")
+        if not success:
+            self._fetch_status.setToolTip(error)
+        else:
+            self._fetch_status.setToolTip("")
 
     def _on_protocol_changed(self, idx: int) -> None:
         if not self._current_provider_id:
@@ -443,6 +472,14 @@ class AiProviderConfigDialog(QtWidgets.QDialog):
     def _set_form_enabled(self, enabled: bool) -> None:
         for w in self._form_widgets:
             w.setEnabled(enabled)
+
+    def _setup_combo_search(self, combo: QtWidgets.QComboBox) -> None:
+        combo.setEditable(True)
+        combo.setInsertPolicy(QtWidgets.QComboBox.InsertPolicy.NoInsert)
+        completer = combo.completer()
+        if completer:
+            completer.setFilterMode(QtCore.Qt.MatchFlag.MatchContains)
+            completer.setCompletionMode(QtWidgets.QCompleter.CompletionMode.PopupCompletion)
 
 
 def _vline() -> QtWidgets.QFrame:
