@@ -152,6 +152,7 @@ class AiQuickPanel(QtWidgets.QWidget):
         self._building = True
         try:
             providers = self._store.providers()
+            selection_state = self._bridge.selection_state()
 
             self._inline_provider_combo.clear()
             self._chat_provider_combo.clear()
@@ -163,24 +164,24 @@ class AiQuickPanel(QtWidgets.QWidget):
             self._inline_provider_combo.addItem("🧩 Standard Python LSP", "lsp")
 
             # Select the global active provider from bridge
-            self._set_combo_by_data(self._inline_provider_combo, self._bridge._inline_provider_id)
-            self._set_combo_by_data(self._chat_provider_combo, self._bridge._chat_provider_id)
+            self._set_combo_by_data(self._inline_provider_combo, selection_state.inline_provider_id)
+            self._set_combo_by_data(self._chat_provider_combo, selection_state.chat_provider_id)
 
             # Populate models for the active provider
             in_p = self._current_provider(self._inline_provider_combo)
             if in_p:
                 self._fill_inline_models(in_p)
-                self._set_combo_by_data(self._inline_model_combo, self._bridge._inline_model_id)
+                self._set_combo_by_data(self._inline_model_combo, selection_state.inline_model_id)
                 
             ch_p = self._current_provider(self._chat_provider_combo)
             if ch_p:
                 self._fill_chat_models(ch_p)
-                self._set_combo_by_data(self._chat_model_combo, self._bridge._chat_model_id)
+                self._set_combo_by_data(self._chat_model_combo, selection_state.chat_model_id)
                 
                 # set reasoning combo correctly
                 levels = ["(none)", "low", "medium", "high"]
-                if ch_p.reasoning_level in levels:
-                    self._reasoning_combo.setCurrentIndex(levels.index(ch_p.reasoning_level))
+                if selection_state.reasoning_level in levels:
+                    self._reasoning_combo.setCurrentIndex(levels.index(selection_state.reasoning_level))
                 else:
                     self._reasoning_combo.setCurrentIndex(0)
         finally:

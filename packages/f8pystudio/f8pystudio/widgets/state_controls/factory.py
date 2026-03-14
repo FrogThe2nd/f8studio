@@ -5,6 +5,7 @@ from typing import Any
 from f8pysdk import F8StateAccess
 
 from ...editor_assist.protocol import editor_assist_context_for_field
+from ...editor_assist.session import EditorSessionKey
 from ...editor_assist.workspace import EditorAssistContext
 from ..editor_controls import (
     F8PropBoolSwitch,
@@ -34,6 +35,24 @@ def _editor_assist_context_for_code_field(node: Any, prop_name: str) -> EditorAs
     except Exception:
         return None
     return editor_assist_context_for_field(spec, field_kind="state", field_key="code", language="python")
+
+
+def _editor_session_key_for_node(node: Any, prop_name: str) -> EditorSessionKey | None:
+    field_name = str(prop_name or "").strip()
+    if not field_name:
+        return None
+    try:
+        graph = node.graph
+        node_id = str(node.id or "").strip()
+    except AttributeError:
+        return None
+    if graph is None or not node_id:
+        return None
+    return EditorSessionKey.studio_node(
+        graph_id=f"graph:{id(graph)}",
+        node_id=node_id,
+        field_name=field_name,
+    )
 
 
 def build_state_value_widget(context: ControlBuildContext) -> Any:
@@ -73,6 +92,7 @@ def build_state_value_widget(context: ControlBuildContext) -> Any:
                 current_prop,
             )
         )
+        widget.set_editor_session_key(_editor_session_key_for_node(node, prop_name))
         return widget
 
     if ui_control_l in {"wrapline"}:

@@ -13,6 +13,7 @@ from f8pysdk import F8OperatorSpec
 from f8pysdk.msgspec_codec import dump_json, validate_as
 
 from ..app_logging import configure_root_logging_from_env
+from ..editor_assist.session import EditorSessionKey
 from ..qt_font_utils import normalize_application_font
 from ..webengine_utils import configure_default_webengine_profile
 from ..widgets.monaco_editor_dialog import open_code_editor_window
@@ -66,9 +67,10 @@ def _target_matches(raw_spec: dict[str, Any]) -> bool:
     return operator_class == _TARGET_OPERATOR_CLASS and service_class == _TARGET_SERVICE_CLASS
 
 
-def load_session_editor_target(session_path: Path) -> SessionEditorTarget:
+def load_session_editor_targets(session_path: Path) -> list[SessionEditorTarget]:
     resolved_path = session_path.expanduser().resolve()
     payload = _load_json_file(resolved_path)
+    targets: list[SessionEditorTarget] = []
 
     for node_id, node_payload in _iter_layout_nodes(payload):
         raw_spec = node_payload.get("f8_spec")
@@ -101,18 +103,26 @@ def load_session_editor_target(session_path: Path) -> SessionEditorTarget:
                     raw_code = default_value if isinstance(default_value, str) else None
                 break
         code = str(raw_code or "")
-        return SessionEditorTarget(
-            session_path=resolved_path,
-            node_id=node_id,
-            spec=spec,
-            code=code,
-            context=context,
+        targets.append(
+            SessionEditorTarget(
+                session_path=resolved_path,
+                node_id=node_id,
+                spec=spec,
+                code=code,
+                context=context,
+            )
         )
 
+    if targets:
+        return targets
     raise ValueError(
         "No matching node found for "
         f"operatorClass={_TARGET_OPERATOR_CLASS!r}, serviceClass={_TARGET_SERVICE_CLASS!r}"
     )
+
+
+def load_session_editor_target(session_path: Path) -> SessionEditorTarget:
+    return load_session_editor_targets(session_path)[0]
 
 
 @dataclass
@@ -134,18 +144,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--session",
         default=str(_DEFAULT_SESSION_PATH),
-        help="Session JSON to inspect for the first f8.pyengine / f8.python_script node.",
+        help="Session JSON to inspect for all f8.pyengine / f8.python_script nodes.",
     )
     args = parser.parse_args(argv)
 
-    target = load_session_editor_target(Path(str(args.session or _DEFAULT_SESSION_PATH)))
-    logger.info(
-        "Loaded debug session target: session=%s node=%s serviceClass=%s operatorClass=%s",
-        target.session_path,
-        target.node_id,
-        target.spec.serviceClass,
-        target.spec.operatorClass,
-    )
+    targets = load_session_editor_targets(Path(str(args.session or _DEFAULT_SESSION_PATH)))
+    for target in targets:
+        logger.info(
+            "Loaded debug session target: session=%s node=%s serviceClass=%s operatorClass=%s",
+            target.session_path,
+            target.node_id,
+            target.spec.serviceClass,
+            target.spec.operatorClass,
+        )
 
     app = QtWidgets.QApplication.instance()
     owns_app = app is None
@@ -156,26 +167,33 @@ def main(argv: list[str] | None = None) -> int:
     normalize_application_font(app)
     configure_default_webengine_profile()
 
-    state = _DebugSessionState.from_target(target)
-
-    def _on_code_saved(code: str) -> None:
-        state.code = str(code or "")
-        logger.info(
-            "Debug editor saved code length=%d node=%s field=%s",
-            len(state.code),
-            state.target.node_id,
-            _TARGET_FIELD_NAME,
+    states = [_DebugSessionState.from_target(target) for target in targets]
+    for state in states:
+        session_key = EditorSessionKey.debug_target(
+            session_path=state.target.session_path,
+            node_id=state.target.node_id,
+            field_name=_TARGET_FIELD_NAME,
         )
 
-    editor_window = open_code_editor_window(
-        None,
-        title=f"Monaco Debug - {state.target.node_id}.{_TARGET_FIELD_NAME}",
-        code=state.code,
-        language="python",
-        on_saved=_on_code_saved,
-        assist_context=state.context(),
-        assist_context_provider=state.context,
-    )
+        def _on_code_saved(code: str, current_state: _DebugSessionState = state) -> None:
+            current_state.code = str(code or "")
+            logger.info(
+                "Debug editor saved code length=%d node=%s field=%s",
+                len(current_state.code),
+                current_state.target.node_id,
+                _TARGET_FIELD_NAME,
+            )
+
+        _ = open_code_editor_window(
+            None,
+            title=f"Monaco Debug - {state.target.node_id}.{_TARGET_FIELD_NAME}",
+            code=state.code,
+            language="python",
+            on_saved=_on_code_saved,
+            assist_context=state.context(),
+            assist_context_provider=state.context,
+            session_key=session_key,
+        )
 
     if owns_app:
         return app.exec()

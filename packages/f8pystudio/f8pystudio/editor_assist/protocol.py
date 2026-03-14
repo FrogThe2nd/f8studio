@@ -49,6 +49,27 @@ def _error_context(spec: F8ServiceSpec | F8OperatorSpec | None, detail: str) -> 
     return EditorAssistContext(language="python", error_message=msg)
 
 
+def _state_fields(spec: F8ServiceSpec | F8OperatorSpec) -> list[Any]:
+    raw_fields = spec.stateFields
+    if isinstance(raw_fields, list):
+        return raw_fields
+    return []
+
+
+def _data_in_ports(spec: F8ServiceSpec | F8OperatorSpec) -> list[Any]:
+    raw_ports = spec.dataInPorts
+    if isinstance(raw_ports, list):
+        return raw_ports
+    return []
+
+
+def _data_out_ports(spec: F8ServiceSpec | F8OperatorSpec) -> list[Any]:
+    raw_ports = spec.dataOutPorts
+    if isinstance(raw_ports, list):
+        return raw_ports
+    return []
+
+
 def _field_editor_assist_payload(
     spec: F8ServiceSpec | F8OperatorSpec,
     *,
@@ -61,17 +82,15 @@ def _field_editor_assist_payload(
         return None, "field key must be non-empty"
 
     if field_kind == "state":
-        raw_fields = getattr(spec, "stateFields", None)
-        if not isinstance(raw_fields, list):
-            return None, "spec.stateFields must be a list"
-        for field in raw_fields:
-            name = str(getattr(field, "name", "") or "").strip()
+        for field in _state_fields(spec):
+            name = str(field.name or "").strip()
             if name != key:
                 continue
-            ui_language = str(getattr(field, "uiLanguage", "") or "").strip().lower()
+            ui_language_raw = field.uiLanguage
+            ui_language = "" if isinstance(ui_language_raw, msgspec.UnsetType) else str(ui_language_raw or "").strip().lower()
             if ui_language and ui_language != language:
                 return None, f"state:{key} uiLanguage={ui_language!r} does not match requested language={language!r}"
-            payload_obj = getattr(field, "editorAssist", None)
+            payload_obj = field.editorAssist
             if payload_obj is None or isinstance(payload_obj, msgspec.UnsetType):
                 return None, f"field-level editorAssist missing for state:{key}"
             if isinstance(payload_obj, dict):
@@ -110,18 +129,17 @@ def _is_valid_module_name(name: str) -> bool:
 
 
 def _spec_data_in_ports(spec: F8ServiceSpec | F8OperatorSpec) -> tuple[EditorAssistDataInPort, ...]:
-    raw_ports = getattr(spec, "dataInPorts", None)
-    if not isinstance(raw_ports, list):
-        return ()
     out: list[EditorAssistDataInPort] = []
-    for port in raw_ports:
-        name = str(getattr(port, "name", "") or "").strip()
+    for port in _data_in_ports(spec):
+        name = str(port.name or "").strip()
         if not name:
             continue
-        required = bool(getattr(port, "required", True))
-        description = str(getattr(port, "description", "") or "").strip()
+        required_raw = port.required
+        required = True if isinstance(required_raw, msgspec.UnsetType) else bool(required_raw)
+        description_raw = port.description
+        description = "" if isinstance(description_raw, msgspec.UnsetType) else str(description_raw or "").strip()
         value_schema: dict[str, Any] | None = None
-        schema_obj = getattr(port, "valueSchema", None)
+        schema_obj = port.valueSchema
         if schema_obj is not None:
             try:
                 dumped = dump_json(schema_obj, mode="json")
@@ -141,18 +159,17 @@ def _spec_data_in_ports(spec: F8ServiceSpec | F8OperatorSpec) -> tuple[EditorAss
 
 
 def _spec_data_out_ports(spec: F8ServiceSpec | F8OperatorSpec) -> tuple[EditorAssistDataOutPort, ...]:
-    raw_ports = getattr(spec, "dataOutPorts", None)
-    if not isinstance(raw_ports, list):
-        return ()
     out: list[EditorAssistDataOutPort] = []
-    for port in raw_ports:
-        name = str(getattr(port, "name", "") or "").strip()
+    for port in _data_out_ports(spec):
+        name = str(port.name or "").strip()
         if not name:
             continue
-        required = bool(getattr(port, "required", True))
-        description = str(getattr(port, "description", "") or "").strip()
+        required_raw = port.required
+        required = True if isinstance(required_raw, msgspec.UnsetType) else bool(required_raw)
+        description_raw = port.description
+        description = "" if isinstance(description_raw, msgspec.UnsetType) else str(description_raw or "").strip()
         value_schema: dict[str, Any] | None = None
-        schema_obj = getattr(port, "valueSchema", None)
+        schema_obj = port.valueSchema
         if schema_obj is not None:
             try:
                 dumped = dump_json(schema_obj, mode="json")
@@ -172,22 +189,20 @@ def _spec_data_out_ports(spec: F8ServiceSpec | F8OperatorSpec) -> tuple[EditorAs
 
 
 def _spec_readable_state_fields(spec: F8ServiceSpec | F8OperatorSpec) -> tuple[EditorAssistStateField, ...]:
-    raw_fields = getattr(spec, "stateFields", None)
-    if not isinstance(raw_fields, list):
-        return ()
     out: list[EditorAssistStateField] = []
-    for field in raw_fields:
-        name = str(getattr(field, "name", "") or "").strip()
+    for field in _state_fields(spec):
+        name = str(field.name or "").strip()
         if not name:
             continue
-        access_raw = getattr(field, "access", None)
-        access = str(getattr(access_raw, "value", access_raw) or "").strip().lower()
+        access = str(field.access.value or "").strip().lower()
         if access not in ("rw", "ro", "wo"):
             continue
-        required = bool(getattr(field, "required", False))
-        description = str(getattr(field, "description", "") or "").strip()
+        required_raw = field.required
+        required = False if isinstance(required_raw, msgspec.UnsetType) else bool(required_raw)
+        description_raw = field.description
+        description = "" if isinstance(description_raw, msgspec.UnsetType) else str(description_raw or "").strip()
         value_schema: dict[str, Any] | None = None
-        schema_obj = getattr(field, "valueSchema", None)
+        schema_obj = field.valueSchema
         if schema_obj is not None:
             try:
                 dumped = dump_json(schema_obj, mode="json")
@@ -417,9 +432,9 @@ def editor_assist_context_for_field(
     return EditorAssistContext(
         language="python",
         node_kind=node_kind,
-        service_class=str(getattr(spec, "serviceClass", "") or "").strip(),
-        operator_class=str(getattr(spec, "operatorClass", "") or "").strip(),
-        node_description=str(getattr(spec, "description", "") or "").strip(),
+        service_class=str(spec.serviceClass or "").strip(),
+        operator_class=str(spec.operatorClass or "").strip() if isinstance(spec, F8OperatorSpec) else "",
+        node_description="" if isinstance(spec.description, msgspec.UnsetType) else str(spec.description or "").strip(),
         support_files=sorted_files,
         overlay_prefix=overlay_prefix,
         dynamic_inputs_binding=dynamic_inputs_binding,

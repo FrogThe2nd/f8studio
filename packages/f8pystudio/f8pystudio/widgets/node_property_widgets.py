@@ -30,6 +30,7 @@ from f8pysdk import (
 from f8pysdk.schema_helpers import schema_default
 
 from ..editor_assist.protocol import editor_assist_context_for_field
+from ..editor_assist.session import EditorSessionKey
 from ..editor_assist.workspace import EditorAssistContext
 from .property_value_widgets import (
     F8CodeButtonPropWidget as _F8CodeButtonPropWidget,
@@ -135,6 +136,24 @@ def _build_editor_assist_context(node: Any, *, prop_name: str) -> EditorAssistCo
 
     spec = _get_node_spec(node)
     return editor_assist_context_for_field(spec, field_kind="state", field_key=field_name, language="python")
+
+
+def _editor_session_key(node: Any, *, prop_name: str) -> EditorSessionKey | None:
+    field_name = str(prop_name or "").strip()
+    if not field_name:
+        return None
+    try:
+        graph = node.graph
+        node_id = str(node.id or "").strip()
+    except AttributeError:
+        return None
+    if graph is None or not node_id:
+        return None
+    return EditorSessionKey.studio_node(
+        graph_id=f"graph:{id(graph)}",
+        node_id=node_id,
+        field_name=field_name,
+    )
 
 
 def _node_missing_lock_info(node: Any) -> tuple[bool, str]:
@@ -2593,6 +2612,7 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
                                 prop_name=current_prop,
                             )
                         )
+                        widget.set_editor_session_key(_editor_session_key(node, prop_name=prop_name))
                 except Exception:
                     logger.exception("Failed to build code editor widget for property '%s'", prop_name)
                 access = _state_field_access(node, prop_name)

@@ -17,6 +17,7 @@ import json
 import logging
 import math
 import os
+from dataclasses import dataclass
 from typing import Any
 
 from qtpy import QtCore, QtGui  # type: ignore[import-not-found]
@@ -24,6 +25,7 @@ from qtpy import QtCore, QtGui  # type: ignore[import-not-found]
 from .http_client import AiHttpClient
 from .registry import ModelInfo, ProviderConfig
 from .store import AiProviderStore
+from .ui_state import load_ai_panel_state, save_ai_panel_state
 from ..editor_assist.bridge import PythonEditorAssistBridge
 from ..editor_assist.workspace import EditorAssistContext
 
@@ -79,6 +81,15 @@ def _env_flag(name: str) -> bool:
     return raw in {"1", "true", "yes", "on", "debug"}
 
 
+@dataclass(frozen=True)
+class AiBridgeSelectionState:
+    inline_provider_id: str
+    inline_model_id: str
+    chat_provider_id: str
+    chat_model_id: str
+    reasoning_level: str
+
+
 class AiLlmBridge(QtCore.QObject):
     """
     QObject registered on QWebChannel as ``"aiAssist"``.
@@ -104,7 +115,6 @@ class AiLlmBridge(QtCore.QObject):
         super().__init__(parent)
         self._store = store
         self._http = AiHttpClient(self)
-        self._attachments: list[dict[str, str]] = []  # [{name, content(b64), mime}]
 
         # Active provider/model selections (changeable from quick panel)
         self._inline_provider_id: str = ""
@@ -140,6 +150,19 @@ class AiLlmBridge(QtCore.QObject):
 
     def set_assist_context(self, context: EditorAssistContext | None) -> None:
         self._assist_context = context
+
+    def selection_state(self) -> AiBridgeSelectionState:
+        cfg = self._store.provider_by_id(self._chat_provider_id)
+        reasoning_level = ""
+        if cfg is not None:
+            reasoning_level = str(cfg.reasoning_level or "")
+        return AiBridgeSelectionState(
+            inline_provider_id=self._inline_provider_id,
+            inline_model_id=self._inline_model_id,
+            chat_provider_id=self._chat_provider_id,
+            chat_model_id=self._chat_model_id,
+            reasoning_level=reasoning_level,
+        )
 
     def _format_assist_context(self) -> str:
         if not self._assist_context:
@@ -264,10 +287,8 @@ class AiLlmBridge(QtCore.QObject):
     def reset_chat_history(self) -> None:
         """Called when user clicks the reset button in UI."""
         logger.info("AI chat history reset requested by user")
-        self._attachments.clear()
         # In current design, history is held by JS, so this is mainly a signal
         # for backend to clear any ephemeral cached context if it had any.
-        pass
 
     @QtCore.Slot(result="QVariantList")
     def select_images(self) -> list[dict[str, str]]:
@@ -314,26 +335,21 @@ class AiLlmBridge(QtCore.QObject):
                 "content": encoded,
                 "mime": "image/png",
             }
+        return {
+            "name": "",
+            "content": "",
+            "mime": "",
+        }
+
     @QtCore.Slot(str, "QVariant")
     def set_ui_state(self, key: str, value: Any) -> None:
-        """Persist UI state (called from JS) using default QSettings."""
-        settings = QtCore.QSettings()
-        settings.beginGroup("monaco_editor/ai_panel/v1")
-        try:
-            settings.setValue(str(key), value)
-            settings.sync()
-        finally:
-            settings.endGroup()
+        """Persist UI state (called from JS)."""
+        save_ai_panel_state(str(key), value)
 
     @QtCore.Slot(str, "QVariant", result="QVariant")
     def get_ui_state(self, key: str, default: Any = None) -> Any:
-        """Load persistent UI state (called from JS) using default QSettings."""
-        settings = QtCore.QSettings()
-        settings.beginGroup("monaco_editor/ai_panel/v1")
-        try:
-            return settings.value(str(key), default)
-        finally:
-            settings.endGroup()
+        """Load persistent UI state (called from JS)."""
+        return load_ai_panel_state(str(key), default)
 
     # ------------------------------------------------------------------
     # Inline suggestion (FIM)
@@ -356,19 +372,10 @@ class AiLlmBridge(QtCore.QObject):
                 # We'll use the executor to avoid blocking the main thread
                 def _handle_lsp():
                     try:
-                        # Reconstruct "current code" for LSP - we don't have the full code here, 
-                        # but prefix and suffix usually form it around the cursor.
-                        # Ideally, the caller should have synced the document already.
-                        # Fortunately, PythonEditorAssistBridge.sync_document is called by Monaco on every change.
-                        
-                        # We use _completion_items which is internal but it's what we need.
-                        # It returns a list of dicts: {"label": "...", "insertText": "...", ...}
-                        # We just take the first one.
-                        items = self._lsp_bridge._completion_items(
-                            code="", # already synced
+                        items = self._lsp_bridge.inline_completion_items(
                             line=int(line),
                             column=int(column),
-                            request_id="inline-" + rid
+                            request_id="inline-" + rid,
                         )
                         text = ""
                         if items:

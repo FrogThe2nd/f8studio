@@ -87,3 +87,44 @@ def test_debug_prompt_flag_logs_payload() -> None:
             messages=[{"role": "system", "content": "system"}],
         )
     warning_mock.assert_called_once()
+
+
+def test_selection_state_exposes_public_bridge_choices() -> None:
+    temp_dir = Path(".tmp") / "test_ai_llm_bridge" / uuid.uuid4().hex
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    store_path = temp_dir / "ai_providers.json"
+    with patch.object(AiProviderStore, "_resolve_storage_path", return_value=store_path):
+        bridge = AiLlmBridge(AiProviderStore())
+
+    bridge.set_inline_model("openai", "gpt-4.1")
+    bridge.set_chat_model("anthropic", "claude-opus-4-5")
+    bridge.set_reasoning_level("high")
+
+    selection_state = bridge.selection_state()
+
+    assert selection_state.inline_provider_id == "openai"
+    assert selection_state.inline_model_id == "gpt-4.1"
+    assert selection_state.chat_provider_id == "anthropic"
+    assert selection_state.chat_model_id == "claude-opus-4-5"
+    assert selection_state.reasoning_level == "high"
+
+
+def test_get_clipboard_image_returns_empty_payload_when_no_image(monkeypatch) -> None:
+    temp_dir = Path(".tmp") / "test_ai_llm_bridge" / uuid.uuid4().hex
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    store_path = temp_dir / "ai_providers.json"
+    with patch.object(AiProviderStore, "_resolve_storage_path", return_value=store_path):
+        bridge = AiLlmBridge(AiProviderStore())
+
+    class _FakeImage:
+        def isNull(self) -> bool:
+            return True
+
+    class _FakeClipboard:
+        def image(self) -> _FakeImage:
+            return _FakeImage()
+
+    monkeypatch.setattr("f8pystudio.ai_assist.llm_bridge.QtGui.QGuiApplication.clipboard", lambda: _FakeClipboard())
+    payload = bridge.get_clipboard_image()
+
+    assert payload == {"name": "", "content": "", "mime": ""}

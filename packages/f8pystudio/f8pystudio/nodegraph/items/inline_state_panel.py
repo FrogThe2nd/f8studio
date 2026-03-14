@@ -9,6 +9,7 @@ from qtpy import QtCore, QtGui, QtWidgets
 from f8pysdk.schema_helpers import schema_type
 
 from ...editor_assist.protocol import editor_assist_context_for_field
+from ...editor_assist.session import EditorSessionKey
 from ...editor_assist.workspace import EditorAssistContext
 from ...ui_icons import StudioIcon, icon_for
 from ...widgets.editor_controls import (
@@ -647,11 +648,22 @@ def make_state_inline_control(node_item: Any, state_field: StateFieldInfo) -> Qt
             state_field_name = str(state_field.name or "")
             assist_context = _editor_assist_context(node_item, state_field_name=state_field_name)
             assist_context_provider = lambda: _editor_assist_context(node_item, state_field_name=state_field_name)
+            node = node_item._backend_node()
+            session_key = None
+            if node is not None:
+                node_id = str(node.id or "").strip()
+                graph = node_item._graph()
+                if graph is not None and node_id:
+                    session_key = EditorSessionKey.studio_node(
+                        graph_id=f"graph:{id(graph)}",
+                        node_id=node_id,
+                        field_name=state_field_name,
+                    )
 
             def _on_saved(updated: str) -> None:
                 _set_node_value(updated, push_undo=True)
 
-            dlg = open_code_editor_window(
+            _ = open_code_editor_window(
                 None,
                 title=f"{node_item.name} - {state_field.label}",
                 code="" if current is None else str(current),
@@ -659,22 +671,8 @@ def make_state_inline_control(node_item: Any, state_field: StateFieldInfo) -> Qt
                 on_saved=_on_saved,
                 assist_context=assist_context,
                 assist_context_provider=assist_context_provider,
+                session_key=session_key,
             )
-            node_item._open_code_editors.append(dlg)
-
-            def _cleanup() -> None:
-                alive: list[QtWidgets.QDialog] = []
-                for widget in node_item._open_code_editors:
-                    if widget is None:
-                        continue
-                    try:
-                        _ = widget.isVisible()
-                        alive.append(widget)
-                    except RuntimeError:
-                        continue
-                node_item._open_code_editors = alive
-
-            dlg.destroyed.connect(_cleanup)  # type: ignore[attr-defined]
 
         btn.clicked.connect(_on_click)  # type: ignore[attr-defined]
         _apply_value(_get_node_value())

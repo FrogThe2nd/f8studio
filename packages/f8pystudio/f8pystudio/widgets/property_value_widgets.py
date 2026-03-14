@@ -7,6 +7,7 @@ from typing import Any, Callable
 
 from qtpy import QtCore, QtGui, QtWidgets
 
+from ..editor_assist.session import EditorSessionKey
 from ..editor_assist.workspace import EditorAssistContext
 from ..ui_notifications import show_warning
 from ..ui_icons import StudioIcon, icon_for
@@ -30,6 +31,7 @@ class F8CodePropWidget(QtWidgets.QWidget):
         self._title = str(title or "Edit Code")
         self._assist_context: EditorAssistContext | None = None
         self._assist_context_provider: Callable[[], EditorAssistContext | None] | None = None
+        self._editor_session_key: EditorSessionKey | None = None
         self._editor_window: QtWidgets.QDialog | None = None
 
         self._preview = QtWidgets.QLineEdit()
@@ -76,8 +78,11 @@ class F8CodePropWidget(QtWidgets.QWidget):
     ) -> None:
         self._assist_context_provider = provider
 
+    def set_editor_session_key(self, session_key: EditorSessionKey | None) -> None:
+        self._editor_session_key = session_key
+
     def _on_edit_clicked(self) -> None:
-        if self._editor_window is not None:
+        if self._editor_session_key is None and self._editor_window is not None:
             try:
                 self._editor_window.raise_()
                 self._editor_window.activateWindow()
@@ -97,9 +102,11 @@ class F8CodePropWidget(QtWidgets.QWidget):
             on_saved=_on_saved,
             assist_context=self._assist_context,
             assist_context_provider=self._assist_context_provider,
+            session_key=self._editor_session_key,
         )
-        self._editor_window = dlg
-        dlg.destroyed.connect(self._on_editor_destroyed)  # type: ignore[attr-defined]
+        if self._editor_session_key is None:
+            self._editor_window = dlg
+            dlg.destroyed.connect(self._on_editor_destroyed)  # type: ignore[attr-defined]
 
     @QtCore.Slot()
     def _on_editor_destroyed(self) -> None:
@@ -121,6 +128,7 @@ class F8CodeButtonPropWidget(QtWidgets.QWidget):
         self._language = str(language or "plaintext").strip() or "plaintext"
         self._assist_context: EditorAssistContext | None = None
         self._assist_context_provider: Callable[[], EditorAssistContext | None] | None = None
+        self._editor_session_key: EditorSessionKey | None = None
         self._editor_window: QtWidgets.QDialog | None = None
 
         self._btn = QtWidgets.QPushButton("Edit...")
@@ -157,8 +165,11 @@ class F8CodeButtonPropWidget(QtWidgets.QWidget):
     ) -> None:
         self._assist_context_provider = provider
 
+    def set_editor_session_key(self, session_key: EditorSessionKey | None) -> None:
+        self._editor_session_key = session_key
+
     def _on_edit_clicked(self) -> None:
-        if self._editor_window is not None:
+        if self._editor_session_key is None and self._editor_window is not None:
             try:
                 self._editor_window.raise_()
                 self._editor_window.activateWindow()
@@ -178,9 +189,11 @@ class F8CodeButtonPropWidget(QtWidgets.QWidget):
             on_saved=_on_saved,
             assist_context=self._assist_context,
             assist_context_provider=self._assist_context_provider,
+            session_key=self._editor_session_key,
         )
-        self._editor_window = dlg
-        dlg.destroyed.connect(self._on_editor_destroyed)  # type: ignore[attr-defined]
+        if self._editor_session_key is None:
+            self._editor_window = dlg
+            dlg.destroyed.connect(self._on_editor_destroyed)  # type: ignore[attr-defined]
 
     @QtCore.Slot()
     def _on_editor_destroyed(self) -> None:

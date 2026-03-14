@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 import uuid
 
-from f8pystudio.editor_assist.debug_monaco_editor import load_session_editor_target
+from f8pystudio.editor_assist.debug_monaco_editor import load_session_editor_target, load_session_editor_targets
 
 
 def _write_session(tmp_path: Path) -> Path:
@@ -119,6 +119,54 @@ def _write_session(tmp_path: Path) -> Path:
                     },
                     "custom": {"code": "print('live')\n"},
                 },
+                "nodeB": {
+                    "f8_spec": {
+                        "schemaVersion": "f8operator/1",
+                        "serviceClass": "f8.pyengine",
+                        "operatorClass": "f8.python_script",
+                        "label": "Python Script B",
+                        "rendererClass": "default_op",
+                        "rendererProps": {},
+                        "version": "0.0.1",
+                        "description": "",
+                        "tags": ["script"],
+                        "stateFields": [
+                            {
+                                "name": "code",
+                                "valueSchema": {"type": "string", "default": "print('default b')\n"},
+                                "access": "rw",
+                                "required": True,
+                                "uiControl": "code",
+                                "uiLanguage": "python",
+                                "showOnNode": False,
+                                "editorAssist": {
+                                    "version": 1,
+                                    "language": "python",
+                                    "python": {
+                                        "support_files": {
+                                            "f8_script_api.pyi": (
+                                                "from f8_dynamic_inputs import F8Inputs\n"
+                                                "class F8PyEngineContext:\n"
+                                                "    ...\n"
+                                            )
+                                        },
+                                        "overlay_prefix": "from f8_script_api import *\n",
+                                    },
+                                },
+                            }
+                        ],
+                        "editableStateFields": True,
+                        "execInPorts": [],
+                        "execOutPorts": [],
+                        "editableExecInPorts": True,
+                        "editableExecOutPorts": True,
+                        "dataInPorts": [],
+                        "dataOutPorts": [],
+                        "editableDataInPorts": True,
+                        "editableDataOutPorts": True,
+                    },
+                    "custom": {"code": "print('live b')\n"},
+                },
             }
         },
     }
@@ -157,3 +205,14 @@ def test_load_session_editor_target_falls_back_to_state_default() -> None:
     target = load_session_editor_target(path)
 
     assert target.code == "print('default')\n"
+
+
+def test_load_session_editor_targets_returns_all_matching_nodes() -> None:
+    temp_dir = Path(".tmp") / "test_monaco_editor_debug" / uuid.uuid4().hex
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    path = _write_session(temp_dir)
+
+    targets = load_session_editor_targets(path)
+
+    assert [target.node_id for target in targets] == ["nodeA", "nodeB"]
+    assert [target.code for target in targets] == ["print('live')\n", "print('live b')\n"]
