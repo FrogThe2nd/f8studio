@@ -9,9 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from pathlib import Path
-from typing import Callable
 
 from qtpy import QtCore, QtNetwork  # type: ignore[import-not-found]
 
@@ -438,27 +436,7 @@ class AiProviderStore(QtCore.QObject):
 
     @staticmethod
     def _resolve_storage_path() -> Path:
-        xdg = os.environ.get("XDG_CONFIG_HOME", "")
-        if xdg:
-            base = Path(xdg)
-        else:
-            base = Path.home() / ".config"
-
-        new_path = base / "Feel8" / "ai_providers.json"
-        old_path = base / "f8studio" / "ai_providers.json"
-
-        # Automatic migration
-        if old_path.exists() and not new_path.exists():
-            try:
-                new_path.parent.mkdir(parents=True, exist_ok=True)
-                import shutil
-                shutil.move(str(old_path), str(new_path))
-                logger.info("Migrated AI providers config from %s to %s", old_path, new_path)
-            except Exception:
-                logger.exception("Failed to migrate AI providers config")
-                return old_path  # Fallback to old path if migration fails
-
-        return new_path
+        return Path.home() / ".config" / "Feel8" / "ai_providers.json"
 
     def _load(self) -> None:
         """Load persisted providers. If no config exists, initialize with defaults."""
