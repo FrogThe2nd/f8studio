@@ -151,6 +151,8 @@ def main(argv: list[str] | None = None) -> int:
     owns_app = app is None
     if app is None:
         app = QtWidgets.QApplication([])
+        app.setOrganizationName("Feel8")
+        app.setApplicationName("F8PyStudio")
     normalize_application_font(app)
     configure_default_webengine_profile()
 

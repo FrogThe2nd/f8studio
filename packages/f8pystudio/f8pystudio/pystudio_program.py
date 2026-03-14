@@ -184,6 +184,8 @@ class PyStudioProgram:
             pass
 
         app = QtWidgets.QApplication([])
+        app.setOrganizationName("Feel8")
+        app.setApplicationName("F8PyStudio")
         normalize_application_font(app)
         icon_path = self._studio_icon_path()
         if icon_path is not None:

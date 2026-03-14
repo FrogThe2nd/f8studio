@@ -104,6 +104,7 @@ class AiLlmBridge(QtCore.QObject):
         super().__init__(parent)
         self._store = store
         self._http = AiHttpClient(self)
+        self._attachments: list[dict[str, str]] = []  # [{name, content(b64), mime}]
 
         # Active provider/model selections (changeable from quick panel)
         self._inline_provider_id: str = ""
@@ -263,9 +264,76 @@ class AiLlmBridge(QtCore.QObject):
     def reset_chat_history(self) -> None:
         """Called when user clicks the reset button in UI."""
         logger.info("AI chat history reset requested by user")
+        self._attachments.clear()
         # In current design, history is held by JS, so this is mainly a signal
         # for backend to clear any ephemeral cached context if it had any.
         pass
+
+    @QtCore.Slot(result="QVariantList")
+    def select_images(self) -> list[dict[str, str]]:
+        """Open file dialog to select images and return base64 encoded content."""
+        from qtpy import QtWidgets
+        files, _ = QtWidgets.QFileDialog.getOpenFileNames(
+            self.parent(),  # type: ignore
+            "Select Images",
+            "",
+            "Images (*.png *.jpg *.jpeg *.webp *.gif)"
+        )
+        results = []
+        for path in files:
+            try:
+                with open(path, "rb") as f:
+                    data = f.read()
+                import base64
+                import mimetypes
+                encoded = base64.b64encode(data).decode("utf-8")
+                mime, _ = mimetypes.guess_type(path)
+                results.append({
+                    "name": os.path.basename(path),
+                    "content": encoded,
+                    "mime": mime or "image/png",
+                })
+            except Exception:
+                logger.exception("Failed to read image: %s", path)
+        return results
+
+    @QtCore.Slot(result="QVariantMap")
+    def get_clipboard_image(self) -> dict[str, str]:
+        """Try to get an image from the system clipboard (Native Qt)."""
+        clipboard = QtGui.QGuiApplication.clipboard()
+        img = clipboard.image()
+        if not img.isNull():
+            ba = QtCore.QByteArray()
+            buffer = QtCore.QBuffer(ba)
+            buffer.open(QtCore.QIODevice.OpenModeFlag.WriteOnly)
+            img.save(buffer, "PNG")
+            import base64
+            encoded = base64.b64encode(ba.data()).decode("utf-8")
+            return {
+                "name": "clipboard_image.png",
+                "content": encoded,
+                "mime": "image/png",
+            }
+    @QtCore.Slot(str, "QVariant")
+    def set_ui_state(self, key: str, value: Any) -> None:
+        """Persist UI state (called from JS) using default QSettings."""
+        settings = QtCore.QSettings()
+        settings.beginGroup("monaco_editor/ai_panel/v1")
+        try:
+            settings.setValue(str(key), value)
+            settings.sync()
+        finally:
+            settings.endGroup()
+
+    @QtCore.Slot(str, "QVariant", result="QVariant")
+    def get_ui_state(self, key: str, default: Any = None) -> Any:
+        """Load persistent UI state (called from JS) using default QSettings."""
+        settings = QtCore.QSettings()
+        settings.beginGroup("monaco_editor/ai_panel/v1")
+        try:
+            return settings.value(str(key), default)
+        finally:
+            settings.endGroup()
 
     # ------------------------------------------------------------------
     # Inline suggestion (FIM)
@@ -363,8 +431,8 @@ class AiLlmBridge(QtCore.QObject):
     # Chat (streaming)
     # ------------------------------------------------------------------
 
-    @QtCore.Slot(str, str, str, str)
-    def request_chat(self, request_id: str, messages_json: str, code: str, selection: str) -> None:
+    @QtCore.Slot(str, str, str, str, str)
+    def request_chat(self, request_id: str, messages_json: str, code: str, selection: str, attachments_json: str = "") -> None:
         rid = str(request_id or "")
         cfg = self._chat_provider(for_inline=False)
         if cfg is None:
@@ -383,8 +451,15 @@ class AiLlmBridge(QtCore.QObject):
         except json.JSONDecodeError:
             history = []
 
+        try:
+            attachments: list[dict[str, str]] = json.loads(attachments_json) if attachments_json else []
+            if not isinstance(attachments, list):
+                attachments = []
+        except json.JSONDecodeError:
+            attachments = []
+
         system_prompt = self._get_system_prompt(_SYSTEM_PROMPT_CODE)
-        messages = self._build_chat_messages(history, code, selection, system_prompt)
+        messages = self._build_chat_messages(history, code, selection, system_prompt, attachments)
         self._log_prompt_payload(mode="chat", system_prompt=system_prompt, messages=messages)
         self._update_context_tokens(messages)
 
@@ -399,7 +474,13 @@ class AiLlmBridge(QtCore.QObject):
         )
 
     @staticmethod
-    def _build_chat_messages(history: list[dict], code: str, selection: str, system_prompt: str) -> list[dict]:
+    def _build_chat_messages(
+        history: list[dict],
+        code: str,
+        selection: str,
+        system_prompt: str,
+        attachments: list[dict[str, str]] | None = None
+    ) -> list[dict]:
         messages: list[dict] = [{"role": "system", "content": system_prompt}]
         if code:
             context_content = f"Current file:\n```\n{code}\n```"
@@ -407,15 +488,38 @@ class AiLlmBridge(QtCore.QObject):
                 context_content += f"\n\nSelected text:\n```\n{selection}\n```"
             messages.append({"role": "user", "content": context_content})
             messages.append({"role": "assistant", "content": "I can see your code. How can I help?"})
-        messages.extend(history)
+        
+        # Process history
+        for msg in history:
+            role = msg.get("role")
+            content = msg.get("content", "")
+            if role == "system":
+                continue
+            messages.append({"role": role, "content": content})
+
+        # Add attachments to the LAST message if it's from the user
+        if attachments and messages:
+            last_msg = messages[-1]
+            if last_msg["role"] == "user":
+                text_content = last_msg["content"]
+                if isinstance(text_content, str):
+                    new_content: list[dict] = [{"type": "text", "text": text_content}]
+                    for att in attachments:
+                        new_content.append({
+                            "type": "image",
+                            "image": att["content"],
+                            "mime_type": att["mime"]
+                        })
+                    last_msg["content"] = new_content
+        
         return messages
 
     # ------------------------------------------------------------------
     # Edit mode (non-streaming → diff view)
     # ------------------------------------------------------------------
 
-    @QtCore.Slot(str, str, str, str)
-    def request_edit(self, request_id: str, code: str, instruction: str, messages_json: str) -> None:
+    @QtCore.Slot(str, str, str, str, str)
+    def request_edit(self, request_id: str, code: str, instruction: str, messages_json: str, attachments_json: str = "") -> None:
         rid = str(request_id or "")
         cfg = self._chat_provider(for_inline=False)
         if cfg is None:
@@ -427,8 +531,15 @@ class AiLlmBridge(QtCore.QObject):
             self.edit_result_ready.emit(rid, "", "No model selected")
             return
 
+        try:
+            attachments: list[dict[str, str]] = json.loads(attachments_json) if attachments_json else []
+            if not isinstance(attachments, list):
+                attachments = []
+        except json.JSONDecodeError:
+            attachments = []
+
         system_prompt = self._get_system_prompt(_SYSTEM_PROMPT_EDIT)
-        messages = [{"role": "system", "content": system_prompt}]
+        messages: list[dict] = [{"role": "system", "content": system_prompt}]
         
         try:
             history = json.loads(messages_json) if messages_json else []
@@ -439,12 +550,23 @@ class AiLlmBridge(QtCore.QObject):
         except json.JSONDecodeError:
             pass
             
+        user_content: Any = (
+            f"Instruction: {instruction}\n\n"
+            f"Code:\n```\n{code}\n```"
+        )
+        if attachments:
+            parts = [{"type": "text", "text": user_content}]
+            for att in attachments:
+                parts.append({
+                    "type": "image",
+                    "image": att["content"],
+                    "mime_type": att["mime"]
+                })
+            user_content = parts
+
         messages.append({
             "role": "user",
-            "content": (
-                f"Instruction: {instruction}\n\n"
-                f"Code:\n```\n{code}\n```"
-            ),
+            "content": user_content,
         })
         self._log_prompt_payload(mode="edit", system_prompt=system_prompt, messages=messages)
 
@@ -487,8 +609,8 @@ class AiLlmBridge(QtCore.QObject):
     # Plan mode (streaming + two-phase)
     # ------------------------------------------------------------------
 
-    @QtCore.Slot(str, str, str, str)
-    def request_plan(self, request_id: str, task_description: str, code: str, messages_json: str) -> None:
+    @QtCore.Slot(str, str, str, str, str)
+    def request_plan(self, request_id: str, task_description: str, code: str, messages_json: str, attachments_json: str = "") -> None:
         rid = str(request_id or "")
         cfg = self._chat_provider(for_inline=False)
         if cfg is None:
@@ -507,14 +629,33 @@ class AiLlmBridge(QtCore.QObject):
         except json.JSONDecodeError:
             history = []
 
+        try:
+            attachments: list[dict[str, str]] = json.loads(attachments_json) if attachments_json else []
+            if not isinstance(attachments, list):
+                attachments = []
+        except json.JSONDecodeError:
+            attachments = []
+
         system_prompt = self._get_system_prompt(_SYSTEM_PROMPT_PLAN)
         messages: list[dict] = [{"role": "system", "content": system_prompt}]
         if code:
             messages.append({"role": "user", "content": f"Context code:\n```\n{code}\n```"})
             messages.append({"role": "assistant", "content": "I see the code. What would you like me to do?"})
         messages.extend(history)
-        if task_description:
-            messages.append({"role": "user", "content": str(task_description)})
+        
+        user_content: Any = str(task_description or "")
+        if attachments:
+            parts = [{"type": "text", "text": user_content}]
+            for att in attachments:
+                parts.append({
+                    "type": "image",
+                    "image": att["content"],
+                    "mime_type": att["mime"]
+                })
+            user_content = parts
+
+        if user_content:
+            messages.append({"role": "user", "content": user_content})
         self._log_prompt_payload(mode="plan", system_prompt=system_prompt, messages=messages)
 
         self._http.chat_completion_stream(

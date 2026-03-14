@@ -1097,6 +1097,10 @@ class F8MonacoEditorDialog(QtWidgets.QDialog):
 
     <!-- AI Chat Panel Styles -->
     <style>
+      #f8-ai-panel.f8-drag-over {{
+        border: 2px dashed #cba6f7 !important;
+        background: rgba(203, 166, 247, 0.05);
+      }}
       #f8-ai-panel {{
         position: fixed;
         top: 0; right: 0; bottom: 0;
@@ -1218,40 +1222,75 @@ class F8MonacoEditorDialog(QtWidgets.QDialog):
       .f8-diff-accept {{ background: #a6e3a1; color: #1e1e2e; border: none; border-radius: 4px; padding: 4px 12px; cursor: pointer; font-weight: bold; }}
       .f8-diff-reject {{ background: #f38ba8; color: #1e1e2e; border: none; border-radius: 4px; padding: 4px 12px; cursor: pointer; font-weight: bold; }}
       #f8-ai-input-area {{
-        display: flex;
-        gap: 6px;
-        padding: 8px;
-        border-top: 1px solid #313244;
+        padding: 12px;
         background: #181825;
-        align-items: flex-end;
+        border-top: 1px solid #313244;
       }}
-      #f8-ai-input {{
-        flex: 1;
+      .f8-input-wrapper {{
         background: #313244;
         border: 1px solid #45475a;
-        border-radius: 4px;
+        border-radius: 8px;
+        display: flex;
+        flex-direction: column;
+        transition: border-color 0.2s, box-shadow 0.2s;
+      }}
+      .f8-input-wrapper:focus-within {{
+        border-color: #cba6f7;
+        box-shadow: 0 0 0 2px rgba(203, 166, 247, 0.1);
+      }}
+      #f8-ai-input {{
+        width: 100%;
+        background: transparent;
+        border: none;
         color: #cdd6f4;
-        padding: 6px 8px;
-        font-size: 12px;
+        padding: 12px 12px 4px 12px;
+        font-size: 13px;
         resize: none;
-        min-height: 36px;
-        max-height: 120px;
+        min-height: 24px;
+        max-height: 300px;
         outline: none;
         font-family: inherit;
+        box-sizing: border-box;
+        overflow-y: auto;
       }}
-      #f8-ai-input:focus {{ border-color: #cba6f7; }}
+      #f8-ai-input::-webkit-scrollbar {{
+        width: 6px;
+      }}
+      #f8-ai-input::-webkit-scrollbar-track {{
+        background: transparent;
+      }}
+      #f8-ai-input::-webkit-scrollbar-thumb {{
+        background: #45475a;
+        border-radius: 3px;
+      }}
+      #f8-ai-input::-webkit-scrollbar-thumb:hover {{
+        background: #585b70;
+      }}
+      .f8-input-toolbar {{
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 4px 8px 8px 8px;
+      }}
+      .f8-toolbar-left {{
+        display: flex;
+        gap: 4px;
+      }}
       #f8-ai-send {{
         background: #cba6f7;
         border: none;
-        border-radius: 4px;
+        border-radius: 6px;
         color: #1e1e2e;
-        font-size: 16px;
-        width: 32px; height: 32px;
+        width: 28px; height: 28px;
         cursor: pointer;
-        transition: background 0.15s;
+        transition: transform 0.1s, background 0.1s;
         display: flex; align-items: center; justify-content: center;
-        font-weight: bold;
+        padding: 0;
       }}
+      #f8-ai-send svg {{ width: 20px; height: 20px; stroke-width: 2; }}
+      #f8-ai-send:hover {{ background: #b4befe; transform: scale(1.05); }}
+      #f8-ai-send:active {{ transform: scale(0.95); }}
+      #f8-ai-attach-btn svg, .f8-new-chat svg {{ width: 18px; height: 18px; stroke-width: 1.5; }}
       #f8-ai-send:hover {{ background: #d0bcff; }}
       #f8-ai-thinking {{
         display: none;
@@ -1261,6 +1300,46 @@ class F8MonacoEditorDialog(QtWidgets.QDialog):
         font-style: italic;
       }}
       #f8-ai-thinking.visible {{ display: block; }}
+      #f8-ai-attachments {{
+        display: none;
+        padding: 8px;
+        gap: 8px;
+        overflow-x: auto;
+        background: #181825;
+      }}
+      #f8-ai-attachments.visible {{ display: flex; }}
+      .f8-att-thumb {{
+        position: relative;
+        width: 48px; height: 48px;
+        border-radius: 4px;
+        border: 1px solid #45475a;
+        flex-shrink: 0;
+        background-size: cover;
+        background-position: center;
+      }}
+      .f8-att-remove {{
+        position: absolute; top: -4px; right: -4px;
+        background: #f38ba8; color: #1e1e2e;
+        border-radius: 50%; width: 14px; height: 14px;
+        font-size: 10px; display: flex; align-items: center; justify-content: center;
+        cursor: pointer; font-weight: bold;
+        box-shadow: 0 1px 4px rgba(0,0,0,0.5);
+      }}
+      #f8-ai-attach-btn, .f8-new-chat {{
+        background: transparent;
+        border: none;
+        border-radius: 4px;
+        color: #9399b2;
+        font-size: 14px;
+        width: 24px; height: 24px;
+        cursor: pointer;
+        display: flex; align-items: center; justify-content: center;
+        transition: background 0.1s, color 0.1s;
+      }}
+      #f8-ai-attach-btn:hover, .f8-new-chat:hover {{ 
+        background: #45475a; 
+        color: #cdd6f4; 
+      }}
       .f8-plan-confirm {{
         margin-top: 8px;
         padding: 6px 12px;
@@ -1398,11 +1477,45 @@ class F8MonacoEditorDialog(QtWidgets.QDialog):
         const acceptBtn = document.getElementById('f8-diff-accept');
         const rejectBtn = document.getElementById('f8-diff-reject');
         const thinking = document.getElementById('f8-ai-thinking');
+        const attachments = document.getElementById('f8-ai-attachments');
 
         if (!panel || !toggle) return;
 
+        // Restore saved states
+        if (window._f8_aiAssist && window._f8_aiAssist.get_ui_state) {{
+          const savedOpen = window._f8_aiAssist.get_ui_state('ai_panel_open', false);
+          const savedWidth = window._f8_aiAssist.get_ui_state('ai_panel_width', 320);
+          if (savedOpen) panel.classList.add('open');
+          panel.style.width = savedWidth + 'px';
+        }}
+
+        // Drag and Drop support
+        panel.addEventListener('dragover', (e) => {{
+          e.preventDefault();
+          panel.classList.add('f8-drag-over');
+        }});
+        panel.addEventListener('dragleave', () => {{
+          panel.classList.remove('f8-drag-over');
+        }});
+        panel.addEventListener('drop', (e) => {{
+          e.preventDefault();
+          panel.classList.remove('f8-drag-over');
+          const files = e.dataTransfer.files;
+          if (files && files.length) {{
+            for (let i = 0; i < files.length; i++) {{
+              const file = files[i];
+              if (file.type.startsWith('image/')) {{
+                _f8_handleImageFile(file, file.type);
+              }}
+            }}
+          }}
+        }});
+
         toggle.addEventListener('click', function() {{
-          panel.classList.toggle('open');
+          const isOpen = panel.classList.toggle('open');
+          if (window._f8_aiAssist && window._f8_aiAssist.set_ui_state) {{
+            window._f8_aiAssist.set_ui_state('ai_panel_open', isOpen);
+          }}
         }});
 
         modeBtns.forEach(function(btn) {{
@@ -1425,10 +1538,32 @@ class F8MonacoEditorDialog(QtWidgets.QDialog):
           }});
           input.addEventListener('input', function() {{
             input.style.height = 'auto';
-            input.style.height = Math.min(input.scrollHeight, 120) + 'px';
+            input.style.height = Math.min(input.scrollHeight, 300) + 'px';
+          }});
+          input.addEventListener('paste', function(e) {{
+            _f8_handlePaste(e);
           }});
         }}
+
+        // Global paste listener for when focusing might be slightly off
+        document.addEventListener('paste', function(e) {{
+          if (panel.classList.contains('open') && e.target !== input) {{
+            _f8_handlePaste(e);
+          }}
+        }});
         if (sendBtn) sendBtn.addEventListener('click', _f8_sendMessage);
+        const attachBtn = document.getElementById('f8-ai-attach-btn');
+        if (attachBtn) {{
+          attachBtn.addEventListener('click', function() {{
+            if (window._f8_aiAssist && window._f8_aiAssist.select_images) {{
+              window._f8_aiAssist.select_images(function(results) {{
+                if (results && results.length) {{
+                  _f8_addAttachments(results);
+                }}
+              }});
+            }}
+          }});
+        }}
         if (acceptBtn) acceptBtn.addEventListener('click', _f8_acceptDiff);
         if (rejectBtn) rejectBtn.addEventListener('click', _f8_closeDiff);
         
@@ -1471,6 +1606,11 @@ class F8MonacoEditorDialog(QtWidgets.QDialog):
           document.body.style.cursor = 'default';
           document.removeEventListener('mousemove', _onMouseMove);
           document.removeEventListener('mouseup', _onMouseUp);
+
+          // Save width
+          if (window._f8_aiAssist && window._f8_aiAssist.set_ui_state) {{
+            window._f8_aiAssist.set_ui_state('ai_panel_width', panel.offsetWidth);
+          }}
         }}
       }}
 
@@ -1482,12 +1622,13 @@ class F8MonacoEditorDialog(QtWidgets.QDialog):
           window._f8_aiAssist.reset_chat_history();
         }}
         _f8_appendMessage('assistant', 'Chat reset. Context cleared.');
+        _f8_clearAttachments();
       }}
 
       function _f8_sendMessage() {{
         const input = document.getElementById('f8-ai-input');
         const text = input ? input.value.trim() : '';
-        if (!text || !window._f8_aiAssist) return;
+        if (!text && window._f8_attachments.length === 0 || !window._f8_aiAssist) return;
         input.value = '';
         input.style.height = 'auto';
 
@@ -1503,7 +1644,7 @@ class F8MonacoEditorDialog(QtWidgets.QDialog):
         const thinking = document.getElementById('f8-ai-thinking');
 
         if (window._f8_aiMode === 'chat') {{
-          window._f8_chatMessages.push({{role: 'user', content: text}});
+          window._f8_chatMessages.push({{role: 'user', content: text, attachments: window._f8_attachments}});
           if (thinking) thinking.classList.add('visible');
           const assistantEl = _f8_appendMessage('assistant', '');
           window._f8_aiAssist.chat_chunk_ready.connect(function(id, delta) {{
@@ -1523,7 +1664,8 @@ class F8MonacoEditorDialog(QtWidgets.QDialog):
               window._f8_aiAssist.update_chat_context(JSON.stringify(window._f8_chatMessages));
             }}
           }});
-          window._f8_aiAssist.request_chat(rid, JSON.stringify(window._f8_chatMessages), code, selection);
+          window._f8_aiAssist.request_chat(rid, JSON.stringify(window._f8_chatMessages), code, selection, JSON.stringify(window._f8_attachments || []));
+          _f8_clearAttachments();
 
         }} else if (window._f8_aiMode === 'edit') {{
           if (thinking) thinking.classList.add('visible');
@@ -1534,10 +1676,11 @@ class F8MonacoEditorDialog(QtWidgets.QDialog):
             if (err) {{ _f8_appendMessage('assistant', '⚠ ' + err); return; }}
             _f8_showDiff(newCode);
           }});
-          window._f8_aiAssist.request_edit(rid, code, text, JSON.stringify(window._f8_chatMessages));
+          window._f8_aiAssist.request_edit(rid, code, text, JSON.stringify(window._f8_chatMessages), JSON.stringify(window._f8_attachments || []));
+          _f8_clearAttachments();
 
         }} else if (window._f8_aiMode === 'plan') {{
-          window._f8_chatMessages.push({{role: 'user', content: text}});
+          window._f8_chatMessages.push({{role: 'user', content: text, attachments: window._f8_attachments}});
           if (thinking) thinking.classList.add('visible');
           const assistantEl = _f8_appendMessage('assistant', '');
           window._f8_aiAssist.plan_step_ready.connect(function(id, delta) {{
@@ -1567,7 +1710,107 @@ class F8MonacoEditorDialog(QtWidgets.QDialog):
               assistantEl.appendChild(confirmBtn);
             }}
           }});
-          window._f8_aiAssist.request_plan(rid, text, code, JSON.stringify(window._f8_chatMessages));
+          window._f8_aiAssist.request_plan(rid, text, code, JSON.stringify(window._f8_chatMessages), JSON.stringify(window._f8_attachments || []));
+          _f8_clearAttachments();
+        }}
+      }}
+
+      window._f8_attachments = [];
+      function _f8_addAttachments(newAtts) {{
+        newAtts.forEach(att => {{
+          window._f8_attachments.push(att);
+        }});
+        _f8_renderAttachments();
+      }}
+      function _f8_removeAttachment(idx) {{
+        window._f8_attachments.splice(idx, 1);
+        _f8_renderAttachments();
+      }}
+      function _f8_clearAttachments() {{
+        window._f8_attachments = [];
+        _f8_renderAttachments();
+      }}
+      function _f8_renderAttachments() {{
+        const container = document.getElementById('f8-ai-attachments');
+        if (!container) return;
+        container.innerHTML = '';
+        if (window._f8_attachments.length > 0) {{
+          container.classList.add('visible');
+          window._f8_attachments.forEach((att, idx) => {{
+            const thumb = document.createElement('div');
+            thumb.className = 'f8-att-thumb';
+            thumb.style.backgroundImage = 'url(data:' + att.mime + ';base64,' + att.content + ')';
+            thumb.title = att.name;
+            const rm = document.createElement('div');
+            rm.className = 'f8-att-remove';
+            rm.textContent = '×';
+            rm.onclick = (e) => {{
+              e.stopPropagation();
+              _f8_removeAttachment(idx);
+            }};
+            thumb.appendChild(rm);
+            container.appendChild(thumb);
+          }});
+        }} else {{
+          container.classList.remove('visible');
+        }}
+      }}
+
+      function _f8_handleImageFile(file, mimeType) {{
+        const reader = new FileReader();
+        reader.onload = function(event) {{
+          const base64 = event.target.result.split(',')[1];
+          _f8_addAttachments([{{
+            name: file.name || "pasted_image.png",
+            content: base64,
+            mime: mimeType || "image/png"
+          }}]);
+        }};
+        reader.readAsDataURL(file);
+      }}
+
+      function _f8_handlePaste(e) {{
+        const clipboardData = e.clipboardData || window.clipboardData;
+        if (!clipboardData) return;
+
+        let foundInJs = false;
+        const items = clipboardData.items;
+        if (items) {{
+          for (let i = 0; i < items.length; i++) {{
+            const item = items[i];
+            if (item.type.indexOf('image') !== -1) {{
+              const blob = item.getAsFile();
+              if (blob) {{
+                _f8_handleImageFile(blob, item.type);
+                foundInJs = true;
+              }}
+            }} else if (item.type === 'text/html') {{
+              item.getAsString(function(html) {{
+                // Try many flavors of data-urls
+                const matches = html.matchAll(/src="([^"]+)"/gi);
+                for (const match of matches) {{
+                  const src = match[1];
+                  if (src.startsWith('data:image/')) {{
+                     const p = src.split(',');
+                     if (p.length > 1) {{
+                       const m = p[0].split(':')[1].split(';')[0];
+                       _f8_addAttachments([{{ name: "web_snippet.png", content: p[1], mime: m }}]);
+                       foundInJs = true;
+                     }}
+                  }}
+                }}
+              }});
+            }}
+          }}
+        }}
+
+        // Native fallback (much more powerful for "Copy Image" from web)
+        if (!foundInJs && window._f8_aiAssist && window._f8_aiAssist.get_clipboard_image) {{
+          window._f8_aiAssist.get_clipboard_image(function(res) {{
+            if (res && res.content) {{
+              _f8_addAttachments([res]);
+            }}
+          }});
         }}
       }}
 
@@ -1885,15 +2128,29 @@ class F8MonacoEditorDialog(QtWidgets.QDialog):
       </div>
       <div id="f8-ai-messages"></div>
       <div id="f8-ai-thinking">AI is thinking…</div>
+      <div id="f8-ai-attachments"></div>
       <div class="f8-diff-bar" id="f8-diff-bar">
         <button class="f8-diff-accept" id="f8-diff-accept">✓</button>
         <button class="f8-diff-reject" id="f8-diff-reject">✗</button>
         <span style="color:#6c7086;font-size:11px;margin-left:6px;"></span>
       </div>
       <div id="f8-ai-input-area">
-        <button class="f8-new-chat" title="New Conversation / Clear Context">♻️</button>
-        <textarea id="f8-ai-input" placeholder="Ask AI… (Enter to send, Shift+Enter for newline)" rows="1"></textarea>
-        <button id="f8-ai-send">↑</button>
+        <div class="f8-input-wrapper">
+          <textarea id="f8-ai-input" placeholder="Ask AI… (Enter to send, Shift+Enter for newline)" rows="1"></textarea>
+          <div class="f8-input-toolbar">
+            <div class="f8-toolbar-left">
+              <button id="f8-ai-attach-btn" title="Attach Images">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M15 7l-6.5 6.5a1.5 1.5 0 0 0 3 3l6.5 -6.5a3 3 0 0 0 -6 -6l-6.5 6.5a4.5 4.5 0 0 0 9 9l6.5 -6.5" /></svg>
+              </button>
+              <button class="f8-new-chat" title="New Conversation / Clear Context">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M4.05 11a8 8 0 1 1 .5 4m-.5 5v-5h5" /></svg>
+              </button>
+            </div>
+            <button id="f8-ai-send" title="Send (Enter)">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a9 9 0 1 0 0 18a9 9 0 0 0 0 -18" /><path d="M16 12l-4 -4" /><path d="M16 12h-8" /><path d="M16 12l-4 4" /></svg>
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   </body>

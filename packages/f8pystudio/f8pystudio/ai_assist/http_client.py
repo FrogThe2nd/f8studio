@@ -71,9 +71,29 @@ def _chat_payload_openai(
     reasoning_level: str,
     max_tokens: int,
 ) -> dict:
+    # Translate intermediate multimodal format to OpenAI format
+    processed_messages = []
+    for msg in messages:
+        content = msg.get("content")
+        if isinstance(content, list):
+            new_content = []
+            for part in content:
+                if part.get("type") == "text":
+                    new_content.append({"type": "text", "text": part.get("text", "")})
+                elif part.get("type") == "image":
+                    mime = part.get("mime_type", "image/png")
+                    data = part.get("image", "")
+                    new_content.append({
+                        "type": "image_url",
+                        "image_url": {"url": f"data:{mime};base64,{data}"}
+                    })
+            processed_messages.append({"role": msg["role"], "content": new_content})
+        else:
+            processed_messages.append(msg)
+
     payload: dict = {
         "model": model_id,
-        "messages": messages,
+        "messages": processed_messages,
         "stream": stream,
         "max_tokens": max_tokens,
     }
@@ -91,10 +111,35 @@ def _chat_payload_anthropic(
     reasoning_level: str,
     max_tokens: int,
 ) -> dict:
-    # Anthropic splits system from messages
+    # Anthropic splits system from messages and has a specific multimodal format
+    processed_messages = []
+    for msg in messages:
+        if msg.get("role") == "system":
+            continue
+        content = msg.get("content")
+        if isinstance(content, list):
+            new_content = []
+            for part in content:
+                if part.get("type") == "text":
+                    new_content.append({"type": "text", "text": part.get("text", "")})
+                elif part.get("type") == "image":
+                    mime = part.get("mime_type", "image/png")
+                    data = part.get("image", "")
+                    new_content.append({
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": mime,
+                            "data": data,
+                        }
+                    })
+            processed_messages.append({"role": msg["role"], "content": new_content})
+        else:
+            processed_messages.append(msg)
+
     payload: dict = {
         "model": model_id,
-        "messages": [m for m in messages if m.get("role") != "system"],
+        "messages": processed_messages,
         "stream": stream,
         "max_tokens": max_tokens,
     }

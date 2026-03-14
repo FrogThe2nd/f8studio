@@ -288,7 +288,7 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
             self._log_level_actions[level_value] = action
 
     def _layout_settings(self) -> QtCore.QSettings:
-        return QtCore.QSettings(self._WINDOW_LAYOUT_SETTINGS_ORGANIZATION, self._WINDOW_LAYOUT_SETTINGS_APPLICATION)
+        return QtCore.QSettings()
 
     @staticmethod
     def _as_qbytearray(value: Any) -> QtCore.QByteArray | None:
