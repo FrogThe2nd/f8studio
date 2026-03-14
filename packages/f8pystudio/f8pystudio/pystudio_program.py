@@ -164,6 +164,7 @@ class PyStudioProgram:
         # Local import: keep `--describe` fast and avoid importing Qt at module import time.
         from qtpy import QtCore, QtGui, QtWidgets
 
+        from .qt_font_utils import normalize_application_font
         from .widgets.main_window import F8StudioMainWin
 
         manifests = self._load_plugin_manifests()
@@ -183,6 +184,7 @@ class PyStudioProgram:
             pass
 
         app = QtWidgets.QApplication([])
+        normalize_application_font(app)
         icon_path = self._studio_icon_path()
         if icon_path is not None:
             app_icon = QtGui.QIcon(str(icon_path))

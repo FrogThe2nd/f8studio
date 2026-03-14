@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import uuid
 
 from f8pystudio.editor_assist.debug_monaco_editor import load_session_editor_target
 
@@ -126,8 +127,10 @@ def _write_session(tmp_path: Path) -> Path:
     return path
 
 
-def test_load_session_editor_target_reads_matching_node_and_code(tmp_path: Path) -> None:
-    path = _write_session(tmp_path)
+def test_load_session_editor_target_reads_matching_node_and_code() -> None:
+    temp_dir = Path(".tmp") / "test_monaco_editor_debug" / uuid.uuid4().hex
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    path = _write_session(temp_dir)
 
     target = load_session_editor_target(path)
 
@@ -142,8 +145,10 @@ def test_load_session_editor_target_reads_matching_node_and_code(tmp_path: Path)
     assert tuple(field.name for field in target.context.state_fields) == ("code", "lastError")
 
 
-def test_load_session_editor_target_falls_back_to_state_default(tmp_path: Path) -> None:
-    path = _write_session(tmp_path)
+def test_load_session_editor_target_falls_back_to_state_default() -> None:
+    temp_dir = Path(".tmp") / "test_monaco_editor_debug" / uuid.uuid4().hex
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    path = _write_session(temp_dir)
     payload = json.loads(path.read_text(encoding="utf-8"))
     node = payload["layout"]["nodes"]["nodeA"]
     del node["custom"]["code"]

@@ -5,6 +5,14 @@ import re
 from typing import Any
 
 
+def _escape_docstring(text: str) -> str:
+    return str(text or "").replace('"""', '\\"\\"\\"').strip()
+
+
+def _single_line_comment(text: str) -> str:
+    return " ".join(str(text or "").split()).strip()
+
+
 def _normalize_type_name(raw_name: str, *, fallback: str) -> str:
     txt = str(raw_name or "").strip()
     if not txt:
@@ -44,6 +52,7 @@ def _schema_type_name(
     class_blocks: list[str],
     used_names: set[str],
     in_progress: set[int],
+    field_doc: str = "",
 ) -> str:
     if not isinstance(schema_obj, dict):
         return "Any"
@@ -100,6 +109,9 @@ def _schema_type_name(
         used_names.add(class_name)
 
         block_lines = [f"class {class_name}(_F8ObjectView):"]
+        doc = _escape_docstring(field_doc)
+        if doc:
+            block_lines.append(f'    """Nested object view for {doc}."""')
         valid_attr_count = 0
         attr_names_in_class: set[str] = set()
         skipped_names: list[str] = []
@@ -124,7 +136,9 @@ def _schema_type_name(
             else:
                 skipped_names.append(prop_name)
 
-        if valid_attr_count == 0:
+        if valid_attr_count == 0 and doc:
+            block_lines.append("    ...")
+        elif valid_attr_count == 0:
             block_lines.append("    pass")
         if skipped_names:
             block_lines.append("")
@@ -142,6 +156,7 @@ def build_dynamic_inputs_stub(
     *,
     type_name: str,
     data_in_ports: tuple[Any, ...],
+    node_description: str = "",
 ) -> str:
     """Build a per-node `F8Inputs` stub module for pyright/monaco."""
 
@@ -153,6 +168,27 @@ def build_dynamic_inputs_stub(
         fields=data_in_ports,
         guard_prefix="is_port",
         guard_selector_name="port",
+        node_description=node_description,
+    )
+
+
+def build_dynamic_outputs_stub(
+    *,
+    type_name: str,
+    data_out_ports: tuple[Any, ...],
+    node_description: str = "",
+) -> str:
+    """Build a per-node `F8Outputs` stub module for pyright/monaco."""
+
+    return _build_dynamic_mapping_stub(
+        type_name=type_name,
+        fallback_type_name="F8Outputs",
+        root_doc="Dynamic output payload view for python_script hooks.",
+        skipped_doc="Non-identifier output names are accessible only via mapping methods.",
+        fields=data_out_ports,
+        guard_prefix="is_output",
+        guard_selector_name="port",
+        node_description=node_description,
     )
 
 
@@ -160,6 +196,7 @@ def build_dynamic_states_stub(
     *,
     type_name: str,
     state_fields: tuple[Any, ...],
+    node_description: str = "",
 ) -> str:
     """Build a per-node `F8States` stub module for pyright/monaco."""
 
@@ -171,6 +208,7 @@ def build_dynamic_states_stub(
         fields=state_fields,
         guard_prefix="is_state",
         guard_selector_name="field",
+        node_description=node_description,
     )
 
 
@@ -183,13 +221,14 @@ def _build_dynamic_mapping_stub(
     fields: tuple[Any, ...],
     guard_prefix: str | None,
     guard_selector_name: str,
+    node_description: str = "",
 ) -> str:
     root_type_name = _normalize_type_name(type_name, fallback=fallback_type_name)
 
     class_blocks: list[str] = []
     attribute_lines: list[str] = []
     keyword_attribute_lines: list[str] = []
-    skipped_names: list[str] = []
+    skipped_names: list[tuple[str, str]] = []
     type_guards: list[tuple[str, str]] = []
     occupied_attr_names: set[str] = set()
     occupied_guard_names: set[str] = set()
@@ -200,8 +239,8 @@ def _build_dynamic_mapping_stub(
         name = str(getattr(raw_field, "name", "") or "").strip()
         if not name:
             continue
+        field_description = str(getattr(raw_field, "description", "") or "").strip()
         value_schema = getattr(raw_field, "value_schema", None)
-        # Port/state `required` flags describe edit-time protection, so runtime views remain nullable.
         value_type = _optional_type_name(
             _schema_type_name(
                 value_schema,
@@ -209,6 +248,7 @@ def _build_dynamic_mapping_stub(
                 class_blocks=class_blocks,
                 used_names=used_names,
                 in_progress=in_progress,
+                field_doc=field_description or name,
             )
         )
         if guard_prefix:
@@ -223,16 +263,22 @@ def _build_dynamic_mapping_stub(
             type_guards.append((guard_name, value_type))
         attr_name = _attribute_name_for_key(name)
         if attr_name is None:
-            skipped_names.append(name)
+            skipped_names.append((name, field_description))
             continue
         if attr_name in occupied_attr_names:
-            skipped_names.append(name)
+            skipped_names.append((name, field_description))
             continue
         occupied_attr_names.add(attr_name)
+        comment = _single_line_comment(field_description)
         if attr_name == name:
+            if comment:
+                attribute_lines.append(f"    # {comment}")
             attribute_lines.append(f"    {attr_name}: {value_type}")
         else:
+            if comment:
+                keyword_attribute_lines.append(f"    # {comment}")
             keyword_attribute_lines.append(f"    {attr_name}: {value_type}")
+
     lines: list[str] = [
         "from __future__ import annotations",
         "",
@@ -256,10 +302,14 @@ def _build_dynamic_mapping_stub(
         lines.extend(class_blocks)
         lines.append("")
 
+    root_doc_parts = [_escape_docstring(root_doc)]
+    node_doc = _escape_docstring(node_description)
+    if node_doc:
+        root_doc_parts.append(f"Node: {node_doc}")
     lines.extend(
         [
             f"class {root_type_name}(_F8ObjectView):",
-            f'    """{root_doc}"""',
+            f'    """{" ".join(part for part in root_doc_parts if part)}"""',
             "    pass",
         ]
     )
@@ -274,8 +324,11 @@ def _build_dynamic_mapping_stub(
     if skipped_names:
         lines.append("")
         lines.append(f"    # {skipped_doc}")
-        for skipped in skipped_names:
-            lines.append(f"    # - {skipped!r}")
+        for skipped_name, skipped_desc in skipped_names:
+            if skipped_desc:
+                lines.append(f"    # - {skipped_name!r}: {_single_line_comment(skipped_desc)}")
+            else:
+                lines.append(f"    # - {skipped_name!r}")
 
     if type_guards:
         lines.append("")

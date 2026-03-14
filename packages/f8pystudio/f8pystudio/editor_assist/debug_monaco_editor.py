@@ -13,6 +13,7 @@ from f8pysdk import F8OperatorSpec
 from f8pysdk.msgspec_codec import dump_json, validate_as
 
 from ..app_logging import configure_root_logging_from_env
+from ..qt_font_utils import normalize_application_font
 from ..webengine_utils import configure_default_webengine_profile
 from ..widgets.monaco_editor_dialog import open_code_editor_window
 from .protocol import editor_assist_context_for_field
@@ -150,6 +151,7 @@ def main(argv: list[str] | None = None) -> int:
     owns_app = app is None
     if app is None:
         app = QtWidgets.QApplication([])
+    normalize_application_font(app)
     configure_default_webengine_profile()
 
     state = _DebugSessionState.from_target(target)

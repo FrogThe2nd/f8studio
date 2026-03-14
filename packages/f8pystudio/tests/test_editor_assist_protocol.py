@@ -18,6 +18,7 @@ def _operator_spec_with_field_editor_assist(
     state_fields = [
         {
             "name": state_key,
+            "description": "Primary code body.",
             "valueSchema": {"type": "string"},
             "access": "rw",
         }
@@ -25,13 +26,17 @@ def _operator_spec_with_field_editor_assist(
     if extra_state_fields:
         state_fields.extend(extra_state_fields)
     data_in_ports = [
-        {"name": port_key, "required": True, "valueSchema": {"type": "number"}},
-        {"name": "y", "required": False, "valueSchema": {"type": "array", "items": {"type": "integer"}}},
+        {"name": port_key, "description": "Main numeric input.", "required": True, "valueSchema": {"type": "number"}},
+        {"name": "y", "description": "Optional samples.", "required": False, "valueSchema": {"type": "array", "items": {"type": "integer"}}},
         {
             "name": "z",
+            "description": "Structured payload.",
             "required": True,
             "valueSchema": {"type": "object", "properties": {"name": {"type": "string"}}},
         },
+    ]
+    data_out_ports = [
+        {"name": "result", "description": "Script output payload.", "required": False, "valueSchema": {"type": "string"}},
     ]
     if editor_assist is not None and attach_to_state:
         state_fields[0]["editorAssist"] = editor_assist
@@ -41,8 +46,10 @@ def _operator_spec_with_field_editor_assist(
         "serviceClass": "f8.pyengine",
         "operatorClass": "f8.python_script",
         "label": "Python Script",
+        "description": "Execute custom python code for the current node.",
         "stateFields": state_fields,
         "dataInPorts": data_in_ports,
+        "dataOutPorts": data_out_ports,
     }
     if with_top_level and editor_assist is not None:
         base["editorAssist"] = editor_assist
@@ -64,9 +71,16 @@ def test_editor_assist_context_for_field_accepts_valid_python_payload() -> None:
     assert context is not None
     assert context.error_message == ""
     assert context.language == "python"
+    assert context.node_kind == "operator"
+    assert context.service_class == "f8.pyengine"
+    assert context.operator_class == "f8.python_script"
+    assert context.node_description == "Execute custom python code for the current node."
     assert context.overlay_prefix == "from f8_script_api import *\n"
     assert context.support_files == (("f8_script_api.pyi", "class F8PyEngineContext:\n    ...\n"),)
     assert context.dynamic_inputs_binding is None
+    assert tuple(port.name for port in context.data_in_ports) == ("x", "y", "z")
+    assert tuple(port.name for port in context.data_out_ports) == ("result",)
+    assert tuple(field.name for field in context.state_fields) == ("code",)
 
 
 def test_editor_assist_context_for_field_returns_error_when_protocol_missing() -> None:
@@ -127,6 +141,65 @@ def test_editor_assist_context_for_field_accepts_dynamic_inputs_binding() -> Non
     assert context.dynamic_inputs_binding.type_name == "F8Inputs"
     assert context.dynamic_inputs_binding.module_name == "f8_dynamic_inputs"
     assert tuple(port.name for port in context.data_in_ports) == ("x", "y", "z")
+    assert context.data_in_ports[0].description == "Main numeric input."
+
+
+def test_editor_assist_context_for_field_accepts_dynamic_outputs_binding() -> None:
+    spec = _operator_spec_with_field_editor_assist(
+        {
+            "version": 1,
+            "language": "python",
+            "python": {
+                "support_files": {"f8_script_api.pyi": "class F8PyEngineContext:\n    ...\n"},
+                "overlay_prefix": "from f8_script_api import *\n",
+                "dynamic_bindings": {
+                    "outputs": {
+                        "enabled": True,
+                        "source": "data_out_ports",
+                        "type_name": "F8Outputs",
+                        "module_name": "f8_dynamic_outputs",
+                        "schema_mode": "basic_recursive",
+                        "access_mode": "object_and_mapping",
+                    }
+                },
+            },
+        }
+    )
+    context = editor_assist_context_for_field(spec, field_kind="state", field_key="code", language="python")
+    assert context is not None
+    assert context.dynamic_outputs_binding is not None
+    assert context.dynamic_outputs_binding.type_name == "F8Outputs"
+    assert context.dynamic_outputs_binding.module_name == "f8_dynamic_outputs"
+    assert tuple(port.name for port in context.data_out_ports) == ("result",)
+    assert context.data_out_ports[0].description == "Script output payload."
+
+
+def test_editor_assist_context_exposes_outputs_without_dynamic_outputs_binding() -> None:
+    spec = _operator_spec_with_field_editor_assist(
+        {
+            "version": 1,
+            "language": "python",
+            "python": {
+                "support_files": {"f8_script_api.pyi": "class F8PyEngineContext:\n    ...\n"},
+                "overlay_prefix": "from f8_script_api import *\n",
+                "dynamic_bindings": {
+                    "inputs": {
+                        "enabled": True,
+                        "source": "data_in_ports",
+                    },
+                    "states": {
+                        "enabled": True,
+                        "source": "state_fields",
+                    },
+                },
+            },
+        }
+    )
+    context = editor_assist_context_for_field(spec, field_kind="state", field_key="code", language="python")
+    assert context is not None
+    assert context.dynamic_outputs_binding is None
+    assert tuple(port.name for port in context.data_out_ports) == ("result",)
+    assert context.data_out_ports[0].description == "Script output payload."
 
 
 def test_editor_assist_context_for_field_accepts_dynamic_states_binding() -> None:
@@ -165,6 +238,7 @@ def test_editor_assist_context_for_field_accepts_dynamic_states_binding() -> Non
     assert "visible_rw" in state_names
     assert "visible_ro" in state_names
     assert "hidden_wo" in state_names
+    assert context.state_fields[0].description == "Primary code body."
 
 
 def test_invalid_dynamic_inputs_source_is_rejected_by_schema() -> None:
@@ -205,6 +279,26 @@ def test_invalid_dynamic_states_source_is_rejected_by_schema() -> None:
         assert "dynamic_bindings.states.source" in message
     else:
         raise AssertionError("invalid dynamic states source must fail schema validation")
+
+
+def test_invalid_dynamic_outputs_source_is_rejected_by_schema() -> None:
+    payload = {
+        "version": 1,
+        "language": "python",
+        "python": {
+            "support_files": {"f8_script_api.pyi": "class F8PyEngineContext:\n    ...\n"},
+            "overlay_prefix": "",
+            "dynamic_bindings": {"outputs": {"enabled": True, "source": "state_fields"}},
+        },
+    }
+    try:
+        _ = _operator_spec_with_field_editor_assist(payload)
+    except Exception as exc:
+        message = str(exc)
+        assert "state_fields" in message
+        assert "dynamic_bindings.outputs.source" in message
+    else:
+        raise AssertionError("invalid dynamic outputs source must fail schema validation")
 
 
 def test_editor_assist_context_for_port_field_is_not_supported() -> None:

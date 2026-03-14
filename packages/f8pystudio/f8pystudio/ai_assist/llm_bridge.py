@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import os
 from typing import Any
 
 from qtpy import QtCore, QtGui  # type: ignore[import-not-found]
@@ -52,6 +53,30 @@ _SYSTEM_PROMPT_PLAN = (
 def _approx_tokens(text: str) -> int:
     """Rough approximation: 1 token ≈ 4 characters."""
     return max(1, math.ceil(len(text) / 4))
+
+
+def _schema_summary(schema_obj: dict[str, Any] | None) -> str:
+    if not isinstance(schema_obj, dict):
+        return "Any"
+    schema_type = str(schema_obj.get("type") or "any").strip().lower()
+    if schema_type == "object":
+        properties = schema_obj.get("properties")
+        if isinstance(properties, dict) and properties:
+            keys = ", ".join(str(key) for key in properties.keys())
+            return f"object<{keys}>"
+        return "object"
+    if schema_type == "array":
+        items = schema_obj.get("items")
+        if isinstance(items, dict):
+            item_type = str(items.get("type") or "any").strip().lower() or "any"
+            return f"array<{item_type}>"
+        return "array"
+    return schema_type or "Any"
+
+
+def _env_flag(name: str) -> bool:
+    raw = str(os.environ.get(name, "") or "").strip().lower()
+    return raw in {"1", "true", "yes", "on", "debug"}
 
 
 class AiLlmBridge(QtCore.QObject):
@@ -106,6 +131,7 @@ class AiLlmBridge(QtCore.QObject):
 
         self._assist_context: EditorAssistContext | None = None
         self._lsp_bridge: PythonEditorAssistBridge | None = None
+        self._debug_prompt = _env_flag("F8_AI_DEBUG_PROMPT")
 
     def set_lsp_bridge(self, bridge: PythonEditorAssistBridge | None) -> None:
         """Inject the Python LSP bridge so we can route completions to it."""
@@ -119,18 +145,39 @@ class AiLlmBridge(QtCore.QObject):
             return ""
         ctx = self._assist_context
         lines = []
+        meta_lines = []
+        if ctx.node_kind:
+            meta_lines.append(f"- Kind: `{ctx.node_kind}`")
+        if ctx.service_class:
+            meta_lines.append(f"- Service: `{ctx.service_class}`")
+        if ctx.operator_class:
+            meta_lines.append(f"- Operator: `{ctx.operator_class}`")
+        if ctx.node_description:
+            meta_lines.append(f"- Description: {ctx.node_description}")
+        if meta_lines:
+            lines.append("## Node Metadata")
+            lines.extend(meta_lines)
         if ctx.data_in_ports:
             lines.append("## Input Ports (`dataInPorts`)")
             for p in ctx.data_in_ports:
                 req = "required" if p.required else "optional"
-                schema_str = json.dumps(p.value_schema) if p.value_schema else "Any"
-                lines.append(f"- `{p.name}` ({req}): {schema_str}")
+                schema_str = _schema_summary(p.value_schema)
+                desc = f" | description={p.description}" if p.description else ""
+                lines.append(f"- `{p.name}` ({req}, schema={schema_str}){desc}")
+        if ctx.data_out_ports:
+            lines.append("## Output Ports (`dataOutPorts`)")
+            for p in ctx.data_out_ports:
+                req = "required" if p.required else "optional"
+                schema_str = _schema_summary(p.value_schema)
+                desc = f" | description={p.description}" if p.description else ""
+                lines.append(f"- `{p.name}` ({req}, schema={schema_str}){desc}")
         if ctx.state_fields:
             lines.append("## State Fields (`stateFields`)")
             for f in ctx.state_fields:
                 req = "required" if f.required else "optional"
-                schema_str = json.dumps(f.value_schema) if f.value_schema else "Any"
-                lines.append(f"- `{f.name}` ({req}, access={f.access}): {schema_str}")
+                schema_str = _schema_summary(f.value_schema)
+                desc = f" | description={f.description}" if f.description else ""
+                lines.append(f"- `{f.name}` ({req}, access={f.access}, schema={schema_str}){desc}")
         if not lines:
             return ""
         
@@ -144,6 +191,23 @@ class AiLlmBridge(QtCore.QObject):
         if ctx_str:
             return f"{base_prompt}\n\n{ctx_str}"
         return base_prompt
+
+    def _log_prompt_payload(self, *, mode: str, system_prompt: str, messages: list[dict]) -> None:
+        if not self._debug_prompt:
+            return
+        try:
+            payload = {
+                "mode": str(mode or ""),
+                "system_prompt": str(system_prompt or ""),
+                "messages": messages,
+                "context_block": self._format_assist_context(),
+            }
+            logger.warning(
+                "F8_AI_DEBUG_PROMPT payload:\n%s",
+                json.dumps(payload, ensure_ascii=False, indent=2),
+            )
+        except (TypeError, ValueError):
+            logger.exception("Failed to dump F8_AI_DEBUG_PROMPT payload")
 
     # ------------------------------------------------------------------
     # Configuration slots (called from quick panel via QWebChannel)
@@ -321,6 +385,7 @@ class AiLlmBridge(QtCore.QObject):
 
         system_prompt = self._get_system_prompt(_SYSTEM_PROMPT_CODE)
         messages = self._build_chat_messages(history, code, selection, system_prompt)
+        self._log_prompt_payload(mode="chat", system_prompt=system_prompt, messages=messages)
         self._update_context_tokens(messages)
 
         self._http.chat_completion_stream(
@@ -381,6 +446,7 @@ class AiLlmBridge(QtCore.QObject):
                 f"Code:\n```\n{code}\n```"
             ),
         })
+        self._log_prompt_payload(mode="edit", system_prompt=system_prompt, messages=messages)
 
         self._http.chat_completion(
             cfg,
@@ -449,6 +515,7 @@ class AiLlmBridge(QtCore.QObject):
         messages.extend(history)
         if task_description:
             messages.append({"role": "user", "content": str(task_description)})
+        self._log_prompt_payload(mode="plan", system_prompt=system_prompt, messages=messages)
 
         self._http.chat_completion_stream(
             cfg,

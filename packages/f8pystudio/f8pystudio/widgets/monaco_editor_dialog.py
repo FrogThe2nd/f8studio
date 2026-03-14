@@ -13,6 +13,7 @@ from ..ai_assist.llm_bridge import AiLlmBridge
 from ..ai_assist.store import AiProviderStore
 from ..editor_assist.bridge import PythonEditorAssistBridge
 from ..editor_assist.workspace import EditorAssistContext
+from ..qt_font_utils import normalize_font_point_size
 from ..ui_notifications import show_warning
 from .ai_quick_panel import AiQuickPanel
 
@@ -44,6 +45,52 @@ def _python_assist_warning(context: EditorAssistContext | None) -> str:
     return str(context.error_message or "").strip()
 
 
+def _set_tool_button_point_size(button: QtWidgets.QToolButton, point_size: int) -> None:
+    font = normalize_font_point_size(button.font(), fallback_point_size=point_size)
+    font.setPointSize(max(1, int(point_size)))
+    button.setFont(font)
+
+
+def _usage_pie_icon(*, used_ratio: float, color: QtGui.QColor, size: int = 14) -> QtGui.QIcon:
+    ratio = max(0.0, min(1.0, float(used_ratio)))
+    pix = QtGui.QPixmap(size, size)
+    pix.fill(QtCore.Qt.GlobalColor.transparent)
+
+    painter = QtGui.QPainter(pix)
+    painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
+
+    outer = QtCore.QRectF(1.0, 1.0, float(size - 2), float(size - 2))
+    center = QtCore.QPointF(outer.center())
+
+    base = QtGui.QColor("#4a4f57")
+    painter.setPen(QtCore.Qt.PenStyle.NoPen)
+    painter.setBrush(base)
+    painter.drawEllipse(outer)
+
+    if ratio > 0.0:
+        painter.setBrush(color)
+        start_angle = 90 * 16
+        span_angle = int(-360 * 16 * ratio)
+        painter.drawPie(outer, start_angle, span_angle)
+
+    # punch a hole to make a donut/pie hybrid that reads well on dark UI
+    inner_diameter = max(2.0, outer.width() * 0.46)
+    inner = QtCore.QRectF(
+        center.x() - inner_diameter / 2.0,
+        center.y() - inner_diameter / 2.0,
+        inner_diameter,
+        inner_diameter,
+    )
+    painter.setBrush(QtGui.QColor("#1f2328"))
+    painter.drawEllipse(inner)
+
+    painter.setPen(QtGui.QPen(QtGui.QColor("#6c7380"), 1.0))
+    painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+    painter.drawEllipse(outer)
+    painter.end()
+    return QtGui.QIcon(pix)
+
+
 def _assist_context_fingerprint(context: EditorAssistContext | None) -> str:
     if context is None:
         return ""
@@ -59,6 +106,10 @@ def _assist_context_fingerprint(context: EditorAssistContext | None) -> str:
 
     payload = {
         "language": str(context.language or ""),
+        "node_kind": str(context.node_kind or ""),
+        "service_class": str(context.service_class or ""),
+        "operator_class": str(context.operator_class or ""),
+        "node_description": str(context.node_description or ""),
         "support_files": [[str(name), str(text)] for name, text in context.support_files],
         "overlay_prefix": str(context.overlay_prefix or ""),
         "dynamic_inputs_binding": (
@@ -72,13 +123,34 @@ def _assist_context_fingerprint(context: EditorAssistContext | None) -> str:
             if context.dynamic_inputs_binding is not None
             else None
         ),
+        "dynamic_outputs_binding": (
+            {
+                "source": str(context.dynamic_outputs_binding.source or ""),
+                "type_name": str(context.dynamic_outputs_binding.type_name or ""),
+                "module_name": str(context.dynamic_outputs_binding.module_name or ""),
+                "schema_mode": str(context.dynamic_outputs_binding.schema_mode or ""),
+                "access_mode": str(context.dynamic_outputs_binding.access_mode or ""),
+            }
+            if context.dynamic_outputs_binding is not None
+            else None
+        ),
         "data_in_ports": [
             {
                 "name": str(port.name or ""),
                 "required": bool(port.required),
                 "value_schema": _jsonable(port.value_schema),
+                "description": str(port.description or ""),
             }
             for port in context.data_in_ports
+        ],
+        "data_out_ports": [
+            {
+                "name": str(port.name or ""),
+                "required": bool(port.required),
+                "value_schema": _jsonable(port.value_schema),
+                "description": str(port.description or ""),
+            }
+            for port in context.data_out_ports
         ],
         "dynamic_states_binding": (
             {
@@ -97,6 +169,7 @@ def _assist_context_fingerprint(context: EditorAssistContext | None) -> str:
                 "required": bool(field.required),
                 "value_schema": _jsonable(field.value_schema),
                 "access": str(field.access or ""),
+                "description": str(field.description or ""),
             }
             for field in context.state_fields
         ],
@@ -228,12 +301,15 @@ class F8MonacoEditorDialog(QtWidgets.QDialog):
 
         # Context usage indicator
         self._ctx_btn = QtWidgets.QToolButton()
-        self._ctx_btn.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextOnly)
-        self._ctx_btn.setText("●")
-        self._ctx_btn.setToolTip("AI context usage")
+        self._ctx_btn.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self._ctx_btn.setIconSize(QtCore.QSize(14, 14))
+        self._ctx_btn.setIcon(_usage_pie_icon(used_ratio=0.0, color=QtGui.QColor("#4fc3f7")))
+        self._ctx_btn.setText("100% free")
+        self._ctx_btn.setToolTip("AI context usage\nUsed: 0 / 0 tok")
+        _set_tool_button_point_size(self._ctx_btn, 10)
         self._ctx_btn.setStyleSheet(
-            "QToolButton { color: #4fc3f7; border: none; font-size: 16px; padding: 0 4px; }"
-            "QToolButton:hover { color: #81d4fa; }"
+            "QToolButton { color: #9aa4b2; border: none; padding: 0 4px; }"
+            "QToolButton:hover { color: #d7deea; }"
         )
         self._ai_bridge.context_usage_updated.connect(self._on_context_usage_updated)  # type: ignore[attr-defined]
 
@@ -242,8 +318,9 @@ class F8MonacoEditorDialog(QtWidgets.QDialog):
         self._ai_panel_btn.setText("🤖")
         self._ai_panel_btn.setCheckable(True)
         self._ai_panel_btn.setToolTip("Toggle AI settings panel")
+        _set_tool_button_point_size(self._ai_panel_btn, 16)
         self._ai_panel_btn.setStyleSheet(
-            "QToolButton { border: none; font-size: 16px; padding: 0 4px; }"
+            "QToolButton { border: none; padding: 0 4px; }"
             "QToolButton:checked { background: #2d2d2d; border-radius: 3px; }"
         )
         self._ai_panel_btn.toggled.connect(self._on_ai_panel_toggle)  # type: ignore[attr-defined]
@@ -1985,10 +2062,11 @@ class F8MonacoEditorDialog(QtWidgets.QDialog):
     @QtCore.Slot(int, int)
     def _on_context_usage_updated(self, used: int, total: int) -> None:
         if total > 0:
-            pct = used / total
-            if pct < 0.5:
+            used_ratio = max(0.0, min(1.0, used / total))
+            free_ratio = max(0.0, 1.0 - used_ratio)
+            if used_ratio < 0.5:
                 color = "#4fc3f7"
-            elif pct < 0.8:
+            elif used_ratio < 0.8:
                 color = "#ffd54f"
             else:
                 color = "#ef9a9a"
@@ -1996,19 +2074,23 @@ class F8MonacoEditorDialog(QtWidgets.QDialog):
             def _fmt(n: int) -> str:
                 return f"{n / 1000:.0f}k" if n >= 1000 else str(n)
 
-            self._ctx_btn.setText(f"◉ {_fmt(used)}/{_fmt(total)}")
+            free_pct = int(round(free_ratio * 100.0))
+            self._ctx_btn.setIcon(_usage_pie_icon(used_ratio=used_ratio, color=QtGui.QColor(color)))
+            self._ctx_btn.setText(f"{free_pct}% free")
+            _set_tool_button_point_size(self._ctx_btn, 10)
             self._ctx_btn.setStyleSheet(
-                f"QToolButton {{ color: {color}; border: none; font-size: 11px; padding: 0 4px; }}"
-                f"QToolButton:hover {{ color: white; }}"
+                f"QToolButton {{ color: {color}; border: none; padding: 0 4px; }}"
+                "QToolButton:hover { color: white; }"
             )
             try:
                 breakdown = self._ai_bridge.get_context_breakdown()
                 tip = (
-                    f"<b>AI Context Usage</b><br>"
-                    f"System: {breakdown['system_tokens']} tok<br>"
-                    f"Code: {breakdown['code_tokens']} tok<br>"
-                    f"Chat: {breakdown['chat_tokens']} tok<br>"
-                    f"<hr>Used: {breakdown['used_tokens']} / {breakdown['total_tokens']} tok"
+                    "AI Context Usage\n"
+                    f"System: {breakdown['system_tokens']} tok\n"
+                    f"Code: {breakdown['code_tokens']} tok\n"
+                    f"Chat: {breakdown['chat_tokens']} tok\n"
+                    f"Free: {free_pct}%\n"
+                    f"Used: {breakdown['used_tokens']} / {breakdown['total_tokens']} tok"
                 )
                 self._ctx_btn.setToolTip(tip)
             except Exception:

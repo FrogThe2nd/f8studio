@@ -13,6 +13,8 @@ from .workspace import (
     EditorAssistContext,
     EditorAssistDataInPort,
     EditorAssistInputsBinding,
+    EditorAssistDataOutPort,
+    EditorAssistOutputsBinding,
     EditorAssistStateField,
     EditorAssistStatesBinding,
 )
@@ -117,6 +119,7 @@ def _spec_data_in_ports(spec: F8ServiceSpec | F8OperatorSpec) -> tuple[EditorAss
         if not name:
             continue
         required = bool(getattr(port, "required", True))
+        description = str(getattr(port, "description", "") or "").strip()
         value_schema: dict[str, Any] | None = None
         schema_obj = getattr(port, "valueSchema", None)
         if schema_obj is not None:
@@ -126,7 +129,45 @@ def _spec_data_in_ports(spec: F8ServiceSpec | F8OperatorSpec) -> tuple[EditorAss
                     value_schema = dumped
             except (AttributeError, TypeError, ValueError):
                 value_schema = None
-        out.append(EditorAssistDataInPort(name=name, required=required, value_schema=value_schema))
+        out.append(
+            EditorAssistDataInPort(
+                name=name,
+                required=required,
+                value_schema=value_schema,
+                description=description,
+            )
+        )
+    return tuple(out)
+
+
+def _spec_data_out_ports(spec: F8ServiceSpec | F8OperatorSpec) -> tuple[EditorAssistDataOutPort, ...]:
+    raw_ports = getattr(spec, "dataOutPorts", None)
+    if not isinstance(raw_ports, list):
+        return ()
+    out: list[EditorAssistDataOutPort] = []
+    for port in raw_ports:
+        name = str(getattr(port, "name", "") or "").strip()
+        if not name:
+            continue
+        required = bool(getattr(port, "required", True))
+        description = str(getattr(port, "description", "") or "").strip()
+        value_schema: dict[str, Any] | None = None
+        schema_obj = getattr(port, "valueSchema", None)
+        if schema_obj is not None:
+            try:
+                dumped = dump_json(schema_obj, mode="json")
+                if isinstance(dumped, dict):
+                    value_schema = dumped
+            except (AttributeError, TypeError, ValueError):
+                value_schema = None
+        out.append(
+            EditorAssistDataOutPort(
+                name=name,
+                required=required,
+                value_schema=value_schema,
+                description=description,
+            )
+        )
     return tuple(out)
 
 
@@ -144,6 +185,7 @@ def _spec_readable_state_fields(spec: F8ServiceSpec | F8OperatorSpec) -> tuple[E
         if access not in ("rw", "ro", "wo"):
             continue
         required = bool(getattr(field, "required", False))
+        description = str(getattr(field, "description", "") or "").strip()
         value_schema: dict[str, Any] | None = None
         schema_obj = getattr(field, "valueSchema", None)
         if schema_obj is not None:
@@ -159,6 +201,7 @@ def _spec_readable_state_fields(spec: F8ServiceSpec | F8OperatorSpec) -> tuple[E
                 required=required,
                 value_schema=value_schema,
                 access=access,
+                description=description,
             )
         )
     return tuple(out)
@@ -227,6 +270,7 @@ def editor_assist_context_for_field(
         return _error_context(spec, "editorAssist.python.overlay_prefix must be str")
 
     dynamic_inputs_binding: EditorAssistInputsBinding | None = None
+    dynamic_outputs_binding: EditorAssistOutputsBinding | None = None
     dynamic_states_binding: EditorAssistStatesBinding | None = None
     dynamic_bindings = python_payload.get("dynamic_bindings")
     if dynamic_bindings is not None:
@@ -322,14 +366,66 @@ def editor_assist_context_for_field(
                     schema_mode=schema_mode,
                     access_mode=access_mode,
                 )
+        outputs_binding = dynamic_bindings.get("outputs")
+        if outputs_binding is not None:
+            if not isinstance(outputs_binding, dict):
+                return _error_context(spec, "editorAssist.python.dynamic_bindings.outputs must be an object")
+            enabled = outputs_binding.get("enabled")
+            if not isinstance(enabled, bool):
+                return _error_context(spec, "editorAssist.python.dynamic_bindings.outputs.enabled must be bool")
+            source = str(outputs_binding.get("source") or "data_out_ports").strip()
+            if source != "data_out_ports":
+                return _error_context(
+                    spec,
+                    "editorAssist.python.dynamic_bindings.outputs.source must be 'data_out_ports'",
+                )
+            type_name = str(outputs_binding.get("type_name") or "F8Outputs").strip()
+            module_name = str(outputs_binding.get("module_name") or "f8_dynamic_outputs").strip()
+            schema_mode = str(outputs_binding.get("schema_mode") or "basic_recursive").strip()
+            access_mode = str(outputs_binding.get("access_mode") or "object_and_mapping").strip()
+            if not _is_valid_type_name(type_name):
+                return _error_context(
+                    spec,
+                    "editorAssist.python.dynamic_bindings.outputs.type_name must be a valid identifier",
+                )
+            if not _is_valid_module_name(module_name):
+                return _error_context(
+                    spec,
+                    "editorAssist.python.dynamic_bindings.outputs.module_name must be a valid module path",
+                )
+            if schema_mode != "basic_recursive":
+                return _error_context(
+                    spec,
+                    "editorAssist.python.dynamic_bindings.outputs.schema_mode must be 'basic_recursive'",
+                )
+            if access_mode != "object_and_mapping":
+                return _error_context(
+                    spec,
+                    "editorAssist.python.dynamic_bindings.outputs.access_mode must be 'object_and_mapping'",
+                )
+            if enabled:
+                dynamic_outputs_binding = EditorAssistOutputsBinding(
+                    source=source,
+                    type_name=type_name,
+                    module_name=module_name,
+                    schema_mode=schema_mode,
+                    access_mode=access_mode,
+                )
 
     sorted_files = tuple(sorted(support_files, key=lambda item: item[0]))
+    node_kind = "service" if isinstance(spec, F8ServiceSpec) else "operator"
     return EditorAssistContext(
         language="python",
+        node_kind=node_kind,
+        service_class=str(getattr(spec, "serviceClass", "") or "").strip(),
+        operator_class=str(getattr(spec, "operatorClass", "") or "").strip(),
+        node_description=str(getattr(spec, "description", "") or "").strip(),
         support_files=sorted_files,
         overlay_prefix=overlay_prefix,
         dynamic_inputs_binding=dynamic_inputs_binding,
-        data_in_ports=_spec_data_in_ports(spec) if dynamic_inputs_binding is not None else (),
+        data_in_ports=_spec_data_in_ports(spec),
+        dynamic_outputs_binding=dynamic_outputs_binding,
+        data_out_ports=_spec_data_out_ports(spec),
         dynamic_states_binding=dynamic_states_binding,
-        state_fields=_spec_readable_state_fields(spec) if dynamic_states_binding is not None else (),
+        state_fields=_spec_readable_state_fields(spec),
     )

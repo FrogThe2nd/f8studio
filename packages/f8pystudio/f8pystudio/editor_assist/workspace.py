@@ -9,7 +9,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .python_dynamic_types import build_dynamic_inputs_stub, build_dynamic_states_stub
+from .python_dynamic_types import (
+    build_dynamic_inputs_stub,
+    build_dynamic_outputs_stub,
+    build_dynamic_states_stub,
+)
 from .pyscript_stubs import write_support_files
 
 logger = logging.getLogger(__name__)
@@ -20,6 +24,15 @@ class EditorAssistDataInPort:
     name: str
     required: bool = True
     value_schema: dict[str, Any] | None = None
+    description: str = ""
+
+
+@dataclass(frozen=True)
+class EditorAssistDataOutPort:
+    name: str
+    required: bool = True
+    value_schema: dict[str, Any] | None = None
+    description: str = ""
 
 
 @dataclass(frozen=True)
@@ -32,11 +45,21 @@ class EditorAssistInputsBinding:
 
 
 @dataclass(frozen=True)
+class EditorAssistOutputsBinding:
+    source: str = "data_out_ports"
+    type_name: str = "F8Outputs"
+    module_name: str = "f8_dynamic_outputs"
+    schema_mode: str = "basic_recursive"
+    access_mode: str = "object_and_mapping"
+
+
+@dataclass(frozen=True)
 class EditorAssistStateField:
     name: str
     required: bool = False
     value_schema: dict[str, Any] | None = None
     access: str = "rw"
+    description: str = ""
 
 
 @dataclass(frozen=True)
@@ -51,10 +74,16 @@ class EditorAssistStatesBinding:
 @dataclass(frozen=True)
 class EditorAssistContext:
     language: str = "plaintext"
+    node_kind: str = ""
+    service_class: str = ""
+    operator_class: str = ""
+    node_description: str = ""
     support_files: tuple[tuple[str, str], ...] = ()
     overlay_prefix: str = ""
     dynamic_inputs_binding: EditorAssistInputsBinding | None = None
     data_in_ports: tuple[EditorAssistDataInPort, ...] = ()
+    dynamic_outputs_binding: EditorAssistOutputsBinding | None = None
+    data_out_ports: tuple[EditorAssistDataOutPort, ...] = ()
     dynamic_states_binding: EditorAssistStatesBinding | None = None
     state_fields: tuple[EditorAssistStateField, ...] = ()
     error_message: str = ""
@@ -93,6 +122,7 @@ class EditorWorkspaceSession:
                         build_dynamic_inputs_stub(
                             type_name=str(binding.type_name or "F8Inputs"),
                             data_in_ports=tuple(self._context.data_in_ports),
+                            node_description=str(self._context.node_description or ""),
                         ),
                     )
                 )
@@ -106,6 +136,21 @@ class EditorWorkspaceSession:
                         build_dynamic_states_stub(
                             type_name=str(binding.type_name or "F8States"),
                             state_fields=tuple(self._context.state_fields),
+                            node_description=str(self._context.node_description or ""),
+                        ),
+                    )
+                )
+        if self._context.dynamic_outputs_binding is not None:
+            binding = self._context.dynamic_outputs_binding
+            module_path = str(binding.module_name or "").strip().replace(".", "/")
+            if module_path:
+                support_files.append(
+                    (
+                        f"{module_path}.pyi",
+                        build_dynamic_outputs_stub(
+                            type_name=str(binding.type_name or "F8Outputs"),
+                            data_out_ports=tuple(self._context.data_out_ports),
+                            node_description=str(self._context.node_description or ""),
                         ),
                     )
                 )
@@ -121,10 +166,11 @@ class EditorWorkspaceSession:
         self._line_offset = self._line_overlay_prefix.count("\n")
         self._write_pyright_config()
         logger.debug(
-            "editor assist workspace prepared: root=%s supportFiles=%s dynamicInputs=%s dynamicStates=%s overlayLines=%d",
+            "editor assist workspace prepared: root=%s supportFiles=%s dynamicInputs=%s dynamicOutputs=%s dynamicStates=%s overlayLines=%d",
             self._root,
             [name for name, _ in support_files],
             self._context.dynamic_inputs_binding is not None,
+            self._context.dynamic_outputs_binding is not None,
             self._context.dynamic_states_binding is not None,
             self._line_offset,
         )
