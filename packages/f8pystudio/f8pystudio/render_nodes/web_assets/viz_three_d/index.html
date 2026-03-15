@@ -1,19 +1,34 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Skeleton3D</title>
     <style>
+      :root {
+        --bg-color: #0f0f12;
+        --panel-bg: rgba(22, 22, 26, 0.85);
+        --accent-color: #4f46e5;
+        --text-color: #e5e7eb;
+        --text-dim: #9ca3af;
+        --border-color: rgba(255, 255, 255, 0.08);
+        --row-hover: rgba(255, 255, 255, 0.03);
+        --glass-blur: blur(12px);
+        --gui-font-size: 11px;
+        --gui-row-height: 24px;
+      }
+
       html,
       body {
         margin: 0;
+        padding: 0;
         width: 100%;
         height: 100%;
         overflow: hidden;
-        background: #0f0f12;
-        color: #ececec;
-        font-family: "Segoe UI", "Helvetica Neue", sans-serif;
+        background: var(--bg-color);
+        color: var(--text-color);
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        -webkit-font-smoothing: antialiased;
       }
 
       #app {
@@ -25,175 +40,348 @@
       #gl-root {
         width: 100%;
         height: 100%;
-        background: #0f0f12;
+        background: var(--bg-color);
       }
 
-      #hud {
+      /* Floating Toggle Button */
+      #toggle-hud {
         position: absolute;
         left: 8px;
         top: 8px;
-        z-index: 10;
+        z-index: 100;
+        width: 28px;
+        height: 28px;
+        border-radius: 6px;
+        background: var(--panel-bg);
+        border: 1px solid var(--border-color);
+        color: var(--text-color);
+        backdrop-filter: var(--glass-blur);
+        cursor: pointer;
         display: flex;
-        flex-direction: column;
-        gap: 6px;
-        padding: 8px;
-        border-radius: 8px;
-        background: rgba(15, 15, 18, 0.72);
-        border: 1px solid rgba(255, 255, 255, 0.12);
-        backdrop-filter: blur(2px);
+        align-items: center;
+        justify-content: center;
+        transition: transform 0.2s, background 0.2s;
+        font-size: 14px;
       }
 
-      #axis-tree {
-        max-height: 180px;
-        overflow: auto;
-        border-top: 1px solid rgba(255, 255, 255, 0.12);
-        padding-top: 6px;
+      #toggle-hud:hover {
+        background: rgba(40, 40, 45, 0.9);
+        transform: scale(1.05);
+      }
+
+      /* Compact HUD (lil-gui style) */
+      #hud {
+        position: absolute;
+        left: 8px;
+        top: 44px;
+        z-index: 90;
+        width: 200px; /* More compact width */
+        max-height: calc(100% - 60px);
+        display: flex;
+        flex-direction: column;
+        background: var(--panel-bg);
+        border: 1px solid var(--border-color);
+        backdrop-filter: var(--glass-blur);
+        transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.2s;
+        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+        border-radius: 4px; /* Flatter corners for GUI feel */
+        overflow: hidden;
+      }
+
+      #hud.collapsed {
+        transform: translateY(-10px);
+        opacity: 0;
+        pointer-events: none;
+      }
+
+      .hud-header {
+        height: 28px;
+        padding: 0 10px;
+        display: flex;
+        align-items: center;
+        background: rgba(0, 0, 0, 0.2);
+        border-bottom: 1px solid var(--border-color);
+        cursor: default;
+      }
+
+      .hud-title {
+        font-size: 10px;
+        font-weight: 700;
+        color: var(--text-dim);
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+      }
+
+      #hud-content {
+        display: flex;
+        flex-direction: column;
+        overflow-y: auto;
+      }
+
+      /* lil-gui inspired row structure */
+      .gui-row {
+        display: flex;
+        align-items: center;
+        min-height: var(--gui-row-height);
+        padding: 0 8px;
+        border-bottom: 1px solid var(--border-color);
+        font-size: var(--gui-font-size);
+      }
+
+      .gui-row:hover {
+        background: var(--row-hover);
+      }
+
+      .gui-label {
+        flex: 1;
+        color: var(--text-dim);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        padding-right: 8px;
+      }
+
+      .gui-control {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 4px;
+      }
+
+      /* Input & Button Styling */
+      input[type="number"],
+      input[type="text"] {
+        background: rgba(0, 0, 0, 0.3);
+        border: 1px solid var(--border-color);
+        color: #fff;
+        border-radius: 2px;
+        padding: 2px 4px;
+        font-size: 10px;
+        font-family: inherit;
+        outline: none;
+      }
+
+      input[type="number"]:focus,
+      input[type="text"]:focus {
+        border-color: var(--accent-color);
+      }
+
+      button {
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid var(--border-color);
+        color: var(--text-color);
+        border-radius: 2px;
+        padding: 2px 6px;
+        font-size: 10px;
+        cursor: pointer;
+        transition: 0.1s;
+      }
+
+      button:hover {
+        background: rgba(255, 255, 255, 0.12);
+        border-color: rgba(255, 255, 255, 0.2);
+      }
+
+      button.primary {
+        background: var(--accent-color);
+        border-color: transparent;
+        font-weight: 600;
+      }
+
+      /* Checkbox */
+      input[type="checkbox"] {
+        width: 12px;
+        height: 12px;
+        cursor: pointer;
+        accent-color: var(--accent-color);
+        margin: 0;
+      }
+
+      /* Search Row */
+      .search-box {
+        padding: 4px 8px;
+        background: rgba(0, 0, 0, 0.1);
+        border-bottom: 1px solid var(--border-color);
       }
 
       #axis-search {
         width: 100%;
         box-sizing: border-box;
         height: 22px;
-        border: 1px solid rgba(255, 255, 255, 0.2);
-        background: rgba(255, 255, 255, 0.08);
-        color: #f1f1f1;
-        border-radius: 4px;
-        padding: 0 6px;
-        outline: none;
       }
 
-      #axis-tree .group-title {
-        font-size: 11px;
-        color: rgba(245, 245, 245, 0.92);
-        margin: 4px 0 2px 0;
+      /* Tree Section */
+      .section-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 4px 8px;
+        background: rgba(255, 255, 255, 0.02);
+        font-size: 9px;
+        color: var(--text-dim);
+        font-weight: 800;
+        text-transform: uppercase;
+        border-bottom: 1px solid var(--border-color);
       }
 
-      #axis-tree .axis-item {
+      #axis-tree {
+        max-height: 200px;
+        overflow-y: auto;
+      }
+
+      /* Tree Items */
+      .axis-model {
+        border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+      }
+
+      summary.axis-item {
+        padding: 4px 8px;
+        font-weight: 600;
+        color: #fff;
+        cursor: pointer;
+        list-style: none; /* Hide default arrow */
         display: flex;
         align-items: center;
         gap: 6px;
-        font-size: 11px;
-        color: rgba(230, 230, 230, 0.9);
       }
 
-      #axis-tree .axis-item input {
-        margin: 0;
+      summary::before {
+        content: '▸';
+        font-size: 9px;
+        color: var(--text-dim);
+        display: inline-block;
+        width: 8px;
+        transition: transform 0.2s;
       }
 
-      .row {
+      details[open] > summary::before {
+        transform: rotate(90deg);
+      }
+
+      .axis-item input { margin: 0; }
+      .axis-item span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+      .bone-list {
+        background: rgba(0,0,0,0.15);
+      }
+
+      label.axis-item {
+        padding: 2px 8px 2px 28px;
         display: flex;
         align-items: center;
-        gap: 8px;
-        font-size: 12px;
+        gap: 6px;
+        opacity: 0.8;
       }
 
-      .row input[type="number"] {
-        width: 64px;
-      }
+      label.axis-item:hover { opacity: 1; background: rgba(255,255,255,0.03); }
 
-      button {
-        border: 1px solid rgba(255, 255, 255, 0.2);
-        background: rgba(255, 255, 255, 0.08);
-        color: #f1f1f1;
-        border-radius: 4px;
-        height: 22px;
-        padding: 0 8px;
-        cursor: pointer;
-      }
-
-      .label2d {
-        color: #f5f5f5;
-        font-size: 11px;
-        background: rgba(0, 0, 0, 0.45);
-        border: 1px solid rgba(255, 255, 255, 0.2);
-        border-radius: 3px;
-        padding: 1px 4px;
-        white-space: nowrap;
-        user-select: none;
-        pointer-events: none;
-      }
-
+      /* Status area */
       #status {
-        opacity: 0.82;
+        padding: 6px 8px;
+        font-size: 9px;
+        color: var(--text-dim);
+        background: rgba(0, 0, 0, 0.3);
+        border-top: 1px solid var(--border-color);
       }
+
+      /* 2D Labels in Scene */
+      .label2d {
+        color: #fff;
+        font-size: 10px;
+        background: rgba(0, 0, 0, 0.7);
+        padding: 1px 4px;
+        border-radius: 2px;
+        pointer-events: none;
+        white-space: nowrap;
+      }
+
+      /* Custom scrollbar */
+      ::-webkit-scrollbar { width: 4px; }
+      ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.15); border-radius: 2px; }
     </style>
   </head>
   <body>
     <div id="app">
+      <button id="toggle-hud" type="button" title="Toggle Panel (H)">☰</button>
       <div id="gl-root"></div>
       <div id="hud">
-        <div class="row">
-          <button id="fit-btn" type="button">Zoom To Fit (F)</button>
-          <label><input id="live-toggle" type="checkbox" checked /> Live Update</label>
+        <div class="hud-header">
+           <span class="hud-title">Skeleton3D</span>
         </div>
-        <div class="row">
-          <label>FPS Cap <input id="fps-cap" type="number" min="1" max="120" value="60" /></label>
+        <div id="hud-content">
+          <!-- View Group -->
+          <div class="gui-row">
+            <span class="gui-label">View</span>
+            <div class="gui-control">
+              <button id="fit-btn" class="primary" type="button">Zoom To Fit</button>
+            </div>
+          </div>
+          
+          <div class="gui-row">
+            <span class="gui-label">Live Update</span>
+            <div class="gui-control">
+              <input id="live-toggle" type="checkbox" checked />
+            </div>
+          </div>
+
+          <div class="gui-row">
+            <span class="gui-label">FPS Cap</span>
+            <div class="gui-control">
+              <input id="fps-cap" type="number" min="1" max="120" value="60" style="width: 38px;" />
+            </div>
+          </div>
+
+          <!-- Skeleton Group -->
+          <div class="section-header">
+            <span>Skeleton Tree</span>
+            <div style="display: flex; gap: 4px;">
+              <button id="axis-all-on" style="font-size: 8px; padding: 1px 4px;">On</button>
+              <button id="axis-all-off" style="font-size: 8px; padding: 1px 4px;">Off</button>
+            </div>
+          </div>
+          
+          <div class="search-box">
+            <input id="axis-search" type="text" placeholder="Search bones..." />
+          </div>
+          
+          <div id="axis-tree"></div>
         </div>
-        <div class="row">Axis Tree (per bone)</div>
-        <div class="row">
-          <button id="axis-all-on" type="button">All On</button>
-          <button id="axis-all-off" type="button">All Off</button>
-        </div>
-        <div class="row">
-          <input id="axis-search" type="text" placeholder="Search person or bone..." />
-        </div>
-        <div id="axis-tree"></div>
-        <div id="status" class="row">ready</div>
+        <div id="status">ready</div>
       </div>
     </div>
 
     <script>
       (function () {
         const dependencies = [
-          {
-            name: "three.js",
-            src: "https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js",
-          },
-          {
-            name: "OrbitControls.js",
-            src: "https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js",
-          },
-          {
-            name: "CSS2DRenderer.js",
-            src: "https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/renderers/CSS2DRenderer.js",
-          },
+          { name: "three.js", src: "https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js" },
+          { name: "OrbitControls.js", src: "https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js" },
+          { name: "CSS2DRenderer.js", src: "https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/renderers/CSS2DRenderer.js" },
         ];
 
         function setStatus(text) {
           const status = document.getElementById("status");
-          if (!status) {
-            return;
-          }
-          status.textContent = String(text || "");
+          if (status) status.textContent = String(text || "");
         }
 
-        function loadScript(name, src) {
-          return new Promise(function (resolve, reject) {
+        function loadScript(src) {
+          return new Promise((resolve, reject) => {
             const script = document.createElement("script");
             script.src = src;
             script.async = false;
-            script.onload = function () {
-              resolve();
-            };
-            script.onerror = function () {
-              reject(new Error(name));
-            };
+            script.onload = () => resolve();
+            script.onerror = () => reject(new Error(src));
             document.body.appendChild(script);
           });
         }
 
         async function bootstrap() {
           try {
-            for (const dep of dependencies) {
-              await loadScript(dep.name, dep.src);
-            }
-            await loadScript("viewer.js", "./viewer.js");
+            for (const dep of dependencies) await loadScript(dep.src);
+            await loadScript("./viewer.js");
           } catch (error) {
-            const name = error instanceof Error ? error.message : "dependency";
-            setStatus("CDN load failed: " + name);
+            setStatus("Load failed: " + error.message);
           }
         }
-
         bootstrap();
       })();
     </script>

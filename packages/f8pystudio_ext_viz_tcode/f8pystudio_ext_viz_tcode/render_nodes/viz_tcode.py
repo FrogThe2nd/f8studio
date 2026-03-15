@@ -112,7 +112,7 @@ class _TCodeViewerWindow(QtWidgets.QDialog):
     ) -> None:
         super().__init__(parent=None)
         self.setWindowTitle("TCode Viewer")
-        self.resize(1080, 720)
+        self.resize(300, 300)
         self._on_open_state_changed = on_open_state_changed
         self._view = None
         self._page_ready = False

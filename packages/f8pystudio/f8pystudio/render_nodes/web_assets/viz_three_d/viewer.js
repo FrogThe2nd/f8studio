@@ -8,6 +8,8 @@
   const axisAllOnBtn = document.getElementById('axis-all-on');
   const axisAllOffBtn = document.getElementById('axis-all-off');
   const statusEl = document.getElementById('status');
+  const toggleHudBtn = document.getElementById('toggle-hud');
+  const hudElement = document.getElementById('hud');
 
   const state = {
     worldUp: '+y',
@@ -576,12 +578,13 @@
         }
       });
       const modelText = document.createElement('span');
-      modelText.textContent = '[Model] ' + personDisplayName + ' (' + String(selectedBones) + '/' + String(totalBones) + ')';
+      modelText.textContent = personDisplayName + ' (' + String(selectedBones) + '/' + String(totalBones) + ')';
       modelRow.appendChild(modelCk);
       modelRow.appendChild(modelText);
       details.appendChild(modelRow);
 
       const nodeContainer = document.createElement('div');
+      nodeContainer.className = 'bone-list';
       details.appendChild(nodeContainer);
 
       const shouldRenderNodes = details.open || !!searchText;
@@ -597,9 +600,8 @@
           if (rowCount >= maxRows) {
             const truncated = document.createElement('div');
             truncated.className = 'axis-item';
-            truncated.style.marginLeft = '14px';
             truncated.style.opacity = '0.75';
-            truncated.textContent = '… too many bones, refine search';
+            truncated.textContent = '… more bones';
             nodeContainer.appendChild(truncated);
             break;
           }
@@ -609,7 +611,6 @@
 
           const row = document.createElement('label');
           row.className = 'axis-item';
-          row.style.marginLeft = '14px';
 
           const checkbox = document.createElement('input');
           checkbox.type = 'checkbox';
@@ -1173,7 +1174,7 @@
     if (moveLeft) move.sub(right);
     if (move.lengthSq() < 1e-8) return;
 
-    move.normalize().multiplyScalar(state.roamSpeed * speedMul * Math.max(0.0, deltaS));
+      move.normalize().multiplyScalar(state.roamSpeed * speedMul * Math.max(0.0, deltaS));
     camera.position.add(move);
     controls.target.add(move);
   }
@@ -1188,6 +1189,21 @@
     labelRenderer.setSize(w, h);
   }
 
+  function setRunning(run) {
+    state.running = !!run;
+    if (state.running) {
+      if (!state.frameHandle) {
+        state.lastFrameMs = performance.now();
+        state.frameHandle = requestAnimationFrame(tick);
+      }
+    } else {
+      if (state.frameHandle) {
+        cancelAnimationFrame(state.frameHandle);
+        state.frameHandle = 0;
+      }
+    }
+  }
+
   function onKeyDown(ev) {
     if (!ev || !ev.code) return;
     state.keyDown.add(ev.code);
@@ -1195,11 +1211,20 @@
       zoomToFit();
       ev.preventDefault();
     }
+    if (ev.code === 'KeyH') {
+      toggleHud();
+      ev.preventDefault();
+    }
   }
 
   function onKeyUp(ev) {
     if (!ev || !ev.code) return;
     state.keyDown.delete(ev.code);
+  }
+
+  function toggleHud() {
+    if (!hudElement) return;
+    hudElement.classList.toggle('collapsed');
   }
 
   function tick(nowMs) {
@@ -1296,6 +1321,12 @@
     });
   }
 
+  if (toggleHudBtn) {
+    toggleHudBtn.addEventListener('click', function () {
+      toggleHud();
+    });
+  }
+
   if (axisAllOffBtn) {
     axisAllOffBtn.addEventListener('click', function () {
       if (!state.payload) return;
@@ -1330,5 +1361,6 @@
     setWorldUp: setWorldUp,
     zoomToFit: zoomToFit,
     detach: detach,
+    setRunning: setRunning,
   };
 })();

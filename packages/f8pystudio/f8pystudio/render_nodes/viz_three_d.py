@@ -106,7 +106,7 @@ class _Skeleton3DViewerWindow(QtWidgets.QDialog):
     ) -> None:
         super().__init__(parent=None)
         self.setWindowTitle("Skeleton3D Viewer")
-        self.resize(1200, 760)
+        self.resize(300, 300)
 
         self._on_open_state_changed = on_open_state_changed
         self._on_viewer_status_changed = on_viewer_status_changed
@@ -207,6 +207,7 @@ class _Skeleton3DViewerWindow(QtWidgets.QDialog):
         self._pending_payload = None
         if pending is not None and self._is_open:
             self._run_set_data(pending)
+        self.set_running(self._is_open)
 
     def _on_render_process_terminated(self, termination_status: Any, exit_code: int) -> None:
         status_text = webengine_termination_status_text(termination_status)
@@ -237,14 +238,16 @@ class _Skeleton3DViewerWindow(QtWidgets.QDialog):
         if self._is_open:
             return
         self._is_open = True
+        self.set_running(True)
         self._on_open_state_changed(True)
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
         if self._is_open:
             self._is_open = False
+            self.set_running(False)
             self._on_open_state_changed(False)
         self._pending_payload = None
-        self._release_web_view(reason="window_close")
+        # Keep web view alive between shows to avoid expensive/unstable recreation
         self._on_viewer_status_changed("closed")
         super().closeEvent(event)
 
@@ -391,6 +394,15 @@ class _Skeleton3DViewerWindow(QtWidgets.QDialog):
             page.runJavaScript(script)
         except (AttributeError, RuntimeError, TypeError):
             logger.exception("failed to run Skeleton3D setWorldUp javascript")
+
+    def set_running(self, running: bool) -> None:
+        if self._view is None:
+            return
+        arg = "true" if running else "false"
+        script = f"if (window.Skeleton3DViewer && window.Skeleton3DViewer.setRunning) {{ window.Skeleton3DViewer.setRunning({arg}); }}"
+        page = self._view.page()
+        if page is not None:
+            page.runJavaScript(script)
 
 
 class _Skeleton3DControlPane(QtWidgets.QWidget):
