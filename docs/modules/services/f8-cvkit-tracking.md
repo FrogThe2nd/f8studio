@@ -22,7 +22,9 @@ No description.
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
 | `shmName` | `rw` | `true` | `true` | `string` | Optional SHM name override (e.g. shm.xxx.video). |
-| `initSelect` | `rw` | `true` | `true` | `string / enum[closest_center, largest_area, highest_score] / default=closest_center` | Init bbox selection strategy: closest_center \| largest_area \| highest_score. |
+| `initSelect` | `rw` | `true` | `true` | `string / enum[first_box, closest_center, largest_area, highest_score] / default=closest_center` | Init bbox selection strategy: first_box \| closest_center \| largest_area \| highest_score. |
+| `stopTrackingCooldownMs` | `rw` | `true` | `true` | `integer / default=1000` | After stopTracking, ignore initBox for this many ms. Set to 0 to disable. |
+| `stopTrackingCooldownUntilTsMs` | `ro` | `true` | `true` | `integer` | When > 0, initBox is ignored until this timestamp (ms). |
 | `isTracking` | `ro` | `true` | `true` | `boolean` | True when tracker is running. |
 | `isNotTracking` | `ro` | `true` | `true` | `boolean` | Negation of isTracking. |
 | `lastError` | `ro` | `true` | `true` | `string` | Last error message. |
@@ -41,7 +43,7 @@ Stop current tracking and return to waiting for initBox.
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
-| `initBox` | `true` | `true` | `object{bbox, bottom, conf, confidence, ...}` | Init payload (single bbox or nested detection tree). Recursively extracts bbox candidates and uses the one closest to image center. |
+| `initBox` | `true` | `true` | `object{bbox, bottom, conf, confidence, ...}` | Init payload (single bbox or nested detection tree). Recursively extracts bbox candidates and uses the one selected by initSelect. |
 
 ## Service Data Output Ports
 
@@ -73,12 +75,13 @@ _None_
 ## Key Fields That Matter
 
 - `shmName` (Video SHM, `rw`): Optional SHM name override (e.g. shm.xxx.video). Schema: `string`.
-- `initSelect` (Init Select, `rw`): Init bbox selection strategy: closest_center | largest_area | highest_score. Schema: `string / enum[closest_center, largest_area, highest_score] / default=closest_center`.
+- `initSelect` (Init Select, `rw`): Init bbox selection strategy: first_box | closest_center | largest_area | highest_score. Schema: `string / enum[first_box, closest_center, largest_area, highest_score] / default=closest_center`.
+- `stopTrackingCooldownMs` (Stop Cooldown (ms), `rw`): After stopTracking, ignore initBox for this many ms. Set to 0 to disable. Schema: `integer / default=1000`.
+- `stopTrackingCooldownUntilTsMs` (Stop Cooldown Until (tsMs), `ro`): When > 0, initBox is ignored until this timestamp (ms). Schema: `integer`.
 - `isTracking` (Is Tracking, `ro`): True when tracker is running. Schema: `boolean`.
 - `isNotTracking` (Is Not Tracking, `ro`): Negation of isTracking. Schema: `boolean`.
 - `lastError` (Last Error, `ro`): Last error message. Schema: `string`.
 - `active` (Active, `rw`): Service lifecycle state (activate/deactivate). Schema: `boolean / default=True`.
-- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
 
 ## Pitfalls / Gotchas
 

@@ -520,7 +520,31 @@ _None_
 
 <a id="operator-f8-envelope"></a>
 ### Envelope (`f8.envelope`)
-Tracks upper/lower envelopes and emits normalized + confidence outputs.
+Track a signal envelope and normalize it into a stable 0..1 range.
+
+Core
+- Input `value` is tracked with lower and upper envelope estimators.
+- Outputs are `lower`, `upper`, `normalized`, and `confidence`.
+- `normalized` maps the current input between the tracked envelopes, including optional margin and minimum span.
+- `confidence` estimates how periodic and stable the recent signal is.
+
+Envelope Modes
+- `EMA`: simple exponential tracking
+- `DEMA`: double exponential tracking with faster response
+- `SMA`: moving average window smoothing
+
+Jump Handling
+- Optional jump detection can reseed the envelopes after large sustained changes.
+- Jump settings control the trigger threshold, consecutive frames, and reseed blend time.
+
+Confidence
+- Optional confidence uses autocorrelation over a sliding window.
+- Confidence settings control lag range, peak prominence, smoothing, and noise floor.
+
+Examples
+- Normalize a noisy control signal into `normalized`
+- Track changing lower/upper motion bounds
+- Use `confidence` as a quality gate for rhythmic or periodic input
 
 - Exec in ports: none
 - Exec out ports: none
@@ -529,18 +553,18 @@ Tracks upper/lower envelopes and emits normalized + confidence outputs.
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `method` | `rw` | `true` | `true` | `string / enum[EMA, DEMA, SMA] / default=EMA` | Envelope filter method. |
-| `rise_alpha` | `rw` | `true` | `true` | `number / default=0.4` | Smoothing factor when moving toward the envelope. |
-| `fall_alpha` | `rw` | `true` | `true` | `number / default=0.05` | Smoothing factor when moving away from the envelope. |
-| `min_span` | `rw` | `true` | `true` | `number / default=0.25` | Minimum enforced envelope span. |
-| `sma_window` | `rw` | `true` | `true` | `number / default=10` | Window size for SMA mode. |
-| `margin` | `rw` | `true` | `false` | `number / default=0.0` | Extra margin added to envelopes before normalization. |
+| `method` | `rw` | `true` | `true` | `string / enum[EMA, DEMA, SMA] / default=EMA` | Envelope tracking method: `EMA`, `DEMA`, or `SMA`. |
+| `rise_alpha` | `rw` | `true` | `true` | `number / default=0.4` | Smoothing factor when the estimator moves toward the current envelope edge. |
+| `fall_alpha` | `rw` | `true` | `true` | `number / default=0.05` | Smoothing factor when the estimator relaxes away from the current envelope edge. |
+| `min_span` | `rw` | `true` | `true` | `number / default=0.25` | Minimum enforced distance between lower and upper envelopes before normalization. |
+| `sma_window` | `rw` | `true` | `true` | `number / default=10` | Moving-average window size used when Method is `SMA`. |
+| `margin` | `rw` | `true` | `false` | `number / default=0.0` | Extra padding added outside the envelopes before computing `normalized`. |
 | `jumpEnabled` | `rw` | `true` | `false` | `boolean / default=True` | Enable consecutive-frame jump detection and reseed. |
 | `jumpSpanMult` | `rw` | `true` | `false` | `number / default=4.0` | Distance threshold in envelope-span units for jump detection. |
 | `jumpConsecutiveFrames` | `rw` | `true` | `false` | `number / default=4` | Consecutive far frames required before jump trigger. |
 | `jumpReseedFrames` | `rw` | `true` | `false` | `number / default=8` | Blend length (frames) after jump reset. |
 | `jumpResetConfidence` | `rw` | `true` | `false` | `boolean / default=True` | Reset confidence history when jump reset is triggered. |
-| `confidenceEnabled` | `rw` | `true` | `false` | `boolean / default=True` | Enable periodicity confidence estimation. |
+| `confidenceEnabled` | `rw` | `true` | `false` | `boolean / default=True` | Enable autocorrelation-based periodicity confidence estimation. |
 | `confidenceWindow` | `rw` | `true` | `false` | `number / default=128` | Sliding window size for autocorrelation confidence. |
 | `confidenceMinLag` | `rw` | `true` | `false` | `number / default=4` | Minimum lag used in autocorrelation scan. |
 | `confidenceMaxLag` | `rw` | `true` | `false` | `number / default=48` | Maximum lag used in autocorrelation scan. |
@@ -584,12 +608,12 @@ Tracks upper/lower envelopes and emits normalized + confidence outputs.
 
 #### Key Fields That Matter
 
-- `method` (Method, `rw`): Envelope filter method. Schema: `string / enum[EMA, DEMA, SMA] / default=EMA`.
-- `rise_alpha` (Rise Alpha, `rw`): Smoothing factor when moving toward the envelope. Schema: `number / default=0.4`.
-- `fall_alpha` (Fall Alpha, `rw`): Smoothing factor when moving away from the envelope. Schema: `number / default=0.05`.
-- `min_span` (Min Span, `rw`): Minimum enforced envelope span. Schema: `number / default=0.25`.
-- `sma_window` (SMA Window, `rw`): Window size for SMA mode. Schema: `number / default=10`.
-- `margin` (Margin, `rw`): Extra margin added to envelopes before normalization. Schema: `number / default=0.0`.
+- `method` (Method, `rw`): Envelope tracking method: `EMA`, `DEMA`, or `SMA`. Schema: `string / enum[EMA, DEMA, SMA] / default=EMA`.
+- `rise_alpha` (Rise Alpha, `rw`): Smoothing factor when the estimator moves toward the current envelope edge. Schema: `number / default=0.4`.
+- `fall_alpha` (Fall Alpha, `rw`): Smoothing factor when the estimator relaxes away from the current envelope edge. Schema: `number / default=0.05`.
+- `min_span` (Min Span, `rw`): Minimum enforced distance between lower and upper envelopes before normalization. Schema: `number / default=0.25`.
+- `sma_window` (SMA Window, `rw`): Moving-average window size used when Method is `SMA`. Schema: `number / default=10`.
+- `margin` (Margin, `rw`): Extra padding added outside the envelopes before computing `normalized`. Schema: `number / default=0.0`.
 - `jumpEnabled` (Jump Enabled, `rw`): Enable consecutive-frame jump detection and reseed. Schema: `boolean / default=True`.
 - `jumpSpanMult` (Jump Span Mult, `rw`): Distance threshold in envelope-span units for jump detection. Schema: `number / default=4.0`.
 
@@ -689,11 +713,11 @@ Smooths scalar or vector inputs with EMA/DEMA/One Euro filtering.
 | --- | --- | --- | --- | --- | --- |
 | `filter_type` | `rw` | `true` | `true` | `string / enum[NONE, EMA, DEMA, ONEEURO] / default=EMA` | Filter type. |
 | `ema_alpha` | `rw` | `true` | `true` | `number / default=0.4` | EMA smoothing factor (0..1). |
-| `dema_alpha` | `rw` | `true` | `true` | `number / default=0.4` | DEMA smoothing factor (0..1). |
-| `one_euro_min_cutoff` | `rw` | `true` | `true` | `number / default=1.5` | Minimum cutoff frequency. |
-| `one_euro_beta` | `rw` | `true` | `true` | `number / default=0.0` | Speed coefficient for dynamic cutoff. |
-| `one_euro_derivative_cutoff` | `rw` | `true` | `true` | `number / default=1.0` | Cutoff frequency for the derivative filter. |
-| `one_euro_default_freq` | `rw` | `true` | `true` | `number / default=90.0` | Default sampling frequency (Hz). |
+| `dema_alpha` | `rw` | `true` | `false` | `number / default=0.4` | DEMA smoothing factor (0..1). |
+| `one_euro_min_cutoff` | `rw` | `true` | `false` | `number / default=1.5` | Minimum cutoff frequency. |
+| `one_euro_beta` | `rw` | `true` | `false` | `number / default=0.0` | Speed coefficient for dynamic cutoff. |
+| `one_euro_derivative_cutoff` | `rw` | `true` | `false` | `number / default=1.0` | Cutoff frequency for the derivative filter. |
+| `one_euro_default_freq` | `rw` | `true` | `false` | `number / default=90.0` | Default sampling frequency (Hz). |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 | `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
@@ -1095,7 +1119,7 @@ Execute Python code with onStart/onState/onMsg/onExec/onStop hooks.
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `code` | `rw` | `true` | `false` | `string / default=# Hooks template (uncomment what you need):<br># - onStart(ctx)<br># - onState(ctx, field, value, ts_ms=None)<br># - onMsg(ctx, inputs)<br># - onExec(ctx, exec_in, inputs)<br># - onStop(ctx)<br>#<br># Notes:<br># - ctx.locals is preserved between calls (script-local memory)<br># - ctx.exec_in is set only for exec-triggered calls<br># - ctx.states.<field> reads cached rw/ro/wo state snapshot<br>#   - example: ctx.states.foo / ctx.states.pose.x<br># - await ctx.read_state(field)  # fresh runtime read<br># - ctx.states.get(field)  # cached snapshot<br># - ctx.set_state(field, value)<br>#   - await ctx.set_state_async(field, value)<br># - inputs binding mode is configured by state `inputMode`:<br>#   - input_view (default): supports dot and mapping access<br>#   - raw_dict: plain dict only<br>#   - msgspec_struct: typed struct from dataIn schema<br># - State TypeGuard helpers are available from f8_dynamic_states<br>#   - example: from f8_dynamic_states import is_state_lastError<br>#   - then: if is_state_lastError(value, field): ...<br># - Video SHM helpers:<br>#   - ctx.subscribe_video_shm(key, shm_name, decode='auto', use_event=False)<br>#   - pkt = ctx.get_video_shm(key)<br>#   - ctx.unsubscribe_video_shm(key)<br>#   - ctx.list_video_shm_subscriptions()<br>#<br># Return value protocol:<br># - onMsg: {'outputs': {...}} or any value (emits to 'out' if present)<br># - onExec: {'exec': ['exec', ...], 'outputs': {...}}<br><br>from typing import TYPE_CHECKING, Any<br>if TYPE_CHECKING:<br>    from f8_script_api import F8Inputs, F8PyEngineContext, F8States<br><br>def onStart(ctx: 'F8PyEngineContext') -> None:<br>    ctx.log('python_script started')<br><br># def onState(<br>#     ctx: 'F8PyEngineContext',<br>#     field: str,<br>#     value: Any,<br>#     ts_ms: int \| None = None,<br># ) -> None:<br>#     ctx.log(f'state {field}={value} ts_ms={ts_ms}')<br>#<br># def onMsg(ctx: 'F8PyEngineContext', inputs: 'F8Inputs') -> dict[str, Any]:<br>#     msg = inputs.msg<br>#     return {'outputs': {'out': msg}}<br>#<br># def onExec(ctx: 'F8PyEngineContext', exec_in: str, inputs: 'F8Inputs') -> dict[str, Any]:<br>#     if exec_in == 'exec2':<br>#         return {'exec': ['exec2'], 'outputs': {'out': inputs.msg}}<br>#     return {'exec': ['exec'], 'outputs': {'out': inputs.msg}}<br>#<br># def onStop(ctx: 'F8PyEngineContext') -> None:<br>#     ctx.log('python_script stopped')<br>` | Python source code defining onStart(ctx), onMsg(ctx, inputs), onStop(ctx). |
+| `code` | `rw` | `true` | `false` | `string / default=# Hooks template (uncomment what you need):<br># - onStart(ctx)<br># - onState(ctx, field, value, ts_ms=None)<br># - onMsg(ctx, inputs)<br># - onExec(ctx, exec_in, inputs)<br># - onStop(ctx)<br>#<br># Notes:<br># - If you define no hooks, the node is a no-op.<br># - ctx.locals is preserved between calls (script-local memory)<br># - ctx.exec_in is set only for exec-triggered calls<br># - ctx.states.<field> reads cached rw/ro/wo state snapshot<br>#   - example: ctx.states.foo / ctx.states.pose.x<br># - await ctx.read_state(field)  # fresh runtime read<br># - ctx.states.get(field)  # cached snapshot<br># - ctx.set_state(field, value)<br>#   - await ctx.set_state_async(field, value)<br># - onStart return values are ignored; use ctx.emit()/ctx.set_state().<br># - inputs binding mode is configured by state `inputMode`:<br>#   - input_view (default): supports dot and mapping access<br>#   - raw_dict: plain dict only<br>#   - msgspec_struct: typed struct from dataIn schema<br># - State TypeGuard helpers are available from f8_dynamic_states<br>#   - example: from f8_dynamic_states import is_state_lastError<br>#   - then: if is_state_lastError(value, field): ...<br># - Video SHM helpers:<br>#   - ctx.subscribe_video_shm(key, shm_name, decode='auto', use_event=False)<br>#   - pkt = ctx.get_video_shm(key)<br>#   - ctx.unsubscribe_video_shm(key)<br>#   - ctx.list_video_shm_subscriptions()<br>#<br># Return value protocol:<br># - onMsg: {'outputs': {...}} or any value (emits to 'out' if present)<br># - onExec: {'exec': ['exec', ...], 'outputs': {...}}<br><br>from typing import TYPE_CHECKING, Any<br>if TYPE_CHECKING:<br>    from f8_script_api import F8Inputs, F8PyEngineContext, F8States<br><br>def onStart(ctx: 'F8PyEngineContext') -> None:<br>    ctx.log('python_script started')<br><br># def onState(<br>#     ctx: 'F8PyEngineContext',<br>#     field: str,<br>#     value: Any,<br>#     ts_ms: int \| None = None,<br># ) -> None:<br>#     ctx.log(f'state {field}={value} ts_ms={ts_ms}')<br>#<br># def onMsg(ctx: 'F8PyEngineContext', inputs: 'F8Inputs') -> dict[str, Any]:<br>#     msg = inputs.msg<br>#     return {'outputs': {'out': msg}}<br>#<br># def onExec(ctx: 'F8PyEngineContext', exec_in: str, inputs: 'F8Inputs') -> dict[str, Any]:<br>#     if exec_in == 'exec2':<br>#         return {'exec': ['exec2'], 'outputs': {'out': inputs.msg}}<br>#     return {'exec': ['exec'], 'outputs': {'out': inputs.msg}}<br>#<br># def onStop(ctx: 'F8PyEngineContext') -> None:<br>#     ctx.log('python_script stopped')<br>` | Python source code optionally defining hooks: onStart/onState/onMsg/onExec/onStop. |
 | `inputMode` | `rw` | `true` | `false` | `string / enum[input_view, raw_dict, msgspec_struct] / default=input_view` | Input binding mode: input_view \| raw_dict \| msgspec_struct. |
 | `lastError` | `wo` | `true` | `false` | `string / default=` | Last script error (compile/runtime). |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
@@ -1132,7 +1156,7 @@ Execute Python code with onStart/onState/onMsg/onExec/onStop hooks.
 
 #### Key Fields That Matter
 
-- `code` (Code, `rw`): Python source code defining onStart(ctx), onMsg(ctx, inputs), onStop(ctx). Schema: `string / default=# Hooks template (uncomment what you need):
+- `code` (Code, `rw`): Python source code optionally defining hooks: onStart/onState/onMsg/onExec/onStop. Schema: `string / default=# Hooks template (uncomment what you need):
 # - onStart(ctx)
 # - onState(ctx, field, value, ts_ms=None)
 # - onMsg(ctx, inputs)
@@ -1140,6 +1164,7 @@ Execute Python code with onStart/onState/onMsg/onExec/onStop hooks.
 # - onStop(ctx)
 #
 # Notes:
+# - If you define no hooks, the node is a no-op.
 # - ctx.locals is preserved between calls (script-local memory)
 # - ctx.exec_in is set only for exec-triggered calls
 # - ctx.states.<field> reads cached rw/ro/wo state snapshot
@@ -1148,6 +1173,7 @@ Execute Python code with onStart/onState/onMsg/onExec/onStop hooks.
 # - ctx.states.get(field)  # cached snapshot
 # - ctx.set_state(field, value)
 #   - await ctx.set_state_async(field, value)
+# - onStart return values are ignored; use ctx.emit()/ctx.set_state().
 # - inputs binding mode is configured by state `inputMode`:
 #   - input_view (default): supports dot and mapping access
 #   - raw_dict: plain dict only
@@ -1207,9 +1233,27 @@ def onStart(ctx: 'F8PyEngineContext') -> None:
 - [Scene 01: CVKit Template Tracking](../../scenarios/scene-01-cvkit_template_tracking.md)
 - [Scene 02: GameMod Skeleton](../../scenarios/scene-02-gamemod_skeleton.md)
 
-<a id="operator-f8-expr"></a>
-### Python Expr (`f8.expr`)
-Evaluate a small expression using input values (math/logic/extraction).
+<a id="operator-f8-data-expr"></a>
+### Data Expr (`f8.data_expr`)
+Evaluate a small Python expression using input values.
+
+Core
+- The main input is `x`, and any additional input port name can be referenced directly.
+- The expression is a single Python expression, not a statement block.
+- The result is emitted on `out`.
+- If `Unpack Dict Outputs` is enabled and the result is a dict, matching output ports receive matching keys.
+
+Available
+- Builtins: `abs`, `min`, `max`, `round`, `float`, `int`, `len`, `sum`, `sorted`, `range`, `any`, `all`
+- Python expressions: indexing, dict/list/tuple literals, comprehensions, conditionals
+- Math namespace: `math.*`
+- Optional numpy namespace: `np.*` and `numpy.*` when `Allow Numpy` is enabled
+
+Examples
+- `x * 0.5`
+- `max(0, x)`
+- `{'left': x[0], 'right': x[1]}`
+- `[value * 2 for value in x]`
 
 - Exec in ports: none
 - Exec out ports: none
@@ -1218,9 +1262,9 @@ Evaluate a small expression using input values (math/logic/extraction).
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `allowNumpy` | `rw` | `false` | `false` | `boolean / default=False` | Enable numpy calls in expressions (np.*, numpy.*). |
-| `unpackDictOutputs` | `rw` | `false` | `false` | `boolean / default=False` | When enabled, dict results are emitted by matching output port names. |
-| `code` | `rw` | `false` | `true` | `string / default=x` | Single-line expression (no statements). Available: abs/min/max/round/float/int, math.*, comprehensions. Numpy (np.*, numpy.*) is available only when Allow Numpy is enabled. |
+| `allowNumpy` | `rw` | `false` | `false` | `boolean / default=False` | Enable `np.*` and `numpy.*` inside the expression. |
+| `unpackDictOutputs` | `rw` | `false` | `false` | `boolean / default=False` | When enabled, dict results are unpacked into output ports with matching names. |
+| `code` | `rw` | `false` | `true` | `string / default=x` | Single Python expression. Reference `x` and any extra input port names directly. Supports literals, indexing, comprehensions, conditionals, `math.*`, and optional `np.*` / `numpy.*` when `Allow Numpy` is enabled. |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 | `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
@@ -1238,8 +1282,8 @@ Evaluate a small expression using input values (math/logic/extraction).
 
 #### When to Use
 
-- Use `Python Expr` when a one-line transformation is enough and a full script node would be overkill.
-- It is ideal for extracting a field, combining a small number of values, or applying a simple formula.
+- Use `Data Expr` when you want a compact expression over one or more input payloads without committing to a full script node.
+- It is a good fit for small transforms, field extraction, simple conditionals, or unpacking one result into multiple outputs.
 
 #### Typical Inputs / Outputs
 
@@ -1248,25 +1292,25 @@ Evaluate a small expression using input values (math/logic/extraction).
 
 #### Common Wiring Patterns
 
-- Feed it structured data from services or other operators, then pass the result into `Range Map`, `WaveViz`, or state edges.
-- Keep expressions readable enough that the graph still explains itself.
+- Feed it from service or operator data ports, reference `x` or named input ports directly, and send the result into mapping, visualization, or control operators.
+- Enable `Unpack Dict Outputs` when the expression naturally returns a dict and you want matching output ports to receive each key.
 
 #### Key Fields That Matter
 
-- `allowNumpy` (Allow Numpy, `rw`): Enable numpy calls in expressions (np.*, numpy.*). Schema: `boolean / default=False`.
-- `unpackDictOutputs` (Unpack Dict Outputs, `rw`): When enabled, dict results are emitted by matching output port names. Schema: `boolean / default=False`.
-- `code` (Expr, `rw`): Single-line expression (no statements). Available: abs/min/max/round/float/int, math.*, comprehensions. Numpy (np.*, numpy.*) is available only when Allow Numpy is enabled. Schema: `string / default=x`.
+- `allowNumpy` (Allow Numpy, `rw`): Enable `np.*` and `numpy.*` inside the expression. Schema: `boolean / default=False`.
+- `unpackDictOutputs` (Unpack Dict Outputs, `rw`): When enabled, dict results are unpacked into output ports with matching names. Schema: `boolean / default=False`.
+- `code` (Expr, `rw`): Single Python expression. Reference `x` and any extra input port names directly. Supports literals, indexing, comprehensions, conditionals, `math.*`, and optional `np.*` / `numpy.*` when `Allow Numpy` is enabled. Schema: `string / default=x`.
 - `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
 - `operatorId` (Operator Id, `ro`): Readonly: current operator/node id (operatorId). Schema: `string`.
 
 #### Pitfalls / Gotchas
 
-- Once the expression needs lifecycle logic or hidden state, switch to `Python Script`.
-- If the payload shape is unclear, the expression node becomes fragile very quickly.
+- Expressions stay maintainable only while they are small. Once you need lifecycle behavior, hidden state, or multi-step logic, move the work to `Python Script`.
+- Optional `numpy` support is off by default, and output unpacking only happens for keys that exactly match existing output port names.
 
 #### Related Scenarios
 
-- [Scene 04: Functional TCode Generation](../../scenarios/scene-04-functional_tcode.md)
+- No bundled scenario references this node yet.
 
 <a id="operator-f8-lovense-out"></a>
 ### Lovense Out (`f8.lovense_out`)
@@ -1909,6 +1953,76 @@ _None_
 
 - No bundled scenario references this node yet.
 
+<a id="operator-f8-state-expr"></a>
+### State Expr (`f8.state_expr`)
+Evaluate a small Python expression using state fields as symbols.
+
+Core
+- Editable RW/WO state fields become expression symbols directly.
+- The expression result is published to read-only state `out`.
+- State names that are not valid Python identifiers remain available through `states['field-name']`.
+- No data ports are involved.
+
+Examples
+- `a + b`
+- `config.center.x`
+- `states['left-value'] * gain`
+- `math.sin(phase)`
+
+- Exec in ports: none
+- Exec out ports: none
+
+#### State Fields
+
+| Name | Access | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- | --- |
+| `allowNumpy` | `rw` | `false` | `false` | `boolean / default=False` | Enable `np.*` and `numpy.*` inside the expression. |
+| `code` | `rw` | `false` | `true` | `string / default=0` | Single Python expression. Editable RW/WO state fields are available directly by name; non-identifier names remain available through `states[...]`. |
+| `out` | `ro` | `false` | `true` | `any` | Expression result published by the node. |
+| `lastError` | `ro` | `false` | `false` | `string / default=` | Last compile or evaluation error. |
+| `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
+| `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
+
+#### Data Input Ports
+
+_None_
+
+#### Data Output Ports
+
+_None_
+
+#### When to Use
+
+- Use `State Expr` when a computed value should be derived from editable state fields instead of incoming data ports.
+- It works well for formulas, derived parameters, and lightweight control math that should stay visible on the node itself.
+
+#### Typical Inputs / Outputs
+
+- Data inputs: none
+- Data outputs: none
+
+#### Common Wiring Patterns
+
+- Add explicit numeric state fields for the symbols you want to expose, then publish the computed `out` state into downstream state edges or inspector views.
+- Keep the expression focused on a small set of clearly named fields so the node remains easy to tune live.
+
+#### Key Fields That Matter
+
+- `allowNumpy` (Allow Numpy, `rw`): Enable `np.*` and `numpy.*` inside the expression. Schema: `boolean / default=False`.
+- `code` (Expr, `rw`): Single Python expression. Editable RW/WO state fields are available directly by name; non-identifier names remain available through `states[...]`. Schema: `string / default=0`.
+- `out` (Out, `ro`): Expression result published by the node. Schema: `any`.
+- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
+- `operatorId` (Operator Id, `ro`): Readonly: current operator/node id (operatorId). Schema: `string`.
+
+#### Pitfalls / Gotchas
+
+- Only writable numeric state fields become expression symbols automatically, so non-numeric or protected fields will not participate in evaluation.
+- Failed expressions publish `lastError` and clear the output, which is helpful for debugging but can make downstream state-driven graphs look idle if you miss the error field.
+
+#### Related Scenarios
+
+- No bundled scenario references this node yet.
+
 <a id="operator-f8-bone-filter"></a>
 ### Bone Filter (`f8.bone_filter`)
 Smooths a single bone pose and outputs filtered + local relative pose.
@@ -2165,6 +2279,243 @@ Selects one bone from a skeleton by `target` and outputs `{name,pos,rot}`.
 
 - A missing bone name is often a naming mismatch, not a broken upstream skeleton.
 - Keep source-skeleton validation in place; this node cannot fix a malformed pose stream.
+
+#### Related Scenarios
+
+- No bundled scenario references this node yet.
+
+<a id="operator-f8-wave-expr"></a>
+### Wave Expr (`f8.wave_expr`)
+Template-based waveform expression node.
+
+Core
+- `t` is cycle-domain input, not radians.
+- Runtime output evaluates with `t % maxT`.
+- Any numeric RW/WO state field can be referenced by name.
+- `express` shows the final formula after numeric state substitution.
+- `Preview` shows sampled `[t, value]` pairs over `[0, maxT)`.
+
+Oscillators
+- Phase trig: `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`
+- Shape helpers: `saw`, `tri`, `pulse`
+- Tempest: `tempest(t, p, c)` where `t` is 0..1 circle phase, `p` is phase, `c` is eccentricity
+
+Utility
+- Blend and range: `clamp`, `lerp`, `smoothstep`, `saturate`
+- Phase helpers: `frac`, `wrap`
+- Selection: `cond(condition, a, b)`
+- Sequence: `sequence([a, b, c])` uses `int(t) % len(sequence)`
+- Numeric helpers: `abs`, `min`, `max`, `round`, `floor`, `ceil`, `sqrt`, `exp`, `log`, `log10`
+
+Examples
+- `0.5 + 0.5 * cos(t)`
+- `sequence([10, 20, 30, 20])`
+- `tempest(t, 0, c)`
+- `cond(t > 4, 1, 0)`
+
+- Exec in ports: none
+- Exec out ports: none
+
+#### State Fields
+
+| Name | Access | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- | --- |
+| `template` | `wo` | `true` | `true` | `string / default=0.5 + 0.5 * cos(t)` | Waveform expression template. `t` is cycle-domain, numeric state fields can be referenced by name, and helpers include `cond`, `sequence([...])`, `tempest(t, p, c)`, phase trig, and shaping functions. |
+| `maxT` | `rw` | `true` | `true` | `number / default=10.0` | Cycle horizon for wrapping and preview sampling. Runtime output uses `t % maxT`; preview samples `[0, maxT)`. |
+| `minValue` | `rw` | `true` | `false` | `number / default=0.0` | Preview window lower bound (Y-axis). Auto zoom when minValue >= maxValue. |
+| `maxValue` | `rw` | `true` | `false` | `number / default=0.0` | Preview window upper bound (Y-axis). Auto zoom when minValue >= maxValue. |
+| `express` | `ro` | `true` | `false` | `string / default=` | Rendered expression after numeric state substitution. `t` remains symbolic so you can inspect the final formula. |
+| `preview` | `ro` | `true` | `true` | `array[array] / default=[]` | Preview waveform samples as `[t, value]` pairs over `[0, maxT)`. Changes in preview coordinates trigger redraw. |
+| `lastError` | `ro` | `true` | `false` | `string / default=` | Last template compile, preview evaluation, or runtime evaluation error. |
+| `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
+| `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
+
+#### Data Input Ports
+
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `t` | `true` | `true` | `number` | Scalar cycle-domain input. 1.0 means one period; output evaluation uses `t % maxT`. |
+
+#### Data Output Ports
+
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `value` | `true` | `true` | `number` | Expression output value for the current wrapped `t` sample. |
+
+#### When to Use
+
+- Use `Wave Expr` when you want a procedural looping waveform defined by an expression instead of hand-authored points.
+- It is ideal for reusable modulation shapes that depend on `t` plus a few numeric parameters exposed as node state.
+
+#### Typical Inputs / Outputs
+
+- Data inputs: `t`
+- Data outputs: `value`
+
+#### Common Wiring Patterns
+
+- Drive the `t` input from a clock, phase, or playback timeline, then feed the `value` output into movement, envelope, or device-control operators.
+- Expose a small set of numeric state fields as variables so the same expression can be tuned interactively without rewriting the template.
+
+#### Key Fields That Matter
+
+- `template` (Template, `wo`): Waveform expression template. `t` is cycle-domain, numeric state fields can be referenced by name, and helpers include `cond`, `sequence([...])`, `tempest(t, p, c)`, phase trig, and shaping functions. Schema: `string / default=0.5 + 0.5 * cos(t)`.
+- `maxT` (Max T, `rw`): Cycle horizon for wrapping and preview sampling. Runtime output uses `t % maxT`; preview samples `[0, maxT)`. Schema: `number / default=10.0`.
+- `minValue` (Min Value, `rw`): Preview window lower bound (Y-axis). Auto zoom when minValue >= maxValue. Schema: `number / default=0.0`.
+- `maxValue` (Max Value, `rw`): Preview window upper bound (Y-axis). Auto zoom when minValue >= maxValue. Schema: `number / default=0.0`.
+- `express` (Express, `ro`): Rendered expression after numeric state substitution. `t` remains symbolic so you can inspect the final formula. Schema: `string / default=`.
+- `preview` (Preview, `ro`): Preview waveform samples as `[t, value]` pairs over `[0, maxT)`. Changes in preview coordinates trigger redraw. Schema: `array[array] / default=[]`.
+- `lastError` (Last Error, `ro`): Last template compile, preview evaluation, or runtime evaluation error. Schema: `string / default=`.
+- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
+
+#### Pitfalls / Gotchas
+
+- Reserved names in the expression language can collide with custom variable names, so parameter naming matters.
+- `maxT` defines the loop period; if your upstream time source and preview assumptions disagree about period or range, the waveform can look correct in isolation but feel wrong in the full graph.
+
+#### Related Scenarios
+
+- No bundled scenario references this node yet.
+
+<a id="operator-f8-wave-pattern"></a>
+### Wave Pattern (`f8.wave_pattern`)
+Interactive periodic waveform node.
+
+Core
+- `t` is cycle-domain input and runtime output evaluates at `t % maxT`.
+- `points` stores editable control points as `[t, value]` pairs.
+- `interp` selects the interpolation method for preview and runtime evaluation.
+- Preview samples the periodic waveform over `[0, maxT)`.
+
+- Exec in ports: none
+- Exec out ports: none
+
+#### State Fields
+
+| Name | Access | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- | --- |
+| `points` | `rw` | `true` | `true` | `array[array] / default=[[0.0, 0.0], [10.0, 0.0]]` | Editable control points as `[t, value]` pairs. |
+| `maxT` | `rw` | `true` | `true` | `number / default=10.0` | Cycle horizon for wrapping and preview sampling. |
+| `minValue` | `rw` | `true` | `true` | `number / default=0.0` | Editor and preview lower Y bound. |
+| `maxValue` | `rw` | `true` | `true` | `number / default=1.0` | Editor and preview upper Y bound. |
+| `interp` | `rw` | `true` | `true` | `string / enum[linear, pchip, akima, cubic_spline] / default=pchip` | Interpolation method used to generate the periodic waveform. |
+| `preview` | `ro` | `true` | `false` | `array[array]` | Preview waveform samples as `[t, value]` pairs over `[0, maxT)`. |
+| `lastError` | `ro` | `true` | `false` | `string / default=` | Last interpolation build or preview evaluation error. |
+| `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
+| `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
+
+#### Data Input Ports
+
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `t` | `true` | `true` | `number` | Scalar cycle-domain input. Runtime evaluation uses `t % maxT`. |
+
+#### Data Output Ports
+
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `value` | `true` | `true` | `number` | Interpolated waveform output for the current wrapped `t` sample. |
+
+#### When to Use
+
+- Use `Wave Pattern` when you want to sketch a looping waveform from explicit control points instead of code.
+- It is a strong fit for hand-tuned motion shapes where designers need direct point editing plus predictable interpolation.
+
+#### Typical Inputs / Outputs
+
+- Data inputs: `t`
+- Data outputs: `value`
+
+#### Common Wiring Patterns
+
+- Feed `t` from a timeline or phase source, edit `points` and `interp` on the node, and send the resulting `value` into envelope, mapping, or output operators.
+- Keep the point list sparse at first, then add detail only where the motion shape actually needs it.
+
+#### Key Fields That Matter
+
+- `points` (Points, `rw`): Editable control points as `[t, value]` pairs. Schema: `array[array] / default=[[0.0, 0.0], [10.0, 0.0]]`.
+- `maxT` (Max T, `rw`): Cycle horizon for wrapping and preview sampling. Schema: `number / default=10.0`.
+- `minValue` (Min Value, `rw`): Editor and preview lower Y bound. Schema: `number / default=0.0`.
+- `maxValue` (Max Value, `rw`): Editor and preview upper Y bound. Schema: `number / default=1.0`.
+- `interp` (Interp, `rw`): Interpolation method used to generate the periodic waveform. Schema: `string / enum[linear, pchip, akima, cubic_spline] / default=pchip`.
+- `preview` (Preview, `ro`): Preview waveform samples as `[t, value]` pairs over `[0, maxT)`. Schema: `array[array]`.
+- `lastError` (Last Error, `ro`): Last interpolation build or preview evaluation error. Schema: `string / default=`.
+- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
+
+#### Pitfalls / Gotchas
+
+- Interpolation choice changes the feel significantly; `pchip`, `akima`, and spline modes can introduce shapes you did not intend if the control points are too dense or uneven.
+- `maxT` defines the loop boundary, so point placement near the wrap point needs extra care to avoid discontinuities or misleading previews.
+
+#### Related Scenarios
+
+- No bundled scenario references this node yet.
+
+<a id="operator-f8-wave-funscript"></a>
+### Wave Funscript (`f8.wave_funscript`)
+Load a .funscript JSON file and expose one axis as a looping linear waveform.
+`t` is in seconds and evaluation uses `t % maxT`.
+
+- Exec in ports: none
+- Exec out ports: none
+
+#### State Fields
+
+| Name | Access | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- | --- |
+| `funscriptPath` | `rw` | `true` | `true` | `string / default=` | Path to a .funscript JSON file. |
+| `allAxes` | `ro` | `true` | `false` | `array[string]` | Available funscript channels including the TopLevel pseudo-axis. |
+| `selectedAxis` | `rw` | `true` | `true` | `string / default=TopLevel` | Axis id to load from the funscript file. |
+| `points` | `ro` | `true` | `false` | `array[array] / default=[]` | Normalized `[timeSec, pos01]` points loaded from the selected axis. |
+| `maxT` | `rw` | `true` | `true` | `number / default=10.0` | Loop period in seconds. Initialized from the funscript duration and user-overridable. |
+| `interp` | `rw` | `true` | `true` | `string / enum[linear, pchip, akima, cubic_spline] / default=linear` | Interpolation method used for runtime output. Heatmap remains linear. |
+| `heatmap` | `ro` | `true` | `true` | `array[number] / default=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]` | Per-time-bin activity heatmap derived from the selected axis. |
+| `lastError` | `ro` | `true` | `false` | `string / default=` | Last load or parse error. |
+| `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
+| `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
+
+#### Data Input Ports
+
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `t` | `true` | `true` | `number` | Scalar time input in seconds. Runtime evaluation uses `t % maxT`. |
+
+#### Data Output Ports
+
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `value` | `true` | `true` | `number` | Normalized output from the selected funscript axis using the chosen interpolation mode. |
+
+#### When to Use
+
+- Use `Wave Funscript` when motion should come from an authored `.funscript` file rather than a synthetic expression or hand-entered point list.
+- It is the right choice when you want repeatable playback of an existing script axis inside a `f8.pyengine` graph.
+
+#### Typical Inputs / Outputs
+
+- Data inputs: `t`
+- Data outputs: `value`
+
+#### Common Wiring Patterns
+
+- Point the node at a `.funscript`, select the desired axis, drive `t` from playback time, and route the normalized `value` output into downstream motion or device nodes.
+- Start with linear interpolation for faithful playback, then experiment with smoother interpolation only if the authored material benefits from it.
+
+#### Key Fields That Matter
+
+- `funscriptPath` (Funscript Path, `rw`): Path to a .funscript JSON file. Schema: `string / default=`.
+- `allAxes` (All Axes, `ro`): Available funscript channels including the TopLevel pseudo-axis. Schema: `array[string]`.
+- `selectedAxis` (Selected Axis, `rw`): Axis id to load from the funscript file. Schema: `string / default=TopLevel`.
+- `points` (Points, `ro`): Normalized `[timeSec, pos01]` points loaded from the selected axis. Schema: `array[array] / default=[]`.
+- `maxT` (Max T, `rw`): Loop period in seconds. Initialized from the funscript duration and user-overridable. Schema: `number / default=10.0`.
+- `interp` (Interp, `rw`): Interpolation method used for runtime output. Heatmap remains linear. Schema: `string / enum[linear, pchip, akima, cubic_spline] / default=linear`.
+- `heatmap` (Heatmap, `ro`): Per-time-bin activity heatmap derived from the selected axis. Schema: `array[number] / default=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]`.
+- `lastError` (Last Error, `ro`): Last load or parse error. Schema: `string / default=`.
+
+#### Pitfalls / Gotchas
+
+- File path, axis selection, and inferred duration all affect the resulting loop, so a valid script can still behave unexpectedly if it targets the wrong axis or timing source.
+- Smoother interpolation modes can change the feel of authored actions; if exact script intent matters, verify the preview against the original source before relying on it.
 
 #### Related Scenarios
 

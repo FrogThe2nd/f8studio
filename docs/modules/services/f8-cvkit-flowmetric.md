@@ -74,6 +74,7 @@ _None_
 - `scalarShmName` (Scalar SHM Name, `ro`): Output SHM name for scalar metric field. Schema: `string`.
 - `scalarShmFormat` (Scalar SHM Format, `ro`): Output payload format. Fixed to scalar1_f32. Schema: `string`.
 - `lastError` (Last Error, `ro`): Last error message. Schema: `string`.
+- `active` (Active, `rw`): Service lifecycle state (activate/deactivate). Schema: `boolean / default=True`.
 
 ## Pitfalls / Gotchas
 
