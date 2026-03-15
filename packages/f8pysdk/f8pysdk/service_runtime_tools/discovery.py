@@ -100,8 +100,14 @@ def _platform_service_yml_names() -> list[str]:
 
 def _service_yml_candidates(service_dir: Path) -> list[Path]:
     service_dir = Path(service_dir).resolve()
-    names = _platform_service_yml_names()
-    return [service_dir / n for n in names] + [service_dir / "service.yml"]
+    platform_names = _platform_service_yml_names()
+    all_platform_names = ["service.win.yml", "service.linux.yml", "service.mac.yml"]
+    fallback_names: list[str] = []
+    for name in all_platform_names:
+        if name not in platform_names:
+            fallback_names.append(name)
+    ordered_names = platform_names + ["service.yml"] + fallback_names
+    return [service_dir / name for name in ordered_names]
 
 
 def find_service_dirs(roots: Iterable[Path]) -> list[Path]:

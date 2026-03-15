@@ -96,7 +96,7 @@ def _new_window() -> tuple[_Skeleton3DViewerWindow, list[bool], list[str]]:
     return window, open_states, statuses
 
 
-def test_viewer_close_releases_web_view_and_next_open_recreates() -> None:
+def test_viewer_close_keeps_web_view_and_next_open_reuses_it() -> None:
     _ensure_app()
     window, open_states, _statuses = _new_window()
     first = _FakeWebView(window)
@@ -108,12 +108,13 @@ def test_viewer_close_releases_web_view_and_next_open_recreates() -> None:
     assert window._view is first
 
     window.close()
-    assert window._view is None
-    assert first.stopped is True
-    assert first.deleted is True
+    assert window._view is first
+    assert first.stopped is False
+    assert first.deleted is False
 
     window.open_viewer()
-    assert window._view is second
+    assert window._view is first
+    assert pool == [second]
     assert open_states == [True, False, True]
 
 
