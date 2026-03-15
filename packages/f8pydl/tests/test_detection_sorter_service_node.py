@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import unittest
 import uuid
 from types import SimpleNamespace
@@ -183,6 +184,54 @@ class DetectionSorterHelpersTests(unittest.TestCase):
         assert sorted_payload is not None
         self.assertEqual([item["cls"] for item in sorted_payload["detections"]], ["low", "high"])
 
+    def test_sort_detection_payload_applies_cls_weights_exact(self) -> None:
+        score_map = np.asarray([[5.0, 5.0], [4.0, 4.0]], dtype=np.float32)
+        payload = _make_detection_payload(
+            [
+                {"cls": "person", "score": 0.1, "bbox": [0, 0, 2, 1]},
+                {"cls": "car", "score": 0.2, "bbox": [0, 1, 2, 2]},
+            ],
+            width=2,
+            height=2,
+        )
+
+        sorted_payload = sort_detection_payload(
+            payload,
+            score_map=score_map,
+            sort_direction="desc",
+            score_aggregation="mean",
+            cls_weights_exact={"person": 0.1, "car": 2.0},
+            cls_weights_regex=[],
+        )
+
+        self.assertIsNotNone(sorted_payload)
+        assert sorted_payload is not None
+        self.assertEqual([item["cls"] for item in sorted_payload["detections"]], ["car", "person"])
+
+    def test_sort_detection_payload_applies_cls_weights_regex(self) -> None:
+        score_map = np.asarray([[5.0, 5.0], [4.0, 4.0]], dtype=np.float32)
+        payload = _make_detection_payload(
+            [
+                {"cls": "cat", "score": 0.1, "bbox": [0, 0, 2, 1]},
+                {"cls": "dog_1", "score": 0.2, "bbox": [0, 1, 2, 2]},
+            ],
+            width=2,
+            height=2,
+        )
+
+        sorted_payload = sort_detection_payload(
+            payload,
+            score_map=score_map,
+            sort_direction="desc",
+            score_aggregation="mean",
+            cls_weights_exact={},
+            cls_weights_regex=[(re.compile("^dog_.*$"), 2.0)],
+        )
+
+        self.assertIsNotNone(sorted_payload)
+        assert sorted_payload is not None
+        self.assertEqual([item["cls"] for item in sorted_payload["detections"]], ["dog_1", "cat"])
+
     def test_sort_detection_payload_all_aggregations(self) -> None:
         score_map = np.asarray(
             [
@@ -238,6 +287,11 @@ class DetectionSorterHelpersTests(unittest.TestCase):
 
 
 class DetectionSorterServiceNodeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_validate_state_cls_weights_rejects_invalid_json(self) -> None:
+        node = DetectionSorterServiceNode(node_id="sorterZ", node=SimpleNamespace(stateFields=[]), initial_state=None)
+        with self.assertRaises(ValueError):
+            _ = await node.validate_state("clsWeights", "{", ts_ms=0, meta={})
+
     async def test_service_node_sorts_scalar_map_and_emits(self) -> None:
         shm_name, writer = _write_scalar_frame(
             np.asarray(

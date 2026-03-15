@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
 import logging
+import math
+import re
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -14,6 +17,8 @@ SortDirection = Literal["asc", "desc"]
 ScoreAggregation = Literal["mean", "max", "sum", "median"]
 
 logger = logging.getLogger(__name__)
+
+_CLS_WEIGHTS_REGEX_PREFIX = "re:"
 
 
 class ScoreShmUnavailableError(RuntimeError):
@@ -66,6 +71,56 @@ def _payload_int(payload: dict[str, Any], key: str) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _parse_cls_weights_json(text: str) -> tuple[dict[str, float], list[tuple[re.Pattern[str], float]]]:
+    """
+    Parse clsWeights JSON string into:
+    - exact mapping: {"person": 2.0, ...}
+    - regex rules (in order): [(re.compile("^dog_.*$"), 1.3), ...]
+
+    Rules:
+    - keys with "re:" prefix are treated as regex patterns matched via fullmatch().
+    - keys without prefix are exact cls matches.
+    """
+    normalized = str(text or "").strip()
+    if not normalized:
+        normalized = "{}"
+
+    try:
+        obj = json.loads(normalized)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"clsWeights must be valid JSON object: {exc}") from exc
+
+    if not isinstance(obj, dict):
+        raise ValueError("clsWeights must be a JSON object mapping string -> number")
+
+    exact: dict[str, float] = {}
+    regex: list[tuple[re.Pattern[str], float]] = []
+
+    for raw_key, raw_weight in obj.items():
+        key = str(raw_key or "")
+        if not key:
+            raise ValueError("clsWeights keys must be non-empty strings")
+        if isinstance(raw_weight, bool) or not isinstance(raw_weight, (int, float)):
+            raise ValueError(f"clsWeights[{key!r}] must be a number")
+        weight = float(raw_weight)
+        if not math.isfinite(weight):
+            raise ValueError(f"clsWeights[{key!r}] must be a finite number")
+
+        if key.startswith(_CLS_WEIGHTS_REGEX_PREFIX):
+            pattern_text = key[len(_CLS_WEIGHTS_REGEX_PREFIX) :]
+            if not pattern_text:
+                raise ValueError("clsWeights regex keys must include a non-empty pattern after 're:'")
+            try:
+                pattern = re.compile(pattern_text)
+            except re.error as exc:
+                raise ValueError(f"invalid clsWeights regex {pattern_text!r}: {exc}") from exc
+            regex.append((pattern, weight))
+        else:
+            exact[key] = weight
+
+    return exact, regex
 
 
 def decode_score_map_from_frame(*, header: VideoShmHeader, payload: memoryview) -> np.ndarray:
@@ -155,6 +210,7 @@ class RankedDetection:
     index: int
     detection: dict[str, Any]
     metric_score: float | None
+    rank_score: float | None
 
 
 def sort_detection_payload(
@@ -163,6 +219,8 @@ def sort_detection_payload(
     score_map: np.ndarray,
     sort_direction: SortDirection,
     score_aggregation: ScoreAggregation,
+    cls_weights_exact: dict[str, float] | None = None,
+    cls_weights_regex: list[tuple[re.Pattern[str], float]] | None = None,
 ) -> dict[str, Any] | None:
     detections_value = detections_payload.get("detections")
     if not isinstance(detections_value, list) or not detections_value:
@@ -178,11 +236,11 @@ def sort_detection_payload(
     ranked: list[RankedDetection] = []
     for index, raw_detection in enumerate(detections_value):
         if not isinstance(raw_detection, dict):
-            ranked.append(RankedDetection(index=index, detection={}, metric_score=None))
+            ranked.append(RankedDetection(index=index, detection={}, metric_score=None, rank_score=None))
             continue
         bbox_value = raw_detection.get("bbox")
         if not isinstance(bbox_value, list) and not isinstance(bbox_value, tuple):
-            ranked.append(RankedDetection(index=index, detection=dict(raw_detection), metric_score=None))
+            ranked.append(RankedDetection(index=index, detection=dict(raw_detection), metric_score=None, rank_score=None))
             continue
         scaled_bbox = rescale_bbox_to_score_map(
             bbox_value,
@@ -192,23 +250,46 @@ def sort_detection_payload(
             score_height=score_height,
         )
         if scaled_bbox is None:
-            ranked.append(RankedDetection(index=index, detection=dict(raw_detection), metric_score=None))
+            ranked.append(RankedDetection(index=index, detection=dict(raw_detection), metric_score=None, rank_score=None))
             continue
         x1, y1, x2, y2 = scaled_bbox
         roi = score_map[y1:y2, x1:x2]
         metric_score = aggregate_roi_score(roi, score_aggregation)
-        ranked.append(RankedDetection(index=index, detection=dict(raw_detection), metric_score=metric_score))
+        if metric_score is None:
+            ranked.append(RankedDetection(index=index, detection=dict(raw_detection), metric_score=None, rank_score=None))
+            continue
+
+        cls_name = raw_detection.get("cls")
+        cls_text = cls_name if isinstance(cls_name, str) else str(cls_name or "")
+        weight = 1.0
+        if cls_weights_exact is not None and cls_text in cls_weights_exact:
+            weight = float(cls_weights_exact[cls_text])
+        elif cls_weights_regex is not None:
+            for pattern, rule_weight in cls_weights_regex:
+                if pattern.fullmatch(cls_text):
+                    weight = float(rule_weight)
+                    break
+
+        rank_score = float(metric_score) * float(weight)
+        ranked.append(
+            RankedDetection(
+                index=index,
+                detection=dict(raw_detection),
+                metric_score=float(metric_score),
+                rank_score=rank_score,
+            )
+        )
 
     valid_ranked: list[RankedDetection] = []
     invalid_ranked: list[RankedDetection] = []
     for item in ranked:
-        if item.metric_score is None:
+        if item.rank_score is None:
             invalid_ranked.append(item)
         else:
             valid_ranked.append(item)
 
     reverse = sort_direction == "desc"
-    valid_ranked.sort(key=lambda item: float(item.metric_score), reverse=reverse)
+    valid_ranked.sort(key=lambda item: float(item.rank_score), reverse=reverse)
     ordered = valid_ranked + invalid_ranked
     if not ordered:
         return None
@@ -231,6 +312,8 @@ class DetectionSorterServiceNode(ServiceNode):
         self._score_shm_name = ""
         self._sort_direction: SortDirection = "desc"
         self._score_aggregation: ScoreAggregation = "mean"
+        self._cls_weights_exact: dict[str, float] = {}
+        self._cls_weights_regex: list[tuple[re.Pattern[str], float]] = []
         self._last_error = ""
         self._latest_detections: dict[str, Any] | None = None
         self._score_reader: VideoShmReader | None = None
@@ -251,6 +334,8 @@ class DetectionSorterServiceNode(ServiceNode):
         self._score_shm_name = _coerce_str(self._read_initial_or_cached_state("scoreShmName", ""))
         self._sort_direction = _coerce_sort_direction(self._read_initial_or_cached_state("sortDirection", "desc"))
         self._score_aggregation = _coerce_score_aggregation(self._read_initial_or_cached_state("scoreAggregation", "mean"))
+        cls_weights_text = _coerce_str(self._read_initial_or_cached_state("clsWeights", "{}"), default="{}")
+        self._set_cls_weights(cls_weights_text)
         self._config_loaded = True
 
     async def validate_state(self, field: str, value: Any, *, ts_ms: int, meta: dict[str, Any]) -> Any:
@@ -268,6 +353,10 @@ class DetectionSorterServiceNode(ServiceNode):
             return aggregation
         if name == "scoreShmName":
             return _coerce_str(value)
+        if name == "clsWeights":
+            text = _coerce_str(value, default="{}")
+            _ = _parse_cls_weights_json(text)
+            return text
         return value
 
     async def on_state(self, field: str, value: Any, *, ts_ms: int | None = None) -> None:
@@ -283,6 +372,10 @@ class DetectionSorterServiceNode(ServiceNode):
             return
         if name == "scoreAggregation":
             self._score_aggregation = _coerce_score_aggregation(value, default=self._score_aggregation)
+            return
+        if name == "clsWeights":
+            text = _coerce_str(value, default="{}")
+            self._set_cls_weights(text)
             return
 
     async def on_data(self, port: str, value: Any, *, ts_ms: int | None = None) -> None:
@@ -355,9 +448,16 @@ class DetectionSorterServiceNode(ServiceNode):
                 score_map=score_map,
                 sort_direction=self._sort_direction,
                 score_aggregation=self._score_aggregation,
+                cls_weights_exact=self._cls_weights_exact,
+                cls_weights_regex=self._cls_weights_regex,
             )
         finally:
             payload.release()
+
+    def _set_cls_weights(self, text: str) -> None:
+        exact, regex = _parse_cls_weights_json(text)
+        self._cls_weights_exact = exact
+        self._cls_weights_regex = regex
 
     @staticmethod
     def _format_shm_unavailable_error(exc: ScoreShmUnavailableError) -> str:

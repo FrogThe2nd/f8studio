@@ -95,6 +95,23 @@ def _detections_payload_schema():
 def _detection_sorter_state_fields() -> list[F8StateSpec]:
     return [
         F8StateSpec(
+            name="clsWeights",
+            label="Class Weights",
+            description=(
+                "JSON map of detection cls -> weight multiplier applied to score-map metric."
+                " Keys without a prefix are exact cls matches."
+                " Keys with 're:' prefix are Python regex patterns matched via fullmatch()."
+                " Unspecified classes default to weight 1.0."
+                ' Example: {"person": 2.0, "car": 0.7, "re:^dog_.*$": 1.3}'
+            ),
+            valueSchema=string_schema(default="{}"),
+            access=F8StateAccess.rw,
+            required=True,
+            uiControl="code",
+            uiLanguage="json",
+            showOnNode=False,
+        ),
+        F8StateSpec(
             name="scoreShmName",
             label="Score SHM",
             description="Score-map SHM name (supports scalar1_f32 and flow2_f16).",
