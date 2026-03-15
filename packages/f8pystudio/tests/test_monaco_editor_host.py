@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import weakref
+
 from qtpy import QtCore, QtWidgets
 
 from f8pystudio.editor_assist.session import EditorSessionKey
 from f8pystudio.widgets import monaco_editor_dialog as monaco_dialog_module
 from f8pystudio.widgets.monaco_editor_dialog import MonacoEditorHostDialog, open_code_editor_window
 from f8pystudio.widgets.monaco_editor_page import MonacoEditorPageConfig, build_monaco_editor_html
+from f8pystudio.widgets.property_value_widgets import F8CodeButtonPropWidget
 
 
 def _ensure_app() -> QtWidgets.QApplication:
@@ -117,6 +120,85 @@ def test_host_keeps_sessions_isolated_across_tabs(monkeypatch) -> None:
     assert key_b.as_id() in host._sessions
     assert host._tabs.count() == 1
     host.close()
+
+
+def test_open_code_editor_window_reuses_host_for_children_of_same_window(monkeypatch) -> None:
+    _ensure_app()
+    monaco_dialog_module._HOST_DIALOGS.clear()
+    monkeypatch.setattr(
+        MonacoEditorHostDialog,
+        "_create_editor_widget",
+        lambda self, controller: _FakeEditorWidget(controller, self),
+    )
+
+    main = QtWidgets.QMainWindow()
+    child_a = QtWidgets.QWidget(main)
+    child_b = QtWidgets.QWidget(main)
+
+    key_a = EditorSessionKey.studio_node(graph_id="graph:main", node_id="nodeA", field_name="code")
+    key_b = EditorSessionKey.studio_node(graph_id="graph:main", node_id="nodeB", field_name="code")
+
+    host1 = open_code_editor_window(
+        child_a,
+        title="Node A",
+        code="print('a')\n",
+        language="python",
+        on_saved=lambda _code: None,
+        session_key=key_a,
+    )
+    host2 = open_code_editor_window(
+        child_b,
+        title="Node B",
+        code="print('b')\n",
+        language="python",
+        on_saved=lambda _code: None,
+        session_key=key_b,
+    )
+
+    assert host1 is host2
+    assert isinstance(host1, MonacoEditorHostDialog)
+    assert host1._tabs.count() == 2
+    host1.close()
+    main.close()
+
+
+def test_code_button_widget_calls_persisted_setter_even_if_widget_destroyed(monkeypatch) -> None:
+    _ensure_app()
+    monaco_dialog_module._HOST_DIALOGS.clear()
+    monkeypatch.setattr(
+        MonacoEditorHostDialog,
+        "_create_editor_widget",
+        lambda self, controller: _FakeEditorWidget(controller, self),
+    )
+
+    main = QtWidgets.QMainWindow()
+    widget = F8CodeButtonPropWidget(main, title="Node A - code", language="python")
+    widget.set_name("code")
+    widget.set_value("print('a')\n")
+    session_key = EditorSessionKey.studio_node(graph_id="graph:destroy", node_id="nodeA", field_name="code")
+    widget.set_editor_session_key(session_key)
+
+    saved: list[str] = []
+    widget.set_persisted_value_setter(lambda text: saved.append(str(text)))
+
+    widget._on_edit_clicked()
+
+    host_key = monaco_dialog_module._host_registry_key(widget)
+    host = monaco_dialog_module._HOST_DIALOGS[host_key]
+    editor_widget = host._sessions[session_key.as_id()]
+
+    widget_ref = weakref.ref(widget)
+    widget.deleteLater()
+    widget = None
+    QtWidgets.QApplication.processEvents()
+
+    editor_widget.controller().save_code("updated\n")
+    assert saved == ["updated\n"]
+
+    # Best-effort: ensure no hard reference from editor callbacks.
+    _ = widget_ref
+    host.close()
+    main.close()
 
 
 def test_monaco_editor_page_routes_ai_requests_through_request_maps() -> None:

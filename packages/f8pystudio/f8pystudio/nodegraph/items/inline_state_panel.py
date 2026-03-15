@@ -9,7 +9,6 @@ from qtpy import QtCore, QtGui, QtWidgets
 from f8pysdk.schema_helpers import schema_type
 
 from ...editor_assist.protocol import editor_assist_context_for_field
-from ...editor_assist.session import EditorSessionKey
 from ...editor_assist.workspace import EditorAssistContext
 from ...ui_icons import StudioIcon, icon_for
 from ...widgets.editor_controls import (
@@ -23,6 +22,7 @@ from ...widgets.editor_controls import (
 )
 from ...widgets.state_controls.pool_resolver import resolve_pool_items
 from ...widgets.property_value_widgets import F8NumberPropLineEdit, open_code_editor_window
+from ...widgets.studio_node_code_editor import get_node_text, resolve_node, set_node_text, studio_session_key
 from .node_item_core import StateFieldInfo, state_field_info
 from .service_toolbar_host import F8ElideToolButton, F8ForceGlobalToolTipFilter
 from .wave_preview import (
@@ -75,17 +75,19 @@ def _apply_text_palette(widget: QtWidgets.QWidget) -> None:
     _refresh_embedded_text_palette(widget)
 
 
-def _editor_assist_context(node_item: Any, *, state_field_name: str) -> EditorAssistContext | None:
+def _editor_assist_context(graph: Any, *, node_id: str, state_field_name: str) -> EditorAssistContext | None:
     if str(state_field_name or "").strip() != "code":
         return None
 
-    node = node_item._backend_node()
+    node = resolve_node(graph, node_id)
     if node is None:
         return None
-
+    spec = None
     try:
-        spec = node.spec
+        spec = node.spec  # type: ignore[attr-defined]
     except Exception:
+        spec = None
+    if spec is None:
         return None
 
     return editor_assist_context_for_field(spec, field_kind="state", field_key="code", language="python")
@@ -644,29 +646,48 @@ def make_state_inline_control(node_item: Any, state_field: StateFieldInfo) -> Qt
                 btn.setToolTip((tip + "\n" if tip else "") + tip2)
 
         def _on_click() -> None:
-            current = _get_node_value()
             state_field_name = str(state_field.name or "")
-            assist_context = _editor_assist_context(node_item, state_field_name=state_field_name)
-            assist_context_provider = lambda: _editor_assist_context(node_item, state_field_name=state_field_name)
             node = node_item._backend_node()
-            session_key = None
+            graph = node_item._graph()
+            node_id = ""
             if node is not None:
                 node_id = str(node.id or "").strip()
-                graph = node_item._graph()
-                if graph is not None and node_id:
-                    session_key = EditorSessionKey.studio_node(
-                        graph_id=f"graph:{id(graph)}",
-                        node_id=node_id,
-                        field_name=state_field_name,
-                    )
+            session_key = studio_session_key(graph, node_id, state_field_name)
+            assist_context = _editor_assist_context(graph, node_id=node_id, state_field_name=state_field_name)
+            assist_context_provider = lambda: _editor_assist_context(
+                graph,
+                node_id=node_id,
+                state_field_name=state_field_name,
+            )
+
+            viewer = node_item.viewer()
+            warning_parent = None
+            if viewer is not None:
+                try:
+                    warning_parent = viewer.window() if viewer.window() is not None else viewer
+                except (AttributeError, RuntimeError, TypeError):
+                    warning_parent = viewer
+
+            current_text = get_node_text(graph, node_id, state_field_name)
+            if not current_text:
+                current = _get_node_value()
+                current_text = "" if current is None else str(current)
 
             def _on_saved(updated: str) -> None:
-                _set_node_value(updated, push_undo=True)
+                set_node_text(
+                    graph,
+                    node_id,
+                    state_field_name,
+                    updated,
+                    push_undo=True,
+                    warning_parent=warning_parent,
+                )
+                _apply_value(updated)
 
             _ = open_code_editor_window(
-                None,
+                viewer,
                 title=f"{node_item.name} - {state_field.label}",
-                code="" if current is None else str(current),
+                code=current_text,
                 language=state_field.ui_language or "plaintext",
                 on_saved=_on_saved,
                 assist_context=assist_context,

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import weakref
 from typing import Any, Callable
 
 from qtpy import QtCore, QtGui, QtWidgets
@@ -33,6 +34,8 @@ class F8CodePropWidget(QtWidgets.QWidget):
         self._assist_context_provider: Callable[[], EditorAssistContext | None] | None = None
         self._editor_session_key: EditorSessionKey | None = None
         self._editor_window: QtWidgets.QDialog | None = None
+        self._persisted_value_getter: Callable[[], str] | None = None
+        self._persisted_value_setter: Callable[[str], None] | None = None
 
         self._preview = QtWidgets.QLineEdit()
         self._preview.setReadOnly(True)
@@ -81,6 +84,12 @@ class F8CodePropWidget(QtWidgets.QWidget):
     def set_editor_session_key(self, session_key: EditorSessionKey | None) -> None:
         self._editor_session_key = session_key
 
+    def set_persisted_value_getter(self, getter: Callable[[], str] | None) -> None:
+        self._persisted_value_getter = getter
+
+    def set_persisted_value_setter(self, setter: Callable[[str], None] | None) -> None:
+        self._persisted_value_setter = setter
+
     def _on_edit_clicked(self) -> None:
         if self._editor_session_key is None and self._editor_window is not None:
             try:
@@ -90,14 +99,39 @@ class F8CodePropWidget(QtWidgets.QWidget):
             except Exception:
                 self._editor_window = None
 
+        code = self.get_value()
+        getter = self._persisted_value_getter
+        if getter is not None:
+            try:
+                code = str(getter() or "")
+            except Exception:
+                logger.exception("persisted code getter failed")
+
+        setter = self._persisted_value_setter
+        widget_ref = weakref.ref(self)
+
         def _on_saved(updated: str) -> None:
-            self.set_value(updated)
-            self.value_changed.emit(self.get_name(), updated)
+            if setter is not None:
+                try:
+                    setter(str(updated or ""))
+                except Exception:
+                    logger.exception("persisted code setter failed")
+
+            widget = widget_ref()
+            if widget is None:
+                return
+            try:
+                widget.set_value(updated)
+                widget.value_changed.emit(widget.get_name(), updated)
+            except (AttributeError, RuntimeError, TypeError):
+                return
+            except Exception:
+                logger.exception("Failed to apply code editor result to property widget")
 
         dlg = open_code_editor_window(
             self,
             title=self._title,
-            code=self.get_value(),
+            code=code,
             language="python",
             on_saved=_on_saved,
             assist_context=self._assist_context,
@@ -130,6 +164,8 @@ class F8CodeButtonPropWidget(QtWidgets.QWidget):
         self._assist_context_provider: Callable[[], EditorAssistContext | None] | None = None
         self._editor_session_key: EditorSessionKey | None = None
         self._editor_window: QtWidgets.QDialog | None = None
+        self._persisted_value_getter: Callable[[], str] | None = None
+        self._persisted_value_setter: Callable[[str], None] | None = None
 
         self._btn = QtWidgets.QPushButton("Edit...")
         self._btn.setIcon(icon_for(self._btn, StudioIcon.CODE))
@@ -168,6 +204,12 @@ class F8CodeButtonPropWidget(QtWidgets.QWidget):
     def set_editor_session_key(self, session_key: EditorSessionKey | None) -> None:
         self._editor_session_key = session_key
 
+    def set_persisted_value_getter(self, getter: Callable[[], str] | None) -> None:
+        self._persisted_value_getter = getter
+
+    def set_persisted_value_setter(self, setter: Callable[[str], None] | None) -> None:
+        self._persisted_value_setter = setter
+
     def _on_edit_clicked(self) -> None:
         if self._editor_session_key is None and self._editor_window is not None:
             try:
@@ -177,14 +219,39 @@ class F8CodeButtonPropWidget(QtWidgets.QWidget):
             except Exception:
                 self._editor_window = None
 
+        code = self.get_value()
+        getter = self._persisted_value_getter
+        if getter is not None:
+            try:
+                code = str(getter() or "")
+            except Exception:
+                logger.exception("persisted code getter failed")
+
+        setter = self._persisted_value_setter
+        widget_ref = weakref.ref(self)
+
         def _on_saved(updated: str) -> None:
-            self.set_value(updated)
-            self.value_changed.emit(self.get_name(), updated)
+            if setter is not None:
+                try:
+                    setter(str(updated or ""))
+                except Exception:
+                    logger.exception("persisted code setter failed")
+
+            widget = widget_ref()
+            if widget is None:
+                return
+            try:
+                widget.set_value(updated)
+                widget.value_changed.emit(widget.get_name(), updated)
+            except (AttributeError, RuntimeError, TypeError):
+                return
+            except Exception:
+                logger.exception("Failed to apply code editor result to property widget")
 
         dlg = open_code_editor_window(
             self,
             title=self._title,
-            code=self.get_value(),
+            code=code,
             language=self._language,
             on_saved=_on_saved,
             assist_context=self._assist_context,

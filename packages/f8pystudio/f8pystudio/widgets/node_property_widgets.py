@@ -30,12 +30,12 @@ from f8pysdk import (
 from f8pysdk.schema_helpers import schema_default
 
 from ..editor_assist.protocol import editor_assist_context_for_field
-from ..editor_assist.session import EditorSessionKey
 from ..editor_assist.workspace import EditorAssistContext
 from .property_value_widgets import (
     F8CodeButtonPropWidget as _F8CodeButtonPropWidget,
     F8JsonPropTextEdit as _F8JsonPropTextEdit,
 )
+from .studio_node_code_editor import get_node_text, resolve_node, set_node_text, studio_session_key
 from .schema_builder import (
     SchemaBuilderDialog,
     schema_from_json_obj as _schema_from_json_obj_strict,
@@ -129,31 +129,18 @@ def _get_node_spec(node: Any) -> Any | None:
         return None
 
 
-def _build_editor_assist_context(node: Any, *, prop_name: str) -> EditorAssistContext | None:
+def _build_editor_assist_context(graph: Any, *, node_id: str, prop_name: str) -> EditorAssistContext | None:
     field_name = str(prop_name or "").strip()
     if field_name != "code":
         return None
 
+    node = resolve_node(graph, node_id)
+    if node is None:
+        return None
     spec = _get_node_spec(node)
+    if spec is None:
+        return None
     return editor_assist_context_for_field(spec, field_kind="state", field_key=field_name, language="python")
-
-
-def _editor_session_key(node: Any, *, prop_name: str) -> EditorSessionKey | None:
-    field_name = str(prop_name or "").strip()
-    if not field_name:
-        return None
-    try:
-        graph = node.graph
-        node_id = str(node.id or "").strip()
-    except AttributeError:
-        return None
-    if graph is None or not node_id:
-        return None
-    return EditorSessionKey.studio_node(
-        graph_id=f"graph:{id(graph)}",
-        node_id=node_id,
-        field_name=field_name,
-    )
 
 
 def _node_missing_lock_info(node: Any) -> tuple[bool, str]:
@@ -2605,14 +2592,52 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
                             title=f"{node.name()} - {prop_name}", language=ui_language or "plaintext"
                         )
                         widget.set_name(prop_name)
-                        widget.set_editor_assist_context(_build_editor_assist_context(node, prop_name=prop_name))
+                        graph = None
+                        node_id = ""
+                        try:
+                            graph = node.graph
+                            node_id = str(node.id or "").strip()
+                        except Exception:
+                            graph = None
+                            node_id = ""
+
+                        warning_parent = None
+                        try:
+                            warning_parent = self.window() if self.window() is not None else self
+                        except (AttributeError, RuntimeError, TypeError):
+                            warning_parent = self
+
+                        widget.set_persisted_value_getter(
+                            lambda current_graph=graph, current_node_id=node_id, current_prop=str(
+                                prop_name
+                            ): get_node_text(current_graph, current_node_id, current_prop)
+                        )
+                        widget.set_persisted_value_setter(
+                            lambda updated, current_graph=graph, current_node_id=node_id, current_prop=str(
+                                prop_name
+                            ), current_parent=warning_parent: set_node_text(
+                                current_graph,
+                                current_node_id,
+                                current_prop,
+                                str(updated or ""),
+                                push_undo=True,
+                                warning_parent=current_parent,
+                            )
+                        )
+
+                        widget.set_editor_assist_context(
+                            _build_editor_assist_context(graph, node_id=node_id, prop_name=str(prop_name))
+                        )
                         widget.set_editor_assist_context_provider(
-                            lambda current_node=node, current_prop=str(prop_name): _build_editor_assist_context(
-                                current_node,
+                            lambda current_graph=graph, current_node_id=node_id, current_prop=str(
+                                prop_name
+                            ): _build_editor_assist_context(
+                                current_graph,
+                                node_id=current_node_id,
                                 prop_name=current_prop,
                             )
                         )
-                        widget.set_editor_session_key(_editor_session_key(node, prop_name=prop_name))
+                        widget.set_editor_session_key(studio_session_key(graph, node_id, str(prop_name)))
                 except Exception:
                     logger.exception("Failed to build code editor widget for property '%s'", prop_name)
                 access = _state_field_access(node, prop_name)
@@ -2636,11 +2661,12 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
                 prop_window.add_widget(
                     name=prop_name, widget=widget, value=value, label=prop_name.replace("_", " "), tooltip=tooltip
                 )
-                widget.value_changed.connect(self._on_property_changed)
-                try:
-                    widget.value_changing.connect(self._on_property_changing)
-                except (AttributeError, RuntimeError, TypeError):
-                    pass
+                if not isinstance(widget, _F8CodeButtonPropWidget):
+                    widget.value_changed.connect(self._on_property_changed)
+                    try:
+                        widget.value_changing.connect(self._on_property_changing)
+                    except (AttributeError, RuntimeError, TypeError):
+                        pass
 
         # add "Node" tab properties. (default props)
         self.add_tab("Node")
