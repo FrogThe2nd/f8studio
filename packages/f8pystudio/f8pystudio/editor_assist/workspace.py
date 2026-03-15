@@ -78,6 +78,12 @@ class EditorAssistContext:
     service_class: str = ""
     operator_class: str = ""
     node_description: str = ""
+    target_field_kind: str = ""
+    target_field_name: str = ""
+    target_field_label: str = ""
+    target_field_description: str = ""
+    target_ui_language: str = ""
+    target_value_schema: dict[str, Any] | None = None
     support_files: tuple[tuple[str, str], ...] = ()
     overlay_prefix: str = ""
     dynamic_inputs_binding: EditorAssistInputsBinding | None = None

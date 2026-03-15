@@ -201,6 +201,86 @@ def test_code_button_widget_calls_persisted_setter_even_if_widget_destroyed(monk
     main.close()
 
 
+def test_open_code_editor_window_recovers_if_cached_host_wrapper_is_invalid(monkeypatch) -> None:
+    _ensure_app()
+    monaco_dialog_module._HOST_DIALOGS.clear()
+    monkeypatch.setattr(
+        MonacoEditorHostDialog,
+        "_create_editor_widget",
+        lambda self, controller: _FakeEditorWidget(controller, self),
+    )
+
+    key_a = EditorSessionKey.studio_node(graph_id="graph:invalid", node_id="nodeA", field_name="code")
+    host1 = open_code_editor_window(
+        None,
+        title="Node A",
+        code="print('a')\n",
+        language="python",
+        on_saved=lambda _code: None,
+        session_key=key_a,
+    )
+
+    reg_key = monaco_dialog_module._host_registry_key(None)
+    host1.close()
+    QtWidgets.QApplication.processEvents()
+
+    assert monaco_dialog_module._qt_object_is_valid(host1) is False
+
+    # Simulate the bug: the Python wrapper is still referenced and ends up in the cache.
+    monaco_dialog_module._HOST_DIALOGS[reg_key] = host1
+
+    key_b = EditorSessionKey.studio_node(graph_id="graph:invalid", node_id="nodeB", field_name="code")
+    host2 = open_code_editor_window(
+        None,
+        title="Node B",
+        code="print('b')\n",
+        language="python",
+        on_saved=lambda _code: None,
+        session_key=key_b,
+    )
+    assert isinstance(host2, MonacoEditorHostDialog)
+    assert monaco_dialog_module._qt_object_is_valid(host2) is True
+    host2.close()
+
+
+def test_open_code_editor_window_replaces_clean_session_when_language_changes(monkeypatch) -> None:
+    _ensure_app()
+    monaco_dialog_module._HOST_DIALOGS.clear()
+    monkeypatch.setattr(
+        MonacoEditorHostDialog,
+        "_create_editor_widget",
+        lambda self, controller: _FakeEditorWidget(controller, self),
+    )
+
+    session_key = EditorSessionKey.studio_node(graph_id="graph:lang", node_id="nodeA", field_name="clsWeights")
+
+    host = open_code_editor_window(
+        None,
+        title="JSON Field",
+        code="{}",
+        language="json",
+        on_saved=lambda _code: None,
+        session_key=session_key,
+    )
+    editor_before = host._sessions[session_key.as_id()]
+    assert editor_before.controller().language() == "json"
+
+    host = open_code_editor_window(
+        None,
+        title="Python Field",
+        code="print('x')\n",
+        language="python",
+        on_saved=lambda _code: None,
+        session_key=session_key,
+    )
+    editor_after = host._sessions[session_key.as_id()]
+
+    assert editor_after is not editor_before
+    assert editor_after.controller().language() == "python"
+    assert editor_after.controller().code() == "print('x')\n"
+    host.close()
+
+
 def test_monaco_editor_page_routes_ai_requests_through_request_maps() -> None:
     html = build_monaco_editor_html(
         MonacoEditorPageConfig(

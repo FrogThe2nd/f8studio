@@ -129,9 +129,11 @@ def _get_node_spec(node: Any) -> Any | None:
         return None
 
 
-def _build_editor_assist_context(graph: Any, *, node_id: str, prop_name: str) -> EditorAssistContext | None:
+def _build_editor_assist_context(
+    graph: Any, *, node_id: str, prop_name: str, language: str = "python"
+) -> EditorAssistContext | None:
     field_name = str(prop_name or "").strip()
-    if field_name != "code":
+    if not field_name:
         return None
 
     node = resolve_node(graph, node_id)
@@ -140,7 +142,9 @@ def _build_editor_assist_context(graph: Any, *, node_id: str, prop_name: str) ->
     spec = _get_node_spec(node)
     if spec is None:
         return None
-    return editor_assist_context_for_field(spec, field_kind="state", field_key=field_name, language="python")
+    return editor_assist_context_for_field(
+        spec, field_kind="state", field_key=field_name, language=language
+    )
 
 
 def _node_missing_lock_info(node: Any) -> tuple[bool, str]:
@@ -2626,15 +2630,21 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
                         )
 
                         widget.set_editor_assist_context(
-                            _build_editor_assist_context(graph, node_id=node_id, prop_name=str(prop_name))
+                            _build_editor_assist_context(
+                                graph,
+                                node_id=node_id,
+                                prop_name=str(prop_name),
+                                language=ui_language or "plaintext",
+                            )
                         )
                         widget.set_editor_assist_context_provider(
                             lambda current_graph=graph, current_node_id=node_id, current_prop=str(
                                 prop_name
-                            ): _build_editor_assist_context(
+                            ), current_lang=(ui_language or "plaintext"): _build_editor_assist_context(
                                 current_graph,
                                 node_id=current_node_id,
                                 prop_name=current_prop,
+                                language=current_lang,
                             )
                         )
                         widget.set_editor_session_key(studio_session_key(graph, node_id, str(prop_name)))

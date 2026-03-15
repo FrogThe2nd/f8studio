@@ -32,16 +32,16 @@ from ..editor_assist.workspace import EditorAssistContext
 logger = logging.getLogger(__name__)
 
 _SYSTEM_PROMPT_CODE = (
-    "You are an expert coding assistant embedded in an IDE. "
-    "You help the user write, refactor, and debug code. "
+    "You are an expert assistant embedded in an IDE. "
+    "You help the user write, refactor, and debug code or structured documents. "
     "Be concise and precise. When providing code, use proper syntax. "
     "When providing explanations, be brief."
 )
 
 _SYSTEM_PROMPT_EDIT = (
-    "You are a code refactoring assistant. "
-    "The user will provide code and an instruction. "
-    "Return ONLY the complete rewritten code — no explanation, no markdown fences, no comments about changes."
+    "You are a document editing assistant. "
+    "The user will provide the current document and an instruction. "
+    "Return ONLY the complete rewritten document — no explanation, no markdown fences, no comments about changes."
 )
 
 _SYSTEM_PROMPT_PLAN = (
@@ -121,11 +121,16 @@ class AiLlmBridge(QtCore.QObject):
         self._inline_model_id: str = ""
         self._chat_provider_id: str = ""
         self._chat_model_id: str = ""
+        self._document_language: str = "plaintext"
 
         # Context tracking
         self._system_tokens: int = _approx_tokens(_SYSTEM_PROMPT_CODE)
         self._code_tokens: int = 0
         self._chat_tokens: int = 0
+        
+        # Debug tracking (holds last seen data for inspection)
+        self._last_code: str = ""
+        self._last_messages: list[dict] = []
 
         # Read global active provider choices from store
         self._inline_provider_id = self._store.active_inline_provider
@@ -150,6 +155,13 @@ class AiLlmBridge(QtCore.QObject):
 
     def set_assist_context(self, context: EditorAssistContext | None) -> None:
         self._assist_context = context
+        if context is not None:
+            language = str(context.language or "").strip().lower()
+            if language:
+                self._document_language = language
+
+    def set_document_language(self, language: str) -> None:
+        self._document_language = str(language or "plaintext").strip().lower() or "plaintext"
 
     def selection_state(self) -> AiBridgeSelectionState:
         cfg = self._store.provider_by_id(self._chat_provider_id)
@@ -169,6 +181,24 @@ class AiLlmBridge(QtCore.QObject):
             return ""
         ctx = self._assist_context
         lines = []
+        target_lines = []
+        if ctx.language:
+            target_lines.append(f"- Document language: `{ctx.language}`")
+        if ctx.target_field_kind:
+            target_lines.append(f"- Target kind: `{ctx.target_field_kind}`")
+        if ctx.target_field_name:
+            target_lines.append(f"- Target field: `{ctx.target_field_name}`")
+        if ctx.target_field_label:
+            target_lines.append(f"- Target label: {ctx.target_field_label}")
+        if ctx.target_ui_language and ctx.target_ui_language != ctx.language:
+            target_lines.append(f"- Target UI language: `{ctx.target_ui_language}`")
+        if ctx.target_field_description:
+            target_lines.append(f"- Target description: {ctx.target_field_description}")
+        if ctx.target_value_schema:
+            target_lines.append(f"- Target schema: `{_schema_summary(ctx.target_value_schema)}`")
+        if target_lines:
+            lines.append("## Editing Target")
+            lines.extend(target_lines)
         meta_lines = []
         if ctx.node_kind:
             meta_lines.append(f"- Kind: `{ctx.node_kind}`")
@@ -210,11 +240,34 @@ class AiLlmBridge(QtCore.QObject):
         out.append("\n*Note: Use the above node inputs and states context to guide your logic and typing.*")
         return "\n".join(out)
 
+    def _current_document_language(self) -> str:
+        if self._assist_context is not None:
+            language = str(self._assist_context.language or "").strip().lower()
+            if language:
+                return language
+        return str(self._document_language or "plaintext").strip().lower() or "plaintext"
+
     def _get_system_prompt(self, base_prompt: str) -> str:
+        document_language = self._current_document_language()
+        language_guidance = ""
+        if document_language == "json":
+            language_guidance = (
+                "You are editing a JSON document. "
+                "When generating or rewriting document content, return valid JSON for this document unless the user explicitly asks for another language. "
+                "Do not default to Python code for JSON-authoring requests."
+            )
+        elif document_language not in {"", "plaintext"}:
+            language_guidance = (
+                f"You are editing a {document_language} document. "
+                f"Prefer {document_language} syntax when writing or rewriting the document unless the user explicitly asks for another format."
+            )
         ctx_str = self._format_assist_context()
+        blocks = [base_prompt]
+        if language_guidance:
+            blocks.append(language_guidance)
         if ctx_str:
-            return f"{base_prompt}\n\n{ctx_str}"
-        return base_prompt
+            blocks.append(ctx_str)
+        return "\n\n".join(blocks)
 
     def _log_prompt_payload(self, *, mode: str, system_prompt: str, messages: list[dict]) -> None:
         if not self._debug_prompt:
@@ -480,8 +533,8 @@ class AiLlmBridge(QtCore.QObject):
             on_done=lambda _full, err: self.chat_done.emit(rid, str(err or "")),
         )
 
-    @staticmethod
     def _build_chat_messages(
+        self,
         history: list[dict],
         code: str,
         selection: str,
@@ -489,12 +542,14 @@ class AiLlmBridge(QtCore.QObject):
         attachments: list[dict[str, str]] | None = None
     ) -> list[dict]:
         messages: list[dict] = [{"role": "system", "content": system_prompt}]
+        document_language = self._current_document_language()
+        fence_language = "" if document_language in {"", "plaintext"} else document_language
         if code:
-            context_content = f"Current file:\n```\n{code}\n```"
+            context_content = f"Current editor content ({document_language}):\n```{fence_language}\n{code}\n```"
             if selection:
-                context_content += f"\n\nSelected text:\n```\n{selection}\n```"
+                context_content += f"\n\nSelected text:\n```{fence_language}\n{selection}\n```"
             messages.append({"role": "user", "content": context_content})
-            messages.append({"role": "assistant", "content": "I can see your code. How can I help?"})
+            messages.append({"role": "assistant", "content": "I can see the current document. How can I help?"})
         
         # Process history
         for msg in history:
@@ -547,6 +602,8 @@ class AiLlmBridge(QtCore.QObject):
 
         system_prompt = self._get_system_prompt(_SYSTEM_PROMPT_EDIT)
         messages: list[dict] = [{"role": "system", "content": system_prompt}]
+        document_language = self._current_document_language()
+        fence_language = "" if document_language in {"", "plaintext"} else document_language
         
         try:
             history = json.loads(messages_json) if messages_json else []
@@ -559,7 +616,7 @@ class AiLlmBridge(QtCore.QObject):
             
         user_content: Any = (
             f"Instruction: {instruction}\n\n"
-            f"Code:\n```\n{code}\n```"
+            f"Current {document_language} document:\n```{fence_language}\n{code}\n```"
         )
         if attachments:
             parts = [{"type": "text", "text": user_content}]
@@ -596,8 +653,6 @@ class AiLlmBridge(QtCore.QObject):
     @staticmethod
     def _strip_code_fence(text: str) -> str:
         # 1. Strip <think>...</think> blocks (reasoning models)
-        # Find the last </think> tag. If present, we only want the text after it.
-        # This handles cases where the model outputs reasoning before the code.
         think_end = text.rfind("</think>")
         if think_end != -1:
             text = text[think_end + len("</think>"):]  # type: ignore[index,arg-type]
@@ -645,9 +700,16 @@ class AiLlmBridge(QtCore.QObject):
 
         system_prompt = self._get_system_prompt(_SYSTEM_PROMPT_PLAN)
         messages: list[dict] = [{"role": "system", "content": system_prompt}]
+        document_language = self._current_document_language()
+        fence_language = "" if document_language in {"", "plaintext"} else document_language
         if code:
-            messages.append({"role": "user", "content": f"Context code:\n```\n{code}\n```"})
-            messages.append({"role": "assistant", "content": "I see the code. What would you like me to do?"})
+            messages.append(
+                {
+                    "role": "user",
+                    "content": f"Current {document_language} document:\n```{fence_language}\n{code}\n```",
+                }
+            )
+            messages.append({"role": "assistant", "content": "I can see the current document. What would you like me to do?"})
         messages.extend(history)
         
         user_content: Any = str(task_description or "")
@@ -682,17 +744,20 @@ class AiLlmBridge(QtCore.QObject):
     @QtCore.Slot(str)
     def update_code_context(self, code: str) -> None:
         """JS notifies us of current editor content so we can track token usage."""
-        self._code_tokens = _approx_tokens(str(code or ""))
+        self._last_code = str(code or "")
+        self._code_tokens = _approx_tokens(self._last_code)
         self._emit_context_usage()
 
     @QtCore.Slot(str)
     def update_chat_context(self, messages_json: str) -> None:
         """JS notifies us of current chat history for token accounting."""
         try:
-            messages = json.loads(messages_json)
+            self._last_messages = json.loads(messages_json)
+            if not isinstance(self._last_messages, list):
+                self._last_messages = []
         except (json.JSONDecodeError, TypeError):
-            messages = []
-        total = sum(_approx_tokens(str(m.get("content", ""))) for m in (messages if isinstance(messages, list) else []))
+            self._last_messages = []
+        total = sum(_approx_tokens(str(m.get("content", ""))) for m in self._last_messages)
         self._chat_tokens = total
         self._emit_context_usage()
 
@@ -734,8 +799,6 @@ class AiLlmBridge(QtCore.QObject):
             return cfg.cached_models[0].model_id
         return ""
 
-
-
     # ------------------------------------------------------------------
     # Context token helpers exposed to JS
     # ------------------------------------------------------------------
@@ -754,3 +817,33 @@ class AiLlmBridge(QtCore.QObject):
         total = sum(_approx_tokens(str(m.get("content", ""))) for m in messages)
         self._chat_tokens = total
         self._emit_context_usage()
+
+    @QtCore.Slot(result=str)
+    def get_context_report(self) -> str:
+        """Returns a formatted Markdown report of the current full payload."""
+        system_prompt = self._get_system_prompt(_SYSTEM_PROMPT_CODE)
+        
+        # We simulate what _build_chat_messages would produce
+        messages = self._build_chat_messages(self._last_messages, self._last_code, "", system_prompt)
+        
+        lines = ["# AI Context Payload Report", ""]
+        lines.append(f"- **Total Tokens (Approx):** {self._system_tokens + self._code_tokens + self._chat_tokens}")
+        lines.append(f"- **Chat Messages:** {len(self._last_messages)}")
+        lines.append("")
+        
+        for i, msg in enumerate(messages):
+            role = str(msg.get("role", "unknown")).upper()
+            content = msg.get("content", "")
+            lines.append(f"### [{i}] {role}")
+            if isinstance(content, list):
+                # Handle multi-modal content lists
+                for part in content:
+                    if part.get("type") == "text":
+                        lines.append(part.get("text", ""))
+                    else:
+                        lines.append(f"*[{part.get('type')} attachment]*")
+            else:
+                lines.append(str(content))
+            lines.append("")
+        
+        return "\n".join(lines)

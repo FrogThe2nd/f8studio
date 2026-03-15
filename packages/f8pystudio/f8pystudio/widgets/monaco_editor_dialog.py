@@ -10,17 +10,46 @@ from qtpy import QtCore, QtGui, QtWidgets
 from ..editor_assist.session import (
     EditorSessionController,
     EditorSessionKey,
+    assist_context_fingerprint,
+    assist_context_requires_python,
+    resolve_assist_context,
     python_assist_warning,
 )
 from ..editor_assist.workspace import EditorAssistContext
 from ..qt_font_utils import normalize_font_point_size
 from ..ui_notifications import show_warning
+from .ai_context_inspector import AiContextInspectorDialog
 from .ai_quick_panel import AiQuickPanel
 from .monaco_editor_page import MonacoEditorPageConfig, build_monaco_editor_html
 
 logger = logging.getLogger(__name__)
 
 _HOST_DIALOGS: "weakref.WeakValueDictionary[str, MonacoEditorHostDialog]" = weakref.WeakValueDictionary()
+
+
+def _qt_object_is_valid(obj: QtCore.QObject) -> bool:
+    """
+    Return True if the underlying Qt/C++ instance is still alive.
+
+    PySide6 can keep the Python wrapper alive even after the C++ object was
+    deleted (eg. with WA_DeleteOnClose). Accessing such wrappers raises
+    `RuntimeError: Internal C++ object ... already deleted.`
+    """
+    try:
+        import shiboken6  # type: ignore[import-not-found]
+
+        try:
+            return bool(shiboken6.isValid(obj))
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+    try:
+        obj.parent()
+        return True
+    except RuntimeError:
+        return False
 
 
 def _set_tool_button_point_size(button: QtWidgets.QToolButton, point_size: int) -> None:
@@ -171,6 +200,8 @@ class F8MonacoEditorWidget(QtWidgets.QWidget):
             "QToolButton { color: #9aa4b2; border: none; padding: 0 4px; }"
             "QToolButton:hover { color: #d7deea; }"
         )
+        self._ctx_btn.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
+        self._ctx_btn.customContextMenuRequested.connect(self._on_ctx_menu_requested)
         self._controller.ai_bridge().context_usage_updated.connect(self._on_context_usage_updated)  # type: ignore[attr-defined]
 
         self._ai_panel_btn = QtWidgets.QToolButton()
@@ -367,6 +398,17 @@ class F8MonacoEditorWidget(QtWidgets.QWidget):
         except Exception:
             logger.exception("Failed to update Monaco AI context tooltip")
 
+    def _on_ctx_menu_requested(self, pos: QtCore.QPoint) -> None:
+        menu = QtWidgets.QMenu(self)
+        inspect_act = menu.addAction("Inspect Current Context Payload...")
+        inspect_act.triggered.connect(self._inspect_context)
+        menu.exec(self._ctx_btn.mapToGlobal(pos))
+
+    def _inspect_context(self) -> None:
+        report = self._controller.ai_bridge().get_context_report()
+        dlg = AiContextInspectorDialog(report, self)
+        dlg.exec()
+
     def _open_full_ai_config(self) -> None:
         from .ai_provider_config_dialog import AiProviderConfigDialog
 
@@ -477,6 +519,79 @@ class MonacoEditorHostDialog(QtWidgets.QDialog):
             return True
         return False
 
+    def refresh_session(
+        self,
+        *,
+        session_key: EditorSessionKey,
+        title: str,
+        code: str,
+        language: str,
+        on_saved: Callable[[str], None],
+        assist_context: EditorAssistContext | None,
+        assist_context_provider: Callable[[], EditorAssistContext | None] | None,
+    ) -> bool:
+        editor_widget = self._sessions.get(session_key.as_id())
+        if editor_widget is None:
+            return False
+
+        resolved_context = resolve_assist_context(
+            assist_context=assist_context,
+            assist_context_provider=assist_context_provider,
+        )
+        requested_language = str(language or "plaintext").strip().lower() or "plaintext"
+        if assist_context_requires_python(resolved_context):
+            requested_language = "python"
+
+        controller = editor_widget.controller()
+        requested_title = str(title or "Edit Code")
+        needs_replace = (
+            controller.title() != requested_title
+            or controller.language() != requested_language
+            or controller.code() != str(code or "")
+            or assist_context_fingerprint(controller.assist_context())
+            != assist_context_fingerprint(resolved_context)
+        )
+        if not needs_replace:
+            return self.focus_session(session_key)
+        if editor_widget.is_dirty():
+            return self.focus_session(session_key)
+
+        replacement = EditorSessionController(
+            title=requested_title,
+            code=code,
+            language=requested_language,
+            session_key=session_key,
+            assist_context=resolved_context,
+            assist_context_provider=assist_context_provider,
+            close_on_save=False,
+            parent=self,
+        )
+        replacement.code_saved.connect(on_saved)  # type: ignore[arg-type]
+        replacement_widget = self._create_editor_widget(replacement)
+        replacement.dirty_changed.connect(
+            lambda _dirty, current_controller=replacement: self._update_tab_title(current_controller)
+        )
+        replacement_widget.close_requested.connect(
+            lambda current_widget=replacement_widget: self._close_editor_widget(current_widget, interactive=True)
+        )
+        replacement_widget.accept_requested.connect(
+            lambda current_widget=replacement_widget: self._close_editor_widget(current_widget, interactive=False)
+        )
+
+        index = self._tabs.indexOf(editor_widget)
+        if index < 0:
+            editor_widget.shutdown()
+            editor_widget.deleteLater()
+            return False
+
+        self._tabs.removeTab(index)
+        editor_widget.shutdown()
+        editor_widget.deleteLater()
+        self._tabs.insertTab(index, replacement_widget, self._tab_title(replacement))
+        self._tabs.setCurrentIndex(index)
+        self._sessions[session_key.as_id()] = replacement_widget
+        return True
+
     def add_session(self, controller: EditorSessionController, on_saved: Callable[[str], None]) -> F8MonacoEditorWidget:
         controller.setParent(self)
         editor_widget = self._create_editor_widget(controller)
@@ -568,7 +683,10 @@ def _host_dialog(parent: QtWidgets.QWidget | None) -> MonacoEditorHostDialog:
     key = _host_registry_key(parent)
     host = _HOST_DIALOGS.get(key)
     if host is not None:
-        return host
+        if _qt_object_is_valid(host):
+            return host
+        _HOST_DIALOGS.pop(key, None)
+
     anchor = None
     if parent is not None:
         try:
@@ -578,6 +696,10 @@ def _host_dialog(parent: QtWidgets.QWidget | None) -> MonacoEditorHostDialog:
     host = MonacoEditorHostDialog(anchor)
     host.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose, True)
     _HOST_DIALOGS[key] = host
+    try:
+        host.destroyed.connect(lambda _obj=None, current_key=key: _HOST_DIALOGS.pop(current_key, None))  # type: ignore[attr-defined]
+    except (AttributeError, RuntimeError, TypeError):
+        logger.exception("Failed to wire Monaco host destroyed cleanup")
     return host
 
 
@@ -619,6 +741,19 @@ def open_code_editor_window(
     session_key: EditorSessionKey | None = None,
 ) -> QtWidgets.QDialog:
     host = _host_dialog(parent)
+    if session_key is not None and host.refresh_session(
+        session_key=session_key,
+        title=title,
+        code=code,
+        language=language,
+        on_saved=on_saved,
+        assist_context=assist_context,
+        assist_context_provider=assist_context_provider,
+    ):
+        host.show()
+        host.raise_()
+        host.activateWindow()
+        return host
     if host.focus_session(session_key):
         host.show()
         host.raise_()

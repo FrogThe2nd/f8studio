@@ -75,8 +75,16 @@ def _apply_text_palette(widget: QtWidgets.QWidget) -> None:
     _refresh_embedded_text_palette(widget)
 
 
-def _editor_assist_context(graph: Any, *, node_id: str, state_field_name: str) -> EditorAssistContext | None:
-    if str(state_field_name or "").strip() != "code":
+def _editor_assist_context(
+    graph: Any,
+    *,
+    node_id: str,
+    state_field_name: str,
+    language: str,
+) -> EditorAssistContext | None:
+    field_name = str(state_field_name or "").strip()
+    lang = str(language or "").strip().lower()
+    if not field_name or not lang:
         return None
 
     node = resolve_node(graph, node_id)
@@ -90,7 +98,7 @@ def _editor_assist_context(graph: Any, *, node_id: str, state_field_name: str) -
     if spec is None:
         return None
 
-    return editor_assist_context_for_field(spec, field_kind="state", field_key="code", language="python")
+    return editor_assist_context_for_field(spec, field_kind="state", field_key=field_name, language=lang)
 
 
 def inline_state_input_is_connected(node_item: Any, field_name: str) -> bool:
@@ -653,11 +661,17 @@ def make_state_inline_control(node_item: Any, state_field: StateFieldInfo) -> Qt
             if node is not None:
                 node_id = str(node.id or "").strip()
             session_key = studio_session_key(graph, node_id, state_field_name)
-            assist_context = _editor_assist_context(graph, node_id=node_id, state_field_name=state_field_name)
+            assist_context = _editor_assist_context(
+                graph,
+                node_id=node_id,
+                state_field_name=state_field_name,
+                language=state_field.ui_language or "plaintext",
+            )
             assist_context_provider = lambda: _editor_assist_context(
                 graph,
                 node_id=node_id,
                 state_field_name=state_field_name,
+                language=state_field.ui_language or "plaintext",
             )
 
             viewer = node_item.viewer()

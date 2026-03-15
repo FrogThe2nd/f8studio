@@ -108,10 +108,20 @@ def test_editor_assist_context_for_field_returns_error_when_field_missing() -> N
     assert "state field not found: code" in context.error_message
 
 
-def test_editor_assist_context_for_field_returns_none_for_non_python_language() -> None:
-    spec = _operator_spec_with_field_editor_assist(None)
-    context = editor_assist_context_for_field(spec, field_kind="state", field_key="code", language="json")
-    assert context is None
+def test_editor_assist_context_for_field_supports_json_language() -> None:
+    spec = _operator_spec_with_field_editor_assist(None, state_key="clsWeights")
+    spec.stateFields[0].uiLanguage = "json"
+    spec.stateFields[0].label = "Class Weights"
+    spec.stateFields[0].description = "JSON map of cls -> weight."
+    context = editor_assist_context_for_field(spec, field_kind="state", field_key="clsWeights", language="json")
+    assert context is not None
+    assert context.language == "json"
+    assert context.target_field_kind == "state"
+    assert context.target_field_name == "clsWeights"
+    assert context.target_field_label == "Class Weights"
+    assert context.target_field_description == "JSON map of cls -> weight."
+    assert context.target_ui_language == "json"
+    assert context.node_kind == "operator"
 
 
 def test_editor_assist_context_for_field_accepts_dynamic_inputs_binding() -> None:
@@ -347,3 +357,25 @@ def test_editor_assist_context_rejects_when_state_ui_language_mismatches() -> No
     context = editor_assist_context_for_field(spec, field_kind="state", field_key="code", language="python")
     assert context is not None
     assert "uiLanguage='lua' does not match requested language='python'" in context.error_message
+
+
+def test_editor_assist_context_for_field_exposes_target_metadata_for_python() -> None:
+    spec = _operator_spec_with_field_editor_assist(
+        {
+            "version": 1,
+            "language": "python",
+            "python": {
+                "support_files": {"f8_script_api.pyi": "class F8PyEngineContext:\n    ...\n"},
+                "overlay_prefix": "",
+            },
+        }
+    )
+    spec.stateFields[0].label = "Script Body"
+    spec.stateFields[0].uiLanguage = "python"
+    context = editor_assist_context_for_field(spec, field_kind="state", field_key="code", language="python")
+    assert context is not None
+    assert context.target_field_kind == "state"
+    assert context.target_field_name == "code"
+    assert context.target_field_label == "Script Body"
+    assert context.target_ui_language == "python"
+    assert context.target_field_description == "Primary code body."

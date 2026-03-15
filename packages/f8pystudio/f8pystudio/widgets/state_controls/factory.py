@@ -27,14 +27,16 @@ from .schema_introspect import (
 )
 
 
-def _editor_assist_context_for_code_field(node: Any, prop_name: str) -> EditorAssistContext | None:
-    if str(prop_name or "").strip() != "code":
+def _editor_assist_context_for_field(node: Any, prop_name: str, language: str) -> EditorAssistContext | None:
+    field_name = str(prop_name or "").strip()
+    lang = str(language or "").strip().lower()
+    if not field_name or not lang:
         return None
     try:
         spec = node.spec
     except Exception:
         return None
-    return editor_assist_context_for_field(spec, field_kind="state", field_key="code", language="python")
+    return editor_assist_context_for_field(spec, field_kind="state", field_key=field_name, language=lang)
 
 
 def _editor_session_key_for_node(node: Any, prop_name: str) -> EditorSessionKey | None:
@@ -85,11 +87,12 @@ def build_state_value_widget(context: ControlBuildContext) -> Any:
             title = f"Edit {prop_name}"
         widget = F8CodeButtonPropWidget(title=title, language=ui_language or "plaintext")
         widget.set_name(prop_name)
-        widget.set_editor_assist_context(_editor_assist_context_for_code_field(node, prop_name))
+        widget.set_editor_assist_context(_editor_assist_context_for_field(node, prop_name, ui_language))
         widget.set_editor_assist_context_provider(
-            lambda current_node=node, current_prop=prop_name: _editor_assist_context_for_code_field(
+            lambda current_node=node, current_prop=prop_name, current_lang=ui_language: _editor_assist_context_for_field(
                 current_node,
                 current_prop,
+                current_lang,
             )
         )
         widget.set_editor_session_key(_editor_session_key_for_node(node, prop_name))

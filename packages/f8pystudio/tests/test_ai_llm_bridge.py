@@ -29,6 +29,12 @@ def test_format_assist_context_includes_node_metadata_outputs_and_descriptions()
             service_class="f8.pyengine",
             operator_class="f8.python_script",
             node_description="Execute custom python logic.",
+            target_field_kind="state",
+            target_field_name="code",
+            target_field_label="Script Body",
+            target_field_description="Primary script source.",
+            target_ui_language="python",
+            target_value_schema={"type": "string"},
             data_in_ports=(
                 EditorAssistDataInPort(
                     name="track",
@@ -60,6 +66,10 @@ def test_format_assist_context_includes_node_metadata_outputs_and_descriptions()
     text = bridge._format_assist_context()
 
     assert "## Node Metadata" in text
+    assert "## Editing Target" in text
+    assert "- Document language: `python`" in text
+    assert "- Target field: `code`" in text
+    assert "- Target description: Primary script source." in text
     assert "- Kind: `operator`" in text
     assert "- Service: `f8.pyengine`" in text
     assert "- Operator: `f8.python_script`" in text
@@ -70,6 +80,51 @@ def test_format_assist_context_includes_node_metadata_outputs_and_descriptions()
     assert "`result` (optional, schema=string) | description=Script output text." in text
     assert "## State Fields (`stateFields`)" in text
     assert "`lastError` (optional, access=wo, schema=string) | description=Most recent execution error." in text
+
+
+def test_get_system_prompt_biases_json_generation_toward_json() -> None:
+    temp_dir = Path(".tmp") / "test_ai_llm_bridge" / uuid.uuid4().hex
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    store_path = temp_dir / "ai_providers.json"
+    with patch.object(AiProviderStore, "_resolve_storage_path", return_value=store_path):
+        bridge = AiLlmBridge(AiProviderStore())
+
+    bridge.set_assist_context(
+        EditorAssistContext(
+            language="json",
+            target_field_kind="state",
+            target_field_name="clsWeights",
+            target_field_description="JSON map of detection cls -> weight multiplier.",
+            target_ui_language="json",
+        )
+    )
+
+    prompt = bridge._get_system_prompt("Base prompt.")
+
+    assert "JSON document" in prompt
+    assert "Do not default to Python" in prompt
+    assert "clsWeights" in prompt
+
+
+def test_build_chat_messages_uses_language_fenced_context() -> None:
+    temp_dir = Path(".tmp") / "test_ai_llm_bridge" / uuid.uuid4().hex
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    store_path = temp_dir / "ai_providers.json"
+    with patch.object(AiProviderStore, "_resolve_storage_path", return_value=store_path):
+        bridge = AiLlmBridge(AiProviderStore())
+
+    bridge.set_document_language("json")
+
+    messages = bridge._build_chat_messages(
+        history=[{"role": "user", "content": "make a template"}],
+        code='{"a": 1}',
+        selection="",
+        system_prompt="system",
+        attachments=None,
+    )
+
+    assert "```json" in str(messages[1]["content"])
+    assert "Current editor content (json)" in str(messages[1]["content"])
 
 
 def test_debug_prompt_flag_logs_payload() -> None:

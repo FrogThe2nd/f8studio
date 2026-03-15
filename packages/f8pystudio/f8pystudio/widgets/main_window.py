@@ -20,6 +20,7 @@ from .service_manager_widget import ServiceManagerWidget
 from .service_inventory import collect_declared_service_ids, collect_declared_services
 from .service_log_widget import ServiceLogDock
 from .runtime_state_sync import RuntimeStateSyncController
+from .ai_assist_sidebar import AiAssistSidebarWidget
 from .session_actions import (
     auto_load_session as session_auto_load_session,
     auto_save_session as session_auto_save_session,
@@ -200,7 +201,19 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         self._node_library_dock.setWidget(node_library)
         self.addDockWidget(QtCore.Qt.RightDockWidgetArea, self._node_library_dock)
 
-        self._dock_widgets = [self._properties_dock, self._log_dock, self._node_library_dock]
+        self._ai_assist_sidebar = AiAssistSidebarWidget(self)
+        self._ai_assist_dock = QtWidgets.QDockWidget("AI Assist", self)
+        self._ai_assist_dock.setObjectName("AiAssistDock")
+        self._ai_assist_dock.setWidget(self._ai_assist_sidebar)
+        self.addDockWidget(QtCore.Qt.RightDockWidgetArea, self._ai_assist_dock)
+        self.tabifyDockWidget(self._node_library_dock, self._ai_assist_dock)
+
+        self._dock_widgets = [
+            self._properties_dock,
+            self._log_dock,
+            self._node_library_dock,
+            self._ai_assist_dock,
+        ]
 
     def _setup_service_manager_dock(self) -> None:
         manager = ServiceManagerWidget(

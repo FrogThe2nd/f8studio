@@ -75,6 +75,12 @@ def assist_context_fingerprint(context: EditorAssistContext | None) -> str:
         "service_class": str(context.service_class or ""),
         "operator_class": str(context.operator_class or ""),
         "node_description": str(context.node_description or ""),
+        "target_field_kind": str(context.target_field_kind or ""),
+        "target_field_name": str(context.target_field_name or ""),
+        "target_field_label": str(context.target_field_label or ""),
+        "target_field_description": str(context.target_field_description or ""),
+        "target_ui_language": str(context.target_ui_language or ""),
+        "target_value_schema": _jsonable(context.target_value_schema),
         "support_files": [[str(name), str(text)] for name, text in context.support_files],
         "overlay_prefix": str(context.overlay_prefix or ""),
         "dynamic_inputs_binding": (
@@ -317,6 +323,7 @@ class EditorSessionController(QtCore.QObject):
         )
         self._ai_store = shared_ai_store()
         self._ai_bridge = AiLlmBridge(self._ai_store, self)
+        self._ai_bridge.set_document_language(self._state.language)
         self._ai_bridge.set_assist_context(self._state.assist_context)
         self._assist_bridge: PythonEditorAssistBridge | None = None
         if effective_language.lower() == "python" and assist_context_requires_python(self._state.assist_context):
