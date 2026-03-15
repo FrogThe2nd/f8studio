@@ -10,6 +10,7 @@ class StudioIcon(Enum):
     FOLDER_OPEN = "folder-open.svg"
     FOLDER_PLUS = "folder-plus.svg"
     SAVE = "save.svg"
+    TRASH = "trash.svg"
     SEND = "send.svg"
     STOP_ALL = "stop-all.svg"
     STOP = "stop.svg"

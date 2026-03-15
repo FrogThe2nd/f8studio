@@ -73,6 +73,7 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
     _view_menu: QtWidgets.QMenu
     _reset_layout_action: QtGui.QAction
     _log_level_menu: QtWidgets.QMenu
+    _clear_all_nodes_action: QtGui.QAction
     _auto_save_action: QtGui.QAction
     _auto_deploy_action: QtGui.QAction
     _log_level_action_group: QtGui.QActionGroup
@@ -123,6 +124,7 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         self._stop_all_services_action = self._create_stop_all_services_action()
         self._auto_save_action = self._create_auto_save_action()
         self._auto_deploy_action = self._create_auto_deploy_action()
+        self._clear_all_nodes_action = self._create_clear_all_nodes_action()
         self._setup_menu()
         self._setup_toolbar()
         self._service_manager: ServiceManagerWidget | None = None
@@ -266,6 +268,8 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         save_as_action.setShortcut("Ctrl+Shift+S")
         save_as_action.triggered.connect(self._save_session_as_action)  # type: ignore[attr-defined]
         menu.addAction(save_as_action)
+        
+        menu.addAction(self._clear_all_nodes_action)
 
         menu.addSeparator()
 
@@ -412,6 +416,11 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         action.triggered.connect(self._on_stop_all_services_triggered)  # type: ignore[attr-defined]
         return action
 
+    def _create_clear_all_nodes_action(self) -> QtGui.QAction:
+        action = QtGui.QAction("Clear All Nodes", self)
+        action.triggered.connect(self._on_clear_all_nodes_triggered)  # type: ignore[attr-defined]
+        return action
+
     def _setup_toolbar(self) -> None:
         tb = QtWidgets.QToolBar("Run", self)
         tb.setObjectName("RunToolBar")
@@ -441,6 +450,10 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         self._save_as_action.setToolTip("Save session to file… (Ctrl+Shift+S)")
         self._save_as_action.triggered.connect(self._save_session_as_action)  # type: ignore[attr-defined]
         tb.addAction(self._save_as_action)
+
+        self._clear_all_nodes_action.setIcon(icon_for(self, StudioIcon.TRASH))
+        self._clear_all_nodes_action.setToolTip("Remove all nodes from the current graph")
+        tb.addAction(self._clear_all_nodes_action)
 
         tb.addSeparator()
 
@@ -609,6 +622,28 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
             start_dir=str(self._session_dialog_dir or ""),
             show_warning=show_warning,
         )
+
+    def _on_clear_all_nodes_triggered(self) -> None:
+        nodes = list(self.studio_graph.all_nodes() or [])
+        if not nodes:
+            self._log_dock.append("studio", "[graph] clear all nodes skipped: graph already empty\n")
+            return
+        answer = QtWidgets.QMessageBox.question(
+            self,
+            "Clear all nodes",
+            f"Remove all {len(nodes)} nodes from the current graph?",
+            QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
+            QtWidgets.QMessageBox.StandardButton.No,
+        )
+        if answer != QtWidgets.QMessageBox.StandardButton.Yes:
+            return
+        try:
+            self.studio_graph.clear_session()
+        except Exception as exc:
+            self._log_dock.report_exception("studio", "clear all nodes failed", exc)
+            show_warning(self, "Clear all nodes failed", str(exc))
+            return
+        self._log_dock.append("studio", f"[graph] cleared all nodes ({len(nodes)})\n")
 
     def _on_deploy_action_triggered(self) -> None:
         try:
