@@ -238,6 +238,24 @@ def test_make_state_inline_control_selected_axis_uses_option_pool() -> None:
     assert isinstance(control, F8OptionCombo)
 
 
+def test_option_combo_read_only_toggle_does_not_call_qlineedit_text_interaction_flags() -> None:
+    _ensure_app()
+    control = F8OptionCombo()
+    control.set_options(["TopLevel", "L1", "R1"])
+    control.set_value("TopLevel")
+
+    control.set_read_only(True)
+
+    assert control.isEditable()
+    line_edit = control.lineEdit()
+    assert line_edit is not None
+    assert line_edit.isReadOnly()
+
+    control.set_read_only(False)
+
+    assert not control.isEditable()
+
+
 def test_on_graph_property_changed_updates_wave_heatmap() -> None:
     _ensure_app()
     node_item = _FakeNodeItem(code_value="")

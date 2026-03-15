@@ -201,7 +201,7 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         self._node_library_dock.setWidget(node_library)
         self.addDockWidget(QtCore.Qt.RightDockWidgetArea, self._node_library_dock)
 
-        self._ai_assist_sidebar = AiAssistSidebarWidget(self)
+        self._ai_assist_sidebar = AiAssistSidebarWidget(studio_graph=self.studio_graph, parent=self)
         self._ai_assist_dock = QtWidgets.QDockWidget("AI Assist", self)
         self._ai_assist_dock.setObjectName("AiAssistDock")
         self._ai_assist_dock.setWidget(self._ai_assist_sidebar)

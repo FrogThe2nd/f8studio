@@ -5,6 +5,7 @@ from unittest.mock import patch
 import uuid
 import logging
 
+from f8pystudio.ai_assist.graph_context import GraphContextSnapshot
 from f8pystudio.ai_assist.llm_bridge import AiLlmBridge
 from f8pystudio.ai_assist.store import AiProviderStore
 from f8pystudio.editor_assist.workspace import (
@@ -183,3 +184,54 @@ def test_get_clipboard_image_returns_empty_payload_when_no_image(monkeypatch) ->
     payload = bridge.get_clipboard_image()
 
     assert payload == {"name": "", "content": "", "mime": ""}
+
+
+def test_get_system_prompt_includes_pinned_graph_context_only_when_set() -> None:
+    temp_dir = Path(".tmp") / "test_ai_llm_bridge" / uuid.uuid4().hex
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    store_path = temp_dir / "ai_providers.json"
+    with patch.object(AiProviderStore, "_resolve_storage_path", return_value=store_path):
+        bridge = AiLlmBridge(AiProviderStore())
+
+    baseline_prompt = bridge._get_system_prompt("Base prompt.")
+    assert "Focused Graph Subgraph Snapshot" not in baseline_prompt
+
+    bridge.set_chat_context_snapshot(
+        GraphContextSnapshot(
+            selection_label="2 selected nodes",
+            selected_node_ids=("node-sorter", "node-validator"),
+            total_selected_count=2,
+            total_one_hop_count=1,
+            total_connection_count=2,
+        )
+    )
+
+    prompt_with_graph = bridge._get_system_prompt("Base prompt.")
+    assert "Focused Graph Subgraph Snapshot" in prompt_with_graph
+    assert "2 selected nodes" in prompt_with_graph
+    assert "not the full graph" in prompt_with_graph
+
+    bridge.clear_chat_context_snapshot()
+    assert "Focused Graph Subgraph Snapshot" not in bridge._get_system_prompt("Base prompt.")
+
+
+def test_reset_chat_history_clears_pinned_graph_context() -> None:
+    temp_dir = Path(".tmp") / "test_ai_llm_bridge" / uuid.uuid4().hex
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    store_path = temp_dir / "ai_providers.json"
+    with patch.object(AiProviderStore, "_resolve_storage_path", return_value=store_path):
+        bridge = AiLlmBridge(AiProviderStore())
+
+    bridge.set_chat_context_snapshot(
+        GraphContextSnapshot(
+            selection_label="2 selected nodes",
+            selected_node_ids=("node-sorter", "node-validator"),
+            total_selected_count=2,
+            total_one_hop_count=1,
+            total_connection_count=2,
+        )
+    )
+
+    assert "2 selected nodes" in bridge.get_chat_context_report()
+    bridge.reset_chat_history()
+    assert "_No pinned graph context._" in bridge.get_chat_context_report()

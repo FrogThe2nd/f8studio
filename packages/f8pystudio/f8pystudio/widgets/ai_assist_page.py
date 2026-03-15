@@ -120,6 +120,29 @@ def build_ai_assist_html() -> str:
         display: flex;
         gap: 4px;
       }}
+      #f8-ai-attach-btn, .f8-new-chat {{
+        border: none;
+        border-radius: 4px;
+        background: transparent;
+        color: #9399b2;
+        width: 24px;
+        height: 24px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+        transition: background 0.1s, color 0.1s;
+      }}
+      #f8-ai-attach-btn svg, .f8-new-chat svg {{
+        width: 18px;
+        height: 18px;
+        stroke-width: 1.5;
+      }}
+      #f8-ai-attach-btn:hover, .f8-new-chat:hover {{
+        background: #45475a;
+        color: #cdd6f4;
+      }}
       #f8-ai-send {{
         background: #cba6f7;
         border: none;
@@ -142,19 +165,6 @@ def build_ai_assist_html() -> str:
         font-style: italic;
       }}
       #f8-ai-thinking.visible {{ display: block; }}
-      
-      .f8-new-chat {{
-        background: transparent;
-        border: none;
-        border-radius: 4px;
-        color: #9399b2;
-        font-size: 14px;
-        width: 24px; height: 24px;
-        cursor: pointer;
-        display: flex; align-items: center; justify-content: center;
-        transition: background 0.1s, color 0.1s;
-      }}
-      .f8-new-chat:hover {{ background: #45475a; color: #cdd6f4; }}
       
       .f8-think {{
         margin: 8px 0;

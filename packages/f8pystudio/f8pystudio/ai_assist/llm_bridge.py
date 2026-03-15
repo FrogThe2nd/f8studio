@@ -22,6 +22,7 @@ from typing import Any
 
 from qtpy import QtCore, QtGui  # type: ignore[import-not-found]
 
+from .graph_context import GraphContextSnapshot, format_graph_context_report, format_graph_context_snapshot
 from .http_client import AiHttpClient
 from .registry import ModelInfo, ProviderConfig
 from .store import AiProviderStore
@@ -106,6 +107,7 @@ class AiLlmBridge(QtCore.QObject):
     plan_step_ready = QtCore.Signal(str, str)            # request_id, delta
     plan_done = QtCore.Signal(str, str)                  # request_id, error_or_empty
     context_usage_updated = QtCore.Signal(int, int)      # used_tokens, total_tokens
+    chat_context_snapshot_changed = QtCore.Signal(bool, str)  # has_context, node_name
 
     def __init__(
         self,
@@ -122,9 +124,11 @@ class AiLlmBridge(QtCore.QObject):
         self._chat_provider_id: str = ""
         self._chat_model_id: str = ""
         self._document_language: str = "plaintext"
+        self._chat_context_snapshot: GraphContextSnapshot | None = None
+        self._chat_context_summary: str = ""
 
         # Context tracking
-        self._system_tokens: int = _approx_tokens(_SYSTEM_PROMPT_CODE)
+        self._system_tokens: int = 0
         self._code_tokens: int = 0
         self._chat_tokens: int = 0
         
@@ -148,6 +152,7 @@ class AiLlmBridge(QtCore.QObject):
         self._assist_context: EditorAssistContext | None = None
         self._lsp_bridge: PythonEditorAssistBridge | None = None
         self._debug_prompt = _env_flag("F8_AI_DEBUG_PROMPT")
+        self._refresh_system_tokens()
 
     def set_lsp_bridge(self, bridge: PythonEditorAssistBridge | None) -> None:
         """Inject the Python LSP bridge so we can route completions to it."""
@@ -159,9 +164,26 @@ class AiLlmBridge(QtCore.QObject):
             language = str(context.language or "").strip().lower()
             if language:
                 self._document_language = language
+        self._refresh_system_tokens()
 
     def set_document_language(self, language: str) -> None:
         self._document_language = str(language or "plaintext").strip().lower() or "plaintext"
+        self._refresh_system_tokens()
+
+    def set_chat_context_snapshot(self, snapshot: GraphContextSnapshot | None) -> None:
+        self._chat_context_snapshot = snapshot
+        self._chat_context_summary = format_graph_context_snapshot(snapshot)
+        node_name = snapshot.node_name if snapshot is not None else ""
+        self._refresh_system_tokens()
+        self.chat_context_snapshot_changed.emit(snapshot is not None, node_name)
+
+    @QtCore.Slot()
+    def clear_chat_context_snapshot(self) -> None:
+        self.set_chat_context_snapshot(None)
+
+    @QtCore.Slot(result=str)
+    def get_chat_context_report(self) -> str:
+        return format_graph_context_report(self._chat_context_snapshot)
 
     def selection_state(self) -> AiBridgeSelectionState:
         cfg = self._store.provider_by_id(self._chat_provider_id)
@@ -267,6 +289,8 @@ class AiLlmBridge(QtCore.QObject):
             blocks.append(language_guidance)
         if ctx_str:
             blocks.append(ctx_str)
+        if self._chat_context_summary:
+            blocks.append(self._chat_context_summary)
         return "\n\n".join(blocks)
 
     def _log_prompt_payload(self, *, mode: str, system_prompt: str, messages: list[dict]) -> None:
@@ -278,6 +302,7 @@ class AiLlmBridge(QtCore.QObject):
                 "system_prompt": str(system_prompt or ""),
                 "messages": messages,
                 "context_block": self._format_assist_context(),
+                "chat_context_block": self._chat_context_summary,
             }
             logger.warning(
                 "F8_AI_DEBUG_PROMPT payload:\n%s",
@@ -342,6 +367,7 @@ class AiLlmBridge(QtCore.QObject):
         logger.info("AI chat history reset requested by user")
         # In current design, history is held by JS, so this is mainly a signal
         # for backend to clear any ephemeral cached context if it had any.
+        self.clear_chat_context_snapshot()
 
     @QtCore.Slot(result="QVariantList")
     def select_images(self) -> list[dict[str, str]]:
@@ -814,8 +840,16 @@ class AiLlmBridge(QtCore.QObject):
         }
 
     def _update_context_tokens(self, messages: list[dict]) -> None:
-        total = sum(_approx_tokens(str(m.get("content", ""))) for m in messages)
+        total = sum(
+            _approx_tokens(str(message.get("content", "")))
+            for message in messages
+            if str(message.get("role", "")) != "system"
+        )
         self._chat_tokens = total
+        self._emit_context_usage()
+
+    def _refresh_system_tokens(self) -> None:
+        self._system_tokens = _approx_tokens(self._get_system_prompt(_SYSTEM_PROMPT_CODE))
         self._emit_context_usage()
 
     @QtCore.Slot(result=str)
@@ -829,6 +863,12 @@ class AiLlmBridge(QtCore.QObject):
         lines = ["# AI Context Payload Report", ""]
         lines.append(f"- **Total Tokens (Approx):** {self._system_tokens + self._code_tokens + self._chat_tokens}")
         lines.append(f"- **Chat Messages:** {len(self._last_messages)}")
+        lines.append("")
+        lines.append("## Pinned Graph Context")
+        if self._chat_context_snapshot is None:
+            lines.append("_No pinned graph context._")
+        else:
+            lines.append(format_graph_context_snapshot(self._chat_context_snapshot))
         lines.append("")
         
         for i, msg in enumerate(messages):

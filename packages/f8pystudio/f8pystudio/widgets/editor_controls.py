@@ -242,16 +242,15 @@ class F8OptionCombo(QtWidgets.QComboBox):
         """
         ro = bool(read_only)
         self._read_only = ro
+        line_edit = self.lineEdit()
         if ro:
             self.setEditable(True)
-            le = self.lineEdit()
-            if le is not None:
-                le.setReadOnly(True)
-                le.setTextInteractionFlags(
-                    QtCore.Qt.TextInteractionFlag.TextSelectableByMouse
-                    | QtCore.Qt.TextInteractionFlag.TextSelectableByKeyboard
-                )
+            line_edit = self.lineEdit()
+            if line_edit is not None:
+                line_edit.setReadOnly(True)
         else:
+            if line_edit is not None:
+                line_edit.setReadOnly(False)
             self.setEditable(False)
 
     def set_context_tooltip(self, tooltip: str) -> None:
