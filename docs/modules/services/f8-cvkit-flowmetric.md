@@ -8,7 +8,27 @@ No description.
 - Source directory: `f8/cvkit/flow_metric`
 - Tags: `cv`, `optical_flow`, `flow_metric`, `scalar_field`
 
-## How to Run
+## When to Use
+
+- Use `f8.cvkit.flowmetric` to reduce raw per-pixel motion vectors (dense optical flow) into useful scalar fields or summary metrics.
+- It is essential when downstream logic needs specific movement qualities like Divergence (expansion/contraction), Curl (rotation), or simple Magnitude rather than raw vectors.
+- Best for building "motion-controlled" interfaces where a specific type of movement (e.g., a hand opening or spinning) needs to be mapped to a control value.
+
+## Common Wiring Patterns
+
+- **Motion Control Bridge**: Feed it from `f8.cvkit.denseoptflow`, then normalize and map the resulting scalar output through `f8.pyengine` operators: `Flow Metric` -> `Range Map` -> `Smoothing` -> `Actuator`.
+- **Logic Triggers**: Use specific metrics like `divergence` to trigger events when something approaches the camera rapidly.
+- **Monitoring**: Visualize the reduced metric over time using `f8.viz.wave` to assist in tuning thresholds for motion-triggered logic.
+
+## Pitfalls / Gotchas
+
+- **Producer Alignment**: The `inputFlowShmName` must match the flow producer's output name exactly. Mismatches are the primary cause of static or empty metric outputs.
+- **Sensitivity Tuning**: Metrics can be very sensitive to "micro-motion" or sensor noise. Use the `minMagnitude` or `scale` properties to filter out low-level noise before it reaches your control logic.
+- **ROI Dependency**: If the flow is being calculated for the whole frame but your target is only in a small region, the resulting metric may be "diluted." Use input cropping or ROIs if the feature of interest is localized.
+
+## Service Reference
+
+### How to Run
 
 ```bash
 ../win/f8cvkit_flow_metric_service.exe
@@ -17,7 +37,13 @@ No description.
 - Workdir: `./`
 - Environment overrides: none
 
-## Service State Fields
+### Typical Inputs / Outputs
+
+- Data inputs: none
+- Data outputs: `monitor`
+- Commands: none
+
+### Service State Fields
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
@@ -31,41 +57,7 @@ No description.
 | `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 
-## Service Commands
-
-_None_
-
-## Service Data Input Ports
-
-_None_
-
-## Service Data Output Ports
-
-| Name | Required | On Node | Schema | Description |
-| --- | --- | --- | --- | --- |
-| `monitor` | `true` | `false` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
-
-## Operators
-
-_None_
-
-## When to Use
-
-- Use `f8.cvkit.flowmetric` when dense optical flow needs to be reduced into a scalar field or metric map.
-- It is useful when downstream logic needs divergence, magnitude, curl, or strain rather than raw vectors.
-
-## Typical Inputs / Outputs
-
-- Data inputs: none
-- Data outputs: `monitor`
-- Commands: none
-
-## Common Wiring Patterns
-
-- Feed it from `f8.cvkit.denseoptflow`, then visualize or normalize the result with `f8.viz.video`, `f8.viz.wave`, and `Range Map`.
-- Use it as the bridge between video motion analysis and scalar-control pipelines.
-
-## Key Fields That Matter
+### Key Fields That Matter
 
 - `inputFlowShmName` (Input Flow SHM, `rw`): Input flow SHM name (format flow2_f16, e.g. shm.xxx.flow). Schema: `string`.
 - `computeEveryNFrames` (Compute Every N Frames, `rw`): Compute selected flow metric once per N new flow frames. Schema: `integer / default=1`.
@@ -76,10 +68,23 @@ _None_
 - `lastError` (Last Error, `ro`): Last error message. Schema: `string`.
 - `active` (Active, `rw`): Service lifecycle state (activate/deactivate). Schema: `boolean / default=True`.
 
-## Pitfalls / Gotchas
+### Service Commands
 
-- `inputFlowShmName` must match the flow producer exactly; this is the first thing to verify.
-- The metric can look weak or noisy if scale settings are tuned before the flow source itself is validated.
+_None_
+
+### Service Data Input Ports
+
+_None_
+
+### Service Data Output Ports
+
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `monitor` | `true` | `false` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
+
+## Operators
+
+_None_
 
 ## Related Scenarios
 

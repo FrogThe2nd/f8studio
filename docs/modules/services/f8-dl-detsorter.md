@@ -8,7 +8,26 @@ Sort detection payloads by a score-map SHM metric.
 - Source directory: `f8/dl/detsorter`
 - Tags: `vision`, `detection`, `sort`, `score_map`
 
-## How to Run
+## When to Use
+
+- Use `f8.dl.detsorter` when detections already exist and you want to reorder them by a second signal such as saliency, motion, or another score-map SHM.
+- It is a utility service that reorders items in a detection payload based on values sampled from a secondary score-map (Shared Memory).
+- It allows for ranking detections by external metrics such as saliency, motion magnitude, or custom heatmap logic, rather than relying solely on the original detector's confidence score.
+- It is a good fit for "pick the most interesting box first" pipelines where plain detector confidence is not the ranking you want downstream.
+
+## Common Wiring Patterns
+
+- Feed `detections` from `f8.dl.detector` or `f8.dl.humandetector`, point `scoreShmName` at a `scalar1_f32` or `flow2_f16` SHM source, then send the sorted `detections` payload to overlays, text inspection, or custom logic.
+- Start with `scoreAggregation=mean` and `sortDirection=desc`, then add `clsWeights` only after the base score-map ranking behaves as expected.
+
+## Pitfalls / Gotchas
+
+- `f8.dl.detsorter` only reorders detections; it does not change each detection's original `score` field, so downstream logic must not assume the first item has the highest detector confidence.
+- Ranking quality depends on score-map alignment. If the detection payload resolution differs from the SHM resolution, the service rescales boxes before scoring, so mismatched crops or stale SHM content can produce surprising orderings.
+
+## Service Reference
+
+### How to Run
 
 ```bash
 pixi run f8pydl_detsorter
@@ -17,7 +36,13 @@ pixi run f8pydl_detsorter
 - Workdir: `../../../../`
 - Environment overrides: none
 
-## Service State Fields
+### Typical Inputs / Outputs
+
+- Data inputs: `detections`
+- Data outputs: `detections`, `monitor`
+- Commands: none
+
+### Service State Fields
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
@@ -29,44 +54,7 @@ pixi run f8pydl_detsorter
 | `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 
-## Service Commands
-
-_None_
-
-## Service Data Input Ports
-
-| Name | Required | On Node | Schema | Description |
-| --- | --- | --- | --- | --- |
-| `detections` | `true` | `true` | `object{detections, frameId, height, model, ...}` | Detection input in schema f8visionDetections/1. |
-
-## Service Data Output Ports
-
-| Name | Required | On Node | Schema | Description |
-| --- | --- | --- | --- | --- |
-| `detections` | `true` | `true` | `object{detections, frameId, height, model, ...}` | Sorted detections in schema f8visionDetections/1. |
-| `monitor` | `true` | `false` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
-
-## Operators
-
-_None_
-
-## When to Use
-
-- Use `f8.dl.detsorter` when detections already exist and you want to reorder them by a second signal such as saliency, motion, or another score-map SHM.
-- It is a good fit for "pick the most interesting box first" pipelines where plain detector confidence is not the ranking you want downstream.
-
-## Typical Inputs / Outputs
-
-- Data inputs: `detections`
-- Data outputs: `detections`, `monitor`
-- Commands: none
-
-## Common Wiring Patterns
-
-- Feed `detections` from `f8.dl.detector` or `f8.dl.humandetector`, point `scoreShmName` at a `scalar1_f32` or `flow2_f16` SHM source, then send the sorted `detections` payload to overlays, text inspection, or custom logic.
-- Start with `scoreAggregation=mean` and `sortDirection=desc`, then add `clsWeights` only after the base score-map ranking behaves as expected.
-
-## Key Fields That Matter
+### Key Fields That Matter
 
 - `clsWeights` (Class Weights, `rw`): JSON map of detection cls -> weight multiplier applied to score-map metric. Keys without a prefix are exact cls matches. Keys with 're:' prefix are Python regex patterns matched via fullmatch(). Unspecified classes default to weight 1.0. Example: {"person": 2.0, "car": 0.7, "re:^dog_.*$": 1.3} Schema: `string / default={}`.
 - `scoreShmName` (Score SHM, `rw`): Score-map SHM name (supports scalar1_f32 and flow2_f16). Schema: `string / default=`.
@@ -76,10 +64,26 @@ _None_
 - `active` (Active, `rw`): Service lifecycle state (activate/deactivate). Schema: `boolean / default=True`.
 - `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
 
-## Pitfalls / Gotchas
+### Service Commands
 
-- `f8.dl.detsorter` only reorders detections; it does not change each detection's original `score` field, so downstream logic must not assume the first item has the highest detector confidence.
-- Ranking quality depends on score-map alignment. If the detection payload resolution differs from the SHM resolution, the service rescales boxes before scoring, so mismatched crops or stale SHM content can produce surprising orderings.
+_None_
+
+### Service Data Input Ports
+
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `detections` | `true` | `true` | `object{detections, frameId, height, model, ...}` | Detection input in schema f8visionDetections/1. |
+
+### Service Data Output Ports
+
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `detections` | `true` | `true` | `object{detections, frameId, height, model, ...}` | Sorted detections in schema f8visionDetections/1. |
+| `monitor` | `true` | `false` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
+
+## Operators
+
+_None_
 
 ## Related Scenarios
 

@@ -8,7 +8,27 @@ No description.
 - Source directory: `f8/audiocap`
 - Tags: `audio`, `capture`, `shm`
 
-## How to Run
+## When to Use
+
+- Use `f8.audiocap` when a graph needs live microphone input, system audio loopback, or ASIO-based audio as its primary timing and feature source.
+- It acts as the canonical Audio Shared Memory (SHM) producer, providing raw signal data to any number of analysis nodes without redundant captures.
+- Keep it at the "head" of audio-driven graphs so downstream services can share one stable, low-latency audio stream.
+
+## Common Wiring Patterns
+
+- **Standard Analysis**: Pair it with `f8.audiofeat.core` for energy/loudness and `f8.audiofeat.rhythm` for beat detection.
+- **Monitoring**: Connect the audio SHM to `f8.viz.audio` for real-time waveform and spectrogram visualization.
+- **Multi-Branching**: Reuse the same configured `audioShmName` (e.g., `shm.audiocap.mic`) across capture, feature extraction, and playback visualization branches.
+
+## Pitfalls / Gotchas
+
+- **Device Selection**: Choosing the wrong input device or host API (MME vs ASIO vs WASAPI) is the most common reason for a "dead" graph. Verify the device is available and not exclusively locked by another application.
+- **Sample Rate Mismatches**: Ensure the capture sample rate matches what downstream feature services expect. Large mismatches can make pitch or rhythm services look unstable or produce empty data.
+- **Buffer Latency**: If the graph feels sluggish, check the buffer size settings. Small buffers reduce latency but increase CPU overhead and risk of "crackle."
+
+## Service Reference
+
+### How to Run
 
 ```bash
 win/f8audiocap_service.exe
@@ -17,7 +37,13 @@ win/f8audiocap_service.exe
 - Workdir: `./`
 - Environment overrides: none
 
-## Service State Fields
+### Typical Inputs / Outputs
+
+- Data inputs: none
+- Data outputs: `monitor`
+- Commands: none
+
+### Service State Fields
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
@@ -35,41 +61,7 @@ win/f8audiocap_service.exe
 | `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 
-## Service Commands
-
-_None_
-
-## Service Data Input Ports
-
-_None_
-
-## Service Data Output Ports
-
-| Name | Required | On Node | Schema | Description |
-| --- | --- | --- | --- | --- |
-| `monitor` | `true` | `false` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
-
-## Operators
-
-_None_
-
-## When to Use
-
-- Use `f8.audiocap` when a graph needs live microphone or loopback audio as its timing and feature source.
-- Keep it near the front of audio-driven graphs so downstream services can share one stable Audio SHM producer.
-
-## Typical Inputs / Outputs
-
-- Data inputs: none
-- Data outputs: `monitor`
-- Commands: none
-
-## Common Wiring Patterns
-
-- Pair it with `f8.audiofeat.core`, `f8.audiofeat.rhythm`, and `f8.viz.audio`.
-- Reuse the same audio SHM name across capture, feature extraction, and visualization branches.
-
-## Key Fields That Matter
+### Key Fields That Matter
 
 - `audioShmName` (Audio SHM, `ro`): Name of the audio shared memory segment Schema: `string`.
 - `audioDevice` (Audio Device, `ro`): Name of the audio capture device in use Schema: `string`.
@@ -80,10 +72,23 @@ _None_
 - `audioChunkCount` (Audio Chunk Count, `ro`): Number of audio chunks Schema: `integer`.
 - `writeSeq` (Write Sequence, `ro`): Sequence number of the last written audio chunk Schema: `integer`.
 
-## Pitfalls / Gotchas
+### Service Commands
 
-- Wrong input device or host API selection looks like a dead graph even when deploy succeeds.
-- Mismatched sample-rate expectations downstream can make feature services look unstable or empty.
+_None_
+
+### Service Data Input Ports
+
+_None_
+
+### Service Data Output Ports
+
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `monitor` | `true` | `false` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
+
+## Operators
+
+_None_
 
 ## Related Scenarios
 

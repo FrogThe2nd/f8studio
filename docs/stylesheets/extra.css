@@ -1,3 +1,91 @@
+:root {
+  --f8-glass-bg: rgba(255, 255, 255, 0.7);
+  --f8-glass-border: rgba(255, 255, 255, 0.2);
+  --f8-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.15);
+  --f8-transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+[data-md-color-scheme="slate"] {
+  --f8-glass-bg: rgba(30, 33, 41, 0.75);
+  --f8-glass-border: rgba(255, 255, 255, 0.05);
+  --f8-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+}
+
+/* Glassmorphism Header */
+.md-header {
+  background-color: var(--f8-glass-bg) !important;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--f8-glass-border) !important;
+  transition: var(--f8-transition);
+}
+
+/* Refined Typography */
+body {
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, h4 {
+  letter-spacing: -0.02em;
+}
+
+/* Nav Hover Effects */
+.md-nav__link {
+  transition: var(--f8-transition);
+  border-radius: 0.4rem;
+  margin: 0.1rem 0;
+}
+
+.md-nav__link:hover {
+  background-color: rgba(125, 125, 125, 0.08);
+  color: var(--md-primary-fg-color) !important;
+}
+
+.md-nav__link--active {
+  font-weight: 700 !important;
+}
+
+/* Premium Code Blocks */
+.md-typeset code {
+  border-radius: 0.3rem;
+  font-size: 0.85em;
+  background-color: rgba(125, 125, 125, 0.1);
+}
+
+.md-typeset pre code {
+  padding: 1rem;
+  box-shadow: var(--f8-shadow);
+  border: 1px solid var(--f8-glass-border);
+}
+
+/* Table Refinement */
+.md-typeset table:not([class]) {
+  border-radius: 0.5rem;
+  overflow: hidden;
+  border-collapse: collapse;
+  box-shadow: var(--f8-shadow);
+  border: 1px solid var(--f8-glass-border);
+}
+
+.md-typeset table:not([class]) th {
+  background-color: rgba(125, 125, 125, 0.05);
+  font-weight: 700;
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  letter-spacing: 0.05em;
+}
+
+.md-typeset table:not([class]) td {
+  border-top: 1px solid var(--f8-glass-border);
+}
+
+/* Smooth Theme Transitions */
+body, .md-container, .md-main, .md-footer {
+  transition: background-color 0.5s ease, color 0.5s ease;
+}
+
+/* Mermaid Adjustments */
 .md-typeset .mermaid {
   overflow: auto;
 }

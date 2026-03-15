@@ -1,15 +1,18 @@
-#### When to Use
+## When to Use
 
-- Use `Python Script` when one operator in the graph needs custom logic but should still live inside `f8.pyengine`.
-- It is the most flexible in-graph escape hatch for shaping data or control flow.
+- Use the `Python Script` operator when a specific part of your graph needs bespoke logic that should still execute inside the high-performance `f8.pyengine` environment.
+- It is the primary "escape hatch" for complex signal processing, domain-specific algorithms, or orchestrating flow between multiple operators.
+- Choose this when you need to maintain internal state across multiple data frames (e.g., counters, moving averages, or state machines).
 
-#### Common Wiring Patterns
+## Common Wiring Patterns
 
-- Keep the script narrow in scope and surround it with visualization nodes so its inputs and outputs stay obvious.
-- Prefer one script per clear responsibility instead of one script doing the whole scenario.
+- **Modular Logic**: Keep the script narrow in scope. Instead of one massive script for the whole scene, use multiple script nodes each handling a single responsibility (e.g., "Hand Gesture Logic," "Sequence Orchestration").
+- **Inspection Layers**: Surround your script node with `f8-viz-text` and `f8-viz-wave` nodes so its internal inputs and outputs stay obvious during debugging.
+- **Dynamic Port Scaling**: Define your custom input and output ports in the node properties to make the script's interface explicit on the graph canvas.
 
-#### Pitfalls / Gotchas
+## Pitfalls / Gotchas
 
-- A script node can become a maintenance bottleneck if it hides too much graph logic.
-- Weak schemas around the script make completion and downstream debugging much worse.
-
+- **Maintenance Bottleneck**: A script node can become a "black box" that hides too much logic from the visual graph representation. Always document your code and keep the script's external interface clear.
+- **Port Naming**: Avoid using generic names like `input1` or `output1`. Use semantic names (e.g., `target_velocity`, `is_active`) to make the data flow readable to others.
+- **Blocking Calls**: Never perform blocking I/O (like `time.sleep()` or synchronous requests) inside the script's processing callback, as this will stall the entire `PyEngine` thread and lock up your graph.
+- **State Leaks**: Be careful with persistent variables; ensure your script handles initialization and reset logic properly when the graph starts or stops.

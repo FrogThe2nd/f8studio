@@ -8,7 +8,27 @@ No description.
 - Source directory: `f8/screencap`
 - Tags: `video`, `capture`, `shm`
 
-## How to Run
+## When to Use
+
+- Use `f8.screencap` when your graph needs to analyze the desktop, a specific monitor, or a fixed region of the screen as a live video Shared Memory (SHM) source.
+- It is the standard producer for screen-driven computer vision, UI automation, game analysis, and streaming scenarios.
+- Choose this when you need low-latency access to any visual content displayed on the host OS.
+
+## Common Wiring Patterns
+
+- **UI Vision Pipeline**: Feed its video SHM into CV nodes (`f8.cvkit.templatematch`, `f8.cvkit.denseoptflow`) or DL nodes (`f8.dl.detector`) to "read" the interface.
+- **Reference Visualization**: Keep a parallel visualization branch (`f8.viz.video`) attached to the capture SHM during setup to lock in the exact `captureRegion` and `scale`.
+- **Logic Sync**: Use the `monitor` port to track capture frame rate and latency, ensuring your downstream analysis doesn't lag behind the physical screen updates.
+
+## Pitfalls / Gotchas
+
+- **Permissions & OS Blocks**: On many operating systems (including Windows and macOS), the Studio or the capture service may require explicit Accessibility or Screen Recording permissions to function. A "dead" graph often means the OS is blocking the capture.
+- **Resolution Overhead**: Capturing a full 4K screen at 60FPS can consume massive CPU/GPU bandwidth. Use the `captureRegion` and `scale` properties to capture only the area of interest at the minimum required resolution.
+- **Refresh Sync**: If the capture looks "jittery," verify that the `targetFps` matches the monitor's refresh rate or is a clean divisor of it.
+
+## Service Reference
+
+### How to Run
 
 ```bash
 win/f8screencap_service.exe
@@ -17,7 +37,13 @@ win/f8screencap_service.exe
 - Workdir: `./`
 - Environment overrides: none
 
-## Service State Fields
+### Typical Inputs / Outputs
+
+- Data inputs: none
+- Data outputs: `monitor`
+- Commands: `listDisplays`, `pickDisplay`, `pickWindow`, `pickRegion`
+
+### Service State Fields
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
@@ -38,7 +64,18 @@ win/f8screencap_service.exe
 | `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 
-## Service Commands
+### Key Fields That Matter
+
+- `videoShmName` (Video SHM, `ro`): Shared memory region name Schema: `string`.
+- `videoShmEvent` (Video Event, `ro`): Shared memory event name Schema: `string`.
+- `mode` (Mode, `rw`): display|window|region Schema: `string / enum[display, window, region]`.
+- `fps` (FPS, `rw`): Capture rate Schema: `number`.
+- `displayId` (Display ID, `ro`): 0..N-1 (see listDisplays) Schema: `integer`.
+- `windowId` (Window ID, `ro`): backend-specific (e.g. win32:hwnd:0x... or x11:win:0x...) Schema: `string`.
+- `window` (Window, `ro`): Resolved window metadata (best-effort) Schema: `object{backend, id, pid, rect, ...}`.
+- `region` (Region, `ro`): Virtual desktop coordinates Schema: `object{h, w, x, y}`.
+
+### Service Commands
 
 ### `listDisplays`
 List displays/monitors (backend-specific)
@@ -64,11 +101,11 @@ Interactive pick a region (click-drag to draw)
 - Show on node: `true`
 - Params: none
 
-## Service Data Input Ports
+### Service Data Input Ports
 
 _None_
 
-## Service Data Output Ports
+### Service Data Output Ports
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
@@ -77,38 +114,6 @@ _None_
 ## Operators
 
 _None_
-
-## When to Use
-
-- Use `f8.screencap` when the graph should read the desktop, a monitor, or a region as a live video SHM source.
-- It is the usual producer for screen-driven CV and UI automation scenarios.
-
-## Typical Inputs / Outputs
-
-- Data inputs: none
-- Data outputs: `monitor`
-- Commands: `listDisplays`, `pickDisplay`, `pickWindow`, `pickRegion`
-
-## Common Wiring Patterns
-
-- Feed its video SHM into CVKit, DL, pose, or `f8.viz.video` consumers.
-- Keep a parallel visualization branch while locking capture region, scale, and frame timing.
-
-## Key Fields That Matter
-
-- `videoShmName` (Video SHM, `ro`): Shared memory region name Schema: `string`.
-- `videoShmEvent` (Video Event, `ro`): Shared memory event name Schema: `string`.
-- `mode` (Mode, `rw`): display|window|region Schema: `string / enum[display, window, region]`.
-- `fps` (FPS, `rw`): Capture rate Schema: `number`.
-- `displayId` (Display ID, `ro`): 0..N-1 (see listDisplays) Schema: `integer`.
-- `windowId` (Window ID, `ro`): backend-specific (e.g. win32:hwnd:0x... or x11:win:0x...) Schema: `string`.
-- `window` (Window, `ro`): Resolved window metadata (best-effort) Schema: `object{backend, id, pid, rect, ...}`.
-- `region` (Region, `ro`): Virtual desktop coordinates Schema: `object{h, w, x, y}`.
-
-## Pitfalls / Gotchas
-
-- Wrong monitor, region, or permission setup can look like a dead downstream graph.
-- Release builds should validate the same capture mode used in the final scenario, not just any available screen source.
 
 ## Related Scenarios
 

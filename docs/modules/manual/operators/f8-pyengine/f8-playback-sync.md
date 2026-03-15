@@ -1,15 +1,17 @@
-#### When to Use
+## When to Use
 
-- Use `Playback Sync` when a graph needs a timeline or state derived from media/sequence playback progress.
-- It helps tie motion logic to a shared playback clock.
+- Use `Playback Sync` when your graph needs to be aware of the timeline, progress, or state of a media stream or sequence playback (active, paused, seeking).
+- It is the primary tool for tying complex motion logic to a shared external playback clock (e.g., from `f8-implayer` or `f8-sequence-player`).
+- Use it to synchronize state machine transitions with specific timestamps in a media file.
 
-#### Common Wiring Patterns
+## Common Wiring Patterns
 
-- Pair it with `Sequence Player`, `IM Player`, or other time-based sources so downstream operators can lock to the same progress.
-- Keep sync state visible during authoring to confirm the graph follows the intended master clock.
+- **Master Clock Lock**: Pair it with an `IM Player` or `Sequence Player` source. Feed the resulting progress into downstream operators to ensure they stay perfectly in sync with the media content.
+- **UI Progress Monitoring**: Route the progress and duration outputs to `TextViz` or a custom dashboard to give the user a visual indication of the current scenario timeline.
+- **Conditional Scripting**: Use the `active` or `looping` status to enable/disable specific parts of your graph based on whether media is currently playing.
 
-#### Pitfalls / Gotchas
+## Pitfalls / Gotchas
 
-- Competing timebases are a common source of drift and surprise resets.
-- If playback ownership is unclear, downstream timing bugs are hard to localize.
-
+- **Timebase Competition**: Drift and unexpected "jump" resets are common when multiple nodes in a graph try to be the authoritative timebase. Choose ONE source as the master clock and use `Playback Sync` to distribute it.
+- **Granularity Differences**: If your sync source has low time resolution, downstream motion may appear "steppy." Consider using a `Smooth Filter` to interpolate between progress updates if perfectly smooth motion is required.
+- **Disconnection Handling**: Always consider what should happen if the playback source is stopped or disconnected. Use default values or fallback logic to prevent actuators from getting "stuck" at a specific position.

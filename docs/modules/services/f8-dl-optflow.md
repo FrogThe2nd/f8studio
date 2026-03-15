@@ -8,7 +8,25 @@ ONNXRuntime NeuFlowV2 dense optical flow service (flow SHM output).
 - Source directory: `f8/dl/optflow`
 - Tags: `onnx`, `vision`, `optical_flow`, `flow_shm`
 
-## How to Run
+## When to Use
+
+- Use `f8.dl.optflow` when learned flow quality is preferred over the classical CV implementation.
+- It provides high-quality dense optical flow using the NeuFlowV2 architecture, which is often more robust to lighting changes and local occlusions.
+- It is a strong option for motion-sensitive graphs when model-backed flow is already part of the deployment stack.
+
+## Common Wiring Patterns
+
+- Feed it from video producers, then inspect outputs through `f8.viz.video` (using flow visualization) or reduce them with `f8.cvkit.flowmetric`.
+- Compare it against the CVKit flow path before committing a release pipeline to balance performance and quality.
+
+## Pitfalls / Gotchas
+
+- GPU/runtime availability matters for performance; validate packaging and device selection (`ortProvider`) early.
+- Flow quality problems are often input-quality problems (blur, noise) rather than model bugs.
+
+## Service Reference
+
+### How to Run
 
 ```bash
 pixi run f8pydl_optflow
@@ -17,7 +35,13 @@ pixi run f8pydl_optflow
 - Workdir: `../../../../`
 - Environment overrides: none
 
-## Service State Fields
+### Typical Inputs / Outputs
+
+- Data inputs: none
+- Data outputs: `monitor`
+- Commands: none
+
+### Service State Fields
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
@@ -37,41 +61,7 @@ pixi run f8pydl_optflow
 | `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 
-## Service Commands
-
-_None_
-
-## Service Data Input Ports
-
-_None_
-
-## Service Data Output Ports
-
-| Name | Required | On Node | Schema | Description |
-| --- | --- | --- | --- | --- |
-| `monitor` | `true` | `false` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
-
-## Operators
-
-_None_
-
-## When to Use
-
-- Use `f8.dl.optflow` when learned flow quality is preferred over the classical CV implementation.
-- It is a strong option for motion-sensitive graphs when model-backed flow is already part of the deployment stack.
-
-## Typical Inputs / Outputs
-
-- Data inputs: none
-- Data outputs: `monitor`
-- Commands: none
-
-## Common Wiring Patterns
-
-- Feed it from video producers, then inspect outputs through `f8.viz.video` or reduce them with `f8.cvkit.flowmetric`.
-- Compare it against the CVKit flow path before committing a release pipeline.
-
-## Key Fields That Matter
+### Key Fields That Matter
 
 - `inputShmName` (Input Video SHM, `rw`): Input SHM name (e.g. shm.xxx.video). Schema: `string / default=`.
 - `computeEveryNFrames` (Compute Every N Frames, `rw`): Compute optical flow once per N new frames. Schema: `integer / default=2`.
@@ -82,10 +72,23 @@ _None_
 - `autoDownloadWeights` (Auto Download Weights, `rw`): When model file is missing, download from onnxUrl in model yaml. Schema: `boolean / default=True`.
 - `availableModels` (Available Models, `ro`): List of model ids discovered from weightsDir. Schema: `array[string]`.
 
-## Pitfalls / Gotchas
+### Service Commands
 
-- GPU/runtime availability matters; validate packaging and device selection early.
-- Flow quality problems are often input-quality problems rather than model bugs.
+_None_
+
+### Service Data Input Ports
+
+_None_
+
+### Service Data Output Ports
+
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `monitor` | `true` | `false` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
+
+## Operators
+
+_None_
 
 ## Related Scenarios
 

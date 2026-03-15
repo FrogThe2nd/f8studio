@@ -1,6 +1,8 @@
 ## When to Use
 
 - Use `f8.dl.detsorter` when detections already exist and you want to reorder them by a second signal such as saliency, motion, or another score-map SHM.
+- It is a utility service that reorders items in a detection payload based on values sampled from a secondary score-map (Shared Memory).
+- It allows for ranking detections by external metrics such as saliency, motion magnitude, or custom heatmap logic, rather than relying solely on the original detector's confidence score.
 - It is a good fit for "pick the most interesting box first" pipelines where plain detector confidence is not the ranking you want downstream.
 
 ## Common Wiring Patterns

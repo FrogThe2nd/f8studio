@@ -716,23 +716,7 @@ def _render_operator_section(
         parts.append(f"### {title} (`{operator.operator_class}`)")
         parts.append(operator.description or "No description.")
         parts.append("")
-        exec_in = ", ".join(f"`{name}`" for name in operator.exec_in_ports) or "none"
-        exec_out = ", ".join(f"`{name}`" for name in operator.exec_out_ports) or "none"
-        parts.append(f"- Exec in ports: {exec_in}")
-        parts.append(f"- Exec out ports: {exec_out}")
-        parts.append("")
-        parts.append("#### State Fields")
-        parts.append("")
-        parts.append(_render_field_table(operator.state_fields).rstrip())
-        parts.append("")
-        parts.append("#### Data Input Ports")
-        parts.append("")
-        parts.append(_render_port_table(operator.data_in_ports).rstrip())
-        parts.append("")
-        parts.append("#### Data Output Ports")
-        parts.append("")
-        parts.append(_render_port_table(operator.data_out_ports).rstrip())
-        parts.append("")
+
         manual = operator_manuals.get(operator.operator_class)
         if manual is None:
             operator_slug = _slugify_identifier(operator.operator_class)
@@ -740,8 +724,24 @@ def _render_operator_section(
                 "missing operator manual section for "
                 f"{operator.operator_class}: docs/modules/manual/operators/{service_slug}/{operator_slug}.md"
             )
-        related = scenario_index.operators.get(operator.operator_class, [])
+
+        # Manual Content First
         parts.append(_render_markdown_section("When to Use", manual.when_to_use, level=4).rstrip())
+        parts.append("")
+        parts.append(
+            _render_markdown_section("Common Wiring Patterns", manual.common_wiring_patterns, level=4).rstrip()
+        )
+        parts.append("")
+        parts.append(_render_markdown_section("Pitfalls / Gotchas", manual.pitfalls_gotchas, level=4).rstrip())
+        parts.append("")
+
+        # Technical Reference Second
+        parts.append("#### Operator Reference")
+        parts.append("")
+        exec_in = ", ".join(f"`{name}`" for name in operator.exec_in_ports) or "none"
+        exec_out = ", ".join(f"`{name}`" for name in operator.exec_out_ports) or "none"
+        parts.append(f"- Exec in ports: {exec_in}")
+        parts.append(f"- Exec out ports: {exec_out}")
         parts.append("")
         parts.append(
             _render_markdown_section(
@@ -752,20 +752,28 @@ def _render_operator_section(
                     data_in_ports=operator.data_in_ports,
                     data_out_ports=operator.data_out_ports,
                 ),
-                level=4,
+                level=5,
             ).rstrip()
         )
         parts.append("")
-        parts.append(
-            _render_markdown_section("Common Wiring Patterns", manual.common_wiring_patterns, level=4).rstrip()
-        )
+        parts.append("##### State Fields")
+        parts.append("")
+        parts.append(_render_field_table(operator.state_fields).rstrip())
         parts.append("")
         parts.append(
-            _render_markdown_section("Key Fields That Matter", _render_key_fields(operator.state_fields), level=4).rstrip()
+            _render_markdown_section("Key Fields That Matter", _render_key_fields(operator.state_fields), level=5).rstrip()
         )
         parts.append("")
-        parts.append(_render_markdown_section("Pitfalls / Gotchas", manual.pitfalls_gotchas, level=4).rstrip())
+        parts.append("##### Data Input Ports")
         parts.append("")
+        parts.append(_render_port_table(operator.data_in_ports).rstrip())
+        parts.append("")
+        parts.append("##### Data Output Ports")
+        parts.append("")
+        parts.append(_render_port_table(operator.data_out_ports).rstrip())
+        parts.append("")
+
+        related = scenario_index.operators.get(operator.operator_class, [])
         parts.append(
             _render_markdown_section(
                 "Related Scenarios",
@@ -798,34 +806,21 @@ def _render_service_page(bundle: ServiceDocBundle, services_root: Path, *, scena
         f"- Source directory: `{source_rel.as_posix()}`",
         f"- Tags: {tags_text}",
         "",
-        "## How to Run",
+        _render_markdown_section("When to Use", bundle.service_manual.when_to_use, level=2).rstrip(),
         "",
-        _render_launch_block(entry).rstrip(),
-        "",
-        "## Service State Fields",
-        "",
-        _render_field_table(describe.state_fields).rstrip(),
-        "",
-        "## Service Commands",
-        "",
-        _render_command_table(describe.commands).rstrip(),
-        "",
-        "## Service Data Input Ports",
-        "",
-        _render_port_table(describe.data_in_ports).rstrip(),
-        "",
-        "## Service Data Output Ports",
-        "",
-        _render_port_table(describe.data_out_ports).rstrip(),
-        "",
-        _render_operator_section(
-            describe.operators,
-            service_slug=bundle.slug,
-            operator_manuals=bundle.operator_manuals,
-            scenario_index=scenario_index,
+        _render_markdown_section(
+            "Common Wiring Patterns",
+            bundle.service_manual.common_wiring_patterns,
+            level=2,
         ).rstrip(),
         "",
-        _render_markdown_section("When to Use", bundle.service_manual.when_to_use, level=2).rstrip(),
+        _render_markdown_section("Pitfalls / Gotchas", bundle.service_manual.pitfalls_gotchas, level=2).rstrip(),
+        "",
+        "## Service Reference",
+        "",
+        "### How to Run",
+        "",
+        _render_launch_block(entry).rstrip(),
         "",
         _render_markdown_section(
             "Typical Inputs / Outputs",
@@ -836,22 +831,37 @@ def _render_service_page(bundle: ServiceDocBundle, services_root: Path, *, scena
                 data_out_ports=describe.data_out_ports,
                 commands=describe.commands,
             ),
-            level=2,
+            level=3,
         ).rstrip(),
         "",
-        _render_markdown_section(
-            "Common Wiring Patterns",
-            bundle.service_manual.common_wiring_patterns,
-            level=2,
-        ).rstrip(),
+        "### Service State Fields",
+        "",
+        _render_field_table(describe.state_fields).rstrip(),
         "",
         _render_markdown_section(
             "Key Fields That Matter",
             _render_key_fields(describe.state_fields),
-            level=2,
+            level=3,
         ).rstrip(),
         "",
-        _render_markdown_section("Pitfalls / Gotchas", bundle.service_manual.pitfalls_gotchas, level=2).rstrip(),
+        "### Service Commands",
+        "",
+        _render_command_table(describe.commands).rstrip(),
+        "",
+        "### Service Data Input Ports",
+        "",
+        _render_port_table(describe.data_in_ports).rstrip(),
+        "",
+        "### Service Data Output Ports",
+        "",
+        _render_port_table(describe.data_out_ports).rstrip(),
+        "",
+        _render_operator_section(
+            describe.operators,
+            service_slug=bundle.slug,
+            operator_manuals=bundle.operator_manuals,
+            scenario_index=scenario_index,
+        ).rstrip(),
         "",
         _render_markdown_section(
             "Related Scenarios",
@@ -1020,6 +1030,7 @@ def _write_files(expected: dict[Path, str], output_root: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
 
+    # Cleanup stale files in English root
     existing_generated = sorted(output_root.glob("*.md"))
     expected_generated = {path for path in expected.keys() if path.parent == output_root}
     for existing_path in existing_generated:
@@ -1049,9 +1060,11 @@ def build_docs(
     )
 
     if check:
+        # Check mode only validates the primary (English) root for simplicity
         return _check_mode(expected, output_root)
 
     _write_files(expected, output_root)
+    
     print(f"generated {len(bundles)} service page(s) and modules index")
     return 0
 
@@ -1080,16 +1093,20 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     try:
+        output_root = Path(args.output_root).resolve()
+        index_path = Path(args.index_path).resolve()
+
         return build_docs(
             services_root=Path(args.services_root).resolve(),
-            output_root=Path(args.output_root).resolve(),
+            output_root=output_root,
             manual_root=Path(args.manual_root).resolve(),
             operator_manual_root=Path(args.operator_manual_root).resolve(),
-            index_path=Path(args.index_path).resolve(),
+            index_path=index_path,
             scenarios_root=Path(args.scenarios_root).resolve(),
             scenario_scripts_root=Path(args.scenario_scripts_root).resolve(),
             check=bool(args.check),
         )
+
     except ValueError as exc:
         print(f"error: {exc}")
         return 2

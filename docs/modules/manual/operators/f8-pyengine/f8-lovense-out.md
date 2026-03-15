@@ -1,15 +1,17 @@
-#### When to Use
+## When to Use
 
-- Use `Lovense Out` when the graph should drive a Lovense target directly from `f8.pyengine`.
-- It is the device-facing sink for Lovense-specific runtime control.
+- Use `Lovense Out` when your graph needs to control Lovense devices (e.g., Lush, Nora, Max) in real-time from the `f8.pyengine` runtime.
+- It acts as the final device-facing sink, converting your graph signals into commands that are sent to the Lovense Connect app or a dedicated dongle.
+- Choose this for high-precision control of vibration, rotation, or contraction intensity.
 
-#### Common Wiring Patterns
+## Common Wiring Patterns
 
-- Feed it already-mapped control values or Lovense-formatted program data from upstream adapters.
-- Keep `Lovense Mock Server` or other debug aids around while validating release behavior.
+- **Direct Intensity Control**: Feed it already-mapped control values (usually 0 to 20 for intensity) from an `f8-range-map`.
+- **Logic Debugging**: Keep the `Lovense Mock Server` active during development to verify your graph logic without needing to wear or run the physical device.
+- **Multi-Device Support**: Use multiple `Lovense Out` nodes to target different devices independently within the same scenario.
 
-#### Pitfalls / Gotchas
+## Pitfalls / Gotchas
 
-- Protocol/device assumptions should be validated before tuning intensity curves.
-- Do not bury transport-specific fixes upstream if they only matter to this sink.
-
+- **Intensity Resolution**: Lovense devices often have a limited number of "steps" (e.g., 0-20 or 0-100). Sending high-resolution floats (like 0.12345) will be rounded by the device transport layer, which can lead to a "steppy" feel if not handled carefully.
+- **Transport Latency**: Communication via the Lovense Connect local API can introduce small delays. If the reaction feels laggy, reduce the command frequency or check your local network congestion.
+- **Connection persistence**: Ensure the Lovense Connect app is running and your device is discovered before starting the Feel8 scenario, as the node will not automatically search for new devices once the graph is active.

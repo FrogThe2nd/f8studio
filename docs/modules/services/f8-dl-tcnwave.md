@@ -8,7 +8,25 @@ ONNXRuntime temporal convolution wave inference service (port output).
 - Source directory: `f8/dl/tcnwave`
 - Tags: `onnx`, `vision`, `temporal`, `wave`, `signal`
 
-## How to Run
+## When to Use
+
+- Use `f8.dl.tcnwave` when a temporal model should infer a waveform or control trace from a sequence of upstream signals.
+- It executes temporal convolution networks (TCN) to map sequences of frames to continuous signals or waveforms, designed for temporal understanding beyond individual frames.
+- It is most useful when hand-built mappings are too brittle or too limited.
+
+## Common Wiring Patterns
+
+- Feed it normalized sequential features, then inspect the generated output with `WaveViz`, `TCodeViz`, or device-output branches.
+- Keep the pre-model feature branch visible so release tuning can separate model issues from input issues.
+
+## Pitfalls / Gotchas
+
+- Temporal models depend heavily on input normalization and window assumptions.
+- Model output can look unstable if the graph does not match the training-time timing expectations; monitor frame rate consistency.
+
+## Service Reference
+
+### How to Run
 
 ```bash
 pixi run f8pydl_tcnwave
@@ -17,7 +35,13 @@ pixi run f8pydl_tcnwave
 - Workdir: `../../../../`
 - Environment overrides: none
 
-## Service State Fields
+### Typical Inputs / Outputs
+
+- Data inputs: none
+- Data outputs: `predictedChange`, `monitor`
+- Commands: none
+
+### Service State Fields
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
@@ -38,42 +62,7 @@ pixi run f8pydl_tcnwave
 | `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 
-## Service Commands
-
-_None_
-
-## Service Data Input Ports
-
-_None_
-
-## Service Data Output Ports
-
-| Name | Required | On Node | Schema | Description |
-| --- | --- | --- | --- | --- |
-| `predictedChange` | `true` | `true` | `number` | Temporal model output value per frame. |
-| `monitor` | `true` | `false` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
-
-## Operators
-
-_None_
-
-## When to Use
-
-- Use `f8.dl.tcnwave` when a temporal model should infer a waveform or control trace from a sequence of upstream signals.
-- It is most useful when hand-built mappings are too brittle or too limited.
-
-## Typical Inputs / Outputs
-
-- Data inputs: none
-- Data outputs: `predictedChange`, `monitor`
-- Commands: none
-
-## Common Wiring Patterns
-
-- Feed it normalized sequential features, then inspect the generated output with `WaveViz`, `TCodeViz`, or device-output branches.
-- Keep the pre-model feature branch visible so release tuning can separate model issues from input issues.
-
-## Key Fields That Matter
+### Key Fields That Matter
 
 - `shmName` (Video SHM, `rw`): Video SHM mapping name (e.g. shm.implayer.video). Schema: `string / default=`.
 - `weightsDir` (Weights Dir, `rw`): Directory containing *.yaml + *.onnx model files. Schema: `string / default=services/f8/dl/weights`.
@@ -84,10 +73,24 @@ _None_
 - `inferEveryN` (Infer Every N Frames, `rw`): Run model inference every N frames (>=1). Schema: `integer / default=1`.
 - `availableModels` (Available Models, `ro`): List of model ids discovered from weightsDir. Schema: `array[string]`.
 
-## Pitfalls / Gotchas
+### Service Commands
 
-- Temporal models depend heavily on input normalization and window assumptions.
-- Model output can look unstable if the graph does not match the training-time timing expectations.
+_None_
+
+### Service Data Input Ports
+
+_None_
+
+### Service Data Output Ports
+
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `predictedChange` | `true` | `true` | `number` | Temporal model output value per frame. |
+| `monitor` | `true` | `false` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
+
+## Operators
+
+_None_
 
 ## Related Scenarios
 

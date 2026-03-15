@@ -8,7 +8,27 @@ No description.
 - Source directory: `f8/cvkit/dense_optflow`
 - Tags: `cv`, `optical_flow`, `flow_field`
 
-## How to Run
+## When to Use
+
+- Use `f8.cvkit.denseoptflow` when you need per-pixel motion vectors to analyze how every part of a video frame is moving.
+- It provides a "classical" Computer Vision approach for motion-derived control, visual flow inspection, and regional motion summaries.
+- Ideal for general motion detection, background subtraction based on movement, or as a source for high-resolution flow metrics.
+
+## Common Wiring Patterns
+
+- **Motion to Metric**: Feed video from `f8.implayer` or `f8.screencap`, then connect the flow SHM output to `f8.cvkit.flowmetric` for scalar reduction (e.g., total motion magnitude).
+- **Visualization**: Branch the flow output to `f8.viz.video` with an optical flow overlay to visually inspect the direction and intensity of motion.
+- **Preprocessing Placement**: Keep this service as close as possible to the video producer to ensure the lowest latency and clear resolution assumptions.
+
+## Pitfalls / Gotchas
+
+- **Channel Mismatch**: If the input SHM name is incorrect, downstream flow consumers will silently receive no data. Always verify that the producer's `shmName` matches the `inputShmName` property.
+- **Resource Intensity**: Dense optical flow is computationally expensive. If the frame rate drops significantly, consider increasing the `computeEveryNFrames` property or reducing the input resolution.
+- **Noise Sensitivity**: Classical flow algorithms are sensitive to sensor noise and lighting flickers, which can be interpreted as high-speed motion. Use input stabilization or filtering if the source is noisy.
+
+## Service Reference
+
+### How to Run
 
 ```bash
 ../win/f8cvkit_dense_optflow_service.exe
@@ -17,7 +37,13 @@ No description.
 - Workdir: `./`
 - Environment overrides: none
 
-## Service State Fields
+### Typical Inputs / Outputs
+
+- Data inputs: none
+- Data outputs: `monitor`
+- Commands: none
+
+### Service State Fields
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
@@ -30,41 +56,7 @@ No description.
 | `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 
-## Service Commands
-
-_None_
-
-## Service Data Input Ports
-
-_None_
-
-## Service Data Output Ports
-
-| Name | Required | On Node | Schema | Description |
-| --- | --- | --- | --- | --- |
-| `monitor` | `true` | `false` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
-
-## Operators
-
-_None_
-
-## When to Use
-
-- Use `f8.cvkit.denseoptflow` when you need per-pixel motion vectors from a video stream.
-- It is the classical CV path for motion-derived control and visual flow inspection.
-
-## Typical Inputs / Outputs
-
-- Data inputs: none
-- Data outputs: `monitor`
-- Commands: none
-
-## Common Wiring Patterns
-
-- Feed video from `f8.implayer` or `f8.screencap`, then branch flow output to `f8.viz.video` overlays or `f8.cvkit.flowmetric`.
-- Keep this service close to the producer so frame timing and resolution assumptions stay obvious.
-
-## Key Fields That Matter
+### Key Fields That Matter
 
 - `inputShmName` (Input Video SHM, `rw`): Input SHM name (e.g. shm.xxx.video). Schema: `string`.
 - `computeEveryNFrames` (Compute Every N Frames, `rw`): Compute flow once per N new frames. Schema: `integer / default=2`.
@@ -75,10 +67,23 @@ _None_
 - `active` (Active, `rw`): Service lifecycle state (activate/deactivate). Schema: `boolean / default=True`.
 - `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
 
-## Pitfalls / Gotchas
+### Service Commands
 
-- If the input SHM name is wrong, downstream flow consumers will look empty even though the graph compiles.
-- Dense flow is sensitive to source quality, scale changes, and noisy screen capture inputs.
+_None_
+
+### Service Data Input Ports
+
+_None_
+
+### Service Data Output Ports
+
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `monitor` | `true` | `false` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
+
+## Operators
+
+_None_
 
 ## Related Scenarios
 

@@ -1,14 +1,17 @@
-#### When to Use
+## When to Use
 
-- Use `Wave Pattern` when you want to sketch a looping waveform from explicit control points instead of code.
-- It is a strong fit for hand-tuned motion shapes where designers need direct point editing plus predictable interpolation.
+- Use `Wave Pattern` when you want to design a looping or one-shot waveform by manually placing control points on a timeline rather than writing code or using simple oscillators.
+- It is the best choice for hand-tuned motion shapes where a designer needs precise control over every peak, valley, and transition.
+- Ideal for complex, non-periodic gestures or repeating patterns that cannot be easily described by a sine wave.
 
-#### Common Wiring Patterns
+## Common Wiring Patterns
 
-- Feed `t` from a timeline or phase source, edit `points` and `interp` on the node, and send the resulting `value` into envelope, mapping, or output operators.
-- Keep the point list sparse at first, then add detail only where the motion shape actually needs it.
+- **Designer LFO**: Feed the `t` input from a `f8-phase` or timeline source. Edit the `points` and `interp` (interpolation) properties to shape the motion, then send the result into a `Range Map` or output operator.
+- **Gesture Library**: Keep a collection of `Wave Pattern` nodes as a "library" of presets. Switch between them using logic in `f8-pyengine`.
+- **Interpolation Tuning**: Experiment with different interpolation modes (`pchip`, `akima`, `linear`) while watching the output on `f8-viz-wave` to find the most natural feel.
 
-#### Pitfalls / Gotchas
+## Pitfalls / Gotchas
 
-- Interpolation choice changes the feel significantly; `pchip`, `akima`, and spline modes can introduce shapes you did not intend if the control points are too dense or uneven.
-- `maxT` defines the loop boundary, so point placement near the wrap point needs extra care to avoid discontinuities or misleading previews.
+- **Interpolation Overshoot**: Non-linear interpolation modes like `spline` or `pchip` can introduce extra "hills" or "valleys" between your points if the points are spaced too closely or unevenly. Monitor the result visually to avoid unwanted movement.
+- **Cycle Wraparound**: The `maxT` property defines the loop boundary. If your last point doesn't align with your first point at `maxT`, you will see a sharp "jump" when the wave repeats.
+- **Point Density**: Keep the point list as sparse as possible. Adding too many unnecessary points makes the pattern harder to tune and can lead to jittery motion.

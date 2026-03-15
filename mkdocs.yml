@@ -70,32 +70,47 @@ nav:
 theme:
   name: material
   language: en
-  logo: media/images/branding/logo_transparent.png
+  logo: media/images/branding/icon.png
   favicon: media/images/branding/icon.png
+  palette:
+    # Palette toggle for light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: cyan
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+
+    # Palette toggle for dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: cyan
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+  font:
+    text: Outfit
+    code: Roboto Mono
+
   features:
     - navigation.tabs
     - navigation.sections
     - navigation.expand
     - navigation.top
+    - navigation.tracking
+    - navigation.indexes
     - content.code.copy
+    - content.code.annotate
     - search.suggest
     - search.highlight
+    - search.share
+    - toc.follow
 
 plugins:
   - search
-  - i18n:
-      docs_structure: folder
-      fallback_to_default: true
-      reconfigure_material: true
-      reconfigure_search: true
-      languages:
-        - locale: en
-          name: English
-          default: true
-          build: true
-        - locale: zh
-          name: Chinese (Simplified)
-          build: true
 
 markdown_extensions:
   - admonition
@@ -117,16 +132,8 @@ markdown_extensions:
 extra_javascript:
   - javascripts/mermaid.mjs
   - javascripts/mermaid-lightbox.mjs
-  - javascripts/i18n-switcher.mjs
 
 extra_css:
   - stylesheets/extra.css
 
-extra:
-  alternate:
-    - name: English
-      lang: en
-      link: /
-    - name: Chinese (Simplified)
-      lang: zh
-      link: /zh/
+extra: {}

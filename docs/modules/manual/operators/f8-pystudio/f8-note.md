@@ -1,14 +1,17 @@
-#### When to Use
+## When to Use
 
-- Use `Note` when the graph needs durable inline explanation, reminders, or scenario-specific setup instructions.
-- It is ideal for documenting intent directly on the canvas instead of relying on outside context.
+- Use the `Note` operator when your graph needs durable, inline explanations, "todo" lists, or scenario-specific setup instructions directly on the canvas.
+- It is the primary tool for documenting your intent for other developers (or your future self) without relying on external READMEs.
+- Use it to highlight critical property settings or explain why a particular non-obvious wiring pattern was used.
 
-#### Common Wiring Patterns
+## Common Wiring Patterns
 
-- Place notes beside non-obvious branches, deployment assumptions, or temporary workarounds so future edits are faster and safer.
-- Keep one note per idea rather than turning the canvas into one large wall of text.
+- **Instructional Context**: Place large notes at the "entry" of a scenario to explain what it does and what hardware is required.
+- **Local Documentation**: Place small notes beside tricky branches, deployment assumptions, or temporary workarounds to make future maintenance safer.
+- **Group Labeling**: Use notes as labels for different logical zones of your graph (e.g., "SECTION: AUDIO PROCESSING").
 
-#### Pitfalls / Gotchas
+## Pitfalls / Gotchas
 
-- Notes help only if they stay current; outdated notes are worse than no notes at all.
-- Important runtime constraints should still be represented in graph structure or validation, not only in prose.
+- **Stale Content**: Notes only help if they stay current. Outdated notes describing logic that has since changed are worse than having no notes at all.
+- **Structural Integrity**: Notes are purely visual aids. Critical runtime constraints should be represented in the graph structure or code, not exclusively in prose.
+- **Canvas Clutter**: Avoid turning the graph into a "wall of text." Keep notes concise and close to the specific nodes they describe.

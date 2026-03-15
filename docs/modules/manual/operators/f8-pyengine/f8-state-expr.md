@@ -1,14 +1,17 @@
-#### When to Use
+## When to Use
 
-- Use `State Expr` when a computed value should be derived from editable state fields instead of incoming data ports.
-- It works well for formulas, derived parameters, and lightweight control math that should stay visible on the node itself.
+- Use `State Expr` when you need to derive a computed value or "virtual property" from other editable state fields on the same node, rather than from incoming data ports.
+- It is excellent for creating formulas, derived parameters, and lightweight control math that should stay visible and tunable directly on the node's property panel.
+- Use it to enforce relationships between parameters (e.g., `max_speed = base_speed * multiplier`).
 
-#### Common Wiring Patterns
+## Common Wiring Patterns
 
-- Add explicit numeric state fields for the symbols you want to expose, then publish the computed `out` state into downstream state edges or inspector views.
-- Keep the expression focused on a small set of clearly named fields so the node remains easy to tune live.
+- **Derived Parameters**: Add multiple numeric state fields (properties) as your input variables. The operator automatically exposes these as symbols in your expression. Publish the result (`out`) to other nodes or use it for Studio inspection.
+- **Live Tuning**: Keep the expression focused on a small set of clearly named fields so the system remains easy to calibrate during a live session.
+- **Inspector Feedback**: Use it to create "Read-only" calculated fields that summarize the current state of a complex operator group for easier monitoring.
 
-#### Pitfalls / Gotchas
+## Pitfalls / Gotchas
 
-- Only writable numeric state fields become expression symbols automatically, so non-numeric or protected fields will not participate in evaluation.
-- Failed expressions publish `lastError` and clear the output, which is helpful for debugging but can make downstream state-driven graphs look idle if you miss the error field.
+- **Type Restrictions**: Only writable numeric state fields (float, int) are automatically extracted as symbols. Non-numeric fields or read-only properties will not be available in the expression.
+- **Error Visibility**: If an expression fails (e.g., division by zero), the operator will publish the error to its `lastError` field and clear the output. If your downstream graph seems "stuck," check the `lastError` field first.
+- **Circular Dependencies**: Be careful not to create logical loops where an expression depends on a value that is eventually affected by its own output, as this can lead to unstable behavior.

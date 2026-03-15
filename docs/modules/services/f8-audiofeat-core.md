@@ -8,7 +8,27 @@ Audio SHM core feature extraction service (rms, onset, centroid).
 - Source directory: `f8/audiofeat/core`
 - Tags: `audio`, `feature`, `rms`, `onset`, `centroid`
 
-## How to Run
+## When to Use
+
+- Use `f8.audiofeat.core` to extract low-level acoustic descriptors such as loudness (RMS/Peak), spectrum-derived features (Centroid, Flux), and general audio activity level.
+- it is the foundation for audio-reactive graphs that map real-world sound energy into visual motion, device control, or logic triggers.
+- Choose this for general energy tracking, silence detection, or basic timbre analysis.
+
+## Common Wiring Patterns
+
+- **Energy to Motion**: Feed it from `f8.audiocap`, then branch the `loudness` or `centroid` outputs to `f8.pyengine` operators or `Python Expr` for range mapping and smoothing.
+- **Spectrum Viz**: Connect the `spectrum` output to visualization nodes to inspect the frequency distribution in real-time.
+- **Responsive Tuning**: Adjust `windowMs` and `hopMs` to balance responsiveness vs. stability. Longer windows provide smoother features at the cost of slight latency.
+
+## Pitfalls / Gotchas
+
+- **SHM Connectivity**: Forgetting to wire the correct `audioShmName` is a common mistake. If the service starts but shows no activity, verify it's reading from the correct producer's SHM region.
+- **Normalization**: Raw audio energy can vary wildly between sources. Use a `Range Map` or auto-gain logic in `f8.pyengine` to normalize features before they drive sensitive actuators.
+- **Processing Overhead**: High-resolution spectral analysis (very short `hopMs`) can be CPU intensive. Only use high rates if the downstream control logic actually requires sub-10ms updates.
+
+## Service Reference
+
+### How to Run
 
 ```bash
 pixi run f8pyaudiofeat_core
@@ -17,7 +37,13 @@ pixi run f8pyaudiofeat_core
 - Workdir: `../../../../`
 - Environment overrides: none
 
-## Service State Fields
+### Typical Inputs / Outputs
+
+- Data inputs: none
+- Data outputs: `coreFeatures`, `monitor`
+- Commands: none
+
+### Service State Fields
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
@@ -30,42 +56,7 @@ pixi run f8pyaudiofeat_core
 | `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 
-## Service Commands
-
-_None_
-
-## Service Data Input Ports
-
-_None_
-
-## Service Data Output Ports
-
-| Name | Required | On Node | Schema | Description |
-| --- | --- | --- | --- | --- |
-| `coreFeatures` | `true` | `true` | `object{hopLength, onsetEnvelope, onsetStrength, rms, ...}` | Core feature payload with onset envelope history. |
-| `monitor` | `true` | `false` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
-
-## Operators
-
-_None_
-
-## When to Use
-
-- Use `f8.audiofeat.core` for low-level descriptors such as loudness, spectrum-derived features, and general audio activity.
-- It is the default feature block for audio-reactive graphs that later map values into motion or visualization.
-
-## Typical Inputs / Outputs
-
-- Data inputs: none
-- Data outputs: `coreFeatures`, `monitor`
-- Commands: none
-
-## Common Wiring Patterns
-
-- Feed it from `f8.audiocap`, then branch outputs to `TextViz`, `Python Expr Service`, or `f8.pyengine` operators.
-- Keep `windowMs` and `hopMs` aligned with the responsiveness you need before adding extra smoothing in `f8.pyengine`.
-
-## Key Fields That Matter
+### Key Fields That Matter
 
 - `audioShmName` (Audio SHM, `rw`): Audio SHM mapping name (e.g. shm.audiocap.audio). Schema: `string / default=`.
 - `channelMode` (Channel Mode, `rw`): Channel selection for analysis. Schema: `string / enum[mono_mix, left, right] / default=mono_mix`.
@@ -76,10 +67,24 @@ _None_
 - `active` (Active, `rw`): Service lifecycle state (activate/deactivate). Schema: `boolean / default=True`.
 - `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
 
-## Pitfalls / Gotchas
+### Service Commands
 
-- Forgetting to wire the correct `audioShmName` makes the service appear idle rather than explicitly broken.
-- Oversized windows improve stability but can make the final motion path feel delayed.
+_None_
+
+### Service Data Input Ports
+
+_None_
+
+### Service Data Output Ports
+
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `coreFeatures` | `true` | `true` | `object{hopLength, onsetEnvelope, onsetStrength, rms, ...}` | Core feature payload with onset envelope history. |
+| `monitor` | `true` | `false` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
+
+## Operators
+
+_None_
 
 ## Related Scenarios
 

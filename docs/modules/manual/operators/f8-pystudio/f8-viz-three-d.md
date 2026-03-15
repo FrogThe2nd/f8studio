@@ -1,14 +1,17 @@
-#### When to Use
+## When to Use
 
-- Use `3D Viz` when spatial data, poses, tracks, or orientation-heavy outputs need a geometric Studio preview.
-- It is the right tool for validating coordinate systems, world-up assumptions, and motion behavior that is hard to judge in text alone.
+- Use `3D Viz` when spatial data, 3D poses, skeleton landmarks, or orientation-heavy data needs a geometric preview inside Studio.
+- It is the right tool for validating coordinate systems, world-up assumptions, and anatomical motion behavior that is difficult to judge in 2D or text alone.
+- Use it to verify depth estimation and spatial relationships between detected objects.
 
-#### Common Wiring Patterns
+## Common Wiring Patterns
 
-- Feed it pose or track-like data in parallel with the real downstream branch so spatial correctness can be verified during authoring.
-- Keep a known-good reference source nearby when tuning transforms or remapping axes.
+- **Pose Validation**: Feed it pose data (e.g., from `f8-mp-pose`) in parallel with the real downstream logic so spatial correctness can be verified during authoring.
+- **Remapping Reference**: Keep a known-good reference skeleton in the view when tuning transforms, remapping axes, or applying bone filters.
+- **World Space Check**: Use it to visualize if your "Camera to World" transformations are resulting in realistic object placements.
 
-#### Pitfalls / Gotchas
+## Pitfalls / Gotchas
 
-- Spatial previews are only as trustworthy as the coordinate conventions feeding them, so wrong handedness or axis assumptions can look plausibly wrong rather than obviously broken.
-- A polished preview does not guarantee the same data will align with downstream consumers that expect different conventions.
+- **Convention Mismatches**: Spatial previews are only as trustworthy as the coordinate conventions feeding them. Wrong handedness (Left vs Right) or axis assumptions (Y-up vs Z-up) can look "plausibly wrong" rather than obviously broken.
+- **Sync Issues**: A polished 3D preview does not guarantee that the raw data will align exactly with external consumers (like Unity or Blender) if they expect different scale or pivot conventions.
+- **Rendering Cost**: The 3D viewer is more resource intensive than 2D visualizations. Close the 3D tabs when not needed to maximize system performance for inference.

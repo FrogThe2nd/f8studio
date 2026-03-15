@@ -199,6 +199,22 @@ def _write(expected: dict[Path, str]) -> None:
         path.write_text(content, encoding="utf-8")
 
 
+def build(
+    *, services_root: Path, service_nodes_path: Path, pyengine_operators_path: Path, check: bool
+) -> int:
+    expected = _build_expected(
+        services_root,
+        service_nodes_path=service_nodes_path,
+        pyengine_operators_path=pyengine_operators_path,
+    )
+    if check:
+        return _check(expected)
+
+    _write(expected)
+    print("generated 2 node atlas page(s)")
+    return 0
+
+
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate node-atlas inventory pages")
     parser.add_argument("--services-root", default="services", help="Root containing service directories")
@@ -210,16 +226,14 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
-    expected = _build_expected(
-        Path(args.services_root).resolve(),
-        service_nodes_path=Path(args.service_nodes_path).resolve(),
+    service_nodes_path = Path(args.service_nodes_path).resolve()
+
+    return build(
+        services_root=Path(args.services_root).resolve(),
+        service_nodes_path=service_nodes_path,
         pyengine_operators_path=Path(args.pyengine_operators_path).resolve(),
+        check=bool(args.check),
     )
-    if args.check:
-        return _check(expected)
-    _write(expected)
-    print(f"generated {len(expected)} node atlas page(s)")
-    return 0
 
 
 if __name__ == "__main__":

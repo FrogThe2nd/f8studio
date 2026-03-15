@@ -1,15 +1,17 @@
-#### When to Use
+## When to Use
 
-- Use `Sequence Player` when a prepared sequence should play back over time and expose current value/index state.
-- It is a good fit for reproducible demos and scripted motion passages.
+- Use `Sequence Player` to play back pre-recorded or hand-authored motion sequences over time, exposing current signal values, frame indices, and play state.
+- It is the primary tool for creating reproducible demos, scripted motion passages, or "preset" movements that can be triggered by scenario logic.
+- Use it when you need a high-precision, frame-perfect reproduction of a specific motion pattern.
 
-#### Common Wiring Patterns
+## Common Wiring Patterns
 
-- Feed it a sequence payload, then branch `value` into mapping or device output nodes and monitor `index`/`done` for control logic.
-- Pair it with `Playback Sync` when the rest of the graph needs to follow the same timeline.
+- **Preset Triggering**: Feed it a sequence payload (e.g., from a JSON file or an upstream generator). Branch the `value` output into `Range Map` or device nodes, and monitor the `done` port to trigger subsequent state changes.
+- **Master Progress Sync**: Pair it with `Playback Sync` if other parts of the graph need to coordinate their behavior based on the sequence's current progress.
+- **Interactive Playback**: Use the `play`, `pause`, and `stop` commands to control playback dynamically based on user input or detection events.
 
-#### Pitfalls / Gotchas
+## Pitfalls / Gotchas
 
-- Sequence schema errors can look like timing problems if the payload contract is not validated first.
-- Keep timeline ownership clear so the graph does not fight between live and prerecorded sources.
-
+- **Payload Contract**: If the sequence data schema is incorrect (e.g., missing timestamps or wrong data types), the player may fail silently or produce stuttering motion. Validate your data with `f8-viz-text` first.
+- **Ownership Confusion**: Avoid having multiple operators fighting for control of the same timeline. Decide whether the `Sequence Player` or an external clock (like `f8-phase`) is the authoritative timebase for a given branch.
+- **Timing Jitter**: Unlike procedural oscillators, sequence playback resolution depends on the engine's tick rate. Ensure your `f8-tick` rate is high enough to capture the detail in your recorded sequence.

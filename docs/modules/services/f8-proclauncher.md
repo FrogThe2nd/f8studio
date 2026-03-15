@@ -8,7 +8,27 @@ Launches an external OS process (optionally detached).
 - Source directory: `f8/proclauncher`
 - Tags: `utility`, `process`, `launcher`
 
-## How to Run
+## When to Use
+
+- Use `f8.proclauncher` when a scenario needs to start an external helper process, companion tool, or bridge alongside the Feel8 graph.
+- It is ideal for one-shot utility launchers (e.g., opening a browser to a dashboard) or background workers that are more efficient to run as separate OS processes.
+- It manages the lifecycle of the child process, allowing you to choose whether the process should be killed when the service stops or left running "detached".
+
+## Common Wiring Patterns
+
+- **Standard Tooling**: Set `programPath` to the exact executable path or command line. Use quotes if the path or arguments contain spaces.
+- **Service Dependency**: Leave `singleton=true` (default) to ensure that starting the service multiple times doesn't spawn redundant instances of the same tool.
+- **Topology Layout**: Keep launcher nodes near the specific part of the graph that depends on the external tool, making the dependency relationship clear in the Studio's node view.
+
+## Pitfalls / Gotchas
+
+- **Detached Zombies**: If `detached=true`, the launched process will persist even after the Feel8 service stops or the Studio is closed. This can lead to hidden background processes using system resources; use `detached=false` if the helper should strictly follow the graph's lifecycle.
+- **Environment Context**: Child processes may not inherit the same environment variables or working directory as the Studio. If the tool depends on specific paths, use absolute paths in the `programPath`.
+- **Command Quoting**: Poorly quoted command lines are the most common cause of failure. If your program path or arguments have spaces, ensure they are properly wrapped (e.g., `"C:\Path With Spaces\app.exe" --arg "Value"`).
+
+## Service Reference
+
+### How to Run
 
 ```bash
 pixi run f8proclauncher
@@ -17,7 +37,13 @@ pixi run f8proclauncher
 - Workdir: `../../../`
 - Environment overrides: none
 
-## Service State Fields
+### Typical Inputs / Outputs
+
+- Data inputs: none
+- Data outputs: `monitor`
+- Commands: none
+
+### Service State Fields
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
@@ -27,15 +53,23 @@ pixi run f8proclauncher
 | `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 
-## Service Commands
+### Key Fields That Matter
+
+- `programPath` (Program Path, `rw`): Executable path or command line (quoted if it contains spaces). Empty means no launch. Schema: `string / default=`.
+- `singleton` (Singleton, `rw`): If true, do not start if a previous launch for the same command is still running. Schema: `boolean / default=True`.
+- `detached` (Detached, `rw`): If true, do not stop the launched process when this service stops. Schema: `boolean / default=True`.
+- `active` (Active, `rw`): Service lifecycle state (activate/deactivate). Schema: `boolean / default=True`.
+- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
+
+### Service Commands
 
 _None_
 
-## Service Data Input Ports
+### Service Data Input Ports
 
 _None_
 
-## Service Data Output Ports
+### Service Data Output Ports
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
@@ -44,35 +78,6 @@ _None_
 ## Operators
 
 _None_
-
-## When to Use
-
-- Use `f8.proclauncher` when a scenario needs to start an external helper process alongside the graph.
-- It is useful for one-shot utility launchers, bridges, or companion tools that are easier to run as separate OS processes.
-
-## Typical Inputs / Outputs
-
-- Data inputs: none
-- Data outputs: `monitor`
-- Commands: none
-
-## Common Wiring Patterns
-
-- Set `programPath` to the exact executable or command line you want to launch, then leave `singleton=true` to avoid accidental duplicate starts during iteration.
-- Keep launcher nodes near the part of the graph that depends on the external tool so the process relationship stays obvious in the session.
-
-## Key Fields That Matter
-
-- `programPath` (Program Path, `rw`): Executable path or command line (quoted if it contains spaces). Empty means no launch. Schema: `string / default=`.
-- `singleton` (Singleton, `rw`): If true, do not start if a previous launch for the same command is still running. Schema: `boolean / default=True`.
-- `detached` (Detached, `rw`): If true, do not stop the launched process when this service stops. Schema: `boolean / default=True`.
-- `active` (Active, `rw`): Service lifecycle state (activate/deactivate). Schema: `boolean / default=True`.
-- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
-
-## Pitfalls / Gotchas
-
-- `detached=true` means the launched process will keep running after the service stops, which is convenient for helpers but easy to forget during debugging.
-- Most failures come from bad command lines, quoting issues, or assuming the child process inherits a working environment it does not actually have.
 
 ## Related Scenarios
 
