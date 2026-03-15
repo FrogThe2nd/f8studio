@@ -1921,12 +1921,19 @@ class _LegacyMonacoEditorPageDialog(QtWidgets.QDialog):
           const model = window._f8_editor.getModel();
           if (model) {{
             const fullRange = model.getFullModelRange();
-            // pushEditOperations adds to the undo stack → Ctrl+Z works
+            const selection = window._f8_editor.getSelection();
+            
+            // Explicitly push a stack element so this AI edit is a distinct undo step.
+            // This ensures Ctrl+Z will correctly revert the entire AI edit as one block.
+            model.pushStackElement();
+            
             model.pushEditOperations(
-              [],
+              [selection],
               [{{ range: fullRange, text: newCode }}],
-              function() {{ return null; }}
+              function() {{ return [selection]; }}
             );
+            
+            model.pushStackElement();
           }}
         }}
         _f8_closeDiff();
