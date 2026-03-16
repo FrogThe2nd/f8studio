@@ -146,6 +146,7 @@ class _Skeleton3DViewerWindow(QtWidgets.QDialog):
             self._on_viewer_status_changed("QtWebEngine unavailable")
             logger.exception("failed to import QtWebEngineWidgets for Skeleton3D viewer")
             return None
+        configure_default_webengine_profile()
         return QtWebEngineWidgets.QWebEngineView(self)
 
     def _ensure_web_view(self) -> bool:

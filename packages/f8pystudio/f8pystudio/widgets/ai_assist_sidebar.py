@@ -9,6 +9,7 @@ from ..ai_assist.store import AiProviderStore
 from ..nodegraph import F8StudioGraph
 from ..qt_font_utils import normalize_font_point_size
 from ..ui_icons import StudioIcon, icon_for
+from ..webengine_utils import configure_default_webengine_profile
 from .ai_context_inspector import AiContextInspectorDialog
 from .ai_quick_panel import AiQuickPanel
 from .ai_assist_page import build_ai_assist_html
@@ -116,7 +117,8 @@ class AiAssistSidebarWidget(QtWidgets.QWidget):
         
         # 2. UI Components
         from PySide6 import QtWebChannel, QtWebEngineWidgets  # type: ignore[import-not-found]
-        
+
+        configure_default_webengine_profile()
         self._view = QtWebEngineWidgets.QWebEngineView(self)
         self._view.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.NoContextMenu)
         

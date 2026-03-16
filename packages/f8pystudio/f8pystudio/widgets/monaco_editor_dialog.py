@@ -18,6 +18,7 @@ from ..editor_assist.session import (
 from ..editor_assist.workspace import EditorAssistContext
 from ..qt_font_utils import normalize_font_point_size
 from ..ui_notifications import show_warning
+from ..webengine_utils import configure_default_webengine_profile
 from .ai_context_inspector import AiContextInspectorDialog
 from .ai_quick_panel import AiQuickPanel
 from .monaco_editor_page import MonacoEditorPageConfig, build_monaco_editor_html
@@ -177,6 +178,7 @@ class F8MonacoEditorWidget(QtWidgets.QWidget):
 
         from PySide6 import QtWebChannel, QtWebEngineWidgets  # type: ignore[import-not-found]
 
+        configure_default_webengine_profile()
         self._view = QtWebEngineWidgets.QWebEngineView(self)
         self._view.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.NoContextMenu)
         self._ui_bridge = _EditorUiBridge(self)

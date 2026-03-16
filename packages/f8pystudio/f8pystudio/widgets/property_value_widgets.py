@@ -8,12 +8,12 @@ from typing import Any, Callable
 
 from qtpy import QtCore, QtGui, QtWidgets
 
-from ..editor_assist.session import EditorSessionKey
+from ..editor_assist.session import EditorSessionKey, assist_context_requires_python
 from ..editor_assist.workspace import EditorAssistContext
 from ..ui_notifications import show_warning
 from ..ui_icons import StudioIcon, icon_for
 from .json_text_editor import attach_json_enhancements
-from .monaco_editor_dialog import open_code_editor_dialog, open_code_editor_window
+from .monaco_editor_dialog import open_code_editor_window
 
 logger = logging.getLogger(__name__)
 
@@ -30,12 +30,10 @@ class F8CodePropWidget(QtWidgets.QWidget):
         self._name = ""
         self._value = ""
         self._title = str(title or "Edit Code")
+        self._language = "plaintext"
         self._assist_context: EditorAssistContext | None = None
         self._assist_context_provider: Callable[[], EditorAssistContext | None] | None = None
-        self._editor_session_key: EditorSessionKey | None = None
         self._editor_window: QtWidgets.QDialog | None = None
-        self._persisted_value_getter: Callable[[], str] | None = None
-        self._persisted_value_setter: Callable[[str], None] | None = None
 
         self._preview = QtWidgets.QLineEdit()
         self._preview.setReadOnly(True)
@@ -72,7 +70,7 @@ class F8CodePropWidget(QtWidgets.QWidget):
 
     def set_editor_assist_context(self, context: EditorAssistContext | None) -> None:
         self._assist_context = context
-        if context is not None and str(context.language or "").strip().lower() == "python" and bool(tuple(context.support_files)):
+        if assist_context_requires_python(context):
             self._language = "python"
 
     def set_editor_assist_context_provider(
@@ -81,17 +79,8 @@ class F8CodePropWidget(QtWidgets.QWidget):
     ) -> None:
         self._assist_context_provider = provider
 
-    def set_editor_session_key(self, session_key: EditorSessionKey | None) -> None:
-        self._editor_session_key = session_key
-
-    def set_persisted_value_getter(self, getter: Callable[[], str] | None) -> None:
-        self._persisted_value_getter = getter
-
-    def set_persisted_value_setter(self, setter: Callable[[str], None] | None) -> None:
-        self._persisted_value_setter = setter
-
     def _on_edit_clicked(self) -> None:
-        if self._editor_session_key is None and self._editor_window is not None:
+        if self._editor_window is not None:
             try:
                 self._editor_window.raise_()
                 self._editor_window.activateWindow()
@@ -99,48 +88,21 @@ class F8CodePropWidget(QtWidgets.QWidget):
             except Exception:
                 self._editor_window = None
 
-        code = self.get_value()
-        getter = self._persisted_value_getter
-        if getter is not None:
-            try:
-                code = str(getter() or "")
-            except Exception:
-                logger.exception("persisted code getter failed")
-
-        setter = self._persisted_value_setter
-        widget_ref = weakref.ref(self)
-
         def _on_saved(updated: str) -> None:
-            if setter is not None:
-                try:
-                    setter(str(updated or ""))
-                except Exception:
-                    logger.exception("persisted code setter failed")
-
-            widget = widget_ref()
-            if widget is None:
-                return
-            try:
-                widget.set_value(updated)
-                widget.value_changed.emit(widget.get_name(), updated)
-            except (AttributeError, RuntimeError, TypeError):
-                return
-            except Exception:
-                logger.exception("Failed to apply code editor result to property widget")
+            self.set_value(updated)
+            self.value_changed.emit(self.get_name(), updated)
 
         dlg = open_code_editor_window(
             self,
             title=self._title,
-            code=code,
-            language="python",
+            code=self.get_value(),
+            language=self._language,
             on_saved=_on_saved,
             assist_context=self._assist_context,
             assist_context_provider=self._assist_context_provider,
-            session_key=self._editor_session_key,
         )
-        if self._editor_session_key is None:
-            self._editor_window = dlg
-            dlg.destroyed.connect(self._on_editor_destroyed)  # type: ignore[attr-defined]
+        self._editor_window = dlg
+        dlg.destroyed.connect(self._on_editor_destroyed)  # type: ignore[attr-defined]
 
     @QtCore.Slot()
     def _on_editor_destroyed(self) -> None:
@@ -162,10 +124,10 @@ class F8CodeButtonPropWidget(QtWidgets.QWidget):
         self._language = str(language or "plaintext").strip() or "plaintext"
         self._assist_context: EditorAssistContext | None = None
         self._assist_context_provider: Callable[[], EditorAssistContext | None] | None = None
-        self._editor_session_key: EditorSessionKey | None = None
-        self._editor_window: QtWidgets.QDialog | None = None
         self._persisted_value_getter: Callable[[], str] | None = None
         self._persisted_value_setter: Callable[[str], None] | None = None
+        self._editor_session_key: EditorSessionKey | None = None
+        self._editor_window: QtWidgets.QDialog | None = None
 
         self._btn = QtWidgets.QPushButton("Edit...")
         self._btn.setIcon(icon_for(self._btn, StudioIcon.CODE))
@@ -192,6 +154,15 @@ class F8CodeButtonPropWidget(QtWidgets.QWidget):
     def set_read_only(self, read_only: bool) -> None:
         self._btn.setEnabled(not bool(read_only))
 
+    def set_persisted_value_getter(self, getter: Callable[[], str] | None) -> None:
+        self._persisted_value_getter = getter
+
+    def set_persisted_value_setter(self, setter: Callable[[str], None] | None) -> None:
+        self._persisted_value_setter = setter
+
+    def set_editor_session_key(self, session_key: EditorSessionKey | None) -> None:
+        self._editor_session_key = session_key
+
     def set_editor_assist_context(self, context: EditorAssistContext | None) -> None:
         self._assist_context = context
 
@@ -201,17 +172,8 @@ class F8CodeButtonPropWidget(QtWidgets.QWidget):
     ) -> None:
         self._assist_context_provider = provider
 
-    def set_editor_session_key(self, session_key: EditorSessionKey | None) -> None:
-        self._editor_session_key = session_key
-
-    def set_persisted_value_getter(self, getter: Callable[[], str] | None) -> None:
-        self._persisted_value_getter = getter
-
-    def set_persisted_value_setter(self, setter: Callable[[str], None] | None) -> None:
-        self._persisted_value_setter = setter
-
     def _on_edit_clicked(self) -> None:
-        if self._editor_session_key is None and self._editor_window is not None:
+        if self._editor_window is not None:
             try:
                 self._editor_window.raise_()
                 self._editor_window.activateWindow()
@@ -219,48 +181,45 @@ class F8CodeButtonPropWidget(QtWidgets.QWidget):
             except Exception:
                 self._editor_window = None
 
-        code = self.get_value()
-        getter = self._persisted_value_getter
-        if getter is not None:
+        initial_code = self.get_value()
+        if self._persisted_value_getter is not None:
             try:
-                code = str(getter() or "")
+                initial_code = str(self._persisted_value_getter() or "")
             except Exception:
-                logger.exception("persisted code getter failed")
+                logger.exception("Failed to load persisted code for property '%s'", self.get_name())
+            else:
+                self.set_value(initial_code)
 
-        setter = self._persisted_value_setter
         widget_ref = weakref.ref(self)
+        prop_name = self.get_name()
+        persisted_value_setter = self._persisted_value_setter
 
         def _on_saved(updated: str) -> None:
-            if setter is not None:
+            updated_text = str(updated or "")
+            if persisted_value_setter is not None:
                 try:
-                    setter(str(updated or ""))
+                    persisted_value_setter(updated_text)
                 except Exception:
-                    logger.exception("persisted code setter failed")
+                    logger.exception("Failed to persist code for property '%s'", prop_name)
 
             widget = widget_ref()
             if widget is None:
                 return
-            try:
-                widget.set_value(updated)
-                widget.value_changed.emit(widget.get_name(), updated)
-            except (AttributeError, RuntimeError, TypeError):
-                return
-            except Exception:
-                logger.exception("Failed to apply code editor result to property widget")
+            widget.set_value(updated_text)
+            widget.value_changed.emit(widget.get_name(), updated_text)
 
         dlg = open_code_editor_window(
             self,
             title=self._title,
-            code=code,
+            code=initial_code,
             language=self._language,
             on_saved=_on_saved,
             assist_context=self._assist_context,
             assist_context_provider=self._assist_context_provider,
             session_key=self._editor_session_key,
         )
-        if self._editor_session_key is None:
-            self._editor_window = dlg
-            dlg.destroyed.connect(self._on_editor_destroyed)  # type: ignore[attr-defined]
+        self._editor_window = dlg
+        dlg.destroyed.connect(self._on_editor_destroyed)  # type: ignore[attr-defined]
 
     @QtCore.Slot()
     def _on_editor_destroyed(self) -> None:
@@ -711,3 +670,5 @@ class F8NumberPropLineEdit(QtWidgets.QLineEdit):
         else:
             text = hint
         super().setToolTip(text)
+
+

@@ -165,6 +165,7 @@ class PyStudioProgram:
         from qtpy import QtCore, QtGui, QtWidgets
 
         from .qt_font_utils import normalize_application_font
+        from .webengine_utils import configure_default_webengine_profile
         from .widgets.main_window import F8StudioMainWin
 
         manifests = self._load_plugin_manifests()
@@ -187,6 +188,7 @@ class PyStudioProgram:
         app.setOrganizationName("Feel8")
         app.setApplicationName("F8PyStudio")
         normalize_application_font(app)
+        configure_default_webengine_profile()
         icon_path = self._studio_icon_path()
         if icon_path is not None:
             app_icon = QtGui.QIcon(str(icon_path))

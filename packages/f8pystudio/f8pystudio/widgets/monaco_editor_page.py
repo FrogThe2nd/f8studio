@@ -1,27 +1,21 @@
-"""Monaco page resource builder extracted from the legacy dialog implementation."""
+"""Monaco page resource builder used by the hosted multi-session editor."""
 
 from __future__ import annotations
 
 import json
-import logging
-import math
-import os
-import time
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Callable
 
-from qtpy import QtCore, QtGui, QtWidgets
+from qtpy import QtWidgets
 
-from ..ai_assist.llm_bridge import AiLlmBridge
-from ..ai_assist.store import AiProviderStore
-from ..editor_assist.bridge import PythonEditorAssistBridge
 from ..editor_assist.workspace import EditorAssistContext
-from ..qt_font_utils import normalize_font_point_size
-from ..ui_notifications import show_warning
-from .ai_quick_panel import AiQuickPanel
 
-logger = logging.getLogger(__name__)
-__all__ = ["MonacoEditorPageConfig", "build_monaco_editor_html"]
+__all__ = [
+    "MonacoEditorPageConfig",
+    "build_monaco_editor_html",
+    "open_code_editor_dialog",
+    "open_code_editor_window",
+]
 
 
 @dataclass(frozen=True)
@@ -32,383 +26,17 @@ class MonacoEditorPageConfig:
     python_assist_enabled: bool = False
     theme: str = "vs-dark"
 
-# Shared store instance — one per process so model caches are shared
-_SHARED_AI_STORE: AiProviderStore | None = None
 
-
-def _get_shared_ai_store() -> AiProviderStore:
-    global _SHARED_AI_STORE
-    if _SHARED_AI_STORE is None:
-        _SHARED_AI_STORE = AiProviderStore()
-    return _SHARED_AI_STORE
-
-
-def _assist_context_requires_python(context: EditorAssistContext | None) -> bool:
-    if context is None:
-        return False
-    language = str(context.language or "").strip().lower()
-    if language != "python":
-        return False
-    return bool(tuple(context.support_files))
-
-
-def _python_assist_warning(context: EditorAssistContext | None) -> str:
-    if context is None:
-        return ""
-    return str(context.error_message or "").strip()
-
-
-def _set_tool_button_point_size(button: QtWidgets.QToolButton, point_size: int) -> None:
-    font = normalize_font_point_size(button.font(), fallback_point_size=point_size)
-    font.setPointSize(max(1, int(point_size)))
-    button.setFont(font)
-
-
-def _usage_pie_icon(*, used_ratio: float, color: QtGui.QColor, size: int = 14) -> QtGui.QIcon:
-    ratio = max(0.0, min(1.0, float(used_ratio)))
-    pix = QtGui.QPixmap(size, size)
-    pix.fill(QtCore.Qt.GlobalColor.transparent)
-
-    painter = QtGui.QPainter(pix)
-    painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
-
-    outer = QtCore.QRectF(1.0, 1.0, float(size - 2), float(size - 2))
-    center = QtCore.QPointF(outer.center())
-
-    base = QtGui.QColor("#4a4f57")
-    painter.setPen(QtCore.Qt.PenStyle.NoPen)
-    painter.setBrush(base)
-    painter.drawEllipse(outer)
-
-    if ratio > 0.0:
-        painter.setBrush(color)
-        start_angle = 90 * 16
-        span_angle = int(-360 * 16 * ratio)
-        painter.drawPie(outer, start_angle, span_angle)
-
-    # punch a hole to make a donut/pie hybrid that reads well on dark UI
-    inner_diameter = max(2.0, outer.width() * 0.46)
-    inner = QtCore.QRectF(
-        center.x() - inner_diameter / 2.0,
-        center.y() - inner_diameter / 2.0,
-        inner_diameter,
-        inner_diameter,
-    )
-    painter.setBrush(QtGui.QColor("#1f2328"))
-    painter.drawEllipse(inner)
-
-    painter.setPen(QtGui.QPen(QtGui.QColor("#6c7380"), 1.0))
-    painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
-    painter.drawEllipse(outer)
-    painter.end()
-    return QtGui.QIcon(pix)
-
-
-def _assist_context_fingerprint(context: EditorAssistContext | None) -> str:
-    if context is None:
-        return ""
-
-    def _jsonable(value: Any) -> Any:
-        if value is None or isinstance(value, (str, int, float, bool)):
-            return value
-        if isinstance(value, dict):
-            return {str(key): _jsonable(item) for key, item in value.items()}
-        if isinstance(value, (list, tuple)):
-            return [_jsonable(item) for item in value]
-        return str(value)
-
-    payload = {
-        "language": str(context.language or ""),
-        "node_kind": str(context.node_kind or ""),
-        "service_class": str(context.service_class or ""),
-        "operator_class": str(context.operator_class or ""),
-        "node_description": str(context.node_description or ""),
-        "target_field_kind": str(context.target_field_kind or ""),
-        "target_field_name": str(context.target_field_name or ""),
-        "target_field_label": str(context.target_field_label or ""),
-        "target_field_description": str(context.target_field_description or ""),
-        "target_ui_language": str(context.target_ui_language or ""),
-        "target_value_schema": _jsonable(context.target_value_schema),
-        "support_files": [[str(name), str(text)] for name, text in context.support_files],
-        "overlay_prefix": str(context.overlay_prefix or ""),
-        "dynamic_inputs_binding": (
-            {
-                "source": str(context.dynamic_inputs_binding.source or ""),
-                "type_name": str(context.dynamic_inputs_binding.type_name or ""),
-                "module_name": str(context.dynamic_inputs_binding.module_name or ""),
-                "schema_mode": str(context.dynamic_inputs_binding.schema_mode or ""),
-                "access_mode": str(context.dynamic_inputs_binding.access_mode or ""),
-            }
-            if context.dynamic_inputs_binding is not None
-            else None
-        ),
-        "dynamic_outputs_binding": (
-            {
-                "source": str(context.dynamic_outputs_binding.source or ""),
-                "type_name": str(context.dynamic_outputs_binding.type_name or ""),
-                "module_name": str(context.dynamic_outputs_binding.module_name or ""),
-                "schema_mode": str(context.dynamic_outputs_binding.schema_mode or ""),
-                "access_mode": str(context.dynamic_outputs_binding.access_mode or ""),
-            }
-            if context.dynamic_outputs_binding is not None
-            else None
-        ),
-        "data_in_ports": [
-            {
-                "name": str(port.name or ""),
-                "required": bool(port.required),
-                "value_schema": _jsonable(port.value_schema),
-                "description": str(port.description or ""),
-            }
-            for port in context.data_in_ports
-        ],
-        "data_out_ports": [
-            {
-                "name": str(port.name or ""),
-                "required": bool(port.required),
-                "value_schema": _jsonable(port.value_schema),
-                "description": str(port.description or ""),
-            }
-            for port in context.data_out_ports
-        ],
-        "dynamic_states_binding": (
-            {
-                "source": str(context.dynamic_states_binding.source or ""),
-                "type_name": str(context.dynamic_states_binding.type_name or ""),
-                "module_name": str(context.dynamic_states_binding.module_name or ""),
-                "schema_mode": str(context.dynamic_states_binding.schema_mode or ""),
-                "access_mode": str(context.dynamic_states_binding.access_mode or ""),
-            }
-            if context.dynamic_states_binding is not None
-            else None
-        ),
-        "state_fields": [
-            {
-                "name": str(field.name or ""),
-                "required": bool(field.required),
-                "value_schema": _jsonable(field.value_schema),
-                "access": str(field.access or ""),
-                "description": str(field.description or ""),
-            }
-            for field in context.state_fields
-        ],
-        "error_message": str(context.error_message or ""),
+def build_monaco_editor_html(config: MonacoEditorPageConfig) -> str:
+    base = str(config.monaco_base_url or "").strip().rstrip("/")
+    initial = {
+        "code": str(config.code or ""),
+        "language": str(config.language or "plaintext").strip() or "plaintext",
+        "theme": str(config.theme or "vs-dark").strip() or "vs-dark",
+        "pythonAssistEnabled": bool(config.python_assist_enabled),
     }
-    return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-
-
-def _resolve_assist_context(
-    *,
-    assist_context: EditorAssistContext | None,
-    assist_context_provider: Callable[[], EditorAssistContext | None] | None,
-) -> EditorAssistContext | None:
-    provider = assist_context_provider
-    if provider is None:
-        return assist_context
-    try:
-        return provider()
-    except Exception:
-        logger.exception("Failed to build editor assist context from provider")
-        return assist_context
-
-
-def _ask_save_before_close(parent: QtWidgets.QWidget) -> QtWidgets.QMessageBox.StandardButton:
-    return QtWidgets.QMessageBox.question(
-        parent,
-        "Unsaved Changes",
-        "You have unsaved changes. Save before closing?",
-        QtWidgets.QMessageBox.StandardButton.Yes
-        | QtWidgets.QMessageBox.StandardButton.No
-        | QtWidgets.QMessageBox.StandardButton.Cancel,
-        QtWidgets.QMessageBox.StandardButton.Yes,
-    )
-
-
-class _EditorUiBridge(QtCore.QObject):
-    dirty_changed = QtCore.Signal(bool)
-    save_requested = QtCore.Signal()
-    close_requested = QtCore.Signal()
-
-    @QtCore.Slot(bool)
-    def notify_dirty(self, dirty: bool) -> None:
-        self.dirty_changed.emit(bool(dirty))
-
-    @QtCore.Slot()
-    def request_save(self) -> None:
-        self.save_requested.emit()
-
-    @QtCore.Slot()
-    def request_close(self) -> None:
-        self.close_requested.emit()
-
-    @QtCore.Slot(str)
-    def log_js(self, message: str) -> None:
-        logger.debug("monaco js: %s", str(message or ""))
-
-    @QtCore.Slot(str)
-    def logJs(self, message: str) -> None:
-        self.log_js(message)
-
-
-class _LegacyMonacoEditorPageDialog(QtWidgets.QDialog):
-    """
-    Monaco-based editor dialog with AI-assisted editing.
-
-    Modes:
-    - Inline suggestions: FIM ghost-text via AI (replaces pure LSP)
-    - Chat: streaming side-panel conversation with code context
-    - Edit: LLM generates patch shown in diff editor
-    - Plan: agent mode with clarifying Q&A before execution
-
-    Monaco assets from ``F8_MONACO_BASE_URL`` env var or CDN fallback.
-    """
-
-    code_saved = QtCore.Signal(str)
-
-    def __init__(
-        self,
-        parent=None,
-        *,
-        title: str,
-        code: str,
-        language: str = "python",
-        assist_context: EditorAssistContext | None = None,
-        assist_context_provider: Callable[[], EditorAssistContext | None] | None = None,
-    ) -> None:
-        super().__init__(parent)
-        self.setWindowTitle(str(title or "Edit Code"))
-        self._code: str = str(code or "")
-        self._dirty: bool = False
-        self._close_on_save: bool = True
-        self._language: str = str(language or "plaintext").strip() or "plaintext"
-        self._assist_context_provider = assist_context_provider
-        self._assist_context_fingerprint = _assist_context_fingerprint(assist_context)
-        self._assist_pending_context: EditorAssistContext | None = None
-        self._assist_pending_fingerprint = ""
-        self._assist_reload_poll_timer: QtCore.QTimer | None = None
-        self._assist_reload_debounce_timer: QtCore.QTimer | None = None
-        self._assist_error_sig = ""
-        self._assist_error_ts = 0.0
-
-        from PySide6 import QtWebChannel, QtWebEngineWidgets  # type: ignore[import-not-found]
-
-        self._view = QtWebEngineWidgets.QWebEngineView(self)
-        self._view.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.NoContextMenu)
-        self._ui_bridge = _EditorUiBridge(self)
-        self._assist_bridge: PythonEditorAssistBridge | None = None
-
-        # AI assist
-        self._ai_store = _get_shared_ai_store()
-        self._ai_bridge = AiLlmBridge(self._ai_store, self)
-        if assist_context:
-            self._ai_bridge.set_assist_context(assist_context)
-
-        self._web_channel: Any = QtWebChannel.QWebChannel(self._view.page())
-        self._web_channel.registerObject("f8EditorUi", self._ui_bridge)
-        self._web_channel.registerObject("aiAssist", self._ai_bridge)
-        python_assist_enabled = self._language.lower() == "python" and _assist_context_requires_python(assist_context)
-        if python_assist_enabled:
-            self._assist_bridge = PythonEditorAssistBridge(
-                code=self._code,
-                language="python",
-                context=assist_context,
-                parent=self,
-            )
-            self._web_channel.registerObject("pyAssist", self._assist_bridge)
-            self._ai_bridge.set_lsp_bridge(self._assist_bridge)
-        self._view.page().setWebChannel(self._web_channel)
-
-        # Context usage indicator
-        self._ctx_btn = QtWidgets.QToolButton()
-        self._ctx_btn.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        self._ctx_btn.setIconSize(QtCore.QSize(14, 14))
-        self._ctx_btn.setIcon(_usage_pie_icon(used_ratio=0.0, color=QtGui.QColor("#4fc3f7")))
-        self._ctx_btn.setText("100% free")
-        self._ctx_btn.setToolTip("AI context usage\nUsed: 0 / 0 tok")
-        _set_tool_button_point_size(self._ctx_btn, 10)
-        self._ctx_btn.setStyleSheet(
-            "QToolButton { color: #9aa4b2; border: none; padding: 0 4px; }"
-            "QToolButton:hover { color: #d7deea; }"
-        )
-        self._ai_bridge.context_usage_updated.connect(self._on_context_usage_updated)  # type: ignore[attr-defined]
-
-        # AI settings toggle button
-        self._ai_panel_btn = QtWidgets.QToolButton()
-        self._ai_panel_btn.setText("🤖")
-        self._ai_panel_btn.setCheckable(True)
-        self._ai_panel_btn.setToolTip("Toggle AI settings panel")
-        _set_tool_button_point_size(self._ai_panel_btn, 16)
-        self._ai_panel_btn.setStyleSheet(
-            "QToolButton { border: none; padding: 0 4px; }"
-            "QToolButton:checked { background: #2d2d2d; border-radius: 3px; }"
-        )
-        self._ai_panel_btn.toggled.connect(self._on_ai_panel_toggle)  # type: ignore[attr-defined]
-
-        # AI quick panel (hidden by default, floating overlay)
-        self._ai_quick_panel = AiQuickPanel(self._ai_store, self._ai_bridge, self)
-        self._ai_quick_panel.setVisible(False)
-        self._ai_quick_panel.open_full_config_requested.connect(self._open_full_ai_config)  # type: ignore[attr-defined]
-        self._ai_quick_panel.raise_()
-
-        buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Save | QtWidgets.QDialogButtonBox.Cancel)
-        buttons.accepted.connect(self._on_save_clicked)  # type: ignore[attr-defined]
-        buttons.rejected.connect(self.reject)  # type: ignore[attr-defined]
-        self._save_button = buttons.button(QtWidgets.QDialogButtonBox.Save)
-        self._save_button.setEnabled(False)
-
-        self._ui_bridge.dirty_changed.connect(self._on_dirty_changed)  # type: ignore[attr-defined]
-        self._ui_bridge.save_requested.connect(self._on_save_clicked)  # type: ignore[attr-defined]
-        self._ui_bridge.close_requested.connect(self.close)  # type: ignore[attr-defined]
-
-        self._save_shortcut = QtGui.QShortcut(QtGui.QKeySequence("Ctrl+S"), self)
-        self._save_shortcut.setContext(QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut)
-        self._save_shortcut.activated.connect(self._on_save_clicked)
-        self._close_shortcut = QtGui.QShortcut(QtGui.QKeySequence("Ctrl+Q"), self)
-        self._close_shortcut.setContext(QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut)
-        self._close_shortcut.activated.connect(self.close)
-
-        # Build layout: editor fills the space, AI panel is a floating overlay
-        editor_layout = QtWidgets.QHBoxLayout()
-        editor_layout.setSpacing(0)
-        editor_layout.setContentsMargins(0, 0, 0, 0)
-        editor_layout.addWidget(self._view, 1)
-
-        bottom_bar = QtWidgets.QHBoxLayout()
-        bottom_bar.addWidget(self._ctx_btn)
-        bottom_bar.addWidget(self._ai_panel_btn)
-        bottom_bar.addStretch()
-        bottom_bar.addWidget(buttons)
-
-        layout = QtWidgets.QVBoxLayout(self)
-        layout.setSpacing(2)
-        layout.setContentsMargins(4, 4, 4, 4)
-        layout.addLayout(editor_layout, 1)
-        layout.addLayout(bottom_bar)
-
-        self.resize(1120, 720)
-        self._load_page()
-        self._start_assist_context_sync()
-
-    def code(self) -> str:
-        return str(self._code or "")
-
-    def _monaco_base_url(self) -> str:
-        value = str(os.environ.get("F8_MONACO_BASE_URL") or "").strip().rstrip("/")
-        if value:
-            return value
-        return "https://cdn.jsdelivr.net/npm/monaco-editor/min"
-
-    def _load_page(self) -> None:
-        base = self._monaco_base_url()
-        initial = {
-            "code": self._code,
-            "language": self._language,
-            "theme": "vs-dark",
-            "pythonAssistEnabled": bool(self._assist_bridge is not None),
-        }
-        initial_json = json.dumps(initial, ensure_ascii=False)
-        
-        html = f"""
+    initial_json = json.dumps(initial, ensure_ascii=False)
+    html = f"""
 <!doctype html>
 <html>
   <head>
@@ -2247,234 +1875,7 @@ class _LegacyMonacoEditorPageDialog(QtWidgets.QDialog):
   </body>
 </html>
 """
-        self._view.setHtml(html)
-
-    def _start_assist_context_sync(self) -> None:
-        if self._assist_bridge is None:
-            return
-        if self._assist_context_provider is None:
-            return
-        poll_timer = QtCore.QTimer(self)
-        poll_timer.setInterval(320)
-        poll_timer.timeout.connect(self._poll_assist_context_change)  # type: ignore[attr-defined]
-        self._assist_reload_poll_timer = poll_timer
-
-        debounce_timer = QtCore.QTimer(self)
-        debounce_timer.setSingleShot(True)
-        debounce_timer.setInterval(480)
-        debounce_timer.timeout.connect(self._apply_assist_context_reload)  # type: ignore[attr-defined]
-        self._assist_reload_debounce_timer = debounce_timer
-
-        poll_timer.start()
-
-    def _stop_assist_context_sync(self) -> None:
-        poll_timer = self._assist_reload_poll_timer
-        if poll_timer is not None:
-            poll_timer.stop()
-            self._assist_reload_poll_timer = None
-        debounce_timer = self._assist_reload_debounce_timer
-        if debounce_timer is not None:
-            debounce_timer.stop()
-            self._assist_reload_debounce_timer = None
-        self._assist_pending_context = None
-        self._assist_pending_fingerprint = ""
-
-    def _poll_assist_context_change(self) -> None:
-        if self._assist_bridge is None:
-            return
-        provider = self._assist_context_provider
-        if provider is None:
-            return
-        try:
-            context = provider()
-        except Exception as exc:
-            self._log_assist_context_error("providerRefresh", exc)
-            return
-        fingerprint = _assist_context_fingerprint(context)
-        if fingerprint == self._assist_context_fingerprint:
-            self._assist_pending_context = None
-            self._assist_pending_fingerprint = ""
-            return
-        self._assist_pending_context = context
-        self._assist_pending_fingerprint = fingerprint
-        debounce_timer = self._assist_reload_debounce_timer
-        if debounce_timer is None:
-            self._apply_assist_context_reload()
-            return
-        debounce_timer.start()
-
-    @QtCore.Slot()
-    def _apply_assist_context_reload(self) -> None:
-        bridge = self._assist_bridge
-        if bridge is None:
-            return
-        fingerprint = str(self._assist_pending_fingerprint or "")
-        if not fingerprint:
-            return
-        if fingerprint == self._assist_context_fingerprint:
-            return
-        context = self._assist_pending_context
-        self._assist_pending_context = None
-        self._assist_pending_fingerprint = ""
-        if not bridge.reload_context(context):
-            logger.warning("Failed to reload python editor assist context")
-            return
-        self._assist_context_fingerprint = fingerprint
-        logger.debug("python editor assist context reloaded")
-
-    def _log_assist_context_error(self, operation: str, exc: Exception) -> None:
-        sig = f"{operation}:{type(exc).__name__}:{exc}"
-        now = time.monotonic()
-        if sig == self._assist_error_sig and (now - self._assist_error_ts) < 5.0:
-            return
-        self._assist_error_sig = sig
-        self._assist_error_ts = now
-        logger.exception("Failed to refresh python editor assist context; operation=%s", operation)
-
-    def _on_save_clicked(self) -> None:
-        if not self._dirty:
-            return
-        self._save_current(close_after=self._close_on_save)
-
-    def _save_current(self, *, close_after: bool) -> None:
-        try:
-            page = self._view.page()
-        except Exception:
-            page = None
-        if page is None:
-            if close_after:
-                self.accept()
-            return
-
-        def _on_value(value: Any) -> None:
-            try:
-                self._code = "" if value is None else str(value)
-            except Exception:
-                self._code = ""
-            self._set_dirty(False)
-            self.code_saved.emit(self._code)
-            if close_after:
-                self.accept()
-
-        try:
-            page.runJavaScript("window._f8_getValue && window._f8_getValue();", _on_value)  # type: ignore[call-arg]
-            page.runJavaScript("window._f8_markSaved && window._f8_markSaved();")
-        except (AttributeError, RuntimeError, TypeError):
-            pass
-
-    def _shutdown_assist(self) -> None:
-        self._stop_assist_context_sync()
-        bridge = self._assist_bridge
-        if bridge is None:
-            return
-        self._assist_bridge = None
-        try:
-            bridge.shutdown()
-        except Exception:
-            logger.exception("Failed to shutdown Python editor assist bridge")
-
-    # ------------------------------------------------------------------
-    # AI panel slots
-    # ------------------------------------------------------------------
-
-    @QtCore.Slot(bool)
-    def _on_ai_panel_toggle(self, checked: bool) -> None:
-        self._ai_quick_panel.setVisible(checked)
-        if checked:
-            self._ai_quick_panel.raise_()
-            self._reposition_ai_panel()
-
-    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:  # type: ignore[override]
-        super().resizeEvent(event)
-        self._reposition_ai_panel()
-
-    def _reposition_ai_panel(self) -> None:
-        if not hasattr(self, "_ai_quick_panel"):
-            return
-        # Position floating panel at bottom-left of the editor view
-        rect = self._view.geometry()
-        if rect.width() <= 0:
-            return
-        
-        # We want it to be above the bottom bar, anchored to left
-        self._ai_quick_panel.adjustSize()
-        pw = self._ai_quick_panel.width()
-        ph = self._ai_quick_panel.height()
-        
-        margin = 10
-        x = rect.x() + margin
-        y = rect.y() + rect.height() - ph - margin
-        
-        self._ai_quick_panel.move(x, y)
-
-    @QtCore.Slot(int, int)
-    def _on_context_usage_updated(self, used: int, total: int) -> None:
-        if total > 0:
-            used_ratio = max(0.0, min(1.0, used / total))
-            free_ratio = max(0.0, 1.0 - used_ratio)
-            if used_ratio < 0.5:
-                color = "#4fc3f7"
-            elif used_ratio < 0.8:
-                color = "#ffd54f"
-            else:
-                color = "#ef9a9a"
-
-            def _fmt(n: int) -> str:
-                return f"{n / 1000:.0f}k" if n >= 1000 else str(n)
-
-            free_pct = int(round(free_ratio * 100.0))
-            self._ctx_btn.setIcon(_usage_pie_icon(used_ratio=used_ratio, color=QtGui.QColor(color)))
-            self._ctx_btn.setText(f"{free_pct}% free")
-            _set_tool_button_point_size(self._ctx_btn, 10)
-            self._ctx_btn.setStyleSheet(
-                f"QToolButton {{ color: {color}; border: none; padding: 0 4px; }}"
-                "QToolButton:hover { color: white; }"
-            )
-            try:
-                breakdown = self._ai_bridge.get_context_breakdown()
-                tip = (
-                    "AI Context Usage\n"
-                    f"System: {breakdown['system_tokens']} tok\n"
-                    f"Code: {breakdown['code_tokens']} tok\n"
-                    f"Chat: {breakdown['chat_tokens']} tok\n"
-                    f"Free: {free_pct}%\n"
-                    f"Used: {breakdown['used_tokens']} / {breakdown['total_tokens']} tok"
-                )
-                self._ctx_btn.setToolTip(tip)
-            except Exception:
-                pass
-
-    def _open_full_ai_config(self) -> None:
-        from .ai_provider_config_dialog import AiProviderConfigDialog
-        dlg = AiProviderConfigDialog(self._ai_store, self)
-        dlg.exec()
-
-    @QtCore.Slot(bool)
-    def _on_dirty_changed(self, dirty: bool) -> None:
-        self._set_dirty(bool(dirty))
-
-    def _set_dirty(self, dirty: bool) -> None:
-        self._dirty = bool(dirty)
-        self._save_button.setEnabled(self._dirty)
-
-    def set_close_on_save(self, close_on_save: bool) -> None:
-        self._close_on_save = bool(close_on_save)
-
-    def closeEvent(self, event: QtGui.QCloseEvent) -> None:  # type: ignore[override]
-        if not self._dirty:
-            self._shutdown_assist()
-            event.accept()
-            return
-        answer = _ask_save_before_close(self)
-        if answer == QtWidgets.QMessageBox.StandardButton.Yes:
-            self._save_current(close_after=True)
-            event.ignore()
-            return
-        if answer == QtWidgets.QMessageBox.StandardButton.No:
-            self._shutdown_assist()
-            event.accept()
-            return
-        event.ignore()
+    return html
 
 
 def open_code_editor_dialog(
@@ -2486,27 +1887,16 @@ def open_code_editor_dialog(
     assist_context: EditorAssistContext | None = None,
     assist_context_provider: Callable[[], EditorAssistContext | None] | None = None,
 ) -> str | None:
-    resolved_context = _resolve_assist_context(
-        assist_context=assist_context,
-        assist_context_provider=assist_context_provider,
-    )
-    effective_language = str(language or "plaintext").strip() or "plaintext"
-    if _assist_context_requires_python(resolved_context):
-        effective_language = "python"
-    warn_text = _python_assist_warning(resolved_context)
-    if effective_language.lower() == "python" and warn_text:
-        show_warning(parent, "Python Assist Warning", warn_text)
-    dlg = _LegacyMonacoEditorPageDialog(
+    from .monaco_editor_dialog import open_code_editor_dialog as open_hosted_code_editor_dialog
+
+    return open_hosted_code_editor_dialog(
         parent,
         title=title,
         code=code,
-        language=effective_language,
-        assist_context=resolved_context,
+        language=language,
+        assist_context=assist_context,
         assist_context_provider=assist_context_provider,
     )
-    if dlg.exec() != QtWidgets.QDialog.Accepted:
-        return None
-    return dlg.code()
 
 
 def open_code_editor_window(
@@ -2519,67 +1909,14 @@ def open_code_editor_window(
     assist_context: EditorAssistContext | None = None,
     assist_context_provider: Callable[[], EditorAssistContext | None] | None = None,
 ) -> QtWidgets.QDialog:
-    resolved_context = _resolve_assist_context(
+    from .monaco_editor_dialog import open_code_editor_window as open_hosted_code_editor_window
+
+    return open_hosted_code_editor_window(
+        parent,
+        title=title,
+        code=code,
+        language=language,
+        on_saved=on_saved,
         assist_context=assist_context,
         assist_context_provider=assist_context_provider,
     )
-    effective_language = str(language or "plaintext").strip() or "plaintext"
-    if _assist_context_requires_python(resolved_context):
-        effective_language = "python"
-    warn_text = _python_assist_warning(resolved_context)
-    if effective_language.lower() == "python" and warn_text:
-        show_warning(parent, "Python Assist Warning", warn_text)
-    dlg = _LegacyMonacoEditorPageDialog(
-        None,
-        title=title,
-        code=code,
-        language=effective_language,
-        assist_context=resolved_context,
-        assist_context_provider=assist_context_provider,
-    )
-
-    dlg.setModal(False)
-    dlg.setWindowModality(QtCore.Qt.WindowModality.NonModal)
-    dlg.setWindowFlag(QtCore.Qt.WindowType.Window, True)
-    dlg.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose, True)
-    dlg.set_close_on_save(False)
-    dlg.code_saved.connect(on_saved)  # type: ignore[arg-type]
-
-    if parent is not None:
-        try:
-            anchor = parent.window() if parent.window() is not None else parent
-            center = anchor.frameGeometry().center()
-            frame = dlg.frameGeometry()
-            frame.moveCenter(center)
-            dlg.move(frame.topLeft())
-        except (AttributeError, RuntimeError, TypeError):
-            pass
-
-    dlg.show()
-    dlg.raise_()
-    dlg.activateWindow()
-    return dlg
-
-
-class _HtmlCaptureView:
-    def __init__(self) -> None:
-        self.html = ""
-
-    def setHtml(self, html: str) -> None:
-        self.html = str(html or "")
-
-
-def build_monaco_editor_html(config: MonacoEditorPageConfig) -> str:
-    capture_view = _HtmlCaptureView()
-    legacy_dialog = _LegacyMonacoEditorPageDialog.__new__(_LegacyMonacoEditorPageDialog)
-    legacy_dialog._code = str(config.code or "")
-    legacy_dialog._language = str(config.language or "plaintext").strip() or "plaintext"
-    legacy_dialog._assist_bridge = object() if config.python_assist_enabled else None
-    legacy_dialog._view = capture_view
-
-    def _monaco_base_url() -> str:
-        return str(config.monaco_base_url or "").strip().rstrip("/")
-
-    legacy_dialog._monaco_base_url = _monaco_base_url
-    _LegacyMonacoEditorPageDialog._load_page(legacy_dialog)
-    return capture_view.html

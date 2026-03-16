@@ -48,9 +48,13 @@ class _FakePage:
     def __init__(self) -> None:
         self.renderProcessTerminated = _FakeSignal()
         self.scripts: list[str] = []
+        self.background_color: object | None = None
 
     def runJavaScript(self, script: str) -> None:
         self.scripts.append(str(script or ""))
+
+    def setBackgroundColor(self, color: object) -> None:
+        self.background_color = color
 
 
 class _FakeWebView(QtWidgets.QWidget):
@@ -116,6 +120,26 @@ def test_viewer_close_keeps_web_view_and_next_open_reuses_it() -> None:
     assert window._view is first
     assert pool == [second]
     assert open_states == [True, False, True]
+
+
+def test_viewer_configures_webengine_profile_before_creating_web_view(monkeypatch) -> None:
+    _ensure_app()
+    window, _open_states, _statuses = _new_window()
+    calls: list[str] = []
+
+    def _configure() -> None:
+        calls.append("configure")
+
+    def _create() -> _FakeWebView:
+        calls.append("create")
+        return _FakeWebView(window)
+
+    monkeypatch.setattr("f8pystudio.render_nodes.viz_three_d.configure_default_webengine_profile", _configure)
+    window._create_web_view = _create  # type: ignore[method-assign]
+
+    window.open_viewer()
+
+    assert calls[:2] == ["configure", "create"]
 
 
 def test_render_process_termination_reports_status_and_releases_view(caplog) -> None:

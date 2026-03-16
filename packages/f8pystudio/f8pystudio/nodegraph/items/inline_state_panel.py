@@ -21,7 +21,8 @@ from ...widgets.editor_controls import (
     parse_select_pool,
 )
 from ...widgets.state_controls.pool_resolver import resolve_pool_items
-from ...widgets.property_value_widgets import F8NumberPropLineEdit, open_code_editor_window
+from ...widgets.monaco_editor_dialog import open_code_editor_window
+from ...widgets.property_value_widgets import F8NumberPropLineEdit
 from ...widgets.studio_node_code_editor import get_node_text, resolve_node, set_node_text, studio_session_key
 from .node_item_core import StateFieldInfo, state_field_info
 from .service_toolbar_host import F8ElideToolButton, F8ForceGlobalToolTipFilter
