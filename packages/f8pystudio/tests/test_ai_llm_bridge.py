@@ -5,6 +5,7 @@ from unittest.mock import patch
 import uuid
 import logging
 
+from f8pystudio.ai_assist.agent_session import AgentTurnTraceEvent
 from f8pystudio.ai_assist.graph_context import GraphContextSnapshot
 from f8pystudio.ai_assist.llm_bridge import AiLlmBridge
 from f8pystudio.ai_assist.store import AiProviderStore
@@ -209,9 +210,8 @@ def test_get_system_prompt_includes_pinned_graph_context_only_when_set() -> None
     )
 
     prompt_with_graph = bridge._get_system_prompt("Base prompt.")
-    assert "Focused Graph Subgraph Snapshot" in prompt_with_graph
-    assert "2 selected nodes" in prompt_with_graph
-    assert "not the full graph" in prompt_with_graph
+    assert '"selection_label": "2 selected nodes"' in prompt_with_graph
+    assert '"selected_nodes": []' in prompt_with_graph
 
     bridge.clear_chat_context_snapshot()
     assert "Focused Graph Subgraph Snapshot" not in bridge._get_system_prompt("Base prompt.")
@@ -237,3 +237,107 @@ def test_reset_chat_history_clears_pinned_graph_context() -> None:
     assert "2 selected nodes" in bridge.get_chat_context_report()
     bridge.reset_chat_history()
     assert "_No pinned graph context._" in bridge.get_chat_context_report()
+
+
+def test_get_chat_context_report_uses_graph_agent_seed_context() -> None:
+    temp_dir = Path(".tmp") / "test_ai_llm_bridge" / uuid.uuid4().hex
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    store_path = temp_dir / "ai_providers.json"
+    with patch.object(AiProviderStore, "_resolve_storage_path", return_value=store_path):
+        bridge = AiLlmBridge(AiProviderStore())
+
+    bridge.set_chat_context_snapshot(
+        GraphContextSnapshot(
+            selection_label="1 selected node",
+            selected_node_ids=("node-sorter",),
+            total_selected_count=1,
+            total_one_hop_count=0,
+            total_connection_count=0,
+        )
+    )
+
+    report = bridge.get_chat_context_report()
+
+    assert "Graph Agent Seed Context" in report
+    assert "lightweight graph context" in report
+    assert "Focused Graph Subgraph Snapshot" not in report
+
+
+def test_agent_trace_report_includes_arguments_and_payload_and_reset_clears_it() -> None:
+    temp_dir = Path(".tmp") / "test_ai_llm_bridge" / uuid.uuid4().hex
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    store_path = temp_dir / "ai_providers.json"
+    with patch.object(AiProviderStore, "_resolve_storage_path", return_value=store_path):
+        bridge = AiLlmBridge(AiProviderStore())
+
+    bridge._on_agent_trace_event(  # type: ignore[attr-defined]
+        "req-1",
+        AgentTurnTraceEvent(
+            event_type="tool_result",
+            step_index=1,
+            tool_name="get_node_spec",
+            reason="Need state metadata",
+            summary="Loaded spec",
+            arguments={"node_id": "node-sorter"},
+            payload={"success": True, "payload": {"node_id": "node-sorter"}},
+        ),
+    )
+
+    report = bridge.get_agent_trace_report()
+
+    assert "Graph Agent Trace Report" in report
+    assert '"node_id": "node-sorter"' in report
+    assert '"success": true' in report
+
+    bridge.reset_chat_history()
+
+    assert "_No graph-agent trace is available yet._" in bridge.get_agent_trace_report()
+
+
+def test_request_sidebar_chat_falls_back_to_stream_chat_without_pinned_graph_context() -> None:
+    temp_dir = Path(".tmp") / "test_ai_llm_bridge" / uuid.uuid4().hex
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    store_path = temp_dir / "ai_providers.json"
+    with patch.object(AiProviderStore, "_resolve_storage_path", return_value=store_path):
+        bridge = AiLlmBridge(AiProviderStore())
+
+    with patch.object(bridge, "request_chat") as request_chat_mock:
+        bridge.request_sidebar_chat("rid-1", '[{"role":"user","content":"hello"}]', "[]")
+
+    request_chat_mock.assert_called_once_with("rid-1", '[{"role":"user","content":"hello"}]', "", "", "[]")
+
+
+def test_request_sidebar_chat_starts_graph_agent_when_context_and_graph_are_available() -> None:
+    temp_dir = Path(".tmp") / "test_ai_llm_bridge" / uuid.uuid4().hex
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    store_path = temp_dir / "ai_providers.json"
+    with patch.object(AiProviderStore, "_resolve_storage_path", return_value=store_path):
+        bridge = AiLlmBridge(AiProviderStore())
+
+    started: dict[str, object] = {}
+
+    class _FakeAgentSession:
+        def __init__(self, **kwargs) -> None:
+            started.update(kwargs)
+            self.system_prompt = "graph agent prompt"
+
+        def start(self) -> None:
+            started["started"] = True
+
+    bridge.set_studio_graph(object())
+    bridge.set_chat_context_snapshot(
+        GraphContextSnapshot(
+            selection_label="1 selected node",
+            selected_node_ids=("node-sorter",),
+            total_selected_count=1,
+            total_one_hop_count=0,
+            total_connection_count=0,
+        )
+    )
+
+    with patch("f8pystudio.ai_assist.llm_bridge.GraphAgentSession", _FakeAgentSession):
+        bridge.request_sidebar_chat("rid-2", '[{"role":"user","content":"hello"}]', "[]")
+
+    assert started["model_id"] == "gpt-4.1"
+    assert started["history"] == [{"role": "user", "content": "hello"}]
+    assert started["started"] is True

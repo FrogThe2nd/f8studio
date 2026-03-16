@@ -142,6 +142,44 @@ class GraphContextSnapshot:
         return asdict(self)
 
 
+@dataclass(frozen=True)
+class GraphAgentSeedNode:
+    node_id: str
+    node_name: str
+    node_kind: str
+    service_class: str
+    operator_class: str
+    description: str
+    instance_purpose: str
+    data_in_port_names: tuple[str, ...]
+    data_out_port_names: tuple[str, ...]
+    state_field_names: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class GraphAgentSeedConnection:
+    from_node_id: str
+    from_port: str
+    to_node_id: str
+    to_port: str
+    edge_kind: str
+
+
+@dataclass(frozen=True)
+class GraphAgentSeedContext:
+    selection_label: str = ""
+    selected_node_ids: tuple[str, ...] = ()
+    focus_node_ids: tuple[str, ...] = ()
+    focus_node_names: tuple[str, ...] = ()
+    selected_nodes: tuple[GraphAgentSeedNode, ...] = ()
+    one_hop_nodes: tuple[GraphAgentSeedNode, ...] = ()
+    connections: tuple[GraphAgentSeedConnection, ...] = ()
+    note: str = "Detailed spec and state values require tool calls."
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
 def build_graph_context_snapshot(studio_graph: Any, nodes: Any) -> GraphContextSnapshot | None:
     _ = studio_graph
     selected_nodes = _normalize_selected_nodes(nodes)
@@ -186,6 +224,29 @@ def build_graph_context_snapshot(studio_graph: Any, nodes: Any) -> GraphContextS
         truncated_selected_nodes=truncated_selected_nodes,
         truncated_one_hop_nodes=truncated_one_hop_nodes,
         truncated_connections=truncated_connections,
+    )
+
+
+def build_graph_agent_seed_context(snapshot: GraphContextSnapshot | None) -> GraphAgentSeedContext | None:
+    if snapshot is None:
+        return None
+    return GraphAgentSeedContext(
+        selection_label=snapshot.selection_label,
+        selected_node_ids=tuple(snapshot.selected_node_ids),
+        focus_node_ids=tuple(snapshot.selected_node_ids),
+        focus_node_names=tuple(node.node_name for node in snapshot.selected_nodes),
+        selected_nodes=tuple(_seed_node_from_summary(node) for node in snapshot.selected_nodes),
+        one_hop_nodes=tuple(_seed_node_from_summary(node) for node in snapshot.one_hop_nodes),
+        connections=tuple(
+            GraphAgentSeedConnection(
+                from_node_id=edge.from_node_id,
+                from_port=edge.from_port,
+                to_node_id=edge.to_node_id,
+                to_port=edge.to_port,
+                edge_kind=edge.edge_kind,
+            )
+            for edge in snapshot.connections
+        ),
     )
 
 
@@ -243,6 +304,32 @@ def format_graph_context_snapshot(
     return _join_lines_with_limit(lines, max_chars=max_chars)
 
 
+def format_graph_agent_seed_context(seed_context: GraphAgentSeedContext | None) -> str:
+    if seed_context is None:
+        return "{}"
+    return json.dumps(seed_context.to_dict(), ensure_ascii=False, indent=2)
+
+
+def format_graph_agent_seed_report(seed_context: GraphAgentSeedContext | None) -> str:
+    if seed_context is None:
+        return "# Graph Agent Seed Context\n\n_No pinned graph context._"
+    return "\n".join(
+        [
+            "# Graph Agent Seed Context",
+            "",
+            "## Structured Payload",
+            "```json",
+            format_graph_agent_seed_context(seed_context),
+            "```",
+            "",
+            "## Notes",
+            "- This is the lightweight graph context injected into the graph agent.",
+            "- Full node specs and large state values are intentionally omitted here.",
+            "- The agent must request detailed data via internal read-only tools.",
+        ]
+    )
+
+
 def format_graph_context_report(snapshot: GraphContextSnapshot | None) -> str:
     if snapshot is None:
         return "# Graph Context Snapshot\n\n_No pinned graph context._"
@@ -261,6 +348,10 @@ def format_graph_context_report(snapshot: GraphContextSnapshot | None) -> str:
             summary,
         ]
     )
+
+
+def dump_graph_value_json(value: Any) -> Any:
+    return _dump_json_safe(value)
 
 
 def _selection_label(nodes: list[Any]) -> str:
@@ -445,6 +536,21 @@ def _format_compact_node_summary(node: GraphContextNodeSummary) -> list[str]:
     return [
         f"- {node.node_name} (`{node.node_id}`, {' / '.join(type_bits)}){ports_suffix}{description_suffix}",
     ]
+
+
+def _seed_node_from_summary(node: GraphContextNodeSummary) -> GraphAgentSeedNode:
+    return GraphAgentSeedNode(
+        node_id=node.node_id,
+        node_name=node.node_name,
+        node_kind=node.node_kind,
+        service_class=node.service_class,
+        operator_class=node.operator_class,
+        description=node.description,
+        instance_purpose=node.instance_purpose,
+        data_in_port_names=tuple(port.name for port in node.data_in_ports),
+        data_out_port_names=tuple(port.name for port in node.data_out_ports),
+        state_field_names=tuple(field.name for field in node.state_fields),
+    )
 
 
 def _node_instance_purpose(node: Any) -> str:
@@ -891,6 +997,9 @@ def _bool_or_default(value: Any, *, default: bool) -> bool:
 
 
 __all__ = [
+    "GraphAgentSeedConnection",
+    "GraphAgentSeedContext",
+    "GraphAgentSeedNode",
     "GraphContextEdgeSummary",
     "GraphContextNodeSummary",
     "GraphContextPortSummary",
@@ -898,6 +1007,10 @@ __all__ = [
     "GraphContextStateFieldSummary",
     "GraphContextValueSummary",
     "build_graph_context_snapshot",
+    "build_graph_agent_seed_context",
+    "dump_graph_value_json",
+    "format_graph_agent_seed_context",
+    "format_graph_agent_seed_report",
     "format_graph_context_report",
     "format_graph_context_snapshot",
 ]

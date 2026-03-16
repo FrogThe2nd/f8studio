@@ -58,6 +58,46 @@ def build_ai_assist_html() -> str:
       .f8-msg {{ padding: 8px 10px; border-radius: 6px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }}
       .f8-msg.user {{ background: #313244; align-self: flex-end; max-width: 85%; }}
       .f8-msg.assistant {{ background: #1e1e2e; border: 1px solid #313244; align-self: flex-start; max-width: 100%; }}
+      .f8-msg-body {{ min-width: 0; }}
+      .f8-trace {{
+        display: none;
+        margin-top: 8px;
+        border-top: 1px solid #313244;
+        padding-top: 8px;
+      }}
+      .f8-trace.visible {{ display: block; }}
+      .f8-trace summary {{
+        cursor: pointer;
+        color: #a6adc8;
+        font-size: 11px;
+        user-select: none;
+      }}
+      .f8-trace-content {{
+        margin-top: 8px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }}
+      .f8-trace-item {{
+        border: 1px solid #313244;
+        border-radius: 6px;
+        background: #11111b;
+        padding: 6px 8px;
+      }}
+      .f8-trace-item-title {{
+        color: #cdd6f4;
+        font-size: 11px;
+        font-weight: 600;
+      }}
+      .f8-trace-item-meta {{
+        color: #9399b2;
+        font-size: 11px;
+        margin-top: 3px;
+        white-space: pre-wrap;
+      }}
+      .f8-trace-item-error {{
+        color: #f38ba8;
+      }}
       
       .f8-msg pre {{
         background: #11111b;
@@ -263,8 +303,14 @@ def build_ai_assist_html() -> str:
         if (thinking) thinking.classList.add('visible');
         const assistantEl = _f8_appendMessage('assistant', '');
         
-        window._f8_chatRequests[rid] = {{ assistantEl, thinking }};
-        window._f8_aiAssist.request_chat(rid, JSON.stringify(window._f8_chatMessages), '', '', JSON.stringify(window._f8_attachments));
+        window._f8_chatRequests[rid] = {{
+          assistantEl,
+          assistantBodyEl: assistantEl.querySelector('.f8-msg-body'),
+          traceEl: assistantEl.querySelector('.f8-trace'),
+          traceContentEl: assistantEl.querySelector('.f8-trace-content'),
+          thinking
+        }};
+        window._f8_aiAssist.request_sidebar_chat(rid, JSON.stringify(window._f8_chatMessages), JSON.stringify(window._f8_attachments));
         _f8_clearAttachments();
       }}
 
@@ -273,11 +319,55 @@ def build_ai_assist_html() -> str:
         const div = document.createElement('div');
         div.className = 'f8-msg ' + role;
         div.dataset.raw = text;
-        div.innerHTML = role === 'assistant' ? _f8_md(text) : _f8_escHtml(text);
-        if (role === 'assistant' && window.Prism) Prism.highlightAllUnder(div);
+        if (role === 'assistant') {{
+          const body = document.createElement('div');
+          body.className = 'f8-msg-body';
+          body.innerHTML = _f8_md(text);
+          div.appendChild(body);
+          const trace = document.createElement('details');
+          trace.className = 'f8-trace';
+          const summary = document.createElement('summary');
+          summary.textContent = 'Graph agent trace';
+          trace.appendChild(summary);
+          const traceContent = document.createElement('div');
+          traceContent.className = 'f8-trace-content';
+          trace.appendChild(traceContent);
+          div.appendChild(trace);
+          if (window.Prism) Prism.highlightAllUnder(body);
+        }} else {{
+          div.innerHTML = _f8_escHtml(text);
+        }}
         msgs.appendChild(div);
         msgs.scrollTop = msgs.scrollHeight;
         return div;
+      }}
+
+      function _f8_appendTraceEvent(req, eventPayload) {{
+        if (!req || !req.traceEl || !req.traceContentEl || !eventPayload) return;
+        req.traceEl.classList.add('visible');
+        const item = document.createElement('div');
+        item.className = 'f8-trace-item';
+
+        const title = document.createElement('div');
+        title.className = 'f8-trace-item-title';
+        let titleText = 'Step ' + String(eventPayload.step_index || 0) + ': ' + String(eventPayload.event_type || 'event');
+        if (eventPayload.tool_name) {{
+          titleText += ' · ' + String(eventPayload.tool_name);
+        }}
+        title.textContent = titleText;
+        item.appendChild(title);
+
+        const metaLines = [];
+        if (eventPayload.reason) metaLines.push('Reason: ' + String(eventPayload.reason));
+        if (eventPayload.summary) metaLines.push(String(eventPayload.summary));
+        if (eventPayload.error) metaLines.push('Error: ' + String(eventPayload.error));
+        if (metaLines.length > 0) {{
+          const meta = document.createElement('div');
+          meta.className = 'f8-trace-item-meta' + (eventPayload.error ? ' f8-trace-item-error' : '');
+          meta.textContent = metaLines.join('\\n');
+          item.appendChild(meta);
+        }}
+        req.traceContentEl.appendChild(item);
       }}
 
       function _f8_escHtml(s) {{
@@ -333,10 +423,24 @@ def build_ai_assist_html() -> str:
             const req = window._f8_chatRequests[rid];
             if (!req) return;
             req.assistantEl.dataset.raw = (req.assistantEl.dataset.raw || '') + delta;
-            req.assistantEl.innerHTML = _f8_md(req.assistantEl.dataset.raw);
-            if (window.Prism) Prism.highlightAllUnder(req.assistantEl);
+            if (req.assistantBodyEl) {{
+              req.assistantBodyEl.innerHTML = _f8_md(req.assistantEl.dataset.raw);
+              if (window.Prism) Prism.highlightAllUnder(req.assistantBodyEl);
+            }}
             document.getElementById('f8-ai-messages').scrollTop = document.getElementById('f8-ai-messages').scrollHeight;
           }});
+
+          if (window._f8_aiAssist.agent_trace_event && window._f8_aiAssist.agent_trace_event.connect) {{
+            window._f8_aiAssist.agent_trace_event.connect(function(rid, eventJson) {{
+              const req = window._f8_chatRequests[rid];
+              if (!req) return;
+              try {{
+                const payload = JSON.parse(String(eventJson || '{{}}'));
+                _f8_appendTraceEvent(req, payload);
+              }} catch (_err) {{
+              }}
+            }});
+          }}
           
           window._f8_aiAssist.chat_done.connect(function(rid, err) {{
             const req = window._f8_chatRequests[rid];
@@ -344,7 +448,9 @@ def build_ai_assist_html() -> str:
             delete window._f8_chatRequests[rid];
             req.thinking.classList.remove('visible');
             if (err) {{
-               req.assistantEl.innerHTML += '<div style="color:#f38ba8;padding-top:4px;">⚠ Error: ' + _f8_escHtml(err) + '</div>';
+               if (req.assistantBodyEl) {{
+                 req.assistantBodyEl.innerHTML += '<div style="color:#f38ba8;padding-top:4px;">⚠ Error: ' + _f8_escHtml(err) + '</div>';
+               }}
             }} else {{
                window._f8_chatMessages.push({{role: 'assistant', content: req.assistantEl.dataset.raw}});
             }}

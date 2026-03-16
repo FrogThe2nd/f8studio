@@ -114,6 +114,7 @@ class AiAssistSidebarWidget(QtWidgets.QWidget):
         # 1. Setup AI components
         self._ai_store = AiProviderStore()
         self._ai_bridge = AiLlmBridge(self._ai_store, self)
+        self._ai_bridge.set_studio_graph(studio_graph)
         
         # 2. UI Components
         from PySide6 import QtWebChannel, QtWebEngineWidgets  # type: ignore[import-not-found]
@@ -180,11 +181,11 @@ class AiAssistSidebarWidget(QtWidgets.QWidget):
         )
 
         self._inspect_graph_context_btn = QtWidgets.QToolButton()
-        self._inspect_graph_context_btn.clicked.connect(self._inspect_graph_context)
+        self._inspect_graph_context_btn.clicked.connect(self._show_graph_inspector_menu)
         _configure_icon_tool_button(
             self._inspect_graph_context_btn,
             icon=icon_for(self._inspect_graph_context_btn, StudioIcon.ARTICLE),
-            tooltip="Inspect pinned graph context payload",
+            tooltip="Inspect graph agent seed context or trace",
             accent_color="#a6e3a1",
         )
         
@@ -292,8 +293,10 @@ class AiAssistSidebarWidget(QtWidgets.QWidget):
         menu = QtWidgets.QMenu(self)
         inspect_act = menu.addAction("Inspect Current Context Payload...")
         inspect_act.triggered.connect(self._inspect_context)
-        inspect_graph_act = menu.addAction("Inspect Graph Context Payload...")
+        inspect_graph_act = menu.addAction("Inspect Graph Agent Seed Context...")
         inspect_graph_act.triggered.connect(self._inspect_graph_context)
+        inspect_trace_act = menu.addAction("Inspect Graph Agent Trace...")
+        inspect_trace_act.triggered.connect(self._inspect_agent_trace)
         menu.exec(self._ctx_btn.mapToGlobal(pos))
 
     def _inspect_context(self) -> None:
@@ -305,6 +308,19 @@ class AiAssistSidebarWidget(QtWidgets.QWidget):
         report = self._ai_bridge.get_chat_context_report()
         dlg = AiContextInspectorDialog(report, self)
         dlg.exec()
+
+    def _inspect_agent_trace(self) -> None:
+        report = self._ai_bridge.get_agent_trace_report()
+        dlg = AiContextInspectorDialog(report, self)
+        dlg.exec()
+
+    def _show_graph_inspector_menu(self) -> None:
+        menu = QtWidgets.QMenu(self)
+        seed_act = menu.addAction("Inspect Graph Agent Seed Context...")
+        seed_act.triggered.connect(self._inspect_graph_context)
+        trace_act = menu.addAction("Inspect Graph Agent Trace...")
+        trace_act.triggered.connect(self._inspect_agent_trace)
+        menu.exec(self._inspect_graph_context_btn.mapToGlobal(QtCore.QPoint(0, self._inspect_graph_context_btn.height())))
 
     def _on_ai_settings_toggle(self, checked: bool) -> None:
         self._ai_quick_panel.setVisible(checked)
@@ -409,11 +425,11 @@ class AiAssistSidebarWidget(QtWidgets.QWidget):
 
     @QtCore.Slot(object)
     def _on_graph_selection_signal(self, _node: object) -> None:
-        self._selection_timer.start()
+        self._apply_graph_selection()
 
     @QtCore.Slot(list, list)
     def _on_graph_selection_changed(self, _selected: list[object], _deselected: list[object]) -> None:
-        self._selection_timer.start()
+        self._apply_graph_selection()
 
     @QtCore.Slot(list)
     def _on_graph_nodes_deleted(self, _node_ids: list[str]) -> None:

@@ -1663,7 +1663,7 @@ packages:
 - pypi: ./packages/f8pystudio
   name: f8pystudio
   version: 0.2.0
-  sha256: a62a952bd8e6fc03706739acb2534038195092f605a74292589ef5656730fe90
+  sha256: 9f37e856a12a6ad3517675e25f15e0a5936756d275aa37183fab4e1fbcd13654
   requires_dist:
   - qtpy>=2.4.3
   - pyside6>=6.10.1

@@ -22,7 +22,16 @@ from typing import Any
 
 from qtpy import QtCore, QtGui  # type: ignore[import-not-found]
 
-from .graph_context import GraphContextSnapshot, format_graph_context_report, format_graph_context_snapshot
+from .agent_session import AgentTurnOutcome, AgentTurnTraceEvent, GraphAgentSession
+from .graph_agent_tools import GraphAgentToolExecutor
+from .graph_context import (
+    GraphContextSnapshot,
+    build_graph_agent_seed_context,
+    format_graph_agent_seed_context,
+    format_graph_agent_seed_report,
+    format_graph_context_report,
+    format_graph_context_snapshot,
+)
 from .http_client import AiHttpClient
 from .registry import ModelInfo, ProviderConfig
 from .store import AiProviderStore
@@ -103,6 +112,7 @@ class AiLlmBridge(QtCore.QObject):
     inline_suggestion_ready = QtCore.Signal(str, str)   # request_id, text
     chat_chunk_ready = QtCore.Signal(str, str)           # request_id, delta
     chat_done = QtCore.Signal(str, str)                  # request_id, error_or_empty
+    agent_trace_event = QtCore.Signal(str, str)          # request_id, trace_event_json
     edit_result_ready = QtCore.Signal(str, str, str)     # request_id, new_code, error_or_empty
     plan_step_ready = QtCore.Signal(str, str)            # request_id, delta
     plan_done = QtCore.Signal(str, str)                  # request_id, error_or_empty
@@ -126,6 +136,7 @@ class AiLlmBridge(QtCore.QObject):
         self._document_language: str = "plaintext"
         self._chat_context_snapshot: GraphContextSnapshot | None = None
         self._chat_context_summary: str = ""
+        self._studio_graph: Any | None = None
 
         # Context tracking
         self._system_tokens: int = 0
@@ -135,6 +146,8 @@ class AiLlmBridge(QtCore.QObject):
         # Debug tracking (holds last seen data for inspection)
         self._last_code: str = ""
         self._last_messages: list[dict] = []
+        self._active_agent_sessions: dict[str, GraphAgentSession] = {}
+        self._agent_trace_history: list[dict[str, Any]] = []
 
         # Read global active provider choices from store
         self._inline_provider_id = self._store.active_inline_provider
@@ -170,9 +183,13 @@ class AiLlmBridge(QtCore.QObject):
         self._document_language = str(language or "plaintext").strip().lower() or "plaintext"
         self._refresh_system_tokens()
 
+    def set_studio_graph(self, studio_graph: Any | None) -> None:
+        self._studio_graph = studio_graph
+
     def set_chat_context_snapshot(self, snapshot: GraphContextSnapshot | None) -> None:
         self._chat_context_snapshot = snapshot
-        self._chat_context_summary = format_graph_context_snapshot(snapshot)
+        seed_context = build_graph_agent_seed_context(snapshot)
+        self._chat_context_summary = format_graph_agent_seed_context(seed_context)
         node_name = snapshot.node_name if snapshot is not None else ""
         self._refresh_system_tokens()
         self.chat_context_snapshot_changed.emit(snapshot is not None, node_name)
@@ -183,7 +200,7 @@ class AiLlmBridge(QtCore.QObject):
 
     @QtCore.Slot(result=str)
     def get_chat_context_report(self) -> str:
-        return format_graph_context_report(self._chat_context_snapshot)
+        return format_graph_agent_seed_report(build_graph_agent_seed_context(self._chat_context_snapshot))
 
     def selection_state(self) -> AiBridgeSelectionState:
         cfg = self._store.provider_by_id(self._chat_provider_id)
@@ -369,6 +386,7 @@ class AiLlmBridge(QtCore.QObject):
         logger.info("AI chat history reset requested by user")
         # In current design, history is held by JS, so this is mainly a signal
         # for backend to clear any ephemeral cached context if it had any.
+        self._agent_trace_history = []
         self.clear_chat_context_snapshot()
 
     @QtCore.Slot(result="QVariantList")
@@ -519,6 +537,47 @@ class AiLlmBridge(QtCore.QObject):
     # Chat (streaming)
     # ------------------------------------------------------------------
 
+    @QtCore.Slot(str, str, str)
+    def request_sidebar_chat(self, request_id: str, messages_json: str, attachments_json: str = "") -> None:
+        if self._chat_context_snapshot is None or self._studio_graph is None:
+            self.request_chat(request_id, messages_json, "", "", attachments_json)
+            return
+
+        rid = str(request_id or "")
+        cfg = self._chat_provider(for_inline=False)
+        if cfg is None:
+            self.chat_done.emit(rid, "No AI provider configured")
+            return
+        model_id = self._chat_model_id or cfg.chat_model_id or self._first_model_id(cfg)
+        if not model_id:
+            self.chat_done.emit(rid, "No model selected")
+            return
+        history = self._parse_messages_history(messages_json)
+        attachments = self._parse_attachments(attachments_json)
+        seed_context = build_graph_agent_seed_context(self._chat_context_snapshot)
+        if seed_context is None:
+            self.request_chat(request_id, messages_json, "", "", attachments_json)
+            return
+
+        tool_executor = GraphAgentToolExecutor(self._studio_graph)
+        session = GraphAgentSession(
+            http_client=self._http,
+            provider_config=cfg,
+            model_id=model_id,
+            tool_executor=tool_executor,
+            seed_context=seed_context,
+            history=history,
+            attachments=attachments,
+            on_trace=lambda event: self._on_agent_trace_event(rid, event),
+            on_chunk=lambda text: self.chat_chunk_ready.emit(rid, text),
+            on_done=lambda outcome: self._on_sidebar_agent_done(rid, outcome),
+            on_messages_changed=self._update_context_tokens,
+        )
+        self._active_agent_sessions[rid] = session
+        self._system_tokens = _approx_tokens(session.system_prompt)
+        self._emit_context_usage()
+        session.start()
+
     @QtCore.Slot(str, str, str, str, str)
     def request_chat(self, request_id: str, messages_json: str, code: str, selection: str, attachments_json: str = "") -> None:
         rid = str(request_id or "")
@@ -532,19 +591,8 @@ class AiLlmBridge(QtCore.QObject):
             self.chat_done.emit(rid, "No model selected")
             return
 
-        try:
-            history: list[dict] = json.loads(messages_json) if messages_json else []
-            if not isinstance(history, list):
-                history = []
-        except json.JSONDecodeError:
-            history = []
-
-        try:
-            attachments: list[dict[str, str]] = json.loads(attachments_json) if attachments_json else []
-            if not isinstance(attachments, list):
-                attachments = []
-        except json.JSONDecodeError:
-            attachments = []
+        history = self._parse_messages_history(messages_json)
+        attachments = self._parse_attachments(attachments_json)
 
         system_prompt = self._get_system_prompt(_SYSTEM_PROMPT_CODE)
         messages = self._build_chat_messages(history, code, selection, system_prompt, attachments)
@@ -603,6 +651,34 @@ class AiLlmBridge(QtCore.QObject):
                     last_msg["content"] = new_content
         
         return messages
+
+    def _parse_messages_history(self, messages_json: str) -> list[dict]:
+        try:
+            history = json.loads(messages_json) if messages_json else []
+        except json.JSONDecodeError:
+            return []
+        if not isinstance(history, list):
+            return []
+        return [item for item in history if isinstance(item, dict)]
+
+    def _parse_attachments(self, attachments_json: str) -> list[dict[str, str]]:
+        try:
+            attachments = json.loads(attachments_json) if attachments_json else []
+        except json.JSONDecodeError:
+            return []
+        if not isinstance(attachments, list):
+            return []
+        return [item for item in attachments if isinstance(item, dict)]
+
+    def _on_agent_trace_event(self, request_id: str, event: AgentTurnTraceEvent) -> None:
+        event_payload = event.to_dict()
+        event_payload["request_id"] = request_id
+        self._agent_trace_history.append(event_payload)
+        self.agent_trace_event.emit(request_id, json.dumps(event_payload, ensure_ascii=False))
+
+    def _on_sidebar_agent_done(self, request_id: str, outcome: AgentTurnOutcome) -> None:
+        self._active_agent_sessions.pop(request_id, None)
+        self.chat_done.emit(request_id, str(outcome.error or ""))
 
     # ------------------------------------------------------------------
     # Edit mode (non-streaming → diff view)
@@ -870,7 +946,7 @@ class AiLlmBridge(QtCore.QObject):
         if self._chat_context_snapshot is None:
             lines.append("_No pinned graph context._")
         else:
-            lines.append(format_graph_context_snapshot(self._chat_context_snapshot))
+            lines.append(format_graph_agent_seed_report(build_graph_agent_seed_context(self._chat_context_snapshot)))
         lines.append("")
         
         for i, msg in enumerate(messages):
@@ -889,3 +965,48 @@ class AiLlmBridge(QtCore.QObject):
             lines.append("")
         
         return "\n".join(lines)
+
+    @QtCore.Slot(result=str)
+    def get_agent_trace_report(self) -> str:
+        lines = ["# Graph Agent Trace Report", ""]
+        if not self._agent_trace_history:
+            lines.append("_No graph-agent trace is available yet._")
+            return "\n".join(lines)
+        lines.append(f"- **Trace Events:** {len(self._agent_trace_history)}")
+        lines.append("")
+        for index, event in enumerate(self._agent_trace_history):
+            event_type = str(event.get("event_type") or "event")
+            step_index = int(event.get("step_index") or 0)
+            tool_name = str(event.get("tool_name") or "").strip()
+            title = f"## [{index}] Step {step_index} · {event_type}"
+            if tool_name:
+                title += f" · {tool_name}"
+            lines.append(title)
+            request_id = str(event.get("request_id") or "").strip()
+            if request_id:
+                lines.append(f"- **Request ID:** `{request_id}`")
+            reason = str(event.get("reason") or "").strip()
+            if reason:
+                lines.append(f"- **Reason:** {reason}")
+            summary = str(event.get("summary") or "").strip()
+            if summary:
+                lines.append(f"- **Summary:** {summary}")
+            error = str(event.get("error") or "").strip()
+            if error:
+                lines.append(f"- **Error:** {error}")
+            arguments = event.get("arguments")
+            if isinstance(arguments, dict) and arguments:
+                lines.append("")
+                lines.append("### Arguments")
+                lines.append("```json")
+                lines.append(json.dumps(arguments, ensure_ascii=False, indent=2))
+                lines.append("```")
+            payload = event.get("payload")
+            if isinstance(payload, dict) and payload:
+                lines.append("")
+                lines.append("### Payload")
+                lines.append("```json")
+                lines.append(json.dumps(payload, ensure_ascii=False, indent=2))
+                lines.append("```")
+            lines.append("")
+        return "\n".join(lines).rstrip()
