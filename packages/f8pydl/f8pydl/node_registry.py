@@ -101,6 +101,7 @@ def _detection_sorter_state_fields() -> list[F8StateSpec]:
                 "JSON map of detection cls -> weight multiplier applied to score-map metric."
                 " Keys without a prefix are exact cls matches."
                 " Keys with 're:' prefix are Python regex patterns matched via fullmatch()."
+                " All matching rules are multiplied together."
                 " Unspecified classes default to weight 1.0."
                 ' Example: {"person": 2.0, "car": 0.7, "re:^dog_.*$": 1.3}'
             ),

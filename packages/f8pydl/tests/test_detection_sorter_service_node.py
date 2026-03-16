@@ -232,6 +232,33 @@ class DetectionSorterHelpersTests(unittest.TestCase):
         assert sorted_payload is not None
         self.assertEqual([item["cls"] for item in sorted_payload["detections"]], ["dog_1", "cat"])
 
+    def test_sort_detection_payload_multiplies_all_matching_cls_weights(self) -> None:
+        score_map = np.asarray([[4.0, 4.0], [5.0, 5.0]], dtype=np.float32)
+        payload = _make_detection_payload(
+            [
+                {"cls": "FEMALE_GENITALIA_EXPOSED", "score": 0.1, "bbox": [0, 0, 2, 1]},
+                {"cls": "neutral", "score": 0.2, "bbox": [0, 1, 2, 2]},
+            ],
+            width=2,
+            height=2,
+        )
+
+        sorted_payload = sort_detection_payload(
+            payload,
+            score_map=score_map,
+            sort_direction="desc",
+            score_aggregation="mean",
+            cls_weights_exact={},
+            cls_weights_regex=[
+                (re.compile("^.*_GENITALIA_.*$"), 3.0),
+                (re.compile("^.*_EXPOSED$"), 2.0),
+            ],
+        )
+
+        self.assertIsNotNone(sorted_payload)
+        assert sorted_payload is not None
+        self.assertEqual([item["cls"] for item in sorted_payload["detections"]], ["FEMALE_GENITALIA_EXPOSED", "neutral"])
+
     def test_sort_detection_payload_all_aggregations(self) -> None:
         score_map = np.asarray(
             [

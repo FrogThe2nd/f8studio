@@ -82,6 +82,7 @@ def _parse_cls_weights_json(text: str) -> tuple[dict[str, float], list[tuple[re.
     Rules:
     - keys with "re:" prefix are treated as regex patterns matched via fullmatch().
     - keys without prefix are exact cls matches.
+    - final multiplier is the product of the exact match (if any) and every regex rule that matches.
     """
     normalized = str(text or "").strip()
     if not normalized:
@@ -121,6 +122,22 @@ def _parse_cls_weights_json(text: str) -> tuple[dict[str, float], list[tuple[re.
             exact[key] = weight
 
     return exact, regex
+
+
+def _combined_cls_weight(
+    cls_text: str,
+    *,
+    cls_weights_exact: dict[str, float] | None,
+    cls_weights_regex: list[tuple[re.Pattern[str], float]] | None,
+) -> float:
+    weight = 1.0
+    if cls_weights_exact is not None and cls_text in cls_weights_exact:
+        weight *= float(cls_weights_exact[cls_text])
+    if cls_weights_regex is not None:
+        for pattern, rule_weight in cls_weights_regex:
+            if pattern.fullmatch(cls_text):
+                weight *= float(rule_weight)
+    return float(weight)
 
 
 def decode_score_map_from_frame(*, header: VideoShmHeader, payload: memoryview) -> np.ndarray:
@@ -261,15 +278,11 @@ def sort_detection_payload(
 
         cls_name = raw_detection.get("cls")
         cls_text = cls_name if isinstance(cls_name, str) else str(cls_name or "")
-        weight = 1.0
-        if cls_weights_exact is not None and cls_text in cls_weights_exact:
-            weight = float(cls_weights_exact[cls_text])
-        elif cls_weights_regex is not None:
-            for pattern, rule_weight in cls_weights_regex:
-                if pattern.fullmatch(cls_text):
-                    weight = float(rule_weight)
-                    break
-
+        weight = _combined_cls_weight(
+            cls_text,
+            cls_weights_exact=cls_weights_exact,
+            cls_weights_regex=cls_weights_regex,
+        )
         rank_score = float(metric_score) * float(weight)
         ranked.append(
             RankedDetection(
