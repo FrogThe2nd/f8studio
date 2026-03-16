@@ -995,11 +995,12 @@ ButtplugOutRuntimeNode.SPEC = F8OperatorSpec(
         F8StateSpec(
             name="wsUrl",
             label="WebSocket URL",
-            description="Buttplug server websocket URL.",
+            description="Buttplug server websocket URL. Reset to default when exporting publish JSON.",
             valueSchema=string_schema(default="ws://127.0.0.1:12345"),
             access=F8StateAccess.rw,
             required=True,
             showOnNode=False,
+            redactOnPublish=True,
         ),
         F8StateSpec(
             name="autoConnect",

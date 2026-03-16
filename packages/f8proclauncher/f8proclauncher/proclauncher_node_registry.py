@@ -27,11 +27,12 @@ def register_proclauncher_specs(registry: RuntimeNodeRegistry | None = None) -> 
                 F8StateSpec(
                     name="programPath",
                     label="Program Path",
-                    description="Executable path or command line (quoted if it contains spaces). Empty means no launch.",
+                    description="Executable path or command line (quoted if it contains spaces). Cleared when exporting publish JSON.",
                     valueSchema=string_schema(default=""),
                     access=F8StateAccess.rw,
                     required=True,
                     showOnNode=True,
+                    redactOnPublish=True,
                 ),
                 F8StateSpec(
                     name="singleton",

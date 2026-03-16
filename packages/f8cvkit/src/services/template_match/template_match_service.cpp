@@ -9,6 +9,7 @@
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 
+#include "f8cppsdk/describe_schema.h"
 #include "f8cppsdk/shm/sizing.h"
 #include "f8cppsdk/state_kv.h"
 #include "f8cppsdk/time_utils.h"
@@ -18,67 +19,14 @@
 namespace f8::cvkit::template_match {
 
 using json = nlohmann::json;
+using f8::cppsdk::describe::schema_array;
+using f8::cppsdk::describe::schema_integer;
+using f8::cppsdk::describe::schema_number;
+using f8::cppsdk::describe::schema_object;
+using f8::cppsdk::describe::schema_string;
+using f8::cppsdk::describe::state_field;
 
 namespace {
-
-json schema_string() {
-  return json{{"type", "string"}};
-}
-json schema_number() {
-  return json{{"type", "number"}};
-}
-json schema_number(double default_value, double minimum, double maximum) {
-  json s{{"type", "number"}};
-  s["default"] = default_value;
-  s["minimum"] = minimum;
-  s["maximum"] = maximum;
-  return s;
-}
-json schema_integer() {
-  return json{{"type", "integer"}};
-}
-json schema_integer(std::int64_t default_value, std::int64_t minimum, std::int64_t maximum) {
-  json s{{"type", "integer"}};
-  s["default"] = default_value;
-  s["minimum"] = minimum;
-  s["maximum"] = maximum;
-  return s;
-}
-
-json schema_object(const json& props, const json& required = json::array()) {
-  json obj;
-  obj["type"] = "object";
-  obj["properties"] = props;
-  if (required.is_array())
-    obj["required"] = required;
-  obj["additionalProperties"] = false;
-  return obj;
-}
-
-json schema_array(const json& item_schema) {
-  json arr;
-  arr["type"] = "array";
-  arr["items"] = item_schema;
-  return arr;
-}
-
-json state_field(std::string name, const json& value_schema, std::string access, std::string label = {},
-                 std::string description = {}, bool show_on_node = false, std::string ui_control = {}) {
-  json sf;
-  sf["name"] = std::move(name);
-  sf["valueSchema"] = value_schema;
-  sf["access"] = std::move(access);
-  sf["required"] = true;
-  if (!label.empty())
-    sf["label"] = std::move(label);
-  if (!description.empty())
-    sf["description"] = std::move(description);
-  if (show_on_node)
-    sf["showOnNode"] = true;
-  if (!ui_control.empty())
-    sf["uiControl"] = std::move(ui_control);
-  return sf;
-}
 
 int clamp_int(int v, int lo, int hi) {
   if (v < lo)
@@ -710,8 +658,9 @@ json TemplateMatchService::describe() {
   service["rendererClass"] = "template_match_capture";
   service["tags"] = json::array({"cv", "template_match"});
   service["stateFields"] = json::array({
-      state_field("templateImagePngB64", schema_string(), "rw", "Template PNG (Base64)", "PNG bytes encoded as base64.",
-                  false),
+      state_field("templateImagePngB64", schema_string(), "rw", "Template PNG (Base64)",
+                  "PNG bytes encoded as base64. Local-only payload; cleared when exporting publish JSON.",
+                  false, "", true),
       state_field("matchThreshold", schema_number(0.5, 0.0, 1.0), "rw", "Match Threshold",
                   "0..1 score threshold used to emit detections.", true, "slider"),
       state_field("matchingIntervalMs", schema_integer(200, 0, 60000), "rw", "Matching Interval (ms)",

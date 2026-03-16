@@ -1,4 +1,5 @@
 add_library(f8cppsdk
+  src/describe_schema.cpp
   src/nats_client.cpp
   src/kv_store.cpp
   src/service_control_plane.cpp

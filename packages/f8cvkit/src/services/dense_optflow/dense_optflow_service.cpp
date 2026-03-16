@@ -10,6 +10,7 @@
 #include <opencv2/video/tracking.hpp>
 #include <spdlog/spdlog.h>
 
+#include "f8cppsdk/describe_schema.h"
 #include "f8cppsdk/shm/naming.h"
 #include "f8cppsdk/shm/sizing.h"
 #include "f8cppsdk/state_kv.h"
@@ -19,51 +20,13 @@
 namespace f8::cvkit::dense_optflow {
 
 using json = nlohmann::json;
+using f8::cppsdk::describe::schema_integer;
+using f8::cppsdk::describe::schema_number;
+using f8::cppsdk::describe::schema_object;
+using f8::cppsdk::describe::schema_string;
+using f8::cppsdk::describe::state_field;
 
 namespace {
-
-json schema_string() { return json{{"type", "string"}}; }
-json schema_number() { return json{{"type", "number"}}; }
-json schema_integer() { return json{{"type", "integer"}}; }
-
-json schema_number(double default_value, double minimum, double maximum) {
-  json s{{"type", "number"}};
-  s["default"] = default_value;
-  s["minimum"] = minimum;
-  s["maximum"] = maximum;
-  return s;
-}
-
-json schema_integer(int default_value, int minimum, int maximum) {
-  json s{{"type", "integer"}};
-  s["default"] = default_value;
-  s["minimum"] = minimum;
-  s["maximum"] = maximum;
-  return s;
-}
-
-json schema_object(const json& props, const json& required = json::array()) {
-  json obj;
-  obj["type"] = "object";
-  obj["properties"] = props;
-  if (required.is_array()) obj["required"] = required;
-  obj["additionalProperties"] = false;
-  return obj;
-}
-
-json state_field(std::string name, const json& value_schema, std::string access, std::string label = {},
-                 std::string description = {}, bool show_on_node = false, std::string ui_control = {}) {
-  json sf;
-  sf["name"] = std::move(name);
-  sf["valueSchema"] = value_schema;
-  sf["access"] = std::move(access);
-  sf["required"] = true;
-  if (!label.empty()) sf["label"] = std::move(label);
-  if (!description.empty()) sf["description"] = std::move(description);
-  if (show_on_node) sf["showOnNode"] = true;
-  if (!ui_control.empty()) sf["uiControl"] = std::move(ui_control);
-  return sf;
-}
 
 std::uint16_t float32_to_half(float value) {
   std::uint32_t bits = 0;

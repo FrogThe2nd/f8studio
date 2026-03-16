@@ -561,11 +561,12 @@ WaveFunscriptRuntimeNode.SPEC = F8OperatorSpec(
         F8StateSpec(
             name="funscriptPath",
             label="Funscript Path",
-            description="Path to a .funscript JSON file.",
+            description="Path to a .funscript JSON file. Cleared when exporting publish JSON.",
             valueSchema=string_schema(default=""),
             access=F8StateAccess.rw,
             required=True,
             showOnNode=True,
+            redactOnPublish=True,
         ),
         F8StateSpec(
             name="allAxes",

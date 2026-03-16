@@ -3,7 +3,8 @@
 #include <cstdint>
 #include <string>
 #include <unordered_set>
-#include <vector>
+
+#include "f8cppsdk/describe_schema.h"
 
 namespace f8::cppsdk {
 
@@ -13,10 +14,6 @@ namespace {
 
 json schema_boolean_with_default(const bool value) {
   return json{{"type", "boolean"}, {"default", value}};
-}
-
-json schema_string() {
-  return json{{"type", "string"}};
 }
 
 json schema_number(const double default_value) {
@@ -132,10 +129,10 @@ void upsert_builtin_state_fields(json& spec, const bool is_service) {
     filtered.push_back(state_field("active", schema_boolean_with_default(true), "rw", "Active",
                                    "Service lifecycle state (activate/deactivate).", true, false));
   }
-  filtered.push_back(state_field("svcId", schema_string(), "ro", "Service Id",
+  filtered.push_back(state_field("svcId", describe::schema_string(), "ro", "Service Id",
                                  "Readonly: current service instance id (svcId).", true, false));
   if (!is_service) {
-    filtered.push_back(state_field("operatorId", schema_string(), "ro", "Operator Id",
+    filtered.push_back(state_field("operatorId", describe::schema_string(), "ro", "Operator Id",
                                    "Readonly: current operator/node id (operatorId).", true, false));
   }
 

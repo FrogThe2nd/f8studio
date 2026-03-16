@@ -10,6 +10,7 @@
 #include <opencv2/imgproc.hpp>
 #include <spdlog/spdlog.h>
 
+#include "f8cppsdk/describe_schema.h"
 #include "f8cppsdk/shm/naming.h"
 #include "f8cppsdk/shm/sizing.h"
 #include "f8cppsdk/state_kv.h"
@@ -19,51 +20,13 @@
 namespace f8::cvkit::flow_metric {
 
 using json = nlohmann::json;
+using f8::cppsdk::describe::schema_integer;
+using f8::cppsdk::describe::schema_number;
+using f8::cppsdk::describe::schema_string;
+using f8::cppsdk::describe::schema_string_enum;
+using f8::cppsdk::describe::state_field;
 
 namespace {
-
-json schema_string() { return json{{"type", "string"}}; }
-json schema_number() { return json{{"type", "number"}}; }
-json schema_integer() { return json{{"type", "integer"}}; }
-json schema_string_enum(const std::vector<std::string>& values, const std::string& default_value) {
-  json s{{"type", "string"}};
-  s["enum"] = json::array();
-  for (const std::string& v : values) {
-    s["enum"].push_back(v);
-  }
-  s["default"] = default_value;
-  return s;
-}
-
-json schema_number(double default_value, double minimum, double maximum) {
-  json s{{"type", "number"}};
-  s["default"] = default_value;
-  s["minimum"] = minimum;
-  s["maximum"] = maximum;
-  return s;
-}
-
-json schema_integer(int default_value, int minimum, int maximum) {
-  json s{{"type", "integer"}};
-  s["default"] = default_value;
-  s["minimum"] = minimum;
-  s["maximum"] = maximum;
-  return s;
-}
-
-json state_field(std::string name, const json& value_schema, std::string access, std::string label = {},
-                 std::string description = {}, bool show_on_node = false, std::string ui_control = {}) {
-  json sf;
-  sf["name"] = std::move(name);
-  sf["valueSchema"] = value_schema;
-  sf["access"] = std::move(access);
-  sf["required"] = true;
-  if (!label.empty()) sf["label"] = std::move(label);
-  if (!description.empty()) sf["description"] = std::move(description);
-  if (show_on_node) sf["showOnNode"] = true;
-  if (!ui_control.empty()) sf["uiControl"] = std::move(ui_control);
-  return sf;
-}
 
 float half_to_float(std::uint16_t half_bits) {
   const std::uint32_t sign = static_cast<std::uint32_t>((half_bits >> 15) & 0x1u);

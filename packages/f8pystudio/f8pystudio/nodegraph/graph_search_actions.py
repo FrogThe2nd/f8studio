@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 
 from .service_basenode import F8StudioServiceNodeItem
@@ -153,6 +155,15 @@ class GraphSearchActionsMixin:
         path = last_session_path()
         path.parent.mkdir(parents=True, exist_ok=True)
         self.save_session(str(path))
+        return str(path)
+
+    def save_publish_session(self, file_path: str) -> str:
+        path = Path(str(file_path or "").strip())
+        if not str(path):
+            raise ValueError("publish session path cannot be empty")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = self.serialize_publish_session()
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         return str(path)
 
     def load_last_session(self) -> str | None:

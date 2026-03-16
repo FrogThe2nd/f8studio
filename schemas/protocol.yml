@@ -151,6 +151,10 @@ components:
           type: boolean
           default: false
           description: If true, render this control inline on the node body; otherwise only in the inspector
+        redactOnPublish:
+          type: boolean
+          default: false
+          description: If true, clear this state's saved value when exporting a publish-safe session JSON.
         editorAssist:
           $ref: "#/components/schemas/F8EditorAssistSpec"
       required:

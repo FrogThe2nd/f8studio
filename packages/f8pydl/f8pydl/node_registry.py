@@ -169,11 +169,12 @@ def _common_state_fields(
         F8StateSpec(
             name="weightsDir",
             label="Weights Dir",
-            description="Directory containing *.yaml + *.onnx model files.",
+            description="Directory containing *.yaml + *.onnx model files. Reset to the default relative path when exporting publish JSON.",
             valueSchema=string_schema(default="services/f8/dl/weights"),
             access=F8StateAccess.rw,
             required=True,
             showOnNode=True,
+            redactOnPublish=True,
         ),
         F8StateSpec(
             name="modelId",
@@ -188,11 +189,12 @@ def _common_state_fields(
         F8StateSpec(
             name="modelYamlPath",
             label="Model YAML Path",
-            description="Optional explicit model yaml path (overrides modelId).",
+            description="Optional explicit model yaml path (overrides modelId). Cleared when exporting publish JSON.",
             valueSchema=string_schema(default=""),
             access=F8StateAccess.rw,
             required=True,
             showOnNode=False,
+            redactOnPublish=True,
         ),
         F8StateSpec(
             name="ortProvider",
@@ -359,11 +361,12 @@ def _optflow_state_fields() -> list[F8StateSpec]:
         F8StateSpec(
             name="weightsDir",
             label="Weights Dir",
-            description="Directory containing *.yaml + *.onnx model files.",
+            description="Directory containing *.yaml + *.onnx model files. Reset to the default relative path when exporting publish JSON.",
             valueSchema=string_schema(default="services/f8/dl/weights"),
             access=F8StateAccess.rw,
             required=True,
             showOnNode=False,
+            redactOnPublish=True,
         ),
         F8StateSpec(
             name="modelId",
@@ -378,11 +381,12 @@ def _optflow_state_fields() -> list[F8StateSpec]:
         F8StateSpec(
             name="modelYamlPath",
             label="Model YAML Path",
-            description="Optional explicit model yaml path (overrides modelId).",
+            description="Optional explicit model yaml path (overrides modelId). Cleared when exporting publish JSON.",
             valueSchema=string_schema(default=""),
             access=F8StateAccess.rw,
             required=True,
             showOnNode=False,
+            redactOnPublish=True,
         ),
         F8StateSpec(
             name="ortProvider",

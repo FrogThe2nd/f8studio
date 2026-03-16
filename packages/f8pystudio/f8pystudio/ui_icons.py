@@ -35,6 +35,8 @@ class StudioIcon(Enum):
     MESSAGE_CHATBOT = "message-chatbot.svg"
     X = "x.svg"
     ARTICLE = "article.svg"
+    PACKAGE_IMPORT = "package-import.svg"
+    PACKAGE_EXPORT = "package-export.svg"
 
 
 def icon_for(widget: QtWidgets.QWidget, token: StudioIcon) -> QtGui.QIcon:

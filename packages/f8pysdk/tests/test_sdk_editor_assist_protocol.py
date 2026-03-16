@@ -57,10 +57,12 @@ def test_state_spec_accepts_editor_assist_field() -> None:
         description="",
         valueSchema=string_schema(default=""),
         access=F8StateAccess.rw,
+        redactOnPublish=True,
         editorAssist=validate_editor_assist_spec(_editor_assist_payload()),
     )
     assert state.editorAssist is not None
     assert int(state.editorAssist.version) == 1
+    assert bool(state.redactOnPublish) is True
 
 
 def test_state_spec_still_forbids_unknown_fields() -> None:

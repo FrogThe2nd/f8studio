@@ -16,6 +16,7 @@
 #include <spdlog/spdlog.h>
 #include <nlohmann/json.hpp>
 
+#include "f8cppsdk/describe_schema.h"
 #include "f8cppsdk/data_bus.h"
 #include "f8cppsdk/f8_naming.h"
 #include "f8cppsdk/shm/video.h"
@@ -30,64 +31,15 @@
 namespace f8::implayer {
 
 using json = nlohmann::json;
+using f8::cppsdk::describe::schema_boolean;
+using f8::cppsdk::describe::schema_integer;
+using f8::cppsdk::describe::schema_number;
+using f8::cppsdk::describe::schema_object;
+using f8::cppsdk::describe::schema_string;
+using f8::cppsdk::describe::schema_string_enum;
+using f8::cppsdk::describe::state_field;
 
 namespace {
-
-json schema_string() {
-  return json{{"type", "string"}};
-}
-json schema_string_enum(std::initializer_list<const char*> items) {
-  json s = schema_string();
-  s["enum"] = json::array();
-  for (const char* it : items) {
-    if (it && *it)
-      s["enum"].push_back(it);
-  }
-  return s;
-}
-json schema_number() {
-  return json{{"type", "number"}};
-}
-json schema_number(double default_value, double minimum, double maximum) {
-  json s{{"type", "number"}};
-  s["default"] = default_value;
-  s["minimum"] = minimum;
-  s["maximum"] = maximum;
-  return s;
-}
-json schema_integer() {
-  return json{{"type", "integer"}};
-}
-json schema_boolean() {
-  return json{{"type", "boolean"}};
-}
-json schema_object(const json& props, const json& required = json::array()) {
-  json obj;
-  obj["type"] = "object";
-  obj["properties"] = props;
-  if (required.is_array())
-    obj["required"] = required;
-  obj["additionalProperties"] = false;
-  return obj;
-}
-
-json state_field(std::string name, const json& value_schema, std::string access, std::string label = {},
-                 std::string description = {}, bool show_on_node = false, std::string ui_control = {}) {
-  json sf;
-  sf["name"] = std::move(name);
-  sf["valueSchema"] = value_schema;
-  sf["access"] = std::move(access);
-  sf["required"] = true;
-  if (!label.empty())
-    sf["label"] = std::move(label);
-  if (!description.empty())
-    sf["description"] = std::move(description);
-  if (show_on_node)
-    sf["showOnNode"] = true;
-  if (!ui_control.empty())
-    sf["uiControl"] = std::move(ui_control);
-  return sf;
-}
 
 std::string new_video_id() {
   static std::atomic<std::uint64_t> g_seq{0};
@@ -2017,7 +1969,8 @@ json ImPlayerService::describe() {
   service["description"] = "C++ MPV-based player service with shared-memory video output.";
   service["stateFields"] = json::array({
       state_field("loop", schema_boolean(), "rw", "Loop", "Repeat playlist when reaching EOF.", false),
-      state_field("mediaUrl", schema_string(), "rw", "Media URL", "URI or file path to open.", true),
+      state_field("mediaUrl", schema_string(), "rw", "Media URL",
+                  "URI or local file path to open. Cleared when exporting publish JSON.", true, "", true),
       state_field("openxrMode", schema_string_enum({"off", "on", "auto"}), "rw", "OpenXR Mode",
                   "PCVR output: off|on|auto (auto retries when headset/runtime becomes available).", true),
       state_field("openxrMirrorWindow", schema_boolean(), "rw", "OpenXR Mirror",
@@ -2038,9 +1991,11 @@ json ImPlayerService::describe() {
                   "Auth Browser",
                   "Browser name for authMode=browser: chrome|chromium|edge|firefox|safari.", false),
       state_field("authBrowserProfile", schema_string(), "rw", "Auth Browser Profile",
-                  "Optional browser profile for authMode=browser. Sensitive: runtime-only; not persisted.", false),
+                  "Optional browser profile for authMode=browser. Local-only path-like metadata; cleared when exporting publish JSON.",
+                  false, "", true),
       state_field("authCookiesFile", schema_string(), "rw", "Auth Cookies File",
-                  "cookies.txt path for authMode=cookiesFile. Sensitive: runtime-only; not persisted.", false),
+                  "cookies.txt path for authMode=cookiesFile. Local-only file path; cleared when exporting publish JSON.",
+                  false, "", true),
       state_field("decodedWidth", schema_integer(), "ro", "Decoded Width",
                   "Decoded/source video width (on-screen uses this).", false),
       state_field("decodedHeight", schema_integer(), "ro", "Decoded Height",

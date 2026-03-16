@@ -8,12 +8,14 @@ from NodeGraphQt import NodeGraph
 from f8pysdk.msgspec_codec import dump_json
 from f8pysdk.generated import (
     F8DataPortSpec,
+    F8StateAccess,
+    F8StateSpec,
     F8OperatorSchemaVersion,
     F8OperatorSpec,
     F8ServiceSchemaVersion,
     F8ServiceSpec,
 )
-from f8pysdk.schema_helpers import any_schema
+from f8pysdk.schema_helpers import any_schema, boolean_schema, string_schema
 
 from f8pystudio.nodegraph.node_graph import F8StudioGraph
 from f8pystudio.nodegraph.missing_operator_basenode import F8StudioOperatorMissingNode
@@ -34,10 +36,10 @@ def _new_graph_with_registry(registered_types: dict[str, Any]) -> F8StudioGraph:
 def _service_spec_payload(service_class: str) -> dict[str, Any]:
     return dump_json(
         F8ServiceSpec(
-        schemaVersion=F8ServiceSchemaVersion.f8service_1,
-        serviceClass=service_class,
-        version="0.0.1",
-        label="Service",
+            schemaVersion=F8ServiceSchemaVersion.f8service_1,
+            serviceClass=service_class,
+            version="0.0.1",
+            label="Service",
         ),
         mode="json",
     )
@@ -153,6 +155,89 @@ def test_serialize_session_restores_original_type_and_strips_missing_flags() -> 
     assert "missingType" not in node["f8_sys"]
     assert "missingSpec" not in node["f8_sys"]
     assert "missingOriginalName" not in node["f8_sys"]
+
+
+def test_serialize_publish_session_redacts_only_marked_state_values() -> None:
+    graph = _new_graph_with_registry({})
+    input_layout = {
+        "nodes": {
+            "svcA": {
+                "type_": "svc.f8.implayer",
+                "f8_spec": dump_json(
+                    F8ServiceSpec(
+                        schemaVersion=F8ServiceSchemaVersion.f8service_1,
+                        serviceClass="f8.implayer",
+                        version="0.0.1",
+                        label="IM Player",
+                        stateFields=[
+                            F8StateSpec(
+                                name="authCookiesFile",
+                                valueSchema=string_schema(),
+                                access=F8StateAccess.rw,
+                                redactOnPublish=True,
+                            ),
+                            F8StateSpec(
+                                name="showHud",
+                                valueSchema=boolean_schema(default=True),
+                                access=F8StateAccess.rw,
+                            ),
+                        ],
+                    ),
+                    mode="json",
+                ),
+                "custom": {
+                    "authCookiesFile": "C:\\Users\\me\\cookies.txt",
+                    "showHud": False,
+                },
+            }
+        }
+    }
+
+    with patch.object(NodeGraph, "serialize_session", return_value=input_layout):
+        normal = graph.serialize_session()
+        published = graph.serialize_publish_session()
+
+    normal_custom = normal["layout"]["nodes"]["svcA"]["custom"]
+    publish_custom = published["layout"]["nodes"]["svcA"]["custom"]
+    assert normal_custom["authCookiesFile"] == "C:\\Users\\me\\cookies.txt"
+    assert normal_custom["showHud"] is False
+    assert publish_custom["authCookiesFile"] == ""
+    assert publish_custom["showHud"] is False
+    assert published["layout"]["nodes"]["svcA"]["f8_spec"]["stateFields"][0]["redactOnPublish"] is True
+
+
+def test_serialize_publish_session_uses_schema_default_when_redacting() -> None:
+    graph = _new_graph_with_registry({})
+    input_layout = {
+        "nodes": {
+            "svcA": {
+                "type_": "svc.f8.cvkit.templatematch",
+                "f8_spec": dump_json(
+                    F8ServiceSpec(
+                        schemaVersion=F8ServiceSchemaVersion.f8service_1,
+                        serviceClass="f8.cvkit.templatematch",
+                        version="0.0.1",
+                        label="Template Match",
+                        stateFields=[
+                            F8StateSpec(
+                                name="enabled",
+                                valueSchema=boolean_schema(default=True),
+                                access=F8StateAccess.rw,
+                                redactOnPublish=True,
+                            ),
+                        ],
+                    ),
+                    mode="json",
+                ),
+                "custom": {"enabled": False},
+            }
+        }
+    }
+
+    with patch.object(NodeGraph, "serialize_session", return_value=input_layout):
+        published = graph.serialize_publish_session()
+
+    assert published["layout"]["nodes"]["svcA"]["custom"]["enabled"] is True
 
 
 def test_build_node_classes_registers_missing_specialized_classes() -> None:
