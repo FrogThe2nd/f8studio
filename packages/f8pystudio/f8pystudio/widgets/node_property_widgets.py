@@ -86,7 +86,7 @@ from ..ui_icons import StudioIcon, icon_for
 
 logger = logging.getLogger(__name__)
 
-_PROPERTY_PANEL_MIN_WIDTH = 320
+_PROPERTY_PANEL_MIN_WIDTH = 250
 _TAB_PANEL_MARGIN = 4
 _TAB_PANEL_SPACING = 5
 _TAB_HEADER_STYLE = """
