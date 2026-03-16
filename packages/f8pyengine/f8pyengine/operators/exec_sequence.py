@@ -14,10 +14,10 @@ from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
 from ..constants import SERVICE_CLASS
 from ._ports import exec_out_ports
 
-OPERATOR_CLASS = "f8.sequence"
+OPERATOR_CLASS = "f8.exec_sequence"
 
 
-class SequenceRuntimeNode(OperatorNode):
+class ExecSequenceRuntimeNode(OperatorNode):
     """
     UE-style Sequence:
     - one exec input
@@ -37,7 +37,7 @@ class SequenceRuntimeNode(OperatorNode):
         return list(self._exec_out_ports)
 
 
-SequenceRuntimeNode.SPEC = F8OperatorSpec(
+ExecSequenceRuntimeNode.SPEC = F8OperatorSpec(
     schemaVersion=F8OperatorSchemaVersion.f8operator_1,
     serviceClass=SERVICE_CLASS,
     operatorClass=OPERATOR_CLASS,
@@ -55,9 +55,9 @@ def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNod
     reg = registry or RuntimeNodeRegistry.instance()
 
     def _factory(node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any]) -> OperatorNode:
-        return SequenceRuntimeNode(node_id=node_id, node=node, initial_state=initial_state)
+        return ExecSequenceRuntimeNode(node_id=node_id, node=node, initial_state=initial_state)
 
     reg.register(SERVICE_CLASS, OPERATOR_CLASS, _factory, overwrite=True)
-    reg.register_operator_spec(SequenceRuntimeNode.SPEC, overwrite=True)
+    reg.register_operator_spec(ExecSequenceRuntimeNode.SPEC, overwrite=True)
     return reg
 

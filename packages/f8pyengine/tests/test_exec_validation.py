@@ -119,7 +119,7 @@ class ExecValidationTests(unittest.IsolatedAsyncioTestCase):
         bus, service, runtime = await self._setup_service()
         try:
             tick = _node(node_id="tick1", operator_class="f8.tick", exec_in=[], exec_out=["exec"])
-            seq = _node(node_id="seq1", operator_class="f8.sequence", exec_in=["exec"], exec_out=["exec"])
+            seq = _node(node_id="seq1", operator_class="f8.exec_sequence", exec_in=["exec"], exec_out=["exec"])
             edges = [
                 _exec_edge(edge_id="e1", from_node="tick1", from_port="exec", to_node="seq1", to_port="exec"),
                 _exec_edge(edge_id="e2", from_node="seq1", from_port="exec", to_node="seq1", to_port="exec"),
@@ -134,9 +134,9 @@ class ExecValidationTests(unittest.IsolatedAsyncioTestCase):
         bus, service, runtime = await self._setup_service()
         try:
             tick = _node(node_id="tick1", operator_class="f8.tick", exec_in=[], exec_out=["exec"])
-            seq = _node(node_id="seq1", operator_class="f8.sequence", exec_in=["exec"], exec_out=["exec"])
-            a = _node(node_id="a", operator_class="f8.sequence", exec_in=["exec"], exec_out=["exec"])
-            b = _node(node_id="b", operator_class="f8.sequence", exec_in=["exec"], exec_out=["exec"])
+            seq = _node(node_id="seq1", operator_class="f8.exec_sequence", exec_in=["exec"], exec_out=["exec"])
+            a = _node(node_id="a", operator_class="f8.exec_sequence", exec_in=["exec"], exec_out=["exec"])
+            b = _node(node_id="b", operator_class="f8.exec_sequence", exec_in=["exec"], exec_out=["exec"])
             edges = [
                 _exec_edge(edge_id="e1", from_node="tick1", from_port="exec", to_node="seq1", to_port="exec"),
                 _exec_edge(edge_id="e2", from_node="seq1", from_port="exec", to_node="a", to_port="exec"),

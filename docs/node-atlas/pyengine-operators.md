@@ -6,7 +6,7 @@
 | Operator | Label | Main Role | Canonical Doc |
 | --- | --- | --- | --- |
 | `f8.tick` | Tick | Source operator that generates periodic exec ticks. | [Open](../modules/services/f8-pyengine.md#operator-f8-tick) |
-| `f8.sequence` | Sequence | Exec flow splitter: triggers its exec outputs in order (requires DFS scheduling). | [Open](../modules/services/f8-pyengine.md#operator-f8-sequence) |
+| `f8.exec_sequence` | Exec Sequence | Exec flow splitter: triggers its exec outputs in order (requires DFS scheduling). | [Open](../modules/services/f8-pyengine.md#operator-f8-sequence) |
 | `f8.cosine` | Cosine | Cosine phase transform. | [Open](../modules/services/f8-pyengine.md#operator-f8-cosine) |
 | `f8.tempest` | Tempest | Tempest phase transform (phase-modulated cosine). | [Open](../modules/services/f8-pyengine.md#operator-f8-tempest) |
 | `f8.phase` | Phase | Phase accumulator. | [Open](../modules/services/f8-pyengine.md#operator-f8-phase) |

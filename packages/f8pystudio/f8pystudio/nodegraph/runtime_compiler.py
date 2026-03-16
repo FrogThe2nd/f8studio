@@ -201,18 +201,23 @@ def _inject_studio_auto_pull_triggers(graph: F8RuntimeGraph) -> tuple[F8RuntimeG
         if mode != "auto":
             continue
 
-        hz = _as_int(state_values.get("upstreamSampleHz", 10), default=10, minimum=1, maximum=120)
+        interval_ms = _as_int(
+            state_values.get("upstreamSampleIntervalMs", 100),
+            default=100,
+            minimum=8,
+            maximum=5000,
+        )
         src_key = (from_service_id, str(edge.fromOperatorId), str(edge.fromPort))
 
         group = by_source.get(src_key)
         if group is None:
             group = {
-                "sample_hz": hz,
+                "sample_interval_ms": interval_ms,
                 "consumers": set(),
             }
             by_source[src_key] = group
         group["consumers"].add(dst_node_id)
-        group["sample_hz"] = max(int(group["sample_hz"]), int(hz))
+        group["sample_interval_ms"] = min(int(group["sample_interval_ms"]), int(interval_ms))
 
     if not by_source:
         return graph, warnings
@@ -235,7 +240,7 @@ def _inject_studio_auto_pull_triggers(graph: F8RuntimeGraph) -> tuple[F8RuntimeG
             continue
 
         pull_node_id = _stable_id("auto_pull", from_service_id, from_node_id, from_port)
-        sample_hz = int(group["sample_hz"])
+        sample_interval_ms = int(group["sample_interval_ms"])
         trigger_port = "value"
 
         if pull_node_id not in nodes_by_id:
@@ -265,17 +270,17 @@ def _inject_studio_auto_pull_triggers(graph: F8RuntimeGraph) -> tuple[F8RuntimeG
                         showOnNode=False,
                     ),
                     F8StateSpec(
-                        name="autoTriggerHz",
-                        label="Auto Trigger Hz",
-                        description="Periodic pull frequency in Hz.",
-                        valueSchema=integer_schema(default=10, minimum=1, maximum=120),
+                        name="autoTriggerIntervalMs",
+                        label="Auto Trigger Interval (ms)",
+                        description="Periodic pull interval in milliseconds.",
+                        valueSchema=integer_schema(default=100, minimum=8, maximum=5000),
                         access=F8StateAccess.rw,
                         showOnNode=False,
                     ),
                 ],
                 stateValues={
                     "autoTriggerEnabled": True,
-                    "autoTriggerHz": sample_hz,
+                    "autoTriggerIntervalMs": sample_interval_ms,
                 },
             )
             new_nodes.append(pull_node)

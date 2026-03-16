@@ -15,14 +15,13 @@ from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
 
 from .constants import SERVICE_CLASS
 from .operators.serial_out import register_operator as register_serial_out_operator
-from .operators.sequence import register_operator as register_sequence_operator
+from .operators.exec_sequence import register_operator as register_exec_sequence_operator
 from .operators.signal import register_operator as register_signal_operator
 from .operators.print import register_operator as register_print_operator
 from .operators.pull import register_operator as register_pull_operator
 from .operators.program_wave import register_operator as register_program_wave_operator
 from .operators.tick import register_operator as register_tick_operator
 from .operators.envelope import register_operator as register_envelope_operator
-from .operators.axis_envelope import register_operator as register_axis_envelope_operator
 from .operators.smooth_filter import register_operator as register_smooth_filter_operator
 from .operators.range_map import register_operator as register_range_map_operator
 from .operators.rate_limiter import register_operator as register_rate_limiter_operator
@@ -47,6 +46,11 @@ from .operators.bone_selector import register_operator as register_bone_selector
 from .operators.wave_expr import register_operator as register_wave_expr_operator
 from .operators.wave_pattern import register_operator as register_wave_pattern_operator
 from .operators.wave_funscript import register_operator as register_wave_funscript_operator
+from .operators.detrend import register_operator as register_detrend_operator
+from .operators.lowpass_filter import register_operator as register_lowpass_filter_operator
+from .operators.highpass_filter import register_operator as register_highpass_filter_operator
+from .operators.bandpass_filter import register_operator as register_bandpass_filter_operator
+from .operators.periodicity_detector import register_operator as register_periodicity_detector_operator
 from .pyengine_service_node import PyEngineServiceNode
 
 
@@ -92,13 +96,12 @@ def register_pyengine_specs(registry: RuntimeNodeRegistry | None = None) -> Runt
     reg.register_service(SERVICE_CLASS, _service_factory, overwrite=True)
 
     register_tick_operator(reg)
-    register_sequence_operator(reg)
+    register_exec_sequence_operator(reg)
     register_signal_operator(reg)
     register_print_operator(reg)
     register_pull_operator(reg)
     register_program_wave_operator(reg)
     register_envelope_operator(reg)
-    register_axis_envelope_operator(reg)
     register_smooth_filter_operator(reg)
     register_range_map_operator(reg)
     register_rate_limiter_operator(reg)
@@ -124,4 +127,9 @@ def register_pyengine_specs(registry: RuntimeNodeRegistry | None = None) -> Runt
     register_wave_expr_operator(reg)
     register_wave_pattern_operator(reg)
     register_wave_funscript_operator(reg)
+    register_detrend_operator(reg)
+    register_lowpass_filter_operator(reg)
+    register_highpass_filter_operator(reg)
+    register_bandpass_filter_operator(reg)
+    register_periodicity_detector_operator(reg)
     return reg

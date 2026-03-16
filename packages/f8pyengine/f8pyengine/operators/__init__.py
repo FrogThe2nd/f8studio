@@ -8,7 +8,6 @@ from .serial_out import SerialOutRuntimeNode
 from .tick import TickRuntimeNode
 from .udp_skeleton import UdpSkeletonRuntimeNode
 from .envelope import EnvelopeRuntimeNode
-from .axis_envelope import AxisEnvelopeRuntimeNode
 from .smooth_filter import SmoothFilterRuntimeNode
 from .range_map import RangeMapRuntimeNode
 from .rate_limiter import RateLimiterRuntimeNode
@@ -32,6 +31,11 @@ from .bone_selector import BoneSelectorRuntimeNode
 from .wave_expr import WaveExprRuntimeNode
 from .wave_pattern import WavePatternRuntimeNode
 from .wave_funscript import WaveFunscriptRuntimeNode
+from .detrend import DetrendRuntimeNode
+from .lowpass_filter import LowpassFilterRuntimeNode
+from .highpass_filter import HighpassFilterRuntimeNode
+from .bandpass_filter import BandpassFilterRuntimeNode
+from .periodicity_detector import PeriodicityDetectorRuntimeNode
 
 __all__ = [
     "PrintRuntimeNode",
@@ -45,7 +49,6 @@ __all__ = [
     "TickRuntimeNode",
     "UdpSkeletonRuntimeNode",
     "EnvelopeRuntimeNode",
-    "AxisEnvelopeRuntimeNode",
     "SmoothFilterRuntimeNode",
     "RangeMapRuntimeNode",
     "RateLimiterRuntimeNode",
@@ -66,4 +69,9 @@ __all__ = [
     "WaveExprRuntimeNode",
     "WavePatternRuntimeNode",
     "WaveFunscriptRuntimeNode",
+    "DetrendRuntimeNode",
+    "LowpassFilterRuntimeNode",
+    "HighpassFilterRuntimeNode",
+    "BandpassFilterRuntimeNode",
+    "PeriodicityDetectorRuntimeNode",
 ]

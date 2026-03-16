@@ -47,7 +47,12 @@ class PullRuntimeNode(OperatorNode):
         self._stop = asyncio.Event()
         self._last_log_ms_by_sig: dict[str, int] = {}
         self._auto_trigger_enabled = self._coerce_bool(self._initial_state.get("autoTriggerEnabled"), default=False)
-        self._auto_trigger_hz = self._coerce_int(self._initial_state.get("autoTriggerHz"), default=10, minimum=1, maximum=120)
+        self._auto_trigger_interval_ms = self._coerce_int(
+            self._initial_state.get("autoTriggerIntervalMs"),
+            default=100,
+            minimum=8,
+            maximum=5000,
+        )
 
     def _should_log(self, sig: str, *, now_ms: int, interval_ms: int = 2000) -> bool:
         last_ms = int(self._last_log_ms_by_sig.get(sig, 0))
@@ -96,7 +101,7 @@ class PullRuntimeNode(OperatorNode):
     async def _run_periodic(self) -> None:
         while not self._stop.is_set():
             enabled = bool(self._auto_trigger_enabled)
-            period_s = 1.0 / float(max(1, int(self._auto_trigger_hz)))
+            period_s = float(max(8, int(self._auto_trigger_interval_ms))) / 1000.0
 
             if enabled:
                 exec_id = int(time.time() * 1000.0)
@@ -133,8 +138,8 @@ class PullRuntimeNode(OperatorNode):
         if name == "autoTriggerEnabled":
             self._auto_trigger_enabled = self._coerce_bool(value, default=False)
             return
-        if name == "autoTriggerHz":
-            self._auto_trigger_hz = self._coerce_int(value, default=10, minimum=1, maximum=120)
+        if name == "autoTriggerIntervalMs":
+            self._auto_trigger_interval_ms = self._coerce_int(value, default=100, minimum=8, maximum=5000)
             return
 
     async def validate_state(self, field: str, value: Any, *, ts_ms: int, meta: dict[str, Any]) -> Any:
@@ -142,8 +147,8 @@ class PullRuntimeNode(OperatorNode):
         name = str(field or "").strip()
         if name == "autoTriggerEnabled":
             return self._coerce_bool(value, default=False)
-        if name == "autoTriggerHz":
-            return self._coerce_int(value, default=10, minimum=1, maximum=120)
+        if name == "autoTriggerIntervalMs":
+            return self._coerce_int(value, default=100, minimum=8, maximum=5000)
         return value
 
     @staticmethod
@@ -215,10 +220,10 @@ PullRuntimeNode.SPEC = F8OperatorSpec(
             showOnNode=True,
         ),
         F8StateSpec(
-            name="autoTriggerHz",
-            label="Auto Trigger Hz",
-            description="Periodic pull frequency in Hz when Auto Trigger is enabled.",
-            valueSchema=integer_schema(default=10, minimum=1, maximum=120),
+            name="autoTriggerIntervalMs",
+            label="Auto Trigger Interval (ms)",
+            description="Periodic pull interval in milliseconds when Auto Trigger is enabled.",
+            valueSchema=integer_schema(default=100, minimum=8, maximum=5000),
             access=F8StateAccess.rw,
             required=True,
             showOnNode=True,
