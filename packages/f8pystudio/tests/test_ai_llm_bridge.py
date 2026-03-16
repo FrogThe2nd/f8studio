@@ -30,6 +30,7 @@ def test_format_assist_context_includes_node_metadata_outputs_and_descriptions()
             service_class="f8.pyengine",
             operator_class="f8.python_script",
             node_description="Execute custom python logic.",
+            node_instance_purpose="Transform incoming tracks into a compact summary for this graph.",
             target_field_kind="state",
             target_field_name="code",
             target_field_label="Script Body",
@@ -74,7 +75,8 @@ def test_format_assist_context_includes_node_metadata_outputs_and_descriptions()
     assert "- Kind: `operator`" in text
     assert "- Service: `f8.pyengine`" in text
     assert "- Operator: `f8.python_script`" in text
-    assert "- Description: Execute custom python logic." in text
+    assert "- Type Description: Execute custom python logic." in text
+    assert "- Instance Purpose: Transform incoming tracks into a compact summary for this graph." in text
     assert "## Input Ports (`dataInPorts`)" in text
     assert "`track` (required, schema=object<frameId>) | description=Incoming track payload." in text
     assert "## Output Ports (`dataOutPorts`)" in text

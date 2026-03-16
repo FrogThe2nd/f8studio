@@ -301,12 +301,22 @@ def _field_target_kwargs(
     }
 
 
+def _node_instance_purpose(node: Any | None) -> str:
+    if node is None:
+        return ""
+    try:
+        return str(node.nodePurpose or "").strip()
+    except Exception:
+        return ""
+
+
 def editor_assist_context_for_field(
     spec: F8ServiceSpec | F8OperatorSpec | None,
     *,
     field_kind: Literal["state", "port", "prop"],
     field_key: str,
     language: str,
+    node: Any | None = None,
 ) -> EditorAssistContext | None:
     lang = str(language or "").strip().lower()
     key = str(field_key or "").strip()
@@ -345,6 +355,7 @@ def editor_assist_context_for_field(
                 if isinstance(spec.description, msgspec.UnsetType)
                 else str(spec.description or "").strip()
             ),
+            node_instance_purpose=_node_instance_purpose(node),
             **target_kwargs,
             data_in_ports=_spec_data_in_ports(spec),
             data_out_ports=_spec_data_out_ports(spec),
@@ -380,6 +391,7 @@ def editor_assist_context_for_field(
                 if isinstance(spec.description, msgspec.UnsetType)
                 else str(spec.description or "").strip()
             ),
+            node_instance_purpose=_node_instance_purpose(node),
             **target_kwargs,
             data_in_ports=_spec_data_in_ports(spec),
             data_out_ports=_spec_data_out_ports(spec),
@@ -601,6 +613,7 @@ def editor_assist_context_for_field(
         service_class=str(spec.serviceClass or "").strip(),
         operator_class=str(spec.operatorClass or "").strip() if isinstance(spec, F8OperatorSpec) else "",
         node_description="" if isinstance(spec.description, msgspec.UnsetType) else str(spec.description or "").strip(),
+        node_instance_purpose=_node_instance_purpose(node),
         **target_kwargs,
         support_files=sorted_files,
         overlay_prefix=overlay_prefix,

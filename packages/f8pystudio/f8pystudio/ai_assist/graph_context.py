@@ -91,6 +91,7 @@ class GraphContextNodeSummary:
     service_class: str
     operator_class: str
     description: str
+    instance_purpose: str
     data_in_ports: tuple[GraphContextPortSummary, ...]
     data_out_ports: tuple[GraphContextPortSummary, ...]
     state_fields: tuple[GraphContextStateFieldSummary, ...]
@@ -377,6 +378,7 @@ def _node_summary(node: Any, *, include_current_values: bool, is_selected: bool)
         service_class=_service_class(spec),
         operator_class=_operator_class(spec),
         description=_text_or_empty(spec.description),
+        instance_purpose=_node_instance_purpose(node),
         data_in_ports=tuple(_port_summary(port) for port in list(spec.dataInPorts or [])),
         data_out_ports=tuple(_port_summary(port) for port in list(spec.dataOutPorts or [])),
         state_fields=tuple(_state_field_summary(field) for field in state_fields),
@@ -396,7 +398,9 @@ def _format_detailed_node_summary(node: GraphContextNodeSummary) -> list[str]:
     if node.operator_class:
         lines.append(f"- Operator Class: `{node.operator_class}`")
     if node.description:
-        lines.append(f"- Description: {node.description}")
+        lines.append(f"- Type Description: {node.description}")
+    if node.instance_purpose:
+        lines.append(f"- Instance Purpose: {node.instance_purpose}")
     if node.data_in_ports:
         lines.append("- Input Ports:")
         lines.extend(_indent_lines(_format_port_lines(node.data_in_ports)))
@@ -432,10 +436,22 @@ def _format_compact_node_summary(node: GraphContextNodeSummary) -> list[str]:
     if node.data_out_ports:
         ports_bits.append("out=" + ", ".join(port.name for port in node.data_out_ports[:4]))
     ports_suffix = f" | {'; '.join(ports_bits)}" if ports_bits else ""
-    description_suffix = f" | {node.description}" if node.description else ""
+    detail_bits: list[str] = []
+    if node.description:
+        detail_bits.append(f"type={node.description}")
+    if node.instance_purpose:
+        detail_bits.append(f"purpose={node.instance_purpose}")
+    description_suffix = f" | {'; '.join(detail_bits)}" if detail_bits else ""
     return [
         f"- {node.node_name} (`{node.node_id}`, {' / '.join(type_bits)}){ports_suffix}{description_suffix}",
     ]
+
+
+def _node_instance_purpose(node: Any) -> str:
+    try:
+        return str(node.nodePurpose or "").strip()
+    except Exception:
+        return ""
 
 
 def _indent_lines(lines: list[str]) -> list[str]:

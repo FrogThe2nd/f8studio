@@ -56,6 +56,11 @@ def _operator_spec_with_field_editor_assist(
     return validate_as(F8OperatorSpec, base)
 
 
+class _NodeWithPurpose:
+    def __init__(self, purpose: str) -> None:
+        self.nodePurpose = purpose
+
+
 def test_editor_assist_context_for_field_accepts_valid_python_payload() -> None:
     spec = _operator_spec_with_field_editor_assist(
         {
@@ -81,6 +86,31 @@ def test_editor_assist_context_for_field_accepts_valid_python_payload() -> None:
     assert tuple(port.name for port in context.data_in_ports) == ("x", "y", "z")
     assert tuple(port.name for port in context.data_out_ports) == ("result",)
     assert tuple(field.name for field in context.state_fields) == ("code",)
+    assert context.node_instance_purpose == ""
+
+
+def test_editor_assist_context_for_field_includes_instance_purpose_when_node_is_provided() -> None:
+    spec = _operator_spec_with_field_editor_assist(
+        {
+            "version": 1,
+            "language": "python",
+            "python": {
+                "support_files": {"f8_script_api.pyi": "class F8PyEngineContext:\n    ...\n"},
+                "overlay_prefix": "from f8_script_api import *\n",
+            },
+        },
+    )
+
+    context = editor_assist_context_for_field(
+        spec,
+        field_kind="state",
+        field_key="code",
+        language="python",
+        node=_NodeWithPurpose("Extract the final bone map for the avatar rig."),
+    )
+
+    assert context is not None
+    assert context.node_instance_purpose == "Extract the final bone map for the avatar rig."
 
 
 def test_editor_assist_context_for_field_returns_error_when_protocol_missing() -> None:

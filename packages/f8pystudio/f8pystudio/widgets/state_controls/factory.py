@@ -36,7 +36,7 @@ def _editor_assist_context_for_field(node: Any, prop_name: str, language: str) -
         spec = node.spec
     except Exception:
         return None
-    return editor_assist_context_for_field(spec, field_kind="state", field_key=field_name, language=lang)
+    return editor_assist_context_for_field(spec, field_kind="state", field_key=field_name, language=lang, node=node)
 
 
 def _editor_session_key_for_node(node: Any, prop_name: str) -> EditorSessionKey | None:

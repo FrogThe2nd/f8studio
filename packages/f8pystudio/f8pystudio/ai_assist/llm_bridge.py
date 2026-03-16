@@ -229,7 +229,9 @@ class AiLlmBridge(QtCore.QObject):
         if ctx.operator_class:
             meta_lines.append(f"- Operator: `{ctx.operator_class}`")
         if ctx.node_description:
-            meta_lines.append(f"- Description: {ctx.node_description}")
+            meta_lines.append(f"- Type Description: {ctx.node_description}")
+        if ctx.node_instance_purpose:
+            meta_lines.append(f"- Instance Purpose: {ctx.node_instance_purpose}")
         if meta_lines:
             lines.append("## Node Metadata")
             lines.extend(meta_lines)

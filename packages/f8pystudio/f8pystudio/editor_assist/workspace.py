@@ -78,6 +78,7 @@ class EditorAssistContext:
     service_class: str = ""
     operator_class: str = ""
     node_description: str = ""
+    node_instance_purpose: str = ""
     target_field_kind: str = ""
     target_field_name: str = ""
     target_field_label: str = ""

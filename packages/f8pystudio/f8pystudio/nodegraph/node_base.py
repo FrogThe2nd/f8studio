@@ -61,6 +61,14 @@ class F8StudioBaseNode(BaseNode):
     def svcId(self, value: Any) -> None:
         self.model.svcId = value
 
+    @property
+    def nodePurpose(self) -> str:
+        return self.model.nodePurpose
+
+    @nodePurpose.setter
+    def nodePurpose(self, value: str) -> None:
+        self.model.nodePurpose = value
+
     def update_model(self):
         """
         Extend NodeGraphQt model update so `spec` + system fields persist in

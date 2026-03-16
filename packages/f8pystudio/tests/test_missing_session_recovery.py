@@ -132,6 +132,7 @@ def test_serialize_session_restores_original_type_and_strips_missing_flags() -> 
                 "f8_spec": _service_spec_payload("f8.missing"),
                 "f8_sys": {
                     "svcId": "svcA",
+                    "nodePurpose": "Keep this placeholder node labelled for operator recovery.",
                     "missingLocked": True,
                     "missingType": "svc.f8.cvkit.denseoptflow",
                     "missingReason": "unregistered node type",
@@ -151,6 +152,7 @@ def test_serialize_session_restores_original_type_and_strips_missing_flags() -> 
     assert node["f8_spec"]["serviceClass"] == "f8.cvkit.denseoptflow"
     assert node["name"] == "DenseFlow"
     assert node["f8_sys"]["svcId"] == "svcA"
+    assert node["f8_sys"]["nodePurpose"] == "Keep this placeholder node labelled for operator recovery."
     assert "missingLocked" not in node["f8_sys"]
     assert "missingType" not in node["f8_sys"]
     assert "missingSpec" not in node["f8_sys"]

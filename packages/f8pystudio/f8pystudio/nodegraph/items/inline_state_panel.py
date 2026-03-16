@@ -99,7 +99,7 @@ def _editor_assist_context(
     if spec is None:
         return None
 
-    return editor_assist_context_for_field(spec, field_kind="state", field_key=field_name, language=lang)
+    return editor_assist_context_for_field(spec, field_kind="state", field_key=field_name, language=lang, node=node)
 
 
 def inline_state_input_is_connected(node_item: Any, field_name: str) -> bool:

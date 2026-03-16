@@ -33,6 +33,7 @@ from ..editor_assist.protocol import editor_assist_context_for_field
 from ..editor_assist.workspace import EditorAssistContext
 from .property_value_widgets import (
     F8CodeButtonPropWidget as _F8CodeButtonPropWidget,
+    F8InlineCodePropWidget as _F8InlineCodePropWidget,
     F8JsonPropTextEdit as _F8JsonPropTextEdit,
 )
 from .studio_node_code_editor import get_node_text, resolve_node, set_node_text, studio_session_key
@@ -85,6 +86,50 @@ from ..ui_icons import StudioIcon, icon_for
 
 logger = logging.getLogger(__name__)
 
+_PROPERTY_PANEL_MIN_WIDTH = 320
+_TAB_PANEL_MARGIN = 4
+_TAB_PANEL_SPACING = 5
+_TAB_HEADER_STYLE = """
+QTabWidget#f8NodePropTabs::pane {
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 6px;
+    background: rgba(18, 18, 18, 0.92);
+    top: -1px;
+}
+QTabWidget#f8NodePropTabs QTabBar {
+    qproperty-drawBase: 0;
+}
+QTabWidget#f8NodePropTabs QTabBar::tab {
+    color: rgba(220, 220, 220, 0.88);
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    border-bottom-color: rgba(255, 255, 255, 0.03);
+    border-top-left-radius: 5px;
+    border-top-right-radius: 5px;
+    padding: 4px 7px;
+    margin-right: 1px;
+    margin-top: 1px;
+    min-width: 0px;
+}
+QTabWidget#f8NodePropTabs QTabBar::tab:hover {
+    color: rgba(245, 245, 245, 0.96);
+    background: rgba(255, 255, 255, 0.09);
+    border-color: rgba(255, 255, 255, 0.12);
+}
+QTabWidget#f8NodePropTabs QTabBar::tab:selected {
+    color: rgb(255, 255, 255);
+    background: rgba(42, 42, 42, 0.96);
+    border-color: rgba(255, 255, 255, 0.14);
+    border-bottom-color: rgba(42, 42, 42, 0.96);
+    margin-top: 0px;
+    padding-top: 5px;
+    padding-bottom: 5px;
+}
+QTabWidget#f8NodePropTabs QTabBar::tab:!selected {
+    margin-top: 1px;
+}
+"""
+
 
 def _apply_read_only_widget(widget: QtWidgets.QWidget) -> None:
     _set_widget_read_only(widget, read_only=True)
@@ -92,6 +137,28 @@ def _apply_read_only_widget(widget: QtWidgets.QWidget) -> None:
 
 def _set_read_only_widget(widget: QtWidgets.QWidget, *, read_only: bool) -> None:
     _set_widget_read_only(widget, read_only=bool(read_only))
+
+
+def _wrap_tab_page(content: QtWidgets.QWidget) -> QtWidgets.QWidget:
+    page = QtWidgets.QWidget()
+    layout = QtWidgets.QVBoxLayout(page)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(0)
+
+    scroll = QtWidgets.QScrollArea(page)
+    scroll.setWidgetResizable(True)
+    scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
+    scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    scroll.setStyleSheet("QScrollArea { background: transparent; border: 0; }")
+    try:
+        scroll.viewport().setAutoFillBackground(False)
+    except (AttributeError, RuntimeError, TypeError):
+        pass
+    content.setObjectName("f8TabPageContent")
+    content.setStyleSheet("#f8TabPageContent { background: transparent; }")
+    scroll.setWidget(content)
+    layout.addWidget(scroll)
+    return page
 
 
 def _state_input_is_connected(node: Any, field_name: str) -> bool:
@@ -143,7 +210,7 @@ def _build_editor_assist_context(
     if spec is None:
         return None
     return editor_assist_context_for_field(
-        spec, field_kind="state", field_key=field_name, language=language
+        spec, field_kind="state", field_key=field_name, language=language, node=node
     )
 
 
@@ -299,12 +366,15 @@ class _F8StateContainer(QtWidgets.QWidget):
         super(_F8StateContainer, self).__init__(parent)
         self.__layout = QtWidgets.QGridLayout()
         self.__layout.setColumnStretch(1, 1)
-        self.__layout.setSpacing(6)
+        self.__layout.setSpacing(4)
         self.__layout.setColumnMinimumWidth(0, 90)
 
         layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(_TAB_PANEL_MARGIN, _TAB_PANEL_MARGIN, _TAB_PANEL_MARGIN, _TAB_PANEL_MARGIN)
+        layout.setSpacing(_TAB_PANEL_SPACING)
         layout.setAlignment(QtCore.Qt.AlignTop)
         layout.addLayout(self.__layout)
+        layout.addStretch(1)
 
         self.__property_widgets = {}
 
@@ -334,12 +404,10 @@ class _F8StateContainer(QtWidgets.QWidget):
             widget.setToolTip(name)
             label_widget.setToolTip(name)
         widget.set_value(value)
-        row = self.__layout.rowCount()
-        if row > 0:
-            row += 1
+        row = len(self.__property_widgets)
 
         label_flags = QtCore.Qt.AlignCenter | QtCore.Qt.AlignRight
-        if widget.__class__.__name__ == "PropTextEdit":
+        if isinstance(widget, (QtWidgets.QTextEdit, QtWidgets.QPlainTextEdit)) or widget.__class__.__name__ == "PropTextEdit":
             label_flags = label_flags | QtCore.Qt.AlignTop
 
         self.__layout.addWidget(label_widget, row, 0, label_flags)
@@ -409,14 +477,14 @@ class _F8StateStackContainer(QtWidgets.QWidget):
         self.__property_widgets: dict[str, QtWidgets.QWidget] = {}
 
         self._layout = QtWidgets.QVBoxLayout(self)
-        self._layout.setContentsMargins(0, 0, 0, 0)
-        self._layout.setSpacing(10)
+        self._layout.setContentsMargins(_TAB_PANEL_MARGIN, _TAB_PANEL_MARGIN, _TAB_PANEL_MARGIN, _TAB_PANEL_MARGIN)
+        self._layout.setSpacing(_TAB_PANEL_SPACING)
         self._layout.setAlignment(QtCore.Qt.AlignTop)
 
         self._header = QtWidgets.QWidget()
         h = QtWidgets.QHBoxLayout(self._header)
         h.setContentsMargins(0, 0, 0, 0)
-        h.setSpacing(6)
+        h.setSpacing(4)
         title = QtWidgets.QLabel("State Fields")
         f = title.font()
         f.setBold(True)
@@ -449,12 +517,12 @@ class _F8StateStackContainer(QtWidgets.QWidget):
         section = QtWidgets.QWidget()
         v = QtWidgets.QVBoxLayout(section)
         v.setContentsMargins(0, 0, 0, 0)
-        v.setSpacing(6)
+        v.setSpacing(4)
 
         header = QtWidgets.QWidget()
         h = QtWidgets.QHBoxLayout(header)
         h.setContentsMargins(0, 0, 0, 0)
-        h.setSpacing(6)
+        h.setSpacing(4)
 
         label_widget = _F8StateStackContainer._ElideLabel(label)
         f = label_widget.font()
@@ -543,6 +611,86 @@ class _F8StateStackContainer(QtWidgets.QWidget):
         return self.__property_widgets
 
 
+class _F8LabeledStackContainer(QtWidgets.QWidget):
+    """
+    Generic stacked property container:
+      row1: label
+      row2: editor widget
+
+    Used for tabs like "Node" where we want the same vertical rhythm as
+    State/Commands/Port without the extra state-field action buttons.
+    """
+
+    class _ElideLabel(QtWidgets.QLabel):
+        def __init__(self, text: str, parent: QtWidgets.QWidget | None = None):
+            super().__init__("", parent)
+            self._full_text = str(text or "")
+            self.setText(self._full_text)
+
+        def setText(self, text: str) -> None:  # type: ignore[override]
+            self._full_text = str(text or "")
+            self._update_elide()
+
+        def resizeEvent(self, event):  # type: ignore[override]
+            super().resizeEvent(event)
+            self._update_elide()
+
+        def _update_elide(self) -> None:
+            try:
+                fm = QtGui.QFontMetrics(self.font())
+                elided = fm.elidedText(self._full_text, QtCore.Qt.ElideRight, max(10, int(self.width())))
+                super().setText(elided)
+            except Exception:
+                super().setText(self._full_text)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.__property_widgets: dict[str, QtWidgets.QWidget] = {}
+
+        self._layout = QtWidgets.QVBoxLayout(self)
+        self._layout.setContentsMargins(_TAB_PANEL_MARGIN, _TAB_PANEL_MARGIN, _TAB_PANEL_MARGIN, _TAB_PANEL_MARGIN)
+        self._layout.setSpacing(_TAB_PANEL_SPACING)
+        self._layout.setAlignment(QtCore.Qt.AlignTop)
+        self._layout.addStretch(1)
+
+    def add_widget(self, name, widget, value, label=None, tooltip=None):
+        label = str(label or name or "")
+        name_text = str(name or "")
+        section = QtWidgets.QWidget(self)
+        section.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Maximum)
+        layout = QtWidgets.QVBoxLayout(section)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+
+        label_widget = _F8LabeledStackContainer._ElideLabel(label)
+        font = label_widget.font()
+        font.setBold(True)
+        label_widget.setFont(font)
+        label_widget.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Fixed)
+
+        if tooltip:
+            tip = f"{name_text}\n{tooltip}"
+            label_widget.setToolTip(tip)
+            widget.setToolTip(tip)
+        else:
+            label_widget.setToolTip(name_text)
+            widget.setToolTip(name_text)
+
+        widget.set_value(value)
+        layout.addWidget(label_widget, 0, QtCore.Qt.AlignTop)
+        layout.addWidget(widget, 0, QtCore.Qt.AlignTop)
+
+        insert_at = max(0, self._layout.count() - 1)
+        self._layout.insertWidget(insert_at, section, 0, QtCore.Qt.AlignTop)
+        self.__property_widgets[name] = widget
+
+    def get_widget(self, name):
+        return self.__property_widgets.get(name)
+
+    def get_all_widgets(self):
+        return self.__property_widgets
+
+
 def _icon_from_style(
     widget: QtWidgets.QWidget, style_icon: QtWidgets.QStyle.StandardPixmap, fallback: str
 ) -> QtGui.QIcon:
@@ -596,8 +744,8 @@ class _F8SpecListSection(QtWidgets.QWidget):
         self._list_layout.setSpacing(4)
 
         outer = QtWidgets.QVBoxLayout(self)
-        outer.setContentsMargins(6, 6, 6, 6)
-        outer.setSpacing(6)
+        outer.setContentsMargins(_TAB_PANEL_MARGIN, _TAB_PANEL_MARGIN, _TAB_PANEL_MARGIN, _TAB_PANEL_MARGIN)
+        outer.setSpacing(4)
         outer.addLayout(header)
         outer.addLayout(self._list_layout)
 
@@ -662,7 +810,7 @@ class _F8SpecNameRow(QtWidgets.QWidget):
 
         layout = QtWidgets.QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(4)
+        layout.setSpacing(3)
         layout.addWidget(self.name_edit, 1)
         layout.addWidget(self.edit_btn)
         layout.addWidget(self.eye_btn)
@@ -977,22 +1125,17 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
 
         content = QtWidgets.QWidget()
         v = QtWidgets.QVBoxLayout(content)
-        v.setContentsMargins(6, 6, 6, 6)
-        v.setSpacing(8)
+        v.setContentsMargins(_TAB_PANEL_MARGIN, _TAB_PANEL_MARGIN, _TAB_PANEL_MARGIN, _TAB_PANEL_MARGIN)
+        v.setSpacing(4)
         v.addWidget(self._sec_exec_in)
         v.addWidget(self._sec_exec_out)
         v.addWidget(self._sec_data_in)
         v.addWidget(self._sec_data_out)
         v.addStretch(1)
 
-        scroll = QtWidgets.QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
-        scroll.setWidget(content)
-
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(scroll)
+        layout.addWidget(_wrap_tab_page(content))
 
         self._load_from_spec()
 
@@ -1640,19 +1783,14 @@ class _F8SpecCommandEditor(QtWidgets.QWidget):
 
         content = QtWidgets.QWidget()
         v = QtWidgets.QVBoxLayout(content)
-        v.setContentsMargins(6, 6, 6, 6)
-        v.setSpacing(8)
+        v.setContentsMargins(_TAB_PANEL_MARGIN, _TAB_PANEL_MARGIN, _TAB_PANEL_MARGIN, _TAB_PANEL_MARGIN)
+        v.setSpacing(4)
         v.addWidget(self._sec)
         v.addStretch(1)
 
-        scroll = QtWidgets.QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
-        scroll.setWidget(content)
-
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(scroll)
+        layout.addWidget(_wrap_tab_page(content))
 
         self._load()
 
@@ -2093,6 +2231,13 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
         self.__node_id = node.id
         self.__tab_windows = {}
         self.__tab = QtWidgets.QTabWidget()
+        self.__tab.setObjectName("f8NodePropTabs")
+        self.__tab.setDocumentMode(False)
+        self.__tab.setStyleSheet(_TAB_HEADER_STYLE)
+        self.__tab.setUsesScrollButtons(False)
+        self.__tab.tabBar().setExpanding(True)
+        self.__tab.tabBar().setElideMode(QtCore.Qt.TextElideMode.ElideRight)
+        self.__tab.setMinimumWidth(_PROPERTY_PANEL_MIN_WIDTH)
         self._option_pool_dependents: dict[str, list[Any]] = {}
         self._reload_pending = False
         self._reload_debounce_ms = 50
@@ -2102,9 +2247,13 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
 
         close_btn = QtWidgets.QPushButton()
         close_btn.setIcon(QtGui.QIcon(self.style().standardIcon(QtWidgets.QStyle.SP_DialogCloseButton)))
-        close_btn.setMaximumWidth(40)
+        close_btn.setFixedSize(24, 24)
         close_btn.setToolTip("close property")
         close_btn.clicked.connect(self._on_close)
+        close_btn.setStyleSheet(
+            "QPushButton { border: 0; border-radius: 4px; padding: 0; background: rgba(255,255,255,0.04); }"
+            "QPushButton:hover { background: rgba(255,255,255,0.08); }"
+        )
 
         pixmap = QtGui.QPixmap()
         if node.icon():
@@ -2119,35 +2268,42 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
         self.icon_label.setPixmap(pixmap)
         self.icon_label.setStyleSheet("background: transparent;")
 
+        self._name_label = QtWidgets.QLabel("name", self)
+        self._name_label.setStyleSheet("color: rgba(235,235,235,140); font-size: 11px;")
+
         self.name_wgt = PropLineEdit()
         self.name_wgt.set_name("name")
         self.name_wgt.setToolTip("name\nSet the node name.")
         self.name_wgt.set_value(node.name())
         self.name_wgt.value_changed.connect(self._on_property_changed)
+        self.name_wgt.setMinimumHeight(26)
 
         self.type_wgt = QtWidgets.QLabel(node.type_)
-        self.type_wgt.setAlignment(QtCore.Qt.AlignRight)
+        self.type_wgt.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
         self.type_wgt.setToolTip("type_\nNode type identifier followed by the class name.")
         font = self.type_wgt.font()
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.type_wgt.setFont(font)
+        self.type_wgt.setStyleSheet("color: rgba(235,235,235,120); padding: 0 2px;")
 
         name_layout = QtWidgets.QHBoxLayout()
         name_layout.setContentsMargins(0, 0, 0, 0)
+        name_layout.setSpacing(4)
         name_layout.addWidget(self.icon_label)
-        name_layout.addWidget(QtWidgets.QLabel("name"))
+        name_layout.addWidget(self._name_label)
         name_layout.addWidget(self.name_wgt)
         name_layout.addWidget(close_btn)
         missing_locked, missing_type = _node_missing_lock_info(node)
         self._missing_banner = QtWidgets.QLabel()
         self._missing_banner.setStyleSheet(
-            "color: rgb(255, 224, 138); background: rgba(80, 60, 0, 70); border-radius: 4px; padding: 4px 6px;"
+            "color: rgb(255, 224, 138); background: rgba(80, 60, 0, 58); border-radius: 4px; padding: 2px 6px;"
         )
         self._missing_banner.setVisible(bool(missing_locked))
         if missing_locked:
             self._missing_banner.setText(f"Missing dependency: {missing_type or 'unknown type'}")
         layout = QtWidgets.QVBoxLayout(self)
-        layout.setSpacing(4)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(3)
         layout.addLayout(name_layout)
         layout.addWidget(self._missing_banner)
         layout.addWidget(self.__tab)
@@ -2722,6 +2878,21 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
                 tooltip="Bound service container id.",
             )
 
+        purpose_widget = _F8InlineCodePropWidget(language="plaintext")
+        purpose_widget.set_name("nodePurpose")
+        try:
+            node_purpose = str(node.nodePurpose or "")  # type: ignore[attr-defined]
+        except Exception:
+            node_purpose = ""
+        prop_window.add_widget(
+            name="nodePurpose",
+            widget=purpose_widget,
+            value=node_purpose,
+            label="Purpose",
+            tooltip="Instance-specific purpose for this node in the current graph. Used by AI/collaboration context.",
+        )
+        purpose_widget.value_changed.connect(self._on_property_changed)
+
         self.type_wgt.setText(model.get_property("type_") or "")
 
         # built-in spec editors (if node has F8 spec).
@@ -2914,7 +3085,12 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
         """
         if name in self.__tab_windows.keys():
             raise AssertionError("Tab name {} already taken!".format(name))
-        window = _F8StateStackContainer(self) if name == "State" else _F8StateContainer(self)
+        if name == "State":
+            window = _F8StateStackContainer(self)
+        elif name == "Node":
+            window = _F8LabeledStackContainer(self)
+        else:
+            window = _F8StateContainer(self)
         self.__tab_windows[name] = window
         if name == "State":
             assert isinstance(window, _F8StateStackContainer)
@@ -2922,7 +3098,7 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
             window.delete_state_field_requested.connect(self.delete_state_field)
             window.add_state_field_requested.connect(self.add_state_field)
             window.toggle_state_field_show_on_node_requested.connect(self._toggle_state_field_show_on_node)
-        self.__tab.addTab(window, name)
+        self.__tab.addTab(_wrap_tab_page(window), name)
         return window
 
     def get_tab_widget(self):
@@ -3019,6 +3195,7 @@ class F8StudioSingleNodePropertiesWidget(QtWidgets.QWidget):
         self._scroll.setWidgetResizable(True)
         self._scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
         self._scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setMinimumWidth(_PROPERTY_PANEL_MIN_WIDTH)
 
         self._container = QtWidgets.QWidget(self._scroll)
         self._container.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred)

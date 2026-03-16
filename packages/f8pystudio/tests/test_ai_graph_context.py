@@ -36,6 +36,7 @@ class _FakeNode:
     _name: str
     spec: F8OperatorSpec
     properties: dict[str, object]
+    nodePurpose: str = ""
     _input_ports: list[_FakePort] = field(default_factory=list)
     _output_ports: list[_FakePort] = field(default_factory=list)
 
@@ -103,6 +104,7 @@ def _make_subgraph() -> tuple[_FakeNode, _FakeNode, _FakeNode, _FakeNode]:
             "blob": "a" * 140,
             "previewImage": {"mime": "image/png", "content": "A" * 140},
         },
+        nodePurpose="Sort detections into the canonical class buckets used downstream.",
     )
     selected_b = _FakeNode(
         id="node-validator",
@@ -182,6 +184,7 @@ def test_build_graph_context_snapshot_builds_selected_subgraph_with_one_hop_node
     assert "previewImage" not in current_value_names
     one_hop_source = next(node for node in snapshot.one_hop_nodes if node.node_name == "Source")
     assert one_hop_source.current_values == ()
+    assert selected_a_summary.instance_purpose == "Sort detections into the canonical class buckets used downstream."
 
 
 def test_format_graph_context_snapshot_respects_length_limit() -> None:
@@ -193,6 +196,16 @@ def test_format_graph_context_snapshot_respects_length_limit() -> None:
     assert len(text) <= 280
     assert "Focused Graph Subgraph Snapshot" in text
     assert "2 selected nodes" in text
+
+
+def test_format_graph_context_snapshot_distinguishes_type_description_and_instance_purpose() -> None:
+    selected_a, _selected_b, _producer, _sink = _make_subgraph()
+    snapshot = build_graph_context_snapshot(studio_graph=None, nodes=[selected_a])
+
+    text = format_graph_context_snapshot(snapshot, max_chars=2000)
+
+    assert "Type Description: Sorts detections into classes." in text
+    assert "Instance Purpose: Sort detections into the canonical class buckets used downstream." in text
 
 
 def test_build_graph_context_snapshot_counts_one_hop_and_connections_from_all_selected_nodes() -> None:

@@ -75,6 +75,7 @@ def assist_context_fingerprint(context: EditorAssistContext | None) -> str:
         "service_class": str(context.service_class or ""),
         "operator_class": str(context.operator_class or ""),
         "node_description": str(context.node_description or ""),
+        "node_instance_purpose": str(context.node_instance_purpose or ""),
         "target_field_kind": str(context.target_field_kind or ""),
         "target_field_name": str(context.target_field_name or ""),
         "target_field_label": str(context.target_field_label or ""),
