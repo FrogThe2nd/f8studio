@@ -98,6 +98,24 @@ def state_field_ui_language(node: Any, prop_name: str) -> str:
     return ""
 
 
+def state_field_label(node: Any, prop_name: str) -> str:
+    prop = str(prop_name or "").strip()
+    if not prop:
+        return ""
+    for field in effective_state_fields(node):
+        try:
+            name = str(field.name or "").strip()
+        except AttributeError:
+            continue
+        if name != prop:
+            continue
+        try:
+            return str(field.label or "").strip()
+        except AttributeError:
+            return ""
+    return ""
+
+
 def schema_type_any(schema: Any) -> str:
     if schema is None:
         return ""

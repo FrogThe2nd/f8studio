@@ -51,6 +51,8 @@ from .operators.lowpass_filter import register_operator as register_lowpass_filt
 from .operators.highpass_filter import register_operator as register_highpass_filter_operator
 from .operators.bandpass_filter import register_operator as register_bandpass_filter_operator
 from .operators.periodicity_detector import register_operator as register_periodicity_detector_operator
+from .operators.recorder import register_operator as register_recorder_operator
+from .operators.replayer import register_operator as register_replayer_operator
 from .pyengine_service_node import PyEngineServiceNode
 
 
@@ -132,4 +134,6 @@ def register_pyengine_specs(registry: RuntimeNodeRegistry | None = None) -> Runt
     register_highpass_filter_operator(reg)
     register_bandpass_filter_operator(reg)
     register_periodicity_detector_operator(reg)
+    register_recorder_operator(reg)
+    register_replayer_operator(reg)
     return reg

@@ -36,6 +36,8 @@ from .lowpass_filter import LowpassFilterRuntimeNode
 from .highpass_filter import HighpassFilterRuntimeNode
 from .bandpass_filter import BandpassFilterRuntimeNode
 from .periodicity_detector import PeriodicityDetectorRuntimeNode
+from .recorder import RecorderRuntimeNode
+from .replayer import ReplayerRuntimeNode
 
 __all__ = [
     "PrintRuntimeNode",
@@ -74,4 +76,6 @@ __all__ = [
     "HighpassFilterRuntimeNode",
     "BandpassFilterRuntimeNode",
     "PeriodicityDetectorRuntimeNode",
+    "RecorderRuntimeNode",
+    "ReplayerRuntimeNode",
 ]

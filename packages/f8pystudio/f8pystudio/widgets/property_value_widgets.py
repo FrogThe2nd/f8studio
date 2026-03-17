@@ -292,6 +292,108 @@ class F8InlineCodePropWidget(QtWidgets.QPlainTextEdit):
         self._prev_text = self.toPlainText()
 
 
+class F8IncrementButtonPropWidget(QtWidgets.QPushButton):
+    """
+    Stateless trigger button backed by a numeric state value.
+
+    Each click emits `current + 1`, which works well with state-dedupe semantics
+    and downstream `state_trigger` nodes.
+    """
+
+    value_changed = QtCore.Signal(str, object)
+
+    def __init__(
+        self,
+        parent: QtWidgets.QWidget | None = None,
+        *,
+        title: str = "Trigger",
+        data_type: type[int] | type[float] = int,
+    ) -> None:
+        super().__init__(str(title or "Trigger"), parent)
+        self._name = ""
+        self._value: object = 0 if data_type is int else 0.0
+        self._read_only = False
+        self._invalid_reason = ""
+        self._context_tooltip = ""
+        self._data_type: type[int] | type[float] = int if data_type is int else float
+        self.setMinimumHeight(24)
+        self.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+        self.clicked.connect(self._on_clicked)  # type: ignore[attr-defined]
+
+    def set_name(self, name: str) -> None:
+        self._name = str(name or "")
+
+    def get_name(self) -> str:
+        return self._name
+
+    def set_value(self, value: Any) -> None:
+        coerced = self._coerce_value(value)
+        if coerced is None:
+            self._value = 0 if self._data_type is int else 0.0
+            return
+        self._value = coerced
+
+    def get_value(self) -> object:
+        return self._value
+
+    def set_button_text(self, text: str) -> None:
+        self.setText(str(text or "Trigger"))
+
+    def set_read_only(self, read_only: bool) -> None:
+        self._read_only = bool(read_only)
+        self._refresh_enabled()
+
+    def set_context_tooltip(self, tooltip: str) -> None:
+        self._context_tooltip = str(tooltip or "").strip()
+        self._refresh_tooltip()
+
+    def set_invalid_reason(self, reason: str) -> None:
+        self._invalid_reason = str(reason or "").strip()
+        self._refresh_tooltip()
+        self._refresh_enabled()
+
+    def _refresh_enabled(self) -> None:
+        self.setEnabled((not self._read_only) and (not self._invalid_reason))
+
+    def _refresh_tooltip(self) -> None:
+        tip_parts: list[str] = []
+        if self._context_tooltip:
+            tip_parts.append(self._context_tooltip)
+        if self._invalid_reason:
+            tip_parts.append(self._invalid_reason)
+        self.setToolTip("\n".join(tip_parts))
+
+    def _on_clicked(self) -> None:
+        if self._read_only or self._invalid_reason:
+            return
+        next_value = self._increment(self._value)
+        self._value = next_value
+        self.value_changed.emit(self.get_name(), next_value)
+
+    def _increment(self, value: object) -> object:
+        if self._data_type is float:
+            current = self._coerce_value(value)
+            if current is None:
+                current = 0.0
+            return float(current) + 1.0
+        current_int = self._coerce_value(value)
+        if current_int is None:
+            current_int = 0
+        return int(current_int) + 1
+
+    def _coerce_value(self, value: Any) -> int | float | None:
+        if value is None:
+            return None
+        if isinstance(value, bool):
+            return int(value) if self._data_type is int else float(value)
+        try:
+            if self._data_type is float:
+                return float(value)
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+
 class F8WrapLinePropWidget(QtWidgets.QPlainTextEdit):
     """
     Single-line editor that wraps long text.
@@ -670,5 +772,3 @@ class F8NumberPropLineEdit(QtWidgets.QLineEdit):
         else:
             text = hint
         super().setToolTip(text)
-
-

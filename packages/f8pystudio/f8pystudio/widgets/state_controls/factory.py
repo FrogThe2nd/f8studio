@@ -15,12 +15,14 @@ from ..editor_controls import (
     F8PropValueBar,
 )
 from ..property_value_widgets import F8CodeButtonPropWidget, F8InlineCodePropWidget, F8NumberPropLineEdit, F8WrapLinePropWidget
+from ..property_value_widgets import F8IncrementButtonPropWidget
 from .descriptors import ControlBuildContext
 from .pool_resolver import build_node_pool_resolver, parse_multiselect_pool, parse_select_pool
 from .schema_introspect import (
     schema_enum_items,
     schema_numeric_range,
     schema_type_any,
+    state_field_label,
     state_field_schema,
     state_field_ui_control,
     state_field_ui_language,
@@ -65,6 +67,7 @@ def build_state_value_widget(context: ControlBuildContext) -> Any:
     ui_control = state_field_ui_control(node, prop_name)
     ui_control_l = str(ui_control).strip().lower()
     ui_language = state_field_ui_language(node, prop_name)
+    field_label = state_field_label(node, prop_name) or prop_name
     enum_items = schema_enum_items(schema) if schema is not None else []
     lo, hi = schema_numeric_range(schema) if schema is not None else (None, None)
 
@@ -106,6 +109,14 @@ def build_state_value_widget(context: ControlBuildContext) -> Any:
     if ui_control_l in {"code_inline", "multiline"}:
         widget = F8InlineCodePropWidget(language=ui_language or "plaintext")
         widget.set_name(prop_name)
+        return widget
+
+    if ui_control_l in {"button"}:
+        data_type = int if schema_t == "integer" else float
+        widget = F8IncrementButtonPropWidget(title=field_label, data_type=data_type)
+        widget.set_name(prop_name)
+        if schema_t not in {"integer", "number"}:
+            widget.set_invalid_reason("Button control requires integer or number state schema.")
         return widget
 
     if multi_pool_field or ui_control_l in {"multiselect", "multi_select", "multi-select"}:

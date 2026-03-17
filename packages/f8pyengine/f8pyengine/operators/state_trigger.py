@@ -42,6 +42,7 @@ class StateTriggerRuntimeNode(OperatorNode, EntrypointNode):
         )
         self._initial_state = dict(initial_state or {})
         self._enabled = self._coerce_bool(_unwrap_json_value(self._initial_state.get("enabled")), default=True)
+        self._fire_on_start = self._coerce_bool(_unwrap_json_value(self._initial_state.get("fireOnStart")), default=False)
         self._has_last_value = "value" in self._initial_state
         self._last_value = _unwrap_json_value(self._initial_state.get("value"))
 
@@ -56,6 +57,9 @@ class StateTriggerRuntimeNode(OperatorNode, EntrypointNode):
 
     async def start_entrypoint(self, ctx: EntrypointContext) -> None:
         self._entrypoint_ctx = ctx
+        if self._enabled and self._fire_on_start and self._has_last_value:
+            self._emit_seq += 1
+            self._request_exec_emit(exec_id=int(self._emit_seq))
 
     async def stop_entrypoint(self) -> None:
         self._entrypoint_ctx = None
@@ -70,6 +74,8 @@ class StateTriggerRuntimeNode(OperatorNode, EntrypointNode):
         raw_value = _unwrap_json_value(value)
         if name == "enabled":
             return self._coerce_bool(raw_value, default=True)
+        if name == "fireOnStart":
+            return self._coerce_bool(raw_value, default=False)
         if name == "value":
             return raw_value
         return value
@@ -79,6 +85,9 @@ class StateTriggerRuntimeNode(OperatorNode, EntrypointNode):
         name = str(field or "").strip()
         if name == "enabled":
             self._enabled = self._coerce_bool(_unwrap_json_value(value), default=self._enabled)
+            return
+        if name == "fireOnStart":
+            self._fire_on_start = self._coerce_bool(_unwrap_json_value(value), default=self._fire_on_start)
             return
         if name != "value":
             return
@@ -173,8 +182,8 @@ StateTriggerRuntimeNode.SPEC = F8OperatorSpec(
     operatorClass=OPERATOR_CLASS,
     version="0.0.1",
     label="State Trigger",
-    description="Triggers exec on `changed` when state `value` changes and node is enabled.",
-    tags=["execution", "state", "trigger", "event"],
+    description="Triggers exec on `changed` when state `value` changes; ideal for wiring button-like state changes into exec graphs.",
+    tags=["execution", "state", "trigger", "event", "button"],
     execInPorts=[],
     execOutPorts=["changed"],
     stateFields=[
@@ -192,6 +201,15 @@ StateTriggerRuntimeNode.SPEC = F8OperatorSpec(
             label="Enabled",
             description="Enable/disable trigger emission on value changes.",
             valueSchema=boolean_schema(default=True),
+            access=F8StateAccess.rw,
+            required=True,
+            showOnNode=True,
+        ),
+        F8StateSpec(
+            name="fireOnStart",
+            label="Fire On Start",
+            description="If enabled and `value` has an initial value, emit one exec when the node entrypoint starts.",
+            valueSchema=boolean_schema(default=False),
             access=F8StateAccess.rw,
             required=True,
             showOnNode=True,

@@ -3,11 +3,15 @@ from __future__ import annotations
 from typing import Any
 
 from qtpy import QtCore, QtGui, QtWidgets
+from NodeGraphQt.custom_widgets.properties_bin.node_property_factory import NodePropertyWidgetFactory
 
+from f8pysdk import F8StateAccess, F8StateSpec, integer_schema, string_schema
 from f8pystudio.nodegraph.items.inline_state_panel import make_state_inline_control, on_graph_property_changed
 from f8pystudio.nodegraph.items.node_item_core import StateFieldInfo
 from f8pystudio.nodegraph.items.service_toolbar_host import F8ForceGlobalToolTipFilter
 from f8pystudio.widgets.editor_controls import F8OptionCombo
+from f8pystudio.widgets.property_value_widgets import F8IncrementButtonPropWidget
+from f8pystudio.widgets.state_widget_api import build_state_value_widget
 from f8pystudio.nodegraph.items.wave_preview import (
     WaveHeatmapControl,
     WavePatternEditorControl,
@@ -140,6 +144,44 @@ def _wave_pattern_field() -> StateFieldInfo:
     )
 
 
+def _button_field() -> StateFieldInfo:
+    return StateFieldInfo(
+        name="playTrigger",
+        label="Play",
+        tooltip="Increment to trigger playback.",
+        show_on_node=True,
+        access="rw",
+        access_str="rw",
+        required=True,
+        ui_control="button",
+        ui_language=None,
+        value_schema=integer_schema(),
+    )
+
+
+def _invalid_button_field() -> StateFieldInfo:
+    return StateFieldInfo(
+        name="badTrigger",
+        label="Bad",
+        tooltip="Wrong schema for button.",
+        show_on_node=True,
+        access="rw",
+        access_str="rw",
+        required=True,
+        ui_control="button",
+        ui_language=None,
+        value_schema=string_schema(),
+    )
+
+
+class _FakePropertyNode:
+    def __init__(self, field: F8StateSpec) -> None:
+        self._field = field
+
+    def effective_state_fields(self) -> list[F8StateSpec]:
+        return [self._field]
+
+
 def _mouse_event(
     event_type: QtCore.QEvent.Type,
     pos: QtCore.QPointF,
@@ -236,6 +278,59 @@ def test_make_state_inline_control_selected_axis_uses_option_pool() -> None:
     control = make_state_inline_control(node_item, _selected_axis_field())
 
     assert isinstance(control, F8OptionCombo)
+
+
+def test_make_state_inline_control_button_increments_integer_value() -> None:
+    _ensure_app()
+    node_item = _FakeNodeItem(code_value="")
+    node_item._backend = _FakeBackendNode({"playTrigger": 0})
+
+    control = make_state_inline_control(node_item, _button_field())
+
+    assert isinstance(control, F8IncrementButtonPropWidget)
+    assert control.text() == "Play"
+    control.click()
+    assert node_item._backend.get_property("playTrigger") == 1
+    control.click()
+    assert node_item._backend.get_property("playTrigger") == 2
+
+
+def test_make_state_inline_control_button_disables_non_numeric_schema() -> None:
+    _ensure_app()
+    node_item = _FakeNodeItem(code_value="")
+    node_item._backend = _FakeBackendNode({"badTrigger": "abc"})
+
+    control = make_state_inline_control(node_item, _invalid_button_field())
+
+    assert isinstance(control, F8IncrementButtonPropWidget)
+    assert not control.isEnabled()
+    assert "integer or number" in str(control.toolTip() or "")
+
+
+def test_build_state_value_widget_button_uses_field_label_and_increments() -> None:
+    _ensure_app()
+    field = F8StateSpec(
+        name="playTrigger",
+        label="Play",
+        valueSchema=integer_schema(),
+        access=F8StateAccess.rw,
+        uiControl="button",
+    )
+    node = _FakePropertyNode(field)
+    widget = build_state_value_widget(
+        node=node,
+        prop_name="playTrigger",
+        widget_type=1,
+        widget_factory=NodePropertyWidgetFactory(),
+    )
+
+    assert isinstance(widget, F8IncrementButtonPropWidget)
+    assert widget.text() == "Play"
+    seen: list[object] = []
+    widget.value_changed.connect(lambda _name, value: seen.append(value))  # type: ignore[attr-defined]
+    widget.click()
+    widget.click()
+    assert seen == [1, 2]
 
 
 def test_option_combo_read_only_toggle_does_not_call_qlineedit_text_interaction_flags() -> None:

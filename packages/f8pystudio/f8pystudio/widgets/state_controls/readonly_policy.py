@@ -3,7 +3,7 @@ from __future__ import annotations
 from qtpy import QtCore, QtWidgets
 
 from ..editor_controls import F8PropBoolSwitch, F8PropMultiSelect, F8PropOptionCombo
-from ..property_value_widgets import F8CodeButtonPropWidget
+from ..property_value_widgets import F8CodeButtonPropWidget, F8IncrementButtonPropWidget
 
 
 def set_widget_read_only(widget: QtWidgets.QWidget, *, read_only: bool) -> None:
@@ -17,6 +17,9 @@ def set_widget_read_only(widget: QtWidgets.QWidget, *, read_only: bool) -> None:
         widget.set_read_only(bool(read_only))
         return
     if isinstance(widget, F8CodeButtonPropWidget):
+        widget.set_read_only(bool(read_only))
+        return
+    if isinstance(widget, F8IncrementButtonPropWidget):
         widget.set_read_only(bool(read_only))
         return
 

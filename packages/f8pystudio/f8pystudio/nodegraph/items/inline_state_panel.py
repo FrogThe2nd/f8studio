@@ -22,7 +22,7 @@ from ...widgets.editor_controls import (
 )
 from ...widgets.state_controls.pool_resolver import resolve_pool_items
 from ...widgets.monaco_editor_dialog import open_code_editor_window
-from ...widgets.property_value_widgets import F8NumberPropLineEdit
+from ...widgets.property_value_widgets import F8IncrementButtonPropWidget, F8NumberPropLineEdit
 from ...widgets.studio_node_code_editor import get_node_text, resolve_node, set_node_text, studio_session_key
 from .node_item_core import StateFieldInfo, state_field_info
 from .service_toolbar_host import F8ElideToolButton, F8ForceGlobalToolTipFilter
@@ -715,6 +715,49 @@ def make_state_inline_control(node_item: Any, state_field: StateFieldInfo) -> Qt
         node_item._state_inline_updaters[name] = _apply_value
         if read_only:
             btn.setDisabled(True)
+        return btn
+
+    if ui in {"button"}:
+        button_data_type: type[int] | type[float] = int if schema_type_value == "integer" else float
+        btn = F8IncrementButtonPropWidget(title=state_field.label or name, data_type=button_data_type)
+        btn.set_name(name)
+        btn.set_button_text(state_field.label or name)
+        btn.setStyleSheet(
+            """
+            QPushButton {
+                color: rgb(235, 235, 235);
+                background: rgba(0, 0, 0, 35);
+                border: 1px solid rgba(140, 220, 180, 90);
+                border-radius: 6px;
+                padding: 6px 10px;
+                text-align: center;
+                font-weight: 600;
+            }
+            QPushButton:hover {
+                background: rgba(140, 220, 180, 22);
+                border-color: rgba(140, 220, 180, 150);
+            }
+            QPushButton:pressed {
+                background: rgba(140, 220, 180, 36);
+                border-color: rgba(140, 220, 180, 180);
+            }
+            QPushButton:disabled {
+                color: rgba(235, 235, 235, 110);
+                background: rgba(0, 0, 0, 20);
+                border-color: rgba(255, 255, 255, 18);
+            }
+            """
+        )
+        if field_tooltip:
+            btn.set_context_tooltip(field_tooltip)
+            _install_global_tooltip_filter(btn)
+        if schema_type_value not in {"integer", "number"}:
+            btn.set_invalid_reason("Button control requires integer or number state schema.")
+        btn.value_changed.connect(lambda _field_name, value: _set_node_value(value, push_undo=True))  # type: ignore[attr-defined]
+        btn.set_value(_get_node_value())
+        node_item._state_inline_updaters[name] = btn.set_value
+        if read_only:
+            btn.set_read_only(True)
         return btn
 
     is_image_b64 = schema_type_value == "string" and (ui in {"image", "image_b64", "img"} or "b64" in name.lower())
