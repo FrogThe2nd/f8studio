@@ -42,13 +42,29 @@ def build_monaco_editor_html(config: MonacoEditorPageConfig) -> str:
   <head>
     <meta charset="utf-8" />
     <style>
-      html, body, #container {{
+      html, body, #f8-root {{
         height: 100%;
         width: 100%;
         margin: 0;
         padding: 0;
         overflow: hidden;
         background: #1e1e1e;
+      }}
+      #f8-root {{
+        display: flex;
+        flex-direction: row;
+      }}
+      #f8-editor-area {{
+        flex: 1;
+        position: relative;
+        overflow: hidden;
+        background: #1e1e1e;
+      }}
+      #container {{
+        position: absolute;
+        top: 0; left: 0; bottom: 0; right: 0;
+        background: #1e1e1e;
+        z-index: 10;
       }}
       .f8-hunk-actions {{
         background: rgba(37,37,38,0.9);
@@ -749,10 +765,8 @@ def build_monaco_editor_html(config: MonacoEditorPageConfig) -> str:
         background: rgba(203, 166, 247, 0.05);
       }}
       #f8-ai-panel {{
-        position: fixed;
-        top: 0; right: 0; bottom: 0;
-        width: 320px;
-        min-width: 200px;
+        width: 0;
+        min-width: 0;
         max-width: 800px;
         background: #1e1e2e;
         border-left: 1px solid #313244;
@@ -762,9 +776,13 @@ def build_monaco_editor_html(config: MonacoEditorPageConfig) -> str:
         font-size: 13px;
         color: #cdd6f4;
         z-index: 100;
-        transform: translateX(100%);
-        transition: transform 0.2s ease;
+        transition: width 0.2s ease;
         box-shadow: -4px 0 16px rgba(0,0,0,0.4);
+        position: relative;
+        overflow: hidden;
+      }}
+      #f8-ai-panel.open {{
+        width: var(--f8-ai-panel-width, 320px);
       }}
       #f8-ai-resizer {{
         position: absolute;
@@ -776,9 +794,9 @@ def build_monaco_editor_html(config: MonacoEditorPageConfig) -> str:
       #f8-ai-resizer:hover {{
         background: rgba(137, 180, 250, 0.2);
       }}
-      #f8-ai-panel.open {{ transform: translateX(0); }}
+      #f8-ai-panel.open {{ width: var(--f8-ai-panel-width, 320px); }}
       #f8-ai-toggle {{
-        position: fixed;
+        position: absolute;
         top: 8px; right: 8px;
         z-index: 200;
         background: #313244;
@@ -794,10 +812,11 @@ def build_monaco_editor_html(config: MonacoEditorPageConfig) -> str:
       #f8-ai-toggle:hover {{ background: #45475a; }}
       #f8-ai-mode-bar {{
         display: flex;
-        gap: 4px;
-        padding: 8px 48px 8px 8px;
+        gap: 6px;
+        padding: 8px;
         border-bottom: 1px solid #313244;
         background: #181825;
+        align-items: center;
       }}
       .f8-mode-btn {{
         flex: 1;
@@ -817,15 +836,15 @@ def build_monaco_editor_html(config: MonacoEditorPageConfig) -> str:
       }}
       .f8-mode-btn:hover:not(.active) {{ background: #313244; color: #cdd6f4; }}
       .f8-new-chat {{
-        border: 1px solid #45475a;
+        background: transparent;
+        border: none;
         border-radius: 4px;
-        background: #313244;
         color: #a6adc8;
-        font-size: 16px;
-        width: 32px; height: 32px;
+        width: 28px; height: 28px;
         cursor: pointer;
-        transition: background 0.15s;
+        transition: all 0.1s;
         display: flex; align-items: center; justify-content: center;
+        flex-shrink: 0;
       }}
       .f8-new-chat:hover {{ background: #45475a; color: #cdd6f4; }}
       #f8-ai-messages {{
@@ -950,6 +969,7 @@ def build_monaco_editor_html(config: MonacoEditorPageConfig) -> str:
         align-items: center; justify-content: center;
         padding: 0;
       }}
+      #f8-ai-stop svg {{ width: 20px; height: 20px; stroke-width: 2; }}
       #f8-ai-stop:hover {{ background: #eba0ac; transform: scale(1.05); }}
       #f8-ai-stop:active {{ transform: scale(0.95); }}
       #f8-ai-stop.visible {{ display: flex; }}
@@ -989,18 +1009,18 @@ def build_monaco_editor_html(config: MonacoEditorPageConfig) -> str:
         cursor: pointer; font-weight: bold;
         box-shadow: 0 1px 4px rgba(0,0,0,0.5);
       }}
-      #f8-ai-attach-btn, .f8-new-chat {{
+      #f8-ai-attach-btn {{
         background: transparent;
         border: none;
         border-radius: 4px;
         color: #9399b2;
         font-size: 14px;
-        width: 24px; height: 24px;
+        width: 28px; height: 28px;
         cursor: pointer;
         display: flex; align-items: center; justify-content: center;
         transition: background 0.1s, color 0.1s;
       }}
-      #f8-ai-attach-btn:hover, .f8-new-chat:hover {{ 
+      #f8-ai-attach-btn:hover {{ 
         background: #45475a; 
         color: #cdd6f4; 
       }}
@@ -1018,10 +1038,50 @@ def build_monaco_editor_html(config: MonacoEditorPageConfig) -> str:
       .f8-plan-confirm:hover {{ background: #74c7ec; }}
       #f8-diff-container {{
         display: none;
-        position: fixed;
+        position: absolute;
         top: 0; left: 0; right: 0; bottom: 0;
-        z-index: 50;
+        z-index: 80;
         background: #1e1e1e;
+      }}
+      #f8-diff-bar {{
+        display: none;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        background: #181825;
+        border-top: 1px solid #313244;
+        border-bottom: 1px solid #313244;
+      }}
+      #f8-diff-bar.visible {{
+        display: flex;
+      }}
+      .f8-diff-hint {{
+        font-size: 11px;
+        color: #9399b2;
+        flex: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }}
+      #f8-diff-accept, #f8-diff-reject {{
+        padding: 4px 12px;
+        border-radius: 4px;
+        border: none;
+        cursor: pointer;
+        font-size: 11px;
+        font-weight: bold;
+        transition: opacity 0.1s;
+      }}
+      #f8-diff-accept:hover, #f8-diff-reject:hover {{
+        opacity: 0.8;
+      }}
+      #f8-diff-accept {{
+        background: #a6e3a1;
+        color: #11111b;
+      }}
+      #f8-diff-reject {{
+        background: #f38ba8;
+        color: #11111b;
       }}
       .f8-think {{
         margin: 8px 0;
@@ -1160,8 +1220,12 @@ def build_monaco_editor_html(config: MonacoEditorPageConfig) -> str:
         if (window._f8_aiAssist && window._f8_aiAssist.get_ui_state) {{
           const savedOpen = window._f8_aiAssist.get_ui_state('ai_panel_open', false);
           const savedWidth = window._f8_aiAssist.get_ui_state('ai_panel_width', 320);
-          if (savedOpen) panel.classList.add('open');
-          panel.style.width = savedWidth + 'px';
+          if (savedOpen) {{
+            panel.classList.add('open');
+            document.body.classList.add('f8-ai-open');
+          }}
+          panel.style.width = savedOpen ? (savedWidth + 'px') : '0';
+          document.documentElement.style.setProperty('--f8-ai-panel-width', savedWidth + 'px');
         }}
 
         // Drag and Drop support
@@ -1188,9 +1252,20 @@ def build_monaco_editor_html(config: MonacoEditorPageConfig) -> str:
 
         toggle.addEventListener('click', function() {{
           const isOpen = panel.classList.toggle('open');
+          // Update width directly to avoid transform conflicts
+          panel.style.width = isOpen ? (document.documentElement.style.getPropertyValue('--f8-ai-panel-width') || '320px') : '0';
+          
           if (window._f8_aiAssist && window._f8_aiAssist.set_ui_state) {{
             window._f8_aiAssist.set_ui_state('ai_panel_open', isOpen);
           }}
+          
+          // Force layout refresh periodically during transition for smoothness
+          const start = Date.now();
+          const timer = setInterval(() => {{
+            if (window._f8_editor) window._f8_editor.layout();
+            if (window._f8_diffEditor) window._f8_diffEditor.layout();
+            if (Date.now() - start > 400) clearInterval(timer);
+          }}, 30);
         }});
 
         modeBtns.forEach(function(btn) {{
@@ -1272,7 +1347,11 @@ def build_monaco_editor_html(config: MonacoEditorPageConfig) -> str:
           if (!isResizing) return;
           const delta = startX - e.clientX;
           const newWidth = Math.min(800, Math.max(200, startWidth + delta));
-          panel.style.width = newWidth + 'px';
+          document.documentElement.style.setProperty('--f8-ai-panel-width', newWidth + 'px');
+          if (panel.classList.contains('open')) {{
+             panel.style.width = newWidth + 'px';
+          }}
+          // No need to call layout() here as automaticLayout: true handles the resize container
         }}
 
         function _onMouseUp() {{
@@ -1490,6 +1569,10 @@ def build_monaco_editor_html(config: MonacoEditorPageConfig) -> str:
           renderSideBySide: false,
           originalEditable: false,
         }});
+        // Ensure layout is correctly initialized
+        setTimeout(() => {{
+          if (window._f8_diffEditor) window._f8_diffEditor.layout();
+        }}, 50);
         window._f8_diffEditor.setModel({{
           original: monaco.editor.createModel(window._f8_diffOriginalCode, _f8_editorLanguage()),
           modified: monaco.editor.createModel(newCode, _f8_editorLanguage()),
@@ -1862,47 +1945,47 @@ def build_monaco_editor_html(config: MonacoEditorPageConfig) -> str:
     </script>
   </head>
   <body>
-    <div id="container"></div>
-    <!-- Diff overlay: separate div keeps #container/live editor alive -->
-    <div id="f8-diff-container"></div>
-
-    <!-- AI Toggle Button (overlaid on monaco) -->
-    <button id="f8-ai-toggle" title="Open AI Chat">✦</button>
-
-    <!-- AI Chat/Edit/Plan Panel -->
-    <div id="f8-ai-panel">
-      <div id="f8-ai-resizer"></div>
-      <div id="f8-ai-mode-bar">
-        <button class="f8-mode-btn active" data-mode="chat">💬 Chat</button>
-        <button class="f8-mode-btn" data-mode="edit">✏ Edit</button>
-        <button class="f8-mode-btn" data-mode="plan">🗺 Plan</button>
+    <div id="f8-root">
+      <div id="f8-editor-area">
+        <div id="container"></div>
+        <div id="f8-diff-container"></div>
+        <button id="f8-ai-toggle" title="AI Assist">✨</button>
       </div>
-      <div id="f8-ai-messages"></div>
-      <div id="f8-ai-thinking">AI is thinking…</div>
-      <div id="f8-ai-attachments"></div>
-      <div class="f8-diff-bar" id="f8-diff-bar">
-        <button class="f8-diff-accept" id="f8-diff-accept">✓</button>
-        <button class="f8-diff-reject" id="f8-diff-reject">✗</button>
-        <span style="color:#6c7086;font-size:11px;margin-left:6px;"></span>
-      </div>
-      <div id="f8-ai-input-area">
-        <div class="f8-input-wrapper">
-          <textarea id="f8-ai-input" placeholder="Ask AI… (Enter to send, Shift+Enter for newline)" rows="1"></textarea>
-          <div class="f8-input-toolbar">
-            <div class="f8-toolbar-left">
-              <button id="f8-ai-attach-btn" title="Attach Images">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M15 7l-6.5 6.5a1.5 1.5 0 0 0 3 3l6.5 -6.5a3 3 0 0 0 -6 -6l-6.5 6.5a4.5 4.5 0 0 0 9 9l6.5 -6.5" /></svg>
+
+      <div id="f8-ai-panel">
+        <div id="f8-ai-resizer"></div>
+        <div id="f8-ai-mode-bar">
+          <button class="f8-mode-btn active" data-mode="chat">Chat</button>
+          <button class="f8-mode-btn" data-mode="edit">Edit</button>
+          <button class="f8-mode-btn" data-mode="plan">Plan</button>
+        </div>
+        <div id="f8-ai-messages"></div>
+        <div id="f8-ai-thinking">AI is thinking…</div>
+        <div id="f8-ai-attachments"></div>
+        <div id="f8-diff-bar">
+           <span class="f8-diff-hint">Review changes</span>
+           <button id="f8-diff-accept">Accept</button>
+           <button id="f8-diff-reject">Discard</button>
+        </div>
+        <div id="f8-ai-input-area">
+          <div class="f8-input-wrapper">
+            <textarea id="f8-ai-input" placeholder="Ask AI anything..." rows="1"></textarea>
+            <div class="f8-input-toolbar">
+              <div class="f8-toolbar-left">
+                <button id="f8-ai-attach-btn" title="Upload Image">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 7l-6.5 6.5a1.5 1.5 0 0 0 3 3l6.5 -6.5a3 3 0 0 0 -6 -6l-6.5 6.5a4.5 4.5 0 0 0 9 9l6.5 -6.5"/></svg>
+                </button>
+                <button class="f8-new-chat" title="New Chat">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a9 9 0 1 0 0 18a9 9 0 0 0 0 -18"/><path d="M12 8v8"/><path d="M8 12h8"/></svg>
+                </button>
+              </div>
+              <button id="f8-ai-send" title="Send Message">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 14l11 -11"/><path d="M21 3l-6.5 18a.55 .55 0 0 1 -1 0l-3.5 -7l-7 -3.5a.55 .55 0 0 1 0 -1l18 -6.5"/></svg>
               </button>
-              <button class="f8-new-chat" title="New Conversation / Clear Context">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M4.05 11a8 8 0 1 1 .5 4m-.5 5v-5h5" /></svg>
+              <button id="f8-ai-stop" title="Stop Generation">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
               </button>
             </div>
-            <button id="f8-ai-send" title="Send (Enter)">
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a9 9 0 1 0 0 18a9 9 0 0 0 0 -18" /><path d="M16 12l-4 -4" /><path d="M16 12h-8" /><path d="M16 12l-4 4" /></svg>
-            </button>
-            <button id="f8-ai-stop" title="Stop">
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2" /></svg>
-            </button>
           </div>
         </div>
       </div>

@@ -154,6 +154,7 @@ def build_ai_assist_html() -> str:
         display: flex; align-items: center; justify-content: center;
         padding: 0;
       }}
+      #f8-ai-send svg {{ width: 20px; height: 20px; stroke-width: 2; }}
       #f8-ai-send:hover {{ background: #b4befe; transform: scale(1.05); }}
       #f8-ai-send:active {{ transform: scale(0.95); }}
       
@@ -169,6 +170,7 @@ def build_ai_assist_html() -> str:
         align-items: center; justify-content: center;
         padding: 0;
       }}
+      #f8-ai-stop svg {{ width: 20px; height: 20px; stroke-width: 2; }}
       #f8-ai-stop:hover {{ background: #eba0ac; transform: scale(1.05); }}
       #f8-ai-stop:active {{ transform: scale(0.95); }}
       #f8-ai-stop.visible {{ display: flex; }}
@@ -414,14 +416,14 @@ def build_ai_assist_html() -> str:
                 <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 7l-6.5 6.5a1.5 1.5 0 0 0 3 3l6.5 -6.5a3 3 0 0 0 -6 -6l-6.5 6.5a4.5 4.5 0 0 0 9 9l6.5 -6.5" /></svg>
               </button>
               <button class="f8-new-chat" title="New Conversation">
-                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4.05 11a8 8 0 1 1 .5 4m-.5 5v-5h5" /></svg>
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a9 9 0 1 0 0 18a9 9 0 0 0 0 -18"/><path d="M12 8v8"/><path d="M8 12h8"/></svg>
               </button>
             </div>
             <button id="f8-ai-send" title="Send">
-               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a9 9 0 1 0 0 18a9 9 0 0 0 0 -18" /><path d="M16 12l-4 -4" /><path d="M16 12h-8" /><path d="M16 12l-4 4" /></svg>
+               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 14l11 -11"/><path d="M21 3l-6.5 18a.55 .55 0 0 1 -1 0l-3.5 -7l-7 -3.5a.55 .55 0 0 1 0 -1l18 -6.5"/></svg>
             </button>
             <button id="f8-ai-stop" title="Stop">
-               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2" /></svg>
+               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
             </button>
           </div>
         </div>
