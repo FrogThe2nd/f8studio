@@ -12,13 +12,33 @@ except ImportError:
     np = None
 
 
+def sigmoid(x: Any) -> Any:
+    """Standard sigmoid function: 1 / (1 + exp(-x))"""
+    if np is not None and isinstance(x, (np.ndarray, np.generic)):
+        return 1.0 / (1.0 + np.exp(-x))
+    try:
+        val = float(x)
+        return 1.0 / (1.0 + math.exp(-val))
+    except OverflowError:
+        return 0.0 if float(x) < 0 else 1.0
+    except (ValueError, TypeError):
+        return 0.0
+
+
 ALLOWED_GLOBAL_FNS: dict[str, Any] = {
     "abs": abs,
+    "all": all,
+    "any": any,
     "float": float,
     "int": int,
+    "len": len,
     "max": max,
     "min": min,
+    "range": range,
     "round": round,
+    "sigmoid": sigmoid,
+    "sorted": sorted,
+    "sum": sum,
 }
 
 ALLOWED_MATH_FNS: set[str] = {

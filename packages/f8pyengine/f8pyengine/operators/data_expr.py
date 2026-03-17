@@ -249,7 +249,7 @@ DataExprRuntimeNode.SPEC = F8OperatorSpec(
         "- If `Unpack Dict Outputs` is enabled and the result is a dict, matching output ports receive matching keys.\n"
         "\n"
         "Available\n"
-        "- Builtins: `abs`, `min`, `max`, `round`, `float`, `int`, `len`, `sum`, `sorted`, `range`, `any`, `all`\n"
+        "- Builtins: `abs`, `min`, `max`, `round`, `float`, `int`, `len`, `sum`, `sorted`, `range`, `any`, `all`, `sigmoid`\n"
         "- Python expressions: indexing, dict/list/tuple literals, comprehensions, conditionals\n"
         "- Math namespace: `math.*`\n"
         "- Optional numpy namespace: `np.*` and `numpy.*` when `Allow Numpy` is enabled\n"
