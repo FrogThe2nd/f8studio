@@ -605,7 +605,7 @@ class MediaPipePoseServiceNode(ServiceNode):
         self._min_detection_confidence = 0.5
         self._min_tracking_confidence = 0.5
         self._visibility_threshold = 0.5
-        self._skeleton_source: SkeletonSource = "world"
+        self._skeleton_source: SkeletonSource = "camera"
 
         self._shm: VideoShmReader | None = None
         self._shm_open_name = ""
@@ -736,7 +736,7 @@ class MediaPipePoseServiceNode(ServiceNode):
         )
         self._skeleton_source = _coerce_skeleton_source(
             await self.get_state_value("skeletonSource"),
-            default=_coerce_skeleton_source(self._initial_state.get("skeletonSource"), default="world"),
+            default=_coerce_skeleton_source(self._initial_state.get("skeletonSource"), default="camera"),
         )
         self._config_loaded = True
 

@@ -156,6 +156,16 @@ def _state_fields() -> list[F8StateSpec]:
             required=True,
             showOnNode=False,
         ),
+        F8StateSpec(
+            name="skeletonSource",
+            label="Skeleton Source",
+            description="Skeleton data source (camera-relative vs world-relative).",
+            valueSchema=string_schema(default="camera", enum=["camera", "world"]),
+            access=F8StateAccess.rw,
+            required=True,
+            uiControl="select",
+            showOnNode=False,
+        ),
     ]
 
 
