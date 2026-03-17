@@ -937,6 +937,23 @@ def build_monaco_editor_html(config: MonacoEditorPageConfig) -> str:
       #f8-ai-send svg {{ width: 20px; height: 20px; stroke-width: 2; }}
       #f8-ai-send:hover {{ background: #b4befe; transform: scale(1.05); }}
       #f8-ai-send:active {{ transform: scale(0.95); }}
+      
+      #f8-ai-stop {{
+        display: none;
+        background: #f38ba8;
+        border: none;
+        border-radius: 6px;
+        color: #1e1e2e;
+        width: 28px; height: 28px;
+        cursor: pointer;
+        transition: transform 0.1s;
+        align-items: center; justify-content: center;
+        padding: 0;
+      }}
+      #f8-ai-stop:hover {{ background: #eba0ac; transform: scale(1.05); }}
+      #f8-ai-stop:active {{ transform: scale(0.95); }}
+      #f8-ai-stop.visible {{ display: flex; }}
+      
       #f8-ai-attach-btn svg, .f8-new-chat svg {{ width: 18px; height: 18px; stroke-width: 1.5; }}
       #f8-ai-send:hover {{ background: #d0bcff; }}
       #f8-ai-thinking {{
@@ -1039,6 +1056,8 @@ def build_monaco_editor_html(config: MonacoEditorPageConfig) -> str:
       window._f8_chatRequests = Object.create(null);
       window._f8_editRequests = Object.create(null);
       window._f8_planRequests = Object.create(null);
+      window._f8_attachments = [];
+      window._f8_currentRid = null;
       window._f8_aiSignalsConnected = false;
 
       function _f8_editorLanguage() {{
@@ -1298,39 +1317,35 @@ def build_monaco_editor_html(config: MonacoEditorPageConfig) -> str:
 
         const rid = (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()));
         const thinking = document.getElementById('f8-ai-thinking');
+        
+        window._f8_chatMessages.push({{role: 'user', content: text, attachments: window._f8_attachments}});
+        if (thinking) thinking.classList.add('visible');
+        const assistantEl = _f8_appendMessage('assistant', '');
+        
+        window._f8_currentRid = rid;
+        document.getElementById('f8-ai-send').style.display = 'none';
+        document.getElementById('f8-ai-stop').classList.add('visible');
 
+        const attachmentsPayload = JSON.stringify(window._f8_attachments);
+        
         if (window._f8_aiMode === 'chat') {{
-          window._f8_chatMessages.push({{role: 'user', content: text, attachments: window._f8_attachments}});
-          if (thinking) thinking.classList.add('visible');
-          const assistantEl = _f8_appendMessage('assistant', '');
-          window._f8_chatRequests[rid] = {{
-            assistantEl: assistantEl,
-            thinking: thinking,
-          }};
-          window._f8_aiAssist.request_chat(rid, JSON.stringify(window._f8_chatMessages), code, selection, JSON.stringify(window._f8_attachments || []));
-          _f8_clearAttachments();
-
+          window._f8_chatRequests[rid] = {{ assistantEl, thinking }};
+          window._f8_aiAssist.request_chat(rid, JSON.stringify(window._f8_chatMessages), code, selection, attachmentsPayload);
         }} else if (window._f8_aiMode === 'edit') {{
-          if (thinking) thinking.classList.add('visible');
-          const statusEl = _f8_appendMessage('assistant', 'Generating edit…');
-          window._f8_editRequests[rid] = {{
-            thinking: thinking,
-            statusEl: statusEl,
-          }};
-          window._f8_aiAssist.request_edit(rid, code, text, JSON.stringify(window._f8_chatMessages), JSON.stringify(window._f8_attachments || []));
-          _f8_clearAttachments();
-
+          // Original edit mode used 'statusEl' and didn't push to chatMessages yet
+          window._f8_editRequests[rid] = {{ statusEl: assistantEl, thinking }}; 
+          window._f8_aiAssist.request_edit(rid, code, text, JSON.stringify(window._f8_chatMessages), attachmentsPayload);
         }} else if (window._f8_aiMode === 'plan') {{
-          window._f8_chatMessages.push({{role: 'user', content: text, attachments: window._f8_attachments}});
-          if (thinking) thinking.classList.add('visible');
-          const assistantEl = _f8_appendMessage('assistant', '');
-          window._f8_planRequests[rid] = {{
-            assistantEl: assistantEl,
-            thinking: thinking,
-          }};
-          window._f8_aiAssist.request_plan(rid, text, code, JSON.stringify(window._f8_chatMessages), JSON.stringify(window._f8_attachments || []));
-          _f8_clearAttachments();
+          window._f8_planRequests[rid] = {{ assistantEl, thinking }};
+          window._f8_aiAssist.request_plan(rid, text, code, JSON.stringify(window._f8_chatMessages), attachmentsPayload);
         }}
+        _f8_clearAttachments();
+      }}
+
+      function _f8_stopMessage() {{
+        if (!window._f8_currentRid || !window._f8_aiAssist) return;
+        window._f8_aiAssist.abort_request(window._f8_currentRid);
+        // UI reset on signal
       }}
 
       window._f8_attachments = [];
@@ -1748,6 +1763,11 @@ def build_monaco_editor_html(config: MonacoEditorPageConfig) -> str:
               const request = window._f8_chatRequests[rid];
               if (!request) return;
               delete window._f8_chatRequests[rid];
+              if (window._f8_currentRid === rid) {{
+                window._f8_currentRid = null;
+                document.getElementById('f8-ai-send').style.display = 'flex';
+                document.getElementById('f8-ai-stop').classList.remove('visible');
+              }}
               if (request.thinking) request.thinking.classList.remove('visible');
               const assistantEl = request.assistantEl;
               if (err) {{
@@ -1768,6 +1788,11 @@ def build_monaco_editor_html(config: MonacoEditorPageConfig) -> str:
               const request = window._f8_editRequests[rid];
               if (!request) return;
               delete window._f8_editRequests[rid];
+              if (window._f8_currentRid === rid) {{
+                window._f8_currentRid = null;
+                document.getElementById('f8-ai-send').style.display = 'flex';
+                document.getElementById('f8-ai-stop').classList.remove('visible');
+              }}
               if (request.thinking) request.thinking.classList.remove('visible');
               if (err) {{
                 request.statusEl.dataset.raw = '⚠ ' + err;
@@ -1797,6 +1822,11 @@ def build_monaco_editor_html(config: MonacoEditorPageConfig) -> str:
               const request = window._f8_planRequests[rid];
               if (!request) return;
               delete window._f8_planRequests[rid];
+              if (window._f8_currentRid === rid) {{
+                window._f8_currentRid = null;
+                document.getElementById('f8-ai-send').style.display = 'flex';
+                document.getElementById('f8-ai-stop').classList.remove('visible');
+              }}
               if (request.thinking) request.thinking.classList.remove('visible');
               const assistantEl = request.assistantEl;
               if (err) {{
@@ -1822,6 +1852,8 @@ def build_monaco_editor_html(config: MonacoEditorPageConfig) -> str:
             }});
           }}
           window._f8_aiSignalsConnected = true;
+          document.getElementById('f8-ai-send').onclick = _f8_sendMessage;
+          document.getElementById('f8-ai-stop').onclick = _f8_stopMessage;
         }}
 
         _f8_setupInlineSuggestions();
@@ -1867,6 +1899,9 @@ def build_monaco_editor_html(config: MonacoEditorPageConfig) -> str:
             </div>
             <button id="f8-ai-send" title="Send (Enter)">
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a9 9 0 1 0 0 18a9 9 0 0 0 0 -18" /><path d="M16 12l-4 -4" /><path d="M16 12h-8" /><path d="M16 12l-4 4" /></svg>
+            </button>
+            <button id="f8-ai-stop" title="Stop">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2" /></svg>
             </button>
           </div>
         </div>

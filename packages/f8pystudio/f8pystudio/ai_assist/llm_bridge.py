@@ -371,6 +371,11 @@ class AiLlmBridge(QtCore.QObject):
         # for backend to clear any ephemeral cached context if it had any.
         self.clear_chat_context_snapshot()
 
+    @QtCore.Slot(str)
+    def abort_request(self, request_id: str) -> None:
+        """Called from JS to abort an in-flight LLM request."""
+        self._http.abort_request(request_id)
+
     @QtCore.Slot(result="QVariantList")
     def select_images(self) -> list[dict[str, str]]:
         """Open file dialog to select images and return base64 encoded content."""
@@ -495,6 +500,7 @@ class AiLlmBridge(QtCore.QObject):
             suffix=str(suffix or ""),
             max_tokens=256,
             on_result=lambda text, err: self._on_inline_result(rid, text, err),
+            request_id=rid,
         )
 
     def _on_inline_result(self, rid: str, text: str, err: str | None) -> None:
@@ -559,6 +565,7 @@ class AiLlmBridge(QtCore.QObject):
             max_tokens=4096,
             on_chunk=lambda delta: self.chat_chunk_ready.emit(rid, delta),
             on_done=lambda _full, err: self.chat_done.emit(rid, str(err or "")),
+            request_id=rid,
         )
 
     def _build_chat_messages(
@@ -669,6 +676,7 @@ class AiLlmBridge(QtCore.QObject):
             system=system_prompt,
             max_tokens=8192,
             on_result=lambda text, err: self._on_edit_result(rid, text, err),
+            request_id=rid,
         )
 
     def _on_edit_result(self, rid: str, text: str, err: str | None) -> None:
@@ -763,6 +771,7 @@ class AiLlmBridge(QtCore.QObject):
             max_tokens=4096,
             on_chunk=lambda delta: self.plan_step_ready.emit(rid, delta),
             on_done=lambda _full, err: self.plan_done.emit(rid, str(err or "")),
+            request_id=rid,
         )
 
     # ------------------------------------------------------------------

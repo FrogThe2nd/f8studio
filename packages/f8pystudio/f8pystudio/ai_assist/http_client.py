@@ -199,10 +199,23 @@ class AiHttpClient(QtCore.QObject):
         self._nam = QtNetwork.QNetworkAccessManager(self)
         # Keep references to in-flight replies so they aren't GC'd early.
         self._active_replies: set[QtNetwork.QNetworkReply] = set()
+        # Track replies by request_id for explicit cancellation.
+        self._requests: dict[str, QtNetwork.QNetworkReply] = {}
 
     # ------------------------------------------------------------------
     # Public interface
     # ------------------------------------------------------------------
+
+    def abort_request(self, request_id: str) -> None:
+        """Explicitly abort an in-flight request."""
+        rid = str(request_id or "").strip()
+        if not rid:
+            return
+        reply = self._requests.get(rid)
+        if reply is not None:
+            logger.info("AI HTTP: aborting request id=%s", rid)
+            reply.abort()
+            # on_done / on_result will be called via finished signal with OperationCanceledError
 
     def chat_completion(
         self,
@@ -213,6 +226,7 @@ class AiHttpClient(QtCore.QObject):
         system: str = "",
         max_tokens: int = 4096,
         on_result: OnResult,
+        request_id: str = "",
     ) -> None:
         """Non-streaming chat completion."""
         payload = self._build_chat_payload(
@@ -224,7 +238,7 @@ class AiHttpClient(QtCore.QObject):
             max_tokens=max_tokens,
         )
         url = self._chat_url(cfg)
-        self._post_json(cfg, url, payload, on_result=on_result)
+        self._post_json(cfg, url, payload, on_result=on_result, request_id=request_id)
 
     def chat_completion_stream(
         self,
@@ -236,6 +250,7 @@ class AiHttpClient(QtCore.QObject):
         max_tokens: int = 4096,
         on_chunk: OnChunk,
         on_done: OnDone,
+        request_id: str = "",
     ) -> None:
         """Streaming SSE chat completion."""
         payload = self._build_chat_payload(
@@ -247,7 +262,7 @@ class AiHttpClient(QtCore.QObject):
             max_tokens=max_tokens,
         )
         url = self._chat_url(cfg)
-        self._post_json_stream(cfg, url, payload, on_chunk=on_chunk, on_done=on_done)
+        self._post_json_stream(cfg, url, payload, on_chunk=on_chunk, on_done=on_done, request_id=request_id)
 
     def fim_completion(
         self,
@@ -258,11 +273,12 @@ class AiHttpClient(QtCore.QObject):
         suffix: str,
         max_tokens: int = 256,
         on_result: OnResult,
+        request_id: str = "",
     ) -> None:
         """FIM (Fill-In-the-Middle) completion for inline suggestions."""
         payload = _fim_payload_openai(model_id, prefix, suffix, max_tokens)
         url = self._chat_url(cfg)  # Use chat completions endpoint (FIM via chat)
-        self._post_json(cfg, url, payload, on_result=lambda text, err: on_result(text, err))
+        self._post_json(cfg, url, payload, on_result=lambda text, err: on_result(text, err), request_id=request_id)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -315,13 +331,17 @@ class AiHttpClient(QtCore.QObject):
         payload: dict,
         *,
         on_result: OnResult,
+        request_id: str = "",
     ) -> None:
+        rid = str(request_id or "").strip()
         req = _build_request(url, cfg)
         body = json.dumps(payload, ensure_ascii=False).encode()
         reply = self._nam.post(req, body)
         self._active_replies.add(reply)
+        if rid:
+            self._requests[rid] = reply
         reply.finished.connect(  # type: ignore[attr-defined]
-            lambda: self._on_non_stream_reply(reply, cfg.protocol, on_result)
+            lambda: self._on_non_stream_reply(reply, cfg.protocol, on_result, rid)
         )
 
     def _on_non_stream_reply(
@@ -329,18 +349,30 @@ class AiHttpClient(QtCore.QObject):
         reply: QtNetwork.QNetworkReply,
         protocol: ProviderProtocol,
         on_result: OnResult,
+        request_id: str = "",
     ) -> None:
         self._active_replies.discard(reply)
+        if request_id:
+            self._requests.pop(request_id, None)
         try:
             if reply.error() != QtNetwork.QNetworkReply.NetworkError.NoError:
                 err = reply.errorString()
+                # Handle user cancellation
+                if reply.error() == QtNetwork.QNetworkReply.NetworkError.OperationCanceledError:
+                    logger.info("AI HTTP request canceled by user")
+                    on_result("", "Canceled")
+                    return
+                
                 logger.warning("AI HTTP error: %s", err)
                 on_result("", err)
                 return
 
-            raw = bytes(reply.readAll()).decode("utf-8", errors="replace")
-            text = self._extract_text(raw, protocol)
-            on_result(text, None)
+            if reply.isOpen() and reply.isReadable():
+                raw = bytes(reply.readAll()).decode("utf-8", errors="replace")
+                text = self._extract_text(raw, protocol)
+                on_result(text, None)
+            else:
+                on_result("", "Reply was closed prematurely")
         except Exception as exc:
             logger.exception("_on_non_stream_reply: unexpected error")
             on_result("", str(exc))
@@ -355,26 +387,41 @@ class AiHttpClient(QtCore.QObject):
         *,
         on_chunk: OnChunk,
         on_done: OnDone,
+        request_id: str = "",
     ) -> None:
+        rid = str(request_id or "").strip()
         req = _build_request(url, cfg)
         body = json.dumps(payload, ensure_ascii=False).encode()
         reply = self._nam.post(req, body)
         self._active_replies.add(reply)
+        if rid:
+            self._requests[rid] = reply
         state = _StreamState(protocol=cfg.protocol, on_chunk=on_chunk, on_done=on_done)
         reply.readyRead.connect(lambda: state.feed(bytes(reply.readAll())))  # type: ignore[attr-defined]
-        reply.finished.connect(lambda: self._on_stream_done(reply, state))  # type: ignore[attr-defined]
+        reply.finished.connect(lambda: self._on_stream_done(reply, state, rid))  # type: ignore[attr-defined]
 
-    def _on_stream_done(self, reply: QtNetwork.QNetworkReply, state: "_StreamState") -> None:
+    def _on_stream_done(self, reply: QtNetwork.QNetworkReply, state: "_StreamState", request_id: str = "") -> None:
         self._active_replies.discard(reply)
+        if request_id:
+            self._requests.pop(request_id, None)
         try:
             if reply.error() != QtNetwork.QNetworkReply.NetworkError.NoError:
                 err = reply.errorString()
+                # OperationCanceledError happens when we call .abort()
+                if reply.error() == QtNetwork.QNetworkReply.NetworkError.OperationCanceledError:
+                    logger.info("AI stream request canceled by user")
+                    state.finish("Canceled")
+                    return
+
                 logger.warning("AI stream HTTP error: %s", err)
-                # Drain any remaining bytes
-                state.feed(bytes(reply.readAll()))
+                # Drain any remaining bytes if possible
+                if reply.isOpen() and reply.isReadable():
+                    state.feed(bytes(reply.readAll()))
                 state.finish(err)
                 return
-            state.feed(bytes(reply.readAll()))
+
+            if reply.isOpen() and reply.isReadable():
+                state.feed(bytes(reply.readAll()))
             state.finish(None)
         except Exception as exc:
             logger.exception("_on_stream_done: unexpected error")

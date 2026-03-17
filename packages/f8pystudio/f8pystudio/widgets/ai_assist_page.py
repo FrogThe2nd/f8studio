@@ -157,6 +157,22 @@ def build_ai_assist_html() -> str:
       #f8-ai-send:hover {{ background: #b4befe; transform: scale(1.05); }}
       #f8-ai-send:active {{ transform: scale(0.95); }}
       
+      #f8-ai-stop {{
+        display: none;
+        background: #f38ba8;
+        border: none;
+        border-radius: 6px;
+        color: #1e1e2e;
+        width: 28px; height: 28px;
+        cursor: pointer;
+        transition: transform 0.1s;
+        align-items: center; justify-content: center;
+        padding: 0;
+      }}
+      #f8-ai-stop:hover {{ background: #eba0ac; transform: scale(1.05); }}
+      #f8-ai-stop:active {{ transform: scale(0.95); }}
+      #f8-ai-stop.visible {{ display: flex; }}
+      
       #f8-ai-thinking {{
         display: none;
         padding: 4px 8px;
@@ -219,6 +235,7 @@ def build_ai_assist_html() -> str:
       window._f8_chatMessages = [];
       window._f8_chatRequests = Object.create(null);
       window._f8_attachments = [];
+      window._f8_currentRid = null;
 
       function _f8_md(text) {{
         let html = String(text || '');
@@ -263,9 +280,19 @@ def build_ai_assist_html() -> str:
         if (thinking) thinking.classList.add('visible');
         const assistantEl = _f8_appendMessage('assistant', '');
         
+        window._f8_currentRid = rid;
+        document.getElementById('f8-ai-send').style.display = 'none';
+        document.getElementById('f8-ai-stop').classList.add('visible');
+
         window._f8_chatRequests[rid] = {{ assistantEl, thinking }};
         window._f8_aiAssist.request_chat(rid, JSON.stringify(window._f8_chatMessages), '', '', JSON.stringify(window._f8_attachments));
         _f8_clearAttachments();
+      }}
+
+      function _f8_stopMessage() {{
+        if (!window._f8_currentRid || !window._f8_aiAssist) return;
+        window._f8_aiAssist.abort_request(window._f8_currentRid);
+        // UI will be reset when chat_done is received
       }}
 
       function _f8_appendMessage(role, text) {{
@@ -342,6 +369,11 @@ def build_ai_assist_html() -> str:
             const req = window._f8_chatRequests[rid];
             if (!req) return;
             delete window._f8_chatRequests[rid];
+            if (window._f8_currentRid === rid) {{
+                window._f8_currentRid = null;
+                document.getElementById('f8-ai-send').style.display = 'flex';
+                document.getElementById('f8-ai-stop').classList.remove('visible');
+            }}
             req.thinking.classList.remove('visible');
             if (err) {{
                req.assistantEl.innerHTML += '<div style="color:#f38ba8;padding-top:4px;">⚠ Error: ' + _f8_escHtml(err) + '</div>';
@@ -351,6 +383,7 @@ def build_ai_assist_html() -> str:
           }});
 
           document.getElementById('f8-ai-send').onclick = _f8_sendMessage;
+          document.getElementById('f8-ai-stop').onclick = _f8_stopMessage;
           document.getElementById('f8-ai-input').onkeydown = function(e) {{
             if (e.key === 'Enter' && !e.shiftKey) {{ e.preventDefault(); _f8_sendMessage(); }}
           }};
@@ -386,6 +419,9 @@ def build_ai_assist_html() -> str:
             </div>
             <button id="f8-ai-send" title="Send">
                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a9 9 0 1 0 0 18a9 9 0 0 0 0 -18" /><path d="M16 12l-4 -4" /><path d="M16 12h-8" /><path d="M16 12l-4 4" /></svg>
+            </button>
+            <button id="f8-ai-stop" title="Stop">
+               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2" /></svg>
             </button>
           </div>
         </div>
