@@ -7,15 +7,18 @@ from f8pysdk import F8StateAccess
 from ...editor_assist.protocol import editor_assist_context_for_field
 from ...editor_assist.session import EditorSessionKey
 from ...editor_assist.workspace import EditorAssistContext
-from ..editor_controls import (
-    F8PropBoolSwitch,
-    F8PropImageB64,
-    F8PropMultiSelect,
-    F8PropOptionCombo,
-    F8PropValueBar,
+from ..state_value_controls import (
+    F8BoolSwitchEditor,
+    F8CodeButtonEditor,
+    F8ImageValueEditor,
+    F8InlineCodeEditor,
+    F8MultiSelectEditor,
+    F8NumberLineEditor,
+    F8OptionComboEditor,
+    F8ValueBarEditor,
+    F8WrapLineEditor,
 )
-from ..property_value_widgets import F8CodeButtonPropWidget, F8InlineCodePropWidget, F8NumberPropLineEdit, F8WrapLinePropWidget
-from ..property_value_widgets import F8IncrementButtonPropWidget
+from ..state_value_controls import F8IncrementButtonEditor
 from .descriptors import ControlBuildContext
 from .pool_resolver import build_node_pool_resolver, parse_multiselect_pool, parse_select_pool
 from .schema_introspect import (
@@ -59,7 +62,7 @@ def _editor_session_key_for_node(node: Any, prop_name: str) -> EditorSessionKey 
     )
 
 
-def build_state_value_widget(context: ControlBuildContext) -> Any:
+def build_state_panel_control(context: ControlBuildContext) -> Any:
     node = context.node
     prop_name = str(context.prop_name or "")
     schema = state_field_schema(node, prop_name)
@@ -79,7 +82,7 @@ def build_state_value_widget(context: ControlBuildContext) -> Any:
         ui_control_l in {"image", "image_b64", "img"} or "b64" in str(prop_name).lower()
     )
     if is_image_b64:
-        widget = F8PropImageB64()
+        widget = F8ImageValueEditor()
         widget.set_name(prop_name)
         return widget
 
@@ -88,7 +91,7 @@ def build_state_value_widget(context: ControlBuildContext) -> Any:
             title = f"{node.name()} - {prop_name}"
         except AttributeError:
             title = f"Edit {prop_name}"
-        widget = F8CodeButtonPropWidget(title=title, language=ui_language or "plaintext")
+        widget = F8CodeButtonEditor(title=title, language=ui_language or "plaintext")
         widget.set_name(prop_name)
         widget.set_editor_assist_context(_editor_assist_context_for_field(node, prop_name, ui_language))
         widget.set_editor_assist_context_provider(
@@ -102,25 +105,25 @@ def build_state_value_widget(context: ControlBuildContext) -> Any:
         return widget
 
     if ui_control_l in {"wrapline"}:
-        widget = F8WrapLinePropWidget(language=ui_language or "plaintext")
+        widget = F8WrapLineEditor(language=ui_language or "plaintext")
         widget.set_name(prop_name)
         return widget
 
     if ui_control_l in {"code_inline", "multiline"}:
-        widget = F8InlineCodePropWidget(language=ui_language or "plaintext")
+        widget = F8InlineCodeEditor(language=ui_language or "plaintext")
         widget.set_name(prop_name)
         return widget
 
     if ui_control_l in {"button"}:
         data_type = int if schema_t == "integer" else float
-        widget = F8IncrementButtonPropWidget(title=field_label, data_type=data_type)
+        widget = F8IncrementButtonEditor(title=field_label, data_type=data_type)
         widget.set_name(prop_name)
         if schema_t not in {"integer", "number"}:
             widget.set_invalid_reason("Button control requires integer or number state schema.")
         return widget
 
     if multi_pool_field or ui_control_l in {"multiselect", "multi_select", "multi-select"}:
-        widget = F8PropMultiSelect()
+        widget = F8MultiSelectEditor()
         widget.set_name(prop_name)
         if multi_pool_field:
             widget.set_pool(multi_pool_field, pool_resolver)
@@ -131,7 +134,7 @@ def build_state_value_widget(context: ControlBuildContext) -> Any:
         return widget
 
     if enum_items or pool_field or ui_control_l in {"select", "dropdown", "dropbox", "combo", "combobox"}:
-        widget = F8PropOptionCombo()
+        widget = F8OptionComboEditor()
         widget.set_name(prop_name)
         if pool_field:
             widget.set_pool(pool_field, pool_resolver)
@@ -142,12 +145,12 @@ def build_state_value_widget(context: ControlBuildContext) -> Any:
         return widget
 
     if schema is not None and (schema_t == "boolean" or ui_control_l in {"switch", "toggle"}):
-        widget = F8PropBoolSwitch()
+        widget = F8BoolSwitchEditor()
         widget.set_name(prop_name)
         return widget
 
     if schema is not None and schema_t in {"integer", "number"} and ui_control_l == "slider":
-        widget = F8PropValueBar(data_type=int if schema_t == "integer" else float)
+        widget = F8ValueBarEditor(data_type=int if schema_t == "integer" else float)
         widget.set_name(prop_name)
         if lo is not None:
             widget.set_min(lo)
@@ -156,7 +159,7 @@ def build_state_value_widget(context: ControlBuildContext) -> Any:
         return widget
 
     if schema is not None and schema_t in {"integer", "number"}:
-        widget = F8NumberPropLineEdit(data_type=int if schema_t == "integer" else float)
+        widget = F8NumberLineEditor(data_type=int if schema_t == "integer" else float)
         widget.set_name(prop_name)
         if lo is not None:
             widget.set_min(lo)

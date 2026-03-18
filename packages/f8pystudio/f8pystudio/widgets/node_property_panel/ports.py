@@ -12,7 +12,7 @@ from qtpy import QtCore, QtWidgets
 from ...ui_notifications import show_warning
 from ..schema_builder import SchemaBuilderDialog
 from ..spec_mutations import set_ports as _spec_set_ports
-from ..state_widget_api import schema_type_any as _schema_type
+from ..state_controls import schema_type_any as _schema_type
 from ..ui_override_mutations import (
     base_data_port_show_on_node as _base_data_port_show_on_node,
     set_data_port_show_on_node_override as _set_data_port_show_on_node_override,

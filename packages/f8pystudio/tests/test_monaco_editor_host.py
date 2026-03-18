@@ -8,7 +8,7 @@ from f8pystudio.editor_assist.session import EditorSessionKey
 from f8pystudio.widgets import monaco_editor_dialog as monaco_dialog_module
 from f8pystudio.widgets.monaco_editor_dialog import MonacoEditorHostDialog, open_code_editor_window
 from f8pystudio.widgets.monaco_editor_page import MonacoEditorPageConfig, build_monaco_editor_html
-from f8pystudio.widgets.property_value_widgets import F8CodeButtonPropWidget
+from f8pystudio.widgets.state_value_controls import F8CodeButtonEditor
 
 
 def _ensure_app() -> QtWidgets.QApplication:
@@ -172,7 +172,7 @@ def test_code_button_widget_calls_persisted_setter_even_if_widget_destroyed(monk
     )
 
     main = QtWidgets.QMainWindow()
-    widget = F8CodeButtonPropWidget(main, title="Node A - code", language="python")
+    widget = F8CodeButtonEditor(main, title="Node A - code", language="python")
     widget.set_name("code")
     widget.set_value("print('a')\n")
     session_key = EditorSessionKey.studio_node(graph_id="graph:destroy", node_id="nodeA", field_name="code")

@@ -412,7 +412,7 @@ def open_data_port_editor_dialog(node_item: Any, *, is_in: bool, port_name: str)
     ui_only = bool(not editable)
     read_only = bool(missing_locked)
 
-    from ...widgets.node_property_widgets import _F8EditDataPortDialog
+    from ...widgets.node_property_panel import _F8EditDataPortDialog
     from ...widgets.ui_override_mutations import (
         base_data_port_show_on_node as _base_data_port_show_on_node,
         set_data_port_show_on_node_override as _set_data_port_show_on_node_override,
@@ -485,7 +485,7 @@ def open_state_field_editor_dialog(node_item: Any, *, field_name: str) -> None:
     ui_only = bool(not editable)
     read_only = bool(missing_locked)
 
-    from ...widgets.node_property_widgets import _F8EditStateFieldDialog
+    from ...widgets.node_property_panel import _F8EditStateFieldDialog
     from ...widgets.spec_mutations import replace_state_field as _spec_replace_state_field
     from ...widgets.ui_override_mutations import (
         find_base_state_field as _find_base_state_field,

@@ -13,7 +13,7 @@ from f8pysdk import (
     F8StateAccess,
     F8StateSpec,
 )
-from f8pystudio.widgets import node_property_widgets as npw
+from f8pystudio.widgets import node_property_panel as npw
 
 
 def _ensure_app() -> QtWidgets.QApplication:

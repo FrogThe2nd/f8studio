@@ -14,7 +14,7 @@ from ..pystudio_node_registry import SERVICE_CLASS as STUDIO_SERVICE_CLASS
 from ..ui_notifications import show_info, show_warning
 from ..ui_bus import UiCommand, UiCommandApplier
 from ..ui_icons import StudioIcon, icon_for
-from .node_property_widgets import F8StudioSingleNodePropertiesWidget
+from .node_property_panel import F8StudioSingleNodePropertiesWidget
 from .node_library_widget import F8StudioNodeLibraryWidget
 from .service_manager_widget import ServiceManagerWidget
 from .service_inventory import collect_declared_service_ids, collect_declared_services

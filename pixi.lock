@@ -1663,7 +1663,7 @@ packages:
 - pypi: ./packages/f8pystudio
   name: f8pystudio
   version: 0.2.0
-  sha256: a62a952bd8e6fc03706739acb2534038195092f605a74292589ef5656730fe90
+  sha256: 6cae077443c73349c2aa0e6850a6060ed19f3f49e4ec86a75beafb9ba567c1be
   requires_dist:
   - qtpy>=2.4.3
   - pyside6>=6.10.1
@@ -1675,7 +1675,6 @@ packages:
   - datamodel-code-generator>=0.50.0
   - shortuuid>=1.0.13
   - basedpyright>=1.31.0
-  - mypy>=1.11.2 ; extra == 'dev'
   requires_python: '>=3.10'
 - pypi: ./packages/f8pystudio_ext_template_match
   name: f8pystudio-ext-template-match

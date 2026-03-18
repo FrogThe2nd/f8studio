@@ -19,7 +19,7 @@ from ..spec_mutations import (
     delete_command as _spec_delete_command,
     replace_command as _spec_replace_command,
 )
-from ..state_widget_api import (
+from ..state_controls import (
     schema_enum_items as _schema_enum_items,
     schema_numeric_range as _schema_numeric_range,
     schema_type_any as _schema_type,

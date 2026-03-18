@@ -20,7 +20,7 @@ from ..schema_builder import (
 )
 from ..state_controls.readonly_policy import set_widget_read_only as _set_widget_read_only
 from ..studio_node_code_editor import resolve_node
-from ..state_widget_api import schema_type_any as _schema_type
+from ..state_controls import schema_type_any as _schema_type
 
 
 logger = logging.getLogger(__name__)

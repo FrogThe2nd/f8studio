@@ -53,15 +53,15 @@ from .items.inline_command_panel import (
     invoke_command as _invoke_command_impl,
     prompt_command_args as _prompt_command_args_impl,
 )
-from .items.inline_state_panel import (
-    ensure_inline_state_widgets as _ensure_inline_state_widgets_impl,
-    inline_state_input_is_connected as _inline_state_input_is_connected_impl,
-    make_state_inline_control as _make_state_inline_control_impl,
-    on_graph_property_changed as _on_graph_property_changed_impl,
-    on_state_toggle as _on_state_toggle_impl,
-    refresh_inline_state_read_only as _refresh_inline_state_read_only_impl,
-    refresh_option_pool_for_changed_field as _refresh_option_pool_for_changed_field_impl,
-    set_inline_state_control_read_only as _set_inline_state_control_read_only_impl,
+from .items.state_inline_controls import (
+    build_state_inline_control as _build_state_inline_control_impl,
+    ensure_state_inline_controls as _ensure_state_inline_controls_impl,
+    is_state_inline_input_connected as _is_state_inline_input_connected_impl,
+    refresh_state_inline_control_read_only as _refresh_state_inline_control_read_only_impl,
+    refresh_state_inline_option_pools as _refresh_state_inline_option_pools_impl,
+    set_state_inline_control_read_only as _set_state_inline_control_read_only_impl,
+    sync_state_inline_controls_from_graph_property as _sync_state_inline_controls_from_graph_property_impl,
+    toggle_state_inline_section as _toggle_state_inline_section_impl,
 )
 from .items.service_node_port_schema_actions import (
     data_port_tooltip as _data_port_tooltip_impl,
@@ -319,15 +319,15 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
     def _backend_node(self) -> Any | None:
         return _backend_node_impl(self)
 
-    def _inline_state_input_is_connected(self, field_name: str) -> bool:
-        return _inline_state_input_is_connected_impl(self, field_name)
+    def _is_state_inline_input_connected(self, field_name: str) -> bool:
+        return _is_state_inline_input_connected_impl(self, field_name)
 
     @staticmethod
-    def _set_inline_state_control_read_only(control: QtWidgets.QWidget, *, read_only: bool) -> None:
-        _set_inline_state_control_read_only_impl(control, read_only=read_only)
+    def _set_state_inline_control_read_only(control: QtWidgets.QWidget, *, read_only: bool) -> None:
+        _set_state_inline_control_read_only_impl(control, read_only=read_only)
 
-    def refresh_inline_state_read_only(self) -> None:
-        _refresh_inline_state_read_only_impl(self)
+    def refresh_state_inline_control_read_only(self) -> None:
+        _refresh_state_inline_control_read_only_impl(self)
 
     def _graph(self) -> Any | None:
         return _graph_impl(self)
@@ -365,14 +365,14 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
     def _ensure_inline_command_widget(self) -> None:
         _ensure_inline_command_widget_impl(self)
 
-    def _on_graph_property_changed(self, node: Any, name: str, value: Any) -> None:
-        _on_graph_property_changed_impl(self, node, name, value)
+    def _sync_state_inline_controls_from_graph_property(self, node: Any, name: str, value: Any) -> None:
+        _sync_state_inline_controls_from_graph_property_impl(self, node, name, value)
 
-    def _refresh_option_pool_for_changed_field(self, changed_field: str) -> None:
-        _refresh_option_pool_for_changed_field_impl(self, changed_field)
+    def _refresh_state_inline_option_pools(self, changed_field: str) -> None:
+        _refresh_state_inline_option_pools_impl(self, changed_field)
 
-    def _on_state_toggle(self, name: str, expanded: bool) -> None:
-        _on_state_toggle_impl(self, name, expanded)
+    def _toggle_state_inline_section(self, name: str, expanded: bool) -> None:
+        _toggle_state_inline_section_impl(self, name, expanded)
 
     @staticmethod
     def _port_group(name: str) -> str:
@@ -434,11 +434,11 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
     def _on_port_right_click(self, port: Any, screen_pos: QtCore.QPoint) -> None:
         _on_port_right_click_impl(self, port, screen_pos)
 
-    def _make_state_inline_control(self, state_field: _StateFieldInfo) -> QtWidgets.QWidget:
-        return _make_state_inline_control_impl(self, state_field)
+    def _build_state_inline_control(self, state_field: _StateFieldInfo) -> QtWidgets.QWidget:
+        return _build_state_inline_control_impl(self, state_field)
 
-    def _ensure_inline_state_widgets(self) -> None:
-        _ensure_inline_state_widgets_impl(self)
+    def _ensure_state_inline_controls(self) -> None:
+        _ensure_state_inline_controls_impl(self)
 
     def post_init(self, viewer=None, pos=None):
         """
@@ -923,7 +923,7 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         widget_height = 0.0
         # Ensure state inline widgets exist so we can account for width.
         try:
-            self._ensure_inline_state_widgets()
+            self._ensure_state_inline_controls()
         except (AttributeError, RuntimeError, TypeError):
             pass
         try:
@@ -1244,7 +1244,7 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
 
         # Ensure inline widgets exist before aligning so sizing + rows match.
         try:
-            self._ensure_inline_state_widgets()
+            self._ensure_state_inline_controls()
         except (AttributeError, RuntimeError, TypeError):
             pass
 
@@ -1520,7 +1520,7 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
 
     def _draw_node_horizontal(self):
         try:
-            self._ensure_inline_state_widgets()
+            self._ensure_state_inline_controls()
         except (AttributeError, RuntimeError, TypeError):
             pass
         try:

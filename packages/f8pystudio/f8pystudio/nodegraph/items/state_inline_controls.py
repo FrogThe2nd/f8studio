@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+"""
+Inline node-hosted controls for state values.
+
+This module binds state-value controls into the nodegraph item environment,
+handling node callbacks, option-pool refresh, styling, and graph sync.
+"""
+
 import json
 import logging
 from typing import Any
@@ -22,17 +29,17 @@ from ...widgets.editor_controls import (
 )
 from ...widgets.state_controls.pool_resolver import resolve_pool_items
 from ...widgets.monaco_editor_dialog import open_code_editor_window
-from ...widgets.property_value_widgets import F8IncrementButtonPropWidget, F8NumberPropLineEdit
-from ...widgets.studio_node_code_editor import get_node_text, resolve_node, set_node_text, studio_session_key
-from .node_item_core import StateFieldInfo, state_field_info
-from .service_toolbar_host import F8ElideToolButton, F8ForceGlobalToolTipFilter
-from .wave_preview import (
+from ...widgets.state_value_controls import F8IncrementButtonEditor, F8NumberLineEditor
+from ...widgets.value_controls.wave_controls import (
     WAVE_PATTERN_EDITOR_DEPENDENCY_FIELDS,
     WAVE_PREVIEW_DEPENDENCY_FIELDS,
     make_wave_heatmap_control,
     make_wave_pattern_editor_control,
     make_wave_preview_control,
 )
+from ...widgets.studio_node_code_editor import get_node_text, resolve_node, set_node_text, studio_session_key
+from .node_item_core import StateFieldInfo, state_field_info
+from .service_toolbar_host import F8ElideToolButton, F8ForceGlobalToolTipFilter
 
 logger = logging.getLogger(__name__)
 
@@ -102,7 +109,7 @@ def _editor_assist_context(
     return editor_assist_context_for_field(spec, field_kind="state", field_key=field_name, language=lang, node=node)
 
 
-def inline_state_input_is_connected(node_item: Any, field_name: str) -> bool:
+def is_state_inline_input_connected(node_item: Any, field_name: str) -> bool:
     """
     True if the state field is upstream-driven via a state-edge.
     """
@@ -118,7 +125,7 @@ def inline_state_input_is_connected(node_item: Any, field_name: str) -> bool:
     return bool(port.connected_ports())
 
 
-def set_inline_state_control_read_only(control: QtWidgets.QWidget, *, read_only: bool) -> None:
+def set_state_inline_control_read_only(control: QtWidgets.QWidget, *, read_only: bool) -> None:
     """
     Best-effort toggle for inline state controls hosted in the node item.
     """
@@ -153,7 +160,7 @@ def set_inline_state_control_read_only(control: QtWidgets.QWidget, *, read_only:
     control.setEnabled(not bool(read_only))
 
 
-def refresh_inline_state_read_only(node_item: Any) -> None:
+def refresh_state_inline_control_read_only(node_item: Any) -> None:
     """
     Refresh readonly state for already-built inline state controls.
     """
@@ -172,11 +179,11 @@ def refresh_inline_state_read_only(node_item: Any) -> None:
         ctrl = node_item._state_inline_controls.get(name)
         if ctrl is None:
             continue
-        read_only = info.access_str == "ro" or inline_state_input_is_connected(node_item, name)
-        set_inline_state_control_read_only(ctrl, read_only=bool(read_only))
+        read_only = info.access_str == "ro" or is_state_inline_input_connected(node_item, name)
+        set_state_inline_control_read_only(ctrl, read_only=bool(read_only))
 
 
-def on_graph_property_changed(node_item: Any, node: Any, name: str, value: Any) -> None:
+def sync_state_inline_controls_from_graph_property(node_item: Any, node: Any, name: str, value: Any) -> None:
     """
     Keep inline state widgets in sync with NodeGraphQt properties.
 
@@ -238,10 +245,10 @@ def on_graph_property_changed(node_item: Any, node: Any, name: str, value: Any) 
                 node_id = ""
             logger.exception("inline wave pattern updater failed nodeId=%s key=%s", node_id, key)
 
-    refresh_option_pool_for_changed_field(node_item, key)
+    refresh_state_inline_option_pools(node_item, key)
 
 
-def refresh_option_pool_for_changed_field(node_item: Any, changed_field: str) -> None:
+def refresh_state_inline_option_pools(node_item: Any, changed_field: str) -> None:
     """
     If `changed_field` is used as an option-pool, refresh all dependent option controls.
     """
@@ -275,7 +282,7 @@ def refresh_option_pool_for_changed_field(node_item: Any, changed_field: str) ->
             continue
 
 
-def on_state_toggle(node_item: Any, name: str, expanded: bool) -> None:
+def toggle_state_inline_section(node_item: Any, name: str, expanded: bool) -> None:
     state_name = str(name)
     old_scene_rect = None
     try:
@@ -329,7 +336,7 @@ def on_state_toggle(node_item: Any, name: str, expanded: bool) -> None:
         _redraw_and_invalidate()
 
 
-def make_state_inline_control(node_item: Any, state_field: StateFieldInfo) -> QtWidgets.QWidget:
+def build_state_inline_control(node_item: Any, state_field: StateFieldInfo) -> QtWidgets.QWidget:
     name = state_field.name
     ui_raw = state_field.ui_control
     ui = str(ui_raw or "").strip().lower()
@@ -420,7 +427,7 @@ def make_state_inline_control(node_item: Any, state_field: StateFieldInfo) -> Qt
         return resolve_pool_items(value)
 
     # Create control.
-    read_only = access_s == "ro" or node_item._inline_state_input_is_connected(name)
+    read_only = access_s == "ro" or node_item._is_state_inline_input_connected(name)
 
     if ui in {"wave_preview"}:
         control, apply_value = make_wave_preview_control(
@@ -719,7 +726,7 @@ def make_state_inline_control(node_item: Any, state_field: StateFieldInfo) -> Qt
 
     if ui in {"button"}:
         button_data_type: type[int] | type[float] = int if schema_type_value == "integer" else float
-        btn = F8IncrementButtonPropWidget(title=state_field.label or name, data_type=button_data_type)
+        btn = F8IncrementButtonEditor(title=state_field.label or name, data_type=button_data_type)
         btn.set_name(name)
         btn.set_button_text(state_field.label or name)
         btn.setStyleSheet(
@@ -851,7 +858,7 @@ def make_state_inline_control(node_item: Any, state_field: StateFieldInfo) -> Qt
         return bar
 
     if schema_type_value == "integer" or ui in {"spinbox", "int"}:
-        line = F8NumberPropLineEdit(data_type=int)
+        line = F8NumberLineEditor(data_type=int)
         line.set_name(name)
         _common_style(line)
         _apply_text_palette(line)
@@ -877,7 +884,7 @@ def make_state_inline_control(node_item: Any, state_field: StateFieldInfo) -> Qt
         return line
 
     if schema_type_value == "number" or ui in {"doublespinbox", "float"}:
-        line = F8NumberPropLineEdit(data_type=float)
+        line = F8NumberLineEditor(data_type=float)
         line.set_name(name)
         _common_style(line)
         _apply_text_palette(line)
@@ -925,7 +932,7 @@ def make_state_inline_control(node_item: Any, state_field: StateFieldInfo) -> Qt
     return line
 
 
-def ensure_inline_state_widgets(node_item: Any) -> None:
+def ensure_state_inline_controls(node_item: Any) -> None:
     node_item._ensure_graph_property_hook()
     node = node_item._backend_node()
     if node is None:
@@ -1045,7 +1052,7 @@ def ensure_inline_state_widgets(node_item: Any) -> None:
         if isinstance(store, dict) and name in store:
             expanded = bool(store.get(name))
         expanded = bool(node_item._state_inline_expanded.get(name, expanded))
-        control = node_item._make_state_inline_control(info)
+        control = node_item._build_state_inline_control(info)
 
         # Header: toggle button (state name).
         header = QtWidgets.QWidget()
@@ -1110,7 +1117,7 @@ def ensure_inline_state_widgets(node_item: Any) -> None:
         panel.setStyleSheet("background: transparent;")
 
         # Connect toggle.
-        btn.toggled.connect(lambda v, _n=name: node_item._on_state_toggle(_n, bool(v)))  # type: ignore[attr-defined]
+        btn.toggled.connect(lambda v, _n=name: node_item._toggle_state_inline_section(_n, bool(v)))  # type: ignore[attr-defined]
         btn.pressed.connect(node_item._select_node_from_embedded_widget)  # type: ignore[attr-defined]
 
         # Install/replace proxy.

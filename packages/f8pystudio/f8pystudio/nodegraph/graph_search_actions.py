@@ -188,5 +188,5 @@ class GraphSearchActionsMixin:
             view = n.view
             if not isinstance(view, F8StudioServiceNodeItem):
                 continue
-            view.refresh_inline_state_read_only()
+            view.refresh_state_inline_control_read_only()
             view.update()

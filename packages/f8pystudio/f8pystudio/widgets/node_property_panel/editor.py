@@ -16,20 +16,22 @@ from NodeGraphQt.custom_widgets.properties_bin.prop_widgets_base import PropLabe
 
 from qtpy import QtCore, QtGui, QtWidgets
 
-from ..property_value_widgets import (
-    F8CodeButtonPropWidget as _F8CodeButtonPropWidget,
-    F8InlineCodePropWidget as _F8InlineCodePropWidget,
-    F8JsonPropTextEdit as _F8JsonPropTextEdit,
+from ..state_value_controls import (
+    F8BoolSwitchEditor,
+    F8CodeButtonEditor as _F8CodeButtonEditor,
+    F8InlineCodeEditor as _F8InlineCodeEditor,
+    F8JsonValueEditor as _F8JsonValueEditor,
+    F8MultiSelectEditor,
+    F8OptionComboEditor,
 )
 from ..studio_node_code_editor import get_node_text, set_node_text, studio_session_key
-from ..editor_controls import F8PropBoolSwitch, F8PropMultiSelect, F8PropOptionCombo
 from ..spec_mutations import (
     add_state_field as _spec_add_state_field,
     delete_state_field as _spec_delete_state_field,
     replace_state_field as _spec_replace_state_field,
 )
-from ..state_widget_api import (
-    build_state_value_widget as _build_state_value_widget,
+from ..state_controls import (
+    build_state_panel_control as _build_state_panel_control,
     effective_state_fields as _effective_state_fields,
     schema_type_any as _schema_type,
     state_field_access as _state_field_access,
@@ -521,7 +523,7 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
                     wid_type = _widget_type_for_property(name)
                     if wid_type == 0:
                         continue
-                    widget = _build_state_value_widget(
+                    widget = _build_state_panel_control(
                         node=node,
                         prop_name=name,
                         widget_type=wid_type,
@@ -562,7 +564,7 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
                 wid_type = _widget_type_for_property(str(prop_name))
                 if wid_type == 0:
                     continue
-                widget = _build_state_value_widget(
+                widget = _build_state_panel_control(
                     node=node,
                     prop_name=prop_name,
                     widget_type=wid_type,
@@ -591,7 +593,7 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
                         tooltip = common_props[prop_name]["tooltip"]
 
                 if wid_type == NodePropWidgetEnum.QTEXT_EDIT.value and _is_json_state_value(node, prop_name):
-                    widget = _F8JsonPropTextEdit()
+                    widget = _F8JsonValueEditor()
                     widget.set_name(prop_name)
 
                 # Dialog-backed code editor (eg. python_script code).
@@ -600,7 +602,7 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
                     ui_control = str(ui_control_raw or "").strip().lower()
                     if ui_control == "code":
                         ui_language = _state_field_ui_language(node, prop_name)
-                        widget = _F8CodeButtonPropWidget(
+                        widget = _F8CodeButtonEditor(
                             title=f"{node.name()} - {prop_name}", language=ui_language or "plaintext"
                         )
                         widget.set_name(prop_name)
@@ -662,7 +664,7 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
                 if access == F8StateAccess.ro or missing_locked:
                     _apply_read_only_widget(widget)
                 # Enrich tooltips for option/switch editors.
-                if isinstance(widget, (F8PropOptionCombo, F8PropMultiSelect, F8PropBoolSwitch)):
+                if isinstance(widget, (F8OptionComboEditor, F8MultiSelectEditor, F8BoolSwitchEditor)):
                     desc = ""
                     for f in _effective_state_fields(node):
                         try:
@@ -679,7 +681,7 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
                 prop_window.add_widget(
                     name=prop_name, widget=widget, value=value, label=prop_name.replace("_", " "), tooltip=tooltip
                 )
-                if not isinstance(widget, _F8CodeButtonPropWidget):
+                if not isinstance(widget, _F8CodeButtonEditor):
                     widget.value_changed.connect(self._on_property_changed)
                     try:
                         widget.value_changing.connect(self._on_property_changing)
@@ -730,7 +732,7 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
                 tooltip="Bound service container id.",
             )
 
-        purpose_widget = _F8InlineCodePropWidget(language="plaintext")
+        purpose_widget = _F8InlineCodeEditor(language="plaintext")
         purpose_widget.set_name("nodePurpose")
         try:
             node_purpose = str(node.nodePurpose or "")  # type: ignore[attr-defined]

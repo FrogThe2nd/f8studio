@@ -6,15 +6,15 @@ from .embedded_resize_contract import (
 )
 from .service_toolbar_host import F8ElideToolButton, F8ForceGlobalToolTipFilter
 from .inline_command_panel import ensure_inline_command_widget, invoke_command, prompt_command_args
-from .inline_state_panel import (
-    ensure_inline_state_widgets,
-    inline_state_input_is_connected,
-    make_state_inline_control,
-    on_graph_property_changed,
-    on_state_toggle,
-    refresh_inline_state_read_only,
-    refresh_option_pool_for_changed_field,
-    set_inline_state_control_read_only,
+from .state_inline_controls import (
+    build_state_inline_control,
+    ensure_state_inline_controls,
+    is_state_inline_input_connected,
+    refresh_state_inline_control_read_only,
+    refresh_state_inline_option_pools,
+    set_state_inline_control_read_only,
+    sync_state_inline_controls_from_graph_property,
+    toggle_state_inline_section,
 )
 
 __all__ = [
@@ -25,16 +25,16 @@ __all__ = [
     "clamp_content_size",
     "content_rect_with_minimum",
     "ensure_inline_command_widget",
-    "ensure_inline_state_widgets",
-    "inline_state_input_is_connected",
+    "build_state_inline_control",
+    "ensure_state_inline_controls",
+    "is_state_inline_input_connected",
     "invoke_command",
-    "make_state_inline_control",
-    "on_graph_property_changed",
-    "on_state_toggle",
-    "refresh_inline_state_read_only",
+    "refresh_state_inline_control_read_only",
+    "refresh_state_inline_option_pools",
     "port_name",
     "prompt_command_args",
-    "refresh_option_pool_for_changed_field",
-    "set_inline_state_control_read_only",
+    "set_state_inline_control_read_only",
     "state_field_info",
+    "sync_state_inline_controls_from_graph_property",
+    "toggle_state_inline_section",
 ]

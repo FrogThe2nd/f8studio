@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+"""
+Shared state-value controls used by multiple hosts.
+
+This module holds reusable editors/widgets for state values that can be
+embedded in the properties panel and, in some cases, reused by inline node UI.
+"""
+
 import json
 import logging
 import math
@@ -12,104 +19,14 @@ from ..editor_assist.session import EditorSessionKey, assist_context_requires_py
 from ..editor_assist.workspace import EditorAssistContext
 from ..ui_notifications import show_warning
 from ..ui_icons import StudioIcon, icon_for
+from .editor_controls import F8ImageB64Editor, F8MultiSelect, F8OptionCombo, F8Switch, F8ValueBar
 from .json_text_editor import attach_json_enhancements
 from .monaco_editor_dialog import open_code_editor_window
 
 logger = logging.getLogger(__name__)
 
 
-class F8CodePropWidget(QtWidgets.QWidget):
-    """
-    Read-only preview with an "Edit..." button that opens a code editor dialog.
-    """
-
-    value_changed = QtCore.Signal(str, object)
-
-    def __init__(self, parent=None, *, title: str = "Edit Code"):
-        super().__init__(parent)
-        self._name = ""
-        self._value = ""
-        self._title = str(title or "Edit Code")
-        self._language = "plaintext"
-        self._assist_context: EditorAssistContext | None = None
-        self._assist_context_provider: Callable[[], EditorAssistContext | None] | None = None
-        self._editor_window: QtWidgets.QDialog | None = None
-
-        self._preview = QtWidgets.QLineEdit()
-        self._preview.setReadOnly(True)
-        self._preview.setClearButtonEnabled(False)
-
-        self._btn = QtWidgets.QPushButton("Edit...")
-        self._btn.clicked.connect(self._on_edit_clicked)
-
-        layout = QtWidgets.QHBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(6)
-        layout.addWidget(self._preview, 1)
-        layout.addWidget(self._btn, 0)
-
-    def set_name(self, name: str) -> None:
-        self._name = str(name or "")
-
-    def get_name(self) -> str:
-        return self._name
-
-    def get_value(self) -> str:
-        return str(self._value or "")
-
-    def set_value(self, value: Any) -> None:
-        self._value = str(value or "")
-        lines = self._value.splitlines()
-        n = len(lines)
-        preview = f"{n} line" if n == 1 else f"{n} lines"
-        if lines:
-            head = lines[0].strip()
-            if head:
-                preview = f"{preview} - {head[:80]}"
-        self._preview.setText(preview)
-
-    def set_editor_assist_context(self, context: EditorAssistContext | None) -> None:
-        self._assist_context = context
-        if assist_context_requires_python(context):
-            self._language = "python"
-
-    def set_editor_assist_context_provider(
-        self,
-        provider: Callable[[], EditorAssistContext | None] | None,
-    ) -> None:
-        self._assist_context_provider = provider
-
-    def _on_edit_clicked(self) -> None:
-        if self._editor_window is not None:
-            try:
-                self._editor_window.raise_()
-                self._editor_window.activateWindow()
-                return
-            except Exception:
-                self._editor_window = None
-
-        def _on_saved(updated: str) -> None:
-            self.set_value(updated)
-            self.value_changed.emit(self.get_name(), updated)
-
-        dlg = open_code_editor_window(
-            self,
-            title=self._title,
-            code=self.get_value(),
-            language=self._language,
-            on_saved=_on_saved,
-            assist_context=self._assist_context,
-            assist_context_provider=self._assist_context_provider,
-        )
-        self._editor_window = dlg
-        dlg.destroyed.connect(self._on_editor_destroyed)  # type: ignore[attr-defined]
-
-    @QtCore.Slot()
-    def _on_editor_destroyed(self) -> None:
-        self._editor_window = None
-
-
-class F8CodeButtonPropWidget(QtWidgets.QWidget):
+class F8CodeButtonEditor(QtWidgets.QWidget):
     """
     A single "Edit..." button that opens a code editor dialog.
     """
@@ -226,7 +143,7 @@ class F8CodeButtonPropWidget(QtWidgets.QWidget):
         self._editor_window = None
 
 
-class F8InlineCodePropWidget(QtWidgets.QPlainTextEdit):
+class F8InlineCodeEditor(QtWidgets.QPlainTextEdit):
     """
     Inline multiline editor used for lightweight expressions (`uiControl=code_inline`).
 
@@ -292,7 +209,7 @@ class F8InlineCodePropWidget(QtWidgets.QPlainTextEdit):
         self._prev_text = self.toPlainText()
 
 
-class F8IncrementButtonPropWidget(QtWidgets.QPushButton):
+class F8IncrementButtonEditor(QtWidgets.QPushButton):
     """
     Stateless trigger button backed by a numeric state value.
 
@@ -394,7 +311,7 @@ class F8IncrementButtonPropWidget(QtWidgets.QPushButton):
             return None
 
 
-class F8WrapLinePropWidget(QtWidgets.QPlainTextEdit):
+class F8WrapLineEditor(QtWidgets.QPlainTextEdit):
     """
     Single-line editor that wraps long text.
 
@@ -492,7 +409,7 @@ class F8WrapLinePropWidget(QtWidgets.QPlainTextEdit):
         self._prev_text = text
 
 
-class F8JsonPropTextEdit(QtWidgets.QTextEdit):
+class F8JsonValueEditor(QtWidgets.QTextEdit):
     """
     QTextEdit property widget that round-trips JSON values as python objects.
     """
@@ -549,7 +466,7 @@ class F8JsonPropTextEdit(QtWidgets.QTextEdit):
                 self.setPlainText(json.dumps(value, ensure_ascii=False, indent=2))
 
 
-class F8NumberPropLineEdit(QtWidgets.QLineEdit):
+class F8NumberLineEditor(QtWidgets.QLineEdit):
     """
     LineEdit that validates and emits int/float values.
     """
@@ -772,3 +689,253 @@ class F8NumberPropLineEdit(QtWidgets.QLineEdit):
         else:
             text = hint
         super().setToolTip(text)
+
+
+class F8OptionComboEditor(QtWidgets.QWidget):
+    """
+    Property-value editor wrapper around the reusable combo control.
+    """
+
+    value_changed = QtCore.Signal(str, object)
+
+    def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._name = ""
+        self._combo = F8OptionCombo()
+        self._combo.valueChanged.connect(self._emit)  # type: ignore[attr-defined]
+
+        layout = QtWidgets.QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self._combo, 1)
+
+        self._pool_field: str | None = None
+        self._pool_resolver: Callable[[str], list[str]] | None = None
+
+    def set_name(self, name: str) -> None:
+        self._name = str(name or "")
+
+    def get_name(self) -> str:
+        return self._name
+
+    def set_items(self, items: list[str]) -> None:
+        self._combo.set_options(list(items), labels=list(items))
+
+    def set_pool(self, pool_field: str, resolver: Callable[[str], list[str]]) -> None:
+        self._pool_field = str(pool_field or "")
+        self._pool_resolver = resolver
+        self.refresh_options()
+
+    def refresh_options(self) -> None:
+        if not self._pool_field or self._pool_resolver is None:
+            return
+        items = self._pool_resolver(self._pool_field)
+        self.set_items(items)
+
+    def set_value(self, value: Any) -> None:
+        self._combo.set_value("" if value is None else str(value))
+
+    def get_value(self) -> Any:
+        value = self._combo.value()
+        if value is None:
+            return None
+        return str(value)
+
+    def set_context_tooltip(self, tooltip: str) -> None:
+        self._combo.set_context_tooltip(tooltip)
+
+    def set_read_only(self, read_only: bool) -> None:
+        self._combo.set_read_only(bool(read_only))
+
+    def _emit(self, value: Any) -> None:
+        self.value_changed.emit(self.get_name(), None if value is None else str(value))
+
+
+class F8MultiSelectEditor(QtWidgets.QWidget):
+    """
+    Property-value editor wrapper around the reusable multi-select control.
+    """
+
+    value_changed = QtCore.Signal(str, object)
+
+    def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._name = ""
+        self._multi = F8MultiSelect()
+        self._multi.valueChanged.connect(self._emit)  # type: ignore[attr-defined]
+
+        layout = QtWidgets.QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self._multi, 1)
+
+        self._pool_field: str | None = None
+        self._pool_resolver: Callable[[str], list[str]] | None = None
+
+    def set_name(self, name: str) -> None:
+        self._name = str(name or "")
+
+    def get_name(self) -> str:
+        return self._name
+
+    def set_items(self, items: list[str]) -> None:
+        self._multi.set_options(list(items), labels=list(items))
+
+    def set_pool(self, pool_field: str, resolver: Callable[[str], list[str]]) -> None:
+        self._pool_field = str(pool_field or "")
+        self._pool_resolver = resolver
+        self.refresh_options()
+
+    def refresh_options(self) -> None:
+        if not self._pool_field or self._pool_resolver is None:
+            return
+        items = self._pool_resolver(self._pool_field)
+        self.set_items(items)
+
+    def set_value(self, value: Any) -> None:
+        self._multi.set_value(value)
+
+    def get_value(self) -> Any:
+        return self._multi.value()
+
+    def set_context_tooltip(self, tooltip: str) -> None:
+        self._multi.set_context_tooltip(tooltip)
+
+    def set_read_only(self, read_only: bool) -> None:
+        self._multi.set_read_only(bool(read_only))
+
+    def _emit(self, value: Any) -> None:
+        out = [str(item) for item in list(value or [])]
+        self.value_changed.emit(self.get_name(), out)
+
+
+class F8BoolSwitchEditor(QtWidgets.QWidget):
+    """
+    Property-value editor wrapper around the reusable boolean switch control.
+    """
+
+    value_changed = QtCore.Signal(str, object)
+
+    def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._name = ""
+        self._switch = F8Switch()
+        self._switch.set_labels("True", "False")
+        self._switch.valueChanged.connect(self._emit)  # type: ignore[attr-defined]
+
+        layout = QtWidgets.QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self._switch, 1)
+
+    def set_name(self, name: str) -> None:
+        self._name = str(name or "")
+
+    def get_name(self) -> str:
+        return self._name
+
+    def set_value(self, value: Any) -> None:
+        self._switch.set_value(bool(value) if value is not None else False)
+
+    def get_value(self) -> Any:
+        return bool(self._switch.value())
+
+    def set_context_tooltip(self, tooltip: str) -> None:
+        self._switch.setToolTip(str(tooltip or ""))
+
+    def set_read_only(self, read_only: bool) -> None:
+        self._switch.setEnabled(not bool(read_only))
+
+    def _emit(self, value: Any) -> None:
+        self.value_changed.emit(self.get_name(), bool(value))
+
+
+class F8ValueBarEditor(QtWidgets.QWidget):
+    """
+    Property-value editor wrapper around the reusable value-bar control.
+    """
+
+    value_changed = QtCore.Signal(str, object)
+
+    def __init__(self, parent: QtWidgets.QWidget | None = None, *, data_type: type[int] | type[float]) -> None:
+        super().__init__(parent)
+        self._name = ""
+        self._data_type = data_type
+        self._min: float | int | None = None
+        self._max: float | int | None = None
+        self._bar = F8ValueBar(integer=(data_type is int), minimum=0.0, maximum=1.0)
+        self._bar.valueCommitted.connect(self._emit)  # type: ignore[attr-defined]
+
+        layout = QtWidgets.QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self._bar, 1)
+
+    def set_name(self, name: str) -> None:
+        self._name = str(name or "")
+
+    def get_name(self) -> str:
+        return self._name
+
+    def set_min(self, value: Any) -> None:
+        self._min = value
+        self._bar.set_range(self._min, self._max)
+
+    def set_max(self, value: Any) -> None:
+        self._max = value
+        self._bar.set_range(self._min, self._max)
+
+    def set_value(self, value: Any) -> None:
+        self._bar.set_value(value)
+
+    def get_value(self) -> Any:
+        value = self._bar.value()
+        return int(value) if self._data_type is int else float(value)
+
+    def _emit(self, value: Any) -> None:
+        out = int(value) if self._data_type is int else float(value)
+        self.value_changed.emit(self.get_name(), out)
+
+
+class F8ImageValueEditor(QtWidgets.QWidget):
+    """
+    Property-value editor wrapper around the reusable base64 image control.
+    """
+
+    value_changed = QtCore.Signal(str, object)
+
+    def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._name = ""
+        self._widget = F8ImageB64Editor()
+        self._widget.valueChanged.connect(self._emit)  # type: ignore[attr-defined]
+
+        layout = QtWidgets.QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self._widget, 1)
+
+    def set_name(self, name: str) -> None:
+        self._name = str(name or "")
+
+    def get_name(self) -> str:
+        return self._name
+
+    def set_value(self, value: Any) -> None:
+        self._widget.set_value("" if value is None else str(value))
+
+    def get_value(self) -> Any:
+        return str(self._widget.value() or "")
+
+    def _emit(self, value: str) -> None:
+        self.value_changed.emit(self.get_name(), str(value or ""))
+
+
+__all__ = [
+    "F8CodeButtonEditor",
+    "F8InlineCodeEditor",
+    "F8IncrementButtonEditor",
+    "F8WrapLineEditor",
+    "F8JsonValueEditor",
+    "F8NumberLineEditor",
+    "F8OptionComboEditor",
+    "F8MultiSelectEditor",
+    "F8BoolSwitchEditor",
+    "F8ValueBarEditor",
+    "F8ImageValueEditor",
+]

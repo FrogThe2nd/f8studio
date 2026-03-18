@@ -6,13 +6,16 @@ from qtpy import QtCore, QtGui, QtWidgets
 from NodeGraphQt.custom_widgets.properties_bin.node_property_factory import NodePropertyWidgetFactory
 
 from f8pysdk import F8StateAccess, F8StateSpec, integer_schema, string_schema
-from f8pystudio.nodegraph.items.inline_state_panel import make_state_inline_control, on_graph_property_changed
+from f8pystudio.nodegraph.items.state_inline_controls import (
+    build_state_inline_control,
+    sync_state_inline_controls_from_graph_property,
+)
 from f8pystudio.nodegraph.items.node_item_core import StateFieldInfo
 from f8pystudio.nodegraph.items.service_toolbar_host import F8ForceGlobalToolTipFilter
 from f8pystudio.widgets.editor_controls import F8OptionCombo
-from f8pystudio.widgets.property_value_widgets import F8IncrementButtonPropWidget
-from f8pystudio.widgets.state_widget_api import build_state_value_widget
-from f8pystudio.nodegraph.items.wave_preview import (
+from f8pystudio.widgets.state_value_controls import F8IncrementButtonEditor
+from f8pystudio.widgets.state_controls import build_state_panel_control
+from f8pystudio.widgets.value_controls.wave_controls import (
     WaveHeatmapControl,
     WavePatternEditorControl,
     WavePreviewControl,
@@ -53,7 +56,7 @@ class _FakeNodeItem:
         del schema
         return None, None
 
-    def _inline_state_input_is_connected(self, field_name: str) -> bool:
+    def _is_state_inline_input_connected(self, field_name: str) -> bool:
         del field_name
         return False
 
@@ -200,10 +203,10 @@ def _mouse_event(
     )
 
 
-def test_make_state_inline_control_code_uses_push_button_and_style() -> None:
+def test_build_state_inline_control_code_uses_push_button_and_style() -> None:
     _ensure_app()
     node_item = _FakeNodeItem(code_value="a\nb")
-    control = make_state_inline_control(node_item, _code_field())
+    control = build_state_inline_control(node_item, _code_field())
 
     assert isinstance(control, QtWidgets.QPushButton)
     style = str(control.styleSheet() or "")
@@ -211,10 +214,10 @@ def test_make_state_inline_control_code_uses_push_button_and_style() -> None:
     assert "text-align: center" in style
 
 
-def test_make_state_inline_control_code_installs_tooltip_filter_and_multiline_tooltip() -> None:
+def test_build_state_inline_control_code_installs_tooltip_filter_and_multiline_tooltip() -> None:
     _ensure_app()
     node_item = _FakeNodeItem(code_value="a\nb")
-    control = make_state_inline_control(node_item, _code_field())
+    control = build_state_inline_control(node_item, _code_field())
     assert isinstance(control, QtWidgets.QPushButton)
 
     assert len(node_item._tooltip_filters) == 1
@@ -230,7 +233,7 @@ def test_make_state_inline_control_code_installs_tooltip_filter_and_multiline_to
     assert "3 lines" in str(control.toolTip() or "")
 
 
-def test_make_state_inline_control_wave_preview_restores_widget() -> None:
+def test_build_state_inline_control_wave_preview_restores_widget() -> None:
     _ensure_app()
     node_item = _FakeNodeItem(code_value="")
     node_item._backend = _FakeBackendNode(
@@ -243,14 +246,14 @@ def test_make_state_inline_control_wave_preview_restores_widget() -> None:
         }
     )
 
-    control = make_state_inline_control(node_item, _wave_preview_field())
+    control = build_state_inline_control(node_item, _wave_preview_field())
 
     assert isinstance(control, WavePreviewControl)
 
 
 
 
-def test_make_state_inline_control_wave_heatmap_restores_widget() -> None:
+def test_build_state_inline_control_wave_heatmap_restores_widget() -> None:
     _ensure_app()
     node_item = _FakeNodeItem(code_value="")
     node_item._backend = _FakeBackendNode(
@@ -260,12 +263,12 @@ def test_make_state_inline_control_wave_heatmap_restores_widget() -> None:
         }
     )
 
-    control = make_state_inline_control(node_item, _wave_heatmap_field())
+    control = build_state_inline_control(node_item, _wave_heatmap_field())
 
     assert isinstance(control, WaveHeatmapControl)
 
 
-def test_make_state_inline_control_selected_axis_uses_option_pool() -> None:
+def test_build_state_inline_control_selected_axis_uses_option_pool() -> None:
     _ensure_app()
     node_item = _FakeNodeItem(code_value="")
     node_item._backend = _FakeBackendNode(
@@ -275,19 +278,19 @@ def test_make_state_inline_control_selected_axis_uses_option_pool() -> None:
         }
     )
 
-    control = make_state_inline_control(node_item, _selected_axis_field())
+    control = build_state_inline_control(node_item, _selected_axis_field())
 
     assert isinstance(control, F8OptionCombo)
 
 
-def test_make_state_inline_control_button_increments_integer_value() -> None:
+def test_build_state_inline_control_button_increments_integer_value() -> None:
     _ensure_app()
     node_item = _FakeNodeItem(code_value="")
     node_item._backend = _FakeBackendNode({"playTrigger": 0})
 
-    control = make_state_inline_control(node_item, _button_field())
+    control = build_state_inline_control(node_item, _button_field())
 
-    assert isinstance(control, F8IncrementButtonPropWidget)
+    assert isinstance(control, F8IncrementButtonEditor)
     assert control.text() == "Play"
     control.click()
     assert node_item._backend.get_property("playTrigger") == 1
@@ -295,19 +298,19 @@ def test_make_state_inline_control_button_increments_integer_value() -> None:
     assert node_item._backend.get_property("playTrigger") == 2
 
 
-def test_make_state_inline_control_button_disables_non_numeric_schema() -> None:
+def test_build_state_inline_control_button_disables_non_numeric_schema() -> None:
     _ensure_app()
     node_item = _FakeNodeItem(code_value="")
     node_item._backend = _FakeBackendNode({"badTrigger": "abc"})
 
-    control = make_state_inline_control(node_item, _invalid_button_field())
+    control = build_state_inline_control(node_item, _invalid_button_field())
 
-    assert isinstance(control, F8IncrementButtonPropWidget)
+    assert isinstance(control, F8IncrementButtonEditor)
     assert not control.isEnabled()
     assert "integer or number" in str(control.toolTip() or "")
 
 
-def test_build_state_value_widget_button_uses_field_label_and_increments() -> None:
+def test_build_state_panel_control_button_uses_field_label_and_increments() -> None:
     _ensure_app()
     field = F8StateSpec(
         name="playTrigger",
@@ -317,14 +320,14 @@ def test_build_state_value_widget_button_uses_field_label_and_increments() -> No
         uiControl="button",
     )
     node = _FakePropertyNode(field)
-    widget = build_state_value_widget(
+    widget = build_state_panel_control(
         node=node,
         prop_name="playTrigger",
         widget_type=1,
         widget_factory=NodePropertyWidgetFactory(),
     )
 
-    assert isinstance(widget, F8IncrementButtonPropWidget)
+    assert isinstance(widget, F8IncrementButtonEditor)
     assert widget.text() == "Play"
     seen: list[object] = []
     widget.value_changed.connect(lambda _name, value: seen.append(value))  # type: ignore[attr-defined]
@@ -351,7 +354,7 @@ def test_option_combo_read_only_toggle_does_not_call_qlineedit_text_interaction_
     assert not control.isEditable()
 
 
-def test_on_graph_property_changed_updates_wave_heatmap() -> None:
+def test_sync_state_inline_controls_from_graph_property_updates_wave_heatmap() -> None:
     _ensure_app()
     node_item = _FakeNodeItem(code_value="")
     seen: list[Any] = []
@@ -360,11 +363,11 @@ def test_on_graph_property_changed_updates_wave_heatmap() -> None:
         seen.append(value)
 
     node_item._state_inline_updaters["heatmap"] = _record_heatmap
-    on_graph_property_changed(node_item, node_item._backend, "heatmap", [0.0, 1.0, 0.0])
+    sync_state_inline_controls_from_graph_property(node_item, node_item._backend, "heatmap", [0.0, 1.0, 0.0])
 
     assert seen == [[0.0, 1.0, 0.0]]
 
-def test_make_state_inline_control_wave_pattern_restores_widget() -> None:
+def test_build_state_inline_control_wave_pattern_restores_widget() -> None:
     _ensure_app()
     node_item = _FakeNodeItem(code_value="")
     node_item._backend = _FakeBackendNode(
@@ -377,12 +380,12 @@ def test_make_state_inline_control_wave_pattern_restores_widget() -> None:
         }
     )
 
-    control = make_state_inline_control(node_item, _wave_pattern_field())
+    control = build_state_inline_control(node_item, _wave_pattern_field())
 
     assert isinstance(control, WavePatternEditorControl)
 
 
-def test_on_graph_property_changed_refreshes_wave_preview_from_bounds_change() -> None:
+def test_sync_state_inline_controls_from_graph_property_refreshes_wave_preview_from_bounds_change() -> None:
     _ensure_app()
     node_item = _FakeNodeItem(code_value="")
     node_item._backend = _FakeBackendNode(
@@ -401,12 +404,12 @@ def test_on_graph_property_changed_refreshes_wave_preview_from_bounds_change() -
 
     node_item._state_inline_updaters["preview"] = _record_preview
 
-    on_graph_property_changed(node_item, node_item._backend, "maxT", 8.0)
+    sync_state_inline_controls_from_graph_property(node_item, node_item._backend, "maxT", 8.0)
 
     assert seen == [[[0.0, 0.0], [0.1, 1.0]]]
 
 
-def test_on_graph_property_changed_refreshes_wave_pattern_from_preview_dependency() -> None:
+def test_sync_state_inline_controls_from_graph_property_refreshes_wave_pattern_from_preview_dependency() -> None:
     _ensure_app()
     node_item = _FakeNodeItem(code_value="")
     node_item._backend = _FakeBackendNode(
@@ -425,7 +428,7 @@ def test_on_graph_property_changed_refreshes_wave_pattern_from_preview_dependenc
 
     node_item._state_inline_updaters["points"] = _record_points
 
-    on_graph_property_changed(node_item, node_item._backend, "preview", [[0.0, 0.0], [0.2, 0.9]])
+    sync_state_inline_controls_from_graph_property(node_item, node_item._backend, "preview", [[0.0, 0.0], [0.2, 0.9]])
 
     assert seen == [[[0.0, 0.0], [10.0, 0.0]]]
 
@@ -443,11 +446,11 @@ def test_wave_pattern_editor_preserves_hidden_points_when_max_t_shrinks() -> Non
         }
     )
 
-    control = make_state_inline_control(node_item, _wave_pattern_field())
+    control = build_state_inline_control(node_item, _wave_pattern_field())
     assert isinstance(control, WavePatternEditorControl)
 
     node_item._backend.set_property("maxT", 5.0)
-    on_graph_property_changed(node_item, node_item._backend, "maxT", 5.0)
+    sync_state_inline_controls_from_graph_property(node_item, node_item._backend, "maxT", 5.0)
 
     assert node_item._backend.get_property("points") == [[1.0, 0.1], [6.0, 0.6], [12.0, 1.2]]
 
@@ -464,7 +467,7 @@ def test_wave_pattern_editor_add_move_delete_updates_backend_points() -> None:
         }
     )
 
-    control = make_state_inline_control(node_item, _wave_pattern_field())
+    control = build_state_inline_control(node_item, _wave_pattern_field())
     assert isinstance(control, WavePatternEditorControl)
     control.resize(240, 84)
 

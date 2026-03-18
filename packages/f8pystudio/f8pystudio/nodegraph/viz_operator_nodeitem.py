@@ -82,7 +82,7 @@ class F8StudioVizOperatorNodeItem(F8StudioOperatorNodeItem):
         group_gap = 6.0
 
         try:
-            self._ensure_inline_state_widgets()
+            self._ensure_state_inline_controls()
         except (AttributeError, RuntimeError, TypeError):
             pass
 
@@ -169,7 +169,7 @@ class F8StudioVizOperatorNodeItem(F8StudioOperatorNodeItem):
 
         return width, height
 
-    def _make_state_inline_control(self, state_field: Any):  # type: ignore[override]
+    def _build_state_inline_control(self, state_field: Any):  # type: ignore[override]
         """
         Override a couple of fields for viz nodes:
         - minVal/maxVal: allow blank (auto) via QLineEdit (stores None/float)
@@ -177,7 +177,7 @@ class F8StudioVizOperatorNodeItem(F8StudioOperatorNodeItem):
         nm = self._state_field_name_if_visible(state_field)
         name = nm or ""
         if name not in {"minVal", "maxVal"}:
-            return super()._make_state_inline_control(state_field)
+            return super()._build_state_inline_control(state_field)
 
         from qtpy import QtCore, QtWidgets
 
@@ -254,7 +254,7 @@ class F8StudioVizOperatorNodeItem(F8StudioOperatorNodeItem):
 
         # Ensure inline widgets exist before aligning so sizing + rows match.
         try:
-            self._ensure_inline_state_widgets()
+            self._ensure_state_inline_controls()
         except (AttributeError, RuntimeError, TypeError):
             pass
 
@@ -495,7 +495,7 @@ class F8StudioVizOperatorNodeItem(F8StudioOperatorNodeItem):
 
     def _draw_node_horizontal(self):  # type: ignore[override]
         try:
-            self._ensure_inline_state_widgets()
+            self._ensure_state_inline_controls()
         except (AttributeError, RuntimeError, TypeError):
             pass
         try:

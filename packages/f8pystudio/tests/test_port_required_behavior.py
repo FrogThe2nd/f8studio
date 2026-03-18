@@ -7,8 +7,8 @@ from qtpy import QtWidgets
 
 from f8pysdk import F8DataPortSpec, F8ServiceSpec, F8StateAccess, F8StateSpec
 from f8pysdk.schema_helpers import string_schema
-from f8pystudio.widgets import node_property_widgets as npw
-from f8pystudio.widgets.node_property_widgets import _F8SpecPortEditor
+from f8pystudio.widgets import node_property_panel as npw
+from f8pystudio.widgets.node_property_panel import _F8SpecPortEditor
 from f8pystudio.widgets.spec_mutations import set_ports
 
 
