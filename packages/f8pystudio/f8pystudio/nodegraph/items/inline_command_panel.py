@@ -9,8 +9,8 @@ from qtpy import QtCore, QtWidgets
 from f8pysdk.schema_helpers import schema_default, schema_type
 
 from ...command_ui_protocol import CommandUiHandler, CommandUiSource
+from ...components.controls import F8OptionCombo, F8Switch, F8ValueBar, parse_select_pool
 from ...ui_notifications import show_warning
-from ...widgets.editor_controls import F8OptionCombo, F8Switch, F8ValueBar, parse_select_pool
 from .service_toolbar_host import F8ForceGlobalToolTipFilter
 
 logger = logging.getLogger(__name__)

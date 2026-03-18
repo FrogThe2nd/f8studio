@@ -15,28 +15,19 @@ from qtpy import QtCore, QtGui, QtWidgets
 
 from f8pysdk.schema_helpers import schema_type
 
-from ...editor_assist.protocol import editor_assist_context_for_field
-from ...editor_assist.workspace import EditorAssistContext
-from ...ui_icons import StudioIcon, icon_for
-from ...widgets.editor_controls import (
-    F8ImageB64Editor,
-    F8MultiSelect,
-    F8OptionCombo,
-    F8Switch,
-    F8ValueBar,
-    parse_multiselect_pool,
-    parse_select_pool,
+from ...components.controls import parse_multiselect_pool, parse_select_pool
+from ...components.state_builders import (
+    StateControlSpec,
+    build_inline_control_binding,
+    set_control_read_only,
 )
-from ...widgets.state_controls.pool_resolver import resolve_pool_items
-from ...widgets.monaco_editor_dialog import open_code_editor_window
-from ...widgets.state_value_controls import F8IncrementButtonEditor, F8NumberLineEditor
-from ...widgets.value_controls.wave_controls import (
+from ...components.wave import (
     WAVE_PATTERN_EDITOR_DEPENDENCY_FIELDS,
     WAVE_PREVIEW_DEPENDENCY_FIELDS,
-    make_wave_heatmap_control,
-    make_wave_pattern_editor_control,
-    make_wave_preview_control,
 )
+from ...editor_assist.protocol import editor_assist_context_for_field
+from ...editor_assist.workspace import EditorAssistContext
+from ...widgets.state_controls.pool_resolver import resolve_pool_items
 from ...widgets.studio_node_code_editor import get_node_text, resolve_node, set_node_text, studio_session_key
 from .node_item_core import StateFieldInfo, state_field_info
 from .service_toolbar_host import F8ElideToolButton, F8ForceGlobalToolTipFilter
@@ -129,35 +120,7 @@ def set_state_inline_control_read_only(control: QtWidgets.QWidget, *, read_only:
     """
     Best-effort toggle for inline state controls hosted in the node item.
     """
-    if isinstance(control, F8OptionCombo):
-        control.set_read_only(bool(read_only))
-        return
-    if isinstance(control, F8Switch):
-        control.setEnabled(not bool(read_only))
-        return
-    if isinstance(control, F8ValueBar):
-        control.setEnabled(not bool(read_only))
-        return
-    if isinstance(control, QtWidgets.QLineEdit):
-        control.setEnabled(True)
-        control.setReadOnly(bool(read_only))
-        return
-    if isinstance(control, QtWidgets.QPlainTextEdit):
-        control.setEnabled(True)
-        control.setReadOnly(bool(read_only))
-        return
-    if isinstance(control, QtWidgets.QTextEdit):
-        control.setEnabled(True)
-        control.setReadOnly(bool(read_only))
-        if read_only:
-            control.setTextInteractionFlags(
-                QtCore.Qt.TextInteractionFlag.TextSelectableByMouse
-                | QtCore.Qt.TextInteractionFlag.TextSelectableByKeyboard
-            )
-        else:
-            control.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextEditorInteraction)
-        return
-    control.setEnabled(not bool(read_only))
+    set_control_read_only(control, read_only=read_only)
 
 
 def refresh_state_inline_control_read_only(node_item: Any) -> None:
@@ -176,11 +139,17 @@ def refresh_state_inline_control_read_only(node_item: Any) -> None:
         if info is None or not info.show_on_node:
             continue
         name = info.name
-        ctrl = node_item._state_inline_controls.get(name)
-        if ctrl is None:
-            continue
         read_only = info.access_str == "ro" or is_state_inline_input_connected(node_item, name)
-        set_state_inline_control_read_only(ctrl, read_only=bool(read_only))
+        try:
+            binding = node_item._state_inline_bindings.get(name)
+        except AttributeError:
+            binding = None
+        if binding is not None:
+            binding.set_read_only(bool(read_only))
+            continue
+        ctrl = node_item._state_inline_controls.get(name)
+        if ctrl is not None:
+            set_state_inline_control_read_only(ctrl, read_only=bool(read_only))
 
 
 def sync_state_inline_controls_from_graph_property(node_item: Any, node: Any, name: str, value: Any) -> None:
@@ -261,21 +230,35 @@ def refresh_state_inline_option_pools(node_item: Any, changed_field: str) -> Non
     if node is None:
         return
     try:
-        pool_value = node.get_property(pool)
-    except Exception:
-        pool_value = None
-    items = resolve_pool_items(pool_value)
+        bindings = node_item._state_inline_bindings
+    except AttributeError:
+        bindings = {}
     for field, pool_name in list(node_item._state_inline_option_pools.items()):
         if pool_name != pool:
             continue
+        binding = bindings.get(field)
+        if binding is not None and binding.refresh_options is not None:
+            try:
+                binding.refresh_options()
+            except (RuntimeError, TypeError):
+                continue
+            continue
         ctrl = node_item._state_inline_controls.get(field)
-        if not isinstance(ctrl, (F8OptionCombo, F8MultiSelect)):
+        if ctrl is None:
             continue
         try:
+            pool_value = node.get_property(pool)
+        except Exception:
+            pool_value = None
+        items = resolve_pool_items(pool_value)
+        try:
+            selected_value = node.get_property(field)
+        except Exception:
             try:
-                selected_value = node.get_property(field)
-            except Exception:
                 selected_value = ctrl.value()
+            except Exception:
+                selected_value = None
+        try:
             ctrl.set_options(items, labels=items)
             ctrl.set_value(selected_value)
         except (AttributeError, RuntimeError, TypeError):
@@ -426,510 +409,103 @@ def build_state_inline_control(node_item: Any, state_field: StateFieldInfo) -> Q
             return []
         return resolve_pool_items(value)
 
-    # Create control.
     read_only = access_s == "ro" or node_item._is_state_inline_input_connected(name)
+    spec = StateControlSpec(
+        name=name,
+        label=state_field.label or name,
+        ui_control=ui,
+        ui_language=state_field.ui_language or "plaintext",
+        schema_type=schema_type_value,
+        enum_items=enum_items,
+        minimum=lo,
+        maximum=hi,
+        field_tooltip=field_tooltip,
+        select_pool_field=select_pool_field,
+        multiselect_pool_field=multiselect_pool_field,
+        is_image_b64=schema_type_value == "string" and (ui in {"image", "image_b64", "img"} or "b64" in name.lower()),
+    )
+    try:
+        graph = node_item._graph()
+    except AttributeError:
+        graph = None
+    node = node_item._backend_node()
+    node_id = ""
+    if node is not None:
+        node_id = str(node.id or "").strip()
 
-    if ui in {"wave_preview"}:
-        control, apply_value = make_wave_preview_control(
-            field_tooltip=field_tooltip,
-            preview_value_getter=_get_node_value,
-            property_value_getter=_get_node_property,
-        )
-        node_item._state_inline_updaters[name] = apply_value
-        return control
-
-    if ui in {"wave_heatmap"}:
-        control, apply_value = make_wave_heatmap_control(
-            field_tooltip=field_tooltip,
-            heatmap_value_getter=_get_node_value,
-        )
-        node_item._state_inline_updaters[name] = apply_value
-        return control
-
-    if ui in {"wave_pattern_editor"}:
-        def _set_points_value(value: Any, push_undo: bool) -> None:
-            _set_node_value(value, push_undo=push_undo)
-
-        control, apply_value = make_wave_pattern_editor_control(
-            field_tooltip=field_tooltip,
-            points_value_getter=_get_node_value,
-            property_value_getter=_get_node_property,
-            points_setter=_set_points_value,
-        )
-        if read_only:
-            control.set_read_only(True)
-        node_item._state_inline_updaters[name] = apply_value
-        return control
-
-    if ui in {"wrapline"}:
-
-        class _InlineWrapLineEdit(QtWidgets.QPlainTextEdit):
-            def __init__(self, parent: QtWidgets.QWidget | None = None):
-                super().__init__(parent)
-                self._prev = ""
-
-            @staticmethod
-            def _normalize(value: str) -> str:
-                if "\n" not in value and "\r" not in value:
-                    return value.strip()
-                parts = [p.strip() for p in value.replace("\r\n", "\n").replace("\r", "\n").split("\n")]
-                return " ".join([p for p in parts if p]).strip()
-
-            def focusInEvent(self, event):  # type: ignore[override]
-                super().focusInEvent(event)
-                self._prev = str(self.toPlainText() or "")
-
-            def focusOutEvent(self, event):  # type: ignore[override]
-                super().focusOutEvent(event)
-                txt_raw = str(self.toPlainText() or "")
-                txt = self._normalize(txt_raw)
-                if txt != txt_raw:
-                    with QtCore.QSignalBlocker(self):
-                        self.setPlainText(txt)
-                if txt != self._prev:
-                    self._prev = txt
-                    _set_node_value(txt, push_undo=True)
-
-            def keyPressEvent(self, event):  # type: ignore[override]
-                if event.key() in (QtCore.Qt.Key.Key_Return, QtCore.Qt.Key.Key_Enter):
-                    txt_raw = str(self.toPlainText() or "")
-                    txt = self._normalize(txt_raw)
-                    if txt != txt_raw:
-                        with QtCore.QSignalBlocker(self):
-                            self.setPlainText(txt)
-                    if txt != self._prev:
-                        self._prev = txt
-                        _set_node_value(txt, push_undo=True)
-                    self.clearFocus()
-                    event.accept()
-                    return
-                super().keyPressEvent(event)
-
-            def insertFromMimeData(self, source: QtCore.QMimeData) -> None:  # type: ignore[override]
-                if source is None or not source.hasText():
-                    return super().insertFromMimeData(source)
-                txt = self._normalize(str(source.text() or ""))
-                if txt:
-                    self.textCursor().insertText(txt)
-                return
-
-        edit = _InlineWrapLineEdit()
-        edit.setLineWrapMode(QtWidgets.QPlainTextEdit.LineWrapMode.WidgetWidth)
-        edit.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        edit.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        edit.setTabStopDistance(4 * edit.fontMetrics().horizontalAdvance(" "))
+    try:
+        viewer = node_item.viewer()
+    except AttributeError:
+        viewer = None
+    warning_parent = None
+    if viewer is not None:
         try:
-            font = QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.FixedFont)
-            edit.setFont(font)
+            warning_parent = viewer.window() if viewer.window() is not None else viewer
         except (AttributeError, RuntimeError, TypeError):
-            pass
-        edit.setMinimumWidth(0)
-        edit.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred)
-        edit.setMinimumHeight(38)
-        edit.setMaximumHeight(64)
-        _common_style(edit)
-        _apply_text_palette(edit)
-        edit.document().setDocumentMargin(4.0)
-        if field_tooltip:
-            edit.setToolTip(field_tooltip)
-            _install_global_tooltip_filter(edit)
+            warning_parent = viewer
 
-        def _apply_value(value: Any) -> None:
-            text = "" if value is None else str(value)
-            text_normalized = _InlineWrapLineEdit._normalize(text)
-            with QtCore.QSignalBlocker(edit):
-                edit.setPlainText(text_normalized)
-            try:
-                edit._prev = text_normalized  # type: ignore[attr-defined]
-            except RuntimeError:
-                pass
+    def _get_persisted_code_value() -> str:
+        if graph is None or not node_id:
+            current = _get_node_value()
+            return "" if current is None else str(current)
+        text = get_node_text(graph, node_id, name)
+        if text:
+            return text
+        current = _get_node_value()
+        return "" if current is None else str(current)
 
-        _apply_value(_get_node_value())
-        node_item._state_inline_updaters[name] = _apply_value
-        if read_only:
-            edit.setReadOnly(True)
-        return edit
-
-    if ui in {"code_inline", "multiline"}:
-
-        class _InlineExprEdit(QtWidgets.QPlainTextEdit):
-            def __init__(self, parent: QtWidgets.QWidget | None = None):
-                super().__init__(parent)
-                self._prev = ""
-
-            def focusInEvent(self, event):  # type: ignore[override]
-                super().focusInEvent(event)
-                self._prev = str(self.toPlainText() or "")
-
-            def focusOutEvent(self, event):  # type: ignore[override]
-                super().focusOutEvent(event)
-                txt = str(self.toPlainText() or "")
-                if txt != self._prev:
-                    self._prev = txt
-                    _set_node_value(txt, push_undo=True)
-
-            def keyPressEvent(self, event):  # type: ignore[override]
-                if event.key() in (QtCore.Qt.Key.Key_Return, QtCore.Qt.Key.Key_Enter) and bool(
-                    event.modifiers() & QtCore.Qt.KeyboardModifier.ControlModifier
-                ):
-                    txt = str(self.toPlainText() or "")
-                    if txt != self._prev:
-                        self._prev = txt
-                        _set_node_value(txt, push_undo=True)
-                    event.accept()
-                    return
-                super().keyPressEvent(event)
-
-        edit = _InlineExprEdit()
-        edit.setLineWrapMode(QtWidgets.QPlainTextEdit.LineWrapMode.WidgetWidth)
-        edit.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        edit.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        edit.setTabStopDistance(4 * edit.fontMetrics().horizontalAdvance(" "))
-        try:
-            font = QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.FixedFont)
-            edit.setFont(font)
-        except (AttributeError, RuntimeError, TypeError):
-            pass
-        edit.setMinimumWidth(160)
-        edit.setMinimumHeight(44)
-        edit.setMaximumHeight(88)
-        _common_style(edit)
-        _apply_text_palette(edit)
-        edit.document().setDocumentMargin(4.0)
-        if field_tooltip:
-            edit.setToolTip(field_tooltip)
-            _install_global_tooltip_filter(edit)
-
-        def _apply_value(value: Any) -> None:
-            text = "" if value is None else str(value)
-            with QtCore.QSignalBlocker(edit):
-                edit.setPlainText(text)
-            try:
-                edit._prev = text  # type: ignore[attr-defined]
-            except RuntimeError:
-                pass
-
-        _apply_value(_get_node_value())
-        node_item._state_inline_updaters[name] = _apply_value
-        if read_only:
-            edit.setReadOnly(True)
-        return edit
-
-    if ui in {"code"}:
-        btn = QtWidgets.QPushButton()
-        btn.setText("Edit...")
-        btn.setIcon(icon_for(btn, StudioIcon.CODE))
-        btn.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred)
-        btn.setMinimumHeight(24)
-        btn.setStyleSheet(
-            """
-            QPushButton {
-                color: rgb(235, 235, 235);
-                background: rgba(0, 0, 0, 35);
-                border: 1px solid rgba(120, 200, 255, 85);
-                border-radius: 6px;
-                padding: 6px 10px;
-                text-align: center;
-                font-weight: 600;
-            }
-            QPushButton:hover {
-                background: rgba(120, 200, 255, 22);
-                border-color: rgba(120, 200, 255, 140);
-            }
-            QPushButton:pressed {
-                background: rgba(120, 200, 255, 35);
-                border-color: rgba(120, 200, 255, 160);
-            }
-            QPushButton:disabled {
-                color: rgba(235, 235, 235, 110);
-                background: rgba(0, 0, 0, 20);
-                border-color: rgba(255, 255, 255, 18);
-            }
-            """
+    def _set_persisted_code_value(updated: str) -> None:
+        if graph is None or not node_id:
+            _set_node_value(updated, push_undo=True)
+            return
+        set_node_text(
+            graph,
+            node_id,
+            name,
+            updated,
+            push_undo=True,
+            warning_parent=warning_parent,
         )
-        tooltip_filter = F8ForceGlobalToolTipFilter(btn)
-        btn.installEventFilter(tooltip_filter)
-        node_item._tooltip_filters.append(tooltip_filter)
-        if field_tooltip:
-            btn.setToolTip(field_tooltip)
 
-        def _apply_value(value: Any) -> None:
-            text = "" if value is None else str(value)
-            lines = len(text.splitlines()) if text else 0
-            tip = field_tooltip or ""
-            if lines:
-                tip2 = f"{lines} line" if lines == 1 else f"{lines} lines"
-                btn.setToolTip((tip + "\n" if tip else "") + tip2)
-
-        def _on_click() -> None:
-            state_field_name = str(state_field.name or "")
-            node = node_item._backend_node()
-            graph = node_item._graph()
-            node_id = ""
-            if node is not None:
-                node_id = str(node.id or "").strip()
-            session_key = studio_session_key(graph, node_id, state_field_name)
-            assist_context = _editor_assist_context(
-                graph,
-                node_id=node_id,
-                state_field_name=state_field_name,
-                language=state_field.ui_language or "plaintext",
-            )
-            assist_context_provider = lambda: _editor_assist_context(
-                graph,
-                node_id=node_id,
-                state_field_name=state_field_name,
-                language=state_field.ui_language or "plaintext",
-            )
-
-            viewer = node_item.viewer()
-            warning_parent = None
-            if viewer is not None:
-                try:
-                    warning_parent = viewer.window() if viewer.window() is not None else viewer
-                except (AttributeError, RuntimeError, TypeError):
-                    warning_parent = viewer
-
-            current_text = get_node_text(graph, node_id, state_field_name)
-            if not current_text:
-                current = _get_node_value()
-                current_text = "" if current is None else str(current)
-
-            def _on_saved(updated: str) -> None:
-                set_node_text(
-                    graph,
-                    node_id,
-                    state_field_name,
-                    updated,
-                    push_undo=True,
-                    warning_parent=warning_parent,
-                )
-                _apply_value(updated)
-
-            _ = open_code_editor_window(
-                viewer,
-                title=f"{node_item.name} - {state_field.label}",
-                code=current_text,
-                language=state_field.ui_language or "plaintext",
-                on_saved=_on_saved,
-                assist_context=assist_context,
-                assist_context_provider=assist_context_provider,
-                session_key=session_key,
-            )
-
-        btn.clicked.connect(_on_click)  # type: ignore[attr-defined]
-        _apply_value(_get_node_value())
-        node_item._state_inline_updaters[name] = _apply_value
-        if read_only:
-            btn.setDisabled(True)
-        return btn
-
-    if ui in {"button"}:
-        button_data_type: type[int] | type[float] = int if schema_type_value == "integer" else float
-        btn = F8IncrementButtonEditor(title=state_field.label or name, data_type=button_data_type)
-        btn.set_name(name)
-        btn.set_button_text(state_field.label or name)
-        btn.setStyleSheet(
-            """
-            QPushButton {
-                color: rgb(235, 235, 235);
-                background: rgba(0, 0, 0, 35);
-                border: 1px solid rgba(140, 220, 180, 90);
-                border-radius: 6px;
-                padding: 6px 10px;
-                text-align: center;
-                font-weight: 600;
-            }
-            QPushButton:hover {
-                background: rgba(140, 220, 180, 22);
-                border-color: rgba(140, 220, 180, 150);
-            }
-            QPushButton:pressed {
-                background: rgba(140, 220, 180, 36);
-                border-color: rgba(140, 220, 180, 180);
-            }
-            QPushButton:disabled {
-                color: rgba(235, 235, 235, 110);
-                background: rgba(0, 0, 0, 20);
-                border-color: rgba(255, 255, 255, 18);
-            }
-            """
-        )
-        if field_tooltip:
-            btn.set_context_tooltip(field_tooltip)
-            _install_global_tooltip_filter(btn)
-        if schema_type_value not in {"integer", "number"}:
-            btn.set_invalid_reason("Button control requires integer or number state schema.")
-        btn.value_changed.connect(lambda _field_name, value: _set_node_value(value, push_undo=True))  # type: ignore[attr-defined]
-        btn.set_value(_get_node_value())
-        node_item._state_inline_updaters[name] = btn.set_value
-        if read_only:
-            btn.set_read_only(True)
-        return btn
-
-    is_image_b64 = schema_type_value == "string" and (ui in {"image", "image_b64", "img"} or "b64" in name.lower())
-    if is_image_b64:
-        img = F8ImageB64Editor()
-
-        def _apply_value(value: Any) -> None:
-            img.set_value("" if value is None else str(value))
-
-        img.valueChanged.connect(lambda value: _set_node_value(str(value or ""), push_undo=True))  # type: ignore[attr-defined]
-        _apply_value(_get_node_value())
-        node_item._state_inline_updaters[name] = _apply_value
-        if read_only:
-            img.set_disabled(True)
-        return img
-
-    if multiselect_pool_field or ui in {"multiselect", "multi_select", "multi-select"}:
-        multi = F8MultiSelect()
-        if field_tooltip:
-            multi.set_context_tooltip(field_tooltip)
-
-        items = _pool_items(multiselect_pool_field) if multiselect_pool_field else list(enum_items)
-        multi.set_options(items, labels=items)
-
-        def _apply_value(value: Any) -> None:
-            multi.set_value(value)
-
-        multi.valueChanged.connect(lambda value: _set_node_value(list(value or []), push_undo=True))  # type: ignore[attr-defined]
-        _apply_value(_get_node_value())
-        node_item._state_inline_updaters[name] = _apply_value
-        if multiselect_pool_field:
-            node_item._state_inline_option_pools[name] = multiselect_pool_field
-        if read_only:
-            multi.set_read_only(True)
-        return multi
-
-    if enum_items or select_pool_field or ui in {"select", "dropdown", "dropbox", "combo", "combobox"}:
-        combo = F8OptionCombo()
-        _common_style(combo)
-
-        items = _pool_items(select_pool_field) if select_pool_field else list(enum_items)
-        combo.set_options(items, labels=items)
-        if field_tooltip:
-            combo.set_context_tooltip(field_tooltip)
-
-        def _apply_value(value: Any) -> None:
-            combo.set_value("" if value is None else str(value))
-
-        combo.valueChanged.connect(  # type: ignore[attr-defined]
-            lambda value: _set_node_value("" if value is None else str(value), push_undo=True)
-        )
-        _apply_value(_get_node_value())
-        node_item._state_inline_updaters[name] = _apply_value
-        if select_pool_field:
-            node_item._state_inline_option_pools[name] = select_pool_field
-        if read_only:
-            combo.set_read_only(True)
-        return combo
-
-    if schema_type_value == "boolean" or ui in {"switch", "toggle"}:
-        sw = F8Switch()
-        sw.set_labels("True", "False")
-        if field_tooltip:
-            sw.setToolTip(field_tooltip)
-
-        def _apply_value(value: Any) -> None:
-            with QtCore.QSignalBlocker(sw):
-                sw.set_value(bool(value) if value is not None else False)
-
-        sw.valueChanged.connect(lambda value: _set_node_value(bool(value), push_undo=True))  # type: ignore[attr-defined]
-        _apply_value(_get_node_value())
-        node_item._state_inline_updaters[name] = _apply_value
-        if read_only:
-            sw.setDisabled(True)
-        return sw
-
-    if schema_type_value in {"integer", "number"} and ui == "slider":
-        is_int = schema_type_value == "integer"
-        bar = F8ValueBar(integer=is_int, minimum=0.0, maximum=1.0)
-        bar.set_range(lo, hi)
-
-        def _apply_value(value: Any) -> None:
-            bar.set_value(value)
-
-        bar.valueChanging.connect(lambda value: _set_node_value(value, push_undo=False))  # type: ignore[attr-defined]
-        bar.valueCommitted.connect(lambda value: _set_node_value(value, push_undo=True))  # type: ignore[attr-defined]
-        _apply_value(_get_node_value())
-        node_item._state_inline_updaters[name] = _apply_value
-        if read_only:
-            bar.setDisabled(True)
-        return bar
-
-    if schema_type_value == "integer" or ui in {"spinbox", "int"}:
-        line = F8NumberLineEditor(data_type=int)
-        line.set_name(name)
-        _common_style(line)
-        _apply_text_palette(line)
-        line.setMinimumWidth(90)
-        if lo is not None:
-            line.set_min(int(lo))
-        if hi is not None:
-            line.set_max(int(hi))
-        if field_tooltip:
-            line.setToolTip(field_tooltip)
-            _install_global_tooltip_filter(line)
-
-        def _apply_value(value: Any) -> None:
-            line.set_value(value)
-
-        _apply_value(_get_node_value())
-        node_item._state_inline_updaters[name] = _apply_value
-        if read_only:
-            line.setReadOnly(True)
-        else:
-            line.value_changing.connect(lambda _field_name, value: _set_node_value(value, push_undo=False))  # type: ignore[attr-defined]
-            line.value_changed.connect(lambda _field_name, value: _set_node_value(value, push_undo=True))  # type: ignore[attr-defined]
-        return line
-
-    if schema_type_value == "number" or ui in {"doublespinbox", "float"}:
-        line = F8NumberLineEditor(data_type=float)
-        line.set_name(name)
-        _common_style(line)
-        _apply_text_palette(line)
-        line.setMinimumWidth(90)
-        if lo is not None:
-            line.set_min(float(lo))
-        if hi is not None:
-            line.set_max(float(hi))
-        if field_tooltip:
-            line.setToolTip(field_tooltip)
-            _install_global_tooltip_filter(line)
-
-        def _apply_value(value: Any) -> None:
-            line.set_value(value)
-
-        _apply_value(_get_node_value())
-        node_item._state_inline_updaters[name] = _apply_value
-        if read_only:
-            line.setReadOnly(True)
-        else:
-            line.value_changing.connect(lambda _field_name, value: _set_node_value(value, push_undo=False))  # type: ignore[attr-defined]
-            line.value_changed.connect(lambda _field_name, value: _set_node_value(value, push_undo=True))  # type: ignore[attr-defined]
-        return line
-
-    # default: text input.
-    line = QtWidgets.QLineEdit()
-    line.setMinimumWidth(90)
-    _common_style(line)
-    _apply_text_palette(line)
-    if field_tooltip:
-        line.setToolTip(field_tooltip)
-        _install_global_tooltip_filter(line)
-
-    def _apply_value(value: Any) -> None:
-        text = "" if value is None else str(value)
-        with QtCore.QSignalBlocker(line):
-            line.setText(text)
-
-    _apply_value(_get_node_value())
-    node_item._state_inline_updaters[name] = _apply_value
-    if read_only:
-        line.setReadOnly(True)
-    else:
-        line.editingFinished.connect(lambda: _set_node_value(line.text(), push_undo=True))
-    return line
+    binding = build_inline_control_binding(
+        spec=spec,
+        read_only=read_only,
+        value_getter=_get_node_value,
+        value_setter=_set_node_value,
+        property_value_getter=_get_node_property,
+        pool_resolver=lambda pool_field: _pool_items(pool_field),
+        code_title=f"{node_item.name} - {spec.label}",
+        code_value_getter=_get_persisted_code_value,
+        code_value_setter=_set_persisted_code_value,
+        assist_context=_editor_assist_context(
+            graph,
+            node_id=node_id,
+            state_field_name=name,
+            language=state_field.ui_language or "plaintext",
+        ),
+        assist_context_provider=lambda: _editor_assist_context(
+            graph,
+            node_id=node_id,
+            state_field_name=name,
+            language=state_field.ui_language or "plaintext",
+        ),
+        editor_session_key=studio_session_key(graph, node_id, name) if graph is not None and node_id else None,
+        style_applier=_common_style,
+        text_palette_applier=_apply_text_palette,
+        tooltip_filter_installer=_install_global_tooltip_filter,
+    )
+    try:
+        bindings = node_item._state_inline_bindings
+    except AttributeError:
+        bindings = {}
+        node_item._state_inline_bindings = bindings
+    bindings[name] = binding
+    node_item._state_inline_updaters[name] = binding.apply_value
+    if select_pool_field:
+        node_item._state_inline_option_pools[name] = select_pool_field
+    if multiselect_pool_field:
+        node_item._state_inline_option_pools[name] = multiselect_pool_field
+    return binding.widget
 
 
 def ensure_state_inline_controls(node_item: Any) -> None:
@@ -967,6 +543,7 @@ def ensure_state_inline_controls(node_item: Any) -> None:
             continue
         proxy = node_item._state_inline_proxies.pop(name, None)
         node_item._state_inline_controls.pop(name, None)
+        node_item._state_inline_bindings.pop(name, None)
         node_item._state_inline_updaters.pop(name, None)
         node_item._state_inline_toggles.pop(name, None)
         node_item._state_inline_headers.pop(name, None)

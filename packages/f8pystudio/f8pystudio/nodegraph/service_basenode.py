@@ -297,6 +297,7 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         self._proxy_mode_threshold = 70
         self._state_inline_proxies: OrderedDict[str, QtWidgets.QGraphicsProxyWidget] = OrderedDict()
         self._state_inline_controls: OrderedDict[str, QtWidgets.QWidget] = OrderedDict()
+        self._state_inline_bindings: OrderedDict[str, Any] = OrderedDict()
         self._state_inline_updaters: OrderedDict[str, Any] = OrderedDict()
         self._state_inline_toggles: OrderedDict[str, QtWidgets.QToolButton] = OrderedDict()
         self._state_inline_headers: OrderedDict[str, QtWidgets.QWidget] = OrderedDict()

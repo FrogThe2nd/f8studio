@@ -8,7 +8,7 @@ from f8pystudio.editor_assist.session import EditorSessionKey
 from f8pystudio.widgets import monaco_editor_dialog as monaco_dialog_module
 from f8pystudio.widgets.monaco_editor_dialog import MonacoEditorHostDialog, open_code_editor_window
 from f8pystudio.widgets.monaco_editor_page import MonacoEditorPageConfig, build_monaco_editor_html
-from f8pystudio.widgets.state_value_controls import F8CodeButtonEditor
+from f8pystudio.components.state_editors import F8CodeButtonEditor
 
 
 def _ensure_app() -> QtWidgets.QApplication:

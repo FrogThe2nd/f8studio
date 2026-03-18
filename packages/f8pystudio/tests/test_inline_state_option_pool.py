@@ -5,7 +5,7 @@ from typing import Any
 from qtpy import QtWidgets
 
 from f8pystudio.nodegraph.items.state_inline_controls import refresh_state_inline_option_pools
-from f8pystudio.widgets.editor_controls import F8OptionCombo
+from f8pystudio.components.controls import F8OptionCombo
 
 
 class _FakeBackendNode:

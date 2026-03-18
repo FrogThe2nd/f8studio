@@ -12,10 +12,10 @@ from f8pystudio.nodegraph.items.state_inline_controls import (
 )
 from f8pystudio.nodegraph.items.node_item_core import StateFieldInfo
 from f8pystudio.nodegraph.items.service_toolbar_host import F8ForceGlobalToolTipFilter
-from f8pystudio.widgets.editor_controls import F8OptionCombo
-from f8pystudio.widgets.state_value_controls import F8IncrementButtonEditor
+from f8pystudio.components.controls import F8OptionCombo
+from f8pystudio.components.state_editors import F8CodeButtonEditor, F8IncrementButtonEditor
 from f8pystudio.widgets.state_controls import build_state_panel_control
-from f8pystudio.widgets.value_controls.wave_controls import (
+from f8pystudio.components.wave import (
     WaveHeatmapControl,
     WavePatternEditorControl,
     WavePreviewControl,
@@ -208,7 +208,7 @@ def test_build_state_inline_control_code_uses_push_button_and_style() -> None:
     node_item = _FakeNodeItem(code_value="a\nb")
     control = build_state_inline_control(node_item, _code_field())
 
-    assert isinstance(control, QtWidgets.QPushButton)
+    assert isinstance(control, F8CodeButtonEditor)
     style = str(control.styleSheet() or "")
     assert "border:" in style
     assert "text-align: center" in style
@@ -218,7 +218,7 @@ def test_build_state_inline_control_code_installs_tooltip_filter_and_multiline_t
     _ensure_app()
     node_item = _FakeNodeItem(code_value="a\nb")
     control = build_state_inline_control(node_item, _code_field())
-    assert isinstance(control, QtWidgets.QPushButton)
+    assert isinstance(control, F8CodeButtonEditor)
 
     assert len(node_item._tooltip_filters) == 1
     tooltip_filter = node_item._tooltip_filters[0]

@@ -10,9 +10,9 @@ from f8pysdk.schema_helpers import schema_default
 from qtpy import QtCore, QtWidgets
 
 from ...command_ui_protocol import CommandUiHandler, CommandUiSource
+from ...components.controls import F8OptionCombo, F8Switch, F8ValueBar
 from ...ui_notifications import show_warning
 from ...ui_icons import StudioIcon
-from ..editor_controls import F8OptionCombo, F8Switch, F8ValueBar
 from ..schema_builder import SchemaBuilderDialog
 from ..spec_mutations import (
     add_command as _spec_add_command,

@@ -4,21 +4,10 @@ from typing import Any
 
 from f8pysdk import F8StateAccess
 
+from ...components.state_builders import StateControlSpec, build_panel_control_binding
 from ...editor_assist.protocol import editor_assist_context_for_field
 from ...editor_assist.session import EditorSessionKey
 from ...editor_assist.workspace import EditorAssistContext
-from ..state_value_controls import (
-    F8BoolSwitchEditor,
-    F8CodeButtonEditor,
-    F8ImageValueEditor,
-    F8InlineCodeEditor,
-    F8MultiSelectEditor,
-    F8NumberLineEditor,
-    F8OptionComboEditor,
-    F8ValueBarEditor,
-    F8WrapLineEditor,
-)
-from ..state_value_controls import F8IncrementButtonEditor
 from .descriptors import ControlBuildContext
 from .pool_resolver import build_node_pool_resolver, parse_multiselect_pool, parse_select_pool
 from .schema_introspect import (
@@ -77,99 +66,42 @@ def build_state_panel_control(context: ControlBuildContext) -> Any:
     pool_field = parse_select_pool(ui_control)
     multi_pool_field = parse_multiselect_pool(ui_control)
     pool_resolver = build_node_pool_resolver(node)
-
-    is_image_b64 = schema_t == "string" and (
-        ui_control_l in {"image", "image_b64", "img"} or "b64" in str(prop_name).lower()
+    spec = StateControlSpec(
+        name=prop_name,
+        label=field_label,
+        ui_control=ui_control_l,
+        ui_language=ui_language or "plaintext",
+        schema_type=schema_t,
+        enum_items=enum_items,
+        minimum=lo,
+        maximum=hi,
+        select_pool_field=pool_field,
+        multiselect_pool_field=multi_pool_field,
+        is_image_b64=schema_t == "string" and (ui_control_l in {"image", "image_b64", "img"} or "b64" in prop_name.lower()),
     )
-    if is_image_b64:
-        widget = F8ImageValueEditor()
-        widget.set_name(prop_name)
-        return widget
-
-    if ui_control_l in {"code"}:
-        try:
-            title = f"{node.name()} - {prop_name}"
-        except AttributeError:
-            title = f"Edit {prop_name}"
-        widget = F8CodeButtonEditor(title=title, language=ui_language or "plaintext")
-        widget.set_name(prop_name)
-        widget.set_editor_assist_context(_editor_assist_context_for_field(node, prop_name, ui_language))
-        widget.set_editor_assist_context_provider(
-            lambda current_node=node, current_prop=prop_name, current_lang=ui_language: _editor_assist_context_for_field(
-                current_node,
-                current_prop,
-                current_lang,
-            )
-        )
-        widget.set_editor_session_key(_editor_session_key_for_node(node, prop_name))
-        return widget
-
-    if ui_control_l in {"wrapline"}:
-        widget = F8WrapLineEditor(language=ui_language or "plaintext")
-        widget.set_name(prop_name)
-        return widget
-
-    if ui_control_l in {"code_inline", "multiline"}:
-        widget = F8InlineCodeEditor(language=ui_language or "plaintext")
-        widget.set_name(prop_name)
-        return widget
-
-    if ui_control_l in {"button"}:
-        data_type = int if schema_t == "integer" else float
-        widget = F8IncrementButtonEditor(title=field_label, data_type=data_type)
-        widget.set_name(prop_name)
-        if schema_t not in {"integer", "number"}:
-            widget.set_invalid_reason("Button control requires integer or number state schema.")
-        return widget
-
-    if multi_pool_field or ui_control_l in {"multiselect", "multi_select", "multi-select"}:
-        widget = F8MultiSelectEditor()
-        widget.set_name(prop_name)
-        if multi_pool_field:
-            widget.set_pool(multi_pool_field, pool_resolver)
-            if context.register_option_pool_dependent is not None:
-                context.register_option_pool_dependent(multi_pool_field, widget)
-        else:
-            widget.set_items(enum_items)
-        return widget
-
-    if enum_items or pool_field or ui_control_l in {"select", "dropdown", "dropbox", "combo", "combobox"}:
-        widget = F8OptionComboEditor()
-        widget.set_name(prop_name)
-        if pool_field:
-            widget.set_pool(pool_field, pool_resolver)
-            if context.register_option_pool_dependent is not None:
-                context.register_option_pool_dependent(pool_field, widget)
-        else:
-            widget.set_items(enum_items)
-        return widget
-
-    if schema is not None and (schema_t == "boolean" or ui_control_l in {"switch", "toggle"}):
-        widget = F8BoolSwitchEditor()
-        widget.set_name(prop_name)
-        return widget
-
-    if schema is not None and schema_t in {"integer", "number"} and ui_control_l == "slider":
-        widget = F8ValueBarEditor(data_type=int if schema_t == "integer" else float)
-        widget.set_name(prop_name)
-        if lo is not None:
-            widget.set_min(lo)
-        if hi is not None:
-            widget.set_max(hi)
-        return widget
-
-    if schema is not None and schema_t in {"integer", "number"}:
-        widget = F8NumberLineEditor(data_type=int if schema_t == "integer" else float)
-        widget.set_name(prop_name)
-        if lo is not None:
-            widget.set_min(lo)
-        if hi is not None:
-            widget.set_max(hi)
-        return widget
-
-    widget = context.widget_factory.get_widget(context.widget_type)
-    widget.set_name(prop_name)
-    return widget
+    try:
+        title = f"{node.name()} - {prop_name}"
+    except AttributeError:
+        title = f"Edit {prop_name}"
+    binding = build_panel_control_binding(
+        spec=spec,
+        fallback_widget=context.widget_factory.get_widget(context.widget_type),
+        pool_resolver=pool_resolver,
+        editor_title=title,
+        assist_context=_editor_assist_context_for_field(node, prop_name, ui_language),
+        assist_context_provider=lambda current_node=node, current_prop=prop_name, current_lang=ui_language: _editor_assist_context_for_field(
+            current_node,
+            current_prop,
+            current_lang,
+        ),
+        editor_session_key=_editor_session_key_for_node(node, prop_name),
+    )
+    if binding.refresh_options is not None:
+        if multi_pool_field and context.register_option_pool_dependent is not None:
+            context.register_option_pool_dependent(multi_pool_field, binding.widget)
+        if pool_field and context.register_option_pool_dependent is not None:
+            context.register_option_pool_dependent(pool_field, binding.widget)
+    return binding.widget
 
 
 def state_field_is_readonly(access: F8StateAccess | None) -> bool:

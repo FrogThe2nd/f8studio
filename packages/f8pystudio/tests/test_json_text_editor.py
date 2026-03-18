@@ -11,7 +11,7 @@ from f8pystudio.widgets.json_text_editor import (
     compute_line_end_depth,
     find_bracket_match,
 )
-from f8pystudio.widgets.state_value_controls import F8JsonValueEditor
+from f8pystudio.components.state_editors import F8JsonValueEditor
 from f8pystudio.widgets.node_library_widget import _F8StudioNodesTreeWidget
 from f8pystudio.widgets.node_variant_manager_dialog import NodeVariantManagerDialog
 

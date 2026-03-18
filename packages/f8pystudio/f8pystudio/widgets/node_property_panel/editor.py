@@ -16,7 +16,7 @@ from NodeGraphQt.custom_widgets.properties_bin.prop_widgets_base import PropLabe
 
 from qtpy import QtCore, QtGui, QtWidgets
 
-from ..state_value_controls import (
+from ...components.state_editors import (
     F8BoolSwitchEditor,
     F8CodeButtonEditor as _F8CodeButtonEditor,
     F8InlineCodeEditor as _F8InlineCodeEditor,

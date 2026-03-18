@@ -15,13 +15,13 @@ from typing import Any, Callable
 
 from qtpy import QtCore, QtGui, QtWidgets
 
-from ..editor_assist.session import EditorSessionKey, assist_context_requires_python
+from ..editor_assist.session import EditorSessionKey
 from ..editor_assist.workspace import EditorAssistContext
 from ..ui_notifications import show_warning
 from ..ui_icons import StudioIcon, icon_for
-from .editor_controls import F8ImageB64Editor, F8MultiSelect, F8OptionCombo, F8Switch, F8ValueBar
-from .json_text_editor import attach_json_enhancements
-from .monaco_editor_dialog import open_code_editor_window
+from .controls import F8ImageB64Editor, F8MultiSelect, F8OptionCombo, F8Switch, F8ValueBar
+from ..widgets.json_text_editor import attach_json_enhancements
+from ..widgets.monaco_editor_dialog import open_code_editor_window
 
 logger = logging.getLogger(__name__)
 
