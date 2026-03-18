@@ -462,6 +462,13 @@ class F8StudioNodeViewer(NodeViewer):
             return
         super().sceneMousePressEvent(event)
 
+    def contextMenuEvent(self, event: QtGui.QContextMenuEvent) -> None:  # type: ignore[override]
+        scene_pos = self.mapToScene(event.pos())
+        if self._is_proxy_widget_hit(scene_pos):
+            event.accept()
+            return
+        super().contextMenuEvent(event)
+
     def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
         if event.key() == QtCore.Qt.Key_Escape:
             if self.is_graph_placement_active():

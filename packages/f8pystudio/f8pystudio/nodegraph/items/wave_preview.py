@@ -110,7 +110,7 @@ class WavePatternEditorControl(QtWidgets.QWidget):
         self._read_only = False
 
         self.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
-        self.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.DefaultContextMenu)
+        self.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.PreventContextMenu)
         self.setMouseTracking(True)
         self.setMinimumHeight(72)
         self.setMaximumHeight(92)
@@ -169,9 +169,8 @@ class WavePatternEditorControl(QtWidgets.QWidget):
             if not self._read_only and hit_index is not None:
                 self._selected_index = hit_index
                 self._delete_selected_point(push_undo=True)
-                event.accept()
-                return
-            super().mousePressEvent(event)
+                self.update()
+            event.accept()
             return
 
         if event.button() != QtCore.Qt.MouseButton.LeftButton:
@@ -208,6 +207,9 @@ class WavePatternEditorControl(QtWidgets.QWidget):
         event.accept()
 
     def mouseReleaseEvent(self, event: QtGui.QMouseEvent) -> None:  # type: ignore[override]
+        if event.button() == QtCore.Qt.MouseButton.RightButton:
+            event.accept()
+            return
         if event.button() == QtCore.Qt.MouseButton.LeftButton and self._drag_index is not None:
             self._move_dragged_point(event.position())
             self._drag_index = None

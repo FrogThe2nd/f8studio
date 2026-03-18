@@ -29,6 +29,7 @@ from ..spec_mutations import (
     replace_state_field as _spec_replace_state_field,
 )
 from ..state_widget_api import (
+    build_state_value_widget as _build_state_value_widget,
     effective_state_fields as _effective_state_fields,
     schema_type_any as _schema_type,
     state_field_access as _state_field_access,
