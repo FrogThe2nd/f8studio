@@ -13,6 +13,7 @@ from NodeGraphQt.errors import NodeCreationError
 from f8pysdk import F8OperatorSpec, F8ServiceSpec
 
 from .edge_rules import EdgeRuleNodeInfo, layout_node_info, validate_layout_connection
+from .viewer import F8StudioNodeViewer
 from ..session_migration import extract_layout as _extract_session_layout
 from ..session_migration import wrap_layout_for_save as _wrap_layout_for_save
 
@@ -660,3 +661,6 @@ class SessionLayoutCodecMixin:
         # leave inline state widgets with stale editability until the user forces a refresh.
         # Do a post-load pass to apply the "state-edge => readonly" rule.
         QtCore.QTimer.singleShot(0, self._refresh_all_inline_state_read_only)
+        viewer = self.viewer()
+        if isinstance(viewer, F8StudioNodeViewer):
+            QtCore.QTimer.singleShot(0, lambda: viewer.refresh_auto_proxy_mode(force=True))

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import json
+from dataclasses import dataclass
 from typing import Any
 
 from .node_base import F8StudioBaseNode
@@ -23,6 +24,7 @@ from NodeGraphQt.constants import (
     PortEnum,
     NodePropWidgetEnum,
 )
+from NodeGraphQt.nodes.base_node import NodeBaseWidget
 from NodeGraphQt.qgraphics.node_abstract import AbstractNodeItem
 from NodeGraphQt.qgraphics.node_overlay_disabled import XDisabledItem
 from NodeGraphQt.qgraphics.node_text_item import NodeTextItem
@@ -125,6 +127,18 @@ from ..widgets.state_controls.schema_introspect import (
 from ..widgets.schema_builder import SchemaBuilderDialog, schema_from_json_obj as _schema_from_json_obj
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class _LayoutMetric:
+    cache_key: str = ""
+    width: float = 0.0
+    height: float = 0.0
+
+
+@dataclass
+class _StatePanelLayoutMetric(_LayoutMetric):
+    header_height: float = 0.0
 
 
 def _clear_embedded_text_selection(widget: QtWidgets.QWidget | None) -> None:
@@ -316,6 +330,10 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         self._svc_toolbar_proxy: QtWidgets.QGraphicsProxyWidget | None = None
         self._ports_end_y: float | None = None
         self._open_code_editors: list[QtWidgets.QDialog] = []
+        self._layout_metrics_ready: bool = False
+        self._embedded_widget_metrics: dict[str, _LayoutMetric] = {}
+        self._state_panel_metrics: dict[str, _StatePanelLayoutMetric] = {}
+        self._command_panel_metric = _LayoutMetric()
 
     def _backend_node(self) -> Any | None:
         return _backend_node_impl(self)
@@ -587,7 +605,6 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
                 used to describe the parameters needed to draw.
             widget (QtWidgets.QWidget): not used.
         """
-        self.auto_switch_mode()
         if self.layout_direction is LayoutDirectionEnum.HORIZONTAL.value:
             self._paint_horizontal(painter, option, widget)
         elif self.layout_direction is LayoutDirectionEnum.VERTICAL.value:
@@ -781,6 +798,338 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
             except (AttributeError, RuntimeError, TypeError, ValueError, KeyError, ImportError, OSError):
                 pass
 
+    def _invalidate_layout_metrics(self) -> None:
+        self._layout_metrics_ready = False
+        self._embedded_widget_metrics.clear()
+        self._state_panel_metrics.clear()
+        self._command_panel_metric = _LayoutMetric()
+
+    def _prepare_layout_metrics(self) -> None:
+        ready = True
+        for widget_proxy in self._widgets.values():
+            try:
+                if widget_proxy.widget() is None:
+                    ready = False
+                    break
+            except (AttributeError, RuntimeError, TypeError):
+                ready = False
+                break
+        if ready:
+            for proxy in self._state_inline_proxies.values():
+                try:
+                    if proxy.widget() is None:
+                        ready = False
+                        break
+                except (AttributeError, RuntimeError, TypeError):
+                    ready = False
+                    break
+        if ready and self._cmd_proxy is not None:
+            try:
+                if self._cmd_proxy.widget() is None:
+                    ready = False
+            except (AttributeError, RuntimeError, TypeError):
+                ready = False
+        self._layout_metrics_ready = bool(ready)
+
+    def _requires_layout_metrics_for_proxy(self) -> bool:
+        return bool(self._widgets or self._state_inline_proxies or self._cmd_proxy is not None)
+
+    def _supports_auto_proxy(self) -> bool:
+        if not self._requires_layout_metrics_for_proxy():
+            return True
+        return bool(self._layout_metrics_ready)
+
+    @staticmethod
+    def _activate_widget_layout(widget: QtWidgets.QWidget | None) -> None:
+        if widget is None:
+            return
+        try:
+            widget.ensurePolished()
+        except (AttributeError, RuntimeError, TypeError):
+            pass
+        try:
+            layout = widget.layout()
+        except (AttributeError, RuntimeError, TypeError):
+            layout = None
+        if layout is not None:
+            try:
+                layout.activate()
+            except (AttributeError, RuntimeError, TypeError):
+                pass
+        try:
+            widget.updateGeometry()
+        except (AttributeError, RuntimeError, TypeError):
+            pass
+        try:
+            widget.adjustSize()
+        except (AttributeError, RuntimeError, TypeError):
+            pass
+
+    @classmethod
+    def _measure_qwidget_geometry(
+        cls,
+        widget: QtWidgets.QWidget | None,
+        *,
+        fixed_width: int | None = None,
+    ) -> tuple[float, float]:
+        if widget is None:
+            return 0.0, 0.0
+        width_value = int(max(1, fixed_width)) if fixed_width is not None else None
+        if width_value is not None:
+            try:
+                widget.setFixedWidth(width_value)
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                width_value = None
+        cls._activate_widget_layout(widget)
+
+        width_candidates: list[float] = []
+        height_candidates: list[float] = []
+        for size_getter in (widget.size, widget.sizeHint, widget.minimumSizeHint):
+            try:
+                size = size_getter()
+            except (AttributeError, RuntimeError, TypeError):
+                continue
+            width_candidates.append(float(size.width()))
+            height_candidates.append(float(size.height()))
+        if width_value is not None:
+            width_candidates.append(float(width_value))
+            try:
+                height_for_width = float(widget.heightForWidth(width_value))
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                height_for_width = 0.0
+            if height_for_width > 0.0:
+                height_candidates.append(height_for_width)
+            try:
+                layout = widget.layout()
+            except (AttributeError, RuntimeError, TypeError):
+                layout = None
+            if layout is not None:
+                try:
+                    total_height = float(layout.totalHeightForWidth(width_value))
+                except (AttributeError, RuntimeError, TypeError, ValueError):
+                    total_height = 0.0
+                if total_height > 0.0:
+                    height_candidates.append(total_height)
+        width = float(max(width_candidates, default=0.0))
+        height = float(max(height_candidates, default=0.0))
+        return width, height
+
+    def _embedded_widget_metric_key(self, widget_proxy: Any, *, target_width: float | None) -> str:
+        widget_name = type(widget_proxy).__name__
+        if isinstance(widget_proxy, NodeBaseWidget):
+            try:
+                value = str(widget_proxy.get_name() or "").strip()
+            except (AttributeError, RuntimeError, TypeError):
+                value = ""
+            if value:
+                widget_name = value
+        width_key = "natural" if target_width is None else str(max(1, int(round(target_width))))
+        return f"{widget_name}|{type(widget_proxy).__name__}|{width_key}"
+
+    def _measure_embedded_widget(
+        self,
+        widget_proxy: Any,
+        *,
+        target_width: float | None = None,
+    ) -> _LayoutMetric:
+        cache_key = self._embedded_widget_metric_key(widget_proxy, target_width=target_width)
+        cached = self._embedded_widget_metrics.get(cache_key)
+        if cached is not None:
+            return cached
+
+        width = 0.0
+        height = 0.0
+        target_width_value = None if target_width is None else max(1, int(round(target_width)))
+        if isinstance(widget_proxy, ResizableEmbeddedWidget):
+            try:
+                min_width, min_height = widget_proxy.minimum_content_size()
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                min_width, min_height = 0, 0
+            apply_width = int(max(target_width_value or 0, int(min_width), 1))
+            apply_height = int(max(int(min_height), 1))
+            try:
+                widget_proxy.apply_content_rect(apply_width, apply_height)
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                pass
+            try:
+                widget_proxy.prepareGeometryChange()
+            except (AttributeError, RuntimeError, TypeError):
+                pass
+
+        group_widget = None
+        try:
+            group_widget = widget_proxy.widget()
+        except (AttributeError, RuntimeError, TypeError):
+            group_widget = None
+        width, height = self._measure_qwidget_geometry(group_widget, fixed_width=target_width_value)
+        metric = _LayoutMetric(cache_key=cache_key, width=float(width), height=float(height))
+        self._embedded_widget_metrics[cache_key] = metric
+        return metric
+
+    def _state_panel_metric_cache_key(self, name: str, *, target_width: float) -> str:
+        width_key = max(1, int(round(target_width)))
+        ctrl_serial = str(self._state_inline_ctrl_serial.get(name, "") or "")
+        expanded = "1" if bool(self._state_inline_expanded.get(name, False)) else "0"
+        return f"{name}|{width_key}|{expanded}|{ctrl_serial}"
+
+    def _measure_state_panel_metric(self, name: str, width: float) -> _StatePanelLayoutMetric:
+        cache_key = self._state_panel_metric_cache_key(name, target_width=width)
+        cached = self._state_panel_metrics.get(cache_key)
+        if cached is not None:
+            return cached
+
+        width_value = max(1, int(round(width)))
+        panel_proxy = self._state_inline_proxies.get(name)
+        panel_widget = None
+        if panel_proxy is not None:
+            try:
+                panel_widget = panel_proxy.widget()
+            except (AttributeError, RuntimeError, TypeError):
+                panel_widget = None
+        panel_width, panel_height = self._measure_qwidget_geometry(panel_widget, fixed_width=width_value)
+
+        header_height = float(PortEnum.SIZE.value)
+        header = self._state_inline_headers.get(name)
+        if header is not None:
+            _header_width, measured_header_height = self._measure_qwidget_geometry(header, fixed_width=width_value)
+            if measured_header_height > 0.0:
+                header_height = float(measured_header_height)
+
+        metric = _StatePanelLayoutMetric(
+            cache_key=cache_key,
+            width=float(max(panel_width, float(width_value))),
+            height=float(max(panel_height, header_height)),
+            header_height=float(header_height),
+        )
+        self._state_panel_metrics[cache_key] = metric
+        return metric
+
+    def _command_metric_cache_key(self, *, target_width: float) -> str:
+        width_key = max(1, int(round(target_width)))
+        return f"{width_key}|{str(self._cmd_serial or '')}"
+
+    def _measure_command_panel_metric(self, width: float) -> _LayoutMetric:
+        cache_key = self._command_metric_cache_key(target_width=width)
+        if self._command_panel_metric.cache_key == cache_key:
+            return self._command_panel_metric
+
+        width_value = max(1, int(round(width)))
+        widget = self._cmd_widget
+        measured_width, measured_height = self._measure_qwidget_geometry(widget, fixed_width=width_value)
+        self._command_panel_metric = _LayoutMetric(
+            cache_key=cache_key,
+            width=float(max(measured_width, float(width_value))),
+            height=float(measured_height),
+        )
+        return self._command_panel_metric
+
+    def _visible_state_names_for_layout(self) -> list[str]:
+        state_names = [str(name) for name in self._state_inline_proxies.keys() if str(name)]
+        if state_names:
+            return state_names
+        inferred: list[str] = []
+        for port in self._input_items.keys():
+            name = _port_name(port)
+            if name.startswith("[S]"):
+                inferred.append(name[3:])
+        for port in self._output_items.keys():
+            name = _port_name(port)
+            if name.endswith("[S]"):
+                inferred.append(name[:-3])
+        return [value for value in list(OrderedDict.fromkeys(inferred).keys()) if value]
+
+    def _set_port_text_visibility(self, *, visible: bool) -> None:
+        for port, text in self._input_items.items():
+            if not port.isVisible():
+                continue
+            if self._port_group(_port_name(port)) == "state":
+                text.setVisible(False)
+                continue
+            text.setVisible(bool(visible and port.display_name))
+        for port, text in self._output_items.items():
+            if not port.isVisible():
+                continue
+            if self._port_group(_port_name(port)) == "state":
+                text.setVisible(False)
+                continue
+            text.setVisible(bool(visible and port.display_name))
+
+    def _should_enable_proxy_mode(self) -> bool:
+        if ITEM_CACHE_MODE is QtWidgets.QGraphicsItem.ItemCoordinateCache:
+            return False
+        viewer = self._viewer_safe()
+        if not isinstance(viewer, F8StudioNodeViewer):
+            return False
+        if not viewer.auto_proxy_enabled():
+            return False
+        if not self._supports_auto_proxy():
+            return False
+        rect = self.sceneBoundingRect()
+        left = viewer.mapToGlobal(viewer.mapFromScene(rect.topLeft()))
+        right = viewer.mapToGlobal(viewer.mapFromScene(rect.topRight()))
+        width = right.x() - left.x()
+        return bool(width < self._proxy_mode_threshold)
+
+    def sync_proxy_mode(self, *, force: bool = False) -> None:
+        self._apply_proxy_mode(self._should_enable_proxy_mode(), force=force)
+
+    def _apply_proxy_mode(self, mode: bool, *, force: bool) -> None:
+        if not force and mode is self._proxy_mode:
+            return
+        self._proxy_mode = bool(mode)
+        visible = not bool(mode)
+
+        if bool(mode):
+            for proxy in self._state_inline_proxies.values():
+                try:
+                    _clear_embedded_text_selection(proxy.widget())
+                except (AttributeError, RuntimeError, TypeError):
+                    pass
+            if self._cmd_proxy is not None:
+                try:
+                    _clear_embedded_text_selection(self._cmd_proxy.widget())
+                except (AttributeError, RuntimeError, TypeError):
+                    pass
+
+        self._x_item.proxy_mode = self._proxy_mode
+
+        for widget_proxy in self._widgets.values():
+            try:
+                group_widget = widget_proxy.widget()
+            except (AttributeError, RuntimeError, TypeError):
+                group_widget = None
+            if group_widget is not None:
+                group_widget.setVisible(visible)
+        for proxy in self._state_inline_proxies.values():
+            try:
+                proxy.setVisible(visible)
+            except (AttributeError, RuntimeError, TypeError):
+                pass
+        if self._cmd_proxy is not None:
+            try:
+                self._cmd_proxy.setVisible(visible)
+            except (AttributeError, RuntimeError, TypeError):
+                pass
+
+        if visible:
+            for proxy in self._state_inline_proxies.values():
+                try:
+                    _clear_embedded_text_selection(proxy.widget())
+                except (AttributeError, RuntimeError, TypeError):
+                    pass
+            if self._cmd_proxy is not None:
+                try:
+                    _clear_embedded_text_selection(self._cmd_proxy.widget())
+                except (AttributeError, RuntimeError, TypeError):
+                    pass
+
+        port_text_visible = False
+        if self.layout_direction is not LayoutDirectionEnum.VERTICAL.value:
+            port_text_visible = visible
+        self._set_port_text_visibility(visible=bool(port_text_visible))
+        self._text_item.setVisible(visible)
+        self._icon_item.setVisible(visible)
+
     def _calc_size_horizontal(self):
         # width, height from node name text.
         text_w = self._text_item.boundingRect().width()
@@ -846,7 +1195,7 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         other_in = _names_for("other", is_in=True)
         other_out = _names_for("other", is_in=False)
 
-        state_names: list[str] = [n for n, p in self._state_inline_proxies.items() if p.isVisible()]
+        state_names: list[str] = self._visible_state_names_for_layout()
         if not state_names:
             # Infer state row order from port names (best-effort).
             tmp: list[str] = []
@@ -862,64 +1211,6 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         rows_data = max(len(data_in), len(data_out))
         rows_other = max(len(other_in), len(other_out))
 
-        # Calculate port area height with expandable state panels.
-        ports_h = 0.0
-        if port_height:
-
-            def _add_group_rows(rows: int) -> None:
-                nonlocal ports_h
-                if rows <= 0:
-                    return
-                if ports_h > 0:
-                    ports_h += group_gap
-                ports_h += (rows * port_height) + (max(0, rows - 1) * spacing)
-
-            _add_group_rows(rows_exec)
-            _add_group_rows(rows_data)
-
-            # State: each row has a header (ports+toggle) and optional expanded body.
-            if state_names:
-                if ports_h > 0:
-                    ports_h += group_gap
-                for i, sname in enumerate(state_names):
-                    header_h = port_height
-                    try:
-                        header = self._state_inline_headers.get(sname)
-                        if header is not None:
-                            header_h = float(max(port_height, header.sizeHint().height()))
-                    except (AttributeError, RuntimeError, TypeError, ValueError, KeyError, ImportError, OSError):
-                        header_h = port_height
-                    # Size hint for the expanded body depends on width (options wrap).
-                    # Use the proxy widget bounding rect after forcing a best-effort width.
-                    panel_h = header_h
-                    try:
-                        proxy = self._state_inline_proxies.get(sname)
-                        if proxy is not None and proxy.isVisible():
-                            try:
-                                w = proxy.widget()
-                                if w is not None:
-                                    rect_w = max(10, int(self.boundingRect().width() - 8.0))
-                                    w.setFixedWidth(rect_w)
-                                    w.adjustSize()
-                            except (AttributeError, RuntimeError, TypeError, ValueError):
-                                pass
-                            try:
-                                panel_h = float(max(header_h, proxy.boundingRect().height()))
-                            except (AttributeError, RuntimeError, TypeError, ValueError, KeyError, ImportError, OSError):
-                                panel_h = header_h
-                    except (AttributeError, RuntimeError, TypeError, ValueError, KeyError, ImportError, OSError):
-                        panel_h = header_h
-                    ports_h += panel_h + spacing
-                ports_h = max(0.0, ports_h - spacing)  # remove trailing row spacing
-
-            _add_group_rows(rows_other)
-
-            p_input_height = ports_h
-            p_output_height = ports_h
-
-        port_text_width = p_input_text_width + p_output_text_width
-
-        # width, height from node embedded widgets.
         widget_width = 0.0
         widget_height = 0.0
         # Ensure state inline widgets exist so we can account for width.
@@ -931,17 +1222,18 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
             self._ensure_inline_command_widget()
         except (AttributeError, RuntimeError, TypeError):
             pass
+        self._prepare_layout_metrics()
         for widget in self._widgets.values():
-            if not widget.isVisible():
+            if not widget.isVisible() and not self._proxy_mode:
                 continue
-            w_width = widget.boundingRect().width()
-            w_height = widget.boundingRect().height()
-            if w_width > widget_width:
-                widget_width = w_width
-            widget_height += w_height
+            metric = self._measure_embedded_widget(widget)
+            if metric.width > widget_width:
+                widget_width = metric.width
+            widget_height += metric.height
         # State panels span the node width; they should not participate in width calculation.
         # Command widget spans the node width; it should not participate in width calculation.
 
+        port_text_width = p_input_text_width + p_output_text_width
         side_padding = 0.0
         if all([widget_width, p_input_text_width, p_output_text_width]):
             port_text_width = max([p_input_text_width, p_output_text_width])
@@ -950,6 +1242,36 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
             side_padding = 10
 
         width = port_width + max([text_w, port_text_width]) + side_padding
+        inner_width = max(10.0, float(width) - 8.0)
+
+        # Calculate port area height with expandable state panels.
+        ports_h = 0.0
+        base_port_height = float(port_height or PortEnum.SIZE.value)
+
+        def _add_group_rows(rows: int) -> None:
+            nonlocal ports_h
+            if rows <= 0:
+                return
+            if ports_h > 0:
+                ports_h += group_gap
+            ports_h += (rows * base_port_height) + (max(0, rows - 1) * spacing)
+
+        _add_group_rows(rows_exec)
+        _add_group_rows(rows_data)
+
+        if state_names:
+            if ports_h > 0:
+                ports_h += group_gap
+            for sname in state_names:
+                metric = self._measure_state_panel_metric(sname, inner_width)
+                panel_height = float(max(metric.height, base_port_height))
+                ports_h += panel_height + spacing
+            ports_h = max(0.0, ports_h - spacing)
+
+        _add_group_rows(rows_other)
+
+        p_input_height = ports_h
+        p_output_height = ports_h
 
         port_area_height = max(p_input_height, p_output_height)
         height = max([text_h, port_area_height, widget_height])
@@ -961,18 +1283,10 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
             height += 4.0
 
         # Commands: compute height using the final width (flow wrap depends on width).
-        if self._cmd_proxy is not None:
-            try:
-                if self._cmd_proxy.isVisible() and port_height:
-                    rect_w = max(10, int(width - 8.0))
-                    if self._cmd_widget is not None:
-                        self._cmd_widget.setFixedWidth(rect_w)
-                        self._cmd_widget.adjustSize()
-                    cmd_h = float(self._cmd_proxy.boundingRect().height())
-                    if cmd_h > 0:
-                        height = max(height, port_area_height + cmd_h + 10.0)
-            except (AttributeError, RuntimeError, TypeError, ValueError):
-                pass
+        if self._cmd_widget is not None or self._cmd_proxy is not None:
+            cmd_metric = self._measure_command_panel_metric(inner_width)
+            if cmd_metric.height > 0.0:
+                height = max(height, port_area_height + cmd_metric.height + 10.0)
         height *= 1.05
         return width, height
 
@@ -995,11 +1309,12 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         widget_width = 0.0
         widget_height = 0.0
         for widget in self._widgets.values():
-            if not widget.isVisible():
+            if not widget.isVisible() and not self._proxy_mode:
                 continue
-            if widget.boundingRect().width() > widget_width:
-                widget_width = widget.boundingRect().width()
-            widget_height += widget.boundingRect().height()
+            metric = self._measure_embedded_widget(widget)
+            if metric.width > widget_width:
+                widget_width = metric.width
+            widget_height += metric.height
 
         width = max([p_input_width, p_output_width, widget_width])
         height = p_input_height + p_output_height + widget_height
@@ -1147,20 +1462,17 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
 
         # Command buttons are placed below the ports area and should span the full node width.
         cmd_bottom = None
-        if self._cmd_proxy is not None and self._cmd_proxy.isVisible():
+        if self._cmd_proxy is not None:
             try:
                 y = float(self._ports_end_y or (rect.y() + v_offset))
-                # Force the underlying QWidget to take the full available width.
-                try:
-                    if self._cmd_widget is not None:
-                        self._cmd_widget.setFixedWidth(max(10, int(rect.width() - 8.0)))
-                        self._cmd_widget.adjustSize()
-                except (AttributeError, RuntimeError, TypeError, ValueError):
-                    pass
-                w_rect = self._cmd_proxy.boundingRect()
+                inner_width = max(10.0, rect.width() - 8.0)
+                cmd_metric = self._measure_command_panel_metric(inner_width)
+                if self._cmd_widget is not None:
+                    self._cmd_widget.setFixedWidth(max(10, int(round(inner_width))))
+                    self._cmd_widget.adjustSize()
                 x = rect.left() + 4.0
                 self._cmd_proxy.setPos(x, y + 6.0)
-                cmd_bottom = y + 6.0 + w_rect.height()
+                cmd_bottom = y + 6.0 + float(cmd_metric.height)
             except (AttributeError, RuntimeError, TypeError, ValueError):
                 cmd_bottom = None
 
@@ -1175,11 +1487,13 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         if cmd_bottom is not None:
             y = max(y, cmd_bottom + 6.0)
         for widget in self._widgets.values():
-            if not widget.isVisible():
-                continue
             content_rect = self._content_rect_for_widgets(top_y=y)
             resized = self._apply_widget_resize_policy(widget, content_rect=content_rect)
             widget_rect = widget.boundingRect()
+            target_width = float(content_rect[2]) if resized else None
+            metric = self._measure_embedded_widget(widget, target_width=target_width)
+            widget_width = float(max(widget_rect.width(), metric.width))
+            widget_height = float(max(widget_rect.height(), metric.height))
             if resized:
                 x = float(content_rect[0])
                 widget.widget().setTitleAlign("center")
@@ -1187,13 +1501,13 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
                 x = rect.left() + 10
                 widget.widget().setTitleAlign("left")
             elif not outputs:
-                x = rect.right() - widget_rect.width() - 10
+                x = rect.right() - widget_width - 10
                 widget.widget().setTitleAlign("right")
             else:
-                x = rect.center().x() - (widget_rect.width() / 2)
+                x = rect.center().x() - (widget_width / 2)
                 widget.widget().setTitleAlign("center")
             widget.setPos(x, y)
-            y += widget_rect.height()
+            y += widget_height
 
     def _align_widgets_vertical(self, v_offset):
         if not self._widgets:
@@ -1202,26 +1516,27 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         y = rect.center().y() + v_offset
         widget_height = 0.0
         for widget in self._widgets.values():
-            if not widget.isVisible():
-                continue
+            metric = self._measure_embedded_widget(widget)
             widget_rect = widget.boundingRect()
-            widget_height += widget_rect.height()
+            widget_height += float(max(widget_rect.height(), metric.height))
         y -= widget_height / 2
 
         for widget in self._widgets.values():
-            if not widget.isVisible():
-                continue
             content_rect = self._content_rect_for_widgets(top_y=y)
             resized = self._apply_widget_resize_policy(widget, content_rect=content_rect)
             widget_rect = widget.boundingRect()
+            target_width = float(content_rect[2]) if resized else None
+            metric = self._measure_embedded_widget(widget, target_width=target_width)
+            widget_width = float(max(widget_rect.width(), metric.width))
+            widget_height = float(max(widget_rect.height(), metric.height))
             if resized:
                 x = float(content_rect[0])
                 widget.widget().setTitleAlign("center")
             else:
-                x = rect.center().x() - (widget_rect.width() / 2)
+                x = rect.center().x() - (widget_width / 2)
                 widget.widget().setTitleAlign("center")
             widget.setPos(x, y)
-            y += widget_rect.height()
+            y += widget_height
 
     def align_widgets(self, v_offset=0.0):
         """
@@ -1393,62 +1708,28 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
                 # State row: place collapsible panel + ports aligned to header line.
                 state_key = state_names[i] if i < len(state_names) else None
                 panel_proxy = self._state_inline_proxies.get(state_key) if state_key else None
-                header_h = port_height
-                body_h = 0.0
-                if state_key and panel_proxy is not None:
-                    # Ensure width is up to date before measuring heights (option rows wrap by width).
+                metric = None
+                if state_key:
+                    metric = self._measure_state_panel_metric(state_key, inner_w)
+                header_h = float(max(port_height, metric.header_height if metric is not None else 0.0))
+                panel_h = float(max(header_h, metric.height if metric is not None else 0.0))
+                if panel_proxy is not None and metric is not None:
+                    panel_w = float(max(metric.width, inner_w))
+                    panel_x = rect.left() + (rect.width() - panel_w) / 2.0
+                    min_x = float(inner_x)
+                    max_x = float(rect.right() - 4.0 - panel_w)
+                    if max_x < min_x:
+                        panel_x = min_x
+                    else:
+                        panel_x = max(min_x, min(panel_x, max_x))
                     try:
-                        w = panel_proxy.widget()
-                        if w is not None:
-                            w.setFixedWidth(int(inner_w))
-                            w.adjustSize()
-                    except (AttributeError, RuntimeError, TypeError, ValueError):
-                        pass
-                    try:
-                        if self._state_inline_headers.get(state_key) is not None:
-                            header_h = float(
-                                max(port_height, self._state_inline_headers[state_key].sizeHint().height())
-                            )
-                    except (AttributeError, RuntimeError, TypeError, ValueError):
-                        header_h = port_height
-                    try:
-                        body_w = self._state_inline_bodies.get(state_key)
-                        if body_w is not None and body_w.isVisible():
-                            body_h = float(max(0.0, body_w.sizeHint().height()))
-                    except (AttributeError, RuntimeError, TypeError, ValueError):
-                        body_h = 0.0
-                    try:
-                        # Center panels using their *actual* width. Some controls
-                        # can enforce minimum sizes that override our target width,
-                        # causing asymmetric margins if we anchor at `inner_x`.
-                        w = panel_proxy.widget()
-                        if w is None:
-                            panel_proxy.setPos(inner_x, y)
-                        else:
-                            panel_w = float(w.width() or 0)
-                            if panel_w <= 0:
-                                panel_w = float(panel_proxy.boundingRect().width() or 0)
-                            if panel_w <= 0:
-                                panel_proxy.setPos(inner_x, y)
-                            else:
-                                panel_x = rect.left() + (rect.width() - panel_w) / 2.0
-                                # Clamp inside the node content area so the right edge
-                                # never gets clipped by the node boundary.
-                                min_x = float(inner_x)
-                                max_x = float(rect.right() - 4.0 - panel_w)
-                                if max_x < min_x:
-                                    panel_x = min_x
-                                else:
-                                    panel_x = max(min_x, min(panel_x, max_x))
-                                panel_proxy.setPos(panel_x, y)
+                        panel_proxy.setPos(panel_x, y)
                     except (AttributeError, RuntimeError, TypeError, ValueError):
                         pass
 
                 port_y = y + (header_h - port_height) / 2.0
                 place_row(in_name, out_name, y=port_y)
-                y += header_h + spacing
-                if body_h > 0.0:
-                    y += body_h + spacing
+                y += panel_h + spacing
             # group gap (except after last visible group)
             # determine if any later group has rows.
             has_later = False
@@ -1520,6 +1801,7 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
             raise RuntimeError("Node graph layout direction not valid!")
 
     def _draw_node_horizontal(self):
+        self._invalidate_layout_metrics()
         try:
             self._ensure_state_inline_controls()
         except (AttributeError, RuntimeError, TypeError):
@@ -1528,21 +1810,11 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
             self._ensure_inline_command_widget()
         except (AttributeError, RuntimeError, TypeError):
             pass
+        self._prepare_layout_metrics()
         height = self._text_item.boundingRect().height() + 4.0
 
-        # update port text items in visibility.
-        for port, text in self._input_items.items():
-            if port.isVisible():
-                if self._port_group(_port_name(port)) == "state":
-                    text.setVisible(False)
-                else:
-                    text.setVisible(port.display_name)
-        for port, text in self._output_items.items():
-            if port.isVisible():
-                if self._port_group(_port_name(port)) == "state":
-                    text.setVisible(False)
-                else:
-                    text.setVisible(port.display_name)
+        target_proxy_mode = self._should_enable_proxy_mode()
+        self._set_port_text_visibility(visible=not target_proxy_mode)
 
         # setup initial base size.
         self._set_base_size(add_h=height)
@@ -1562,15 +1834,24 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         self.align_ports(v_offset=height)
         # arrange node widgets
         self.align_widgets(v_offset=height)
+        self.sync_proxy_mode(force=True)
+
+        if self._proxy_mode != target_proxy_mode:
+            self._set_port_text_visibility(visible=not self._proxy_mode)
+            self._set_base_size(add_h=height)
+            self.align_label()
+            self.align_icon(h_offset=2.0, v_offset=1.0)
+            self.align_ports(v_offset=height)
+            self.align_widgets(v_offset=height)
+            self.sync_proxy_mode(force=True)
 
         self.update()
 
     def _draw_node_vertical(self):
+        self._invalidate_layout_metrics()
+        self._prepare_layout_metrics()
         # hide the port text items in vertical layout.
-        for port, text in self._input_items.items():
-            text.setVisible(False)
-        for port, text in self._output_items.items():
-            text.setVisible(False)
+        self._set_port_text_visibility(visible=False)
 
         # setup initial base size.
         self._set_base_size()
@@ -1590,6 +1871,7 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         self.align_ports()
         # arrange node widgets
         self.align_widgets()
+        self.sync_proxy_mode(force=True)
 
         self.update()
 
@@ -1639,25 +1921,9 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
 
     def auto_switch_mode(self):
         """
-        Decide whether to draw the node with proxy mode.
-        (this is called at the start in the "self.paint()" function.)
+        Re-evaluate proxy mode using the current viewer transform.
         """
-        if ITEM_CACHE_MODE is QtWidgets.QGraphicsItem.ItemCoordinateCache:
-            return
-
-        viewer = self._viewer_safe()
-        if not isinstance(viewer, F8StudioNodeViewer):
-            self.set_proxy_mode(False)
-            return
-        if not viewer.auto_proxy_enabled():
-            self.set_proxy_mode(False)
-            return
-
-        rect = self.sceneBoundingRect()
-        left = viewer.mapToGlobal(viewer.mapFromScene(rect.topLeft()))
-        right = viewer.mapToGlobal(viewer.mapFromScene(rect.topRight()))
-        width = right.x() - left.x()
-        self.set_proxy_mode(width < self._proxy_mode_threshold)
+        self.sync_proxy_mode(force=False)
 
     def set_proxy_mode(self, mode):
         """
@@ -1667,79 +1933,7 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         Args:
             mode (bool): true to enable proxy mode.
         """
-        if mode is self._proxy_mode:
-            return
-        self._proxy_mode = mode
-
-        visible = not mode
-
-        if bool(mode):
-            for proxy in self._state_inline_proxies.values():
-                try:
-                    _clear_embedded_text_selection(proxy.widget())
-                except (AttributeError, RuntimeError, TypeError):
-                    pass
-            if self._cmd_proxy is not None:
-                try:
-                    _clear_embedded_text_selection(self._cmd_proxy.widget())
-                except (AttributeError, RuntimeError, TypeError):
-                    pass
-
-        # disable overlay item.
-        self._x_item.proxy_mode = self._proxy_mode
-
-        # node widget visibility.
-        for w in self._widgets.values():
-            w.widget().setVisible(visible)
-        for p in self._state_inline_proxies.values():
-            try:
-                p.setVisible(visible)
-            except (AttributeError, RuntimeError, TypeError):
-                pass
-        if self._cmd_proxy is not None:
-            try:
-                self._cmd_proxy.setVisible(visible)
-            except (AttributeError, RuntimeError, TypeError):
-                pass
-
-        if visible:
-            for proxy in self._state_inline_proxies.values():
-                try:
-                    _clear_embedded_text_selection(proxy.widget())
-                except (AttributeError, RuntimeError, TypeError):
-                    pass
-            if self._cmd_proxy is not None:
-                try:
-                    _clear_embedded_text_selection(self._cmd_proxy.widget())
-                except (AttributeError, RuntimeError, TypeError):
-                    pass
-
-        # port text is not visible in vertical layout.
-        if self.layout_direction is LayoutDirectionEnum.VERTICAL.value:
-            port_text_visible = False
-        else:
-            port_text_visible = visible
-
-        # input port text visibility.
-        for port, text in self._input_items.items():
-            try:
-                is_state = self._port_group(_port_name(port)) == "state"
-            except (AttributeError, RuntimeError, TypeError, ValueError):
-                is_state = False
-            should_show = bool(port_text_visible and port.display_name and not is_state)
-            text.setVisible(should_show)
-
-        # output port text visibility.
-        for port, text in self._output_items.items():
-            try:
-                is_state = self._port_group(_port_name(port)) == "state"
-            except (AttributeError, RuntimeError, TypeError, ValueError):
-                is_state = False
-            should_show = bool(port_text_visible and port.display_name and not is_state)
-            text.setVisible(should_show)
-
-        self._text_item.setVisible(visible)
-        self._icon_item.setVisible(visible)
+        self._apply_proxy_mode(bool(mode), force=False)
 
     def _has_inline_state_controls(self) -> bool:
         if bool(self._state_inline_proxies):

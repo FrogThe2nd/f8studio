@@ -562,3 +562,9 @@ def ensure_inline_command_widget(node_item: Any) -> None:
             except (AttributeError, RuntimeError, TypeError):
                 pass
     node_item._cmd_widget = widget
+    try:
+        node_item._invalidate_layout_metrics()
+        node_item._prepare_layout_metrics()
+        node_item.sync_proxy_mode(force=True)
+    except (AttributeError, RuntimeError, TypeError):
+        pass

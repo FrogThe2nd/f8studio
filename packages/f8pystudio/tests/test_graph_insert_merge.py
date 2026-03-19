@@ -17,14 +17,45 @@ from f8pystudio.nodegraph.node_graph import (
 
 
 class _FakeNode:
-    def __init__(self, node_id: str) -> None:
+    def __init__(self, node_id: str, *, view: Any | None = None) -> None:
         self.id = node_id
         self.selected = False
+        self.view = view if view is not None else _FakeView()
 
     def set_property(self, name: str, value: Any, push_undo: bool = True) -> None:
         _ = push_undo
         if name == "selected":
             self.selected = bool(value)
+
+
+class _FakeView:
+    def __init__(self) -> None:
+        self.draw_calls = 0
+        self.sync_calls: list[bool] = []
+
+    def draw_node(self) -> None:
+        self.draw_calls += 1
+
+    def sync_proxy_mode(self, *, force: bool = False) -> None:
+        self.sync_calls.append(bool(force))
+
+
+class _FakeViewer:
+    def __init__(self) -> None:
+        self.fit_calls = 0
+        self.center_calls = 0
+        self.refresh_calls: list[bool] = []
+
+    def fitInView(self, *args: Any, **kwargs: Any) -> None:
+        _ = (args, kwargs)
+        self.fit_calls += 1
+
+    def centerOn(self, *args: Any, **kwargs: Any) -> None:
+        _ = (args, kwargs)
+        self.center_calls += 1
+
+    def refresh_auto_proxy_mode(self, *, force: bool = False) -> None:
+        self.refresh_calls.append(bool(force))
 
 
 def _new_graph_stub() -> F8StudioGraph:
@@ -183,3 +214,51 @@ def test_apply_insert_graph_remaps_ids_connections_identity_and_offsets() -> Non
 
     assert result.id_remap_plan.mapping["svcA"] == "svcA_2"
     assert result.inserted_node_ids == ["svcA_2", "op1"]
+
+
+def test_apply_insert_graph_preserves_view_and_redraws_inserted_nodes() -> None:
+    graph = _new_graph_stub()
+    existing_view = _FakeView()
+    existing_node = _FakeNode("svcA", view=existing_view)
+    all_nodes = [existing_node]
+    graph.all_nodes = lambda: all_nodes  # type: ignore[method-assign]
+
+    viewer = _FakeViewer()
+    graph.viewer = lambda: viewer  # type: ignore[method-assign]
+
+    request = GraphInsertRequest(
+        source_path="x.json",
+        layout_data={
+            "nodes": {
+                "svcA": {"id": "svcA", "pos": [100, 200]},
+                "op1": {"id": "op1", "pos": [140, 240]},
+            },
+            "connections": [],
+        },
+        source_bbox=GraphBounds(100.0, 200.0, 140.0, 240.0),
+        node_count=2,
+        connection_count=0,
+    )
+
+    inserted_service_view = _FakeView()
+    inserted_operator_view = _FakeView()
+
+    def _fake_deserialize(self, layout_data: dict[str, Any], clear_session: bool, clear_undo_stack: bool) -> None:
+        _ = (self, layout_data, clear_session, clear_undo_stack)
+        all_nodes.append(_FakeNode("svcA_2", view=inserted_service_view))
+        all_nodes.append(_FakeNode("op1", view=inserted_operator_view))
+
+    with patch("f8pystudio.nodegraph.graph_insert_flow.F8StudioNodeViewer", _FakeViewer):
+        with patch.object(NodeGraph, "deserialize_session", new=_fake_deserialize):
+            result = graph.apply_insert_graph(request, anchor_x=300.0, anchor_y=400.0)
+
+    assert result.inserted_node_ids == ["svcA_2", "op1"]
+    assert viewer.fit_calls == 0
+    assert viewer.center_calls == 0
+    assert viewer.refresh_calls == [True]
+    assert existing_view.draw_calls == 0
+    assert existing_view.sync_calls == []
+    assert inserted_service_view.draw_calls == 1
+    assert inserted_service_view.sync_calls == [True]
+    assert inserted_operator_view.draw_calls == 1
+    assert inserted_operator_view.sync_calls == [True]

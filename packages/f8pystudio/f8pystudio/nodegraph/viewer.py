@@ -141,18 +141,18 @@ class F8StudioNodeViewer(NodeViewer):
         if target == self._auto_proxy_enabled:
             return
         self._auto_proxy_enabled = target
-        self.refresh_auto_proxy_mode()
+        self.refresh_auto_proxy_mode(force=True)
 
     def auto_proxy_enabled(self) -> bool:
         return bool(self._auto_proxy_enabled)
 
-    def refresh_auto_proxy_mode(self) -> None:
+    def refresh_auto_proxy_mode(self, *, force: bool = False) -> None:
         from .service_basenode import F8StudioServiceNodeItem
 
         for node_item in list(self.all_nodes() or []):
             if not isinstance(node_item, F8StudioServiceNodeItem):
                 continue
-            node_item.auto_switch_mode()
+            node_item.sync_proxy_mode(force=force)
             node_item.update()
         scene = self.scene()
         if scene is not None:
@@ -378,10 +378,14 @@ class F8StudioNodeViewer(NodeViewer):
         super().showEvent(event)
         self.setFocus()
         self._position_performance_overlay()
+        if self._auto_proxy_enabled:
+            self.refresh_auto_proxy_mode(force=True)
 
     def resizeEvent(self, event):  # type: ignore[override]
         super().resizeEvent(event)
         self._position_performance_overlay()
+        if self._auto_proxy_enabled:
+            self.refresh_auto_proxy_mode(force=False)
 
     def paintEvent(self, event):  # type: ignore[override]
         started_at = time.perf_counter() if self._perf_overlay_enabled else None
@@ -554,6 +558,8 @@ class F8StudioNodeViewer(NodeViewer):
             QtWidgets.QGraphicsView.wheelEvent(self, event)
             return
         super().wheelEvent(event)
+        if self._auto_proxy_enabled:
+            self.refresh_auto_proxy_mode(force=False)
 
     @staticmethod
     def _proxy_ancestor(

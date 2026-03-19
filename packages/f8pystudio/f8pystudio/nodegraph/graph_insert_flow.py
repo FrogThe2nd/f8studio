@@ -6,8 +6,6 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any
 
-from qtpy import QtCore
-
 from .insert_layout_utils import (
     GraphBounds,
     IdRemapPlan,
@@ -136,18 +134,30 @@ class GraphInsertFlowMixin:
         _ = cls
         shift_insert_layout_nodes(layout_data, dx=dx, dy=dy)
 
-    def _focus_graph_bounds(self, bounds: GraphBounds) -> None:
+    def _refresh_inserted_node_views(self, inserted_node_ids: list[str]) -> None:
+        inserted_ids = {
+            str(node_id or "").strip()
+            for node_id in list(inserted_node_ids or [])
+            if str(node_id or "").strip()
+        }
+        if not inserted_ids:
+            return
+        for node in list(self.all_nodes() or []):
+            node_id = str(node.id or "").strip()
+            if node_id not in inserted_ids:
+                continue
+            view = node.view
+            view.draw_node()
+            try:
+                view.sync_proxy_mode(force=True)
+            except AttributeError:
+                pass
+
+    def _refresh_viewer_after_insert(self) -> None:
         viewer = self.viewer()
         if not isinstance(viewer, F8StudioNodeViewer):
             return
-        width = max(1.0, float(bounds.width))
-        height = max(1.0, float(bounds.height))
-        target = QtCore.QRectF(float(bounds.min_x), float(bounds.min_y), width, height).adjusted(-80, -60, 80, 60)
-        try:
-            viewer.fitInView(target, QtCore.Qt.KeepAspectRatio)
-            viewer.centerOn(target.center())
-        except (AttributeError, RuntimeError, TypeError):
-            return
+        viewer.refresh_auto_proxy_mode(force=True)
 
     def apply_insert_graph(self, request: GraphInsertRequest, *, anchor_x: float, anchor_y: float) -> InsertResult:
         source_layout = deepcopy(request.layout_data)
@@ -181,10 +191,10 @@ class GraphInsertFlowMixin:
             super().deserialize_session(remapped_layout, clear_session=False, clear_undo_stack=False)
         finally:
             self._loading_session = prev_loading
+        inserted_node_ids = [remap_plan.mapping.get(src, src) for src in import_node_ids]
         self._rebind_container_children()
         self._refresh_all_inline_state_read_only()
-
-        inserted_node_ids = [remap_plan.mapping.get(src, src) for src in import_node_ids]
+        self._refresh_inserted_node_views(inserted_node_ids)
         all_nodes = list(self.all_nodes() or [])
         selected_ids = set(inserted_node_ids)
         for node in all_nodes:
@@ -192,7 +202,7 @@ class GraphInsertFlowMixin:
                 node.set_property("selected", bool(str(node.id or "") in selected_ids), push_undo=False)
             except (AttributeError, RuntimeError, TypeError):
                 continue
-        self._focus_graph_bounds(inserted_bbox)
+        self._refresh_viewer_after_insert()
 
         total_dropped = int(request.dropped_invalid_connections) + int(dropped_invalid_connections)
         if total_dropped > 0:
@@ -209,4 +219,3 @@ class GraphInsertFlowMixin:
             id_remap_plan=remap_plan,
             dropped_invalid_connections=int(total_dropped),
         )
-

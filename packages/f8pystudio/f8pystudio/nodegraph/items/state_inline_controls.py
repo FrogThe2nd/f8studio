@@ -727,3 +727,9 @@ def ensure_state_inline_controls(node_item: Any) -> None:
         node_item._state_inline_expanded[name] = expanded
         if ctrl_sig:
             node_item._state_inline_ctrl_serial[name] = ctrl_sig
+        try:
+            node_item._invalidate_layout_metrics()
+            node_item._prepare_layout_metrics()
+            node_item.sync_proxy_mode(force=True)
+        except (AttributeError, RuntimeError, TypeError):
+            pass
