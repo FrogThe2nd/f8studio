@@ -1645,16 +1645,18 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         if ITEM_CACHE_MODE is QtWidgets.QGraphicsItem.ItemCoordinateCache:
             return
 
-        v = self._viewer_safe()
-        if v is None:
+        viewer = self._viewer_safe()
+        if not isinstance(viewer, F8StudioNodeViewer):
+            self.set_proxy_mode(False)
+            return
+        if not viewer.auto_proxy_enabled():
+            self.set_proxy_mode(False)
             return
 
         rect = self.sceneBoundingRect()
-        l = v.mapToGlobal(v.mapFromScene(rect.topLeft()))
-        r = v.mapToGlobal(v.mapFromScene(rect.topRight()))
-        # width is the node width in screen
-        width = r.x() - l.x()
-
+        left = viewer.mapToGlobal(viewer.mapFromScene(rect.topLeft()))
+        right = viewer.mapToGlobal(viewer.mapFromScene(rect.topRight()))
+        width = right.x() - left.x()
         self.set_proxy_mode(width < self._proxy_mode_threshold)
 
     def set_proxy_mode(self, mode):

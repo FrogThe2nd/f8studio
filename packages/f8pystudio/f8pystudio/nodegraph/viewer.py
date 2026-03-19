@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 from Qt import QtCore, QtGui, QtWidgets
@@ -59,6 +60,32 @@ class F8StudioNodeViewer(NodeViewer):
         self._inline_editor_refresh_timer.setInterval(250)
         self._inline_editor_refresh_timer.timeout.connect(self._tick_inline_editor_refresh)  # type: ignore[arg-type]
         self._inline_editor_refresh_timer.start()
+        self._auto_proxy_enabled: bool = False
+        self._perf_overlay_enabled: bool = False
+        self._perf_paint_last_ms: float = 0.0
+        self._perf_paint_ema_ms: float = 0.0
+        self._perf_paint_sample_count: int = 0
+        self._perf_overlay_label = QtWidgets.QLabel(self.viewport())
+        self._perf_overlay_label.setObjectName("f8PerfOverlay")
+        self._perf_overlay_label.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents, True)
+        self._perf_overlay_label.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignTop)
+        self._perf_overlay_label.setMargin(8)
+        self._perf_overlay_label.setStyleSheet(
+            """
+            QLabel#f8PerfOverlay {
+                color: rgb(238, 244, 248);
+                background: rgba(12, 18, 24, 190);
+                border: 1px solid rgba(120, 200, 255, 90);
+                border-radius: 8px;
+                font-family: monospace;
+                font-size: 11px;
+            }
+            """
+        )
+        self._perf_overlay_label.hide()
+        self._perf_overlay_timer = QtCore.QTimer(self)
+        self._perf_overlay_timer.setInterval(500)
+        self._perf_overlay_timer.timeout.connect(self._refresh_performance_overlay)  # type: ignore[arg-type]
         self._f8_graph: Any | None = None
         # NOTE: NodeGraphQt's NodeViewer already uses internal attributes like
         # `MMB_state`, `_origin_pos`, `_previous_pos` for selection, tab-search,
@@ -89,6 +116,116 @@ class F8StudioNodeViewer(NodeViewer):
         self._shortcut_backspace = QtWidgets.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key_Backspace), self)
         self._shortcut_backspace.setContext(QtCore.Qt.WidgetShortcut)
         self._shortcut_backspace.activated.connect(self._delete_selected_nodes)  # type: ignore[attr-defined]
+
+    def set_performance_overlay_enabled(self, enabled: bool) -> None:
+        target = bool(enabled)
+        if target == self._perf_overlay_enabled:
+            return
+        self._perf_overlay_enabled = target
+        self._perf_paint_last_ms = 0.0
+        self._perf_paint_ema_ms = 0.0
+        self._perf_paint_sample_count = 0
+        self._perf_overlay_label.setVisible(target)
+        if target:
+            self._refresh_performance_overlay()
+            self._perf_overlay_timer.start()
+        else:
+            self._perf_overlay_timer.stop()
+            self._perf_overlay_label.clear()
+
+    def performance_overlay_enabled(self) -> bool:
+        return bool(self._perf_overlay_enabled)
+
+    def set_auto_proxy_enabled(self, enabled: bool) -> None:
+        target = bool(enabled)
+        if target == self._auto_proxy_enabled:
+            return
+        self._auto_proxy_enabled = target
+        self.refresh_auto_proxy_mode()
+
+    def auto_proxy_enabled(self) -> bool:
+        return bool(self._auto_proxy_enabled)
+
+    def refresh_auto_proxy_mode(self) -> None:
+        from .service_basenode import F8StudioServiceNodeItem
+
+        for node_item in list(self.all_nodes() or []):
+            if not isinstance(node_item, F8StudioServiceNodeItem):
+                continue
+            node_item.auto_switch_mode()
+            node_item.update()
+        scene = self.scene()
+        if scene is not None:
+            scene.update()
+        self.viewport().update()
+
+    def performance_overlay_snapshot(self) -> dict[str, float]:
+        scene = self.scene()
+        visible_proxy_widget_count = 0.0
+        visible_scene_item_count = 0.0
+        if scene is not None:
+            for item in list(scene.items() or []):
+                try:
+                    if item.isVisible():
+                        visible_scene_item_count += 1.0
+                except (AttributeError, RuntimeError, TypeError):
+                    continue
+                if isinstance(item, QtWidgets.QGraphicsProxyWidget):
+                    visible_proxy_widget_count += 1.0
+
+        visible_node_count = 0.0
+        total_node_count = 0.0
+        for node_item in list(self.all_nodes() or []):
+            total_node_count += 1.0
+            try:
+                if node_item.isVisible():
+                    visible_node_count += 1.0
+            except (AttributeError, RuntimeError, TypeError):
+                continue
+
+        try:
+            zoom = float(self.get_zoom())
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            zoom = 0.0
+
+        return {
+            "last_paint_ms": float(self._perf_paint_last_ms),
+            "ema_paint_ms": float(self._perf_paint_ema_ms),
+            "paint_samples": float(self._perf_paint_sample_count),
+            "visible_node_count": float(visible_node_count),
+            "total_node_count": float(total_node_count),
+            "visible_proxy_widget_count": float(visible_proxy_widget_count),
+            "visible_scene_item_count": float(visible_scene_item_count),
+            "zoom": float(zoom),
+        }
+
+    def _refresh_performance_overlay(self) -> None:
+        if not self._perf_overlay_enabled:
+            return
+        snapshot = self.performance_overlay_snapshot()
+        self._perf_overlay_label.setText(
+            "\n".join(
+                [
+                    f"paint {snapshot['last_paint_ms']:.1f} ms",
+                    f"ema   {snapshot['ema_paint_ms']:.1f} ms",
+                    f"zoom  {snapshot['zoom']:.2f}",
+                    f"nodes {int(snapshot['visible_node_count'])}/{int(snapshot['total_node_count'])}",
+                    f"proxy {int(snapshot['visible_proxy_widget_count'])}",
+                    f"items {int(snapshot['visible_scene_item_count'])}",
+                ]
+            )
+        )
+        self._perf_overlay_label.adjustSize()
+        self._position_performance_overlay()
+
+    def _position_performance_overlay(self) -> None:
+        if not self._perf_overlay_label.isVisible():
+            return
+        margin = 12
+        label_size = self._perf_overlay_label.sizeHint()
+        x = max(margin, self.viewport().width() - label_size.width() - margin)
+        y = margin
+        self._perf_overlay_label.move(x, y)
 
     @staticmethod
     def _ensure_cursor_flash_enabled() -> None:
@@ -240,6 +377,24 @@ class F8StudioNodeViewer(NodeViewer):
     def showEvent(self, event):
         super().showEvent(event)
         self.setFocus()
+        self._position_performance_overlay()
+
+    def resizeEvent(self, event):  # type: ignore[override]
+        super().resizeEvent(event)
+        self._position_performance_overlay()
+
+    def paintEvent(self, event):  # type: ignore[override]
+        started_at = time.perf_counter() if self._perf_overlay_enabled else None
+        super().paintEvent(event)
+        if started_at is None:
+            return
+        elapsed_ms = (time.perf_counter() - started_at) * 1000.0
+        self._perf_paint_last_ms = float(elapsed_ms)
+        if self._perf_paint_sample_count <= 0:
+            self._perf_paint_ema_ms = float(elapsed_ms)
+        else:
+            self._perf_paint_ema_ms = (self._perf_paint_ema_ms * 0.85) + (float(elapsed_ms) * 0.15)
+        self._perf_paint_sample_count += 1
 
     def enterEvent(self, event):  # type: ignore[override]
         if self.is_node_placement_active() or self.is_graph_placement_active():
@@ -351,6 +506,8 @@ class F8StudioNodeViewer(NodeViewer):
         center_view = QtCore.QPoint(int(self.viewport().width() / 2), int(self.viewport().height() / 2))
         for _ in range(abs(ticks)):
             self._set_viewer_zoom(1.0 if ticks > 0 else -1.0, 0.0, center_view)
+        if self._auto_proxy_enabled:
+            self.refresh_auto_proxy_mode()
 
     @staticmethod
     def _is_text_input_focus(widget: QtWidgets.QWidget | None) -> bool:

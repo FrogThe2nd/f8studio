@@ -9,6 +9,7 @@ from ..nodegraph import F8StudioGraph
 from ..nodegraph.edge_rules import EDGE_KIND_DATA, EDGE_KIND_EXEC, EDGE_KIND_STATE
 from ..nodegraph.session import last_session_path
 from ..nodegraph.runtime_compiler import compile_runtime_graphs_from_studio
+from ..nodegraph.viewer import F8StudioNodeViewer
 from ..pystudio_service_bridge import PyStudioServiceBridge, PyStudioServiceBridgeConfig
 from ..pystudio_node_registry import SERVICE_CLASS as STUDIO_SERVICE_CLASS
 from ..ui_notifications import show_info, show_warning
@@ -57,6 +58,9 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
     _AUTOMATION_SETTINGS_GROUP = "main_window/automation/v1"
     _AUTO_SAVE_ENABLED_SETTINGS_KEY = "auto_save_enabled"
     _AUTO_DEPLOY_ENABLED_SETTINGS_KEY = "auto_deploy_enabled"
+    _VIEW_SETTINGS_GROUP = "main_window/view/v1"
+    _AUTO_PROXY_ENABLED_SETTINGS_KEY = "auto_proxy_enabled"
+    _PERFORMANCE_OVERLAY_ENABLED_SETTINGS_KEY = "performance_overlay_enabled"
     _PERIODIC_AUTO_SAVE_INTERVAL_MS = 15000
     _AUTO_DEPLOY_DEBOUNCE_MS = 2000
     _LOG_LEVEL_CHOICES: tuple[tuple[str, int], ...] = (
@@ -85,6 +89,8 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
     _export_session_action: QtGui.QAction
     _auto_save_action: QtGui.QAction
     _auto_deploy_action: QtGui.QAction
+    _auto_proxy_action: QtGui.QAction
+    _performance_overlay_action: QtGui.QAction
     _log_level_action_group: QtGui.QActionGroup
     _log_level_actions: dict[int, QtGui.QAction]
     _dock_widgets: list[QtWidgets.QDockWidget]
@@ -105,6 +111,8 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         self._default_dock_layout_state = QtCore.QByteArray()
         self._auto_save_enabled = self._read_saved_auto_save_enabled()
         self._auto_deploy_enabled = self._read_saved_auto_deploy_enabled()
+        self._auto_proxy_enabled = self._read_saved_auto_proxy_enabled()
+        self._performance_overlay_enabled = self._read_saved_performance_overlay_enabled()
 
         self.studio_graph = F8StudioGraph()
         self.studio_graph.node_factory.clear_registered_nodes()
@@ -130,6 +138,8 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
 
         self._setup_docks()
         self._create_graph_actions()
+        self._apply_auto_proxy_enabled(enabled=self._auto_proxy_enabled, persist=False)
+        self._apply_performance_overlay_enabled(enabled=self._performance_overlay_enabled, persist=False)
         self._setup_menu()
         self._setup_toolbar()
         self._service_manager: ServiceManagerWidget | None = None
@@ -267,6 +277,9 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
             action = dock.toggleViewAction()
             action.setCheckable(True)
             self._view_menu.addAction(action)
+        self._view_menu.addSeparator()
+        self._view_menu.addAction(self._auto_proxy_action)
+        self._view_menu.addAction(self._performance_overlay_action)
         self._view_menu.addSeparator()
         self._reset_layout_action = QtGui.QAction("Reset Layout", self)
         self._reset_layout_action.triggered.connect(self._on_reset_layout_action)  # type: ignore[attr-defined]
@@ -458,6 +471,22 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
             tool_tip="Auto deploy after graph edits (2s debounce)",
             checkable=True,
             checked=self._auto_deploy_enabled,
+        )
+        self._performance_overlay_action = self._create_action(
+            "Performance Overlay",
+            handler=self._on_performance_overlay_toggled,
+            shortcut="Ctrl+Shift+P",
+            tool_tip="Show graph viewer paint/perf overlay",
+            checkable=True,
+            checked=self._performance_overlay_enabled,
+        )
+        self._auto_proxy_action = self._create_action(
+            "Auto Proxy",
+            handler=self._on_auto_proxy_toggled,
+            shortcut="Ctrl+Shift+O",
+            tool_tip="Enable zoom-out auto proxy mode for service nodes",
+            checkable=True,
+            checked=self._auto_proxy_enabled,
         )
         self._export_session_action = self._create_action(
             "Export Session",
@@ -852,6 +881,58 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         finally:
             settings.endGroup()
 
+    def _read_saved_performance_overlay_enabled(self) -> bool:
+        settings = self._layout_settings()
+        settings.beginGroup(self._VIEW_SETTINGS_GROUP)
+        try:
+            raw = settings.value(self._PERFORMANCE_OVERLAY_ENABLED_SETTINGS_KEY, False)
+        finally:
+            settings.endGroup()
+        return self._coerce_bool_setting(raw, default=False)
+
+    def _write_saved_performance_overlay_enabled(self, *, enabled: bool) -> None:
+        settings = self._layout_settings()
+        settings.beginGroup(self._VIEW_SETTINGS_GROUP)
+        try:
+            settings.setValue(self._PERFORMANCE_OVERLAY_ENABLED_SETTINGS_KEY, bool(enabled))
+            settings.sync()
+        finally:
+            settings.endGroup()
+
+    def _apply_performance_overlay_enabled(self, *, enabled: bool, persist: bool) -> None:
+        self._performance_overlay_enabled = bool(enabled)
+        viewer = self.studio_graph.viewer()
+        if isinstance(viewer, F8StudioNodeViewer):
+            viewer.set_performance_overlay_enabled(self._performance_overlay_enabled)
+        if persist:
+            self._write_saved_performance_overlay_enabled(enabled=self._performance_overlay_enabled)
+
+    def _read_saved_auto_proxy_enabled(self) -> bool:
+        settings = self._layout_settings()
+        settings.beginGroup(self._VIEW_SETTINGS_GROUP)
+        try:
+            raw = settings.value(self._AUTO_PROXY_ENABLED_SETTINGS_KEY, False)
+        finally:
+            settings.endGroup()
+        return self._coerce_bool_setting(raw, default=False)
+
+    def _write_saved_auto_proxy_enabled(self, *, enabled: bool) -> None:
+        settings = self._layout_settings()
+        settings.beginGroup(self._VIEW_SETTINGS_GROUP)
+        try:
+            settings.setValue(self._AUTO_PROXY_ENABLED_SETTINGS_KEY, bool(enabled))
+            settings.sync()
+        finally:
+            settings.endGroup()
+
+    def _apply_auto_proxy_enabled(self, *, enabled: bool, persist: bool) -> None:
+        self._auto_proxy_enabled = bool(enabled)
+        viewer = self.studio_graph.viewer()
+        if isinstance(viewer, F8StudioNodeViewer):
+            viewer.set_auto_proxy_enabled(self._auto_proxy_enabled)
+        if persist:
+            self._write_saved_auto_proxy_enabled(enabled=self._auto_proxy_enabled)
+
     def _current_undo_index(self) -> int:
         return int(self.studio_graph._undo_stack.index())  # type: ignore[attr-defined]
 
@@ -878,6 +959,14 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
             return
         if self._current_undo_index() != self._last_auto_deployed_undo_index:
             self._auto_deploy_timer.start()
+
+    @QtCore.Slot(bool)
+    def _on_performance_overlay_toggled(self, checked: bool) -> None:
+        self._apply_performance_overlay_enabled(enabled=bool(checked), persist=True)
+
+    @QtCore.Slot(bool)
+    def _on_auto_proxy_toggled(self, checked: bool) -> None:
+        self._apply_auto_proxy_enabled(enabled=bool(checked), persist=True)
 
     @QtCore.Slot(int)
     def _on_graph_undo_index_changed(self, index: int) -> None:
