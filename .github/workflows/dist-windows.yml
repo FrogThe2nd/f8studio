@@ -19,12 +19,28 @@ on:
   schedule:
     - cron: "0 7 * * 1"
   workflow_dispatch:
+    inputs:
+      git_ref:
+        description: Git ref to build (tag, branch, or commit SHA)
+        required: false
+        default: main
+        type: string
+      release_tag:
+        description: Release tag to upload the archive to (optional)
+        required: false
+        default: ""
+        type: string
+      upload_release:
+        description: Upload archive to GitHub Release
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
 
 jobs:
-  warm-conan-cache:
+  warm-windows-build-caches:
     if: github.event_name == 'schedule' || github.ref == 'refs/heads/main'
     runs-on: windows-2022
     env:
@@ -33,12 +49,19 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: prefix-dev/setup-pixi@v0.9.3
+        with:
+          cache: true
+          cache-write: ${{ github.event_name == 'schedule' || (github.event_name == 'push' && github.ref_name == 'main') }}
+          environments: >-
+            ci
+            cpp
+            launcher
 
       - name: Setup MSVC
         uses: ilammy/msvc-dev-cmd@v1
 
       # Tag-scoped caches cannot be restored by other tag runs, so keep the
-      # canonical Conan cache warm on the default branch instead.
+      # canonical Windows build caches warm on the default branch instead.
       - name: Restore Conan cache
         uses: actions/cache/restore@v4
         with:
@@ -68,8 +91,17 @@ jobs:
       CONAN_HOME: ${{ github.workspace }}/.conan2
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.git_ref || github.ref }}
 
       - uses: prefix-dev/setup-pixi@v0.9.3
+        with:
+          cache: true
+          cache-write: false
+          environments: >-
+            ci
+            cpp
+            launcher
 
       - name: Setup MSVC
         uses: ilammy/msvc-dev-cmd@v1
@@ -89,12 +121,54 @@ jobs:
       - name: Build runtime distribution
         run: pixi run --frozen -e ci dist_ci --archive
 
+      - name: Resolve release target
+        id: release_target
+        shell: pwsh
+        env:
+          MANUAL_GIT_REF: ${{ inputs.git_ref || '' }}
+          MANUAL_RELEASE_TAG: ${{ inputs.release_tag || '' }}
+          MANUAL_UPLOAD_RELEASE: ${{ inputs.upload_release && 'true' || 'false' }}
+        run: |
+          $releaseTag = ""
+          if ($env:GITHUB_REF_TYPE -eq "tag") {
+            $releaseTag = $env:GITHUB_REF_NAME
+          }
+          elseif ($env:MANUAL_RELEASE_TAG -ne "") {
+            $releaseTag = $env:MANUAL_RELEASE_TAG.Trim()
+          }
+          elseif ($env:MANUAL_GIT_REF -like "refs/tags/*") {
+            $releaseTag = $env:MANUAL_GIT_REF.Substring(10)
+          }
+          elseif ($env:MANUAL_GIT_REF -match "^v[0-9A-Za-z._-]*$") {
+            $releaseTag = $env:MANUAL_GIT_REF.Trim()
+          }
+
+          $shouldUpload = "false"
+          if ($env:GITHUB_REF_TYPE -eq "tag") {
+            $shouldUpload = "true"
+          }
+          elseif ($env:MANUAL_UPLOAD_RELEASE -eq "true" -and $releaseTag -ne "") {
+            $shouldUpload = "true"
+          }
+
+          "tag=$releaseTag" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "should_upload=$shouldUpload" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
       - name: Resolve build version
         id: version
         shell: pwsh
+        env:
+          MANUAL_GIT_REF: ${{ inputs.git_ref || '' }}
+          RELEASE_TAG: ${{ steps.release_target.outputs.tag }}
         run: |
           if ($env:GITHUB_REF_TYPE -eq "tag") {
             $version = $env:GITHUB_REF_NAME
+          }
+          elseif ($env:RELEASE_TAG -ne "") {
+            $version = $env:RELEASE_TAG
+          }
+          elseif ($env:MANUAL_GIT_REF -like "refs/tags/*") {
+            $version = $env:MANUAL_GIT_REF.Substring(10)
           }
           else {
             $version = $env:GITHUB_SHA.Substring(0, 7)
@@ -110,9 +184,9 @@ jobs:
             build/dist/f8studio-windows-x86_64.zip
 
       - name: Attach archive to GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: steps.release_target.outputs.should_upload == 'true'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
+          tag_name: ${{ steps.release_target.outputs.tag }}
           generate_release_notes: true
           files: build/dist/f8studio-windows-x86_64.zip
