@@ -8,7 +8,27 @@ Rhythm analysis service consuming core features (tempo + pulse clarity).
 - Source directory: `f8/audiofeat/rhythm`
 - Tags: `audio`, `feature`, `tempo`, `beat`, `pulse`
 
-## How to Run
+## When to Use
+
+- Use `f8.audiofeat.rhythm` when timing-based cues such as onsets (drastic changes), beats, or estimated tempo matter more than raw signal energy.
+- It is designed to complement `f8.audiofeat.core`, providing "event" timing rather than continuous signal levels.
+- Best for music-synced visualization, beat-driven interactions, or detecting sudden percussive sounds (claps, impacts).
+
+## Common Wiring Patterns
+
+- **Multi-Analysis Branch**: Feed the same Audio SHM from `f8.audiocap` into both `core` and `rhythm` services to get a complete picture of the sound.
+- **Beat-Triggered Logic**: Use the `onset` or `beat` outputs as triggers for `Tick`, `Envelope`, or state machines in `f8.pyengine`.
+- **Visualization**: Output rhythm cues to `TextViz` or custom visual overlays to verify detection accuracy against the live audio.
+
+## Pitfalls / Gotchas
+
+- **Material Dependency**: Rhythm features rely on transients. Detection will look sparse or inconsistent if the source material is very ambient, drone-like, or lacks sharp attacks.
+- **Threshold Sensitivity**: Onset detection is highly sensitive to background noise. Tune the `threshold` properties carefully while watching the visual feedback to avoid false positives in noisy environments.
+- **Latency Consistency**: Beat tracking algorithms often need a few seconds of consistent audio to "lock on" to a tempo. Avoid relying on instant tempo accuracy for short-duration sounds.
+
+## Service Reference
+
+### How to Run
 
 ```bash
 pixi run f8pyaudiofeat_rhythm
@@ -17,7 +37,13 @@ pixi run f8pyaudiofeat_rhythm
 - Workdir: `../../../../`
 - Environment overrides: none
 
-## Service State Fields
+### Typical Inputs / Outputs
+
+- Data inputs: `coreFeatures`
+- Data outputs: `rhythmFeatures`, `monitor`
+- Commands: none
+
+### Service State Fields
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
@@ -28,17 +54,26 @@ pixi run f8pyaudiofeat_rhythm
 | `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 
-## Service Commands
+### Key Fields That Matter
+
+- `tempoWindowSec` (Tempo Window (s), `rw`): Window length in seconds for tempo estimation. Schema: `number / default=8.0`.
+- `pulseWindowSec` (Pulse Window (s), `rw`): Window length in seconds for pulse clarity. Schema: `number / default=6.0`.
+- `emitEvery` (Emit Every, `rw`): Emit one rhythmFeatures payload every N coreFeatures inputs. Schema: `integer / default=1`.
+- `lastError` (Last Error, `ro`): Last runtime error string. Schema: `string / default=`.
+- `active` (Active, `rw`): Service lifecycle state (activate/deactivate). Schema: `boolean / default=True`.
+- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
+
+### Service Commands
 
 _None_
 
-## Service Data Input Ports
+### Service Data Input Ports
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
 | `coreFeatures` | `true` | `true` | `object{hopLength, onsetEnvelope, onsetStrength, rms, ...}` | Input core feature payload from f8.audiofeat.core. |
 
-## Service Data Output Ports
+### Service Data Output Ports
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
@@ -48,36 +83,6 @@ _None_
 ## Operators
 
 _None_
-
-## When to Use
-
-- Use `f8.audiofeat.rhythm` when beat, onset, or tempo-like cues matter more than raw energy.
-- It complements `f8.audiofeat.core` rather than replacing it.
-
-## Typical Inputs / Outputs
-
-- Data inputs: `coreFeatures`
-- Data outputs: `rhythmFeatures`, `monitor`
-- Commands: none
-
-## Common Wiring Patterns
-
-- Feed the same Audio SHM from `f8.audiocap` into both `core` and `rhythm` services.
-- Visualize rhythm outputs with `TextViz` or map them into `Tick`, `Envelope`, or `Range Map` driven logic.
-
-## Key Fields That Matter
-
-- `tempoWindowSec` (Tempo Window (s), `rw`): Window length in seconds for tempo estimation. Schema: `number / default=8.0`.
-- `pulseWindowSec` (Pulse Window (s), `rw`): Window length in seconds for pulse clarity. Schema: `number / default=6.0`.
-- `emitEvery` (Emit Every, `rw`): Emit one rhythmFeatures payload every N coreFeatures inputs. Schema: `integer / default=1`.
-- `lastError` (Last Error, `ro`): Last runtime error string. Schema: `string / default=`.
-- `active` (Active, `rw`): Service lifecycle state (activate/deactivate). Schema: `boolean / default=True`.
-- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
-
-## Pitfalls / Gotchas
-
-- Rhythm features can look sparse if the source material lacks sharp transients.
-- Users often overfit downstream thresholds before checking whether the input audio itself is strong enough.
 
 ## Related Scenarios
 

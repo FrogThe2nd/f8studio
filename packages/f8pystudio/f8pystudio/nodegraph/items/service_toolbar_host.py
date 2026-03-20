@@ -17,28 +17,14 @@ class F8ElideToolButton(QtWidgets.QToolButton):
         self._apply_elide()
 
     def event(self, event):  # type: ignore[override]
-        # Tooltips on embedded widgets inside a QGraphicsProxyWidget can pick up
-        # an unexpected palette/style (showing as a black box). Force the
-        # tooltip to be shown with the global/default styling by passing
-        # widget=None.
-        try:
-            if event.type() == QtCore.QEvent.ToolTip:
-                tip = str(self.toolTip() or "").strip()
-                if not tip:
-                    return True
-                pos = None
-                try:
-                    pos = event.globalPos()
-                except AttributeError:
-                    try:
-                        pos = event.globalPosition().toPoint()
-                    except (AttributeError, RuntimeError, TypeError):
-                        pos = None
-                if pos is not None:
-                    QtWidgets.QToolTip.showText(pos, tip, None)
-                    return True
-        except (AttributeError, RuntimeError, TypeError):
-            pass
+        if event.type() == QtCore.QEvent.ToolTip:
+            tip = str(self.toolTip() or "").strip()
+            if not tip:
+                return True
+            pos = event.globalPos()
+            QtWidgets.QToolTip.showText(pos, tip, None)
+            return True
+
         return super().event(event)
 
     def _apply_elide(self) -> None:
@@ -66,13 +52,7 @@ class F8ForceGlobalToolTipFilter(QtCore.QObject):
         tip = str(watched.toolTip() or "").strip()
         if not tip:
             return True
-        try:
-            pos = event.globalPos()  # type: ignore[attr-defined]
-        except Exception:
-            try:
-                pos = event.globalPosition().toPoint()  # type: ignore[attr-defined]
-            except Exception:
-                return True
+        pos = event.globalPos()  # type: ignore[attr-defined]
         QtWidgets.QToolTip.showText(pos, tip, None)
         return True
 
@@ -151,7 +131,7 @@ def ensure_service_toolbar(node_item: object, viewer: object | None) -> None:
         proxy = QtWidgets.QGraphicsProxyWidget(node_item)  # type: ignore[arg-type]
         proxy.setWidget(widget)
         proxy.setZValue(10_000)
-        proxy.setCacheMode(QtWidgets.QGraphicsItem.DeviceCoordinateCache)
+        # proxy.setCacheMode(QtWidgets.QGraphicsItem.NoCache)
         node_item._svc_toolbar_proxy = proxy  # type: ignore[attr-defined]
     except (AttributeError, RuntimeError, TypeError, ValueError):
         node_item._svc_toolbar_proxy = None  # type: ignore[attr-defined]

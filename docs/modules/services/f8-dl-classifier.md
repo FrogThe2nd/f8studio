@@ -8,7 +8,25 @@ ONNXRuntime image classifier service (no tracking).
 - Source directory: `f8/dl/classifier`
 - Tags: `onnx`, `vision`, `classification`
 
-## How to Run
+## When to Use
+
+- Use `f8.dl.classifier` when each frame should map to one label or class distribution.
+- It performs whole-image classification on video frames provided via Shared Memory and outputs a class distribution or top-K predicted labels.
+- It is best for scene labels, coarse state estimation, or discrete control cues.
+
+## Common Wiring Patterns
+
+- Feed it from `f8.implayer` or `f8.screencap`, then inspect outputs with `TextViz`, `Python Expr`, or downstream state mappings to drive application logic.
+- Keep a visualization or logging branch attached while tuning thresholds and class interpretation.
+
+## Pitfalls / Gotchas
+
+- Wrong model assets or label assumptions can look like logic bugs in downstream nodes; verify the loaded model in the properties.
+- Classification outputs need explicit business rules (hysteresis, thresholds) before they drive physical devices or actuator logic.
+
+## Service Reference
+
+### How to Run
 
 ```bash
 pixi run f8pydl_classifier
@@ -17,7 +35,13 @@ pixi run f8pydl_classifier
 - Workdir: `../../../../`
 - Environment overrides: none
 
-## Service State Fields
+### Typical Inputs / Outputs
+
+- Data inputs: none
+- Data outputs: `classifications`, `monitor`
+- Commands: none
+
+### Service State Fields
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
@@ -36,42 +60,7 @@ pixi run f8pydl_classifier
 | `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 
-## Service Commands
-
-_None_
-
-## Service Data Input Ports
-
-_None_
-
-## Service Data Output Ports
-
-| Name | Required | On Node | Schema | Description |
-| --- | --- | --- | --- | --- |
-| `classifications` | `true` | `true` | `object{frameId, model, schemaVersion, top1, ...}` | Classification output in schema f8visionClassifications/1. |
-| `monitor` | `true` | `false` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
-
-## Operators
-
-_None_
-
-## When to Use
-
-- Use `f8.dl.classifier` when each frame should map to one label or class distribution.
-- It is best for scene labels, coarse state estimation, or discrete control cues.
-
-## Typical Inputs / Outputs
-
-- Data inputs: none
-- Data outputs: `classifications`, `monitor`
-- Commands: none
-
-## Common Wiring Patterns
-
-- Feed it from `f8.implayer` or `f8.screencap`, then inspect outputs with `TextViz`, `Python Expr`, or downstream state mappings.
-- Keep a visualization or logging branch attached while tuning thresholds and class interpretation.
-
-## Key Fields That Matter
+### Key Fields That Matter
 
 - `shmName` (Video SHM, `rw`): Video SHM mapping name (e.g. shm.implayer.video). Schema: `string / default=`.
 - `weightsDir` (Weights Dir, `rw`): Directory containing *.yaml + *.onnx model files. Schema: `string / default=services/f8/dl/weights`.
@@ -82,10 +71,24 @@ _None_
 - `inferEveryN` (Infer Every N Frames, `rw`): Run model inference every N frames (>=1). Schema: `integer / default=1`.
 - `topK` (Top K, `rw`): Number of top classes to emit. Schema: `integer / default=5`.
 
-## Pitfalls / Gotchas
+### Service Commands
 
-- Wrong model assets or label assumptions can look like logic bugs in downstream nodes.
-- Classification outputs need explicit business rules before they drive devices or actuator logic.
+_None_
+
+### Service Data Input Ports
+
+_None_
+
+### Service Data Output Ports
+
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `classifications` | `true` | `true` | `object{frameId, model, schemaVersion, top1, ...}` | Classification output in schema f8visionClassifications/1. |
+| `monitor` | `true` | `false` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
+
+## Operators
+
+_None_
 
 ## Related Scenarios
 

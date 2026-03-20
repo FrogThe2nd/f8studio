@@ -8,7 +8,33 @@ C++ MPV-based player service with shared-memory video output.
 - Source directory: `f8/implayer`
 - Tags: none
 
-## How to Run
+## When to Use
+
+- Use `f8.implayer` to turn local media files, RTSP streams, or supported web URLs into a stable video Shared Memory (SHM) producer.
+- It is the primary way to ingest video content into the Feel8 graph, providing a deterministic clock for demos, QA passes, and replayable scenarios.
+- It uses a C++ MPV-based backend, supporting a wide range of codecs and protocols (including YouTube-dl support for online video URLs).
+- It is the best choice when you need precise seeking, looping, or volume control through commands.
+
+## Common Wiring Patterns
+
+- **Standard Consumption**: Feed its SHM output (defaulting to the service instance id or `videoShmName`) into CVKit, DL, or visualization consumers (`f8.viz.video`).
+- **Media Master**: Keep one `implayer` node as the canonical media producer for a scenario and branch the SHM signal to multiple analysis pipelines in parallel.
+- **Dynamic Control**: Use `f8.pyengine` or scripts to send `open`, `play`, `pause`, or `seek` commands based on application logic or UI events.
+
+### Cookie/Auth Notes
+
+- Use browser or cookies-file auth modes only when URL playback (e.g., private streams) requires session credentials.
+- Treat auth-related state as sensitive runtime configuration; it is not persisted in session files.
+
+## Pitfalls / Gotchas
+
+- **Codec Availability**: Missing system codecs or internal MPV errors can result in "empty" shared memory; check the `monitor` port and console logs for explicit load failures.
+- **SHM Naming**: Mismatched `shmName` between producer and consumer is the most frequent cause of "no video" issues. Verify the `videoShmName` property matches the consumer's input.
+- **Network Stability**: For URL sources, high latency or connection drops can stall the graph if downstream nodes wait synchronously. Monitor `monitor.frame.dropped` to detect performance issues.
+
+## Service Reference
+
+### How to Run
 
 ```bash
 win/f8implayer_service.exe
@@ -17,7 +43,13 @@ win/f8implayer_service.exe
 - Workdir: `./`
 - Environment overrides: none
 
-## Service State Fields
+### Typical Inputs / Outputs
+
+- Data inputs: none
+- Data outputs: `playback`, `monitor`
+- Commands: `open`, `play`, `pause`, `stop`, `seek`, `setVolume`
+
+### Service State Fields
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
@@ -44,7 +76,18 @@ win/f8implayer_service.exe
 | `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 
-## Service Commands
+### Key Fields That Matter
+
+- `loop` (Loop, `rw`): Repeat playlist when reaching EOF. Schema: `boolean`.
+- `mediaUrl` (Media URL, `rw`): URI or file path to open. Schema: `string`.
+- `volume` (Volume, `rw`): Volume Schema: `number / default=1.0`.
+- `playing` (Playing, `ro`): Playback state. Schema: `boolean`.
+- `duration` (Duration, `ro`): Duration (seconds). Schema: `number`.
+- `lastError` (Last Error, `ro`): Last error message. Schema: `string`.
+- `videoShmName` (Video SHM, `ro`): Shared memory region name. Schema: `string`.
+- `videoShmEvent` (Video Event, `ro`): Optional named event to signal new frames. Schema: `string`.
+
+### Service Commands
 
 ### `open`
 Open a media URL
@@ -91,11 +134,11 @@ Set volume
 | --- | --- | --- | --- |
 | `volume` | `true` | `number` |  |
 
-## Service Data Input Ports
+### Service Data Input Ports
 
 _None_
 
-## Service Data Output Ports
+### Service Data Output Ports
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
@@ -105,43 +148,6 @@ _None_
 ## Operators
 
 _None_
-
-## When to Use
-
-- Use `f8.implayer` to turn local media files or supported URLs into a stable video SHM producer.
-- It is the easiest deterministic source for demos, QA passes, and replayable scenarios.
-
-## Typical Inputs / Outputs
-
-- Data inputs: none
-- Data outputs: `playback`, `monitor`
-- Commands: `open`, `play`, `pause`, `stop`, `seek`, `setVolume`
-
-## Common Wiring Patterns
-
-- Feed its SHM output into CVKit, DL, pose, or `f8.viz.video` consumers.
-- Keep one `implayer` node as the canonical media producer for a scenario and branch from there.
-
-### Cookie/Auth Notes
-
-- Use browser or cookies-file auth only when URL playback truly needs it.
-- Treat auth-related state as sensitive runtime configuration, not a value to casually share in example sessions.
-
-## Key Fields That Matter
-
-- `loop` (Loop, `rw`): Repeat playlist when reaching EOF. Schema: `boolean`.
-- `mediaUrl` (Media URL, `rw`): URI or file path to open. Schema: `string`.
-- `volume` (Volume, `rw`): Volume Schema: `number / default=1.0`.
-- `playing` (Playing, `ro`): Playback state. Schema: `boolean`.
-- `duration` (Duration, `ro`): Duration (seconds). Schema: `number`.
-- `lastError` (Last Error, `ro`): Last error message. Schema: `string`.
-- `videoShmName` (Video SHM, `ro`): Shared memory region name. Schema: `string`.
-- `videoShmEvent` (Video Event, `ro`): Optional named event to signal new frames. Schema: `string`.
-
-## Pitfalls / Gotchas
-
-- Missing codecs or URL auth problems can look like empty downstream graphs rather than explicit load failures.
-- SHM-name mismatches are a more common problem than actual playback failure.
 
 ## Related Scenarios
 

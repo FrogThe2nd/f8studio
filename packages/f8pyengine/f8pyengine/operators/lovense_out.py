@@ -785,11 +785,12 @@ LovenseOutRuntimeNode.SPEC = F8OperatorSpec(
         F8StateSpec(
             name="commandUrl",
             label="Command URL",
-            description="Lovense Local API /command URL.",
+            description="Lovense Local API /command URL. Reset to default when exporting publish JSON.",
             valueSchema=string_schema(default="https://127-0-0-1.lovense.club:30010/command"),
             access=F8StateAccess.rw,
             required=True,
             showOnNode=False,
+            redactOnPublish=True,
         ),
         F8StateSpec(
             name="platformName",

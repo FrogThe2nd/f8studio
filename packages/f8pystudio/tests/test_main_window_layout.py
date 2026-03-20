@@ -11,6 +11,7 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
+from f8pystudio.nodegraph.viewer import F8StudioNodeViewer  # noqa: E402
 from f8pystudio.widgets.main_window import F8StudioMainWin  # noqa: E402
 
 
@@ -41,8 +42,12 @@ class _LayoutHarness(QtWidgets.QMainWindow):
     _LOG_LEVEL_SETTINGS_GROUP = F8StudioMainWin._LOG_LEVEL_SETTINGS_GROUP
     _LOG_LEVEL_SETTINGS_KEY = F8StudioMainWin._LOG_LEVEL_SETTINGS_KEY
     _LOG_LEVEL_CHOICES = F8StudioMainWin._LOG_LEVEL_CHOICES
+    _VIEW_SETTINGS_GROUP = F8StudioMainWin._VIEW_SETTINGS_GROUP
+    _AUTO_PROXY_ENABLED_SETTINGS_KEY = F8StudioMainWin._AUTO_PROXY_ENABLED_SETTINGS_KEY
+    _PERFORMANCE_OVERLAY_ENABLED_SETTINGS_KEY = F8StudioMainWin._PERFORMANCE_OVERLAY_ENABLED_SETTINGS_KEY
 
     _as_qbytearray = staticmethod(F8StudioMainWin._as_qbytearray)
+    _coerce_bool_setting = staticmethod(F8StudioMainWin._coerce_bool_setting)
     _normalize_supported_log_level = staticmethod(F8StudioMainWin._normalize_supported_log_level)
     _log_level_name_for_value = staticmethod(F8StudioMainWin._log_level_name_for_value)
     _log_level_value_from_name = staticmethod(F8StudioMainWin._log_level_value_from_name)
@@ -53,12 +58,46 @@ class _LayoutHarness(QtWidgets.QMainWindow):
     _apply_log_level = F8StudioMainWin._apply_log_level
     _restore_saved_log_level = F8StudioMainWin._restore_saved_log_level
     _on_log_level_toggled = F8StudioMainWin._on_log_level_toggled
+    _create_action = F8StudioMainWin._create_action
     _capture_default_dock_layout_state = F8StudioMainWin._capture_default_dock_layout_state
     _restore_saved_window_layout = F8StudioMainWin._restore_saved_window_layout
     _save_window_layout = F8StudioMainWin._save_window_layout
     _setup_view_menu = F8StudioMainWin._setup_view_menu
     _setup_log_level_menu = F8StudioMainWin._setup_log_level_menu
-    _on_reset_layout_triggered = F8StudioMainWin._on_reset_layout_triggered
+    _on_reset_layout_triggered = F8StudioMainWin._on_reset_layout_action
+    _read_saved_auto_proxy_enabled = F8StudioMainWin._read_saved_auto_proxy_enabled
+    _write_saved_auto_proxy_enabled = F8StudioMainWin._write_saved_auto_proxy_enabled
+    _apply_auto_proxy_enabled = F8StudioMainWin._apply_auto_proxy_enabled
+    _on_auto_proxy_toggled = F8StudioMainWin._on_auto_proxy_toggled
+    _read_saved_performance_overlay_enabled = F8StudioMainWin._read_saved_performance_overlay_enabled
+    _write_saved_performance_overlay_enabled = F8StudioMainWin._write_saved_performance_overlay_enabled
+    _apply_performance_overlay_enabled = F8StudioMainWin._apply_performance_overlay_enabled
+    _on_performance_overlay_toggled = F8StudioMainWin._on_performance_overlay_toggled
+
+    class _FakeViewer(F8StudioNodeViewer):
+        def __init__(self) -> None:
+            super().__init__()
+            self.enabled = False
+            self.calls: list[bool] = []
+            self.auto_proxy_enabled_state = False
+            self.auto_proxy_calls: list[bool] = []
+
+        def set_performance_overlay_enabled(self, enabled: bool) -> None:
+            super().set_performance_overlay_enabled(enabled)
+            self.enabled = self.performance_overlay_enabled()
+            self.calls.append(self.enabled)
+
+        def set_auto_proxy_enabled(self, enabled: bool) -> None:
+            super().set_auto_proxy_enabled(enabled)
+            self.auto_proxy_enabled_state = self.auto_proxy_enabled()
+            self.auto_proxy_calls.append(self.auto_proxy_enabled_state)
+
+    class _FakeStudioGraph:
+        def __init__(self, viewer: "_LayoutHarness._FakeViewer") -> None:
+            self._viewer = viewer
+
+        def viewer(self) -> "_LayoutHarness._FakeViewer":
+            return self._viewer
 
     def __init__(self, settings: QtCore.QSettings) -> None:
         super().__init__(None)
@@ -95,6 +134,22 @@ class _LayoutHarness(QtWidgets.QMainWindow):
         ]
         self._log_level_actions = {}
         self._default_dock_layout_state = QtCore.QByteArray()
+        self._auto_proxy_enabled = self._read_saved_auto_proxy_enabled()
+        self._performance_overlay_enabled = self._read_saved_performance_overlay_enabled()
+        self._fake_viewer = self._FakeViewer()
+        self.studio_graph = self._FakeStudioGraph(self._fake_viewer)
+        self._auto_proxy_action = self._create_action(
+            "Auto Proxy",
+            handler=self._on_auto_proxy_toggled,
+            checkable=True,
+            checked=self._auto_proxy_enabled,
+        )
+        self._performance_overlay_action = self._create_action(
+            "Performance Overlay",
+            handler=self._on_performance_overlay_toggled,
+            checkable=True,
+            checked=self._performance_overlay_enabled,
+        )
 
     def _layout_settings(self) -> QtCore.QSettings:
         return self._settings
@@ -139,6 +194,10 @@ def test_view_menu_actions_are_checkable_and_reset_restores_defaults(tmp_path: P
         toggle_action = dock.toggleViewAction()
         assert toggle_action in menu_actions
         assert toggle_action.isCheckable() is True
+    assert window._auto_proxy_action in menu_actions
+    assert window._auto_proxy_action.isCheckable() is True
+    assert window._performance_overlay_action in menu_actions
+    assert window._performance_overlay_action.isCheckable() is True
     assert window._reset_layout_action in menu_actions
 
     window._node_library_dock.hide()
@@ -152,6 +211,46 @@ def test_view_menu_actions_are_checkable_and_reset_restores_defaults(tmp_path: P
     saved_state = window._read_layout_bytes(key=window._WINDOW_LAYOUT_STATE_KEY)
     assert saved_state is not None
     assert saved_state == window.saveState(window._WINDOW_LAYOUT_STATE_VERSION)
+
+
+def test_performance_overlay_setting_is_applied_and_restored(tmp_path: Path) -> None:
+    _ensure_app()
+    settings = _new_settings(tmp_path / "studio-layout.ini")
+    window = _LayoutHarness(settings)
+    window._setup_view_menu()
+
+    assert window._performance_overlay_action.isChecked() is False
+    assert window._fake_viewer.enabled is False
+
+    window._performance_overlay_action.trigger()
+    _process_events()
+
+    assert window._performance_overlay_action.isChecked() is True
+    assert window._fake_viewer.enabled is True
+    assert window._read_saved_performance_overlay_enabled() is True
+
+    restored = _LayoutHarness(QtCore.QSettings(str(tmp_path / "studio-layout.ini"), QtCore.QSettings.IniFormat))
+    assert restored._performance_overlay_enabled is True
+
+
+def test_auto_proxy_setting_is_applied_and_restored(tmp_path: Path) -> None:
+    _ensure_app()
+    settings = _new_settings(tmp_path / "studio-layout.ini")
+    window = _LayoutHarness(settings)
+    window._setup_view_menu()
+
+    assert window._auto_proxy_action.isChecked() is False
+    assert window._fake_viewer.auto_proxy_enabled_state is False
+
+    window._auto_proxy_action.trigger()
+    _process_events()
+
+    assert window._auto_proxy_action.isChecked() is True
+    assert window._fake_viewer.auto_proxy_enabled_state is True
+    assert window._read_saved_auto_proxy_enabled() is True
+
+    restored = _LayoutHarness(QtCore.QSettings(str(tmp_path / "studio-layout.ini"), QtCore.QSettings.IniFormat))
+    assert restored._auto_proxy_enabled is True
 
 
 def test_log_level_menu_applies_and_restores_saved_level(tmp_path: Path) -> None:

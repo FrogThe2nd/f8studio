@@ -19,6 +19,14 @@ from f8pysdk import (
 from f8pysdk.runtime_node import RuntimeNode
 from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
 
+from .config import (
+    DEFAULT_INFER_EVERY_N,
+    DEFAULT_MIN_DETECTION_CONFIDENCE,
+    DEFAULT_MIN_TRACKING_CONFIDENCE,
+    DEFAULT_MODEL_COMPLEXITY,
+    DEFAULT_SKELETON_SOURCE,
+    DEFAULT_VISIBILITY_THRESHOLD,
+)
 from .constants import POSE_SERVICE_CLASS
 from .service_node import MediaPipePoseServiceNode
 
@@ -105,7 +113,7 @@ def _state_fields() -> list[F8StateSpec]:
             name="inferEveryN",
             label="Infer Every N Frames",
             description="Run pose inference every N frames (>=1).",
-            valueSchema=integer_schema(default=1, minimum=1, maximum=10000),
+            valueSchema=integer_schema(default=DEFAULT_INFER_EVERY_N, minimum=1, maximum=10000),
             access=F8StateAccess.rw,
             showOnNode=False,
             required=True
@@ -114,7 +122,7 @@ def _state_fields() -> list[F8StateSpec]:
             name="modelComplexity",
             label="Model Complexity",
             description="MediaPipe pose model variant.",
-            valueSchema=string_schema(default="full", enum=["lite", "full", "heavy"]),
+            valueSchema=string_schema(default=DEFAULT_MODEL_COMPLEXITY, enum=["lite", "full", "heavy"]),
             access=F8StateAccess.rw,
             required=True,
             uiControl="select",
@@ -124,7 +132,7 @@ def _state_fields() -> list[F8StateSpec]:
             name="minDetectionConfidence",
             label="Min Detection Confidence",
             description="Minimum confidence threshold for pose detection.",
-            valueSchema=number_schema(default=0.5, minimum=0.0, maximum=1.0),
+            valueSchema=number_schema(default=DEFAULT_MIN_DETECTION_CONFIDENCE, minimum=0.0, maximum=1.0),
             access=F8StateAccess.rw,
             required=True,
             showOnNode=False,
@@ -133,7 +141,7 @@ def _state_fields() -> list[F8StateSpec]:
             name="minTrackingConfidence",
             label="Min Tracking Confidence",
             description="Minimum confidence threshold for pose tracking.",
-            valueSchema=number_schema(default=0.5, minimum=0.0, maximum=1.0),
+            valueSchema=number_schema(default=DEFAULT_MIN_TRACKING_CONFIDENCE, minimum=0.0, maximum=1.0),
             access=F8StateAccess.rw,
             required=True,
             showOnNode=False,
@@ -142,7 +150,7 @@ def _state_fields() -> list[F8StateSpec]:
             name="visibilityThreshold",
             label="Visibility Threshold",
             description="Landmark visibility threshold (below threshold => hidden point).",
-            valueSchema=number_schema(default=0.5, minimum=0.0, maximum=1.0),
+            valueSchema=number_schema(default=DEFAULT_VISIBILITY_THRESHOLD, minimum=0.0, maximum=1.0),
             access=F8StateAccess.rw,
             required=True,
             showOnNode=False,
@@ -154,6 +162,16 @@ def _state_fields() -> list[F8StateSpec]:
             valueSchema=string_schema(default=""),
             access=F8StateAccess.ro,
             required=True,
+            showOnNode=False,
+        ),
+        F8StateSpec(
+            name="skeletonSource",
+            label="Skeleton Source",
+            description="Skeleton data source (camera-relative vs world-relative).",
+            valueSchema=string_schema(default=DEFAULT_SKELETON_SOURCE, enum=["camera", "world"]),
+            access=F8StateAccess.rw,
+            required=True,
+            uiControl="select",
             showOnNode=False,
         ),
     ]

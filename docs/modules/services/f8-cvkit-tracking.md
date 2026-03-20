@@ -8,7 +8,27 @@ No description.
 - Source directory: `f8/cvkit/tracking`
 - Tags: `cv`, `tracking`
 
-## How to Run
+## When to Use
+
+- Use `f8.cvkit.tracking` when you need to maintain a continuous "lock" on a moving Region of Interest (ROI) after it has been initialized.
+- It is designed for targets that change position frame-to-frame but maintain some level of visual continuity (e.g., a person walking across a room, a moving vehicle).
+- It is more robust than simple template matching for objects that might slightly change shape or scale as they move.
+
+## Common Wiring Patterns
+
+- **Initialize & Follow**: Start by finding the target with `f8.cvkit.templatematch` or a manual "Capture ROI" workflow, then feed that initial bounding box into the tracking service to maintain the lock.
+- **Visual Feedback**: Always keep an `f8.viz.track` node attached to the tracker output during development to visually verify if the tracker has "lost" the object.
+- **Downstream Analysis**: Feed the tracked ROI coordinates into `f8.pyengine` operators to drive camera following, distance estimation, or motion-triggered logic based on position.
+
+## Pitfalls / Gotchas
+
+- **Loss of Lock**: If an object is occluded or moves too fast for the configured `searchWindow`, the tracker will "lose" the target. You must implement logic (usually via `f8.pyengine`) to re-initialize the tracker when confidence drops.
+- **Drift Accumulation**: Small errors in frame-to-frame matching can accumulate, causing the tracking box to slowly slide away from the actual target. Periodically re-syncing with a global detector (like `f8.dl.detector`) is a common fix.
+- **Startup Order**: The tracker requires a valid initial ROI and a live input stream. Ensure the video producer is running before attempting to initialize the tracking state.
+
+## Service Reference
+
+### How to Run
 
 ```bash
 ../win/f8cvkit_tracking_service.exe
@@ -17,19 +37,38 @@ No description.
 - Workdir: `./`
 - Environment overrides: none
 
-## Service State Fields
+### Typical Inputs / Outputs
+
+- Data inputs: `initBox`
+- Data outputs: `tracking`, `monitor`
+- Commands: `stopTracking`
+
+### Service State Fields
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
 | `shmName` | `rw` | `true` | `true` | `string` | Optional SHM name override (e.g. shm.xxx.video). |
-| `initSelect` | `rw` | `true` | `true` | `string / enum[closest_center, largest_area, highest_score] / default=closest_center` | Init bbox selection strategy: closest_center \| largest_area \| highest_score. |
+| `initSelect` | `rw` | `true` | `true` | `string / enum[first_box, closest_center, largest_area, highest_score] / default=closest_center` | Init bbox selection strategy: first_box \| closest_center \| largest_area \| highest_score. |
+| `stopTrackingCooldownMs` | `rw` | `true` | `true` | `integer / default=1000` | After stopTracking, ignore initBox for this many ms. Set to 0 to disable. |
+| `stopTrackingCooldownUntilTsMs` | `ro` | `true` | `true` | `integer` | When > 0, initBox is ignored until this timestamp (ms). |
 | `isTracking` | `ro` | `true` | `true` | `boolean` | True when tracker is running. |
 | `isNotTracking` | `ro` | `true` | `true` | `boolean` | Negation of isTracking. |
 | `lastError` | `ro` | `true` | `true` | `string` | Last error message. |
 | `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 
-## Service Commands
+### Key Fields That Matter
+
+- `shmName` (Video SHM, `rw`): Optional SHM name override (e.g. shm.xxx.video). Schema: `string`.
+- `initSelect` (Init Select, `rw`): Init bbox selection strategy: first_box | closest_center | largest_area | highest_score. Schema: `string / enum[first_box, closest_center, largest_area, highest_score] / default=closest_center`.
+- `stopTrackingCooldownMs` (Stop Cooldown (ms), `rw`): After stopTracking, ignore initBox for this many ms. Set to 0 to disable. Schema: `integer / default=1000`.
+- `stopTrackingCooldownUntilTsMs` (Stop Cooldown Until (tsMs), `ro`): When > 0, initBox is ignored until this timestamp (ms). Schema: `integer`.
+- `isTracking` (Is Tracking, `ro`): True when tracker is running. Schema: `boolean`.
+- `isNotTracking` (Is Not Tracking, `ro`): Negation of isTracking. Schema: `boolean`.
+- `lastError` (Last Error, `ro`): Last error message. Schema: `string`.
+- `active` (Active, `rw`): Service lifecycle state (activate/deactivate). Schema: `boolean / default=True`.
+
+### Service Commands
 
 ### `stopTracking`
 Stop current tracking and return to waiting for initBox.
@@ -37,13 +76,13 @@ Stop current tracking and return to waiting for initBox.
 - Show on node: `true`
 - Params: none
 
-## Service Data Input Ports
+### Service Data Input Ports
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
-| `initBox` | `true` | `true` | `object{bbox, bottom, conf, confidence, ...}` | Init payload (single bbox or nested detection tree). Recursively extracts bbox candidates and uses the one closest to image center. |
+| `initBox` | `true` | `true` | `object{bbox, bottom, conf, confidence, ...}` | Init payload (single bbox or nested detection tree). Recursively extracts bbox candidates and uses the one selected by initSelect. |
 
-## Service Data Output Ports
+### Service Data Output Ports
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
@@ -53,37 +92,6 @@ Stop current tracking and return to waiting for initBox.
 ## Operators
 
 _None_
-
-## When to Use
-
-- Use `f8.cvkit.tracking` when you need a continuously updated ROI after initialization.
-- It fits graphs where the target keeps moving but still stays visually trackable frame to frame.
-
-## Typical Inputs / Outputs
-
-- Data inputs: `initBox`
-- Data outputs: `tracking`, `monitor`
-- Commands: `stopTracking`
-
-## Common Wiring Patterns
-
-- Start with `f8.cvkit.templatematch` or a capture workflow for initialization, then keep `f8.viz.track` attached for monitoring.
-- Feed tracked regions into `f8.pyengine` or downstream CV services when graph logic depends on target position.
-
-## Key Fields That Matter
-
-- `shmName` (Video SHM, `rw`): Optional SHM name override (e.g. shm.xxx.video). Schema: `string`.
-- `initSelect` (Init Select, `rw`): Init bbox selection strategy: closest_center | largest_area | highest_score. Schema: `string / enum[closest_center, largest_area, highest_score] / default=closest_center`.
-- `isTracking` (Is Tracking, `ro`): True when tracker is running. Schema: `boolean`.
-- `isNotTracking` (Is Not Tracking, `ro`): Negation of isTracking. Schema: `boolean`.
-- `lastError` (Last Error, `ro`): Last error message. Schema: `string`.
-- `active` (Active, `rw`): Service lifecycle state (activate/deactivate). Schema: `boolean / default=True`.
-- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
-
-## Pitfalls / Gotchas
-
-- Tracker drift is easy to miss if you only inspect terminal outputs and not the overlay node.
-- Startup order matters when the tracker expects a ready input stream and valid initial region.
 
 ## Related Scenarios
 

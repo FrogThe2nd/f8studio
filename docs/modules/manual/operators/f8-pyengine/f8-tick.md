@@ -1,15 +1,17 @@
-#### When to Use
+## When to Use
 
-- Use `Tick` when the graph needs a simple periodic exec clock.
-- It is the usual root node for deterministic update loops in `f8.pyengine`.
+- Use `Tick` when your graph needs a simple, periodic execution (exec) trigger to drive deterministic update loops.
+- It is the standard root node for most `f8.pyengine` logic chains, ensuring that your operators run at a consistent frequency regardless of the UI's frame rate.
+- Ideal for polling sensors, updating state machines, or sending periodic commands to hardware.
 
-#### Common Wiring Patterns
+## Common Wiring Patterns
 
-- Drive `Sequence` when several branches must run in a predictable order each tick.
-- Keep `tickMs` aligned with downstream device cadence such as `TCode.intervalMs`.
+- **Logic Heartbeat**: Connect the `tick` output to a `Sequence` operator to drive multiple branches (Read -> Process -> Write) in a predictable order every cycle.
+- **Hardware Sync**: Align the `tickMs` property (e.g., 20ms for 50Hz) with the expected interval of your downstream device nodes (like `f8-tcode.intervalMs`) to minimize jitter.
+- **Performance Branching**: Use different `Tick` nodes with different frequencies (one "fast" for motion, one "slow" for status checks) to optimize CPU usage.
 
-#### Pitfalls / Gotchas
+## Pitfalls / Gotchas
 
-- Very small intervals can make the whole graph look unstable when the real problem is scheduling load.
-- If downstream nodes are not exec-driven, adding more tick roots will not help.
-
+- **Scheduling Overload**: Setting a very small `tickMs` (e.g., 1ms) can overwhelm the engine thread if the graph is complex, leading to unstable timing and high CPU usage. Aim for the minimum frequency required for smooth motion.
+- **Dangling Logic**: If downstream nodes are not "exec-driven" (they don't have an input port for execution triggers), adding more `Tick` roots will not affect their update frequency.
+- **Deterministic Drift**: While the tick attempts to be consistent, actual execution time depends on the system load. Monitor the `dt` (delta time) output if your logic requires millisecond-precise timing across different hardware.

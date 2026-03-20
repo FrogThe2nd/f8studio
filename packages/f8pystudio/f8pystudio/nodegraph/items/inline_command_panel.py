@@ -9,16 +9,11 @@ from qtpy import QtCore, QtWidgets
 from f8pysdk.schema_helpers import schema_default, schema_type
 
 from ...command_ui_protocol import CommandUiHandler, CommandUiSource
+from ...components.controls import F8OptionCombo, F8Switch, F8ValueBar, parse_select_pool
 from ...ui_notifications import show_warning
-from ...widgets.editor_controls import F8OptionCombo, F8Switch, F8ValueBar, parse_select_pool
-from .proxy_widget_utils import dispose_detached_proxy_widget
 from .service_toolbar_host import F8ForceGlobalToolTipFilter
 
 logger = logging.getLogger(__name__)
-
-
-def _dispose_proxy_widget(widget: QtWidgets.QWidget | None) -> None:
-    dispose_detached_proxy_widget(widget, context="inline_command")
 
 
 def _is_missing_locked(node_item: Any) -> bool:
@@ -453,7 +448,15 @@ def ensure_inline_command_widget(node_item: Any) -> None:
                 node_item._cmd_proxy.setWidget(None)
             except RuntimeError:
                 pass
-            _dispose_proxy_widget(old)
+            if old is not None:
+                try:
+                    old.setParent(None)
+                except (AttributeError, RuntimeError, TypeError):
+                    pass
+                try:
+                    old.deleteLater()
+                except (AttributeError, RuntimeError, TypeError):
+                    pass
             try:
                 node_item._cmd_proxy.setParentItem(None)
                 if node_item.scene() is not None:
@@ -550,5 +553,18 @@ def ensure_inline_command_widget(node_item: Any) -> None:
             old = None
         node_item._cmd_proxy.setWidget(widget)
         if old is not None and old is not widget:
-            _dispose_proxy_widget(old)
+            try:
+                old.setParent(None)
+            except (AttributeError, RuntimeError, TypeError):
+                pass
+            try:
+                old.deleteLater()
+            except (AttributeError, RuntimeError, TypeError):
+                pass
     node_item._cmd_widget = widget
+    try:
+        node_item._invalidate_layout_metrics()
+        node_item._prepare_layout_metrics()
+        node_item.sync_proxy_mode(force=True)
+    except (AttributeError, RuntimeError, TypeError):
+        pass

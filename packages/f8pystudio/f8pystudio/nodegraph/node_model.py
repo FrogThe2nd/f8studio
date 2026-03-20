@@ -74,6 +74,9 @@ class F8StudioNodeModel(NodeModel):
                     except Exception:
                         logger.exception("Failed to sync node after f8_ui update.")
             return
+        if name == "nodePurpose":
+            self.nodePurpose = "" if value is None else str(value)
+            return
         return super().set_property(name, value)
 
     @property
@@ -213,3 +216,15 @@ class F8StudioNodeModel(NodeModel):
         if not isinstance(self.f8_sys, dict):
             self.f8_sys = {}
         self.f8_sys["missingRendererFallback"] = bool(value)
+
+    @property
+    def nodePurpose(self) -> str:
+        if not isinstance(self.f8_sys, dict):
+            self.f8_sys = {}
+        return str(self.f8_sys.get("nodePurpose") or "").strip()
+
+    @nodePurpose.setter
+    def nodePurpose(self, value: str) -> None:
+        if not isinstance(self.f8_sys, dict):
+            self.f8_sys = {}
+        self.f8_sys["nodePurpose"] = str(value or "").strip()

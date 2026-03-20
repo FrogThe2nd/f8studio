@@ -1,15 +1,17 @@
-#### When to Use
+## When to Use
 
-- Use `UDP Skeleton` when skeleton payloads arrive over a simple UDP path and should enter the graph as pose data.
-- It is a straightforward ingest node for external body-tracking sources.
+- Use `UDP Skeleton` to ingest 3D skeleton payloads arriving over a UDP port from external body-tracking software (e.g., custom AI detectors, VR trackers, or proprietary vision systems).
+- It is a lightweight, low-latency entry point for getting external body-tracking data into your Feel8 graph.
+- Best for scenarios where the vision processing is handled by a separate process or a remote machine.
 
-#### Common Wiring Patterns
+## Common Wiring Patterns
 
-- Feed its skeleton output into `Bone Selector`, `Bone Filter`, or `f8.viz.three_d`.
-- Keep a visualization branch attached while validating source coordinate conventions.
+- **Live Body Ingest**: Feed the `skeleton` output into a `Bone Selector` to pick a joint, or directly into `f8-viz-three-d` to verify coordinate alignment.
+- **Monitoring Branch**: Keep a `Print` or `TextViz` node attached to the incoming stream to monitor the packet rate and verify the protocol schema.
+- **Coordinate Calibration**: Use the `offset` and `scale` properties (if available) to align the external skeleton with your graph's internal world-space expectations.
 
-#### Pitfalls / Gotchas
+## Pitfalls / Gotchas
 
-- Networking and coordinate-frame issues often look like downstream logic bugs.
-- Do not tune bone-processing nodes until the incoming skeleton itself is visually sane.
-
+- **Network Blocking**: Ensure the target UDP port is open in your OS firewall and not already bound by another process.
+- **Convention Clashes**: External sources often use different coordinate systems (e.g., Left-handed vs. Right-handed, Y-up vs. Z-up). If your 3D skeleton looks "inverted" or "laying down," you must apply a transformation early in your graph.
+- **Diagnostic Hygiene**: Never attempt to tune your motion logic until you have visually confirmed that the incoming 3D skeleton is stable and correctly oriented in space.

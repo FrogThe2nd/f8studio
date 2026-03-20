@@ -111,6 +111,37 @@ def save_session_as_dialog(
         return str(start_dir or ""), False
 
 
+def publish_session_as_dialog(
+    *,
+    parent: QtWidgets.QWidget,
+    studio_graph: Any,
+    log_dock: Any,
+    start_dir: str,
+    show_warning: Any,
+) -> tuple[str, str | None]:
+    path, _ = QtWidgets.QFileDialog.getSaveFileName(
+        parent,
+        "Publish JSON",
+        str(start_dir or ""),
+        "F8 Studio Session (*.json);;JSON (*.json);;All Files (*)",
+    )
+    selected_path = str(path or "").strip()
+    if not selected_path:
+        return str(start_dir or ""), None
+
+    save_path = selected_path if selected_path.lower().endswith(".json") else selected_path + ".json"
+    try:
+        published_path = studio_graph.save_publish_session(save_path)
+        resolved_dir = str(Path(save_path).resolve().parent)
+        log_dock.append("studio", f"[session][publish] exported: {published_path}\n")
+        return resolved_dir, str(published_path)
+    except Exception as exc:
+        log_dock.append("studio", f"[session][publish] export failed: {exc}\n")
+        log_dock.report_exception("studio", f"publish session failed ({save_path})", exc)
+        show_warning(parent, "Publish JSON failed", f"Failed to export publish JSON:\n{save_path}\n\n{exc}")
+        return str(start_dir or ""), None
+
+
 def insert_graph_from_dialog(
     *,
     parent: QtWidgets.QWidget,

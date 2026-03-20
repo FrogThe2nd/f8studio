@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any, Iterable
 
 from qtpy import QtCore, QtGui, QtWidgets
@@ -10,23 +9,26 @@ from ..nodegraph import F8StudioGraph
 from ..nodegraph.edge_rules import EDGE_KIND_DATA, EDGE_KIND_EXEC, EDGE_KIND_STATE
 from ..nodegraph.session import last_session_path
 from ..nodegraph.runtime_compiler import compile_runtime_graphs_from_studio
+from ..nodegraph.viewer import F8StudioNodeViewer
 from ..pystudio_service_bridge import PyStudioServiceBridge, PyStudioServiceBridgeConfig
 from ..pystudio_node_registry import SERVICE_CLASS as STUDIO_SERVICE_CLASS
 from ..ui_notifications import show_info, show_warning
 from ..ui_bus import UiCommand, UiCommandApplier
 from ..ui_icons import StudioIcon, icon_for
-from .node_property_widgets import F8StudioSingleNodePropertiesWidget
+from .node_property_panel import F8StudioSingleNodePropertiesWidget
 from .node_library_widget import F8StudioNodeLibraryWidget
 from .service_manager_widget import ServiceManagerWidget
 from .service_inventory import collect_declared_service_ids, collect_declared_services
 from .service_log_widget import ServiceLogDock
 from .runtime_state_sync import RuntimeStateSyncController
+from .ai_assist_sidebar import AiAssistSidebarWidget
 from .session_actions import (
     auto_load_session as session_auto_load_session,
     auto_save_session as session_auto_save_session,
     insert_graph_from_dialog as session_insert_graph_from_dialog,
     load_last_session as session_load_last_session,
     load_session_from_dialog as session_load_session_from_dialog,
+    publish_session_as_dialog as session_publish_session_as_dialog,
     save_session as session_save_session,
     save_session_as_dialog as session_save_session_as_dialog,
 )
@@ -44,101 +46,6 @@ from .main_window_prefs import (
 logger = logging.getLogger(__name__)
 
 
-class _WindowFlashTraceFilter(QtCore.QObject):
-    """
-    Runtime tracer for transient top-level windows that may flash during graph
-    load / node switch.
-    """
-
-    def __init__(self, *, main_window: QtWidgets.QMainWindow, parent: QtCore.QObject | None = None) -> None:
-        super().__init__(parent)
-        self._main_window = main_window
-
-    def eventFilter(self, watched: QtCore.QObject, event: QtCore.QEvent) -> bool:  # type: ignore[override]
-        event_type = event.type()
-        if event_type not in (QtCore.QEvent.Type.Show, QtCore.QEvent.Type.Hide):
-            return super().eventFilter(watched, event)
-        phase = "SHOW" if event_type == QtCore.QEvent.Type.Show else "HIDE"
-        if isinstance(watched, QtWidgets.QWidget):
-            widget = watched
-            if not widget.isWindow():
-                return super().eventFilter(watched, event)
-            if widget is self._main_window:
-                return super().eventFilter(watched, event)
-            if isinstance(widget, QtWidgets.QMenu):
-                return super().eventFilter(watched, event)
-
-            flags = widget.windowFlags()
-            geom = widget.frameGeometry()
-            width = int(geom.width())
-            height = int(geom.height())
-            title = str(widget.windowTitle() or "")
-            class_name = str(widget.metaObject().className() or widget.__class__.__name__)
-            parent_widget = widget.parentWidget()
-            parent_class = (
-                str(parent_widget.metaObject().className() or parent_widget.__class__.__name__)
-                if parent_widget is not None
-                else "None"
-            )
-
-            is_suspicious = bool((width <= 520 and height <= 260) or not title.strip())
-            if is_suspicious:
-                logger.warning(
-                    "[WindowTrace] %s QWidget class=%s title=%r size=%dx%d pos=(%d,%d) flags=0x%x parent=%s object=%s",
-                    phase,
-                    class_name,
-                    title,
-                    width,
-                    height,
-                    int(geom.x()),
-                    int(geom.y()),
-                    int(flags),
-                    parent_class,
-                    hex(id(widget)),
-                )
-            return super().eventFilter(watched, event)
-
-        if isinstance(watched, QtGui.QWindow):
-            window = watched
-            main_window_handle = self._main_window.windowHandle()
-            if main_window_handle is not None and window is main_window_handle:
-                return super().eventFilter(watched, event)
-            try:
-                parent_window = window.parent()
-            except (AttributeError, RuntimeError, TypeError):
-                parent_window = None
-            if parent_window is not None:
-                return super().eventFilter(watched, event)
-
-            try:
-                flags = int(window.flags())
-            except (AttributeError, RuntimeError, TypeError):
-                flags = 0
-            geom = window.geometry()
-            width = int(geom.width())
-            height = int(geom.height())
-            title = str(window.title() or "")
-            class_name = str(window.metaObject().className() or window.__class__.__name__)
-            parent_class = parent_window.__class__.__name__ if parent_window is not None else "None"
-
-            is_suspicious = bool((width <= 520 and height <= 260) or not title.strip())
-            if is_suspicious:
-                logger.warning(
-                    "[WindowTrace] %s QWindow class=%s title=%r size=%dx%d pos=(%d,%d) flags=0x%x parent=%s object=%s",
-                    phase,
-                    class_name,
-                    title,
-                    width,
-                    height,
-                    int(geom.x()),
-                    int(geom.y()),
-                    flags,
-                    parent_class,
-                    hex(id(window)),
-                )
-        return super().eventFilter(watched, event)
-
-
 class F8StudioMainWin(QtWidgets.QMainWindow):
     _WINDOW_LAYOUT_SETTINGS_ORGANIZATION = "Feel8"
     _WINDOW_LAYOUT_SETTINGS_APPLICATION = "F8PyStudio"
@@ -151,6 +58,9 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
     _AUTOMATION_SETTINGS_GROUP = "main_window/automation/v1"
     _AUTO_SAVE_ENABLED_SETTINGS_KEY = "auto_save_enabled"
     _AUTO_DEPLOY_ENABLED_SETTINGS_KEY = "auto_deploy_enabled"
+    _VIEW_SETTINGS_GROUP = "main_window/view/v1"
+    _AUTO_PROXY_ENABLED_SETTINGS_KEY = "auto_proxy_enabled"
+    _PERFORMANCE_OVERLAY_ENABLED_SETTINGS_KEY = "performance_overlay_enabled"
     _PERIODIC_AUTO_SAVE_INTERVAL_MS = 15000
     _AUTO_DEPLOY_DEBOUNCE_MS = 2000
     _LOG_LEVEL_CHOICES: tuple[tuple[str, int], ...] = (
@@ -162,14 +72,25 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
     )
 
     studio_graph: F8StudioGraph
+    _quickload_session_action: QtGui.QAction
+    _quicksave_session_action: QtGui.QAction
+    _load_session_from_file_action: QtGui.QAction
+    _import_graph_action: QtGui.QAction
+    _save_session_as_action: QtGui.QAction
+    _deploy_action: QtGui.QAction
+    _stop_all_services_action: QtGui.QAction
     _exec_lines_action: QtGui.QAction
     _data_lines_action: QtGui.QAction
     _state_lines_action: QtGui.QAction
     _view_menu: QtWidgets.QMenu
     _reset_layout_action: QtGui.QAction
     _log_level_menu: QtWidgets.QMenu
+    _clear_all_nodes_action: QtGui.QAction
+    _export_session_action: QtGui.QAction
     _auto_save_action: QtGui.QAction
     _auto_deploy_action: QtGui.QAction
+    _auto_proxy_action: QtGui.QAction
+    _performance_overlay_action: QtGui.QAction
     _log_level_action_group: QtGui.QActionGroup
     _log_level_actions: dict[int, QtGui.QAction]
     _dock_widgets: list[QtWidgets.QDockWidget]
@@ -179,8 +100,6 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
 
     def __init__(self, node_classes: Iterable[type], parent=None):
         super().__init__(parent)
-        self._window_flash_trace_filter: _WindowFlashTraceFilter | None = None
-        self._install_window_flash_trace_filter()
         self.setWindowTitle("F8PyStudio")
         self.resize(1920, 980)
 
@@ -192,11 +111,14 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         self._default_dock_layout_state = QtCore.QByteArray()
         self._auto_save_enabled = self._read_saved_auto_save_enabled()
         self._auto_deploy_enabled = self._read_saved_auto_deploy_enabled()
+        self._auto_proxy_enabled = self._read_saved_auto_proxy_enabled()
+        self._performance_overlay_enabled = self._read_saved_performance_overlay_enabled()
 
         self.studio_graph = F8StudioGraph()
         self.studio_graph.node_factory.clear_registered_nodes()
         for cls in node_classes:
             self.studio_graph.node_factory.register_node(cls)
+        self.studio_graph.install_node_docs_context_menu_for_nodes(list(node_classes))
         self.studio_graph.install_variant_context_menu_for_nodes(list(node_classes))
         self.studio_graph.install_identity_context_menu_for_nodes(list(node_classes))
         self.studio_graph.install_duplicate_context_menu_for_nodes(list(node_classes))
@@ -215,10 +137,9 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         self.setCentralWidget(self.studio_graph.widget)
 
         self._setup_docks()
-        self._deploy_action = self._create_deploy_action()
-        self._stop_all_services_action = self._create_stop_all_services_action()
-        self._auto_save_action = self._create_auto_save_action()
-        self._auto_deploy_action = self._create_auto_deploy_action()
+        self._create_graph_actions()
+        self._apply_auto_proxy_enabled(enabled=self._auto_proxy_enabled, persist=False)
+        self._apply_performance_overlay_enabled(enabled=self._performance_overlay_enabled, persist=False)
         self._setup_menu()
         self._setup_toolbar()
         self._service_manager: ServiceManagerWidget | None = None
@@ -252,17 +173,6 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
 
         QtCore.QTimer.singleShot(0, self._auto_load_session)
         QtWidgets.QApplication.instance().aboutToQuit.connect(self._auto_save_session)  # type: ignore[attr-defined]
-
-    def _install_window_flash_trace_filter(self) -> None:
-        raw = str(os.environ.get("F8_STUDIO_TRACE_WINDOW_FLASH", "0") or "").strip().lower()
-        if raw in {"0", "false", "off", "no"}:
-            return
-        app = QtWidgets.QApplication.instance()
-        if app is None:
-            return
-        self._window_flash_trace_filter = _WindowFlashTraceFilter(main_window=self, parent=self)
-        app.installEventFilter(self._window_flash_trace_filter)
-        logger.warning("[WindowTrace] top-level window trace enabled via F8_STUDIO_TRACE_WINDOW_FLASH")
 
     @QtCore.Slot(str, str)
     def _on_service_output(self, service_id: str, line: str) -> None:
@@ -308,7 +218,19 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         self._node_library_dock.setWidget(node_library)
         self.addDockWidget(QtCore.Qt.RightDockWidgetArea, self._node_library_dock)
 
-        self._dock_widgets = [self._properties_dock, self._log_dock, self._node_library_dock]
+        self._ai_assist_sidebar = AiAssistSidebarWidget(studio_graph=self.studio_graph, parent=self)
+        self._ai_assist_dock = QtWidgets.QDockWidget("AI Assist", self)
+        self._ai_assist_dock.setObjectName("AiAssistDock")
+        self._ai_assist_dock.setWidget(self._ai_assist_sidebar)
+        self.addDockWidget(QtCore.Qt.RightDockWidgetArea, self._ai_assist_dock)
+        self.tabifyDockWidget(self._node_library_dock, self._ai_assist_dock)
+
+        self._dock_widgets = [
+            self._properties_dock,
+            self._log_dock,
+            self._node_library_dock,
+            self._ai_assist_dock,
+        ]
 
     def _setup_service_manager_dock(self) -> None:
         manager = ServiceManagerWidget(
@@ -332,40 +254,22 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
 
     def _setup_menu(self) -> None:
         menu = self.menuBar().addMenu("Graph")
-
-        load_action = QtWidgets.QAction("Load Last Session", self)
-        load_action.setShortcut("Ctrl+O")
-        load_action.triggered.connect(self._load_session_action)  # type: ignore[attr-defined]
-        menu.addAction(load_action)
-
-        save_action = QtWidgets.QAction("Save Session", self)
-        save_action.setShortcut("Ctrl+S")
-        save_action.triggered.connect(self._save_session_action)  # type: ignore[attr-defined]
-        menu.addAction(save_action)
+        menu.addAction(self._quickload_session_action)
+        menu.addAction(self._quicksave_session_action)
         menu.addAction(self._auto_save_action)
-        menu.addAction(self._auto_deploy_action)
 
         menu.addSeparator()
-
-        load_from_action = QtWidgets.QAction("Load Session…", self)
-        load_from_action.setShortcut("Ctrl+Shift+O")
-        load_from_action.triggered.connect(self._load_session_from_action)  # type: ignore[attr-defined]
-        menu.addAction(load_from_action)
-
-        insert_action = QtWidgets.QAction("Insert Graph…", self)
-        insert_action.setShortcut("Ctrl+Shift+I")
-        insert_action.triggered.connect(self._insert_graph_from_action)  # type: ignore[attr-defined]
-        menu.addAction(insert_action)
-
-        save_as_action = QtWidgets.QAction("Save Session As…", self)
-        save_as_action.setShortcut("Ctrl+Shift+S")
-        save_as_action.triggered.connect(self._save_session_as_action)  # type: ignore[attr-defined]
-        menu.addAction(save_as_action)
+        menu.addAction(self._load_session_from_file_action)
+        menu.addAction(self._import_graph_action)
+        menu.addAction(self._save_session_as_action)
+        menu.addAction(self._export_session_action)
+        menu.addAction(self._clear_all_nodes_action)
 
         menu.addSeparator()
 
         menu.addAction(self._deploy_action)
         menu.addAction(self._stop_all_services_action)
+        menu.addAction(self._auto_deploy_action)
 
     def _setup_view_menu(self) -> None:
         self._view_menu = self.menuBar().addMenu("View")
@@ -374,8 +278,11 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
             action.setCheckable(True)
             self._view_menu.addAction(action)
         self._view_menu.addSeparator()
+        self._view_menu.addAction(self._auto_proxy_action)
+        self._view_menu.addAction(self._performance_overlay_action)
+        self._view_menu.addSeparator()
         self._reset_layout_action = QtGui.QAction("Reset Layout", self)
-        self._reset_layout_action.triggered.connect(self._on_reset_layout_triggered)  # type: ignore[attr-defined]
+        self._reset_layout_action.triggered.connect(self._on_reset_layout_action)  # type: ignore[attr-defined]
         self._view_menu.addAction(self._reset_layout_action)
 
     def _setup_log_level_menu(self) -> None:
@@ -396,7 +303,7 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
             self._log_level_actions[level_value] = action
 
     def _layout_settings(self) -> QtCore.QSettings:
-        return QtCore.QSettings(self._WINDOW_LAYOUT_SETTINGS_ORGANIZATION, self._WINDOW_LAYOUT_SETTINGS_APPLICATION)
+        return QtCore.QSettings()
 
     @staticmethod
     def _as_qbytearray(value: Any) -> QtCore.QByteArray | None:
@@ -486,8 +393,129 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         )
         self._write_layout_bytes(key=self._WINDOW_LAYOUT_GEOMETRY_KEY, value=self.saveGeometry())
 
+    def _create_action(
+        self,
+        text: str,
+        *,
+        handler,
+        shortcut: str | None = None,
+        icon: StudioIcon | None = None,
+        tool_tip: str | None = None,
+        checkable: bool = False,
+        checked: bool = False,
+    ) -> QtGui.QAction:
+        action = QtGui.QAction(text, self)
+        if shortcut:
+            action.setShortcut(shortcut)
+        if icon is not None:
+            action.setIcon(icon_for(self, icon))
+        if tool_tip:
+            action.setToolTip(tool_tip)
+        if checkable:
+            action.setCheckable(True)
+            action.setChecked(checked)
+            action.toggled.connect(handler)  # type: ignore[attr-defined]
+        else:
+            action.triggered.connect(handler)  # type: ignore[attr-defined]
+        return action
+
+    def _create_graph_actions(self) -> None:
+        self._quickload_session_action = self._create_action(
+            "Quick Load",
+            handler=self._on_quickload_session_action,
+            shortcut="Ctrl+O",
+            icon=StudioIcon.FOLDER_OPEN,
+            tool_tip="Quick load the last session",
+        )
+        self._quicksave_session_action = self._create_action(
+            "Quick Save",
+            handler=self._on_quicksave_session_action,
+            shortcut="Ctrl+S",
+            icon=StudioIcon.SAVE,
+            tool_tip="Quick save the current session",
+        )
+        self._load_session_from_file_action = self._create_action(
+            "Load Session",
+            handler=self._on_load_session_action,
+            shortcut="Ctrl+Shift+O",
+            icon=StudioIcon.FOLDER_OPEN,
+            tool_tip="Load session from file",
+        )
+        self._import_graph_action = self._create_action(
+            "Import Graph…",
+            handler=self._on_import_graph_action,
+            shortcut="Ctrl+Shift+I",
+            icon=StudioIcon.PACKAGE_IMPORT,
+            tool_tip="Import session graph as a subgraph",
+        )
+        self._save_session_as_action = self._create_action(
+            "Save Session As…",
+            handler=self._on_save_session_as_action,
+            shortcut="Ctrl+Shift+S",
+            icon=StudioIcon.SAVE,
+            tool_tip="Save session to new location",
+        )
+        self._auto_save_action = self._create_action(
+            "Auto Save",
+            handler=self._on_auto_save_toggled,
+            icon=None,
+            tool_tip="Auto save after graph edits (2s debounce)",
+            checkable=True,
+            checked=self._auto_save_enabled,
+        )
+
+        self._auto_deploy_action = self._create_action(
+            "Auto Deploy",
+            handler=self._on_auto_deploy_toggled,
+            icon=StudioIcon.AUTOMATION,
+            tool_tip="Auto deploy after graph edits (2s debounce)",
+            checkable=True,
+            checked=self._auto_deploy_enabled,
+        )
+        self._performance_overlay_action = self._create_action(
+            "Performance Overlay",
+            handler=self._on_performance_overlay_toggled,
+            shortcut="Ctrl+Shift+P",
+            tool_tip="Show graph viewer paint/perf overlay",
+            checkable=True,
+            checked=self._performance_overlay_enabled,
+        )
+        self._auto_proxy_action = self._create_action(
+            "Auto Proxy",
+            handler=self._on_auto_proxy_toggled,
+            shortcut="Ctrl+Shift+O",
+            tool_tip="Enable zoom-out auto proxy mode for service nodes",
+            checkable=True,
+            checked=self._auto_proxy_enabled,
+        )
+        self._export_session_action = self._create_action(
+            "Export Session",
+            handler=self._on_export_session_action,
+            icon=StudioIcon.PACKAGE_EXPORT,
+            tool_tip="Export a session JSON with redacted personal identifiers",
+        )
+        self._clear_all_nodes_action = self._create_action(
+            "Clear All Nodes",
+            handler=self._on_clear_all_nodes_action,
+            icon=StudioIcon.TRASH,
+            tool_tip="Clear all nodes from graph",
+        )
+        self._deploy_action = self._create_action(
+            "Deploy Graph",
+            handler=self._on_deploy_action,
+            shortcut="F5",
+            icon=StudioIcon.SEND,
+            tool_tip="Deploy rungraph",
+        )
+        self._stop_all_services_action = self._create_action(
+            "Stop All Services",
+            handler=self._on_stop_all_services_action,
+            icon=StudioIcon.STOP_ALL,
+            tool_tip="Stop all services",
+        )
+
     @QtCore.Slot()
-    def _on_reset_layout_triggered(self) -> None:
+    def _on_reset_layout_action(self) -> None:
         if self._default_dock_layout_state.isEmpty():
             return
         restored = self.restoreState(self._default_dock_layout_state, self._WINDOW_LAYOUT_STATE_VERSION)
@@ -495,17 +523,6 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
             logger.warning("Failed to reset dock layout to defaults")
             return
         self._save_window_layout()
-
-    def _create_deploy_action(self) -> QtGui.QAction:
-        deploy_action = QtGui.QAction("Send Graph", self)
-        deploy_action.setShortcut("F5")
-        deploy_action.triggered.connect(self._on_deploy_action_triggered)  # type: ignore[attr-defined]
-        return deploy_action
-
-    def _create_stop_all_services_action(self) -> QtGui.QAction:
-        action = QtGui.QAction("Stop All Services", self)
-        action.triggered.connect(self._on_stop_all_services_triggered)  # type: ignore[attr-defined]
-        return action
 
     def _setup_toolbar(self) -> None:
         tb = QtWidgets.QToolBar("Run", self)
@@ -515,40 +532,17 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         self.addToolBar(QtCore.Qt.TopToolBarArea, tb)
 
         # Graph file management.
-        self._open_icon = icon_for(self, StudioIcon.FOLDER_OPEN)
-        self._insert_icon = icon_for(self, StudioIcon.FOLDER_PLUS)
-        self._save_icon = icon_for(self, StudioIcon.SAVE)
-
-        self._load_from_action = QtGui.QAction("Load Session…", self)
-        self._load_from_action.setIcon(self._open_icon)
-        self._load_from_action.setToolTip("Load session from file… (Ctrl+Shift+O)")
-        self._load_from_action.triggered.connect(self._load_session_from_action)  # type: ignore[attr-defined]
-        tb.addAction(self._load_from_action)
-
-        self._insert_graph_action = QtGui.QAction("Insert Graph…", self)
-        self._insert_graph_action.setIcon(self._insert_icon)
-        self._insert_graph_action.setToolTip("Insert session graph at cursor… (Ctrl+Shift+I)")
-        self._insert_graph_action.triggered.connect(self._insert_graph_from_action)  # type: ignore[attr-defined]
-        tb.addAction(self._insert_graph_action)
-
-        self._save_as_action = QtGui.QAction("Save Session As…", self)
-        self._save_as_action.setIcon(self._save_icon)
-        self._save_as_action.setToolTip("Save session to file… (Ctrl+Shift+S)")
-        self._save_as_action.triggered.connect(self._save_session_as_action)  # type: ignore[attr-defined]
-        tb.addAction(self._save_as_action)
+        tb.addAction(self._load_session_from_file_action)
+        tb.addAction(self._import_graph_action)
+        tb.addAction(self._save_session_as_action)
+        tb.addAction(self._export_session_action)
+        tb.addAction(self._clear_all_nodes_action)
 
         tb.addSeparator()
 
         # Send Graph(F5).
-        self._send_icon = icon_for(self, StudioIcon.SEND)
-        self._deploy_action.setIcon(self._send_icon)
-        self._deploy_action.setToolTip("Send graph to services (F5)")
         tb.addAction(self._deploy_action)
-        self._stop_all_services_action.setIcon(icon_for(self, StudioIcon.STOP_ALL))
-        self._stop_all_services_action.setToolTip("Stop all service processes in graph")
         tb.addAction(self._stop_all_services_action)
-        self._auto_deploy_action.setIcon(icon_for(self, StudioIcon.AUTOMATION))
-        self._auto_deploy_action.setToolTip("Auto deploy running services after graph edits (2s debounce)")
         tb.addAction(self._auto_deploy_action)
 
         # Push the edge-visibility toolbar to the far-right in the same top toolbar row.
@@ -636,11 +630,13 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
             self._log_dock.report_exception("studio", "bridge.stop failed", exc)
         super().closeEvent(event)
 
+    @QtCore.Slot()
     def _auto_load_session(self) -> None:
         session_auto_load_session(studio_graph=self.studio_graph, log_dock=self._log_dock)
         self._mark_session_saved()
         self._mark_auto_deploy_synced()
 
+    @QtCore.Slot()
     def _auto_save_session(self) -> None:
         # Called from both `closeEvent` and `QApplication.aboutToQuit`; guard to avoid double-save on exit.
         if not self._auto_save_enabled:
@@ -656,11 +652,13 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         if self._exit_autosaved:
             self._mark_session_saved()
 
-    def _save_session_action(self) -> None:
+    @QtCore.Slot()
+    def _on_quicksave_session_action(self) -> None:
         session_save_session(parent=self, studio_graph=self.studio_graph, show_info=show_info)
         self._mark_session_saved()
 
-    def _load_session_action(self) -> None:
+    @QtCore.Slot()
+    def _on_quickload_session_action(self) -> None:
         loaded = session_load_last_session(
             parent=self,
             studio_graph=self.studio_graph,
@@ -671,7 +669,8 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
             self._mark_session_saved()
             self._mark_auto_deploy_synced()
 
-    def _load_session_from_action(self) -> None:
+    @QtCore.Slot()
+    def _on_load_session_action(self) -> None:
         session_dir, loaded = session_load_session_from_dialog(
             parent=self,
             studio_graph=self.studio_graph,
@@ -684,7 +683,8 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
             self._mark_session_saved()
             self._mark_auto_deploy_synced()
 
-    def _save_session_as_action(self) -> None:
+    @QtCore.Slot()
+    def _on_save_session_as_action(self) -> None:
         session_dir, saved = session_save_session_as_dialog(
             parent=self,
             studio_graph=self.studio_graph,
@@ -696,7 +696,21 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         if saved:
             self._mark_session_saved()
 
-    def _insert_graph_from_action(self) -> None:
+    @QtCore.Slot()
+    def _on_export_session_action(self) -> None:
+        session_dir, published_path = session_publish_session_as_dialog(
+            parent=self,
+            studio_graph=self.studio_graph,
+            log_dock=self._log_dock,
+            start_dir=str(self._session_dialog_dir or ""),
+            show_warning=show_warning,
+        )
+        self._session_dialog_dir = session_dir
+        if published_path:
+            show_info(self, "Publish JSON exported", f"Exported publish-safe JSON to:\n{published_path}")
+
+    @QtCore.Slot()
+    def _on_import_graph_action(self) -> None:
         self._session_dialog_dir = session_insert_graph_from_dialog(
             parent=self,
             studio_graph=self.studio_graph,
@@ -705,7 +719,31 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
             show_warning=show_warning,
         )
 
-    def _on_deploy_action_triggered(self) -> None:
+    @QtCore.Slot()
+    def _on_clear_all_nodes_action(self) -> None:
+        nodes = list(self.studio_graph.all_nodes() or [])
+        if not nodes:
+            self._log_dock.append("studio", "[graph] clear all nodes skipped: graph already empty\n")
+            return
+        answer = QtWidgets.QMessageBox.question(
+            self,
+            "Clear all nodes",
+            f"Remove all {len(nodes)} nodes from the current graph?",
+            QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
+            QtWidgets.QMessageBox.StandardButton.No,
+        )
+        if answer != QtWidgets.QMessageBox.StandardButton.Yes:
+            return
+        try:
+            self.studio_graph.clear_session()
+        except Exception as exc:
+            self._log_dock.report_exception("studio", "clear all nodes failed", exc)
+            show_warning(self, "Clear all nodes failed", str(exc))
+            return
+        self._log_dock.append("studio", f"[graph] cleared all nodes ({len(nodes)})\n")
+
+    @QtCore.Slot()
+    def _on_deploy_action(self) -> None:
         try:
             compiled = compile_runtime_graphs_from_studio(self.studio_graph)
         except ValueError as exc:
@@ -722,7 +760,8 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
             self._log_dock.append("studio", f"[compile][warn] {warning}\n")
         self._bridge.deploy(compiled)
 
-    def _on_stop_all_services_triggered(self) -> None:
+    @QtCore.Slot()
+    def _on_stop_all_services_action(self) -> None:
         service_ids = collect_declared_service_ids(
             nodes=list(self.studio_graph.all_nodes() or []),
             studio_service_class=STUDIO_SERVICE_CLASS,
@@ -787,26 +826,11 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         try:
             if isinstance(node, UiCommandApplier):
                 node.apply_ui_command(cmd)
-        except Exception as exc:
-            self._log_dock.report_exception("studio", f"apply_ui_command failed nodeId={node_id}", exc)
+        except (AttributeError, RuntimeError, TypeError, ValueError):
             return
 
     def _on_ui_property_changed(self, node: Any, name: str, value: Any) -> None:
         self._runtime_state_sync.on_ui_property_changed(node, name, value)
-
-    def _create_auto_save_action(self) -> QtGui.QAction:
-        action = QtGui.QAction("Auto Save Last Session", self)
-        action.setCheckable(True)
-        action.setChecked(self._auto_save_enabled)
-        action.toggled.connect(self._on_auto_save_toggled)  # type: ignore[attr-defined]
-        return action
-
-    def _create_auto_deploy_action(self) -> QtGui.QAction:
-        action = QtGui.QAction("Auto Deploy Running Services", self)
-        action.setCheckable(True)
-        action.setChecked(self._auto_deploy_enabled)
-        action.toggled.connect(self._on_auto_deploy_toggled)  # type: ignore[attr-defined]
-        return action
 
     @staticmethod
     def _coerce_bool_setting(raw: Any, *, default: bool) -> bool:
@@ -857,6 +881,58 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         finally:
             settings.endGroup()
 
+    def _read_saved_performance_overlay_enabled(self) -> bool:
+        settings = self._layout_settings()
+        settings.beginGroup(self._VIEW_SETTINGS_GROUP)
+        try:
+            raw = settings.value(self._PERFORMANCE_OVERLAY_ENABLED_SETTINGS_KEY, False)
+        finally:
+            settings.endGroup()
+        return self._coerce_bool_setting(raw, default=False)
+
+    def _write_saved_performance_overlay_enabled(self, *, enabled: bool) -> None:
+        settings = self._layout_settings()
+        settings.beginGroup(self._VIEW_SETTINGS_GROUP)
+        try:
+            settings.setValue(self._PERFORMANCE_OVERLAY_ENABLED_SETTINGS_KEY, bool(enabled))
+            settings.sync()
+        finally:
+            settings.endGroup()
+
+    def _apply_performance_overlay_enabled(self, *, enabled: bool, persist: bool) -> None:
+        self._performance_overlay_enabled = bool(enabled)
+        viewer = self.studio_graph.viewer()
+        if isinstance(viewer, F8StudioNodeViewer):
+            viewer.set_performance_overlay_enabled(self._performance_overlay_enabled)
+        if persist:
+            self._write_saved_performance_overlay_enabled(enabled=self._performance_overlay_enabled)
+
+    def _read_saved_auto_proxy_enabled(self) -> bool:
+        settings = self._layout_settings()
+        settings.beginGroup(self._VIEW_SETTINGS_GROUP)
+        try:
+            raw = settings.value(self._AUTO_PROXY_ENABLED_SETTINGS_KEY, False)
+        finally:
+            settings.endGroup()
+        return self._coerce_bool_setting(raw, default=False)
+
+    def _write_saved_auto_proxy_enabled(self, *, enabled: bool) -> None:
+        settings = self._layout_settings()
+        settings.beginGroup(self._VIEW_SETTINGS_GROUP)
+        try:
+            settings.setValue(self._AUTO_PROXY_ENABLED_SETTINGS_KEY, bool(enabled))
+            settings.sync()
+        finally:
+            settings.endGroup()
+
+    def _apply_auto_proxy_enabled(self, *, enabled: bool, persist: bool) -> None:
+        self._auto_proxy_enabled = bool(enabled)
+        viewer = self.studio_graph.viewer()
+        if isinstance(viewer, F8StudioNodeViewer):
+            viewer.set_auto_proxy_enabled(self._auto_proxy_enabled)
+        if persist:
+            self._write_saved_auto_proxy_enabled(enabled=self._auto_proxy_enabled)
+
     def _current_undo_index(self) -> int:
         return int(self.studio_graph._undo_stack.index())  # type: ignore[attr-defined]
 
@@ -883,6 +959,14 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
             return
         if self._current_undo_index() != self._last_auto_deployed_undo_index:
             self._auto_deploy_timer.start()
+
+    @QtCore.Slot(bool)
+    def _on_performance_overlay_toggled(self, checked: bool) -> None:
+        self._apply_performance_overlay_enabled(enabled=bool(checked), persist=True)
+
+    @QtCore.Slot(bool)
+    def _on_auto_proxy_toggled(self, checked: bool) -> None:
+        self._apply_auto_proxy_enabled(enabled=bool(checked), persist=True)
 
     @QtCore.Slot(int)
     def _on_graph_undo_index_changed(self, index: int) -> None:

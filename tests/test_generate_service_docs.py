@@ -29,11 +29,17 @@ class GenerateServiceDocsTest(unittest.TestCase):
         self.services_root = self.root / "services"
         self.output_root = self.root / "docs" / "modules" / "services"
         self.manual_root = self.root / "docs" / "modules" / "manual"
+        self.operator_manual_root = self.manual_root / "operators"
         self.index_path = self.root / "docs" / "modules" / "index.md"
+        self.scenarios_root = self.root / "docs" / "scenarios"
+        self.scenario_scripts_root = self.scenarios_root / "scripts"
 
         self.services_root.mkdir(parents=True, exist_ok=True)
         self.output_root.mkdir(parents=True, exist_ok=True)
         self.manual_root.mkdir(parents=True, exist_ok=True)
+        self.operator_manual_root.mkdir(parents=True, exist_ok=True)
+        self.scenarios_root.mkdir(parents=True, exist_ok=True)
+        self.scenario_scripts_root.mkdir(parents=True, exist_ok=True)
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
@@ -66,6 +72,35 @@ class GenerateServiceDocsTest(unittest.TestCase):
     def _write_manual(self, service_class: str, text: str) -> None:
         slug = service_class.replace(".", "-")
         (self.manual_root / f"{slug}.md").write_text(text, encoding="utf-8")
+
+    def _full_manual_text(self, summary: str) -> str:
+        return (
+            "## When to Use\n\n"
+            f"{summary}\n\n"
+            "## Common Wiring Patterns\n\n"
+            "- Keep wiring explicit.\n\n"
+            "## Pitfalls / Gotchas\n\n"
+            "- None.\n"
+        )
+
+    def _write_operator_manual(self, service_class: str, operator_class: str, text: str) -> None:
+        service_slug = service_class.replace(".", "-")
+        operator_slug = operator_class.replace(".", "-").replace("_", "-").replace(" ", "-")
+        operator_dir = self.operator_manual_root / service_slug
+        operator_dir.mkdir(parents=True, exist_ok=True)
+        (operator_dir / f"{operator_slug}.md").write_text(text, encoding="utf-8")
+
+    def _build_docs(self, *, check: bool) -> int:
+        return self.module.build_docs(
+            services_root=self.services_root,
+            output_root=self.output_root,
+            manual_root=self.manual_root,
+            operator_manual_root=self.operator_manual_root,
+            index_path=self.index_path,
+            scenarios_root=self.scenarios_root,
+            scenario_scripts_root=self.scenario_scripts_root,
+            check=check,
+        )
 
     def test_generates_service_page_for_non_operator_service(self) -> None:
         service_class = "f8.screencap"
@@ -107,15 +142,9 @@ class GenerateServiceDocsTest(unittest.TestCase):
             label="Screen Capture",
             describe_payload=describe_payload,
         )
-        self._write_manual(service_class, "### Recommended Use Cases\n\nUse for live desktop capture.")
+        self._write_manual(service_class, self._full_manual_text("Use for live desktop capture."))
 
-        result = self.module.build_docs(
-            services_root=self.services_root,
-            output_root=self.output_root,
-            manual_root=self.manual_root,
-            index_path=self.index_path,
-            check=False,
-        )
+        result = self._build_docs(check=False)
 
         self.assertEqual(result, 0)
         service_page = self.output_root / "f8-screencap.md"
@@ -125,7 +154,9 @@ class GenerateServiceDocsTest(unittest.TestCase):
         self.assertIn("## Service State Fields", text)
         self.assertIn("## Operators", text)
         self.assertIn("_None_", text)
-        self.assertIn("## Usage Guide (Manual)", text)
+        self.assertIn("## When to Use", text)
+        self.assertIn("## Common Wiring Patterns", text)
+        self.assertIn("## Pitfalls / Gotchas", text)
 
     def test_generates_operator_section_for_pyengine_like_service(self) -> None:
         service_class = "f8.pyengine"
@@ -178,15 +209,14 @@ class GenerateServiceDocsTest(unittest.TestCase):
             label="PyEngine",
             describe_payload=describe_payload,
         )
-        self._write_manual(service_class, "### Operator Composition Notes\n\nCompose small operator chains.")
-
-        result = self.module.build_docs(
-            services_root=self.services_root,
-            output_root=self.output_root,
-            manual_root=self.manual_root,
-            index_path=self.index_path,
-            check=False,
+        self._write_manual(service_class, self._full_manual_text("Compose small operator chains."))
+        self._write_operator_manual(
+            service_class,
+            "f8.tick",
+            self._full_manual_text("Use when the graph needs a regular exec pulse."),
         )
+
+        result = self._build_docs(check=False)
 
         self.assertEqual(result, 0)
         service_page = self.output_root / "f8-pyengine.md"
@@ -214,16 +244,10 @@ class GenerateServiceDocsTest(unittest.TestCase):
             },
         }
         (service_dir / "service.yml").write_text(yaml.safe_dump(service_yml), encoding="utf-8")
-        self._write_manual(service_class, "### Troubleshooting\n\nNone.")
+        self._write_manual(service_class, self._full_manual_text("Example service."))
 
         with self.assertRaises(ValueError) as ctx:
-            self.module.build_docs(
-                services_root=self.services_root,
-                output_root=self.output_root,
-                manual_root=self.manual_root,
-                index_path=self.index_path,
-                check=False,
-            )
+            self._build_docs(check=False)
 
         self.assertIn("missing describe.json", str(ctx.exception))
 
@@ -246,16 +270,10 @@ class GenerateServiceDocsTest(unittest.TestCase):
         }
         (service_dir / "service.yml").write_text(yaml.safe_dump(service_yml), encoding="utf-8")
         (service_dir / "describe.json").write_text("{broken json", encoding="utf-8")
-        self._write_manual(service_class, "### Troubleshooting\n\nNone.")
+        self._write_manual(service_class, self._full_manual_text("Invalid JSON service."))
 
         with self.assertRaises(ValueError) as ctx:
-            self.module.build_docs(
-                services_root=self.services_root,
-                output_root=self.output_root,
-                manual_root=self.manual_root,
-                index_path=self.index_path,
-                check=False,
-            )
+            self._build_docs(check=False)
 
         self.assertIn("invalid JSON", str(ctx.exception))
 
@@ -280,16 +298,10 @@ class GenerateServiceDocsTest(unittest.TestCase):
             label="Missing Field",
             describe_payload=describe_payload,
         )
-        self._write_manual(service_class, "### Troubleshooting\n\nNone.")
+        self._write_manual(service_class, self._full_manual_text("Missing required field service."))
 
         with self.assertRaises(ValueError) as ctx:
-            self.module.build_docs(
-                services_root=self.services_root,
-                output_root=self.output_root,
-                manual_root=self.manual_root,
-                index_path=self.index_path,
-                check=False,
-            )
+            self._build_docs(check=False)
 
         self.assertIn("missing or invalid 'label'", str(ctx.exception))
 
@@ -316,15 +328,9 @@ class GenerateServiceDocsTest(unittest.TestCase):
             describe_payload=describe_payload,
             entry_filename="service.linux.yml",
         )
-        self._write_manual(service_class, "### Recommended Use Cases\n\nTrack targets from CV streams.")
+        self._write_manual(service_class, self._full_manual_text("Track targets from CV streams."))
 
-        result = self.module.build_docs(
-            services_root=self.services_root,
-            output_root=self.output_root,
-            manual_root=self.manual_root,
-            index_path=self.index_path,
-            check=False,
-        )
+        result = self._build_docs(check=False)
 
         self.assertEqual(result, 0)
         service_page = self.output_root / "f8-cvkit-tracking.md"

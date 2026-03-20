@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from qtpy import QtWidgets
+from qtpy import QtGui, QtWidgets
 
 from NodeGraphQt.constants import ITEM_CACHE_MODE, PortTypeEnum
 from NodeGraphQt.errors import NodeWidgetError
@@ -18,8 +18,9 @@ def add_port(node_item: Any, port: Any) -> Any:
     max_chars = 10 if group == "state" else 18
     label = node_item._display_port_label(full_name, max_chars=max_chars)
     text = QtWidgets.QGraphicsTextItem(label, node_item)
-    text.font().setPointSize(8)
-    text.setFont(text.font())
+    font = QtGui.QFont(text.font())
+    font.setPointSize(8)
+    text.setFont(font)
     text.setVisible(port.display_name)
     text.setCacheMode(ITEM_CACHE_MODE)
     tooltip = node_item._port_tooltip_text(full_name)

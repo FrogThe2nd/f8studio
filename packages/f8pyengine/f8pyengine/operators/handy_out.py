@@ -704,11 +704,12 @@ HandyOutRuntimeNode.SPEC = F8OperatorSpec(
         F8StateSpec(
             name="baseUrl",
             label="Base URL",
-            description="Handy API base URL.",
+            description="Handy API base URL. Reset to default when exporting publish JSON.",
             valueSchema=string_schema(default="https://www.handyfeeling.com/api/handy/v2"),
             access=F8StateAccess.rw,
             required=True,
             showOnNode=True,
+            redactOnPublish=True,
         ),
         F8StateSpec(
             name="ensureHdspMode",

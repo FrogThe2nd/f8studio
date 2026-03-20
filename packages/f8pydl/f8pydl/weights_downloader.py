@@ -18,6 +18,16 @@ def _sha256_file(path: Path) -> str:
     return h.hexdigest().lower()
 
 
+def onnx_file_matches_sha256(path: Path, expected_sha256: str) -> bool:
+    sha256_expected = str(expected_sha256 or "").strip().lower()
+    resolved_path = Path(path).resolve()
+    if not sha256_expected:
+        return resolved_path.exists()
+    if not resolved_path.exists():
+        return False
+    return _sha256_file(resolved_path) == sha256_expected
+
+
 def _unlink_if_exists(path: Path) -> None:
     try:
         path.unlink()

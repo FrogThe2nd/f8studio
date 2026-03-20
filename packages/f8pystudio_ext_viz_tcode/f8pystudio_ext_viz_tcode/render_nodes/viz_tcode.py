@@ -11,37 +11,9 @@ from qtpy import QtCore, QtWidgets
 from f8pystudio.nodegraph.operator_basenode import F8StudioOperatorBaseNode
 from f8pystudio.nodegraph.viz_operator_nodeitem import F8StudioVizOperatorNodeItem
 from f8pystudio.ui_bus import UiCommand
+from f8pystudio.webengine_utils import configure_default_webengine_profile, webengine_termination_status_text
 
 logger = logging.getLogger(__name__)
-_WEBENGINE_PROFILE_CONFIGURED = False
-
-
-def _configure_default_webengine_profile() -> None:
-    global _WEBENGINE_PROFILE_CONFIGURED
-    if _WEBENGINE_PROFILE_CONFIGURED:
-        return
-    try:
-        from PySide6 import QtWebEngineCore  # type: ignore[import-not-found]
-    except ImportError:
-        logger.exception("failed to import QtWebEngineCore for cache configuration")
-        return
-
-    app_data_dir = QtCore.QStandardPaths.writableLocation(QtCore.QStandardPaths.AppDataLocation)
-    if not app_data_dir:
-        logger.error("Qt AppDataLocation is unavailable; web cache path is not configured")
-        return
-
-    cache_dir = Path(app_data_dir) / "webengine_cache"
-    storage_dir = Path(app_data_dir) / "webengine_storage"
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    storage_dir.mkdir(parents=True, exist_ok=True)
-
-    profile = QtWebEngineCore.QWebEngineProfile.defaultProfile()
-    profile.setHttpCacheType(QtWebEngineCore.QWebEngineProfile.DiskHttpCache)
-    profile.setCachePath(str(cache_dir))
-    profile.setPersistentStoragePath(str(storage_dir))
-    profile.setPersistentCookiesPolicy(QtWebEngineCore.QWebEngineProfile.ForcePersistentCookies)
-    _WEBENGINE_PROFILE_CONFIGURED = True
 
 
 class _ViewerHandle(Protocol):
@@ -112,12 +84,13 @@ class _TCodeViewerWindow(QtWidgets.QDialog):
     ) -> None:
         super().__init__(parent=None)
         self.setWindowTitle("TCode Viewer")
-        self.resize(1080, 720)
+        self.resize(300, 300)
         self._on_open_state_changed = on_open_state_changed
         self._view = None
         self._page_ready = False
         self._is_open = False
         self._pending_scripts: list[str] = []
+        self._shutdown_started = False
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -134,11 +107,14 @@ class _TCodeViewerWindow(QtWidgets.QDialog):
             layout.addWidget(fallback, 1)
             return
 
+        configure_default_webengine_profile()
         self._view = QtWebEngineWidgets.QWebEngineView(self)
-        _configure_default_webengine_profile()
         self._view.setContextMenuPolicy(QtCore.Qt.NoContextMenu)
         self._enable_remote_asset_access()
         self._view.loadFinished.connect(self._on_page_loaded)  # type: ignore[attr-defined]
+        page = self._view.page()
+        if page is not None:
+            page.renderProcessTerminated.connect(self._on_render_process_terminated)  # type: ignore[attr-defined]
         layout.addWidget(self._view, 1)
         self._load_index_html()
 
@@ -181,6 +157,16 @@ class _TCodeViewerWindow(QtWidgets.QDialog):
         for script in scripts:
             self._run_script(script)
 
+    def _on_render_process_terminated(self, termination_status: object, exit_code: int) -> None:
+        status_text = webengine_termination_status_text(termination_status)
+        logger.error(
+            "TCode render process terminated status=%s exitCode=%s",
+            status_text,
+            int(exit_code),
+        )
+        self._page_ready = False
+        self._pending_scripts = []
+
     def open_viewer(self) -> None:
         self.show()
         self.raise_()
@@ -196,6 +182,9 @@ class _TCodeViewerWindow(QtWidgets.QDialog):
         super().closeEvent(event)
 
     def force_shutdown(self) -> None:
+        if self._shutdown_started:
+            return
+        self._shutdown_started = True
         try:
             self.detach_viewer()
         except Exception:
@@ -245,7 +234,13 @@ class _TCodeViewerWindow(QtWidgets.QDialog):
     def _run_script(self, script: str) -> None:
         if self._view is None:
             return
-        self._view.page().runJavaScript(script)
+        page = self._view.page()
+        if page is None:
+            return
+        try:
+            page.runJavaScript(script)
+        except (AttributeError, RuntimeError, TypeError):
+            logger.exception("failed to run TCode viewer javascript")
 
 
 class _TCodeViewerControlPane(QtWidgets.QWidget):

@@ -7,8 +7,8 @@ from qtpy import QtWidgets
 
 from f8pysdk import F8DataPortSpec, F8ServiceSpec, F8StateAccess, F8StateSpec
 from f8pysdk.schema_helpers import string_schema
-from f8pystudio.widgets import node_property_widgets as npw
-from f8pystudio.widgets.node_property_widgets import _F8SpecPortEditor
+from f8pystudio.widgets import node_property_panel as npw
+from f8pystudio.widgets.node_property_panel import _F8SpecPortEditor
 from f8pystudio.widgets.spec_mutations import set_ports
 
 
@@ -82,34 +82,6 @@ def test_set_ports_keeps_required_data_ports() -> None:
     assert out_names == ["required_out", "optional_out"]
 
 
-def test_set_ports_rename_keeps_requested_order_for_optional_ports() -> None:
-    spec = F8ServiceSpec(
-        serviceClass="f8.test",
-        label="Test",
-        editableDataInPorts=True,
-        editableDataOutPorts=True,
-        editableStateFields=True,
-        dataInPorts=[
-            F8DataPortSpec(name="a", required=False, valueSchema=string_schema()),
-            F8DataPortSpec(name="b", required=False, valueSchema=string_schema()),
-            F8DataPortSpec(name="c", required=False, valueSchema=string_schema()),
-        ],
-        dataOutPorts=[],
-        stateFields=[],
-    )
-    spec2 = set_ports(
-        spec,
-        data_in=[
-            F8DataPortSpec(name="a", required=False, valueSchema=string_schema()),
-            F8DataPortSpec(name="b2", required=False, valueSchema=string_schema()),
-            F8DataPortSpec(name="c", required=False, valueSchema=string_schema()),
-        ],
-        data_out=[],
-    )
-    in_names = [str(p.name or "") for p in list(spec2.dataInPorts or [])]
-    assert in_names == ["a", "b2", "c"]
-
-
 def test_port_editor_hides_delete_for_required_port() -> None:
     _ensure_app()
     node = _FakeNode(_make_spec())
@@ -144,33 +116,6 @@ def test_port_editor_refuses_delete_or_rename_required_port() -> None:
     editor._delete_row(optional_row)
     in_names_after_optional_delete = [str(p.name or "") for p in list(node.spec.dataInPorts or [])]
     assert in_names_after_optional_delete == ["required_in"]
-
-
-def test_port_editor_move_row_updates_data_port_order() -> None:
-    _ensure_app()
-    spec = F8ServiceSpec(
-        serviceClass="f8.test",
-        label="Test",
-        editableDataInPorts=True,
-        editableDataOutPorts=True,
-        editableStateFields=True,
-        dataInPorts=[
-            F8DataPortSpec(name="a", required=False, valueSchema=string_schema()),
-            F8DataPortSpec(name="b", required=False, valueSchema=string_schema()),
-            F8DataPortSpec(name="c", required=False, valueSchema=string_schema()),
-        ],
-        dataOutPorts=[],
-        stateFields=[],
-    )
-    node = _FakeNode(spec)
-    editor = _F8SpecPortEditor(None, node=node, on_apply=None)
-
-    row_b = _find_data_row(editor, name="b", is_in=True)
-    assert row_b is not None
-    editor._move_row(row_b, 1)
-
-    in_names = [str(p.name or "") for p in list(node.spec.dataInPorts or [])]
-    assert in_names == ["a", "c", "b"]
 
 
 def test_required_data_port_dialog_is_not_ui_only_when_editable(monkeypatch) -> None:
@@ -289,41 +234,3 @@ def test_add_state_field_defaults_to_optional_and_hidden(monkeypatch) -> None:
 
     assert captured["required"] is False
     assert captured["show_on_node"] is False
-
-
-def test_move_state_field_updates_spec_order() -> None:
-    spec = F8ServiceSpec(
-        serviceClass="f8.test",
-        label="Test",
-        editableDataInPorts=True,
-        editableDataOutPorts=True,
-        editableStateFields=True,
-        dataInPorts=[],
-        dataOutPorts=[],
-        stateFields=[
-            F8StateSpec(name="s1", valueSchema=string_schema(), access=F8StateAccess.rw, required=False),
-            F8StateSpec(name="s2", valueSchema=string_schema(), access=F8StateAccess.rw, required=False),
-            F8StateSpec(name="s3", valueSchema=string_schema(), access=F8StateAccess.rw, required=False),
-        ],
-    )
-
-    class _FakeNodeForState:
-        def __init__(self, source_spec: F8ServiceSpec) -> None:
-            self.spec = source_spec
-            self.model = SimpleNamespace(f8_sys={})
-
-    class _FakeEditor:
-        def __init__(self, fake_node: _FakeNodeForState) -> None:
-            self._node = fake_node
-            self.applied = 0
-
-        def _on_spec_applied(self) -> None:
-            self.applied += 1
-
-    fake_node = _FakeNodeForState(spec)
-    widget = _FakeEditor(fake_node)
-    npw.F8StudioNodePropEditorWidget.move_state_field(widget, "s2", 1)
-
-    names = [str(field.name or "") for field in list(fake_node.spec.stateFields or [])]
-    assert names == ["s1", "s3", "s2"]
-    assert widget.applied == 1

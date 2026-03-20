@@ -25,6 +25,7 @@ uv.lock
 
 # Ignore IDE-specific folder
 .vscode/
+.codex/
 
 # CMake build directory
 build/

@@ -8,7 +8,27 @@ Standalone expression runtime service for simplified data-flow transforms.
 - Source directory: `f8/pyexpr`
 - Tags: `python`, `expr`, `service`
 
-## How to Run
+## When to Use
+
+- Use `f8.pyexpr` when you need a simple, single-line Python expression to transform or remap data between other services.
+- It is perfect for extracting a specific field from a complex JSON payload, applying a mathematical formula to a signal, or setting up simple "Value Compare" logic without a full `PyEngine` graph.
+- Best for lightweight, stateless processing that can be described in a single descriptive string.
+
+## Common Wiring Patterns
+
+- **Signal Extraction**: Feed it structured data (e.g., from `f8.audiofeat.core` or `f8.dl.detector`), write an expression like `data.get("loudness", 0) * 100`, and forward the result to a visualizer or `TextViz`.
+- **Conditional Trigger**: Use it to create a boolean signal (e.g., `data["score"] > 0.8`) that downstream nodes use to activate or deactivate behavior.
+- **Payload Rewriting**: Quickly rename or re-format keys in a JSON object before sending it to a generic consumer that expects a specific schema.
+
+## Pitfalls / Gotchas
+
+- **Input Shape Assumptions**: The most common failures are `KeyError` or `AttributeError` caused by unpredictable input data. Use `.get()` or check for key existence if the upstream node sometimes sends empty payloads.
+- **Complexity Scope**: If your expression requires multiple lines, imports, or complex state, it has outgrown `f8.pyexpr`. Move that logic into an `f8.pyengine` operator or an `f8.pyscript` service.
+- **Runtime Performance**: While fast, evaluate whether high-frequency expressions (e.g., processing every video frame's metadata) can be better handled by a dedicated native operator.
+
+## Service Reference
+
+### How to Run
 
 ```bash
 pixi run f8pyexpr
@@ -17,7 +37,13 @@ pixi run f8pyexpr
 - Workdir: `../../../`
 - Environment overrides: none
 
-## Service State Fields
+### Typical Inputs / Outputs
+
+- Data inputs: `msg`
+- Data outputs: `out`, `monitor`
+- Commands: none
+
+### Service State Fields
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
@@ -28,17 +54,26 @@ pixi run f8pyexpr
 | `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 
-## Service Commands
+### Key Fields That Matter
+
+- `code` (Expr, `rw`): Single-line expression. Available names: inputs + identifier-safe input ports. Schema: `string / default=msg`.
+- `allowNumpy` (Allow Numpy, `wo`): Enable numpy calls in expressions (np.*, numpy.*). Schema: `boolean / default=False`.
+- `unpackDictOutputs` (Unpack Dict Outputs, `wo`): When enabled, dict results are emitted per matching output port key. Schema: `boolean / default=False`.
+- `lastError` (Last Error, `ro`): Last expression compile/eval error. Schema: `string / default=`.
+- `active` (Active, `rw`): Service lifecycle state (activate/deactivate). Schema: `boolean / default=True`.
+- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
+
+### Service Commands
 
 _None_
 
-## Service Data Input Ports
+### Service Data Input Ports
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
 | `msg` | `false` | `true` | `any` | Default input value. |
 
-## Service Data Output Ports
+### Service Data Output Ports
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
@@ -48,36 +83,6 @@ _None_
 ## Operators
 
 _None_
-
-## When to Use
-
-- Use `f8.pyexpr` for lightweight service-level expression evaluation when a full `PyEngine` operator graph is unnecessary.
-- It is good for extracting one value, remapping a payload, or applying a simple computed rule.
-
-## Typical Inputs / Outputs
-
-- Data inputs: `msg`
-- Data outputs: `out`, `monitor`
-- Commands: none
-
-## Common Wiring Patterns
-
-- Feed it structured data from feature or CV services, then forward the reduced output into `f8.pyengine`, `TextViz`, or state edges.
-- Keep expressions small and explicit; move complex flow into `f8.pyengine` or `f8.pyscript`.
-
-## Key Fields That Matter
-
-- `code` (Expr, `rw`): Single-line expression. Available names: inputs + identifier-safe input ports. Schema: `string / default=msg`.
-- `allowNumpy` (Allow Numpy, `wo`): Enable numpy calls in expressions (np.*, numpy.*). Schema: `boolean / default=False`.
-- `unpackDictOutputs` (Unpack Dict Outputs, `wo`): When enabled, dict results are emitted per matching output port key. Schema: `boolean / default=False`.
-- `lastError` (Last Error, `ro`): Last expression compile/eval error. Schema: `string / default=`.
-- `active` (Active, `rw`): Service lifecycle state (activate/deactivate). Schema: `boolean / default=True`.
-- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
-
-## Pitfalls / Gotchas
-
-- Expression failures often come from unclear input payload shape rather than Python syntax alone.
-- If the expression starts carrying workflow state, it has outgrown this service.
 
 ## Related Scenarios
 

@@ -48,7 +48,7 @@ def ensure_graph_property_hook(node_item: Any) -> None:
     if graph_obj is None:
         return
     try:
-        graph_obj.property_changed.connect(node_item._on_graph_property_changed)  # type: ignore[attr-defined]
+        graph_obj.property_changed.connect(node_item._sync_state_inline_controls_from_graph_property)  # type: ignore[attr-defined]
     except (AttributeError, RuntimeError, TypeError):
         node_item._graph_prop_hooked = False
         return

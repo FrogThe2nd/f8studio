@@ -1,10 +1,7 @@
 from __future__ import annotations
 
-from f8pysdk.msgspec_codec import dump_json
 from collections import defaultdict
 from typing import Any
-
-import json
 
 from qtpy import QtCore, QtWidgets, QtGui
 from NodeGraphQt import NodesTreeWidget
@@ -16,7 +13,7 @@ from ..ui_notifications import show_warning
 from ..variants.variant_ids import build_variant_node_type, is_variant_node_type, parse_variant_node_type
 from ..variants.variant_repository import delete_variant, list_variants_for_base, variant_exists
 from ..variants.variant_events import subscribe_variants_changed
-from .json_text_editor import attach_json_enhancements
+from .node_docs_dialog import show_node_docs_dialog
 
 
 class _F8StudioNodesTreeWidget(NodesTreeWidget):
@@ -133,106 +130,6 @@ class _F8StudioNodesTreeWidget(NodesTreeWidget):
             return label
         return ""
 
-    @staticmethod
-    def _schema_to_json_text(schema_obj: Any) -> str:
-        if schema_obj is None:
-            return "{}"
-        try:
-            payload = dump_json(schema_obj, mode="json", by_alias=True)
-        except Exception:
-            payload = schema_obj
-        try:
-            return json.dumps(payload, ensure_ascii=False, indent=2, default=str)
-        except Exception:
-            return str(payload)
-
-    @staticmethod
-    def _md_code_block(text: str) -> str:
-        body = str(text or "").strip()
-        if not body:
-            body = "{}"
-        return f"```json\n{body}\n```"
-
-    def _render_data_ports_md(self, title: str, ports: list[Any]) -> str:
-        lines: list[str] = [f"## {title}"]
-        if not ports:
-            lines.append("_None_")
-            return "\n".join(lines)
-        for port in ports:
-            lines.append(f"### `{port.name}`")
-            lines.append(f"- **Description**: {port.description or ''}")
-            lines.append(f"- **Required**: `{bool(port.required)}`")
-            lines.append("**Schema**")
-            lines.append(self._md_code_block(self._schema_to_json_text(port.valueSchema)))
-        return "\n".join(lines)
-
-    def _render_state_fields_md(self, fields: list[Any]) -> str:
-        lines: list[str] = ["## State Fields"]
-        if not fields:
-            lines.append("_None_")
-            return "\n".join(lines)
-        for field in fields:
-            lines.append(f"### `{field.name}`")
-            lines.append(f"- **Label**: {field.label or ''}")
-            lines.append(f"- **Access**: `{field.access}`")
-            lines.append(f"- **Required**: `{bool(field.required)}`")
-            lines.append(f"- **Show On Node**: `{bool(field.showOnNode)}`")
-            lines.append(f"- **Description**: {field.description or ''}")
-            lines.append("- **Schema**:")
-            lines.append(self._md_code_block(self._schema_to_json_text(field.valueSchema)))
-        return "\n".join(lines)
-
-    def _render_operator_doc(self, spec: F8OperatorSpec) -> str:
-        lines: list[str] = [f"# {spec.label or spec.operatorClass}"]
-        lines.append(f"**Operator Class**: `{spec.operatorClass}`  ")
-        lines.append(f"**Service Class**: `{spec.serviceClass}`  ")
-        lines.append(f"**Version**: `{spec.version or ''}`")
-        lines.append("")
-        lines.append(spec.description or "_No description._")
-        lines.append("")
-        tags = ", ".join(str(t) for t in list(spec.tags or []))
-        lines.append(f"**Tags**: {tags or '_none_'}")
-        lines.append("")
-
-        lines.append("## Exec Ports")
-        lines.append(f"- **In**: {', '.join(str(x) for x in list(spec.execInPorts or [])) or '_none_'}")
-        lines.append(f"- **Out**: {', '.join(str(x) for x in list(spec.execOutPorts or [])) or '_none_'}")
-        lines.append("")
-        lines.append("")
-        lines.append(self._render_data_ports_md("Data In Ports", list(spec.dataInPorts or [])))
-        lines.append("")
-        lines.append(self._render_data_ports_md("Data Out Ports", list(spec.dataOutPorts or [])))
-        lines.append("")
-        lines.append(self._render_state_fields_md(list(spec.stateFields or [])))
-        return "\n".join(lines)
-
-    def _render_service_doc(self, spec: F8ServiceSpec) -> str:
-        lines: list[str] = [f"# {spec.label or spec.serviceClass}"]
-        lines.append(f"**Service Class**: `{spec.serviceClass}`  ")
-        lines.append(f"**Version**: `{spec.version or ''}`")
-        lines.append("")
-        lines.append(spec.description or "_No description._")
-        lines.append("")
-        tags = ", ".join(str(t) for t in list(spec.tags or []))
-        lines.append(f"**Tags**: {tags or '_none_'}")
-        lines.append("")
-        lines.append(self._render_data_ports_md("Data In Ports", list(spec.dataInPorts or [])))
-        lines.append("")
-        lines.append(self._render_data_ports_md("Data Out Ports", list(spec.dataOutPorts or [])))
-        lines.append("")
-        lines.append(self._render_state_fields_md(list(spec.stateFields or [])))
-        lines.append("")
-        lines.append("## Commands")
-        commands = list(spec.commands or [])
-        if not commands:
-            lines.append("_None_")
-        else:
-            for c in commands:
-                lines.append(f"### `{c.name}`")
-                lines.append(f"- **Description**: {c.description or ''}")
-
-        return "\n".join(lines)
-
     def _show_spec_dialog(self, *, node_id: str, node_name: str) -> None:
         node_cls = self._factory.nodes.get(node_id) if self._factory is not None else None
         if node_cls is None:
@@ -240,49 +137,7 @@ class _F8StudioNodesTreeWidget(NodesTreeWidget):
         spec = typed_spec_template_or_none(node_cls)
         if spec is None:
             return
-
-        dialog = QtWidgets.QDialog(self)
-        dialog.setWindowTitle(f"Node Info - {node_name}")
-        dialog.resize(860, 620)
-
-        title = QtWidgets.QLabel(f"{node_name}  ({node_id})", dialog)
-        title.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
-
-        tabs = QtWidgets.QTabWidget(dialog)
-        overview = QtWidgets.QTextBrowser(dialog)
-        overview.setOpenExternalLinks(False)
-        overview.setOpenLinks(False)
-        overview.setStyleSheet(
-            "QTextBrowser {"
-            "  background: #1f2329;"
-            "  border: 1px solid #2d333b;"
-            "  color: #e6edf3;"
-            "  font-size: 12px;"
-            "}"
-        )
-        raw = QtWidgets.QPlainTextEdit(dialog)
-        raw.setReadOnly(True)
-        raw.setLineWrapMode(QtWidgets.QPlainTextEdit.NoWrap)
-        attach_json_enhancements(raw, read_only=True)
-
-        if isinstance(spec, F8OperatorSpec):
-            overview.setMarkdown(self._render_operator_doc(spec))
-        else:
-            overview.setMarkdown(self._render_service_doc(spec))
-
-        raw.setPlainText(json.dumps(dump_json(spec, mode="json", by_alias=True), ensure_ascii=False, indent=2, default=str))
-
-        tabs.addTab(overview, "Overview")
-        tabs.addTab(raw, "Raw JSON")
-
-        close_btn = QtWidgets.QPushButton("Close", dialog)
-        close_btn.clicked.connect(dialog.accept)  # type: ignore[attr-defined]
-
-        layout = QtWidgets.QVBoxLayout(dialog)
-        layout.addWidget(title)
-        layout.addWidget(tabs, 1)
-        layout.addWidget(close_btn, 0, QtCore.Qt.AlignRight)
-        dialog.exec()
+        show_node_docs_dialog(parent=self, spec=spec, node_id=node_id, node_name=node_name)
 
     def _open_variant_manager(self, *, base_node_type: str, base_node_name: str) -> None:
         callback = self._on_open_variant_manager

@@ -15,21 +15,20 @@ from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
 
 from .constants import SERVICE_CLASS
 from .operators.serial_out import register_operator as register_serial_out_operator
-from .operators.sequence import register_operator as register_sequence_operator
+from .operators.exec_sequence import register_operator as register_exec_sequence_operator
 from .operators.signal import register_operator as register_signal_operator
 from .operators.print import register_operator as register_print_operator
 from .operators.pull import register_operator as register_pull_operator
 from .operators.program_wave import register_operator as register_program_wave_operator
 from .operators.tick import register_operator as register_tick_operator
 from .operators.envelope import register_operator as register_envelope_operator
-from .operators.axis_envelope import register_operator as register_axis_envelope_operator
 from .operators.smooth_filter import register_operator as register_smooth_filter_operator
 from .operators.range_map import register_operator as register_range_map_operator
 from .operators.rate_limiter import register_operator as register_rate_limiter_operator
 from .operators.udp_skeleton import register_operator as register_udp_skeleton_operator
 from .operators.tcode import register_operator as register_tcode_operator
 from .operators.python_script import register_operator as register_python_script_operator
-from .operators.expr import register_operator as register_expr_operator
+from .operators.data_expr import register_operator as register_data_expr_operator
 from .operators.lovense_mock_server import register_operator as register_lovense_mock_server_operator
 from .operators.lovense_program_adapter import register_operator as register_lovense_program_adapter_operator
 from .operators.lovense_out import register_operator as register_lovense_out_operator
@@ -39,10 +38,21 @@ from .operators.sequence_player import register_operator as register_sequence_pl
 from .operators.playback_sync import register_operator as register_playback_sync_operator
 from .operators.handy_out import register_operator as register_handy_out_operator
 from .operators.state_trigger import register_operator as register_state_trigger_operator
+from .operators.state_expr import register_operator as register_state_expr_operator
 from .operators.bone_filter import register_operator as register_bone_filter_operator
 from .operators.quat_to_euler import register_operator as register_quat_to_euler_operator
 from .operators.udp_vmc import register_operator as register_udp_vmc_operator
 from .operators.bone_selector import register_operator as register_bone_selector_operator
+from .operators.wave_expr import register_operator as register_wave_expr_operator
+from .operators.wave_pattern import register_operator as register_wave_pattern_operator
+from .operators.wave_funscript import register_operator as register_wave_funscript_operator
+from .operators.detrend import register_operator as register_detrend_operator
+from .operators.lowpass_filter import register_operator as register_lowpass_filter_operator
+from .operators.highpass_filter import register_operator as register_highpass_filter_operator
+from .operators.bandpass_filter import register_operator as register_bandpass_filter_operator
+from .operators.periodicity_detector import register_operator as register_periodicity_detector_operator
+from .operators.recorder import register_operator as register_recorder_operator
+from .operators.replayer import register_operator as register_replayer_operator
 from .pyengine_service_node import PyEngineServiceNode
 
 
@@ -88,13 +98,12 @@ def register_pyengine_specs(registry: RuntimeNodeRegistry | None = None) -> Runt
     reg.register_service(SERVICE_CLASS, _service_factory, overwrite=True)
 
     register_tick_operator(reg)
-    register_sequence_operator(reg)
+    register_exec_sequence_operator(reg)
     register_signal_operator(reg)
     register_print_operator(reg)
     register_pull_operator(reg)
     register_program_wave_operator(reg)
     register_envelope_operator(reg)
-    register_axis_envelope_operator(reg)
     register_smooth_filter_operator(reg)
     register_range_map_operator(reg)
     register_rate_limiter_operator(reg)
@@ -102,7 +111,7 @@ def register_pyengine_specs(registry: RuntimeNodeRegistry | None = None) -> Runt
     register_serial_out_operator(reg)
     register_tcode_operator(reg)
     register_python_script_operator(reg)
-    register_expr_operator(reg)
+    register_data_expr_operator(reg)
     register_lovense_out_operator(reg)
     register_buttplug_out_operator(reg)
     register_lovense_mock_server_operator(reg)
@@ -112,8 +121,19 @@ def register_pyengine_specs(registry: RuntimeNodeRegistry | None = None) -> Runt
     register_playback_sync_operator(reg)
     register_handy_out_operator(reg)
     register_state_trigger_operator(reg)
+    register_state_expr_operator(reg)
     register_bone_filter_operator(reg)
     register_quat_to_euler_operator(reg)
     register_udp_vmc_operator(reg)
     register_bone_selector_operator(reg)
+    register_wave_expr_operator(reg)
+    register_wave_pattern_operator(reg)
+    register_wave_funscript_operator(reg)
+    register_detrend_operator(reg)
+    register_lowpass_filter_operator(reg)
+    register_highpass_filter_operator(reg)
+    register_bandpass_filter_operator(reg)
+    register_periodicity_detector_operator(reg)
+    register_recorder_operator(reg)
+    register_replayer_operator(reg)
     return reg

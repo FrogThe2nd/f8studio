@@ -188,6 +188,7 @@ DEFAULT_CODE = (
     "# - onStop(ctx)\n"
     "#\n"
     "# Notes:\n"
+    "# - If you define no hooks, the node is a no-op.\n"
     "# - ctx.locals is preserved between calls (script-local memory)\n"
     "# - ctx.exec_in is set only for exec-triggered calls\n"
     "# - ctx.states.<field> reads cached rw/ro/wo state snapshot\n"
@@ -196,6 +197,7 @@ DEFAULT_CODE = (
     "# - ctx.states.get(field)  # cached snapshot\n"
     "# - ctx.set_state(field, value)\n"
     "#   - await ctx.set_state_async(field, value)\n"
+    "# - onStart return values are ignored; use ctx.emit()/ctx.set_state().\n"
     "# - inputs binding mode is configured by state `inputMode`:\n"
     "#   - input_view (default): supports dot and mapping access\n"
     "#   - raw_dict: plain dict only\n"
@@ -244,10 +246,11 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
     """
     Execute user-provided python code with lifecycle hooks:
 
-    - onStart(ctx): invoked on construction (best-effort) and after recompiles
-    - onState(ctx, field, value, ts_ms=None): invoked on state updates (except 'code')
-    - onMsg(ctx, inputs): invoked on exec or data arrival
-    - onStop(ctx): invoked on close() (best-effort) and before recompiles
+    - onStart(ctx): optional; invoked on construction (best-effort) and after recompiles
+    - onState(ctx, field, value, ts_ms=None): optional; invoked on state updates (except 'code')
+    - onMsg(ctx, inputs): optional; invoked on data arrival and as exec fallback when onExec is missing
+    - onExec(ctx, exec_in, inputs): optional; invoked on exec triggers with a full pulled input snapshot
+    - onStop(ctx): optional; invoked on close() (best-effort) and before recompiles
     """
 
     def __init__(self, *, node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any] | None = None) -> None:
@@ -280,6 +283,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         self._started = False
         self._closing = False
         self._last_error: str | None = None
+        self._error_seq = 0
         self._self_state_writes: dict[str, Any] = {}
         self._pull_cache_ctx_id: str | int | None = None
         self._pull_cache_outputs: dict[str, Any] = {}
@@ -364,6 +368,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         self._metric_output_normalize_time_us += (time.perf_counter() - started_at) * 1_000_000.0
 
     def _set_error(self, stage: str, exc: BaseException) -> None:
+        self._error_seq = int(self._error_seq) + 1
         msg = f"{stage}: {exc}"
         self._last_error = msg
         logger.error("[%s:python_script] error %s", self.node_id, msg, exc_info=exc)
@@ -379,6 +384,23 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
             loop.create_task(_set_last_error(), name=f"python_script:lastError:{self.node_id}")
         except Exception:
             pass
+
+    def _clear_last_error(self) -> None:
+        if not self._last_error:
+            return
+        self._last_error = None
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+
+        async def _clear_last_error_state() -> None:
+            try:
+                await self.set_state("lastError", "")
+            except Exception as exc:
+                logger.error("[%s:python_script] clear lastError failed", self.node_id, exc_info=exc)
+
+        loop.create_task(_clear_last_error_state(), name=f"python_script:lastErrorClear:{self.node_id}")
 
     @staticmethod
     def _now_ms() -> int:
@@ -711,6 +733,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         return PyEngineStatesView(snapshot)
 
     def _compile_and_start(self) -> None:
+        error_seq_start = int(self._error_seq)
         if self._started:
             self._invoke_hook_sync("onStop")
         self._shutdown_video_subscriptions_sync()
@@ -742,8 +765,18 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
 
         if not self._hooks.runtime:
             self._started = False
+            if int(self._error_seq) == error_seq_start:
+                self._set_error(
+                    "hooks",
+                    ValueError(
+                        "no hooks defined; add at least one of: onStart(ctx), onState(ctx, ...), "
+                        "onMsg(ctx, inputs), onExec(ctx, exec_in, inputs), onStop(ctx)"
+                    ),
+                )
             return
         self._invoke_hook_sync("onStart")
+        if int(self._error_seq) == error_seq_start:
+            self._clear_last_error()
 
     def _build_invoke_ctx(self, *, exec_in: str | None) -> PyEngineContext:
         """
@@ -1114,7 +1147,7 @@ PythonScriptRuntimeNode.SPEC = F8OperatorSpec(
         F8StateSpec(
             name="code",
             label="Code",
-            description="Python source code defining onStart(ctx), onMsg(ctx, inputs), onStop(ctx).",
+            description="Python source code optionally defining hooks: onStart/onState/onMsg/onExec/onStop.",
             uiControl="code",
             uiLanguage="python",
             valueSchema=string_schema(default=DEFAULT_CODE),

@@ -29,7 +29,15 @@ def _editor_assist_payload() -> dict[str, object]:
                     "module_name": "f8_dynamic_states",
                     "schema_mode": "basic_recursive",
                     "access_mode": "object_and_mapping",
-                }
+                },
+                "outputs": {
+                    "enabled": True,
+                    "source": "data_out_ports",
+                    "type_name": "F8Outputs",
+                    "module_name": "f8_dynamic_outputs",
+                    "schema_mode": "basic_recursive",
+                    "access_mode": "object_and_mapping",
+                },
             },
         },
     }
@@ -49,10 +57,12 @@ def test_state_spec_accepts_editor_assist_field() -> None:
         description="",
         valueSchema=string_schema(default=""),
         access=F8StateAccess.rw,
+        redactOnPublish=True,
         editorAssist=validate_editor_assist_spec(_editor_assist_payload()),
     )
     assert state.editorAssist is not None
     assert int(state.editorAssist.version) == 1
+    assert bool(state.redactOnPublish) is True
 
 
 def test_state_spec_still_forbids_unknown_fields() -> None:
@@ -85,6 +95,20 @@ def test_validate_editor_assist_spec_rejects_invalid_states_source() -> None:
     states_binding = dynamic_bindings.get("states")
     assert isinstance(states_binding, dict)
     states_binding["source"] = "data_in_ports"
+
+    with pytest.raises(Exception):
+        _ = validate_editor_assist_spec(payload)
+
+
+def test_validate_editor_assist_spec_rejects_invalid_outputs_source() -> None:
+    payload = _editor_assist_payload()
+    python_payload = payload.get("python")
+    assert isinstance(python_payload, dict)
+    dynamic_bindings = python_payload.get("dynamic_bindings")
+    assert isinstance(dynamic_bindings, dict)
+    outputs_binding = dynamic_bindings.get("outputs")
+    assert isinstance(outputs_binding, dict)
+    outputs_binding["source"] = "state_fields"
 
     with pytest.raises(Exception):
         _ = validate_editor_assist_spec(payload)

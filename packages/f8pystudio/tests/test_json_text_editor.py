@@ -11,7 +11,7 @@ from f8pystudio.widgets.json_text_editor import (
     compute_line_end_depth,
     find_bracket_match,
 )
-from f8pystudio.widgets.property_value_widgets import F8JsonPropTextEdit
+from f8pystudio.components.state_editors import F8JsonValueEditor
 from f8pystudio.widgets.node_library_widget import _F8StudioNodesTreeWidget
 from f8pystudio.widgets.node_variant_manager_dialog import NodeVariantManagerDialog
 
@@ -84,7 +84,7 @@ def test_attach_json_enhancements_applies_syntax_colors_for_key_token() -> None:
 
 def test_json_prop_text_edit_attaches_json_enhancements() -> None:
     _ensure_app()
-    widget = F8JsonPropTextEdit()
+    widget = F8JsonValueEditor()
     assert hasattr(widget, "_f8_json_highlighter")
     assert hasattr(widget, "_f8_json_bracket_pair_controller")
 

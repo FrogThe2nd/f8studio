@@ -1,5 +1,6 @@
 #include "tracking_service.h"
 
+#include <algorithm>
 #include <array>
 #include <limits>
 #include <utility>
@@ -9,6 +10,7 @@
 #include <nlohmann/json.hpp>
 #include <opencv2/imgproc.hpp>
 
+#include "f8cppsdk/describe_schema.h"
 #include "f8cppsdk/f8_naming.h"
 #include "f8cppsdk/shm/naming.h"
 #include "f8cppsdk/shm/sizing.h"
@@ -19,65 +21,16 @@
 namespace f8::cvkit::tracking {
 
 using json = nlohmann::json;
+using f8::cppsdk::describe::schema_array;
+using f8::cppsdk::describe::schema_boolean;
+using f8::cppsdk::describe::schema_integer;
+using f8::cppsdk::describe::schema_number;
+using f8::cppsdk::describe::schema_object;
+using f8::cppsdk::describe::schema_string;
+using f8::cppsdk::describe::schema_string_enum;
+using f8::cppsdk::describe::state_field;
 
 namespace {
-
-json schema_string() {
-  return json{{"type", "string"}};
-}
-json schema_string_enum(const std::vector<std::string>& values, const std::string& default_value) {
-  json s{{"type", "string"}};
-  s["enum"] = json::array();
-  for (const std::string& v : values) {
-    s["enum"].push_back(v);
-  }
-  s["default"] = default_value;
-  return s;
-}
-json schema_integer() {
-  return json{{"type", "integer"}};
-}
-json schema_number() {
-  return json{{"type", "number"}};
-}
-json schema_boolean() {
-  return json{{"type", "boolean"}};
-}
-
-json schema_object(const json& props, const json& required = json::array()) {
-  json obj;
-  obj["type"] = "object";
-  obj["properties"] = props;
-  if (required.is_array())
-    obj["required"] = required;
-  obj["additionalProperties"] = false;
-  return obj;
-}
-
-json schema_array(const json& item_schema) {
-  json arr;
-  arr["type"] = "array";
-  arr["items"] = item_schema;
-  return arr;
-}
-
-json state_field(std::string name, const json& value_schema, std::string access, std::string label = {},
-                 std::string description = {}, bool show_on_node = false, std::string ui_control = {}) {
-  json sf;
-  sf["name"] = std::move(name);
-  sf["valueSchema"] = value_schema;
-  sf["access"] = std::move(access);
-  sf["required"] = true;
-  if (!label.empty())
-    sf["label"] = std::move(label);
-  if (!description.empty())
-    sf["description"] = std::move(description);
-  if (show_on_node)
-    sf["showOnNode"] = true;
-  if (!ui_control.empty())
-    sf["uiControl"] = std::move(ui_control);
-  return sf;
-}
 
 bool json_number_to_int(const json& v, int& out) {
   return service_runtime::parse_json_int(v, out);
@@ -210,6 +163,11 @@ void collect_bbox_candidates(const json& root, std::vector<TrackingInitCandidate
 
 TrackingInitSelectMode parse_init_select_mode(const std::string& raw, std::string& normalized, bool& ok) {
   const std::string s = service_runtime::to_lower_ascii_copy(service_runtime::trim_copy(raw));
+  if (s == "first_box" || s == "first" || s == "ordered_first") {
+    normalized = "first_box";
+    ok = true;
+    return TrackingInitSelectMode::FirstBox;
+  }
   if (s.empty() || s == "closest_center" || s == "closest" || s == "center") {
     normalized = "closest_center";
     ok = true;
@@ -247,6 +205,9 @@ std::optional<cv::Rect> pick_best_bbox(const std::vector<TrackingInitCandidate>&
     const cv::Rect clamped = candidate.bbox & frame_rect;
     if (clamped.width <= 0 || clamped.height <= 0)
       continue;
+    if (mode == TrackingInitSelectMode::FirstBox) {
+      return clamped;
+    }
     const double bx = static_cast<double>(clamped.x) + static_cast<double>(clamped.width) * 0.5;
     const double by = static_cast<double>(clamped.y) + static_cast<double>(clamped.height) * 0.5;
     const double dx = bx - cx;
@@ -299,7 +260,8 @@ std::optional<cv::Rect> pick_best_bbox(const std::vector<TrackingInitCandidate>&
 
 }  // namespace
 
-TrackingService::TrackingService(Config cfg) : cfg_(std::move(cfg)) {}
+TrackingService::TrackingService(Config cfg)
+    : cfg_(std::move(cfg)), stop_tracking_cooldown_ms_(std::max(0, std::min(60000, cfg_.stop_tracking_cooldown_ms))) {}
 
 TrackingService::~TrackingService() {
   stop();
@@ -308,6 +270,8 @@ TrackingService::~TrackingService() {
 bool TrackingService::start() {
   if (running_.load(std::memory_order_acquire))
     return true;
+
+  stop_tracking_cooldown_until_ms_.store(0, std::memory_order_release);
 
   f8::cppsdk::ServiceBus::Config bus_cfg;
   bus_cfg.service_id = cfg_.service_id;
@@ -333,6 +297,9 @@ bool TrackingService::start() {
   publish_state_if_changed("serviceClass", cfg_.service_class, "init", json::object());
   publish_state_if_changed("shmName", "", "init", json::object());
   publish_state_if_changed("initSelect", init_select_state_, "init", json::object());
+  publish_state_if_changed("stopTrackingCooldownMs", stop_tracking_cooldown_ms_.load(std::memory_order_acquire), "init",
+                           json::object());
+  publish_state_if_changed("stopTrackingCooldownUntilTsMs", 0, "init", json::object());
   publish_state_if_changed("isTracking", false, "init", json::object());
   publish_state_if_changed("isNotTracking", true, "init", json::object());
   publish_state_if_changed("lastError", "", "init", json::object());
@@ -387,6 +354,13 @@ void TrackingService::tick() {
 
   if (!active_.load(std::memory_order_acquire)) {
     return;
+  }
+
+  const std::int64_t now = f8::cppsdk::now_ms();
+  const std::int64_t until = stop_tracking_cooldown_until_ms_.load(std::memory_order_acquire);
+  if (until > 0 && now >= until) {
+    stop_tracking_cooldown_until_ms_.store(0, std::memory_order_release);
+    publish_state_if_changed("stopTrackingCooldownUntilTsMs", 0, "runtime", json::object({{"reason", "expired"}}));
   }
 
   apply_init_box_if_any();
@@ -445,6 +419,21 @@ void TrackingService::on_state(const std::string& node_id, const std::string& fi
     set_init_select(value.get<std::string>(), meta);
     return;
   }
+  if (field == "stopTrackingCooldownMs") {
+    int v = 0;
+    if (!json_number_to_int(value, v)) {
+      publish_state_if_changed("lastError", "invalid stopTrackingCooldownMs", "state", meta);
+      return;
+    }
+    v = std::max(0, std::min(60000, v));
+    stop_tracking_cooldown_ms_.store(v, std::memory_order_release);
+    if (v == 0) {
+      stop_tracking_cooldown_until_ms_.store(0, std::memory_order_release);
+      publish_state_if_changed("stopTrackingCooldownUntilTsMs", 0, "state", meta);
+    }
+    publish_state_if_changed("stopTrackingCooldownMs", v, "state", meta);
+    return;
+  }
 }
 
 void TrackingService::on_data(const std::string& node_id, const std::string& port, const json& value,
@@ -455,6 +444,9 @@ void TrackingService::on_data(const std::string& node_id, const std::string& por
     return;
   if (port != "initBox")
     return;
+  if (stop_tracking_cooldown_until_ms_.load(std::memory_order_acquire) > f8::cppsdk::now_ms()) {
+    return;
+  }
   std::vector<TrackingInitCandidate> candidates;
   collect_bbox_candidates(value, candidates, 0);
   if (candidates.empty())
@@ -486,6 +478,10 @@ bool TrackingService::on_command(const std::string& call, const json& args, cons
     tracking_meta["source"] = "command";
     tracking_meta["call"] = call;
 
+    const int cooldown_ms = stop_tracking_cooldown_ms_.load(std::memory_order_acquire);
+    const std::int64_t now = f8::cppsdk::now_ms();
+    const std::int64_t until = cooldown_ms > 0 ? (now + static_cast<std::int64_t>(cooldown_ms)) : 0;
+
     bool was_tracking = false;
     {
       std::lock_guard<std::mutex> lock(tracking_mu_);
@@ -493,8 +489,14 @@ bool TrackingService::on_command(const std::string& call, const json& args, cons
       stop_tracking_internal(tracking_meta);
     }
 
+    stop_tracking_cooldown_until_ms_.store(until, std::memory_order_release);
+    publish_state_if_changed("stopTrackingCooldownUntilTsMs", until, "runtime",
+                             json::object({{"source", "command"}, {"call", call}}));
+
     result["stopped"] = true;
     result["wasTracking"] = was_tracking;
+    result["cooldownMs"] = cooldown_ms;
+    result["cooldownUntilTsMs"] = until;
     return true;
   }
 
@@ -563,6 +565,12 @@ bool TrackingService::ensure_video_open() {
 }
 
 void TrackingService::apply_init_box_if_any() {
+  if (stop_tracking_cooldown_until_ms_.load(std::memory_order_acquire) > f8::cppsdk::now_ms()) {
+    std::lock_guard<std::mutex> lock(tracking_mu_);
+    pending_init_boxes_.clear();
+    return;
+  }
+
   std::vector<TrackingInitCandidate> candidates;
   {
     std::lock_guard<std::mutex> lock(tracking_mu_);
@@ -603,7 +611,7 @@ void TrackingService::apply_init_box_if_any() {
     return;
   }
 
-  // Clamp to frame and pick center-nearest bbox.
+  // Clamp to frame and pick the configured init bbox candidate.
   cv::Rect frame_rect(0, 0, static_cast<int>(hdr.width), static_cast<int>(hdr.height));
   const std::optional<cv::Rect> selected = pick_best_bbox(candidates, frame_rect, init_select_mode_);
   if (!selected.has_value()) {
@@ -807,8 +815,12 @@ json TrackingService::describe() {
       state_field("shmName", schema_string(), "rw", "Video SHM", "Optional SHM name override (e.g. shm.xxx.video).",
                   true),
       state_field("initSelect",
-                  schema_string_enum({"closest_center", "largest_area", "highest_score"}, "closest_center"), "rw",
-                  "Init Select", "Init bbox selection strategy: closest_center | largest_area | highest_score.", true),
+                  schema_string_enum({"first_box", "closest_center", "largest_area", "highest_score"}, "closest_center"), "rw",
+                  "Init Select", "Init bbox selection strategy: first_box | closest_center | largest_area | highest_score.", true),
+      state_field("stopTrackingCooldownMs", schema_integer(1000, 0, 60000), "rw", "Stop Cooldown (ms)",
+                  "After stopTracking, ignore initBox for this many ms. Set to 0 to disable.", true),
+      state_field("stopTrackingCooldownUntilTsMs", schema_integer(), "ro", "Stop Cooldown Until (tsMs)",
+                  "When > 0, initBox is ignored until this timestamp (ms).", true),
       state_field("isTracking", schema_boolean(), "ro", "Is Tracking", "True when tracker is running.", true),
       state_field("isNotTracking", schema_boolean(), "ro", "Is Not Tracking", "Negation of isTracking.", true),
       state_field("lastError", schema_string(), "ro", "Last Error", "Last error message.", true),
@@ -827,7 +839,7 @@ json TrackingService::describe() {
           {"valueSchema", init_box_schema},
           {"description",
            "Init payload (single bbox or nested detection tree). Recursively extracts bbox candidates and uses the one "
-           "closest to image center."},
+           "selected by initSelect."},
           {"required", true},
           {"showOnNode", true}},
   });

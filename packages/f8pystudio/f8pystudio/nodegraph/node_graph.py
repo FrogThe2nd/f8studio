@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 from typing import Any
 
 import shortuuid
@@ -12,6 +11,7 @@ from .graph_container_binding import GraphContainerBindingMixin
 from .graph_duplicate_actions import GraphDuplicateActionsMixin
 from .graph_factory_flow import GraphFactoryFlowMixin
 from .graph_identity_actions import GraphIdentityActionsMixin
+from .graph_node_docs_actions import GraphNodeDocsActionsMixin
 from .graph_insert_flow import GraphInsertFlowMixin, GraphInsertRequest, InsertResult
 from .graph_search_actions import GraphSearchActionsMixin
 from .graph_service_reclaim import GraphServiceReclaimMixin
@@ -24,13 +24,13 @@ from ..ui_notifications import show_warning
 
 MISSING_SERVICE_NODE_TYPE = "svc.f8.missing.service"
 MISSING_OPERATOR_NODE_TYPE = "svc.f8.missing.operator"
-logger = logging.getLogger(__name__)
 
 
 class F8StudioGraph(
     GraphVariantActionsMixin,
     GraphIdentityActionsMixin,
     GraphDuplicateActionsMixin,
+    GraphNodeDocsActionsMixin,
     GraphConnectionRulesMixin,
     GraphInsertFlowMixin,
     SessionLayoutCodecMixin,
@@ -66,12 +66,12 @@ class F8StudioGraph(
         self._variant_menu_node_types: set[str] = set()
         self._identity_menu_node_types: set[str] = set()
         self._duplicate_menu_node_types: set[str] = set()
+        self._node_docs_menu_node_types: set[str] = set()
 
         self.property_changed.connect(self._on_property_changed)  # type: ignore[attr-defined]
 
         self._service_bridge: ServiceBridge | None = None
         self._reclaim_timers: dict[str, QtCore.QTimer] = {}
-        self._layout_stabilize_pending = False
 
         self.nodes_deleted.connect(self._on_nodes_deleted)  # type: ignore[attr-defined]
         self.port_connected.connect(self._on_port_connected)  # type: ignore[attr-defined]
@@ -129,32 +129,6 @@ class F8StudioGraph(
     def _on_nodes_moving(self, node_data: Any) -> None:
         _ = node_data
         return
-
-    def _schedule_node_layout_stabilization(self) -> None:
-        if self._layout_stabilize_pending:
-            return
-        self._layout_stabilize_pending = True
-
-        def _run() -> None:
-            self._layout_stabilize_pending = False
-            for node in list(self.all_nodes() or []):
-                view = None
-                try:
-                    view = node.view
-                except (AttributeError, RuntimeError, TypeError):
-                    view = None
-                if view is None:
-                    continue
-                try:
-                    view.draw_node()
-                except Exception:
-                    try:
-                        node_id = str(node.id or "")
-                    except (AttributeError, RuntimeError, TypeError):
-                        node_id = ""
-                    logger.exception("Node layout stabilization draw failed nodeId=%s", node_id)
-
-        QtCore.QTimer.singleShot(0, _run)
 
 
 __all__ = [

@@ -1,6 +1,7 @@
 import asyncio
 import os
 import sys
+import tempfile
 import unittest
 from dataclasses import dataclass
 from typing import Any
@@ -25,9 +26,11 @@ from f8pysdk.service_host import ServiceHost, ServiceHostConfig  # noqa: E402
 from f8pysdk.testing import ServiceBusHarness  # noqa: E402
 
 from f8pyengine.constants import SERVICE_CLASS  # noqa: E402
+from f8pyengine.operators.replayer import ReplayerRuntimeNode  # noqa: E402
 from f8pyengine.operators.state_trigger import StateTriggerRuntimeNode  # noqa: E402
 from f8pyengine.pyengine_node_registry import register_pyengine_specs  # noqa: E402
 from f8pyengine.pyengine_service import PyEngineService  # noqa: E402
+from f8pyengine.recording import FORMAT_VERSION, RecordingHeader, RecordingWriter, TIME_MODE_OFFSET_FROM_PLAY  # noqa: E402
 
 
 def _exec_edge(*, edge_id: str, from_node: str, from_port: str, to_node: str, to_port: str) -> F8Edge:
@@ -73,7 +76,14 @@ class _ProbeExecRuntimeNode(OperatorNode):
 
 
 class StateTriggerTests(unittest.IsolatedAsyncioTestCase):
-    async def _setup_runtime(self) -> tuple[object, PyEngineService, _RuntimeStub]:
+    async def _setup_runtime(
+        self,
+        *,
+        trigger_state_values: dict[str, Any] | None = None,
+        extra_nodes: list[F8RuntimeNode] | None = None,
+        extra_edges: list[F8Edge] | None = None,
+        include_probe: bool = True,
+    ) -> tuple[object, PyEngineService, _RuntimeStub]:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
         reg = RuntimeNodeRegistry.instance()
@@ -97,7 +107,7 @@ class StateTriggerTests(unittest.IsolatedAsyncioTestCase):
             serviceClass=SERVICE_CLASS,
             operatorClass=StateTriggerRuntimeNode.SPEC.operatorClass,
             stateFields=list(StateTriggerRuntimeNode.SPEC.stateFields or []),
-            stateValues={"enabled": True},
+            stateValues={"enabled": True, **dict(trigger_state_values or {})},
             execInPorts=list(StateTriggerRuntimeNode.SPEC.execInPorts or []),
             execOutPorts=list(StateTriggerRuntimeNode.SPEC.execOutPorts or []),
         )
@@ -109,11 +119,13 @@ class StateTriggerTests(unittest.IsolatedAsyncioTestCase):
             execInPorts=["exec"],
             execOutPorts=[],
         )
+        nodes = [state_trigger, *( [probe] if include_probe else [] ), *(list(extra_nodes or []))]
+        edges = [*( [_exec_edge(edge_id="e1", from_node="trigger", from_port="changed", to_node="probe", to_port="exec")] if include_probe else [] ), *(list(extra_edges or []))]
         graph = F8RuntimeGraph(
             graphId="g_state_trigger",
             revision="r1",
-            nodes=[state_trigger, probe],
-            edges=[_exec_edge(edge_id="e1", from_node="trigger", from_port="changed", to_node="probe", to_port="exec")],
+            nodes=nodes,
+            edges=edges,
         )
         await bus.set_rungraph(graph)  # type: ignore[attr-defined]
 
@@ -210,6 +222,80 @@ class StateTriggerTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(node.exec_ids[-1], "30")
         finally:
             await self._teardown_runtime(service, runtime)
+
+    async def test_initial_value_does_not_trigger_by_default(self) -> None:
+        bus, service, runtime = await self._setup_runtime(trigger_state_values={"value": 5})
+        try:
+            await asyncio.sleep(0.2)
+            node = bus.get_node("probe")
+            self.assertIsInstance(node, _ProbeExecRuntimeNode)
+            assert isinstance(node, _ProbeExecRuntimeNode)
+            self.assertEqual(node.calls, 0)
+        finally:
+            await self._teardown_runtime(service, runtime)
+
+    async def test_fire_on_start_emits_once_when_enabled_and_initial_value_present(self) -> None:
+        bus, service, runtime = await self._setup_runtime(trigger_state_values={"value": 5, "fireOnStart": True})
+        try:
+            probe = await self._wait_probe_calls(bus, at_least=1, timeout_s=1.2)
+            self.assertEqual(probe.calls, 1)
+        finally:
+            await self._teardown_runtime(service, runtime)
+
+    async def test_value_change_can_drive_replayer_play(self) -> None:
+        fd, path = tempfile.mkstemp(suffix=".f8rec")
+        os.close(fd)
+        try:
+            writer = RecordingWriter(
+                path,
+                header=RecordingHeader(
+                    format_version=FORMAT_VERSION,
+                    created_ts_ms=1000,
+                    data_ports=("outA",),
+                    state_fields=(),
+                ),
+                append=False,
+            )
+            writer.open()
+            writer.write_data_sample(tick_ts_ms=1000, relative_offset_ms=0, data={"outA": 1})
+            writer.write_data_sample(tick_ts_ms=1500, relative_offset_ms=500, data={"outA": 2})
+            writer.close()
+
+            replayer = F8RuntimeNode(
+                nodeId="rep1",
+                serviceId="svcA",
+                serviceClass=SERVICE_CLASS,
+                operatorClass=ReplayerRuntimeNode.SPEC.operatorClass,
+                stateFields=list(ReplayerRuntimeNode.SPEC.stateFields or []),
+                stateValues={"path": path, "loop": False, "timeMode": TIME_MODE_OFFSET_FROM_PLAY, "playing": False},
+                execInPorts=["play", "pause", "stop"],
+                execOutPorts=["started", "stopped", "looped", "done"],
+                dataInPorts=[],
+                dataOutPorts=list(ReplayerRuntimeNode.SPEC.dataOutPorts or []),
+            )
+
+            bus, service, runtime = await self._setup_runtime(
+                extra_nodes=[replayer],
+                extra_edges=[_exec_edge(edge_id="e2", from_node="trigger", from_port="changed", to_node="rep1", to_port="play")],
+                include_probe=False,
+            )
+            try:
+                await asyncio.sleep(0.05)
+                await bus.publish_state_external("trigger", "value", 1, source="test")  # type: ignore[attr-defined]
+                end = asyncio.get_running_loop().time() + 1.2
+                while asyncio.get_running_loop().time() < end:
+                    playing = (await bus.get_state("rep1", "playing")).value
+                    if bool(playing):
+                        break
+                    await asyncio.sleep(0.01)
+                self.assertTrue(bool((await bus.get_state("rep1", "playing")).value))
+            finally:
+                await self._teardown_runtime(service, runtime)
+        finally:
+            try:
+                os.unlink(path)
+            except FileNotFoundError:
+                pass
 
 
 if __name__ == "__main__":

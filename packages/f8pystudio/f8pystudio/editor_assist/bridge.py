@@ -471,6 +471,9 @@ class PythonEditorAssistBridge(QtCore.QObject):
             offset = int(self._line_offset)
         return max(0, int(editor_line_1based) - 1 + offset)
 
+    def inline_completion_items(self, *, line: int, column: int, request_id: str) -> list[dict[str, Any]]:
+        return self._completion_items(code="", line=int(line), column=int(column), request_id=str(request_id or ""))
+
     def _completion_items(self, *, code: str, line: int, column: int, request_id: str) -> list[dict[str, Any]]:
         self.sync_document(str(code or ""))
         logger.debug("python lsp completion request: id=%s line=%s col=%s", request_id, line, column)

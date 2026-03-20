@@ -28,6 +28,8 @@ int main(int argc, char** argv) {
       "service-id", "Service instance id (required unless --describe)", cxxopts::value<std::string>()->default_value(""))(
       "nats-url", "NATS server URL", cxxopts::value<std::string>()->default_value("nats://127.0.0.1:4222"))(
       "shm-name", "Override SHM name (e.g. shm.xxx.video)", cxxopts::value<std::string>()->default_value(""))(
+      "stop-cooldown-ms", "Cooldown after stopTracking (ignore initBox for N ms)",
+      cxxopts::value<int>()->default_value("1000"))(
       "help", "Show help");
 
   auto result = options.parse(argc, argv);
@@ -65,6 +67,7 @@ int main(int argc, char** argv) {
   cfg.service_id = service_id;
   cfg.nats_url = result["nats-url"].as<std::string>();
   cfg.shm_name = result["shm-name"].as<std::string>();
+  cfg.stop_tracking_cooldown_ms = result["stop-cooldown-ms"].as<int>();
 
   f8::cvkit::tracking::TrackingService svc(cfg);
   if (!svc.start()) {

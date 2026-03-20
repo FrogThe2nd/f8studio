@@ -272,26 +272,6 @@ SerialOutRuntimeNode.SPEC = F8OperatorSpec(
             required=True,
             showOnNode=False,
         ),
-        # Back-compat for saved sessions: these fields used to exist and may appear
-        # in serialized node properties. They are intentionally ignored by runtime.
-        F8StateSpec(
-            name="encoding",
-            label="Encoding (deprecated)",
-            description="Deprecated. Serial Out always encodes as ASCII for TCode devices.",
-            valueSchema=string_schema(default="ascii"),
-            access=F8StateAccess.rw,
-            required=True,
-            showOnNode=False,
-        ),
-        F8StateSpec(
-            name="newline",
-            label="Newline (deprecated)",
-            description="Deprecated. Provide newline in the input payload if needed.",
-            valueSchema=string_schema(default=""),
-            access=F8StateAccess.rw,
-            required=True,
-            showOnNode=False,
-        ),
     ],
 )
 
@@ -305,4 +285,3 @@ def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNod
     reg.register(SERVICE_CLASS, OPERATOR_CLASS, _factory, overwrite=True)
     reg.register_operator_spec(SerialOutRuntimeNode.SPEC, overwrite=True)
     return reg
-

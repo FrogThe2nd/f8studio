@@ -8,7 +8,27 @@ Standalone python script runtime service with lifecycle/tick/command hooks.
 - Source directory: `f8/pyscript`
 - Tags: `python`, `script`, `service`
 
-## How to Run
+## When to Use
+
+- Use `f8.pyscript` when you need to run custom Python logic as a standalone, persistent service with its own lifecycle, ports, and state.
+- It is the most flexible integration point for the Feel8 platform, allowing you to bridge between external APIs, manage complex multi-node orchestration, or implement logic that requires persistent internal state.
+- Choose this when `PyEngine` operators are too fine-grained and `PyExpr` is too simple for your requirements.
+
+## Common Wiring Patterns
+
+- **Integration Bridge**: Use it to listen to data ports, process them through high-level libraries (like OpenCV or custom ML models), and then emit new data or command signals.
+- **Scenario Orchestrator**: Write a script that monitors global graph health (via `monitor` ports) and automatically restarts or reconfigures other services when specific conditions are met.
+- **Declarative Schema**: Define your script's input/output ports and state fields in its configuration to ensure Studio can provide autocomplete and visualization for its connections.
+
+## Pitfalls / Gotchas
+
+- **Blocking the Loop**: Like all Python services, a long-running calculation or a synchronous network request in the main thread will block your service's data processing. Use the `asyncio` loop or background threads for IO-heavy operations.
+- **Opaque Logic**: Scripts that grow too large can become "black boxes" that are hard for others to understand or debug. Consider breaking very complex scripts into smaller `f8.pyengine` operators if the logic is reusable.
+- **Input Error Handling**: Scripts often fail silently or crash when receiving unexpected data types. Always include robust `try/except` blocks at your data entry points to log errors without stopping the service.
+
+## Service Reference
+
+### How to Run
 
 ```bash
 pixi run f8pyscript
@@ -17,7 +37,13 @@ pixi run f8pyscript
 - Workdir: `../../../`
 - Environment overrides: none
 
-## Service State Fields
+### Typical Inputs / Outputs
+
+- Data inputs: `in`
+- Data outputs: `out`, `monitor`
+- Commands: `grant_local_exec`, `revoke_local_exec`
+
+### Service State Fields
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
@@ -28,57 +54,7 @@ pixi run f8pyscript
 | `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 
-## Service Commands
-
-### `grant_local_exec`
-Grant local execution for this script session.
-
-- Show on node: `true`
-
-| Param | Required | Schema | Description |
-| --- | --- | --- | --- |
-| `ttlMs` | `false` | `integer / default=60000` | Optional grant TTL in milliseconds. |
-
-### `revoke_local_exec`
-Revoke local execution grant.
-
-- Show on node: `true`
-- Params: none
-
-## Service Data Input Ports
-
-| Name | Required | On Node | Schema | Description |
-| --- | --- | --- | --- | --- |
-| `in` | `false` | `true` | `any` | Default data input |
-
-## Service Data Output Ports
-
-| Name | Required | On Node | Schema | Description |
-| --- | --- | --- | --- | --- |
-| `out` | `false` | `true` | `any` | Default data output |
-| `monitor` | `true` | `false` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
-
-## Operators
-
-_None_
-
-## When to Use
-
-- Use `f8.pyscript` when a graph needs custom lifecycle hooks or bespoke glue logic as a standalone service.
-- It is the most flexible service-level integration point in the repo.
-
-## Typical Inputs / Outputs
-
-- Data inputs: `in`
-- Data outputs: `out`, `monitor`
-- Commands: `grant_local_exec`, `revoke_local_exec`
-
-## Common Wiring Patterns
-
-- Use it for orchestration, protocol glue, or custom data shaping that does not fit cleanly into declarative service config.
-- Keep its state/port schema explicit so Studio tooling and future readers still understand the contract.
-
-## Key Fields That Matter
+### Key Fields That Matter
 
 - `code` (Code, `rw`): Python source code. Schema: `string / default=# Hooks template (uncomment what you need):
 # - onStart(ctx)
@@ -158,10 +134,39 @@ def onStart(ctx: 'F8PyScriptContext') -> None:
 - `active` (Active, `rw`): Service lifecycle state (activate/deactivate). Schema: `boolean / default=True`.
 - `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
 
-## Pitfalls / Gotchas
+### Service Commands
 
-- Poorly scoped scripts become opaque mini-applications and are hard to debug during release prep.
-- Silent assumptions about input shape or timing are more dangerous here than in declarative nodes.
+### `grant_local_exec`
+Grant local execution for this script session.
+
+- Show on node: `true`
+
+| Param | Required | Schema | Description |
+| --- | --- | --- | --- |
+| `ttlMs` | `false` | `integer / default=60000` | Optional grant TTL in milliseconds. |
+
+### `revoke_local_exec`
+Revoke local execution grant.
+
+- Show on node: `true`
+- Params: none
+
+### Service Data Input Ports
+
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `in` | `false` | `true` | `any` | Default data input |
+
+### Service Data Output Ports
+
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `out` | `false` | `true` | `any` | Default data output |
+| `monitor` | `true` | `false` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
+
+## Operators
+
+_None_
 
 ## Related Scenarios
 

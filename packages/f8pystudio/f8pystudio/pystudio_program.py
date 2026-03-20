@@ -162,8 +162,10 @@ class PyStudioProgram:
 
     def run(self) -> int:
         # Local import: keep `--describe` fast and avoid importing Qt at module import time.
-        from qtpy import QtGui, QtWidgets
+        from qtpy import QtCore, QtGui, QtWidgets
 
+        from .qt_font_utils import normalize_application_font
+        from .webengine_utils import configure_default_webengine_profile
         from .widgets.main_window import F8StudioMainWin
 
         manifests = self._load_plugin_manifests()
@@ -177,7 +179,16 @@ class PyStudioProgram:
 
         node_classes = self.build_node_classes()
 
+        try:
+            QtCore.QCoreApplication.setAttribute(QtCore.Qt.AA_ShareOpenGLContexts, True)  # type: ignore[attr-defined]
+        except Exception:
+            pass
+
         app = QtWidgets.QApplication([])
+        app.setOrganizationName("Feel8")
+        app.setApplicationName("F8PyStudio")
+        normalize_application_font(app)
+        configure_default_webengine_profile()
         icon_path = self._studio_icon_path()
         if icon_path is not None:
             app_icon = QtGui.QIcon(str(icon_path))

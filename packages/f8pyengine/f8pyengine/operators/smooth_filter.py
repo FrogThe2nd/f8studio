@@ -330,6 +330,7 @@ SmoothFilterRuntimeNode.SPEC = F8OperatorSpec(
             valueSchema=number_schema(default=0.4, minimum=0.0, maximum=1.0),
             access=F8StateAccess.rw,
             required=True,
+            uiControl="slider",
             showOnNode=True,
         ),
         F8StateSpec(
@@ -339,7 +340,8 @@ SmoothFilterRuntimeNode.SPEC = F8OperatorSpec(
             valueSchema=number_schema(default=0.4, minimum=0.0, maximum=1.0),
             access=F8StateAccess.rw,
             required=True,
-            showOnNode=True,
+            uiControl="slider",
+            showOnNode=False,
         ),
         F8StateSpec(
             name="one_euro_min_cutoff",
@@ -348,7 +350,8 @@ SmoothFilterRuntimeNode.SPEC = F8OperatorSpec(
             valueSchema=number_schema(default=1.5, minimum=0.01, maximum=10.0),
             access=F8StateAccess.rw,
             required=True,
-            showOnNode=True,
+            uiControl="slider",
+            showOnNode=False,
         ),
         F8StateSpec(
             name="one_euro_beta",
@@ -357,7 +360,8 @@ SmoothFilterRuntimeNode.SPEC = F8OperatorSpec(
             valueSchema=number_schema(default=0.0, minimum=0.0, maximum=5.0),
             access=F8StateAccess.rw,
             required=True,
-            showOnNode=True,
+            uiControl="slider",
+            showOnNode=False,
         ),
         F8StateSpec(
             name="one_euro_derivative_cutoff",
@@ -366,7 +370,8 @@ SmoothFilterRuntimeNode.SPEC = F8OperatorSpec(
             valueSchema=number_schema(default=1.0, minimum=0.01, maximum=10.0),
             access=F8StateAccess.rw,
             required=True,
-            showOnNode=True,
+            uiControl="slider",
+            showOnNode=False,
         ),
         F8StateSpec(
             name="one_euro_default_freq",
@@ -375,7 +380,8 @@ SmoothFilterRuntimeNode.SPEC = F8OperatorSpec(
             valueSchema=number_schema(default=90.0, minimum=1.0, maximum=240.0),
             access=F8StateAccess.rw,
             required=True,
-            showOnNode=True,
+            uiControl="slider",
+            showOnNode=False,
         ),
     ],
 )

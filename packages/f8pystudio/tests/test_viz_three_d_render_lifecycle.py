@@ -6,6 +6,7 @@ from typing import Any
 from qtpy import QtWidgets
 
 from f8pystudio.render_nodes.viz_three_d import _Skeleton3DViewerWindow, VizThreeDRenderNode
+from f8pystudio.ui_bus import UiCommand
 
 
 def _ensure_app() -> QtWidgets.QApplication:
@@ -47,9 +48,13 @@ class _FakePage:
     def __init__(self) -> None:
         self.renderProcessTerminated = _FakeSignal()
         self.scripts: list[str] = []
+        self.background_color: object | None = None
 
     def runJavaScript(self, script: str) -> None:
         self.scripts.append(str(script or ""))
+
+    def setBackgroundColor(self, color: object) -> None:
+        self.background_color = color
 
 
 class _FakeWebView(QtWidgets.QWidget):
@@ -95,7 +100,7 @@ def _new_window() -> tuple[_Skeleton3DViewerWindow, list[bool], list[str]]:
     return window, open_states, statuses
 
 
-def test_viewer_close_releases_web_view_and_next_open_recreates() -> None:
+def test_viewer_close_keeps_web_view_and_next_open_reuses_it() -> None:
     _ensure_app()
     window, open_states, _statuses = _new_window()
     first = _FakeWebView(window)
@@ -107,13 +112,34 @@ def test_viewer_close_releases_web_view_and_next_open_recreates() -> None:
     assert window._view is first
 
     window.close()
-    assert window._view is None
-    assert first.stopped is True
-    assert first.deleted is True
+    assert window._view is first
+    assert first.stopped is False
+    assert first.deleted is False
 
     window.open_viewer()
-    assert window._view is second
+    assert window._view is first
+    assert pool == [second]
     assert open_states == [True, False, True]
+
+
+def test_viewer_configures_webengine_profile_before_creating_web_view(monkeypatch) -> None:
+    _ensure_app()
+    window, _open_states, _statuses = _new_window()
+    calls: list[str] = []
+
+    def _configure() -> None:
+        calls.append("configure")
+
+    def _create() -> _FakeWebView:
+        calls.append("create")
+        return _FakeWebView(window)
+
+    monkeypatch.setattr("f8pystudio.render_nodes.viz_three_d.configure_default_webengine_profile", _configure)
+    window._create_web_view = _create  # type: ignore[method-assign]
+
+    window.open_viewer()
+
+    assert calls[:2] == ["configure", "create"]
 
 
 def test_render_process_termination_reports_status_and_releases_view(caplog) -> None:
@@ -136,12 +162,16 @@ class _FakePresenter:
     def __init__(self) -> None:
         self.detach_calls = 0
         self.detach_viewer_calls = 0
+        self.world_up_values: list[str] = []
 
     def on_detach(self) -> None:
         self.detach_calls += 1
 
     def detach_viewer(self) -> None:
         self.detach_viewer_calls += 1
+
+    def on_set_world_up(self, world_up: str) -> None:
+        self.world_up_values.append(str(world_up))
 
 
 class _FakeViewerWindow:
@@ -166,3 +196,21 @@ def test_render_node_graph_teardown_is_idempotent() -> None:
     assert node._presenter.detach_viewer_calls == 2
     assert unbind_calls == ["unbind", "unbind"]
     assert node._viewer_window is None
+
+
+def test_render_node_world_up_command_applies_without_reopen() -> None:
+    node = VizThreeDRenderNode.__new__(VizThreeDRenderNode)
+    node._presenter = _FakePresenter()
+    node._viewer_window = None
+    node._get_widget = lambda: None  # type: ignore[method-assign]
+
+    node.apply_ui_command(
+        UiCommand(
+            node_id="viz3d1",
+            command="viz.three_d.world_up",
+            payload={"worldUp": "+z"},
+            ts_ms=123,
+        )
+    )
+
+    assert node._presenter.world_up_values == ["+z"]

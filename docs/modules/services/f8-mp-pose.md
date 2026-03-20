@@ -8,7 +8,27 @@ MediaPipe single-person pose extraction service (33 landmarks).
 - Source directory: `f8/mp/pose`
 - Tags: `mediapipe`, `vision`, `human`, `pose`
 
-## How to Run
+## When to Use
+
+- Use `f8.mp.pose` when your graph needs real-time, lightweight 2D or 3D body pose estimation from a video stream.
+- It is the ideal choice for human-machine interaction, gesture recognition, and skeleton-driven animation authoring within the Feel8 ecosystem.
+- Choose this for rapid prototyping and scenarios where a general-purpose, high-performance pose model is preferred over training custom networks.
+
+## Common Wiring Patterns
+
+- **Skeleton Mapping**: Feed video from `f8.implayer` or `f8.screencap`, then connect the `skeleton` output to `f8.pyengine` operators for bone angle calculation or joint-to-control mapping.
+- **3D Inspection**: Connect the 3D landmark output to `f8.viz.three_d` to visualize the estimated body posture in a 3D space directly within Studio.
+- **Feedback Loop**: Keep the original video path visible in a `f8.viz.video` node with skeleton overlays matched to the source frames to diagnose tracking accuracy.
+
+## Pitfalls / Gotchas
+
+- **Framing & Occulusion**: Pose accuracy is highly dependent on the subject being clearly visible. Partial occlusions (e.g., sitting behind a desk) or extreme camera angles can cause joints to "flicker" or be misidentified.
+- **Distance & Scale**: The subject should ideally fill a significant portion of the frame. Small subjects (far away) or very low-resolution video will result in jittery tracking.
+- **Lighting Dependency**: While MediaPipe is robust, extreme darkness or strong backlighting can confuse the initial body detection, leading to no skeleton being produced even if a person is present.
+
+## Service Reference
+
+### How to Run
 
 ```bash
 pixi run f8pymppose
@@ -17,7 +37,13 @@ pixi run f8pymppose
 - Workdir: `../../../../`
 - Environment overrides: none
 
-## Service State Fields
+### Typical Inputs / Outputs
+
+- Data inputs: none
+- Data outputs: `detections`, `skeletons`, `monitor`
+- Commands: none
+
+### Service State Fields
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
@@ -31,43 +57,7 @@ pixi run f8pymppose
 | `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 
-## Service Commands
-
-_None_
-
-## Service Data Input Ports
-
-_None_
-
-## Service Data Output Ports
-
-| Name | Required | On Node | Schema | Description |
-| --- | --- | --- | --- | --- |
-| `detections` | `true` | `true` | `object{detections, frameId, height, model, ...}` | Detection output in schema f8visionDetections/1. |
-| `skeletons` | `true` | `true` | `array[object]` | List of UDP-skeleton-compatible JSON payloads for skeleton3d. |
-| `monitor` | `true` | `false` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
-
-## Operators
-
-_None_
-
-## When to Use
-
-- Use `f8.mp.pose` when a graph needs lightweight body pose estimation from a video stream.
-- It is a practical choice for skeleton-driven demos and authoring workflows before adopting heavier custom models.
-
-## Typical Inputs / Outputs
-
-- Data inputs: none
-- Data outputs: `detections`, `skeletons`, `monitor`
-- Commands: none
-
-## Common Wiring Patterns
-
-- Feed it from `f8.implayer` or `f8.screencap`, then inspect outputs with `f8.viz.three_d` or `f8.pyengine` bone-processing operators.
-- Keep the original video path visible during tuning so pose failures are easier to diagnose.
-
-## Key Fields That Matter
+### Key Fields That Matter
 
 - `shmName` (Video SHM, `rw`): Video SHM mapping name (e.g. shm.implayer.video). Schema: `string / default=`.
 - `inferEveryN` (Infer Every N Frames, `rw`): Run pose inference every N frames (>=1). Schema: `integer / default=1`.
@@ -78,10 +68,25 @@ _None_
 - `lastError` (Last Error, `ro`): Last runtime error string (best-effort). Schema: `string / default=`.
 - `active` (Active, `rw`): Service lifecycle state (activate/deactivate). Schema: `boolean / default=True`.
 
-## Pitfalls / Gotchas
+### Service Commands
 
-- Pose quality is strongly tied to framing, subject scale, and source quality.
-- Downstream graphs should not assume a stable skeleton until the pose stream itself is visually validated.
+_None_
+
+### Service Data Input Ports
+
+_None_
+
+### Service Data Output Ports
+
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `detections` | `true` | `true` | `object{detections, frameId, height, model, ...}` | Detection output in schema f8visionDetections/1. |
+| `skeletons` | `true` | `true` | `array[object]` | List of UDP-skeleton-compatible JSON payloads for skeleton3d. |
+| `monitor` | `true` | `false` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
+
+## Operators
+
+_None_
 
 ## Related Scenarios
 

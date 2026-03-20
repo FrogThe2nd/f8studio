@@ -11,41 +11,19 @@ from NodeGraphQt.nodes.base_node import NodeBaseWidget
 from ..nodegraph.operator_basenode import F8StudioOperatorBaseNode
 from ..nodegraph.viz_operator_nodeitem import F8StudioVizOperatorNodeItem
 from ..ui_bus import UiCommand
+from ..webengine_utils import (
+    configure_default_webengine_profile,
+    set_webengine_view_background,
+    webengine_termination_status_text,
+)
 
 logger = logging.getLogger(__name__)
-_WEBENGINE_PROFILE_CONFIGURED = False
-
-
-def _configure_default_webengine_profile() -> None:
-    global _WEBENGINE_PROFILE_CONFIGURED
-    if _WEBENGINE_PROFILE_CONFIGURED:
-        return
-    try:
-        from PySide6 import QtWebEngineCore  # type: ignore[import-not-found]
-    except ImportError:
-        logger.exception("failed to import QtWebEngineCore for cache configuration")
-        return
-
-    app_data_dir = QtCore.QStandardPaths.writableLocation(QtCore.QStandardPaths.AppDataLocation)
-    if not app_data_dir:
-        logger.error("Qt AppDataLocation is unavailable; web cache path is not configured")
-        return
-
-    cache_dir = Path(app_data_dir) / "webengine_cache"
-    storage_dir = Path(app_data_dir) / "webengine_storage"
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    storage_dir.mkdir(parents=True, exist_ok=True)
-
-    profile = QtWebEngineCore.QWebEngineProfile.defaultProfile()
-    profile.setHttpCacheType(QtWebEngineCore.QWebEngineProfile.DiskHttpCache)
-    profile.setCachePath(str(cache_dir))
-    profile.setPersistentStoragePath(str(storage_dir))
-    profile.setPersistentCookiesPolicy(QtWebEngineCore.QWebEngineProfile.ForcePersistentCookies)
-    _WEBENGINE_PROFILE_CONFIGURED = True
 
 
 class _ViewerHandle(Protocol):
     def apply_scene(self, payload: dict[str, Any]) -> None: ...
+
+    def apply_world_up(self, world_up: str) -> None: ...
 
     def detach_scene(self) -> None: ...
 
@@ -98,6 +76,19 @@ class _Skeleton3DPresenter:
             return
         viewer.apply_scene(payload)
 
+    def on_set_world_up(self, world_up: str) -> None:
+        payload = self.latest_payload
+        if payload is not None:
+            next_payload = dict(payload)
+            next_payload["worldUp"] = str(world_up or "")
+            self.latest_payload = next_payload
+        if not self.viewer_open:
+            return
+        viewer = self._viewer
+        if viewer is None:
+            return
+        viewer.apply_world_up(str(world_up or ""))
+
     def on_detach(self) -> None:
         self.latest_payload = None
         viewer = self._viewer
@@ -115,7 +106,7 @@ class _Skeleton3DViewerWindow(QtWidgets.QDialog):
     ) -> None:
         super().__init__(parent=None)
         self.setWindowTitle("Skeleton3D Viewer")
-        self.resize(1200, 760)
+        self.resize(300, 300)
 
         self._on_open_state_changed = on_open_state_changed
         self._on_viewer_status_changed = on_viewer_status_changed
@@ -155,18 +146,20 @@ class _Skeleton3DViewerWindow(QtWidgets.QDialog):
             self._on_viewer_status_changed("QtWebEngine unavailable")
             logger.exception("failed to import QtWebEngineWidgets for Skeleton3D viewer")
             return None
+        configure_default_webengine_profile()
         return QtWebEngineWidgets.QWebEngineView(self)
 
     def _ensure_web_view(self) -> bool:
         if self._view is not None:
             return True
+        configure_default_webengine_profile()
         view = self._create_web_view()
         if view is None:
             self._show_fallback("QtWebEngine is not available")
             return False
+        set_webengine_view_background(view, "#0f0f12")
         self._hide_fallback()
         self._view = view
-        _configure_default_webengine_profile()
         view.setContextMenuPolicy(QtCore.Qt.NoContextMenu)
         self._enable_remote_asset_access()
         view.loadFinished.connect(self._on_page_loaded)  # type: ignore[attr-defined]
@@ -215,9 +208,10 @@ class _Skeleton3DViewerWindow(QtWidgets.QDialog):
         self._pending_payload = None
         if pending is not None and self._is_open:
             self._run_set_data(pending)
+        self.set_running(self._is_open)
 
     def _on_render_process_terminated(self, termination_status: Any, exit_code: int) -> None:
-        status_text = self._termination_status_text(termination_status)
+        status_text = webengine_termination_status_text(termination_status)
         logger.error(
             "Skeleton3D render process terminated status=%s exitCode=%s",
             status_text,
@@ -233,19 +227,7 @@ class _Skeleton3DViewerWindow(QtWidgets.QDialog):
 
     @staticmethod
     def _termination_status_text(termination_status: Any) -> str:
-        try:
-            status_value = int(termination_status)
-        except (TypeError, ValueError):
-            return str(termination_status or "unknown")
-        if status_value == 0:
-            return "normal"
-        if status_value == 1:
-            return "abnormal"
-        if status_value == 2:
-            return "crashed"
-        if status_value == 3:
-            return "killed"
-        return f"unknown({status_value})"
+        return webengine_termination_status_text(termination_status)
 
     def open_viewer(self) -> None:
         if not self._ensure_web_view():
@@ -257,14 +239,16 @@ class _Skeleton3DViewerWindow(QtWidgets.QDialog):
         if self._is_open:
             return
         self._is_open = True
+        self.set_running(True)
         self._on_open_state_changed(True)
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
         if self._is_open:
             self._is_open = False
+            self.set_running(False)
             self._on_open_state_changed(False)
         self._pending_payload = None
-        self._release_web_view(reason="window_close")
+        # Keep web view alive between shows to avoid expensive/unstable recreation
         self._on_viewer_status_changed("closed")
         super().closeEvent(event)
 
@@ -387,6 +371,39 @@ class _Skeleton3DViewerWindow(QtWidgets.QDialog):
             page.runJavaScript(script)
         except (AttributeError, RuntimeError, TypeError):
             logger.exception("failed to run Skeleton3D detach javascript")
+
+    def apply_world_up(self, world_up: str) -> None:
+        if not self._is_open:
+            return
+        if self._view is None:
+            return
+        if not self._page_ready:
+            pending = dict(self._pending_payload or {})
+            pending["worldUp"] = str(world_up or "")
+            self._pending_payload = pending
+            return
+        world_up_json = json.dumps(str(world_up or ""), ensure_ascii=False)
+        script = (
+            "if (window.Skeleton3DViewer && window.Skeleton3DViewer.setWorldUp) {"
+            f"window.Skeleton3DViewer.setWorldUp({world_up_json});"
+            "}"
+        )
+        page = self._view.page()
+        if page is None:
+            return
+        try:
+            page.runJavaScript(script)
+        except (AttributeError, RuntimeError, TypeError):
+            logger.exception("failed to run Skeleton3D setWorldUp javascript")
+
+    def set_running(self, running: bool) -> None:
+        if self._view is None:
+            return
+        arg = "true" if running else "false"
+        script = f"if (window.Skeleton3DViewer && window.Skeleton3DViewer.setRunning) {{ window.Skeleton3DViewer.setRunning({arg}); }}"
+        page = self._view.page()
+        if page is not None:
+            page.runJavaScript(script)
 
 
 class _Skeleton3DControlPane(QtWidgets.QWidget):
@@ -573,7 +590,7 @@ class VizThreeDRenderNode(F8StudioOperatorBaseNode):
 
     def apply_ui_command(self, cmd: UiCommand) -> None:
         command = str(cmd.command or "").strip()
-        if command not in ("viz.three_d.set", "viz.three_d.detach"):
+        if command not in ("viz.three_d.set", "viz.three_d.detach", "viz.three_d.world_up"):
             return
 
         if command == "viz.three_d.detach":
@@ -581,6 +598,18 @@ class VizThreeDRenderNode(F8StudioOperatorBaseNode):
             widget = self._get_widget()
             if widget is not None:
                 widget.set_people_count(0)
+            return
+
+        if command == "viz.three_d.world_up":
+            payload_any = cmd.payload or {}
+            try:
+                payload = dict(payload_any)
+            except (AttributeError, TypeError, ValueError):
+                return
+            world_up = str(payload.get("worldUp") or "").strip()
+            if not world_up:
+                return
+            self._presenter.on_set_world_up(world_up)
             return
 
         try:

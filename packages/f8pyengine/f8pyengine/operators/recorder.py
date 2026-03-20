@@ -1,0 +1,338 @@
+from __future__ import annotations
+
+from pathlib import Path
+import logging
+import time
+from typing import Any, Final
+
+from f8pysdk import (
+    F8OperatorSchemaVersion,
+    F8OperatorSpec,
+    F8RuntimeNode,
+    F8StateAccess,
+    F8StateSpec,
+    boolean_schema,
+    integer_schema,
+    string_schema,
+)
+from f8pysdk.builtin_state_fields import OPERATOR_ID_FIELD_NAME, SVC_ID_FIELD_NAME
+from f8pysdk.nats_naming import ensure_token
+from f8pysdk.runtime_node import OperatorNode
+from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
+
+from ..constants import SERVICE_CLASS
+from ..recording import FORMAT_VERSION, RecordingHeader, RecordingReader, RecordingWriter
+
+OPERATOR_CLASS: Final[str] = "f8.recorder"
+
+logger = logging.getLogger(__name__)
+
+_CONTROL_STATE_NAMES = {
+    "path",
+    "enabled",
+    "append",
+    "recording",
+    "sessionStartTsMs",
+    "sampleCount",
+    "stateEventCount",
+    "lastError",
+    SVC_ID_FIELD_NAME,
+    OPERATOR_ID_FIELD_NAME,
+}
+
+
+def _coerce_bool(value: Any, *, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    text = str(value or "").strip().lower()
+    if text in ("1", "true", "yes", "on"):
+        return True
+    if text in ("0", "false", "no", "off", ""):
+        return False
+    return bool(default)
+
+
+class RecorderRuntimeNode(OperatorNode):
+    def __init__(self, *, node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any] | None = None) -> None:
+        super().__init__(
+            node_id=ensure_token(node_id, label="node_id"),
+            data_in_ports=[str(p.name) for p in (node.dataInPorts or [])],
+            data_out_ports=[str(p.name) for p in (node.dataOutPorts or [])],
+            state_fields=[str(s.name) for s in (node.stateFields or [])],
+            exec_in_ports=[str(p) for p in (node.execInPorts or [])],
+            exec_out_ports=[str(p) for p in (node.execOutPorts or [])],
+        )
+        self._initial_state = dict(initial_state or {})
+        self._path = str(self._initial_state.get("path") or "").strip()
+        self._enabled = _coerce_bool(self._initial_state.get("enabled"), default=True)
+        self._append = _coerce_bool(self._initial_state.get("append"), default=True)
+        self._writer: RecordingWriter | None = None
+        self._writer_path = ""
+        self._session_start_ts_ms: int | None = None
+        self._sample_count = 0
+        self._state_event_count = 0
+        self._user_state_names = tuple(
+            name for name in self.state_fields if str(name).strip() and str(name) not in _CONTROL_STATE_NAMES
+        )
+
+    async def close(self) -> None:
+        self._close_writer()
+
+    async def on_exec(self, exec_id: str | int, _in_port: str | None = None) -> list[str]:
+        ts_ms = _coerce_ts_ms(exec_id)
+        await self._record_tick(ts_ms=ts_ms)
+        return []
+
+    async def on_state(self, field: str, value: Any, *, ts_ms: int | None = None) -> None:
+        name = str(field or "").strip()
+        if name == "path":
+            self._path = str(value or "").strip()
+            self._close_writer()
+            return
+        if name == "enabled":
+            self._enabled = _coerce_bool(value, default=self._enabled)
+            if not self._enabled:
+                self._close_writer()
+                await self._safe_set_state("recording", False)
+            return
+        if name == "append":
+            self._append = _coerce_bool(value, default=self._append)
+            self._close_writer()
+            return
+        if name not in self._user_state_names:
+            return
+        if not self._enabled:
+            return
+        event_ts_ms = int(ts_ms if ts_ms is not None else now_ms())
+        try:
+            writer = self._ensure_writer(start_ts_ms=event_ts_ms)
+            relative_offset_ms = max(0, int(event_ts_ms - self._session_start_ts_ms_or_now(event_ts_ms)))
+            writer.write_state_change(
+                state_ts_ms=event_ts_ms,
+                relative_offset_ms=relative_offset_ms,
+                field=name,
+                value=value,
+            )
+            self._state_event_count += 1
+            await self._publish_counters()
+        except Exception as exc:
+            logger.exception("[%s:recorder] failed to record state change: %s", self.node_id, name)
+            await self._set_last_error(str(exc))
+
+    async def validate_state(self, field: str, value: Any, *, ts_ms: int, meta: dict[str, Any]) -> Any:
+        del ts_ms, meta
+        name = str(field or "").strip()
+        if name in ("enabled", "append"):
+            return _coerce_bool(value, default=(name == "enabled"))
+        if name == "path":
+            return str(value or "").strip()
+        return value
+
+    def _header(self, *, start_ts_ms: int) -> RecordingHeader:
+        data_ports = tuple(str(name) for name in self.data_in_ports if str(name).strip())
+        state_fields = tuple(str(name) for name in self._user_state_names if str(name).strip())
+        return RecordingHeader(
+            format_version=FORMAT_VERSION,
+            created_ts_ms=int(start_ts_ms),
+            data_ports=data_ports,
+            state_fields=state_fields,
+        )
+
+    def _ensure_writer(self, *, start_ts_ms: int) -> RecordingWriter:
+        path = str(self._path or "").strip()
+        if not path:
+            raise ValueError("path is required")
+        if self._writer is not None and self._writer_path == path:
+            return self._writer
+
+        self._close_writer()
+        header = self._header(start_ts_ms=start_ts_ms)
+        path_obj = Path(path)
+        if self._append and path_obj.exists() and path_obj.stat().st_size > 0:
+            existing_header = RecordingReader(path).read_header()
+            if (
+                int(existing_header.format_version) != int(header.format_version)
+                or tuple(existing_header.data_ports) != tuple(header.data_ports)
+                or tuple(existing_header.state_fields) != tuple(header.state_fields)
+            ):
+                raise ValueError("append recording header mismatch")
+            self._session_start_ts_ms = int(existing_header.created_ts_ms)
+        else:
+            self._session_start_ts_ms = int(start_ts_ms)
+
+        writer = RecordingWriter(path, header=header, append=self._append)
+        writer.open()
+        self._writer = writer
+        self._writer_path = path
+        return writer
+
+    async def _record_tick(self, *, ts_ms: int) -> None:
+        if not self._enabled:
+            return
+        try:
+            writer = self._ensure_writer(start_ts_ms=ts_ms)
+            data: dict[str, Any] = {}
+            for port in self.data_in_ports:
+                data[str(port)] = await self.pull(str(port), ctx_id=ts_ms)
+            relative_offset_ms = max(0, int(ts_ms - self._session_start_ts_ms_or_now(ts_ms)))
+            writer.write_data_sample(
+                tick_ts_ms=ts_ms,
+                relative_offset_ms=relative_offset_ms,
+                data=data,
+            )
+            self._sample_count += 1
+            await self._publish_counters()
+        except Exception as exc:
+            logger.exception("[%s:recorder] failed to record sample", self.node_id)
+            await self._set_last_error(str(exc))
+
+    async def _publish_counters(self) -> None:
+        await self._safe_set_state("recording", self._writer is not None)
+        await self._safe_set_state("sessionStartTsMs", int(self._session_start_ts_ms_or_now(now_ms())))
+        await self._safe_set_state("sampleCount", int(self._sample_count))
+        await self._safe_set_state("stateEventCount", int(self._state_event_count))
+        await self._safe_set_state("lastError", "")
+
+    async def _set_last_error(self, message: str) -> None:
+        self._close_writer()
+        await self._safe_set_state("recording", False)
+        await self._safe_set_state("lastError", str(message))
+
+    async def _safe_set_state(self, field: str, value: Any) -> None:
+        try:
+            await self.set_state(field, value)
+        except Exception:
+            logger.exception("[%s:recorder] failed to publish state: %s", self.node_id, field)
+
+    def _session_start_ts_ms_or_now(self, fallback: int) -> int:
+        if self._session_start_ts_ms is not None:
+            return int(self._session_start_ts_ms)
+        return int(fallback)
+
+    def _close_writer(self) -> None:
+        writer = self._writer
+        self._writer = None
+        self._writer_path = ""
+        if writer is not None:
+            writer.close()
+
+
+def _coerce_ts_ms(exec_id: str | int) -> int:
+    if isinstance(exec_id, int):
+        return int(exec_id)
+    text = str(exec_id or "").strip()
+    try:
+        return int(text)
+    except ValueError:
+        return now_ms()
+
+
+def now_ms() -> int:
+    return int(time.time() * 1000.0)
+
+
+RecorderRuntimeNode.SPEC = F8OperatorSpec(
+    schemaVersion=F8OperatorSchemaVersion.f8operator_1,
+    serviceClass=SERVICE_CLASS,
+    operatorClass=OPERATOR_CLASS,
+    version="0.0.1",
+    label="Recorder",
+    description="Tick-driven debug recorder that captures data samples and sparse state changes.",
+    tags=["record", "replay", "debug", "capture"],
+    execInPorts=["record"],
+    execOutPorts=[],
+    dataInPorts=[],
+    dataOutPorts=[],
+    editableDataInPorts=True,
+    editableDataOutPorts=False,
+    editableExecInPorts=False,
+    editableExecOutPorts=False,
+    editableStateFields=True,
+    stateFields=[
+        F8StateSpec(
+            name="path",
+            label="Path",
+            description="Recording output path.",
+            valueSchema=string_schema(),
+            access=F8StateAccess.rw,
+            required=True,
+            showOnNode=True,
+        ),
+        F8StateSpec(
+            name="enabled",
+            label="Enabled",
+            description="When enabled, incoming exec ticks are recorded.",
+            valueSchema=boolean_schema(default=True),
+            access=F8StateAccess.rw,
+            required=True,
+            showOnNode=True,
+        ),
+        F8StateSpec(
+            name="append",
+            label="Append",
+            description="Append to an existing compatible recording file.",
+            valueSchema=boolean_schema(default=True),
+            access=F8StateAccess.rw,
+            required=True,
+            showOnNode=True,
+        ),
+        F8StateSpec(
+            name="recording",
+            label="Recording",
+            description="Readonly flag indicating whether the file is open and writable.",
+            valueSchema=boolean_schema(default=False),
+            access=F8StateAccess.ro,
+            required=True,
+            showOnNode=True,
+        ),
+        F8StateSpec(
+            name="sessionStartTsMs",
+            label="Session Start",
+            description="Readonly session start timestamp in milliseconds.",
+            valueSchema=integer_schema(),
+            access=F8StateAccess.ro,
+            required=True,
+            showOnNode=False,
+        ),
+        F8StateSpec(
+            name="sampleCount",
+            label="Sample Count",
+            description="Readonly number of recorded data_sample events.",
+            valueSchema=integer_schema(default=0, minimum=0),
+            access=F8StateAccess.ro,
+            required=True,
+            showOnNode=True,
+        ),
+        F8StateSpec(
+            name="stateEventCount",
+            label="State Event Count",
+            description="Readonly number of recorded state_change events.",
+            valueSchema=integer_schema(default=0, minimum=0),
+            access=F8StateAccess.ro,
+            required=True,
+            showOnNode=True,
+        ),
+        F8StateSpec(
+            name="lastError",
+            label="Last Error",
+            description="Last recording error message.",
+            valueSchema=string_schema(),
+            access=F8StateAccess.ro,
+            required=True,
+            showOnNode=True,
+        ),
+    ],
+)
+
+
+def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNodeRegistry:
+    reg = registry or RuntimeNodeRegistry.instance()
+
+    def _factory(node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any]) -> OperatorNode:
+        return RecorderRuntimeNode(node_id=node_id, node=node, initial_state=initial_state)
+
+    reg.register(SERVICE_CLASS, OPERATOR_CLASS, _factory, overwrite=True)
+    reg.register_operator_spec(RecorderRuntimeNode.SPEC, overwrite=True)
+    return reg

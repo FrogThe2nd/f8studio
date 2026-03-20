@@ -3367,54 +3367,6 @@
               "showOnNode":false
             },
             {
-              "name":"encoding",
-              "label":"Encoding (deprecated)",
-              "description":"Deprecated. Serial Out always encodes as ASCII for TCode devices.",
-              "valueSchema":{
-                "title":null,
-                "description":null,
-                "default":"ascii",
-                "examples":null,
-                "field_comment":null,
-                "type":"string",
-                "enum":null,
-                "minimum":null,
-                "maximum":null,
-                "exclusiveMinimum":null,
-                "exclusiveMaximum":null,
-                "multipleOf":null
-              },
-              "access":"rw",
-              "required":false,
-              "uiControl":null,
-              "uiLanguage":null,
-              "showOnNode":false
-            },
-            {
-              "name":"newline",
-              "label":"Newline (deprecated)",
-              "description":"Deprecated. Provide newline in the input payload if needed.",
-              "valueSchema":{
-                "title":null,
-                "description":null,
-                "default":"",
-                "examples":null,
-                "field_comment":null,
-                "type":"string",
-                "enum":null,
-                "minimum":null,
-                "maximum":null,
-                "exclusiveMinimum":null,
-                "exclusiveMaximum":null,
-                "multipleOf":null
-              },
-              "access":"rw",
-              "required":false,
-              "uiControl":null,
-              "uiLanguage":null,
-              "showOnNode":false
-            },
-            {
               "name":"svcId",
               "label":"Service Id",
               "description":"Readonly: current service instance id (svcId).",
@@ -3559,8 +3511,6 @@
           "enabled":true,
           "port":"COM4",
           "baudrate":115200,
-          "encoding":"ascii",
-          "newline":"",
           "svcId":"ASAY",
           "operatorId":"TkFG"
         }

@@ -42,6 +42,9 @@ class PyEngineService(ServiceCliTemplate, ServiceHookBase):
         register_pyengine_specs(registry)
 
     async def setup(self, runtime: ServiceRuntime) -> None:
+        # PyEngine primarily relies on pull-based `compute_output(...)` evaluation.
+        # Keep its default behavior stable even if the global ServiceBus default changes.
+        runtime.bus.set_data_delivery("pull", source="service")
         executor = ExecFlowExecutor(runtime.bus)
         self._executor = executor
         self._runtime = runtime

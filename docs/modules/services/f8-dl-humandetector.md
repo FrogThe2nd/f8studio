@@ -8,7 +8,25 @@ ONNXRuntime human detection/pose service (no tracking).
 - Source directory: `f8/dl/humandetector`
 - Tags: `onnx`, `vision`, `human`, `pose`
 
-## How to Run
+## When to Use
+
+- Use `f8.dl.humandetector` when the graph only cares about people and not general object classes.
+- It specializes in identifying humans in video streams using optimized ONNX models and is a more focused alternative to the general object detector.
+- It is a cleaner release choice than a broader detector when the downstream logic is human-specific.
+
+## Common Wiring Patterns
+
+- Feed it from `f8.implayer` or `f8.screencap`, then branch detections to overlays, skeleton-related logic, or state summaries.
+- Keep it paired with a visual validation branch during threshold tuning to ensure the subject is captured reliably.
+
+## Pitfalls / Gotchas
+
+- Human-only detectors still depend on source framing and input scale; low-quality or extreme-angle inputs reduce confidence quickly.
+- Users often tune downstream logic before verifying that the detector itself sees the subject reliably in the current environment.
+
+## Service Reference
+
+### How to Run
 
 ```bash
 pixi run f8pydl_humandetector
@@ -17,7 +35,13 @@ pixi run f8pydl_humandetector
 - Workdir: `../../../../`
 - Environment overrides: none
 
-## Service State Fields
+### Typical Inputs / Outputs
+
+- Data inputs: none
+- Data outputs: `detections`, `monitor`
+- Commands: none
+
+### Service State Fields
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
@@ -40,42 +64,7 @@ pixi run f8pydl_humandetector
 | `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 
-## Service Commands
-
-_None_
-
-## Service Data Input Ports
-
-_None_
-
-## Service Data Output Ports
-
-| Name | Required | On Node | Schema | Description |
-| --- | --- | --- | --- | --- |
-| `detections` | `true` | `true` | `object{detections, frameId, height, model, ...}` | Detection output in schema f8visionDetections/1. |
-| `monitor` | `true` | `false` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
-
-## Operators
-
-_None_
-
-## When to Use
-
-- Use `f8.dl.humandetector` when the graph only cares about people and not general object classes.
-- It is a cleaner release choice than a broader detector when the downstream logic is human-specific.
-
-## Typical Inputs / Outputs
-
-- Data inputs: none
-- Data outputs: `detections`, `monitor`
-- Commands: none
-
-## Common Wiring Patterns
-
-- Feed it from `f8.implayer` or `f8.screencap`, then branch detections to overlays, skeleton-related logic, or state summaries.
-- Keep it paired with a visual validation branch during threshold tuning.
-
-## Key Fields That Matter
+### Key Fields That Matter
 
 - `shmName` (Video SHM, `rw`): Video SHM mapping name (e.g. shm.implayer.video). Schema: `string / default=`.
 - `weightsDir` (Weights Dir, `rw`): Directory containing *.yaml + *.onnx model files. Schema: `string / default=services/f8/dl/weights`.
@@ -86,10 +75,24 @@ _None_
 - `inferEveryN` (Infer Every N Frames, `rw`): Run model inference every N frames (>=1). Schema: `integer / default=1`.
 - `confThreshold` (Conf Threshold Override, `rw`): Override confidence threshold (negative uses model yaml). Schema: `number / default=-1.0`.
 
-## Pitfalls / Gotchas
+### Service Commands
 
-- Human-only detectors still depend on source framing and input scale; low-quality inputs reduce confidence quickly.
-- Users often tune downstream logic before verifying that the detector itself sees the subject reliably.
+_None_
+
+### Service Data Input Ports
+
+_None_
+
+### Service Data Output Ports
+
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `detections` | `true` | `true` | `object{detections, frameId, height, model, ...}` | Detection output in schema f8visionDetections/1. |
+| `monitor` | `true` | `false` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
+
+## Operators
+
+_None_
 
 ## Related Scenarios
 

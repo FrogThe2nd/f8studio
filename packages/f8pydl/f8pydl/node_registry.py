@@ -19,8 +19,9 @@ from f8pysdk import (
 from f8pysdk.runtime_node import RuntimeNode
 from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
 
-from .constants import CLASSIFIER_SERVICE_CLASS, DETECTOR_SERVICE_CLASS, HUMAN_DETECTOR_SERVICE_CLASS
+from .constants import CLASSIFIER_SERVICE_CLASS, DETECTOR_SERVICE_CLASS, DETECTION_SORTER_SERVICE_CLASS, HUMAN_DETECTOR_SERVICE_CLASS
 from .constants import OPTFLOW_SERVICE_CLASS, TCNWAVE_SERVICE_CLASS
+from .detection_sorter_service_node import DetectionSorterServiceNode
 from .optflow_service_node import OnnxOptflowServiceNode
 from .service_node import OnnxVisionServiceNode
 from .tcnwave_service_node import OnnxTcnWaveServiceNode
@@ -91,6 +92,65 @@ def _detections_payload_schema():
     )
 
 
+def _detection_sorter_state_fields() -> list[F8StateSpec]:
+    return [
+        F8StateSpec(
+            name="clsWeights",
+            label="Class Weights",
+            description=(
+                "JSON map of detection cls -> weight multiplier applied to score-map metric."
+                " Keys without a prefix are exact cls matches."
+                " Keys with 're:' prefix are Python regex patterns matched via fullmatch()."
+                " All matching rules are multiplied together."
+                " Unspecified classes default to weight 1.0."
+                ' Example: {"person": 2.0, "car": 0.7, "re:^dog_.*$": 1.3}'
+            ),
+            valueSchema=string_schema(default="{}"),
+            access=F8StateAccess.rw,
+            required=True,
+            uiControl="code",
+            uiLanguage="json",
+            showOnNode=False,
+        ),
+        F8StateSpec(
+            name="scoreShmName",
+            label="Score SHM",
+            description="Score-map SHM name (supports scalar1_f32 and flow2_f16).",
+            valueSchema=string_schema(default=""),
+            access=F8StateAccess.rw,
+            required=True,
+            showOnNode=True,
+        ),
+        F8StateSpec(
+            name="sortDirection",
+            label="Sort Direction",
+            description="Prefer larger scores first (desc) or smaller scores first (asc).",
+            valueSchema=string_schema(default="desc", enum=["desc", "asc"]),
+            access=F8StateAccess.rw,
+            required=True,
+            showOnNode=True,
+        ),
+        F8StateSpec(
+            name="scoreAggregation",
+            label="Score Aggregation",
+            description="ROI reduction mode used to rank each bbox.",
+            valueSchema=string_schema(default="mean", enum=["mean", "max", "sum", "median"]),
+            access=F8StateAccess.rw,
+            required=True,
+            showOnNode=True,
+        ),
+        F8StateSpec(
+            name="lastError",
+            label="Last Error",
+            description="Last runtime error string (best-effort).",
+            valueSchema=string_schema(default=""),
+            access=F8StateAccess.ro,
+            required=True,
+            showOnNode=False,
+        ),
+    ]
+
+
 def _common_state_fields(
     *,
     include_thresholds: bool,
@@ -110,11 +170,12 @@ def _common_state_fields(
         F8StateSpec(
             name="weightsDir",
             label="Weights Dir",
-            description="Directory containing *.yaml + *.onnx model files.",
+            description="Directory containing *.yaml + *.onnx model files. Reset to the default relative path when exporting publish JSON.",
             valueSchema=string_schema(default="services/f8/dl/weights"),
             access=F8StateAccess.rw,
             required=True,
             showOnNode=True,
+            redactOnPublish=True,
         ),
         F8StateSpec(
             name="modelId",
@@ -129,11 +190,12 @@ def _common_state_fields(
         F8StateSpec(
             name="modelYamlPath",
             label="Model YAML Path",
-            description="Optional explicit model yaml path (overrides modelId).",
+            description="Optional explicit model yaml path (overrides modelId). Cleared when exporting publish JSON.",
             valueSchema=string_schema(default=""),
             access=F8StateAccess.rw,
             required=True,
             showOnNode=False,
+            redactOnPublish=True,
         ),
         F8StateSpec(
             name="ortProvider",
@@ -300,11 +362,12 @@ def _optflow_state_fields() -> list[F8StateSpec]:
         F8StateSpec(
             name="weightsDir",
             label="Weights Dir",
-            description="Directory containing *.yaml + *.onnx model files.",
+            description="Directory containing *.yaml + *.onnx model files. Reset to the default relative path when exporting publish JSON.",
             valueSchema=string_schema(default="services/f8/dl/weights"),
             access=F8StateAccess.rw,
             required=True,
             showOnNode=False,
+            redactOnPublish=True,
         ),
         F8StateSpec(
             name="modelId",
@@ -319,11 +382,12 @@ def _optflow_state_fields() -> list[F8StateSpec]:
         F8StateSpec(
             name="modelYamlPath",
             label="Model YAML Path",
-            description="Optional explicit model yaml path (overrides modelId).",
+            description="Optional explicit model yaml path (overrides modelId). Cleared when exporting publish JSON.",
             valueSchema=string_schema(default=""),
             access=F8StateAccess.rw,
             required=True,
             showOnNode=False,
+            redactOnPublish=True,
         ),
         F8StateSpec(
             name="ortProvider",
@@ -609,6 +673,47 @@ def _register_optflow(reg: RuntimeNodeRegistry) -> None:
     reg.register_service(OPTFLOW_SERVICE_CLASS, _factory, overwrite=True)
 
 
+def _register_detection_sorter(reg: RuntimeNodeRegistry) -> None:
+    reg.register_service_spec(
+        F8ServiceSpec(
+            schemaVersion=F8ServiceSchemaVersion.f8service_1,
+            serviceClass=DETECTION_SORTER_SERVICE_CLASS,
+            version="0.0.1",
+            label="DL Detection Sorter",
+            description="Sort detection payloads by a score-map SHM metric.",
+            tags=["vision", "detection", "sort", "score_map"],
+            rendererClass="default_svc",
+            stateFields=_detection_sorter_state_fields(),
+            dataInPorts=[
+                F8DataPortSpec(
+                    name="detections",
+                    description="Detection input in schema f8visionDetections/1.",
+                    valueSchema=_detections_payload_schema(),
+                    required=True,
+                ),
+            ],
+            dataOutPorts=[
+                F8DataPortSpec(
+                    name="detections",
+                    description="Sorted detections in schema f8visionDetections/1.",
+                    valueSchema=_detections_payload_schema(),
+                    required=True,
+                ),
+            ],
+            editableStateFields=False,
+            editableDataInPorts=False,
+            editableDataOutPorts=False,
+            editableCommands=False,
+        ),
+        overwrite=True,
+    )
+
+    def _factory(node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any]) -> RuntimeNode:
+        return DetectionSorterServiceNode(node_id=node_id, node=node, initial_state=initial_state)
+
+    reg.register_service(DETECTION_SORTER_SERVICE_CLASS, _factory, overwrite=True)
+
+
 def _register_tcn_wave(reg: RuntimeNodeRegistry) -> None:
     reg.register_service_spec(
         F8ServiceSpec(
@@ -653,5 +758,6 @@ def register_specs(registry: RuntimeNodeRegistry | None = None) -> RuntimeNodeRe
     _register_detector(reg)
     _register_human_detector(reg)
     _register_optflow(reg)
+    _register_detection_sorter(reg)
     _register_tcn_wave(reg)
     return reg

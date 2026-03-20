@@ -8,7 +8,27 @@ Python-based execution engine for Feel8 operators.
 - Source directory: `f8/engine`
 - Tags: `engine`, `python`, `py`
 
-## How to Run
+## When to Use
+
+- Use `f8.pyengine` as the primary runtime host for executing `f8.*` operators, signal transforms, protocol adapters, and custom business logic.
+- It is the flexible orchestration hub of the Feel8 ecosystem, allowing you to compose complex logic from simple, reusable operators.
+- Choose `PyEngine` when your graph needs to process data streams, handle events, or manage state through composable operator chains.
+
+## Common Wiring Patterns
+
+- **Operator Hosting**: Create one or more `PyEngine` host nodes in the Studio. Each operator in the session must have its `Service Id` property set to the ID of a running `PyEngine` host.
+- **Logical Segregation**: Use separate `PyEngine` hosts for different functional domains (e.g., one for "Vision Processing", one for "Device Control") to improve performance isolation and simplify debugging.
+- **Signal Flow**: Standard chains usually follow: `Consumer Port` -> `Operator (Transform)` -> `Producer Port`. Use internal signals for light-weight data passing within the engine.
+
+## Pitfalls / Gotchas
+
+- **Service ID Mapping**: If an operator graph looks correct but doesn't produce output or react to inputs, verify that the operator's `Service Id` matches the `PyEngine` host node id exactly.
+- **State Blocking**: Avoid long-running or blocking code in custom operators, as it can stall the entire `PyEngine` event loop. Use background threads or async patterns if necessary.
+- **Resource Management**: Large graphs with many operators on a single host can consume significant CPU. Monitor the host's performance via the `monitor` port and split the workload across multiple `PyEngine` instances if latency increases.
+
+## Service Reference
+
+### How to Run
 
 ```bash
 pixi run f8pyengine
@@ -17,7 +37,13 @@ pixi run f8pyengine
 - Workdir: `../../../`
 - Environment overrides: none
 
-## Service State Fields
+### Typical Inputs / Outputs
+
+- Data inputs: none
+- Data outputs: `monitor`
+- Commands: none
+
+### Service State Fields
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
@@ -25,15 +51,21 @@ pixi run f8pyengine
 | `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 
-## Service Commands
+### Key Fields That Matter
+
+- `dataDelivery` (Data Delivery, `rw`): How data inputs are delivered to nodes: pull (default), push, or both. Schema: `string / enum[pull, push, both] / default=pull`.
+- `active` (Active, `rw`): Service lifecycle state (activate/deactivate). Schema: `boolean / default=True`.
+- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
+
+### Service Commands
 
 _None_
 
-## Service Data Input Ports
+### Service Data Input Ports
 
 _None_
 
-## Service Data Output Ports
+### Service Data Output Ports
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
@@ -45,10 +77,36 @@ _None_
 ### Tick (`f8.tick`)
 Source operator that generates periodic exec ticks.
 
+#### When to Use
+
+- Use `Tick` when your graph needs a simple, periodic execution (exec) trigger to drive deterministic update loops.
+- It is the standard root node for most `f8.pyengine` logic chains, ensuring that your operators run at a consistent frequency regardless of the UI's frame rate.
+- Ideal for polling sensors, updating state machines, or sending periodic commands to hardware.
+
+#### Common Wiring Patterns
+
+- **Logic Heartbeat**: Connect the `tick` output to a `Sequence` operator to drive multiple branches (Read -> Process -> Write) in a predictable order every cycle.
+- **Hardware Sync**: Align the `tickMs` property (e.g., 20ms for 50Hz) with the expected interval of your downstream device nodes (like `f8-tcode.intervalMs`) to minimize jitter.
+- **Performance Branching**: Use different `Tick` nodes with different frequencies (one "fast" for motion, one "slow" for status checks) to optimize CPU usage.
+
+#### Pitfalls / Gotchas
+
+- **Scheduling Overload**: Setting a very small `tickMs` (e.g., 1ms) can overwhelm the engine thread if the graph is complex, leading to unstable timing and high CPU usage. Aim for the minimum frequency required for smooth motion.
+- **Dangling Logic**: If downstream nodes are not "exec-driven" (they don't have an input port for execution triggers), adding more `Tick` roots will not affect their update frequency.
+- **Deterministic Drift**: While the tick attempts to be consistent, actual execution time depends on the system load. Monitor the `dt` (delta time) output if your logic requires millisecond-precise timing across different hardware.
+
+#### Operator Reference
+
 - Exec in ports: none
 - Exec out ports: `exec`
 
-#### State Fields
+##### Typical Inputs / Outputs
+
+- Exec outputs: `exec`
+- Data inputs: none
+- Data outputs: `processingMs`, `intervalMs`, `latenessMs`
+
+##### State Fields
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
@@ -57,45 +115,24 @@ Source operator that generates periodic exec ticks.
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 | `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
-#### Data Input Ports
-
-_None_
-
-#### Data Output Ports
-
-| Name | Required | On Node | Schema | Description |
-| --- | --- | --- | --- | --- |
-| `processingMs` | `true` | `false` | `integer / default=0` | Per-tick processing time in milliseconds (excluding sleep). |
-| `intervalMs` | `true` | `false` | `integer / default=0` | Actual interval between tick starts in milliseconds. |
-| `latenessMs` | `true` | `false` | `integer / default=0` | How late this tick started relative to its scheduled deadline (ms). |
-
-#### When to Use
-
-- Use `Tick` when the graph needs a simple periodic exec clock.
-- It is the usual root node for deterministic update loops in `f8.pyengine`.
-
-#### Typical Inputs / Outputs
-
-- Exec outputs: `exec`
-- Data inputs: none
-- Data outputs: `processingMs`, `intervalMs`, `latenessMs`
-
-#### Common Wiring Patterns
-
-- Drive `Sequence` when several branches must run in a predictable order each tick.
-- Keep `tickMs` aligned with downstream device cadence such as `TCode.intervalMs`.
-
-#### Key Fields That Matter
+##### Key Fields That Matter
 
 - `tickMs` (Tick (ms), `rw`): Interval in milliseconds for emitting exec ticks. Schema: `integer / default=100`.
 - `hiResTimer` (High-res Timer (Windows), `rw`): Request 1ms system timer resolution to reduce jitter on Windows. Schema: `boolean / default=True`.
 - `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
 - `operatorId` (Operator Id, `ro`): Readonly: current operator/node id (operatorId). Schema: `string`.
 
-#### Pitfalls / Gotchas
+##### Data Input Ports
 
-- Very small intervals can make the whole graph look unstable when the real problem is scheduling load.
-- If downstream nodes are not exec-driven, adding more tick roots will not help.
+_None_
+
+##### Data Output Ports
+
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `processingMs` | `true` | `false` | `integer / default=0` | Per-tick processing time in milliseconds (excluding sleep). |
+| `intervalMs` | `true` | `false` | `integer / default=0` | Actual interval between tick starts in milliseconds. |
+| `latenessMs` | `true` | `false` | `integer / default=0` | How late this tick started relative to its scheduled deadline (ms). |
 
 #### Related Scenarios
 
@@ -105,53 +142,58 @@ _None_
 - [Scene 04: Functional TCode Generation](../../scenarios/scene-04-functional_tcode.md)
 
 <a id="operator-f8-sequence"></a>
-### Sequence (`f8.sequence`)
+### Exec Sequence (`f8.exec_sequence`)
 Exec flow splitter: triggers its exec outputs in order (requires DFS scheduling).
+
+#### When to Use
+
+- Use `Exec Sequence` when a single execution trigger (exec) needs to fan out into multiple branches that must run in a specific, ordered priority.
+- It is the best tool for making evaluation order explicit on the Studio canvas, preventing "race conditions" between nodes.
+- Use it to enforce a clear "Read -> Transform -> Write" pattern in your logic.
+
+#### Common Wiring Patterns
+
+- **Standard Processing Flow**: Place a `Exec Sequence` node immediately after a `Tick` or `Phase` trigger. Use output `0` for reading sensor data, output `1` for processing/remapping, and output `2` for sending commands to hardware.
+- **Ordered Side Effects**: Use different numbered outputs for operations that depend on each other's results but shouldn't compete for resources in the same execution slice.
+- **Initialization Helper**: Trigger a series of "reset" or "calibration" commands in a specific order when the scenario starts.
+
+#### Pitfalls / Gotchas
+
+- **Shared Tick Load**: `Exec Sequence` only controls the *order* of execution, not historical timing isolation. Expensive calculations on any branch will still stall the entire tick for all subsequent branches.
+- **Implicit Complexity**: Overusing nested `Exec Sequence` nodes can make the graph difficult to trace. Use descriptive names for your branches or use multiple `f8-pyengine` hosts if logic becomes too dense.
+- **Port Naming**: The outputs are strictly ordered (0, 1, 2...). Ensure your most critical "upstream" logic is always on a lower-numbered port than the nodes that depend on its output.
+
+#### Operator Reference
 
 - Exec in ports: `exec`
 - Exec out ports: `0`, `1`, `2`
 
-#### State Fields
-
-| Name | Access | Required | On Node | Schema | Description |
-| --- | --- | --- | --- | --- | --- |
-| `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
-| `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
-
-#### Data Input Ports
-
-_None_
-
-#### Data Output Ports
-
-_None_
-
-#### When to Use
-
-- Use `Sequence` when one exec trigger should fan out into ordered branches.
-- It is the cleanest way to make evaluation order explicit on canvas.
-
-#### Typical Inputs / Outputs
+##### Typical Inputs / Outputs
 
 - Exec inputs: `exec`
 - Exec outputs: `0`, `1`, `2`
 - Data inputs: none
 - Data outputs: none
 
-#### Common Wiring Patterns
+##### State Fields
 
-- Place it immediately after `Tick` to separate read, transform, and output branches.
-- Use different numbered outputs for side effects that should not race each other.
+| Name | Access | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- | --- |
+| `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
+| `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
-#### Key Fields That Matter
+##### Key Fields That Matter
 
 - `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
 - `operatorId` (Operator Id, `ro`): Readonly: current operator/node id (operatorId). Schema: `string`.
 
-#### Pitfalls / Gotchas
+##### Data Input Ports
 
-- `Sequence` controls ordering, not timing isolation; expensive branches still affect the whole tick.
-- Overusing many nested `Sequence` nodes can make graphs harder to read than separate well-named branches.
+_None_
+
+##### Data Output Ports
+
+_None_
 
 #### Related Scenarios
 
@@ -161,10 +203,35 @@ _None_
 ### Cosine (`f8.cosine`)
 Cosine phase transform. Provide `phase` (0..1) from an upstream phase driver (e.g. Phase node).
 
+#### When to Use
+
+- Use `Cosine` to transform a normalized phase signal (usually 0 to 1) into a smooth, periodic waveform based on the cosine function.
+- it is a fundamental building block for rhythmic motion, breathing patterns, or periodic modulation in your graph.
+- Use it when you need a smooth, continuous oscillation that can be easily tuned for amplitude and DC offset.
+
+#### Common Wiring Patterns
+
+- **Standard LFO**: Feed the `phase` input from an `f8-phase` or `f8-tick` operator. Send the mapping `value` into a `Range Map` or `f8-viz-wave`.
+- **Rhythmic Modulation**: Use multiple `Cosine` nodes with different frequencies to create complex, multi-layered "interference" patterns for more organic motion.
+- **Dynamic Tuning**: Bind the `amp` (amplitude) or `dc` (offset) properties to other control nodes to dynamically change the intensity or center point of the oscillation.
+
+#### Pitfalls / Gotchas
+
+- **Phase Dependency**: If the upstream phase source is jittery or incorrect, no amount of amplitude tuning will fix the resulting waveform. Verify your phase source first.
+- **Output Range**: By default, a cosine wave moves between `-amp+dc` and `+amp+dc`. Ensure your downstream nodes (like `f8-tcode`) are prepared for these values, or use a `Range Map` to normalize them.
+- **Phase Wraparound**: If your phase source doesn't wrap cleanly at 1.0, the cosine wave will have a visible "jump" or discontinuity.
+
+#### Operator Reference
+
 - Exec in ports: none
 - Exec out ports: none
 
-#### State Fields
+##### Typical Inputs / Outputs
+
+- Data inputs: `phase`, `amp`, `dc`, `phaseOffset`
+- Data outputs: `value`
+
+##### State Fields
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
@@ -174,7 +241,15 @@ Cosine phase transform. Provide `phase` (0..1) from an upstream phase driver (e.
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 | `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
-#### Data Input Ports
+##### Key Fields That Matter
+
+- `dc` (DC, `rw`): Default DC offset (used when `dc` input is not provided). Schema: `number / default=0.5`.
+- `amp` (Amp, `rw`): Amplitude. Schema: `number / default=0.5`.
+- `phaseOffset` (Phase Offset, `rw`): Normalized phase offset (0.0 to 1.0). Schema: `number / default=0.0`.
+- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
+- `operatorId` (Operator Id, `ro`): Readonly: current operator/node id (operatorId). Schema: `string`.
+
+##### Data Input Ports
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
@@ -183,39 +258,11 @@ Cosine phase transform. Provide `phase` (0..1) from an upstream phase driver (e.
 | `dc` | `false` | `false` | `number / default=0.5` | DC offset override. |
 | `phaseOffset` | `false` | `false` | `number` | Phase offset override (0..1). |
 
-#### Data Output Ports
+##### Data Output Ports
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
 | `value` | `true` | `true` | `number` | cosine output |
-
-#### When to Use
-
-- Use `Cosine` when a normalized phase should become a smooth periodic value.
-- It is a good building block for simple rhythmic motion or modulation.
-
-#### Typical Inputs / Outputs
-
-- Data inputs: `phase`, `amp`, `dc`, `phaseOffset`
-- Data outputs: `value`
-
-#### Common Wiring Patterns
-
-- Feed it from `Phase`, then send `value` into `Range Map`, `WaveViz`, or motion outputs.
-- Override `amp` or `dc` from state edges when one waveform needs quick live tuning.
-
-#### Key Fields That Matter
-
-- `dc` (DC, `rw`): Default DC offset (used when `dc` input is not provided). Schema: `number / default=0.5`.
-- `amp` (Amp, `rw`): Amplitude. Schema: `number / default=0.5`.
-- `phaseOffset` (Phase Offset, `rw`): Normalized phase offset (0.0 to 1.0). Schema: `number / default=0.0`.
-- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
-- `operatorId` (Operator Id, `ro`): Readonly: current operator/node id (operatorId). Schema: `string`.
-
-#### Pitfalls / Gotchas
-
-- If the phase source is wrong, tuning amplitude and offset will not fix the waveform.
-- Keep output range expectations explicit before wiring it into device-facing nodes.
 
 #### Related Scenarios
 
@@ -225,10 +272,35 @@ Cosine phase transform. Provide `phase` (0..1) from an upstream phase driver (e.
 ### Tempest (`f8.tempest`)
 Tempest phase transform (phase-modulated cosine). Provide `phase` (0..1) from an upstream phase driver (e.g. Phase node).
 
+#### When to Use
+
+- Use `Tempest` when you want a phase-driven, procedural waveform that has more "personality" and controllable asymmetry than a standard sine or cosine wave.
+- It is ideal for motion patterns that require controllable curvature, "breathing" rhythms, or eccentric motion shapes (e.g., a fast stroke with a slow return).
+- Best for creating organic, non-mechanical rhythmic oscillations in haptic or visual graphs.
+
+#### Common Wiring Patterns
+
+- **Organic Oscillator**: Feed the `phase` input from `f8-phase`. Play with the `eccentric` and `curve` properties while watching the result on `f8-viz-wave` to find an interesting pulsing pattern.
+- **Dynamic Shaping**: Map external signals (like audio energy) to the `amp` or `speed` parameters to make the waveform grow and shrink in intensity based on the environment.
+- **Actuator Driver**: Use the output value after a `Range Map` to drive physical hardware with a more complex motion profile than a simple sine wave.
+
+#### Pitfalls / Gotchas
+
+- **Complexity Overhead**: If the `eccentric` setting is too extreme, the resulting waveform can appear "broken" or glitchy if the upstream phase source is not perfectly stable.
+- **Normalization Requirements**: Unlike `Cosine`, `Tempest` can produce a wider variety of shape ranges. Always re-normalize the result with a `Range Map` before sending it to hardware.
+- **Design Intent**: Use it as a specialized "shaping" tool. If you only need a simple, predictable rhythmic wave, `f8-cosine` is often easier to tune and reason about.
+
+#### Operator Reference
+
 - Exec in ports: none
 - Exec out ports: none
 
-#### State Fields
+##### Typical Inputs / Outputs
+
+- Data inputs: `phase`, `amp`, `phaseOffset`, `eccentric`, `dc`
+- Data outputs: `out`
+
+##### State Fields
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
@@ -239,7 +311,16 @@ Tempest phase transform (phase-modulated cosine). Provide `phase` (0..1) from an
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 | `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
-#### Data Input Ports
+##### Key Fields That Matter
+
+- `dc` (DC, `rw`): Default DC offset (used when `dc` input is not provided). Schema: `number / default=0.5`.
+- `amp` (Amp, `rw`): Default amplitude (used when `amp`/`amplitude` input is not provided). Schema: `number / default=0.5`.
+- `phaseOffset` (Phase Offset, `rw`): Fraction of a full cycle added to the phase (0..1). Schema: `number / default=0.0`.
+- `eccentric` (Eccentric, `rw`): Controls curvature of the inner sine. Schema: `number / default=0.0`.
+- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
+- `operatorId` (Operator Id, `ro`): Readonly: current operator/node id (operatorId). Schema: `string`.
+
+##### Data Input Ports
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
@@ -249,40 +330,11 @@ Tempest phase transform (phase-modulated cosine). Provide `phase` (0..1) from an
 | `eccentric` | `false` | `false` | `number` | Eccentricity override |
 | `dc` | `false` | `false` | `number` | DC offset override. |
 
-#### Data Output Ports
+##### Data Output Ports
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
 | `out` | `true` | `true` | `number` | tempest output |
-
-#### When to Use
-
-- Use `Tempest` when you want a phase-driven waveform with more character than plain cosine.
-- It fits motion patterns that need controllable curvature and asymmetry.
-
-#### Typical Inputs / Outputs
-
-- Data inputs: `phase`, `amp`, `phaseOffset`, `eccentric`, `dc`
-- Data outputs: `out`
-
-#### Common Wiring Patterns
-
-- Feed it from `Phase`, then normalize or map the result before hardware output.
-- Compare it against `Cosine` in parallel with `WaveViz` before choosing a release preset.
-
-#### Key Fields That Matter
-
-- `dc` (DC, `rw`): Default DC offset (used when `dc` input is not provided). Schema: `number / default=0.5`.
-- `amp` (Amp, `rw`): Default amplitude (used when `amp`/`amplitude` input is not provided). Schema: `number / default=0.5`.
-- `phaseOffset` (Phase Offset, `rw`): Fraction of a full cycle added to the phase (0..1). Schema: `number / default=0.0`.
-- `eccentric` (Eccentric, `rw`): Controls curvature of the inner sine. Schema: `number / default=0.0`.
-- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
-- `operatorId` (Operator Id, `ro`): Readonly: current operator/node id (operatorId). Schema: `string`.
-
-#### Pitfalls / Gotchas
-
-- `eccentric` can make the curve feel broken if you have not first validated the base phase path.
-- Treat it as a shaping stage, not as a substitute for final output range control.
 
 #### Related Scenarios
 
@@ -292,10 +344,35 @@ Tempest phase transform (phase-modulated cosine). Provide `phase` (0..1) from an
 ### Phase (`f8.phase`)
 Phase accumulator. Outputs normalized phase (0..1) and unwrapped phase turns.
 
+#### When to Use
+
+- Use `Phase` when your graph needs a normalized oscillator (0 to 1) or a continuous cycle counter to drive periodic events.
+- It is the standard "clock" for the Feel8 graph, serving as the authoritative driver for `Cosine`, `Wave Pattern`, and many rhythmic modulation chains.
+- Use it to synchronize multiple independent operators to the same temporal heartbeat.
+
+#### Common Wiring Patterns
+
+- **Master Clock**: Feed the `phase` output into a variety of waveform generators (`Cosine`, `Tempest`). Use `phaseTurns` for logging or sync branches that need to know how many full cycles have elapsed.
+- **Interactive Tempo**: Connect the `hz` (frequency) input to an external control (like a slider or an audio BPM analyzer) to make your motion react to the environment in real-time.
+- **Triggered Reset**: Use the `reset` input or command to restart the oscillator from 0 when a specific event occurs (e.g., a new track starts).
+
+#### Pitfalls / Gotchas
+
+- **Redundant Clocks**: If your graph already has an authoritative timebase (e.g., from a video player or an external MIDI clock), adding a secondary `Phase` node can make the system behavior difficult to synchronize and reason about.
+- **Visual Validation**: Always verify the phase reset and wrap behavior with an `f8-viz-wave` node before connecting it to physical hardware to avoid sudden mechanical jerks.
+- **Hz Resolution**: Very high frequencies might produce aliasing-like effects if the graph's overall update rate is too low.
+
+#### Operator Reference
+
 - Exec in ports: none
 - Exec out ports: none
 
-#### State Fields
+##### Typical Inputs / Outputs
+
+- Data inputs: `hz`, `phase`, `reset`
+- Data outputs: `phase`, `phaseTurns`
+
+##### State Fields
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
@@ -303,7 +380,13 @@ Phase accumulator. Outputs normalized phase (0..1) and unwrapped phase turns.
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 | `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
-#### Data Input Ports
+##### Key Fields That Matter
+
+- `hz` (Hz, `rw`): Frequency in Hz. Schema: `number / default=1.0`.
+- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
+- `operatorId` (Operator Id, `ro`): Readonly: current operator/node id (operatorId). Schema: `string`.
+
+##### Data Input Ports
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
@@ -311,38 +394,12 @@ Phase accumulator. Outputs normalized phase (0..1) and unwrapped phase turns.
 | `phase` | `false` | `true` | `number` | Absolute phase override (0..1). |
 | `reset` | `false` | `true` | `boolean` | If true, reset phase to 0. |
 
-#### Data Output Ports
+##### Data Output Ports
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
 | `phase` | `true` | `true` | `number` | Normalized phase (0..1). |
 | `phaseTurns` | `true` | `true` | `number` | Unwrapped phase turns (cycles). |
-
-#### When to Use
-
-- Use `Phase` when a graph needs a normalized oscillator or continuous cycle counter.
-- It is the default upstream driver for `Cosine`, `Tempest`, and many rhythmic graphs.
-
-#### Typical Inputs / Outputs
-
-- Data inputs: `hz`, `phase`, `reset`
-- Data outputs: `phase`, `phaseTurns`
-
-#### Common Wiring Patterns
-
-- Feed `phase` into waveform generators and send `phaseTurns` into debug or sync branches.
-- Use state or data overrides for `hz`, `phase`, and `reset` when the clock must react live.
-
-#### Key Fields That Matter
-
-- `hz` (Hz, `rw`): Frequency in Hz. Schema: `number / default=1.0`.
-- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
-- `operatorId` (Operator Id, `ro`): Readonly: current operator/node id (operatorId). Schema: `string`.
-
-#### Pitfalls / Gotchas
-
-- If the graph already has an authoritative timebase, adding another `Phase` can make behavior harder to reason about.
-- Reset behavior should be verified with a visual branch before it drives hardware.
 
 #### Related Scenarios
 
@@ -352,10 +409,36 @@ Phase accumulator. Outputs normalized phase (0..1) and unwrapped phase turns.
 ### Print (`f8.print`)
 Exec-driven printer (pulls `value` and prints).
 
+#### When to Use
+
+- Use `Print` when you need a quick, execution-driven (exec) diagnostic sink to output values or messages to the Studio console or engine logs.
+- It is a development-time tool for verifying that specific logic branches are actually firing and for inspecting variable values in real-time.
+- Not intended for production user interfaces; use `f8-viz-text` for persistent on-canvas monitoring.
+
+#### Common Wiring Patterns
+
+- **Branch Verification**: Trigger it from a `Exec Sequence` or `State Trigger` only on the specific branch you are diagnosing. This ensures the log message reflects the correct execution context.
+- **Value Inspection**: Connect the input to any data port (scalar, string, or complex JSON) to see its contents at the exact moment of execution.
+- **Trigger Logging**: Use it to confirm that "one-shot" events (e.g., successful calibration, sequence done) have occurred without needing to watch a visualizer constantly.
+
+#### Pitfalls / Gotchas
+
+- **Log Spam**: Leaving too many `Print` nodes active in a high-frequency loop (like a `Tick` node) will flood the console, potentially hiding more important system logs and slightly impacting performance.
+- **Sink Behavior**: `Print` is a terminal "sink." If you need to pass the data further down the graph for other operators to use, ensure you branch the signal *before* it reaches the print node.
+- **Ordering**: Remember that messages will appear in the order they are executed in the engine thread, which may differ from their spatial arrangement on the Studio canvas.
+
+#### Operator Reference
+
 - Exec in ports: `exec`
 - Exec out ports: none
 
-#### State Fields
+##### Typical Inputs / Outputs
+
+- Exec inputs: `exec`
+- Data inputs: `value`
+- Data outputs: none
+
+##### State Fields
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
@@ -363,42 +446,21 @@ Exec-driven printer (pulls `value` and prints).
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 | `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
-#### Data Input Ports
-
-| Name | Required | On Node | Schema | Description |
-| --- | --- | --- | --- | --- |
-| `value` | `true` | `true` | `any` | value to print |
-
-#### Data Output Ports
-
-_None_
-
-#### When to Use
-
-- Use `Print` when you need a quick exec-driven debug sink on canvas.
-- It is best for development and release validation, not polished production UX.
-
-#### Typical Inputs / Outputs
-
-- Exec inputs: `exec`
-- Data inputs: `value`
-- Data outputs: none
-
-#### Common Wiring Patterns
-
-- Trigger it from `Tick` or `Sequence` and pull the value you want to inspect on that branch.
-- Keep it close to the stage you are diagnosing so the log reflects the right execution context.
-
-#### Key Fields That Matter
+##### Key Fields That Matter
 
 - `strip` (Strip, `wo`): If true, strip whitespace/newlines from the start/end of string values before printing. Schema: `boolean / default=True`.
 - `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
 - `operatorId` (Operator Id, `ro`): Readonly: current operator/node id (operatorId). Schema: `string`.
 
-#### Pitfalls / Gotchas
+##### Data Input Ports
 
-- Leaving many `Print` nodes active in a hot loop can drown out more important logs.
-- It is a sink; if you need persistent visualization, use `TextViz` or `WaveViz` instead.
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `value` | `true` | `true` | `any` | value to print |
+
+##### Data Output Ports
+
+_None_
 
 #### Related Scenarios
 
@@ -408,10 +470,35 @@ _None_
 ### Pull (`f8.pull`)
 Hidden internal sink that periodically pulls all data inputs to trigger upstream computation.
 
+#### When to Use
+
+- Use `Pull` primarily as an advanced internal helper when your graph requires an explicit "auto-sampling" sink for an upstream data node that doesn't have its own execution trigger.
+- It is useful for bridging between "passive" data providers (nodes that only update when asked) and "active" control consumers.
+- Use it sparingly; most graphs should rely on clear, explicit execution triggers (like `Tick`).
+
+#### Common Wiring Patterns
+
+- **Evaluation Forcing**: Use it to force periodic evaluation of an upstream expression or service port in a graph that lacks a `Tick` source.
+- **Data Sampling**: Place it at the end of a long chain of data-only nodes to ensure the entire chain is sampled at a specific frequency.
+- **Internal Helper**: Use it when creating custom operator groups where a group-internal state needs to be updated without exposing an execution port to the outside.
+
+#### Pitfalls / Gotchas
+
+- **Hidden Execution Model**: Relying on `Pull` can make the graph's execution flow opaque to other developers. It is always better to use explicit `exec` wires from a `Tick` node when possible.
+- **Resource Overhead**: Since `Pull` samples autonomously, it can lead to redundant processing if multiple `Pull` nodes are attached to the same data sources.
+- **Drift**: Autonomous sampling may not be perfectly synchronized with the rest of your graph's heartbeat. Use `Tick` for anything where phase-perfect timing matters.
+
+#### Operator Reference
+
 - Exec in ports: none
 - Exec out ports: none
 
-#### State Fields
+##### Typical Inputs / Outputs
+
+- Data inputs: none
+- Data outputs: none
+
+##### State Fields
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
@@ -420,40 +507,20 @@ Hidden internal sink that periodically pulls all data inputs to trigger upstream
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 | `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
-#### Data Input Ports
-
-_None_
-
-#### Data Output Ports
-
-_None_
-
-#### When to Use
-
-- Use `Pull` only when a graph needs an explicit auto-sampling sink for upstream data nodes.
-- Treat it as an advanced/internal helper rather than a default authoring node.
-
-#### Typical Inputs / Outputs
-
-- Data inputs: none
-- Data outputs: none
-
-#### Common Wiring Patterns
-
-- Use it to force periodic upstream evaluation in graphs that are otherwise data-only.
-- Keep it isolated and clearly labeled when it exists in a shared session.
-
-#### Key Fields That Matter
+##### Key Fields That Matter
 
 - `autoTriggerEnabled` (Auto Trigger, `rw`): When enabled, periodically pull all data inputs without exec. Schema: `boolean / default=False`.
 - `autoTriggerHz` (Auto Trigger Hz, `rw`): Periodic pull frequency in Hz when Auto Trigger is enabled. Schema: `integer / default=10`.
 - `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
 - `operatorId` (Operator Id, `ro`): Readonly: current operator/node id (operatorId). Schema: `string`.
 
-#### Pitfalls / Gotchas
+##### Data Input Ports
 
-- It can hide the real execution model if used casually.
-- Prefer clear exec flow first; reach for `Pull` only when the graph genuinely needs passive sampling.
+_None_
+
+##### Data Output Ports
+
+_None_
 
 #### Related Scenarios
 
@@ -463,10 +530,35 @@ _None_
 ### Program Wave (`f8.program_wave`)
 Generate a program-controlled phase/gate waveform from a dict state payload.
 
+#### When to Use
+
+- Use `Program Wave` when your graph needs to emit or shape a structured "wave/program" payload (a collection of points or parameters) rather than just a single scalar value.
+- It is essential for authoring complex motion sequences or "scripts" upstream of playback nodes or device-specific formatters.
+- Use it when you want to group multiple motion parameters into a single reusable "program" that can be shared across multiple output channels.
+
+#### Common Wiring Patterns
+
+- **Motion Sequencer**: Pair it with a `Tick` or `Phase` source. Use the output to drive a `Sequence Player` or a protocol-specific node like `f8-tcode`.
+- **Global Modulation**: Keep the `Program Wave` node upstream from individual device nodes so that one complex motion pattern can drive multiple hardware targets in sync.
+- **Payload Inspection**: Always route a branch through `f8-viz-text` to verify that the generated point data matches the expected schema for your target protocol.
+
+#### Pitfalls / Gotchas
+
+- **Schema Strictness**: Program-oriented nodes depend on a very specific internal payload structure. Any mismatch in port names or data types will cause downstream nodes to ignore the data silently.
+- **Abstraction Overload**: If your graph only needs to move a single actuator between two points, a `Program Wave` might be more complex than necessary. For simple cases, sticks to `f8-cosine` or `f8-range-map`.
+- **Frequency Matching**: Ensure the update rate of your program is high enough to avoid stuttering on the physical device, but low enough common bandwidth limits of serial or network protocols.
+
+#### Operator Reference
+
 - Exec in ports: none
 - Exec out ports: none
 
-#### State Fields
+##### Typical Inputs / Outputs
+
+- Data inputs: none
+- Data outputs: `phaseTurns`, `phase`, `active`, `done`, `elapsedSec`
+
+##### State Fields
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
@@ -474,11 +566,17 @@ Generate a program-controlled phase/gate waveform from a dict state payload.
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 | `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
-#### Data Input Ports
+##### Key Fields That Matter
+
+- `program` (Program, `wo`): Dict payload defining tsMs/timeSec/hz/loopRunningSec/loopPauseSec. Schema: `object{hz, loopPauseSec, loopRunningSec, timeSec, ...}`.
+- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
+- `operatorId` (Operator Id, `ro`): Readonly: current operator/node id (operatorId). Schema: `string`.
+
+##### Data Input Ports
 
 _None_
 
-#### Data Output Ports
+##### Data Output Ports
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
@@ -488,59 +586,82 @@ _None_
 | `done` | `true` | `true` | `boolean` | Whether program finished (timeSec elapsed). |
 | `elapsedSec` | `true` | `true` | `number` | Elapsed seconds since start. |
 
-#### When to Use
-
-- Use `Program Wave` when a graph should emit or shape a reusable wave/program payload rather than a single scalar.
-- It is useful for authoring richer motion sequences upstream of playback or device formatting nodes.
-
-#### Typical Inputs / Outputs
-
-- Data inputs: none
-- Data outputs: `phaseTurns`, `phase`, `active`, `done`, `elapsedSec`
-
-#### Common Wiring Patterns
-
-- Pair it with `Tick`, `Phase`, or `Sequence Player`, then inspect outputs before converting them into `TCode`.
-- Keep it upstream from protocol-specific nodes so one program can feed multiple targets.
-
-#### Key Fields That Matter
-
-- `program` (Program, `wo`): Dict payload defining tsMs/timeSec/hz/loopRunningSec/loopPauseSec. Schema: `object{hz, loopPauseSec, loopRunningSec, timeSec, ...}`.
-- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
-- `operatorId` (Operator Id, `ro`): Readonly: current operator/node id (operatorId). Schema: `string`.
-
-#### Pitfalls / Gotchas
-
-- Program-oriented nodes depend on consistent payload shape; validate that contract early.
-- If the graph only needs a single scalar, this node may be more abstraction than you need.
-
 #### Related Scenarios
 
 - No bundled scenario references this node yet.
 
 <a id="operator-f8-envelope"></a>
 ### Envelope (`f8.envelope`)
-Tracks upper/lower envelopes and emits normalized + confidence outputs.
+Track a signal envelope and normalize it into a stable 0..1 range.
+
+Core
+- Input `value` is tracked with lower and upper envelope estimators.
+- Outputs are `lower`, `upper`, `normalized`, and `confidence`.
+- `normalized` maps the current input between the tracked envelopes, including optional margin and minimum span.
+- `confidence` estimates how periodic and stable the recent signal is.
+
+Envelope Modes
+- `EMA`: simple exponential tracking
+- `DEMA`: double exponential tracking with faster response
+- `SMA`: moving average window smoothing
+
+Jump Handling
+- Optional jump detection can reseed the envelopes after large sustained changes.
+- Jump settings control the trigger threshold, consecutive frames, and reseed blend time.
+
+Confidence
+- Optional confidence uses autocorrelation over a sliding window.
+- Confidence settings control lag range, peak prominence, smoothing, and noise floor.
+
+Examples
+- Normalize a noisy control signal into `normalized`
+- Track changing lower/upper motion bounds
+- Use `confidence` as a quality gate for rhythmic or periodic input
+
+#### When to Use
+
+- Use `Envelope` when you want to convert a noisy, high-frequency, or fast-changing scalar signal into a smoother "magnitude trace" or follower.
+- It is most commonly used in audio-reactive graphs (following loudness) and gesture-reactive graphs (following motion intensity).
+- Use it to extract the general "energy" of a signal while ignoring its individual peaks and valleys.
+
+#### Common Wiring Patterns
+
+- **Energy Follower**: Feed it from a feature output (like audio loudness). Send the resulting envelope into a `Smooth Filter` or `Range Map` to drive motion.
+- **Visual Saliency**: Use the envelope of a motion signal to drive the transition of a classifier's weight, making the system more sensitive when more motion is detected.
+- **Sequence Tuning**: Place it before downstream scaling so that later nodes in the chain receive a stable, predictable signal range.
+
+#### Pitfalls / Gotchas
+
+- **Latency vs. Smoothness**: Over-smoothing the envelope (long attack/decay) can make a graph feel "heavy" or laggy, even if the source data is accurate. Tune the attack and release times carefully.
+- **Input Quality**: If the input source is fundamentally wrong, empty, or entirely noise, no amount of envelope tuning will produce a meaningful control signal. Validate your source with `f8-viz-wave` first.
+- **Range Assumptions**: Envelopes often produce values in a different range than the input. Use a `Range Map` immediately after the envelope to bring it into a standard 0-1 control space.
+
+#### Operator Reference
 
 - Exec in ports: none
 - Exec out ports: none
 
-#### State Fields
+##### Typical Inputs / Outputs
+
+- Data inputs: `value`
+- Data outputs: `lower`, `upper`, `normalized`, `confidence`
+
+##### State Fields
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `method` | `rw` | `true` | `true` | `string / enum[EMA, DEMA, SMA] / default=EMA` | Envelope filter method. |
-| `rise_alpha` | `rw` | `true` | `true` | `number / default=0.4` | Smoothing factor when moving toward the envelope. |
-| `fall_alpha` | `rw` | `true` | `true` | `number / default=0.05` | Smoothing factor when moving away from the envelope. |
-| `min_span` | `rw` | `true` | `true` | `number / default=0.25` | Minimum enforced envelope span. |
-| `sma_window` | `rw` | `true` | `true` | `number / default=10` | Window size for SMA mode. |
-| `margin` | `rw` | `true` | `false` | `number / default=0.0` | Extra margin added to envelopes before normalization. |
+| `method` | `rw` | `true` | `true` | `string / enum[EMA, DEMA, SMA] / default=EMA` | Envelope tracking method: `EMA`, `DEMA`, or `SMA`. |
+| `rise_alpha` | `rw` | `true` | `true` | `number / default=0.4` | Smoothing factor when the estimator moves toward the current envelope edge. |
+| `fall_alpha` | `rw` | `true` | `true` | `number / default=0.05` | Smoothing factor when the estimator relaxes away from the current envelope edge. |
+| `min_span` | `rw` | `true` | `true` | `number / default=0.25` | Minimum enforced distance between lower and upper envelopes before normalization. |
+| `sma_window` | `rw` | `true` | `true` | `number / default=10` | Moving-average window size used when Method is `SMA`. |
+| `margin` | `rw` | `true` | `false` | `number / default=0.0` | Extra padding added outside the envelopes before computing `normalized`. |
 | `jumpEnabled` | `rw` | `true` | `false` | `boolean / default=True` | Enable consecutive-frame jump detection and reseed. |
 | `jumpSpanMult` | `rw` | `true` | `false` | `number / default=4.0` | Distance threshold in envelope-span units for jump detection. |
 | `jumpConsecutiveFrames` | `rw` | `true` | `false` | `number / default=4` | Consecutive far frames required before jump trigger. |
 | `jumpReseedFrames` | `rw` | `true` | `false` | `number / default=8` | Blend length (frames) after jump reset. |
 | `jumpResetConfidence` | `rw` | `true` | `false` | `boolean / default=True` | Reset confidence history when jump reset is triggered. |
-| `confidenceEnabled` | `rw` | `true` | `false` | `boolean / default=True` | Enable periodicity confidence estimation. |
+| `confidenceEnabled` | `rw` | `true` | `false` | `boolean / default=True` | Enable autocorrelation-based periodicity confidence estimation. |
 | `confidenceWindow` | `rw` | `true` | `false` | `number / default=128` | Sliding window size for autocorrelation confidence. |
 | `confidenceMinLag` | `rw` | `true` | `false` | `number / default=4` | Minimum lag used in autocorrelation scan. |
 | `confidenceMaxLag` | `rw` | `true` | `false` | `number / default=48` | Maximum lag used in autocorrelation scan. |
@@ -552,13 +673,24 @@ Tracks upper/lower envelopes and emits normalized + confidence outputs.
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 | `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
-#### Data Input Ports
+##### Key Fields That Matter
+
+- `method` (Method, `rw`): Envelope tracking method: `EMA`, `DEMA`, or `SMA`. Schema: `string / enum[EMA, DEMA, SMA] / default=EMA`.
+- `rise_alpha` (Rise Alpha, `rw`): Smoothing factor when the estimator moves toward the current envelope edge. Schema: `number / default=0.4`.
+- `fall_alpha` (Fall Alpha, `rw`): Smoothing factor when the estimator relaxes away from the current envelope edge. Schema: `number / default=0.05`.
+- `min_span` (Min Span, `rw`): Minimum enforced distance between lower and upper envelopes before normalization. Schema: `number / default=0.25`.
+- `sma_window` (SMA Window, `rw`): Moving-average window size used when Method is `SMA`. Schema: `number / default=10`.
+- `margin` (Margin, `rw`): Extra padding added outside the envelopes before computing `normalized`. Schema: `number / default=0.0`.
+- `jumpEnabled` (Jump Enabled, `rw`): Enable consecutive-frame jump detection and reseed. Schema: `boolean / default=True`.
+- `jumpSpanMult` (Jump Span Mult, `rw`): Distance threshold in envelope-span units for jump detection. Schema: `number / default=4.0`.
+
+##### Data Input Ports
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
 | `value` | `false` | `true` | `number` | Input value. |
 
-#### Data Output Ports
+##### Data Output Ports
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
@@ -566,37 +698,6 @@ Tracks upper/lower envelopes and emits normalized + confidence outputs.
 | `upper` | `true` | `true` | `number` | Estimated upper envelope. |
 | `normalized` | `true` | `true` | `number` | Normalized value (0..1). |
 | `confidence` | `true` | `true` | `number / default=0.0` | Periodicity confidence estimate (0..1). |
-
-#### When to Use
-
-- Use `Envelope` when a noisy or fast-changing scalar should become a smoother magnitude trace.
-- It is common in audio-reactive and gesture-reactive graphs.
-
-#### Typical Inputs / Outputs
-
-- Data inputs: `value`
-- Data outputs: `lower`, `upper`, `normalized`, `confidence`
-
-#### Common Wiring Patterns
-
-- Feed it from feature outputs, then send the smoothed result into `Smooth Filter`, `Range Map`, or `WaveViz`.
-- Tune it before downstream scaling so later nodes see a stable signal.
-
-#### Key Fields That Matter
-
-- `method` (Method, `rw`): Envelope filter method. Schema: `string / enum[EMA, DEMA, SMA] / default=EMA`.
-- `rise_alpha` (Rise Alpha, `rw`): Smoothing factor when moving toward the envelope. Schema: `number / default=0.4`.
-- `fall_alpha` (Fall Alpha, `rw`): Smoothing factor when moving away from the envelope. Schema: `number / default=0.05`.
-- `min_span` (Min Span, `rw`): Minimum enforced envelope span. Schema: `number / default=0.25`.
-- `sma_window` (SMA Window, `rw`): Window size for SMA mode. Schema: `number / default=10`.
-- `margin` (Margin, `rw`): Extra margin added to envelopes before normalization. Schema: `number / default=0.0`.
-- `jumpEnabled` (Jump Enabled, `rw`): Enable consecutive-frame jump detection and reseed. Schema: `boolean / default=True`.
-- `jumpSpanMult` (Jump Span Mult, `rw`): Distance threshold in envelope-span units for jump detection. Schema: `number / default=4.0`.
-
-#### Pitfalls / Gotchas
-
-- Over-smoothing can make a graph feel laggy even when the source is fine.
-- If the input source is mostly wrong or empty, envelope tuning only hides the real issue.
 
 #### Related Scenarios
 
@@ -608,10 +709,35 @@ Tracks upper/lower envelopes and emits normalized + confidence outputs.
 ### Axis Envelope (`f8.axis_envelope`)
 Estimate normalized amplitudes along major/minor axes from 2D input.
 
+#### When to Use
+
+- Use `Axis Envelope` when you need to analyze 2D motion (e.g., from a pose tracker or cursor) and extract it as two normalized scalar amplitudes: Major (primary direction) and Minor (secondary direction).
+- It is highly effective for converting spatial movement (like hand waving or pelvis motion) into intensity values suitable for driving haptic or visual effects.
+- Use it to distinguish between "large swinging" motions and "precise small" movements.
+
+#### Common Wiring Patterns
+
+- **Pose Motion Follower**: Feed it `x` and `y` coordinates from `f8-mp-pose`. Map the `major` and `minor` outputs into separate waveforms or device actuator branches.
+- **Multidimensional Analysis**: Connect the outputs to `f8-viz-wave` to visually tune the smoothing and normalization parameters while the subject is moving.
+- **Gesture Triggering**: Use a threshold on the `major` output to trigger events only when a gesture exceeds a certain spatial intensity.
+
+#### Pitfalls / Gotchas
+
+- **Input Scaling**: If the input coordinates are not already normalized (e.g., 0-1) or are poorly scaled, the resulting envelope will be unstable. Verify upstream normalization before tuning the envelope.
+- **Coordinate Drift**: If the baseline position of the subject drifts over time, the "center" of the envelope calculation may shift. Use auto-reset or baseline subtraction logic if necessary.
+- **Smoothing Response**: Like the standard `Envelope`, excessive smoothing will make the intensity tracking feel sluggish. Balance `attack` and `decay` based on how rapidly the motion is expected to change.
+
+#### Operator Reference
+
 - Exec in ports: none
 - Exec out ports: none
 
-#### State Fields
+##### Typical Inputs / Outputs
+
+- Data inputs: `x`, `y`
+- Data outputs: `major`, `minor`
+
+##### State Fields
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
@@ -627,36 +753,7 @@ Estimate normalized amplitudes along major/minor axes from 2D input.
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 | `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
-#### Data Input Ports
-
-| Name | Required | On Node | Schema | Description |
-| --- | --- | --- | --- | --- |
-| `x` | `false` | `true` | `number` | X coordinate. |
-| `y` | `false` | `true` | `number` | Y coordinate. |
-
-#### Data Output Ports
-
-| Name | Required | On Node | Schema | Description |
-| --- | --- | --- | --- | --- |
-| `major` | `true` | `true` | `number` | Normalized amplitude along the major axis (0..1). |
-| `minor` | `true` | `true` | `number` | Normalized amplitude along the minor axis (0..1). |
-
-#### When to Use
-
-- Use `Axis Envelope` when 2D motion should be reduced into normalized major/minor-axis amplitudes.
-- It is especially useful for pose- or cursor-like signals that need directional intensity.
-
-#### Typical Inputs / Outputs
-
-- Data inputs: `x`, `y`
-- Data outputs: `major`, `minor`
-
-#### Common Wiring Patterns
-
-- Feed it `x` and `y`, then map `major` and `minor` into separate wave or device branches.
-- Visualize both outputs with `WaveViz` while tuning smoothing and normalization.
-
-#### Key Fields That Matter
+##### Key Fields That Matter
 
 - `ema_alpha` (EMA Alpha, `rw`): EMA smoothing for center/covariance tracking. Schema: `number / default=0.2`.
 - `method` (Method, `rw`): Envelope filter method. Schema: `string / enum[EMA, DEMA, SMA] / default=EMA`.
@@ -667,10 +764,19 @@ Estimate normalized amplitudes along major/minor axes from 2D input.
 - `margin` (Margin, `rw`): Extra margin added to the envelopes before normalization. Schema: `number / default=0.0`.
 - `reset_z` (Reset Z, `rw`): Proportional outlier threshold. If a sample is >= this many sigma (2D) or spans (1D) away, reset and ignore it (0 disables). Schema: `number / default=8.0`.
 
-#### Pitfalls / Gotchas
+##### Data Input Ports
 
-- Poorly scaled inputs make the envelope look broken when the problem is really upstream normalization.
-- Reset and span settings matter when the motion range shifts over time.
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `x` | `false` | `true` | `number` | X coordinate. |
+| `y` | `false` | `true` | `number` | Y coordinate. |
+
+##### Data Output Ports
+
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `major` | `true` | `true` | `number` | Normalized amplitude along the major axis (0..1). |
+| `minor` | `true` | `true` | `number` | Normalized amplitude along the minor axis (0..1). |
 
 #### Related Scenarios
 
@@ -680,51 +786,49 @@ Estimate normalized amplitudes along major/minor axes from 2D input.
 ### Smooth Filter (`f8.smooth_filter`)
 Smooths scalar or vector inputs with EMA/DEMA/One Euro filtering.
 
+#### When to Use
+
+- Use `Smooth Filter` when a numeric signal already exists but contains jitter, noise, or sudden spikes that need temporal stabilization.
+- It is a essential second-stage "cleanup" node after feature extraction (audio) or coarse coordinate mapping (vision/pose).
+- Best for creating smooth, organic motion from noisy real-world data sources.
+
+#### Common Wiring Patterns
+
+- **Cleanup Pipeline**: Place it after an `Envelope` or `Range Map` operator. Compare the raw vs. filtered signal in parallel on `f8-viz-wave` to find the ideal smoothing coefficient.
+- **Actuator Guard**: Place a filter immediately before high-frequency device outputs to prevent "chatter" and reduce mechanical wear on actuators.
+- **Signal Separation**: Use different filter settings for different semantic signals (e.g., a "slow" filter for average loudness and a "fast" filter for onset tracking).
+
+#### Pitfalls / Gotchas
+
+- **Responsiveness Tradeoff**: Higher smoothing values increase stability but introduce noticeable latency (lag). Always tune the filter while interacting with the system to find the "sweet spot" for your use case.
+- **Input Error Hiding**: A heavy filter can hide systemic instability or logic errors in the upstream path. Always validate your raw signal before applying aggressive smoothing.
+- **Initialization Jumps**: The filter may produce a large "jump" output when the first data point arrives if the internal state isn't reset properly.
+
+#### Operator Reference
+
 - Exec in ports: none
 - Exec out ports: none
 
-#### State Fields
+##### Typical Inputs / Outputs
+
+- Data inputs: `value`
+- Data outputs: `value`
+
+##### State Fields
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
 | `filter_type` | `rw` | `true` | `true` | `string / enum[NONE, EMA, DEMA, ONEEURO] / default=EMA` | Filter type. |
 | `ema_alpha` | `rw` | `true` | `true` | `number / default=0.4` | EMA smoothing factor (0..1). |
-| `dema_alpha` | `rw` | `true` | `true` | `number / default=0.4` | DEMA smoothing factor (0..1). |
-| `one_euro_min_cutoff` | `rw` | `true` | `true` | `number / default=1.5` | Minimum cutoff frequency. |
-| `one_euro_beta` | `rw` | `true` | `true` | `number / default=0.0` | Speed coefficient for dynamic cutoff. |
-| `one_euro_derivative_cutoff` | `rw` | `true` | `true` | `number / default=1.0` | Cutoff frequency for the derivative filter. |
-| `one_euro_default_freq` | `rw` | `true` | `true` | `number / default=90.0` | Default sampling frequency (Hz). |
+| `dema_alpha` | `rw` | `true` | `false` | `number / default=0.4` | DEMA smoothing factor (0..1). |
+| `one_euro_min_cutoff` | `rw` | `true` | `false` | `number / default=1.5` | Minimum cutoff frequency. |
+| `one_euro_beta` | `rw` | `true` | `false` | `number / default=0.0` | Speed coefficient for dynamic cutoff. |
+| `one_euro_derivative_cutoff` | `rw` | `true` | `false` | `number / default=1.0` | Cutoff frequency for the derivative filter. |
+| `one_euro_default_freq` | `rw` | `true` | `false` | `number / default=90.0` | Default sampling frequency (Hz). |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 | `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
-#### Data Input Ports
-
-| Name | Required | On Node | Schema | Description |
-| --- | --- | --- | --- | --- |
-| `value` | `true` | `true` | `any` | Value to filter. |
-
-#### Data Output Ports
-
-| Name | Required | On Node | Schema | Description |
-| --- | --- | --- | --- | --- |
-| `value` | `true` | `true` | `any` | Filtered output. |
-
-#### When to Use
-
-- Use `Smooth Filter` when a scalar already exists but still needs temporal stabilization.
-- It is a good second-stage cleanup node after feature extraction or coarse mapping.
-
-#### Typical Inputs / Outputs
-
-- Data inputs: `value`
-- Data outputs: `value`
-
-#### Common Wiring Patterns
-
-- Place it after `Envelope` or `Range Map`, then compare raw vs filtered signals in parallel on `WaveViz`.
-- Keep one filter node per semantic signal so tuning remains readable.
-
-#### Key Fields That Matter
+##### Key Fields That Matter
 
 - `filter_type` (Filter, `rw`): Filter type. Schema: `string / enum[NONE, EMA, DEMA, ONEEURO] / default=EMA`.
 - `ema_alpha` (EMA Alpha, `rw`): EMA smoothing factor (0..1). Schema: `number / default=0.4`.
@@ -735,10 +839,17 @@ Smooths scalar or vector inputs with EMA/DEMA/One Euro filtering.
 - `one_euro_default_freq` (One Euro Default Freq, `rw`): Default sampling frequency (Hz). Schema: `number / default=90.0`.
 - `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
 
-#### Pitfalls / Gotchas
+##### Data Input Ports
 
-- A filter cannot fix a fundamentally wrong input path.
-- Filtering too late can hide where instability actually enters the graph.
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `value` | `true` | `true` | `any` | Value to filter. |
+
+##### Data Output Ports
+
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `value` | `true` | `true` | `any` | Filtered output. |
 
 #### Related Scenarios
 
@@ -749,10 +860,35 @@ Smooths scalar or vector inputs with EMA/DEMA/One Euro filtering.
 ### Range Map (`f8.range_map`)
 Clip input to [inMin,inMax] then remap to [outMin,outMax] with a curve.
 
+#### When to Use
+
+- Use `Range Map` when one numeric range (e.g., 0-100) must be clipped and remapped into another (e.g., 0-1).
+- It is the default scaling node for preparing any signal before it reaches actuator-facing outputs or visualizations.
+- Use it to convert raw sensor data, detection scores, or feature magnitudes into normalized control values.
+
+#### Common Wiring Patterns
+
+- **Signal Normalization**: Feed it cleaned scalar values from a detector or audio feature node, then send the mapped output to `f8-tcode`, `f8-serial-out`, or `f8-viz-wave`.
+- **Calibration Loop**: Tune `inMin` and `inMax` against real-time observed source values (using `f8-viz-wave` for reference) before finalizing the `outMin` and `outMax` for your hardware.
+- **Curve Shapping**: Use the `exponent` property to apply non-linear curves (e.g., exponential growth for more sensitivity at lower values).
+
+#### Pitfalls / Gotchas
+
+- **Input Calibration**: A bad or uncalibrated input range (`inMin/inMax`) is the most frequent cause of "dead" actuators or clipping. Verify your source signal range first.
+- **Output Clipping**: Out-of-bounds input values are clipped to `outMin/outMax` by default. ensure your mapping account for the full expected range of the signal.
+- **Semantic Clarity**: Map your values into a 0-1 range early in the graph to maintain a consistent "normalized" signal flow, moving the device-specific scaling to the very end of the chain.
+
+#### Operator Reference
+
 - Exec in ports: none
 - Exec out ports: none
 
-#### State Fields
+##### Typical Inputs / Outputs
+
+- Data inputs: `value`
+- Data outputs: `value`
+
+##### State Fields
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
@@ -764,34 +900,7 @@ Clip input to [inMin,inMax] then remap to [outMin,outMax] with a curve.
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 | `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
-#### Data Input Ports
-
-| Name | Required | On Node | Schema | Description |
-| --- | --- | --- | --- | --- |
-| `value` | `false` | `true` | `number` | Input value. |
-
-#### Data Output Ports
-
-| Name | Required | On Node | Schema | Description |
-| --- | --- | --- | --- | --- |
-| `value` | `true` | `true` | `number` | Mapped output. |
-
-#### When to Use
-
-- Use `Range Map` when one numeric range must be clipped and remapped into another.
-- It is the default scaling node before actuator-facing outputs.
-
-#### Typical Inputs / Outputs
-
-- Data inputs: `value`
-- Data outputs: `value`
-
-#### Common Wiring Patterns
-
-- Feed it cleaned scalar values, then send mapped output to `TCode`, `Serial Out`, or `WaveViz`.
-- Tune `inMin/inMax` against real observed source values before finalizing `outMin/outMax`.
-
-#### Key Fields That Matter
+##### Key Fields That Matter
 
 - `inMin` (Input Min, `rw`): Input range minimum. Schema: `number / default=0.0`.
 - `inMax` (Input Max, `rw`): Input range maximum. Schema: `number / default=1.0`.
@@ -801,10 +910,17 @@ Clip input to [inMin,inMax] then remap to [outMin,outMax] with a curve.
 - `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
 - `operatorId` (Operator Id, `ro`): Readonly: current operator/node id (operatorId). Schema: `string`.
 
-#### Pitfalls / Gotchas
+##### Data Input Ports
 
-- A bad input range makes every downstream node look wrong.
-- Curve shaping is easier to evaluate visually than by guessing from device behavior alone.
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `value` | `false` | `true` | `number` | Input value. |
+
+##### Data Output Ports
+
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `value` | `true` | `true` | `number` | Mapped output. |
 
 #### Related Scenarios
 
@@ -816,10 +932,35 @@ Clip input to [inMin,inMax] then remap to [outMin,outMax] with a curve.
 ### Rate Limiter (`f8.rate_limiter`)
 Limits the rate of change (and optionally acceleration) of an input signal.
 
+#### When to Use
+
+- Use `Rate Limiter` when you need to ensure that an output value changes no faster than a specific "safe" rate (slope limiting) or doesn't exceed a maximum step size.
+- It is a critical "safety node" for protecting physical actuators and hardware from sudden, violent movements caused by noise or upstream logic jumps.
+- Best for smoothing out "teleporting" values from detectors or trackers that occasionally lose their lock.
+
+#### Common Wiring Patterns
+
+- **Safety Guard**: Place it late in the control chain, after all mapping, smoothing, and logic but immediately *before* the hardware output node (e.g., `Lovense Out`, `Serial Out`).
+- **Visual Validation**: Use `f8-viz-wave` to compare the "Unlimited" vs. "Limited" signals side-by-side to ensure the limits are safe for your specific hardware while remaining responsive enough for the user.
+- **Actuator Lifetime**: Use conservative limits during general development to reduce mechanical wear on your devices, then widen them for "high-dynamic" scenarios when necessary.
+
+#### Pitfalls / Gotchas
+
+- **Placement Order**: If placed too early in the graph, the rate limiter can distort the logic of subsequent operators (like Envelopes or Smooth Filters) that expect to see raw signal dynamics.
+- **Responsiveness Lag**: Aggressive rate limiting will make your graph feel sluggish or "unresponsive," even if the upstream vision/audio detection is frame-perfect. Always tune this while physically testing the system.
+- **Step vs Slope**: Understand the difference between limiting the *total change per second* (slope) and the *maximum allowed change in a single frame* (step). Misconfiguring these can lead to unexpected "damping" effect.
+
+#### Operator Reference
+
 - Exec in ports: none
 - Exec out ports: none
 
-#### State Fields
+##### Typical Inputs / Outputs
+
+- Data inputs: `value`
+- Data outputs: `value`
+
+##### State Fields
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
@@ -831,34 +972,7 @@ Limits the rate of change (and optionally acceleration) of an input signal.
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 | `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
-#### Data Input Ports
-
-| Name | Required | On Node | Schema | Description |
-| --- | --- | --- | --- | --- |
-| `value` | `false` | `true` | `number` | Input value. |
-
-#### Data Output Ports
-
-| Name | Required | On Node | Schema | Description |
-| --- | --- | --- | --- | --- |
-| `value` | `true` | `true` | `number` | Rate-limited output. |
-
-#### When to Use
-
-- Use `Rate Limiter` when output should change no faster than a configured slope or step rate.
-- It is useful for making actuator commands safer and less jumpy.
-
-#### Typical Inputs / Outputs
-
-- Data inputs: `value`
-- Data outputs: `value`
-
-#### Common Wiring Patterns
-
-- Place it late in the chain, after mapping and smoothing but before hardware/protocol output.
-- Compare limited vs unlimited branches with `WaveViz` when setting release-safe values.
-
-#### Key Fields That Matter
+##### Key Fields That Matter
 
 - `inMin` (Input Min, `rw`): Input/output clamp minimum (typical 0). Schema: `number / default=0.0`.
 - `inMax` (Input Max, `rw`): Input/output clamp maximum (typical 1). Schema: `number / default=1.0`.
@@ -868,10 +982,17 @@ Limits the rate of change (and optionally acceleration) of an input signal.
 - `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
 - `operatorId` (Operator Id, `ro`): Readonly: current operator/node id (operatorId). Schema: `string`.
 
-#### Pitfalls / Gotchas
+##### Data Input Ports
 
-- If placed too early, it can distort the semantics of the whole control signal.
-- Aggressive limiting can make the graph feel unresponsive even when upstream timing is correct.
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `value` | `false` | `true` | `number` | Input value. |
+
+##### Data Output Ports
+
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `value` | `true` | `true` | `number` | Rate-limited output. |
 
 #### Related Scenarios
 
@@ -882,10 +1003,36 @@ Limits the rate of change (and optionally acceleration) of an input signal.
 ### UDP Skeleton (`f8.udp_skeleton`)
 Receives UDP packets, keeps latest skeleton per model key, and emits exec triggers per committed packet/frame.
 
+#### When to Use
+
+- Use `UDP Skeleton` to ingest 3D skeleton payloads arriving over a UDP port from external body-tracking software (e.g., custom AI detectors, VR trackers, or proprietary vision systems).
+- It is a lightweight, low-latency entry point for getting external body-tracking data into your Feel8 graph.
+- Best for scenarios where the vision processing is handled by a separate process or a remote machine.
+
+#### Common Wiring Patterns
+
+- **Live Body Ingest**: Feed the `skeleton` output into a `Bone Selector` to pick a joint, or directly into `f8-viz-three-d` to verify coordinate alignment.
+- **Monitoring Branch**: Keep a `Print` or `TextViz` node attached to the incoming stream to monitor the packet rate and verify the protocol schema.
+- **Coordinate Calibration**: Use the `offset` and `scale` properties (if available) to align the external skeleton with your graph's internal world-space expectations.
+
+#### Pitfalls / Gotchas
+
+- **Network Blocking**: Ensure the target UDP port is open in your OS firewall and not already bound by another process.
+- **Convention Clashes**: External sources often use different coordinate systems (e.g., Left-handed vs. Right-handed, Y-up vs. Z-up). If your 3D skeleton looks "inverted" or "laying down," you must apply a transformation early in your graph.
+- **Diagnostic Hygiene**: Never attempt to tune your motion logic until you have visually confirmed that the incoming 3D skeleton is stable and correctly oriented in space.
+
+#### Operator Reference
+
 - Exec in ports: none
 - Exec out ports: `packet`
 
-#### State Fields
+##### Typical Inputs / Outputs
+
+- Exec outputs: `packet`
+- Data inputs: none
+- Data outputs: `skeletons`, `selectedSkeleton`
+
+##### State Fields
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
@@ -900,34 +1047,7 @@ Receives UDP packets, keeps latest skeleton per model key, and emits exec trigge
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 | `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
-#### Data Input Ports
-
-_None_
-
-#### Data Output Ports
-
-| Name | Required | On Node | Schema | Description |
-| --- | --- | --- | --- | --- |
-| `skeletons` | `true` | `true` | `array[object]` | List of latest payloads (ordered by key). |
-| `selectedSkeleton` | `true` | `true` | `object{boneCount, bones, modelName, schema, ...}` | Latest payload matching `selectedKey` (or None). |
-
-#### When to Use
-
-- Use `UDP Skeleton` when skeleton payloads arrive over a simple UDP path and should enter the graph as pose data.
-- It is a straightforward ingest node for external body-tracking sources.
-
-#### Typical Inputs / Outputs
-
-- Exec outputs: `packet`
-- Data inputs: none
-- Data outputs: `skeletons`, `selectedSkeleton`
-
-#### Common Wiring Patterns
-
-- Feed its skeleton output into `Bone Selector`, `Bone Filter`, or `f8.viz.three_d`.
-- Keep a visualization branch attached while validating source coordinate conventions.
-
-#### Key Fields That Matter
+##### Key Fields That Matter
 
 - `bindAddress` (Bind Address, `rw`): Local address to bind (loopback by default). Schema: `string / default=127.0.0.1`.
 - `allowNonLoopbackBind` (Allow Non-loopback Bind, `rw`): When true, allow bindAddress values other than loopback. Schema: `boolean / default=False`.
@@ -938,10 +1058,16 @@ _None_
 - `selectedKey` (Selected Key, `rw`): If set and matches an available key, outputs `selectedSkeleton`; otherwise None. Schema: `string / default=`.
 - `availableKeys` (Available Keys, `ro`): Read-only list of current keys (updated only on changes). Schema: `array[string]`.
 
-#### Pitfalls / Gotchas
+##### Data Input Ports
 
-- Networking and coordinate-frame issues often look like downstream logic bugs.
-- Do not tune bone-processing nodes until the incoming skeleton itself is visually sane.
+_None_
+
+##### Data Output Ports
+
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `skeletons` | `true` | `true` | `array[object]` | List of latest payloads (ordered by key). |
+| `selectedSkeleton` | `true` | `true` | `object{boneCount, bones, modelName, schema, ...}` | Latest payload matching `selectedKey` (or None). |
 
 #### Related Scenarios
 
@@ -951,65 +1077,66 @@ _None_
 ### Serial Out (`f8.serial_out`)
 Writes incoming values to a serial port (pyserial).
 
+#### When to Use
+
+- Use `Serial Out` as the final hardware sink for sending TCode or other text-based command streams to a device connected via a COM port (USB-Serial, Arduino, ESP32).
+- It is the most common path for controlling DIY machines (like the OSR2 or SR6) and custom embedded hardware.
+- Use it when you need low-latency, direct-to-metal communication without an intermediate network or Bluetooth layer.
+
+#### Common Wiring Patterns
+
+- **Hardware Command Loop**: Feed it from an `f8-tcode` operator or any other finalized string-producing node. Always keep a `TCodeViz` node in parallel during initial hardware bring-up to see exactly what is being sent.
+- **Safety Chains**: Ensure all safety limits, smoothing, and range mapping are handled *upstream* in the graph. The serial node should strictly be a "dumb" transport layer.
+- **Port Setup**: Select the correct COM port and baud rate in the node properties. It is recommended to use 115200 or higher for smooth haptic feedback.
+
+#### Pitfalls / Gotchas
+
+- **Port Access Conflicts**: The most common error is trying to open a port that is already in use by another application (e.g., Arduino IDE, another Studio instance). Verify the port is free before starting the scenario.
+- **Baud Rate Mismatch**: If the baud rate on the node doesn't match the firmware on your device, you will see garbage characters or the device will not react at all.
+- **Format Errors**: Validate the outgoing string format in the editor before blaming the hardware. Missing a newline character or a semicolon at the end of a command is a frequent cause of "unresponsive" hardware.
+
+#### Operator Reference
+
 - Exec in ports: `exec`
 - Exec out ports: none
 
-#### State Fields
+##### Typical Inputs / Outputs
+
+- Exec inputs: `exec`
+- Data inputs: `value`
+- Data outputs: `isOpen`, `writtenBytes`, `error`
+
+##### State Fields
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
 | `enabled` | `rw` | `true` | `true` | `boolean / default=True` | Enable/disable serial output. |
 | `port` | `rw` | `true` | `true` | `string / default=COM4` | Serial port name (e.g., COM3). |
 | `baudrate` | `wo` | `true` | `false` | `integer / default=115200` | Serial baud rate. |
-| `encoding` | `rw` | `true` | `false` | `string / default=ascii` | Deprecated. Serial Out always encodes as ASCII for TCode devices. |
-| `newline` | `rw` | `true` | `false` | `string / default=` | Deprecated. Provide newline in the input payload if needed. |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 | `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
-#### Data Input Ports
+##### Key Fields That Matter
+
+- `enabled` (Enabled, `rw`): Enable/disable serial output. Schema: `boolean / default=True`.
+- `port` (Port, `rw`): Serial port name (e.g., COM3). Schema: `string / default=COM4`.
+- `baudrate` (Baudrate, `wo`): Serial baud rate. Schema: `integer / default=115200`.
+- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
+- `operatorId` (Operator Id, `ro`): Readonly: current operator/node id (operatorId). Schema: `string`.
+
+##### Data Input Ports
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
 | `value` | `true` | `true` | `any` | Value to write. |
 
-#### Data Output Ports
+##### Data Output Ports
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
 | `isOpen` | `true` | `true` | `boolean / default=False` | Whether serial port is open. |
 | `writtenBytes` | `true` | `true` | `integer / default=0` | Bytes written by last exec. |
 | `error` | `true` | `true` | `string / default=` | Last error (if any). |
-
-#### When to Use
-
-- Use `Serial Out` when the final command stream should go to a serial-connected device.
-- It is the simplest hardware sink for TCode-like outputs.
-
-#### Typical Inputs / Outputs
-
-- Exec inputs: `exec`
-- Data inputs: `value`
-- Data outputs: `isOpen`, `writtenBytes`, `error`
-
-#### Common Wiring Patterns
-
-- Feed it from `TCode` or another finalized string stream and keep `TCodeViz` in parallel during bring-up.
-- Put safety/limiting nodes upstream, not in the serial node itself.
-
-#### Key Fields That Matter
-
-- `enabled` (Enabled, `rw`): Enable/disable serial output. Schema: `boolean / default=True`.
-- `port` (Port, `rw`): Serial port name (e.g., COM3). Schema: `string / default=COM4`.
-- `baudrate` (Baudrate, `wo`): Serial baud rate. Schema: `integer / default=115200`.
-- `encoding` (Encoding (deprecated), `rw`): Deprecated. Serial Out always encodes as ASCII for TCode devices. Schema: `string / default=ascii`.
-- `newline` (Newline (deprecated), `rw`): Deprecated. Provide newline in the input payload if needed. Schema: `string / default=`.
-- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
-- `operatorId` (Operator Id, `ro`): Readonly: current operator/node id (operatorId). Schema: `string`.
-
-#### Pitfalls / Gotchas
-
-- Port-name mistakes are far more common than graph-shape mistakes here.
-- Validate the outgoing string format before blaming transport settings.
 
 #### Related Scenarios
 
@@ -1022,10 +1149,35 @@ Writes incoming values to a serial port (pyserial).
 ### TCode (`f8.tcode`)
 Generates TCode v0.3 command strings from normalized axis values.
 
+#### When to Use
+
+- Use `TCode` to convert one or more normalized numeric control channels (0-1) into a standard TCode string stream (e.g., `L0500`, `V0123`).
+- It is the essential formatting bridge between your abstract motion logic and the physical commands understood by most haptic devices.
+- Use it to bundle multiple independent signals (Stroke, Vibrate, Roll, etc.) into a single, synchronized command packet.
+
+#### Common Wiring Patterns
+
+- **Device Command Chain**: Feed it mapped numeric signals from `Range Map`. Branch the resulting `tcode` string output to `f8-serial-out`, `f8-handy-out`, or a `TCodeViz` for inspection.
+- **Synchronized Updates**: Align the `intervalMs` property with the tick rate of your graph (e.g., 20ms for 50Hz) to ensure smooth, jitter-free device movement.
+- **Multi-Channel Authoring**: Use a single `TCode` operator to manage all axes of a complex device (like an OSR2) by wiring each axis to a dedicated input port.
+
+#### Pitfalls / Gotchas
+
+- **Channel Semantic Mismatch**: If you wire a "Vibration" signal into a "Stroke" axis in the TCode node, the physical device will move incorrectly. Double-check your axis mappings (`L0`, `V0`, `R1`, etc.).
+- **Visual Verification First**: Always view the emitted TCode string in a `TCodeViz` node *before* debugging serial ports or network connections. If the string looks wrong, the problem is upstream.
+- **Resolution Limits**: TCode typically expects 4-digit precision (0-9999). Ensure your upstream values are not being clipped or rounded in a way that creates a "steppy" feel on the device.
+
+#### Operator Reference
+
 - Exec in ports: none
 - Exec out ports: none
 
-#### State Fields
+##### Typical Inputs / Outputs
+
+- Data inputs: `L0`, `L1`, `L2`, `R0`, `R1`, `R2`, `V0`, `V1`, `A0`, `A1`, `intervalMs`
+- Data outputs: `tcode`
+
+##### State Fields
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
@@ -1033,7 +1185,13 @@ Generates TCode v0.3 command strings from normalized axis values.
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 | `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
-#### Data Input Ports
+##### Key Fields That Matter
+
+- `intervalMs` (Interval (ms), `rw`): Default interval appended as `I###` when `intervalMs` input is not provided. Schema: `number / default=20`.
+- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
+- `operatorId` (Operator Id, `ro`): Readonly: current operator/node id (operatorId). Schema: `string`.
+
+##### Data Input Ports
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
@@ -1049,37 +1207,11 @@ Generates TCode v0.3 command strings from normalized axis values.
 | `A1` | `true` | `false` | `number` | Axis A1 (0..1). |
 | `intervalMs` | `true` | `false` | `number / default=20` | Optional interval override in milliseconds (rounded, min 1). |
 
-#### Data Output Ports
+##### Data Output Ports
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
 | `tcode` | `true` | `true` | `string` | TCode v0.3 command string |
-
-#### When to Use
-
-- Use `TCode` when one or more normalized control channels must become a TCode string stream.
-- It is the core formatter between scalar motion signals and device/protocol outputs.
-
-#### Typical Inputs / Outputs
-
-- Data inputs: `L0`, `L1`, `L2`, `R0`, `R1`, `R2`, `V0`, `V1`, `A0`, `A1`, `intervalMs`
-- Data outputs: `tcode`
-
-#### Common Wiring Patterns
-
-- Feed it mapped numeric channels, then branch the resulting string to `Serial Out`, `Handy Out`, or `TCodeViz`.
-- Keep timing explicit by aligning `intervalMs` with the tick source that drives updates.
-
-#### Key Fields That Matter
-
-- `intervalMs` (Interval (ms), `rw`): Default interval appended as `I###` when `intervalMs` input is not provided. Schema: `number / default=20`.
-- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
-- `operatorId` (Operator Id, `ro`): Readonly: current operator/node id (operatorId). Schema: `string`.
-
-#### Pitfalls / Gotchas
-
-- If the upstream channel semantics are unclear, the final string may be valid but still wrong for the device.
-- View the emitted string in `TCodeViz` before debugging transport nodes.
 
 #### Related Scenarios
 
@@ -1092,51 +1224,50 @@ Generates TCode v0.3 command strings from normalized axis values.
 ### Python Script (`f8.python_script`)
 Execute Python code with onStart/onState/onMsg/onExec/onStop hooks.
 
+#### When to Use
+
+- Use the `Python Script` operator when a specific part of your graph needs bespoke logic that should still execute inside the high-performance `f8.pyengine` environment.
+- It is the primary "escape hatch" for complex signal processing, domain-specific algorithms, or orchestrating flow between multiple operators.
+- Choose this when you need to maintain internal state across multiple data frames (e.g., counters, moving averages, or state machines).
+
+#### Common Wiring Patterns
+
+- **Modular Logic**: Keep the script narrow in scope. Instead of one massive script for the whole scene, use multiple script nodes each handling a single responsibility (e.g., "Hand Gesture Logic," "Sequence Orchestration").
+- **Inspection Layers**: Surround your script node with `f8-viz-text` and `f8-viz-wave` nodes so its internal inputs and outputs stay obvious during debugging.
+- **Dynamic Port Scaling**: Define your custom input and output ports in the node properties to make the script's interface explicit on the graph canvas.
+
+#### Pitfalls / Gotchas
+
+- **Maintenance Bottleneck**: A script node can become a "black box" that hides too much logic from the visual graph representation. Always document your code and keep the script's external interface clear.
+- **Port Naming**: Avoid using generic names like `input1` or `output1`. Use semantic names (e.g., `target_velocity`, `is_active`) to make the data flow readable to others.
+- **Blocking Calls**: Never perform blocking I/O (like `time.sleep()` or synchronous requests) inside the script's processing callback, as this will stall the entire `PyEngine` thread and lock up your graph.
+- **State Leaks**: Be careful with persistent variables; ensure your script handles initialization and reset logic properly when the graph starts or stops.
+
+#### Operator Reference
+
 - Exec in ports: `exec`
 - Exec out ports: `exec`
 
-#### State Fields
-
-| Name | Access | Required | On Node | Schema | Description |
-| --- | --- | --- | --- | --- | --- |
-| `code` | `rw` | `true` | `false` | `string / default=# Hooks template (uncomment what you need):<br># - onStart(ctx)<br># - onState(ctx, field, value, ts_ms=None)<br># - onMsg(ctx, inputs)<br># - onExec(ctx, exec_in, inputs)<br># - onStop(ctx)<br>#<br># Notes:<br># - ctx.locals is preserved between calls (script-local memory)<br># - ctx.exec_in is set only for exec-triggered calls<br># - ctx.states.<field> reads cached rw/ro/wo state snapshot<br>#   - example: ctx.states.foo / ctx.states.pose.x<br># - await ctx.read_state(field)  # fresh runtime read<br># - ctx.states.get(field)  # cached snapshot<br># - ctx.set_state(field, value)<br>#   - await ctx.set_state_async(field, value)<br># - inputs binding mode is configured by state `inputMode`:<br>#   - input_view (default): supports dot and mapping access<br>#   - raw_dict: plain dict only<br>#   - msgspec_struct: typed struct from dataIn schema<br># - State TypeGuard helpers are available from f8_dynamic_states<br>#   - example: from f8_dynamic_states import is_state_lastError<br>#   - then: if is_state_lastError(value, field): ...<br># - Video SHM helpers:<br>#   - ctx.subscribe_video_shm(key, shm_name, decode='auto', use_event=False)<br>#   - pkt = ctx.get_video_shm(key)<br>#   - ctx.unsubscribe_video_shm(key)<br>#   - ctx.list_video_shm_subscriptions()<br>#<br># Return value protocol:<br># - onMsg: {'outputs': {...}} or any value (emits to 'out' if present)<br># - onExec: {'exec': ['exec', ...], 'outputs': {...}}<br><br>from typing import TYPE_CHECKING, Any<br>if TYPE_CHECKING:<br>    from f8_script_api import F8Inputs, F8PyEngineContext, F8States<br><br>def onStart(ctx: 'F8PyEngineContext') -> None:<br>    ctx.log('python_script started')<br><br># def onState(<br>#     ctx: 'F8PyEngineContext',<br>#     field: str,<br>#     value: Any,<br>#     ts_ms: int \| None = None,<br># ) -> None:<br>#     ctx.log(f'state {field}={value} ts_ms={ts_ms}')<br>#<br># def onMsg(ctx: 'F8PyEngineContext', inputs: 'F8Inputs') -> dict[str, Any]:<br>#     msg = inputs.msg<br>#     return {'outputs': {'out': msg}}<br>#<br># def onExec(ctx: 'F8PyEngineContext', exec_in: str, inputs: 'F8Inputs') -> dict[str, Any]:<br>#     if exec_in == 'exec2':<br>#         return {'exec': ['exec2'], 'outputs': {'out': inputs.msg}}<br>#     return {'exec': ['exec'], 'outputs': {'out': inputs.msg}}<br>#<br># def onStop(ctx: 'F8PyEngineContext') -> None:<br>#     ctx.log('python_script stopped')<br>` | Python source code defining onStart(ctx), onMsg(ctx, inputs), onStop(ctx). |
-| `inputMode` | `rw` | `true` | `false` | `string / enum[input_view, raw_dict, msgspec_struct] / default=input_view` | Input binding mode: input_view \| raw_dict \| msgspec_struct. |
-| `lastError` | `wo` | `true` | `false` | `string / default=` | Last script error (compile/runtime). |
-| `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
-| `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
-
-#### Data Input Ports
-
-| Name | Required | On Node | Schema | Description |
-| --- | --- | --- | --- | --- |
-| `msg` | `false` | `true` | `any` | Message input |
-
-#### Data Output Ports
-
-| Name | Required | On Node | Schema | Description |
-| --- | --- | --- | --- | --- |
-| `out` | `false` | `true` | `any` | Script output |
-
-#### When to Use
-
-- Use `Python Script` when one operator in the graph needs custom logic but should still live inside `f8.pyengine`.
-- It is the most flexible in-graph escape hatch for shaping data or control flow.
-
-#### Typical Inputs / Outputs
+##### Typical Inputs / Outputs
 
 - Exec inputs: `exec`
 - Exec outputs: `exec`
 - Data inputs: `msg`
 - Data outputs: `out`
 
-#### Common Wiring Patterns
+##### State Fields
 
-- Keep the script narrow in scope and surround it with visualization nodes so its inputs and outputs stay obvious.
-- Prefer one script per clear responsibility instead of one script doing the whole scenario.
+| Name | Access | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- | --- |
+| `code` | `rw` | `true` | `false` | `string / default=# Hooks template (uncomment what you need):<br># - onStart(ctx)<br># - onState(ctx, field, value, ts_ms=None)<br># - onMsg(ctx, inputs)<br># - onExec(ctx, exec_in, inputs)<br># - onStop(ctx)<br>#<br># Notes:<br># - If you define no hooks, the node is a no-op.<br># - ctx.locals is preserved between calls (script-local memory)<br># - ctx.exec_in is set only for exec-triggered calls<br># - ctx.states.<field> reads cached rw/ro/wo state snapshot<br>#   - example: ctx.states.foo / ctx.states.pose.x<br># - await ctx.read_state(field)  # fresh runtime read<br># - ctx.states.get(field)  # cached snapshot<br># - ctx.set_state(field, value)<br>#   - await ctx.set_state_async(field, value)<br># - onStart return values are ignored; use ctx.emit()/ctx.set_state().<br># - inputs binding mode is configured by state `inputMode`:<br>#   - input_view (default): supports dot and mapping access<br>#   - raw_dict: plain dict only<br>#   - msgspec_struct: typed struct from dataIn schema<br># - State TypeGuard helpers are available from f8_dynamic_states<br>#   - example: from f8_dynamic_states import is_state_lastError<br>#   - then: if is_state_lastError(value, field): ...<br># - Video SHM helpers:<br>#   - ctx.subscribe_video_shm(key, shm_name, decode='auto', use_event=False)<br>#   - pkt = ctx.get_video_shm(key)<br>#   - ctx.unsubscribe_video_shm(key)<br>#   - ctx.list_video_shm_subscriptions()<br>#<br># Return value protocol:<br># - onMsg: {'outputs': {...}} or any value (emits to 'out' if present)<br># - onExec: {'exec': ['exec', ...], 'outputs': {...}}<br><br>from typing import TYPE_CHECKING, Any<br>if TYPE_CHECKING:<br>    from f8_script_api import F8Inputs, F8PyEngineContext, F8States<br><br>def onStart(ctx: 'F8PyEngineContext') -> None:<br>    ctx.log('python_script started')<br><br># def onState(<br>#     ctx: 'F8PyEngineContext',<br>#     field: str,<br>#     value: Any,<br>#     ts_ms: int \| None = None,<br># ) -> None:<br>#     ctx.log(f'state {field}={value} ts_ms={ts_ms}')<br>#<br># def onMsg(ctx: 'F8PyEngineContext', inputs: 'F8Inputs') -> dict[str, Any]:<br>#     msg = inputs.msg<br>#     return {'outputs': {'out': msg}}<br>#<br># def onExec(ctx: 'F8PyEngineContext', exec_in: str, inputs: 'F8Inputs') -> dict[str, Any]:<br>#     if exec_in == 'exec2':<br>#         return {'exec': ['exec2'], 'outputs': {'out': inputs.msg}}<br>#     return {'exec': ['exec'], 'outputs': {'out': inputs.msg}}<br>#<br># def onStop(ctx: 'F8PyEngineContext') -> None:<br>#     ctx.log('python_script stopped')<br>` | Python source code optionally defining hooks: onStart/onState/onMsg/onExec/onStop. |
+| `inputMode` | `rw` | `true` | `false` | `string / enum[input_view, raw_dict, msgspec_struct] / default=input_view` | Input binding mode: input_view \| raw_dict \| msgspec_struct. |
+| `lastError` | `wo` | `true` | `false` | `string / default=` | Last script error (compile/runtime). |
+| `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
+| `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
-#### Key Fields That Matter
+##### Key Fields That Matter
 
-- `code` (Code, `rw`): Python source code defining onStart(ctx), onMsg(ctx, inputs), onStop(ctx). Schema: `string / default=# Hooks template (uncomment what you need):
+- `code` (Code, `rw`): Python source code optionally defining hooks: onStart/onState/onMsg/onExec/onStop. Schema: `string / default=# Hooks template (uncomment what you need):
 # - onStart(ctx)
 # - onState(ctx, field, value, ts_ms=None)
 # - onMsg(ctx, inputs)
@@ -1144,6 +1275,7 @@ Execute Python code with onStart/onState/onMsg/onExec/onStop hooks.
 # - onStop(ctx)
 #
 # Notes:
+# - If you define no hooks, the node is a no-op.
 # - ctx.locals is preserved between calls (script-local memory)
 # - ctx.exec_in is set only for exec-triggered calls
 # - ctx.states.<field> reads cached rw/ro/wo state snapshot
@@ -1152,6 +1284,7 @@ Execute Python code with onStart/onState/onMsg/onExec/onStop hooks.
 # - ctx.states.get(field)  # cached snapshot
 # - ctx.set_state(field, value)
 #   - await ctx.set_state_async(field, value)
+# - onStart return values are ignored; use ctx.emit()/ctx.set_state().
 # - inputs binding mode is configured by state `inputMode`:
 #   - input_view (default): supports dot and mapping access
 #   - raw_dict: plain dict only
@@ -1201,85 +1334,142 @@ def onStart(ctx: 'F8PyEngineContext') -> None:
 - `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
 - `operatorId` (Operator Id, `ro`): Readonly: current operator/node id (operatorId). Schema: `string`.
 
-#### Pitfalls / Gotchas
+##### Data Input Ports
 
-- A script node can become a maintenance bottleneck if it hides too much graph logic.
-- Weak schemas around the script make completion and downstream debugging much worse.
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `msg` | `false` | `true` | `any` | Message input |
+
+##### Data Output Ports
+
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `out` | `false` | `true` | `any` | Script output |
 
 #### Related Scenarios
 
 - [Scene 01: CVKit Template Tracking](../../scenarios/scene-01-cvkit_template_tracking.md)
 - [Scene 02: GameMod Skeleton](../../scenarios/scene-02-gamemod_skeleton.md)
 
-<a id="operator-f8-expr"></a>
-### Python Expr (`f8.expr`)
-Evaluate a small expression using input values (math/logic/extraction).
+<a id="operator-f8-data-expr"></a>
+### Data Expr (`f8.data_expr`)
+Evaluate a small Python expression using input values.
+
+Core
+- The main input is `x`, and any additional input port name can be referenced directly.
+- The expression is a single Python expression, not a statement block.
+- The result is emitted on `out`.
+- If `Unpack Dict Outputs` is enabled and the result is a dict, matching output ports receive matching keys.
+
+Available
+- Builtins: `abs`, `min`, `max`, `round`, `float`, `int`, `len`, `sum`, `sorted`, `range`, `any`, `all`
+- Python expressions: indexing, dict/list/tuple literals, comprehensions, conditionals
+- Math namespace: `math.*`
+- Optional numpy namespace: `np.*` and `numpy.*` when `Allow Numpy` is enabled
+
+Examples
+- `x * 0.5`
+- `max(0, x)`
+- `{'left': x[0], 'right': x[1]}`
+- `[value * 2 for value in x]`
+
+#### When to Use
+
+- Use `Data Expr` when you want to execute a compact Python expression over one or more input payloads without the overhead of a full `Python Script` node.
+- It is a good fit for minor data transforms, field extraction from JSON, simple conditionals, or unpacking one result into multiple named outputs.
+- Best for logic that is too complex for a single property but doesn't require complex state management.
+
+#### Common Wiring Patterns
+
+- **Multi-Input Reduction**: Feed it from multiple service or operator data ports. Reference the default input as `x` or use named input ports directly in your expression.
+- **Output Unpacking**: Enable `Unpack Dict Outputs` when your expression returns a dictionary. The operator will automatically route values to output ports whose names match the dictionary keys.
+- **Signal Gating**: Use a conditional expression (e.g., `x if x > 0.5 else 0`) to gate or filter incoming values before they move further down the graph.
+
+#### Pitfalls / Gotchas
+
+- **Complexity Creep**: Expressions stay maintainable only while they are small. Once you need persistent state, complex imports, or multi-step logic, you should upgrade the work to a `Python Script` node.
+- **Port Mapping**: Output unpacking only happens for keys that *exactly* match existing output port names. Double-check your spelling!
+- **Silent Failures**: Expression errors are often swallowed or only visible in the engine logs. Use `f8-viz-text` to monitor the output if your expression appears to be failing.
+- **Library Support**: Optional `numpy` support is available but must be explicitly enabled in node properties.
+
+#### Operator Reference
 
 - Exec in ports: none
 - Exec out ports: none
 
-#### State Fields
+##### Typical Inputs / Outputs
+
+- Data inputs: `x`
+- Data outputs: `out`
+
+##### State Fields
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `allowNumpy` | `rw` | `false` | `false` | `boolean / default=False` | Enable numpy calls in expressions (np.*, numpy.*). |
-| `unpackDictOutputs` | `rw` | `false` | `false` | `boolean / default=False` | When enabled, dict results are emitted by matching output port names. |
-| `code` | `rw` | `false` | `true` | `string / default=x` | Single-line expression (no statements). Available: abs/min/max/round/float/int, math.*, comprehensions. Numpy (np.*, numpy.*) is available only when Allow Numpy is enabled. |
+| `allowNumpy` | `rw` | `false` | `false` | `boolean / default=False` | Enable `np.*` and `numpy.*` inside the expression. |
+| `unpackDictOutputs` | `rw` | `false` | `false` | `boolean / default=False` | When enabled, dict results are unpacked into output ports with matching names. |
+| `code` | `rw` | `false` | `true` | `string / default=x` | Single Python expression. Reference `x` and any extra input port names directly. Supports literals, indexing, comprehensions, conditionals, `math.*`, and optional `np.*` / `numpy.*` when `Allow Numpy` is enabled. |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 | `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
-#### Data Input Ports
+##### Key Fields That Matter
+
+- `allowNumpy` (Allow Numpy, `rw`): Enable `np.*` and `numpy.*` inside the expression. Schema: `boolean / default=False`.
+- `unpackDictOutputs` (Unpack Dict Outputs, `rw`): When enabled, dict results are unpacked into output ports with matching names. Schema: `boolean / default=False`.
+- `code` (Expr, `rw`): Single Python expression. Reference `x` and any extra input port names directly. Supports literals, indexing, comprehensions, conditionals, `math.*`, and optional `np.*` / `numpy.*` when `Allow Numpy` is enabled. Schema: `string / default=x`.
+- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
+- `operatorId` (Operator Id, `ro`): Readonly: current operator/node id (operatorId). Schema: `string`.
+
+##### Data Input Ports
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
 | `x` | `false` | `true` | `any` | Input value for the expression. |
 
-#### Data Output Ports
+##### Data Output Ports
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
 | `out` | `false` | `true` | `any` | Expression result. |
 
-#### When to Use
-
-- Use `Python Expr` when a one-line transformation is enough and a full script node would be overkill.
-- It is ideal for extracting a field, combining a small number of values, or applying a simple formula.
-
-#### Typical Inputs / Outputs
-
-- Data inputs: `x`
-- Data outputs: `out`
-
-#### Common Wiring Patterns
-
-- Feed it structured data from services or other operators, then pass the result into `Range Map`, `WaveViz`, or state edges.
-- Keep expressions readable enough that the graph still explains itself.
-
-#### Key Fields That Matter
-
-- `allowNumpy` (Allow Numpy, `rw`): Enable numpy calls in expressions (np.*, numpy.*). Schema: `boolean / default=False`.
-- `unpackDictOutputs` (Unpack Dict Outputs, `rw`): When enabled, dict results are emitted by matching output port names. Schema: `boolean / default=False`.
-- `code` (Expr, `rw`): Single-line expression (no statements). Available: abs/min/max/round/float/int, math.*, comprehensions. Numpy (np.*, numpy.*) is available only when Allow Numpy is enabled. Schema: `string / default=x`.
-- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
-- `operatorId` (Operator Id, `ro`): Readonly: current operator/node id (operatorId). Schema: `string`.
-
-#### Pitfalls / Gotchas
-
-- Once the expression needs lifecycle logic or hidden state, switch to `Python Script`.
-- If the payload shape is unclear, the expression node becomes fragile very quickly.
-
 #### Related Scenarios
 
-- [Scene 04: Functional TCode Generation](../../scenarios/scene-04-functional_tcode.md)
+- No bundled scenario references this node yet.
 
 <a id="operator-f8-lovense-out"></a>
 ### Lovense Out (`f8.lovense_out`)
 Send Lovense Local API commands with split channels: sendPositionCmd->Position, sendFunctionCmd->Function.
 
+#### When to Use
+
+- Use `Lovense Out` when your graph needs to control Lovense devices (e.g., Lush, Nora, Max) in real-time from the `f8.pyengine` runtime.
+- It acts as the final device-facing sink, converting your graph signals into commands that are sent to the Lovense Connect app or a dedicated dongle.
+- Choose this for high-precision control of vibration, rotation, or contraction intensity.
+
+#### Common Wiring Patterns
+
+- **Direct Intensity Control**: Feed it already-mapped control values (usually 0 to 20 for intensity) from an `f8-range-map`.
+- **Logic Debugging**: Keep the `Lovense Mock Server` active during development to verify your graph logic without needing to wear or run the physical device.
+- **Multi-Device Support**: Use multiple `Lovense Out` nodes to target different devices independently within the same scenario.
+
+#### Pitfalls / Gotchas
+
+- **Intensity Resolution**: Lovense devices often have a limited number of "steps" (e.g., 0-20 or 0-100). Sending high-resolution floats (like 0.12345) will be rounded by the device transport layer, which can lead to a "steppy" feel if not handled carefully.
+- **Transport Latency**: Communication via the Lovense Connect local API can introduce small delays. If the reaction feels laggy, reduce the command frequency or check your local network congestion.
+- **Connection persistence**: Ensure the Lovense Connect app is running and your device is discovered before starting the Feel8 scenario, as the node will not automatically search for new devices once the graph is active.
+
+#### Operator Reference
+
 - Exec in ports: `sendPositionCmd`, `sendFunctionCmd`
 - Exec out ports: none
 
-#### State Fields
+##### Typical Inputs / Outputs
+
+- Exec inputs: `sendPositionCmd`, `sendFunctionCmd`
+- Data inputs: `position`
+- Data outputs: none
+
+##### State Fields
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
@@ -1311,33 +1501,7 @@ Send Lovense Local API commands with split channels: sendPositionCmd->Position, 
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 | `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
-#### Data Input Ports
-
-| Name | Required | On Node | Schema | Description |
-| --- | --- | --- | --- | --- |
-| `position` | `true` | `true` | `number` | Normalized position input (0..1). Sent on sendPositionCmd as Lovense Position command. |
-
-#### Data Output Ports
-
-_None_
-
-#### When to Use
-
-- Use `Lovense Out` when the graph should drive a Lovense target directly from `f8.pyengine`.
-- It is the device-facing sink for Lovense-specific runtime control.
-
-#### Typical Inputs / Outputs
-
-- Exec inputs: `sendPositionCmd`, `sendFunctionCmd`
-- Data inputs: `position`
-- Data outputs: none
-
-#### Common Wiring Patterns
-
-- Feed it already-mapped control values or Lovense-formatted program data from upstream adapters.
-- Keep `Lovense Mock Server` or other debug aids around while validating release behavior.
-
-#### Key Fields That Matter
+##### Key Fields That Matter
 
 - `enabled` (Enabled, `rw`): Enable/disable Lovense output. Schema: `boolean / default=True`.
 - `commandUrl` (Command URL, `rw`): Lovense Local API /command URL. Schema: `string / default=https://127-0-0-1.lovense.club:30010/command`.
@@ -1348,10 +1512,15 @@ _None_
 - `vibrate` (Vibrate, `rw`): Normalized Function Vibrate level (0..1). Schema: `number`.
 - `rotate` (Rotate, `rw`): Normalized Function Rotate level (0..1). Schema: `number`.
 
-#### Pitfalls / Gotchas
+##### Data Input Ports
 
-- Protocol/device assumptions should be validated before tuning intensity curves.
-- Do not bury transport-specific fixes upstream if they only matter to this sink.
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `position` | `true` | `true` | `number` | Normalized position input (0..1). Sent on sendPositionCmd as Lovense Position command. |
+
+##### Data Output Ports
+
+_None_
 
 #### Related Scenarios
 
@@ -1361,10 +1530,36 @@ _None_
 ### Buttplug Out (`f8.buttplug_out`)
 Connect to Intiface/Buttplug with split channels: sendPositionCmd->position, sendFunctionCmd->state.
 
+#### When to Use
+
+- Use `Buttplug Out` when you want to target any hardware supported by the Buttplug.io (Intiface Desktop) ecosystem.
+- It acts as the universal bridge for the Feel8 graph, allowing one logic chain to control hundreds of different haptic devices via the Buttplug protocol.
+- Ideal for scenarios where the specific hardware is unknown or might be swapped by the end user.
+
+#### Common Wiring Patterns
+
+- **Generic Haptic Out**: Feed it cleaned, bounded control values (0.0 to 1.0) from a `Range Map`. Avoid sending raw detector or feature outputs directly to the hardware.
+- **Protocol Separation**: Keep your Buttplug-specific configuration separate from your core motion logic to ensure the graph remains portable to other protocols like TCode or LOVENSER.
+- **Service Monitoring**: Use `f8-viz-text` to monitor the data being sent to the Buttplug server if a device isn't reacting as expected.
+
+#### Pitfalls / Gotchas
+
+- **Capability Mismatches**: Not all devices support the same commands (e.g., some have only "Vibrate," while others have "Linear" or "Rotate"). Verify that your target device supports the command style you are sending from the graph.
+- **Range Mapping Errors**: A bad upstream range (e.g., sending values > 1.0 or < 0.0) will often cause the Buttplug client or server to throw errors or ignore the commands entirely. Always use a `Range Map` immediately before this node.
+- **Server Dependency**: This node requires Intiface Desktop or a compatible Buttplug server to be running on the host or network. If the server is not reachable, the node will appear idle or log connection errors.
+
+#### Operator Reference
+
 - Exec in ports: `sendPositionCmd`, `sendFunctionCmd`
 - Exec out ports: none
 
-#### State Fields
+##### Typical Inputs / Outputs
+
+- Exec inputs: `sendPositionCmd`, `sendFunctionCmd`
+- Data inputs: `position`
+- Data outputs: none
+
+##### State Fields
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
@@ -1394,33 +1589,7 @@ Connect to Intiface/Buttplug with split channels: sendPositionCmd->position, sen
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 | `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
-#### Data Input Ports
-
-| Name | Required | On Node | Schema | Description |
-| --- | --- | --- | --- | --- |
-| `position` | `true` | `true` | `number` | Position-channel target (0.0001..0.9999) used by sendPositionCmd. |
-
-#### Data Output Ports
-
-_None_
-
-#### When to Use
-
-- Use `Buttplug Out` when the final control path targets a Buttplug-compatible device.
-- It is the adapter node for Buttplug-specific runtime output.
-
-#### Typical Inputs / Outputs
-
-- Exec inputs: `sendPositionCmd`, `sendFunctionCmd`
-- Data inputs: `position`
-- Data outputs: none
-
-#### Common Wiring Patterns
-
-- Feed it cleaned, bounded control values rather than raw feature outputs.
-- Keep the protocol branch separate from generic signal shaping so the graph stays portable.
-
-#### Key Fields That Matter
+##### Key Fields That Matter
 
 - `enabled` (Enabled, `rw`): Enable connection and output control. Schema: `boolean / default=True`.
 - `wsUrl` (WebSocket URL, `rw`): Buttplug server websocket URL. Schema: `string / default=ws://127.0.0.1:12345`.
@@ -1431,10 +1600,15 @@ _None_
 - `selectedDevice` (Selected Device, `rw`): Target token: "index|name". Schema: `string / default=`.
 - `rescan` (Rescan, `rw`): Set true to trigger one scan cycle; runtime resets it to false. Schema: `boolean / default=False`.
 
-#### Pitfalls / Gotchas
+##### Data Input Ports
 
-- Device capability mismatches are common; confirm the target supports the intended command style.
-- A bad upstream range will feel like a protocol problem even when transport is fine.
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `position` | `true` | `true` | `number` | Position-channel target (0.0001..0.9999) used by sendPositionCmd. |
+
+##### Data Output Ports
+
+_None_
 
 #### Related Scenarios
 
@@ -1444,10 +1618,36 @@ _None_
 ### Lovense Mock Server (`f8.lovense_mock_server`)
 Event-driven input node that mocks the Lovense Local API, publishes received commands as state, and emits exec.
 
+#### When to Use
+
+- Use `Lovense Mock Server` when you need to test your Lovense local API integrations without having high-end hardware physically connected or powered on.
+- It is invaluable for release rehearsals, development of complex haptic adapters, and protocol debugging during rapid iteration.
+- Use it to simulate different device types (Lush, Nora, etc.) and verify that your commands are correctly formatted.
+
+#### Common Wiring Patterns
+
+- **Validation Branch**: Keep the mock server active on a side branch. Use it to confirm that your `Lovense Out` or `Lovense Program Adapter` nodes are sending the expected intensity values.
+- **Protocol Sniffing**: Inspect the emitted event state and execution triggers using `Print` or `TextViz` nodes to see exactly how the "virtual device" is responding to your graph.
+- **Automated Testing**: Use it in automated scenario tests to verify that a logic chain produces the correct device commands without needing human interaction.
+
+#### Pitfalls / Gotchas
+
+- **Virtual vs Physical**: The mock server validates protocol flow and message timing, but it cannot simulate the physical feel, mechanical latency, or battery/Bluetooth nuances of the actual hardware.
+- **Bind Conflicts**: If the mock server fails to start or appears "silent," check if another service (or even the actual Lovense Connect app) is already using the local API ports on your machine.
+- **Initialization order**: The mock server should ideally be started before the nodes that attempt to connect to it.
+
+#### Operator Reference
+
 - Exec in ports: none
 - Exec out ports: `event`
 
-#### State Fields
+##### Typical Inputs / Outputs
+
+- Exec outputs: `event`
+- Data inputs: none
+- Data outputs: none
+
+##### State Fields
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
@@ -1463,31 +1663,7 @@ Event-driven input node that mocks the Lovense Local API, publishes received com
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 | `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
-#### Data Input Ports
-
-_None_
-
-#### Data Output Ports
-
-_None_
-
-#### When to Use
-
-- Use `Lovense Mock Server` when you need to test Lovense Local API integrations without the real device stack.
-- It is valuable for release rehearsals, demos, and protocol debugging.
-
-#### Typical Inputs / Outputs
-
-- Exec outputs: `event`
-- Data inputs: none
-- Data outputs: none
-
-#### Common Wiring Patterns
-
-- Keep it in a side branch used for validation and automated checks, not as the default production path.
-- Inspect emitted event state and exec triggers with `Print` or `TextViz` while testing adapters.
-
-#### Key Fields That Matter
+##### Key Fields That Matter
 
 - `bindAddress` (Bind Address, `rw`): Local address to bind (loopback by default). Schema: `string / default=127.0.0.1`.
 - `allowNonLoopbackBind` (Allow Non-loopback Bind, `rw`): When true, allow bindAddress values other than loopback. Schema: `boolean / default=False`.
@@ -1498,10 +1674,13 @@ _None_
 - `listening` (Listening, `ro`): True if the HTTP server is currently listening. Schema: `boolean / default=False`.
 - `lastError` (Last Error, `ro`): Last server error (e.g. bind failure). Schema: `string / default=`.
 
-#### Pitfalls / Gotchas
+##### Data Input Ports
 
-- It validates protocol flow, not real hardware behavior.
-- Binding issues and loopback settings are the first things to check when it appears silent.
+_None_
+
+##### Data Output Ports
+
+_None_
 
 #### Related Scenarios
 
@@ -1511,10 +1690,35 @@ _None_
 ### Lovense Program Adapter (`f8.lovense_program_adapter`)
 Convert Lovense Mock Server events into ProgramWave input + amplitude.
 
+#### When to Use
+
+- Use `Lovense Program Adapter` to translate generic motion signals or "Program" payloads into the specific command semantics required by the Lovense hardware protocol.
+- It is the specialized translation layer that isolates device-specific logic (like intensity rounding and specific vibration modes) from your abstract graph motion.
+- Ideal for complex scenarios where you want one motion source to control a variety of Lovense-compatible toys with different capabilities.
+
+#### Common Wiring Patterns
+
+- **Device Adaptation**: Place it immediately after your main waveform generation (`f8-cosine`, `f8-wave-pattern`) and normalization (`Range Map`). Feed the adapted result directly into a `Lovense Out` node.
+- **Side-by-Side Comparison**: Keep the generic "source" motion branch visible in parallel with the "adapted" output using `f8-viz-wave` to verify that the translation is faithful to the original intent.
+- **Profile Switching**: Use the adapter to apply different "profiles" to the same signal (e.g., mapping a stroke to a vibration intensity vs. a rotation speed).
+
+#### Pitfalls / Gotchas
+
+- **Input Normalization**: If the source signal is poorly scaled or unnormalized (e.g., values > 1.0), the adapter's internal logic will produce unpredictable results or clipped intensity commands. High-quality input is a prerequisite.
+- **Mixed Responsibilities**: Do not attempt to fix signal jitter or add delays inside the adapter. Handle signal cleanup in `Smooth Filter` and logic in `f8-pyengine`. The adapter should be a clean 1:1 translation stage.
+- **Rounding Artifacts**: Lovense devices have discrete intensity steps. If your source signal is very subtle, the adapter's rounding may lead to a "steppy" feeling in the physical vibration.
+
+#### Operator Reference
+
 - Exec in ports: none
 - Exec out ports: none
 
-#### State Fields
+##### Typical Inputs / Outputs
+
+- Data inputs: none
+- Data outputs: none
+
+##### State Fields
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
@@ -1536,30 +1740,7 @@ Convert Lovense Mock Server events into ProgramWave input + amplitude.
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 | `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
-#### Data Input Ports
-
-_None_
-
-#### Data Output Ports
-
-_None_
-
-#### When to Use
-
-- Use `Lovense Program Adapter` when generic motion/control signals should become Lovense-style program semantics.
-- It isolates protocol translation from the rest of the graph.
-
-#### Typical Inputs / Outputs
-
-- Data inputs: none
-- Data outputs: none
-
-#### Common Wiring Patterns
-
-- Place it after waveform generation and normalization, then feed the adapted output into `Lovense Out`.
-- Keep the generic motion branch visible in parallel so adapter behavior is easy to compare.
-
-#### Key Fields That Matter
+##### Key Fields That Matter
 
 - `lovenseEvent` (Lovense Event, `wo`): State-edge input from Lovense Mock Server: the latest event dict. Schema: `object{eventId, payload, request, seq, ...}`.
 - `program` (Program, `ro`): Readonly output: ProgramWave-compatible dict (tsMs/timeSec/hz/loopRunningSec/loopPauseSec). Schema: `object{hz, loopPauseSec, loopRunningSec, timeSec, ...}`.
@@ -1570,10 +1751,13 @@ _None_
 - `depthMax` (Depth Max, `wo`): Normalize depth value by this maximum (amplitude). Schema: `number / default=3.0`.
 - `speedGamma` (Speed Gamma, `wo`): Nonlinear curve for thrusting->speed (>=0.01). Schema: `number / default=1.0`.
 
-#### Pitfalls / Gotchas
+##### Data Input Ports
 
-- If the source signal is poorly normalized, adapter tuning becomes guesswork.
-- Mixing protocol mapping with source-signal cleanup makes both stages harder to reuse.
+_None_
+
+##### Data Output Ports
+
+_None_
 
 #### Related Scenarios
 
@@ -1583,10 +1767,35 @@ _None_
 ### Sequence Player (`f8.sequence_player`)
 Play a step-sequence over time (epoch-based), outputting the current step value.
 
+#### When to Use
+
+- Use `Sequence Player` to play back pre-recorded or hand-authored motion sequences over time, exposing current signal values, frame indices, and play state.
+- It is the primary tool for creating reproducible demos, scripted motion passages, or "preset" movements that can be triggered by scenario logic.
+- Use it when you need a high-precision, frame-perfect reproduction of a specific motion pattern.
+
+#### Common Wiring Patterns
+
+- **Preset Triggering**: Feed it a sequence payload (e.g., from a JSON file or an upstream generator). Branch the `value` output into `Range Map` or device nodes, and monitor the `done` port to trigger subsequent state changes.
+- **Master Progress Sync**: Pair it with `Playback Sync` if other parts of the graph need to coordinate their behavior based on the sequence's current progress.
+- **Interactive Playback**: Use the `play`, `pause`, and `stop` commands to control playback dynamically based on user input or detection events.
+
+#### Pitfalls / Gotchas
+
+- **Payload Contract**: If the sequence data schema is incorrect (e.g., missing timestamps or wrong data types), the player may fail silently or produce stuttering motion. Validate your data with `f8-viz-text` first.
+- **Ownership Confusion**: Avoid having multiple operators fighting for control of the same timeline. Decide whether the `Sequence Player` or an external clock (like `f8-phase`) is the authoritative timebase for a given branch.
+- **Timing Jitter**: Unlike procedural oscillators, sequence playback resolution depends on the engine's tick rate. Ensure your `f8-tick` rate is high enough to capture the detail in your recorded sequence.
+
+#### Operator Reference
+
 - Exec in ports: none
 - Exec out ports: none
 
-#### State Fields
+##### Typical Inputs / Outputs
+
+- Data inputs: none
+- Data outputs: `value`, `index`, `active`, `done`, `elapsedSec`
+
+##### State Fields
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
@@ -1594,11 +1803,17 @@ Play a step-sequence over time (epoch-based), outputting the current step value.
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 | `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
-#### Data Input Ports
+##### Key Fields That Matter
+
+- `sequence` (Sequence, `wo`): Dict payload defining tsMs/stepMs/values/timeSec. Schema: `object{stepMs, timeSec, tsMs, values}`.
+- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
+- `operatorId` (Operator Id, `ro`): Readonly: current operator/node id (operatorId). Schema: `string`.
+
+##### Data Input Ports
 
 _None_
 
-#### Data Output Ports
+##### Data Output Ports
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
@@ -1608,32 +1823,6 @@ _None_
 | `done` | `true` | `true` | `boolean` | Whether playback ended. |
 | `elapsedSec` | `true` | `true` | `number` | Elapsed seconds since start. |
 
-#### When to Use
-
-- Use `Sequence Player` when a prepared sequence should play back over time and expose current value/index state.
-- It is a good fit for reproducible demos and scripted motion passages.
-
-#### Typical Inputs / Outputs
-
-- Data inputs: none
-- Data outputs: `value`, `index`, `active`, `done`, `elapsedSec`
-
-#### Common Wiring Patterns
-
-- Feed it a sequence payload, then branch `value` into mapping or device output nodes and monitor `index`/`done` for control logic.
-- Pair it with `Playback Sync` when the rest of the graph needs to follow the same timeline.
-
-#### Key Fields That Matter
-
-- `sequence` (Sequence, `wo`): Dict payload defining tsMs/stepMs/values/timeSec. Schema: `object{stepMs, timeSec, tsMs, values}`.
-- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
-- `operatorId` (Operator Id, `ro`): Readonly: current operator/node id (operatorId). Schema: `string`.
-
-#### Pitfalls / Gotchas
-
-- Sequence schema errors can look like timing problems if the payload contract is not validated first.
-- Keep timeline ownership clear so the graph does not fight between live and prerecorded sources.
-
 #### Related Scenarios
 
 - No bundled scenario references this node yet.
@@ -1642,10 +1831,37 @@ _None_
 ### Mix (Silence Fill) (`f8.mix_silence_fill`)
 Outputs A by default; when A is silent for a while, crossfades to B as filler.
 
+#### When to Use
+
+- Use `Mix (Silence Fill)` when your graph combines multiple signal sources (e.g., from different detectors or audio streams) and you want to ensure the output remains continuous even if one or more branches stop sending data.
+- It is the standard way to "blend" multiple control inputs into a single authoritative signal (e.g., mixing a manual slider with an automated vision trigger).
+- Best for building robust scenarios that shouldn't "freeze" or "glitch" when a sensor port is temporarily disconnected.
+
+#### Common Wiring Patterns
+
+- **Safe Blending**: Combine multiple upstream branches before final scaling or mapping nodes. This allows you to inspect one combined, high-level signal instead of managing dozens of individual branches.
+- **Fall-Through Monitoring**: Keep a `WaveViz` immediately after the mixer to observe how different signals are being prioritized or added together in real-time.
+- **Default State Engine**: Use the mixer to provide a "Default" or "Base" set of values that are only overridden when higher-priority signals become active.
+
+#### Pitfalls / Gotchas
+
+- **Hidden Failures**: Because this node "fills" missing data with silence or neutral values, it can hide genuine upstream outages (like a crashed camera service). Use separate `monitor` ports or health visualizers to track individual branch health.
+- **Normalization Drifts**: If you mix multiple signals without prior range mapping, a single high-intensity branch can "drown out" all others. ensure your inputs are normalized to a consistent 0-1 range before mixing.
+- **Over-Abstraction**: Mixing too early in your logic chain can make it very difficult to debug branch-specific issues, as you are only ever looking at the final "stew" of data.
+
+#### Operator Reference
+
 - Exec in ports: `exec`
 - Exec out ports: `exec`
 
-#### State Fields
+##### Typical Inputs / Outputs
+
+- Exec inputs: `exec`
+- Exec outputs: `exec`
+- Data inputs: `A`, `B`
+- Data outputs: `out`, `alpha`, `silent`
+
+##### State Fields
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
@@ -1655,39 +1871,7 @@ Outputs A by default; when A is silent for a while, crossfades to B as filler.
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 | `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
-#### Data Input Ports
-
-| Name | Required | On Node | Schema | Description |
-| --- | --- | --- | --- | --- |
-| `A` | `true` | `true` | `number` | Primary signal |
-| `B` | `true` | `true` | `number` | Filler signal |
-
-#### Data Output Ports
-
-| Name | Required | On Node | Schema | Description |
-| --- | --- | --- | --- | --- |
-| `out` | `true` | `true` | `number` | Mixed output |
-| `alpha` | `true` | `true` | `number` | Crossfade factor (0=A, 1=B) |
-| `silent` | `true` | `true` | `number` | 1 if A is considered silent else 0 |
-
-#### When to Use
-
-- Use `Mix (Silence Fill)` when multiple sources should be combined while missing inputs are treated as silence rather than failure.
-- It is useful in audio/control graphs that must remain continuous even when one branch drops out.
-
-#### Typical Inputs / Outputs
-
-- Exec inputs: `exec`
-- Exec outputs: `exec`
-- Data inputs: `A`, `B`
-- Data outputs: `out`, `alpha`, `silent`
-
-#### Common Wiring Patterns
-
-- Mix upstream branches before final smoothing or mapping so you can inspect one combined signal.
-- Keep `WaveViz` after the mixer while balancing branch contribution.
-
-#### Key Fields That Matter
+##### Key Fields That Matter
 
 - `silenceMs` (Silence (ms), `rw`): If A changes less than deltaThreshold for this long, fade to B. Schema: `integer / default=500`.
 - `deltaThreshold` (Delta Threshold, `rw`): Absolute change threshold to treat A as active. Schema: `number / default=0.001`.
@@ -1695,10 +1879,20 @@ Outputs A by default; when A is silent for a while, crossfades to B as filler.
 - `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
 - `operatorId` (Operator Id, `ro`): Readonly: current operator/node id (operatorId). Schema: `string`.
 
-#### Pitfalls / Gotchas
+##### Data Input Ports
 
-- Silence fill can hide an upstream outage if there is no separate health visualization.
-- Mixing too early can make debugging branch-specific issues much harder.
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `A` | `true` | `true` | `number` | Primary signal |
+| `B` | `true` | `true` | `number` | Filler signal |
+
+##### Data Output Ports
+
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `out` | `true` | `true` | `number` | Mixed output |
+| `alpha` | `true` | `true` | `number` | Crossfade factor (0=A, 1=B) |
+| `silent` | `true` | `true` | `number` | 1 if A is considered silent else 0 |
 
 #### Related Scenarios
 
@@ -1708,10 +1902,35 @@ Outputs A by default; when A is silent for a while, crossfades to B as filler.
 ### Playback Sync (`f8.playback_sync`)
 Extrapolates IMPlayer playback position between sparse playback state updates.
 
+#### When to Use
+
+- Use `Playback Sync` when your graph needs to be aware of the timeline, progress, or state of a media stream or sequence playback (active, paused, seeking).
+- It is the primary tool for tying complex motion logic to a shared external playback clock (e.g., from `f8-implayer` or `f8-sequence-player`).
+- Use it to synchronize state machine transitions with specific timestamps in a media file.
+
+#### Common Wiring Patterns
+
+- **Master Clock Lock**: Pair it with an `IM Player` or `Sequence Player` source. Feed the resulting progress into downstream operators to ensure they stay perfectly in sync with the media content.
+- **UI Progress Monitoring**: Route the progress and duration outputs to `TextViz` or a custom dashboard to give the user a visual indication of the current scenario timeline.
+- **Conditional Scripting**: Use the `active` or `looping` status to enable/disable specific parts of your graph based on whether media is currently playing.
+
+#### Pitfalls / Gotchas
+
+- **Timebase Competition**: Drift and unexpected "jump" resets are common when multiple nodes in a graph try to be the authoritative timebase. Choose ONE source as the master clock and use `Playback Sync` to distribute it.
+- **Granularity Differences**: If your sync source has low time resolution, downstream motion may appear "steppy." Consider using a `Smooth Filter` to interpolate between progress updates if perfectly smooth motion is required.
+- **Disconnection Handling**: Always consider what should happen if the playback source is stopped or disconnected. Use default values or fallback logic to prevent actuators from getting "stuck" at a specific position.
+
+#### Operator Reference
+
 - Exec in ports: none
 - Exec out ports: none
 
-#### State Fields
+##### Typical Inputs / Outputs
+
+- Data inputs: `playback`
+- Data outputs: `position`, `rawPosition`, `duration`, `playing`, `videoId`, `ageMs`, `stale`
+
+##### State Fields
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
@@ -1721,13 +1940,21 @@ Extrapolates IMPlayer playback position between sparse playback state updates.
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 | `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
-#### Data Input Ports
+##### Key Fields That Matter
+
+- `maxExtrapolateMs` (Max Extrapolate (ms), `rw`): Limit extrapolation horizon to avoid drift when playback state is stale (0 = unlimited). Schema: `integer / default=1000`.
+- `playbackRate` (Playback Rate, `rw`): Rate multiplier used for extrapolation when playing. Schema: `number / default=1.0`.
+- `clampToDuration` (Clamp To Duration, `rw`): Clamp estimated position to latest duration when available. Schema: `boolean / default=True`.
+- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
+- `operatorId` (Operator Id, `ro`): Readonly: current operator/node id (operatorId). Schema: `string`.
+
+##### Data Input Ports
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
 | `playback` | `false` | `true` | `object{duration, playing, position, videoId}` | Playback payload from f8.implayer/playback (position/duration/playing/videoId). |
 
-#### Data Output Ports
+##### Data Output Ports
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
@@ -1739,34 +1966,6 @@ Extrapolates IMPlayer playback position between sparse playback state updates.
 | `ageMs` | `true` | `false` | `integer` | Age of latest playback sample in milliseconds. |
 | `stale` | `true` | `false` | `boolean` | True if sample age exceeds max extrapolation window. |
 
-#### When to Use
-
-- Use `Playback Sync` when a graph needs a timeline or state derived from media/sequence playback progress.
-- It helps tie motion logic to a shared playback clock.
-
-#### Typical Inputs / Outputs
-
-- Data inputs: `playback`
-- Data outputs: `position`, `rawPosition`, `duration`, `playing`, `videoId`, `ageMs`, `stale`
-
-#### Common Wiring Patterns
-
-- Pair it with `Sequence Player`, `IM Player`, or other time-based sources so downstream operators can lock to the same progress.
-- Keep sync state visible during authoring to confirm the graph follows the intended master clock.
-
-#### Key Fields That Matter
-
-- `maxExtrapolateMs` (Max Extrapolate (ms), `rw`): Limit extrapolation horizon to avoid drift when playback state is stale (0 = unlimited). Schema: `integer / default=1000`.
-- `playbackRate` (Playback Rate, `rw`): Rate multiplier used for extrapolation when playing. Schema: `number / default=1.0`.
-- `clampToDuration` (Clamp To Duration, `rw`): Clamp estimated position to latest duration when available. Schema: `boolean / default=True`.
-- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
-- `operatorId` (Operator Id, `ro`): Readonly: current operator/node id (operatorId). Schema: `string`.
-
-#### Pitfalls / Gotchas
-
-- Competing timebases are a common source of drift and surprise resets.
-- If playback ownership is unclear, downstream timing bugs are hard to localize.
-
 #### Related Scenarios
 
 - No bundled scenario references this node yet.
@@ -1775,10 +1974,36 @@ Extrapolates IMPlayer playback position between sparse playback state updates.
 ### Handy Out (`f8.handy_out`)
 Drive The Handy via HDSP using normalized 0..1 input values.
 
+#### When to Use
+
+- Use `Handy Out` when your graph needs to send TCode commands directly to "The Handy" device over a network connection.
+- It is a specialized device sink that handles the specific transport requirements for The Handy while maintaining the Feel8 graph's temporal consistency.
+- Use it to synchronize your computer vision or audio-driven logic with a physical Handy device in real-time.
+
+#### Common Wiring Patterns
+
+- **Standard Handy Setup**: Feed it finalized `TCode` strings from a `f8-tcode` operator. Ensure your scaling and safety limits are applied upstream.
+- **Monitoring Bridge**: Keep an `f8-viz-text` or `TCodeViz` attached to the input port while validating your connection to the device's API.
+- **Connection Management**: Use the node properties to manage the Handy's connection key and transport mode (e.g., WebSocket vs REST).
+
+#### Pitfalls / Gotchas
+
+- **Transport Role**: Treat this node strictly as a communication layer. Do not attempt to fix signal timing or motion logic here; those issues should be addressed in the `f8-tcode` or `Range Map` nodes.
+- **Latency Over network**: Commands sent to The Handy are subject to network jitter. If the motion feels "stuck" or delayed, check your local Wi-Fi stability and the `intervalMs` setting to ensure you aren't overwhelming the device's buffer.
+- **Key Sensitivity**: The connection key is sensitive information. Avoid sharing session files that contain your unique device key if you are collaborating with others.
+
+#### Operator Reference
+
 - Exec in ports: `exec`
 - Exec out ports: none
 
-#### State Fields
+##### Typical Inputs / Outputs
+
+- Exec inputs: `exec`
+- Data inputs: `value`, `durationMs`, `immediateResponse`, `stopOnTarget`
+- Data outputs: `sentPosition`, `httpStatus`, `result`, `error`
+
+##### State Fields
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
@@ -1803,41 +2028,7 @@ Drive The Handy via HDSP using normalized 0..1 input values.
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 | `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
-#### Data Input Ports
-
-| Name | Required | On Node | Schema | Description |
-| --- | --- | --- | --- | --- |
-| `value` | `true` | `true` | `number` | Normalized position input (0..1). |
-| `durationMs` | `false` | `true` | `number / default=100` | Optional duration override for /hdsp/xpt. |
-| `immediateResponse` | `false` | `true` | `boolean / default=False` | Optional immediate response override for /hdsp/xpt. |
-| `stopOnTarget` | `false` | `true` | `boolean / default=False` | Optional stopOnTarget override for /hdsp/xpt. |
-
-#### Data Output Ports
-
-| Name | Required | On Node | Schema | Description |
-| --- | --- | --- | --- | --- |
-| `sentPosition` | `true` | `true` | `number / default=0.0` | Last sent position percent (0..100). |
-| `httpStatus` | `true` | `true` | `integer / default=0` | Last HTTP status code. |
-| `result` | `true` | `true` | `number / default=0.0` | Last RPC result code. |
-| `error` | `true` | `true` | `string / default=` | Last runtime error. |
-
-#### When to Use
-
-- Use `Handy Out` when the final output path targets The Handy device/protocol.
-- It is the specialized sink for Handy-specific runtime control.
-
-#### Typical Inputs / Outputs
-
-- Exec inputs: `exec`
-- Data inputs: `value`, `durationMs`, `immediateResponse`, `stopOnTarget`
-- Data outputs: `sentPosition`, `httpStatus`, `result`, `error`
-
-#### Common Wiring Patterns
-
-- Feed it finalized `TCode` or equivalent control data after scaling and safety shaping are already done.
-- Keep a viewer branch such as `TCodeViz` attached while validating device-targeted behavior.
-
-#### Key Fields That Matter
+##### Key Fields That Matter
 
 - `enabled` (Enabled, `rw`): Enable/disable Handy output. Schema: `boolean / default=True`.
 - `connectionKey` (Connection Key, `rw`): The Handy X-Connection-Key value. Schema: `string / default=`.
@@ -1848,10 +2039,23 @@ Drive The Handy via HDSP using normalized 0..1 input values.
 - `maxPercent` (Max Percent, `rw`): Mapped output maximum in percent. Schema: `number / default=100.0`.
 - `defaultDurationMs` (Default Duration (ms), `rw`): Default /hdsp/xpt duration when durationMs input is not provided. Schema: `integer / default=100`.
 
-#### Pitfalls / Gotchas
+##### Data Input Ports
 
-- Treat it as a transport/device layer, not the place to fix signal semantics.
-- Verify device-specific cadence assumptions early in release testing.
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `value` | `true` | `true` | `number` | Normalized position input (0..1). |
+| `durationMs` | `false` | `true` | `number / default=100` | Optional duration override for /hdsp/xpt. |
+| `immediateResponse` | `false` | `true` | `boolean / default=False` | Optional immediate response override for /hdsp/xpt. |
+| `stopOnTarget` | `false` | `true` | `boolean / default=False` | Optional stopOnTarget override for /hdsp/xpt. |
+
+##### Data Output Ports
+
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `sentPosition` | `true` | `true` | `number / default=0.0` | Last sent position percent (0..100). |
+| `httpStatus` | `true` | `true` | `integer / default=0` | Last HTTP status code. |
+| `result` | `true` | `true` | `number / default=0.0` | Last RPC result code. |
+| `error` | `true` | `true` | `string / default=` | Last runtime error. |
 
 #### Related Scenarios
 
@@ -1861,10 +2065,36 @@ Drive The Handy via HDSP using normalized 0..1 input values.
 ### State Trigger (`f8.state_trigger`)
 Triggers exec on `changed` when state `value` changes and node is enabled.
 
+#### When to Use
+
+- Use `State Trigger` to fire an execution (exec) signal only when a specifically watched state value or data input changes.
+- It is the most efficient way to handle "event-like" reactions (e.g., a button press, a mode change) without polling or calculating every single tick.
+- Use it to trigger initialization sequences or to update "static" UI elements only when new data is actually available.
+
+#### Common Wiring Patterns
+
+- **Event Gating**: Feed a stateful value from a `Control Panel` or a service state edge into it. Use the `changed` exec output to trigger side effects like re-configuring a service or starting a sequence.
+- **Data Cleanup**: Use it to clear a diagnostic visualizer or log a message only when a "Done" signal or an error status actually occurs.
+- **Property Binding**: Link the output to a node property that should only be updated when its input source changes, reducing redundant processing in downstream nodes.
+
+#### Pitfalls / Gotchas
+
+- **High-Frequency Traps**: If the watched value changes every frame (e.g., raw bone coordinates or a noise signal), this node becomes effectively another high-frequency `Tick` source, negating its efficiency benefits.
+- **Missed Changes**: Ensure that your graph logic relies on *changes* rather than *states*. If you need a continuous check, use a `Tick` node instead.
+- **Hysteresis Requirements**: For noisy signals that flip-flop between values, consider adding a `Smooth Filter` or a small amount of dead-zone logic upstream to prevent the trigger from firing too often.
+
+#### Operator Reference
+
 - Exec in ports: none
 - Exec out ports: `changed`
 
-#### State Fields
+##### Typical Inputs / Outputs
+
+- Exec outputs: `changed`
+- Data inputs: none
+- Data outputs: none
+
+##### State Fields
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
@@ -1873,41 +2103,95 @@ Triggers exec on `changed` when state `value` changes and node is enabled.
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 | `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
-#### Data Input Ports
-
-_None_
-
-#### Data Output Ports
-
-_None_
-
-#### When to Use
-
-- Use `State Trigger` when exec should fire only when a watched state value changes.
-- It is useful for event-like reactions without polling every tick.
-
-#### Typical Inputs / Outputs
-
-- Exec outputs: `changed`
-- Data inputs: none
-- Data outputs: none
-
-#### Common Wiring Patterns
-
-- Feed a stateful value into it, then use the `changed` exec output to gate side effects or downstream updates.
-- Pair it with `ControlPanel` or service state edges when authoring reactive graphs.
-
-#### Key Fields That Matter
+##### Key Fields That Matter
 
 - `value` (Value, `rw`): Watched state value. Exec emits when this changes. Schema: `any`.
 - `enabled` (Enabled, `rw`): Enable/disable trigger emission on value changes. Schema: `boolean / default=True`.
 - `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
 - `operatorId` (Operator Id, `ro`): Readonly: current operator/node id (operatorId). Schema: `string`.
 
+##### Data Input Ports
+
+_None_
+
+##### Data Output Ports
+
+_None_
+
+#### Related Scenarios
+
+- No bundled scenario references this node yet.
+
+<a id="operator-f8-state-expr"></a>
+### State Expr (`f8.state_expr`)
+Evaluate a small Python expression using state fields as symbols.
+
+Core
+- Editable RW/WO state fields become expression symbols directly.
+- The expression result is published to read-only state `out`.
+- State names that are not valid Python identifiers remain available through `states['field-name']`.
+- No data ports are involved.
+
+Examples
+- `a + b`
+- `config.center.x`
+- `states['left-value'] * gain`
+- `math.sin(phase)`
+
+#### When to Use
+
+- Use `State Expr` when you need to derive a computed value or "virtual property" from other editable state fields on the same node, rather than from incoming data ports.
+- It is excellent for creating formulas, derived parameters, and lightweight control math that should stay visible and tunable directly on the node's property panel.
+- Use it to enforce relationships between parameters (e.g., `max_speed = base_speed * multiplier`).
+
+#### Common Wiring Patterns
+
+- **Derived Parameters**: Add multiple numeric state fields (properties) as your input variables. The operator automatically exposes these as symbols in your expression. Publish the result (`out`) to other nodes or use it for Studio inspection.
+- **Live Tuning**: Keep the expression focused on a small set of clearly named fields so the system remains easy to calibrate during a live session.
+- **Inspector Feedback**: Use it to create "Read-only" calculated fields that summarize the current state of a complex operator group for easier monitoring.
+
 #### Pitfalls / Gotchas
 
-- If the watched value changes every frame, this becomes effectively another tick source.
-- Make sure the graph really wants change detection and not periodic evaluation.
+- **Type Restrictions**: Only writable numeric state fields (float, int) are automatically extracted as symbols. Non-numeric fields or read-only properties will not be available in the expression.
+- **Error Visibility**: If an expression fails (e.g., division by zero), the operator will publish the error to its `lastError` field and clear the output. If your downstream graph seems "stuck," check the `lastError` field first.
+- **Circular Dependencies**: Be careful not to create logical loops where an expression depends on a value that is eventually affected by its own output, as this can lead to unstable behavior.
+
+#### Operator Reference
+
+- Exec in ports: none
+- Exec out ports: none
+
+##### Typical Inputs / Outputs
+
+- Data inputs: none
+- Data outputs: none
+
+##### State Fields
+
+| Name | Access | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- | --- |
+| `allowNumpy` | `rw` | `false` | `false` | `boolean / default=False` | Enable `np.*` and `numpy.*` inside the expression. |
+| `code` | `rw` | `false` | `true` | `string / default=0` | Single Python expression. Editable RW/WO state fields are available directly by name; non-identifier names remain available through `states[...]`. |
+| `out` | `ro` | `false` | `true` | `any` | Expression result published by the node. |
+| `lastError` | `ro` | `false` | `false` | `string / default=` | Last compile or evaluation error. |
+| `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
+| `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
+
+##### Key Fields That Matter
+
+- `allowNumpy` (Allow Numpy, `rw`): Enable `np.*` and `numpy.*` inside the expression. Schema: `boolean / default=False`.
+- `code` (Expr, `rw`): Single Python expression. Editable RW/WO state fields are available directly by name; non-identifier names remain available through `states[...]`. Schema: `string / default=0`.
+- `out` (Out, `ro`): Expression result published by the node. Schema: `any`.
+- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
+- `operatorId` (Operator Id, `ro`): Readonly: current operator/node id (operatorId). Schema: `string`.
+
+##### Data Input Ports
+
+_None_
+
+##### Data Output Ports
+
+_None_
 
 #### Related Scenarios
 
@@ -1917,10 +2201,35 @@ _None_
 ### Bone Filter (`f8.bone_filter`)
 Smooths a single bone pose and outputs filtered + local relative pose.
 
+#### When to Use
+
+- Use `Bone Filter` when you need to stabilize and normalize a skeleton bone pose (usually from MediaPipe or a VMC stream) into a local, jitter-free control signal.
+- It is essential for skeleton-driven control graphs where sensor noise or tracking jitters would otherwise cause physical actuators to "chatter."
+- Ideal for calculating relative angles or distances between bones (e.g., wrist position relative to shoulder) with built-in temporal smoothing.
+
+#### Common Wiring Patterns
+
+- **Stable Control Loop**: Feed it from a `Bone Selector` operator. Use the `filtered` (smoothed world space) or `relative` (position relative to a parent bone) outputs for `Range Map` or Euler conversion.
+- **Visual Calibration**: Tune the filter properties (like `alpha` or `cutoff`) while watching a live skeleton in `f8-viz-three-d` to find the best balance between jitter reduction and following lag.
+- **Gesture Normalization**: Use the `relative` output to drive gesture-recognition logic that should ignore the subject's overall position in the room.
+
+#### Pitfalls / Gotchas
+
+- **Correct Bone Verification**: Do not attempt to tune the filter coefficients before confirming that the `Bone Selector` is actually providing the correct bone data stream.
+- **Jump Reset Latency**: If your "Jump Reset" (threshold for ignoring large discontinuities) is too aggressive, it may cause the skeleton to "stick" or lag behind when the subject moves rapidly.
+- **Coordinate Systems**: Ensure your world-space assumptions match the upstream source (e.g., MediaPipe's flipped Y-axis) before relying on the filtered relative positions.
+
+#### Operator Reference
+
 - Exec in ports: none
 - Exec out ports: none
 
-#### State Fields
+##### Typical Inputs / Outputs
+
+- Data inputs: `bone`
+- Data outputs: `filtered`, `relative`
+
+##### State Fields
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
@@ -1939,35 +2248,7 @@ Smooths a single bone pose and outputs filtered + local relative pose.
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 | `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
-#### Data Input Ports
-
-| Name | Required | On Node | Schema | Description |
-| --- | --- | --- | --- | --- |
-| `bone` | `true` | `true` | `object{pos, rot}` | Input bone pose with pos[3] and rot[4] quaternion. |
-
-#### Data Output Ports
-
-| Name | Required | On Node | Schema | Description |
-| --- | --- | --- | --- | --- |
-| `filtered` | `true` | `true` | `object{pos, rot}` | Filtered bone pose. |
-| `relative` | `true` | `true` | `object{pos, rot}` | Relative pose in filtered local space. |
-
-#### When to Use
-
-- Use `Bone Filter` when one bone pose should be smoothed and converted into a more stable local signal.
-- It is ideal for skeleton-driven control graphs where jitter matters.
-
-#### Typical Inputs / Outputs
-
-- Data inputs: `bone`
-- Data outputs: `filtered`, `relative`
-
-#### Common Wiring Patterns
-
-- Feed it from `Bone Selector`, then use `filtered` or `relative` outputs for mapping, Euler conversion, or visualization.
-- Tune it with a live skeleton viewer attached so resets and lag are easy to spot.
-
-#### Key Fields That Matter
+##### Key Fields That Matter
 
 - `filter_type` (Filter, `rw`): Filter type. Schema: `string / enum[NONE, EMA, DEMA, ONEEURO] / default=EMA`.
 - `ema_alpha` (EMA Alpha, `rw`): EMA smoothing factor (0..1). Schema: `number / default=0.4`.
@@ -1978,10 +2259,18 @@ Smooths a single bone pose and outputs filtered + local relative pose.
 - `one_euro_default_freq` (One Euro Default Freq, `rw`): Default sampling frequency (Hz). Schema: `number / default=90.0`.
 - `jumpEnabled` (Jump Enabled, `rw`): Enable jump detection and hard reset. Schema: `boolean / default=True`.
 
-#### Pitfalls / Gotchas
+##### Data Input Ports
 
-- Do not tune the filter before confirming the selected bone stream is correct.
-- Jump-reset settings can mask coordinate or source glitches if they are too aggressive.
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `bone` | `true` | `true` | `object{pos, rot}` | Input bone pose with pos[3] and rot[4] quaternion. |
+
+##### Data Output Ports
+
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `filtered` | `true` | `true` | `object{pos, rot}` | Filtered bone pose. |
+| `relative` | `true` | `true` | `object{pos, rot}` | Relative pose in filtered local space. |
 
 #### Related Scenarios
 
@@ -1991,10 +2280,35 @@ Smooths a single bone pose and outputs filtered + local relative pose.
 ### Quat To Euler (`f8.quat_to_euler`)
 Converts quaternion [w,x,y,z] to Euler angles with configurable order.
 
+#### When to Use
+
+- Use `Quat To Euler` when you need to convert 3D rotation data (Quaternions) into human-readable Euler angles (Pitch, Yaw, Roll) or axis-specific scalar values.
+- It is most useful at the boundary between raw skeleton math and physical actuator control logic, where you need to map a specific joint's rotation to a haptic axis.
+- Use it to extract "Tilt" or "Twist" intensities from an limb or a tracked object.
+
+#### Common Wiring Patterns
+
+- **Joint-to-Actuator Mapping**: Feed it from a `Bone Selector` or `Bone Filter`. Map the resulting Euler components (X, Y, or Z) through a `Range Map` to drive device outputs.
+- **Orientation Debugging**: Route the Euler angles into `f8-viz-wave` to visually analyze the range of motion before setting final control thresholds.
+- **Reference Frame Alignment**: Specify the `order` (e.g., XYZ, YZX) and the unit (Degrees vs. Radians) clearly in your configuration to match your downstream control hardware requirements.
+
+#### Pitfalls / Gotchas
+
+- **Gimbal Lock**: Euler angles can become unstable at certain orientations (Gimbal Lock). If your control values "flip" suddenly when a joint reaches a specific angle, you may need a different rotation order or a more robust quaternion-based logic upstream.
+- **Rotation Order Errors**: Choosing the wrong rotation order can produce motion that looks "correct" on one axis but behaves unpredictably on others. Always verify against a visual skeleton reference.
+- **Late Conversion**: Try to keep your math in Quaternion form as long as possible. Only convert to Euler at the very end of your chain to avoid mathematical artifacts during smoothing or interpolation.
+
+#### Operator Reference
+
 - Exec in ports: none
 - Exec out ports: none
 
-#### State Fields
+##### Typical Inputs / Outputs
+
+- Data inputs: `quat`
+- Data outputs: `euler`
+
+##### State Fields
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
@@ -2003,44 +2317,24 @@ Converts quaternion [w,x,y,z] to Euler angles with configurable order.
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 | `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
-#### Data Input Ports
-
-| Name | Required | On Node | Schema | Description |
-| --- | --- | --- | --- | --- |
-| `quat` | `false` | `true` | `array[number]` | Input quaternion [w,x,y,z]. |
-
-#### Data Output Ports
-
-| Name | Required | On Node | Schema | Description |
-| --- | --- | --- | --- | --- |
-| `euler` | `true` | `true` | `array[number]` | Euler angles [x,y,z] in selected order. |
-
-#### When to Use
-
-- Use `Quat To Euler` when quaternion rotation data must become human-readable or axis-specific angles.
-- It is most useful at the edge between skeleton math and scalar control logic.
-
-#### Typical Inputs / Outputs
-
-- Data inputs: `quat`
-- Data outputs: `euler`
-
-#### Common Wiring Patterns
-
-- Feed it from `Bone Selector` or `Bone Filter`, then map the resulting Euler components into waves or device outputs.
-- Keep the chosen order and degree/radian choice explicit in notes or node labels.
-
-#### Key Fields That Matter
+##### Key Fields That Matter
 
 - `order` (Order, `rw`): Euler rotation order. Schema: `string / enum[XYZ, XZY, YXZ, YZX, ZXY, ...] / default=ZYX`.
 - `degrees` (Degrees, `rw`): Output in degrees when true, radians when false. Schema: `boolean / default=True`.
 - `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
 - `operatorId` (Operator Id, `ro`): Readonly: current operator/node id (operatorId). Schema: `string`.
 
-#### Pitfalls / Gotchas
+##### Data Input Ports
 
-- Wrong rotation order can produce believable but incorrect motion.
-- Euler conversion should happen as late as possible if upstream nodes can stay in quaternion form.
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `quat` | `false` | `true` | `array[number]` | Input quaternion [w,x,y,z]. |
+
+##### Data Output Ports
+
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `euler` | `true` | `true` | `array[number]` | Euler angles [x,y,z] in selected order. |
 
 #### Related Scenarios
 
@@ -2050,10 +2344,36 @@ Converts quaternion [w,x,y,z] to Euler angles with configurable order.
 ### UDP VMC (`f8.udp_vmc`)
 Receives VMC OSC packets, converts to skeleton payloads, and emits packet exec triggers.
 
+#### When to Use
+
+- Use `UDP VMC` to ingest high-quality pose data using the Virtual Motion Capture (VMC) protocol (based on OSC).
+- It is the standard entry point for integrating live avatars, VTubing software, and professional mocap-driven skeleton workflows into the Feel8 system.
+- Best for scenarios where you want to use refined skeletal data from tools like VSeeFace, Warudo, or other OSC-capable tracking apps.
+
+#### Common Wiring Patterns
+
+- **Avatar Logic Chain**: Feed the `selectedSkeleton` output into `Bone Selector` and `Bone Filter`. Use it to drive haptic or visual effects that react to an avatar's posture.
+- **Identity Matching**: Use the `availableKeys` and `selectedKey` properties to choose which specific model or person to track if the upstream VMC source is sending data for multiple subjects.
+- **Visual Sync**: Position an `f8-viz-three-d` node nearby to verify that the avatar's movements are being captured with the intended fidelity and range of motion.
+
+#### Pitfalls / Gotchas
+
+- **Bind Failures**: Ensure the UDP port (default 39539) is correctly configured and that no other VMC app is exclusively locking the port.
+- **Latency Spikes**: High-frequency VMC streams over a busy local network can introduce packet loss or jitter. Use `Bone Filter` to stabilize the signal before it reaches your actuators.
+- **Scale Issues**: VMC data scales can vary widely between different software implementations. Use a reference visualizer to verify that a "1.0 unit" movement in the VMC source corresponds correctly to your graph's expectations.
+
+#### Operator Reference
+
 - Exec in ports: none
 - Exec out ports: `packet`
 
-#### State Fields
+##### Typical Inputs / Outputs
+
+- Exec outputs: `packet`
+- Data inputs: none
+- Data outputs: `skeletons`, `selectedSkeleton`
+
+##### State Fields
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
@@ -2068,34 +2388,7 @@ Receives VMC OSC packets, converts to skeleton payloads, and emits packet exec t
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 | `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
-#### Data Input Ports
-
-_None_
-
-#### Data Output Ports
-
-| Name | Required | On Node | Schema | Description |
-| --- | --- | --- | --- | --- |
-| `skeletons` | `true` | `true` | `array[object]` | List of latest payloads (ordered by key). |
-| `selectedSkeleton` | `true` | `true` | `object{boneCount, bones, modelName, schema, ...}` | Latest payload matching `selectedKey` (or None). |
-
-#### When to Use
-
-- Use `UDP VMC` when the graph should ingest VMC/OSC pose streams directly.
-- It is a strong entrypoint for live avatar or mocap-driven skeleton workflows.
-
-#### Typical Inputs / Outputs
-
-- Exec outputs: `packet`
-- Data inputs: none
-- Data outputs: `skeletons`, `selectedSkeleton`
-
-#### Common Wiring Patterns
-
-- Feed `selectedSkeleton` into `Bone Selector`, `Bone Filter`, or `f8.viz.three_d`.
-- Keep `availableKeys` and `selectedKey` visible while choosing which model stream the graph should follow.
-
-#### Key Fields That Matter
+##### Key Fields That Matter
 
 - `bindAddress` (Bind Address, `rw`): Local address to bind (loopback by default). Schema: `string / default=127.0.0.1`.
 - `allowNonLoopbackBind` (Allow Non-loopback Bind, `rw`): When true, allow bindAddress values other than loopback. Schema: `boolean / default=False`.
@@ -2106,10 +2399,16 @@ _None_
 - `selectedKey` (Selected Key, `rw`): If set and matches an available key, outputs `selectedSkeleton`; otherwise None. Schema: `string / default=`.
 - `availableKeys` (Available Keys, `ro`): Read-only list of current keys (updated only on changes). Schema: `array[string]`.
 
-#### Pitfalls / Gotchas
+##### Data Input Ports
 
-- Network bind settings and selected-key mismatches are the first things to verify.
-- Coordinate-frame or source-quality issues should be visualized before downstream mapping is tuned.
+_None_
+
+##### Data Output Ports
+
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `skeletons` | `true` | `true` | `array[object]` | List of latest payloads (ordered by key). |
+| `selectedSkeleton` | `true` | `true` | `object{boneCount, bones, modelName, schema, ...}` | Latest payload matching `selectedKey` (or None). |
 
 #### Related Scenarios
 
@@ -2119,10 +2418,35 @@ _None_
 ### Bone Selector (`f8.bone_selector`)
 Selects one bone from a skeleton by `target` and outputs `{name,pos,rot}`.
 
+#### When to Use
+
+- Use `Bone Selector` to "extract" a single named bone (e.g., `RightWrist`, `Pelvis`) from a full skeleton payload provided by an upstream ingest node.
+- It acts as the primary bridge between a dense skeleton stream (containing dozens of joints) and your specific, bone-targeted control logic.
+- Use it to isolate a specific joint's movement for specialized analysis or device mapping.
+
+#### Common Wiring Patterns
+
+- **Joint Isolation**: Feed it from a `UDP Skeleton`, `UDP VMC`, or MediaPipe source. Pass the resulting single-bone payload into a `Bone Filter` or `Quat To Euler` operator.
+- **Multi-Bone Processing**: Use multiple `Bone Selector` nodes in parallel to extract different joints (e.g., both hands) for a coordinated interaction scenario.
+- **Dynamic Selection**: Use the `availableBones` output list in conjunction with a `Control Panel` to interactively switch which joint your graph is following during a tuning session.
+
+#### Pitfalls / Gotchas
+
+- **Naming Discrepancies**: A "missing" bone is often just a naming mismatch (e.g., `Hips` vs. `Pelvis`) between the source stream and your selector configuration. Check the `availableBones` port to see valid names for your current source.
+- **Stream Continuity**: This node depends on a valid, continuous skeleton payload. If the upstream detector loses the person, this node will stop producing updates.
+- **Abstraction Limits**: This node only selects data; it does not perform any math or transformation. Use `Bone Filter` or `Quat To Euler` for subsequent processing.
+
+#### Operator Reference
+
 - Exec in ports: none
 - Exec out ports: none
 
-#### State Fields
+##### Typical Inputs / Outputs
+
+- Data inputs: `skeleton`
+- Data outputs: `bone`
+
+##### State Fields
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
@@ -2131,75 +2455,280 @@ Selects one bone from a skeleton by `target` and outputs `{name,pos,rot}`.
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 | `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
-#### Data Input Ports
-
-| Name | Required | On Node | Schema | Description |
-| --- | --- | --- | --- | --- |
-| `skeleton` | `true` | `true` | `object{bones}` | Single skeleton payload (e.g. udp_vmc.selectedSkeleton). |
-
-#### Data Output Ports
-
-| Name | Required | On Node | Schema | Description |
-| --- | --- | --- | --- | --- |
-| `bone` | `true` | `true` | `object{name, pos, rot}` | Selected bone payload `{name,pos,rot}` or None. |
-
-#### When to Use
-
-- Use `Bone Selector` when a full skeleton should be reduced to one named bone payload.
-- It is the cleanest bridge between skeleton ingest and bone-specific control logic.
-
-#### Typical Inputs / Outputs
-
-- Data inputs: `skeleton`
-- Data outputs: `bone`
-
-#### Common Wiring Patterns
-
-- Feed it from `UDP Skeleton` or `UDP VMC`, then pass the selected bone into `Bone Filter` or `Quat To Euler`.
-- Watch `availableBones` while authoring so the chosen target name is valid.
-
-#### Key Fields That Matter
+##### Key Fields That Matter
 
 - `target` (Target Bone, `rw`): Bone name to select. Schema: `string / default=`.
 - `availableBones` (Available Bones, `ro`): Read-only list of available bone names from current skeleton input. Schema: `array[string]`.
 - `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
 - `operatorId` (Operator Id, `ro`): Readonly: current operator/node id (operatorId). Schema: `string`.
 
-#### Pitfalls / Gotchas
+##### Data Input Ports
 
-- A missing bone name is often a naming mismatch, not a broken upstream skeleton.
-- Keep source-skeleton validation in place; this node cannot fix a malformed pose stream.
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `skeleton` | `true` | `true` | `object{bones}` | Single skeleton payload (e.g. udp_vmc.selectedSkeleton). |
+
+##### Data Output Ports
+
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `bone` | `true` | `true` | `object{name, pos, rot}` | Selected bone payload `{name,pos,rot}` or None. |
 
 #### Related Scenarios
 
 - No bundled scenario references this node yet.
 
-## When to Use
+<a id="operator-f8-wave-expr"></a>
+### Wave Expr (`f8.wave_expr`)
+Template-based waveform expression node.
 
-- Use `f8.pyengine` as the main runtime host for `f8.*` operators, signal transforms, protocol adapters, and custom control logic.
-- It is the default choice when a graph needs composable operator chains rather than a standalone service.
+Core
+- `t` is cycle-domain input, not radians.
+- Runtime output evaluates with `t % maxT`.
+- Any numeric RW/WO state field can be referenced by name.
+- `express` shows the final formula after numeric state substitution.
+- `Preview` shows sampled `[t, value]` pairs over `[0, maxT)`.
 
-## Typical Inputs / Outputs
+Oscillators
+- Phase trig: `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`
+- Shape helpers: `saw`, `tri`, `pulse`
+- Tempest: `tempest(t, p, c)` where `t` is 0..1 circle phase, `p` is phase, `c` is eccentricity
 
-- Data inputs: none
-- Data outputs: `monitor`
-- Commands: none
+Utility
+- Blend and range: `clamp`, `lerp`, `smoothstep`, `saturate`
+- Phase helpers: `frac`, `wrap`
+- Selection: `cond(condition, a, b)`
+- Sequence: `sequence([a, b, c])` uses `int(t) % len(sequence)`
+- Numeric helpers: `abs`, `min`, `max`, `round`, `floor`, `ceil`, `sqrt`, `exp`, `log`, `log10`
 
-## Common Wiring Patterns
+Examples
+- `0.5 + 0.5 * cos(t)`
+- `sequence([10, 20, 30, 20])`
+- `tempest(t, 0, c)`
+- `cond(t > 4, 1, 0)`
 
-- Create one or more `PyEngine` host nodes, then bind each operator `Service Id` to the correct host node `id`.
-- Separate timing/wave generation, mapping, and device-output branches so release debugging stays tractable.
+#### When to Use
 
-## Key Fields That Matter
+- Use `Wave Expr` to generate a procedural, looping waveform defined by a mathematical expression (e.g., `sin(t * 2 * pi)`) rather than by manually drawing points or keyframes.
+- It is ideal for creating reusable modulation shapes (LFOs) that depend on time `t` and other parameters exposed as node properties.
+- Use it when you need perfectly consistent, algorithmic motion that remains stable over long periods.
 
-- `dataDelivery` (Data Delivery, `rw`): How data inputs are delivered to nodes: pull (default), push, or both. Schema: `string / enum[pull, push, both] / default=pull`.
-- `active` (Active, `rw`): Service lifecycle state (activate/deactivate). Schema: `boolean / default=True`.
+#### Common Wiring Patterns
+
+- **Clock-Driven LFO**: Drive the `t` input from a `f8-phase` or `f8-tick` clock source. Feed the resulting `value` output into an actuator-facing `Range Map` or `Envelope` operator.
+- **Parametric Modulation**: Expose a small set of properties (e.g., `freq`, `amp`) as variables. Use them in your expression (e.g., `amp * sin(t * freq)`) to allow interactive tuning of the wave shape without editing the code.
+- **Wave Combining**: Use the output of one `Wave Expr` to modulate the frequency or amplitude of another to create complex, evolving patterns.
+
+#### Pitfalls / Gotchas
+
+- **Reserved Symbols**: The expression language has reserved names for mathematical functions. Avoid using variable names that collide with these functions (e.g., don't name a property `sin`).
+- **Loop Period Alignment**: The `maxT` property defines the cycle period. If your upstream time source and the `maxT` setting disagree, your waveform may appear to "jump" or stutter at the end of each cycle.
+- **Time Continuity**: Sudden jumps in the `t` input will cause immediate jumps in the output. If you are syncing to an external timeline, consider using a `Smooth Filter` downstream to handle discontinuities.
+
+#### Operator Reference
+
+- Exec in ports: none
+- Exec out ports: none
+
+##### Typical Inputs / Outputs
+
+- Data inputs: `t`
+- Data outputs: `value`
+
+##### State Fields
+
+| Name | Access | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- | --- |
+| `template` | `wo` | `true` | `true` | `string / default=0.5 + 0.5 * cos(t)` | Waveform expression template. `t` is cycle-domain, numeric state fields can be referenced by name, and helpers include `cond`, `sequence([...])`, `tempest(t, p, c)`, phase trig, and shaping functions. |
+| `maxT` | `rw` | `true` | `true` | `number / default=10.0` | Cycle horizon for wrapping and preview sampling. Runtime output uses `t % maxT`; preview samples `[0, maxT)`. |
+| `minValue` | `rw` | `true` | `false` | `number / default=0.0` | Preview window lower bound (Y-axis). Auto zoom when minValue >= maxValue. |
+| `maxValue` | `rw` | `true` | `false` | `number / default=0.0` | Preview window upper bound (Y-axis). Auto zoom when minValue >= maxValue. |
+| `express` | `ro` | `true` | `false` | `string / default=` | Rendered expression after numeric state substitution. `t` remains symbolic so you can inspect the final formula. |
+| `preview` | `ro` | `true` | `true` | `array[array] / default=[]` | Preview waveform samples as `[t, value]` pairs over `[0, maxT)`. Changes in preview coordinates trigger redraw. |
+| `lastError` | `ro` | `true` | `false` | `string / default=` | Last template compile, preview evaluation, or runtime evaluation error. |
+| `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
+| `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
+
+##### Key Fields That Matter
+
+- `template` (Template, `wo`): Waveform expression template. `t` is cycle-domain, numeric state fields can be referenced by name, and helpers include `cond`, `sequence([...])`, `tempest(t, p, c)`, phase trig, and shaping functions. Schema: `string / default=0.5 + 0.5 * cos(t)`.
+- `maxT` (Max T, `rw`): Cycle horizon for wrapping and preview sampling. Runtime output uses `t % maxT`; preview samples `[0, maxT)`. Schema: `number / default=10.0`.
+- `minValue` (Min Value, `rw`): Preview window lower bound (Y-axis). Auto zoom when minValue >= maxValue. Schema: `number / default=0.0`.
+- `maxValue` (Max Value, `rw`): Preview window upper bound (Y-axis). Auto zoom when minValue >= maxValue. Schema: `number / default=0.0`.
+- `express` (Express, `ro`): Rendered expression after numeric state substitution. `t` remains symbolic so you can inspect the final formula. Schema: `string / default=`.
+- `preview` (Preview, `ro`): Preview waveform samples as `[t, value]` pairs over `[0, maxT)`. Changes in preview coordinates trigger redraw. Schema: `array[array] / default=[]`.
+- `lastError` (Last Error, `ro`): Last template compile, preview evaluation, or runtime evaluation error. Schema: `string / default=`.
 - `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
 
-## Pitfalls / Gotchas
+##### Data Input Ports
 
-- Missing or wrong `Service Id` is the most common reason an operator graph looks correct but does nothing.
-- Overloading one host with too many unrelated responsibilities makes runtime diagnosis and reuse harder.
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `t` | `true` | `true` | `number` | Scalar cycle-domain input. 1.0 means one period; output evaluation uses `t % maxT`. |
+
+##### Data Output Ports
+
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `value` | `true` | `true` | `number` | Expression output value for the current wrapped `t` sample. |
+
+#### Related Scenarios
+
+- No bundled scenario references this node yet.
+
+<a id="operator-f8-wave-pattern"></a>
+### Wave Pattern (`f8.wave_pattern`)
+Interactive periodic waveform node.
+
+Core
+- `t` is cycle-domain input and runtime output evaluates at `t % maxT`.
+- `points` stores editable control points as `[t, value]` pairs.
+- `interp` selects the interpolation method for preview and runtime evaluation.
+- Preview samples the periodic waveform over `[0, maxT)`.
+
+#### When to Use
+
+- Use `Wave Pattern` when you want to design a looping or one-shot waveform by manually placing control points on a timeline rather than writing code or using simple oscillators.
+- It is the best choice for hand-tuned motion shapes where a designer needs precise control over every peak, valley, and transition.
+- Ideal for complex, non-periodic gestures or repeating patterns that cannot be easily described by a sine wave.
+
+#### Common Wiring Patterns
+
+- **Designer LFO**: Feed the `t` input from a `f8-phase` or timeline source. Edit the `points` and `interp` (interpolation) properties to shape the motion, then send the result into a `Range Map` or output operator.
+- **Gesture Library**: Keep a collection of `Wave Pattern` nodes as a "library" of presets. Switch between them using logic in `f8-pyengine`.
+- **Interpolation Tuning**: Experiment with different interpolation modes (`pchip`, `akima`, `linear`) while watching the output on `f8-viz-wave` to find the most natural feel.
+
+#### Pitfalls / Gotchas
+
+- **Interpolation Overshoot**: Non-linear interpolation modes like `spline` or `pchip` can introduce extra "hills" or "valleys" between your points if the points are spaced too closely or unevenly. Monitor the result visually to avoid unwanted movement.
+- **Cycle Wraparound**: The `maxT` property defines the loop boundary. If your last point doesn't align with your first point at `maxT`, you will see a sharp "jump" when the wave repeats.
+- **Point Density**: Keep the point list as sparse as possible. Adding too many unnecessary points makes the pattern harder to tune and can lead to jittery motion.
+
+#### Operator Reference
+
+- Exec in ports: none
+- Exec out ports: none
+
+##### Typical Inputs / Outputs
+
+- Data inputs: `t`
+- Data outputs: `value`
+
+##### State Fields
+
+| Name | Access | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- | --- |
+| `points` | `rw` | `true` | `true` | `array[array] / default=[[0.0, 0.0], [10.0, 0.0]]` | Editable control points as `[t, value]` pairs. |
+| `maxT` | `rw` | `true` | `true` | `number / default=10.0` | Cycle horizon for wrapping and preview sampling. |
+| `minValue` | `rw` | `true` | `true` | `number / default=0.0` | Editor and preview lower Y bound. |
+| `maxValue` | `rw` | `true` | `true` | `number / default=1.0` | Editor and preview upper Y bound. |
+| `interp` | `rw` | `true` | `true` | `string / enum[linear, pchip, akima, cubic_spline] / default=pchip` | Interpolation method used to generate the periodic waveform. |
+| `preview` | `ro` | `true` | `false` | `array[array]` | Preview waveform samples as `[t, value]` pairs over `[0, maxT)`. |
+| `lastError` | `ro` | `true` | `false` | `string / default=` | Last interpolation build or preview evaluation error. |
+| `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
+| `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
+
+##### Key Fields That Matter
+
+- `points` (Points, `rw`): Editable control points as `[t, value]` pairs. Schema: `array[array] / default=[[0.0, 0.0], [10.0, 0.0]]`.
+- `maxT` (Max T, `rw`): Cycle horizon for wrapping and preview sampling. Schema: `number / default=10.0`.
+- `minValue` (Min Value, `rw`): Editor and preview lower Y bound. Schema: `number / default=0.0`.
+- `maxValue` (Max Value, `rw`): Editor and preview upper Y bound. Schema: `number / default=1.0`.
+- `interp` (Interp, `rw`): Interpolation method used to generate the periodic waveform. Schema: `string / enum[linear, pchip, akima, cubic_spline] / default=pchip`.
+- `preview` (Preview, `ro`): Preview waveform samples as `[t, value]` pairs over `[0, maxT)`. Schema: `array[array]`.
+- `lastError` (Last Error, `ro`): Last interpolation build or preview evaluation error. Schema: `string / default=`.
+- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
+
+##### Data Input Ports
+
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `t` | `true` | `true` | `number` | Scalar cycle-domain input. Runtime evaluation uses `t % maxT`. |
+
+##### Data Output Ports
+
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `value` | `true` | `true` | `number` | Interpolated waveform output for the current wrapped `t` sample. |
+
+#### Related Scenarios
+
+- No bundled scenario references this node yet.
+
+<a id="operator-f8-wave-funscript"></a>
+### Wave Funscript (`f8.wave_funscript`)
+Load a .funscript JSON file and expose one axis as a looping linear waveform.
+`t` is in seconds and evaluation uses `t % maxT`.
+
+#### When to Use
+
+- Use `Wave Funscript` when the motion in your graph should be driven by an existing authored `.funscript` file (commonly used in haptic media) rather than a synthetic oscillator or a hand-drawn pattern.
+- It is the primary tool for achieving repeatable, frame-accurate playback of synchronized haptic scripts within the Feel8 system.
+- Best for scenarios where you want to "remix" or "re-map" an existing script to different hardware or use it as a part of a larger hybrid automation graph.
+
+#### Common Wiring Patterns
+
+- **Scripted Playback**: Point the node to a local `.funscript` file. Select the desired axis (usually "L0"), drive the `t` input from the current playback time (e.g., from `Playback Sync`), and route the resulting `value` to your hardware out nodes.
+- **Dynamic Rescaling**: Pass the `value` output through a `Range Map` to adjust script intensity in real-time while it is playing.
+- **Interpolation Sweep**: Start with the default `linear` interpolation for a faithful reproduction of the original author's intent. Only use smoother modes like `spline` if the script points are too sparse and cause mechanical jitter on your specific device.
+
+#### Pitfalls / Gotchas
+
+- **Duration Mismatches**: If your timing source (`t`) exceeds the duration of the funscript, the wave will loop or stop depending on the `wrap` settings. ensure your master clock matches the script's expectations.
+- **Axis Confusion**: Many funscripts contain multiple axes of data. Verify you have selected the correct axis (e.g., `L0` for stroke, `V0` for vibration) in the node properties.
+- **Interpolation Overshoot**: Smoother interpolation modes can sometimes introduce "overshoot" or "wobble" between far-apart points that was not in the original script. Always monitor the wave shape in `f8-viz-wave` before final use.
+
+#### Operator Reference
+
+- Exec in ports: none
+- Exec out ports: none
+
+##### Typical Inputs / Outputs
+
+- Data inputs: `t`
+- Data outputs: `value`
+
+##### State Fields
+
+| Name | Access | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- | --- |
+| `funscriptPath` | `rw` | `true` | `true` | `string / default=` | Path to a .funscript JSON file. |
+| `allAxes` | `ro` | `true` | `false` | `array[string]` | Available funscript channels including the TopLevel pseudo-axis. |
+| `selectedAxis` | `rw` | `true` | `true` | `string / default=TopLevel` | Axis id to load from the funscript file. |
+| `points` | `ro` | `true` | `false` | `array[array] / default=[]` | Normalized `[timeSec, pos01]` points loaded from the selected axis. |
+| `maxT` | `rw` | `true` | `true` | `number / default=10.0` | Loop period in seconds. Initialized from the funscript duration and user-overridable. |
+| `interp` | `rw` | `true` | `true` | `string / enum[linear, pchip, akima, cubic_spline] / default=linear` | Interpolation method used for runtime output. Heatmap remains linear. |
+| `heatmap` | `ro` | `true` | `true` | `array[number] / default=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]` | Per-time-bin activity heatmap derived from the selected axis. |
+| `lastError` | `ro` | `true` | `false` | `string / default=` | Last load or parse error. |
+| `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
+| `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
+
+##### Key Fields That Matter
+
+- `funscriptPath` (Funscript Path, `rw`): Path to a .funscript JSON file. Schema: `string / default=`.
+- `allAxes` (All Axes, `ro`): Available funscript channels including the TopLevel pseudo-axis. Schema: `array[string]`.
+- `selectedAxis` (Selected Axis, `rw`): Axis id to load from the funscript file. Schema: `string / default=TopLevel`.
+- `points` (Points, `ro`): Normalized `[timeSec, pos01]` points loaded from the selected axis. Schema: `array[array] / default=[]`.
+- `maxT` (Max T, `rw`): Loop period in seconds. Initialized from the funscript duration and user-overridable. Schema: `number / default=10.0`.
+- `interp` (Interp, `rw`): Interpolation method used for runtime output. Heatmap remains linear. Schema: `string / enum[linear, pchip, akima, cubic_spline] / default=linear`.
+- `heatmap` (Heatmap, `ro`): Per-time-bin activity heatmap derived from the selected axis. Schema: `array[number] / default=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]`.
+- `lastError` (Last Error, `ro`): Last load or parse error. Schema: `string / default=`.
+
+##### Data Input Ports
+
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `t` | `true` | `true` | `number` | Scalar time input in seconds. Runtime evaluation uses `t % maxT`. |
+
+##### Data Output Ports
+
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `value` | `true` | `true` | `number` | Normalized output from the selected funscript axis using the chosen interpolation mode. |
+
+#### Related Scenarios
+
+- No bundled scenario references this node yet.
 
 ## Related Scenarios
 

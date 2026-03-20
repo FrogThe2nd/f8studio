@@ -82,11 +82,10 @@ class F8StudioVizOperatorNodeItem(F8StudioOperatorNodeItem):
         group_gap = 6.0
 
         try:
-            layout_dirty = bool(self._ensure_inline_state_widgets())
+            self._ensure_state_inline_controls()
         except (AttributeError, RuntimeError, TypeError):
-            layout_dirty = False
-        if layout_dirty:
-            self._schedule_deferred_draw_node()
+            pass
+        self._prepare_layout_metrics()
 
         state_names: list[str] = []
         try:
@@ -98,18 +97,14 @@ class F8StudioVizOperatorNodeItem(F8StudioOperatorNodeItem):
             nm = self._state_field_name_if_visible(s)
             if nm:
                 state_names.append(nm)
+        if not state_names:
+            state_names = self._visible_state_names_for_layout()
 
         if state_names:
+            inner_width = max(float(NodeEnum.WIDTH.value) - 8.0, 10.0)
             for sname in state_names:
-                header_h = port_height or float(PortEnum.SIZE.value)
-                try:
-                    header = self._state_inline_headers.get(sname)
-                    if header is not None:
-                        header_h = float(max(header_h, header.sizeHint().height()))
-                except (AttributeError, RuntimeError, TypeError, ValueError):
-                    pass
-
-                panel_h = self._measure_state_panel_height(sname, default_header_h=header_h)
+                metric = self._measure_state_panel_metric(sname, inner_width)
+                panel_h = float(max(metric.height, port_height or float(PortEnum.SIZE.value)))
                 state_h += panel_h + spacing
             state_h = max(0.0, state_h - spacing) + group_gap
 
@@ -117,14 +112,11 @@ class F8StudioVizOperatorNodeItem(F8StudioOperatorNodeItem):
         widget_width = 0.0
         widget_height = 0.0
         for widget in self._widgets.values():
-            if not widget.isVisible():
+            if not widget.isVisible() and not self._proxy_mode:
                 continue
-            try:
-                w_rect = widget.boundingRect()
-                widget_width = max(widget_width, float(w_rect.width()))
-                widget_height += float(w_rect.height())
-            except (AttributeError, RuntimeError, TypeError, ValueError):
-                continue
+            metric = self._measure_embedded_widget(widget)
+            widget_width = max(widget_width, float(metric.width))
+            widget_height += float(metric.height)
 
         in_non_state_count = 0
         out_non_state_count = 0
@@ -163,12 +155,7 @@ class F8StudioVizOperatorNodeItem(F8StudioOperatorNodeItem):
 
         return width, height
 
-    def _make_state_inline_control(  # type: ignore[override]
-        self,
-        state_field: Any,
-        *,
-        parent: Any | None = None,
-    ):
+    def _build_state_inline_control(self, state_field: Any):  # type: ignore[override]
         """
         Override a couple of fields for viz nodes:
         - minVal/maxVal: allow blank (auto) via QLineEdit (stores None/float)
@@ -176,7 +163,7 @@ class F8StudioVizOperatorNodeItem(F8StudioOperatorNodeItem):
         nm = self._state_field_name_if_visible(state_field)
         name = nm or ""
         if name not in {"minVal", "maxVal"}:
-            return super()._make_state_inline_control(state_field, parent=parent)
+            return super()._build_state_inline_control(state_field)
 
         from qtpy import QtCore, QtWidgets
 
@@ -211,7 +198,7 @@ class F8StudioVizOperatorNodeItem(F8StudioOperatorNodeItem):
             except KeyError:
                 return None
 
-        line = QtWidgets.QLineEdit(parent)
+        line = QtWidgets.QLineEdit()
         line.setMinimumWidth(90)
         line.setPlaceholderText("auto")
         _common_style(line)
@@ -243,6 +230,13 @@ class F8StudioVizOperatorNodeItem(F8StudioOperatorNodeItem):
         line.editingFinished.connect(_commit)
         return line
 
+    def _set_port_text_visibility(self, *, visible: bool) -> None:  # type: ignore[override]
+        _ = visible
+        for text in self._input_items.values():
+            text.setVisible(False)
+        for text in self._output_items.values():
+            text.setVisible(False)
+
     def _align_viz_state(self, v_offset: float) -> float:
         """
         Align state inline panels top-to-bottom and return the y position after the state block.
@@ -253,11 +247,9 @@ class F8StudioVizOperatorNodeItem(F8StudioOperatorNodeItem):
 
         # Ensure inline widgets exist before aligning so sizing + rows match.
         try:
-            layout_dirty = bool(self._ensure_inline_state_widgets())
+            self._ensure_state_inline_controls()
         except (AttributeError, RuntimeError, TypeError):
-            layout_dirty = False
-        if layout_dirty:
-            self._schedule_deferred_draw_node()
+            pass
 
         node = self._backend_node()
         if node is None:
@@ -320,49 +312,20 @@ class F8StudioVizOperatorNodeItem(F8StudioOperatorNodeItem):
             out_name = f"{sname}[S]"
 
             panel_proxy = self._state_inline_proxies.get(sname)
-            header_h = port_height
-            panel_h = header_h
-            if panel_proxy is not None and panel_proxy.isVisible():
+            metric = self._measure_state_panel_metric(sname, inner_w)
+            header_h = float(max(port_height or float(PortEnum.SIZE.value), metric.header_height))
+            panel_h = float(max(header_h, metric.height))
+            if panel_proxy is not None:
+                panel_w = float(max(metric.width, inner_w))
+                panel_x = rect.left() + (rect.width() - panel_w) / 2.0
+                min_x = float(inner_x)
+                max_x = float(rect.right() - 4.0 - panel_w)
+                if max_x < min_x:
+                    panel_x = min_x
+                else:
+                    panel_x = max(min_x, min(panel_x, max_x))
                 try:
-                    w = panel_proxy.widget()
-                    if w is not None:
-                        w.setFixedWidth(int(inner_w))
-                        w.adjustSize()
-                except (AttributeError, RuntimeError, TypeError, ValueError):
-                    pass
-                try:
-                    if self._state_inline_headers.get(sname) is not None:
-                        header_h = float(max(port_height, self._state_inline_headers[sname].sizeHint().height()))
-                except Exception:
-                    header_h = port_height
-                try:
-                    panel_h = self._measure_state_panel_height(
-                        sname,
-                        default_header_h=header_h,
-                        target_inner_w=inner_w,
-                    )
-                except Exception:
-                    panel_h = header_h
-                try:
-                    # Center panels using their actual width, then clamp into node bounds.
-                    w = panel_proxy.widget()
-                    if w is None:
-                        panel_proxy.setPos(inner_x, y)
-                    else:
-                        panel_w = float(w.width() or 0.0)
-                        if panel_w <= 0.0:
-                            panel_w = float(panel_proxy.boundingRect().width() or 0.0)
-                        if panel_w <= 0.0:
-                            panel_proxy.setPos(inner_x, y)
-                        else:
-                            panel_x = rect.left() + (rect.width() - panel_w) / 2.0
-                            min_x = float(inner_x)
-                            max_x = float(rect.right() - 4.0 - panel_w)
-                            if max_x < min_x:
-                                panel_x = min_x
-                            else:
-                                panel_x = max(min_x, min(panel_x, max_x))
-                            panel_proxy.setPos(panel_x, y)
+                    panel_proxy.setPos(panel_x, y)
                 except (AttributeError, RuntimeError, TypeError, ValueError):
                     pass
 
@@ -383,7 +346,7 @@ class F8StudioVizOperatorNodeItem(F8StudioOperatorNodeItem):
         """
         rect = self.boundingRect()
 
-        widget_items = [w for w in self._widgets.values() if w.isVisible()]
+        widget_items = [w for w in self._widgets.values()]
         if not widget_items:
             return
 
@@ -393,7 +356,8 @@ class F8StudioVizOperatorNodeItem(F8StudioOperatorNodeItem):
         for w in widget_items:
             try:
                 pos_y = float(w.pos().y())
-                h = float(w.boundingRect().height())
+                metric = self._measure_embedded_widget(w)
+                h = float(max(w.boundingRect().height(), metric.height))
             except (AttributeError, RuntimeError, TypeError, ValueError):
                 continue
             top = min(top, pos_y)
@@ -495,32 +459,19 @@ class F8StudioVizOperatorNodeItem(F8StudioOperatorNodeItem):
             pass
 
     def _draw_node_horizontal(self):  # type: ignore[override]
+        self._invalidate_layout_metrics()
         try:
-            layout_dirty = bool(self._ensure_inline_state_widgets())
+            self._ensure_state_inline_controls()
         except (AttributeError, RuntimeError, TypeError):
-            layout_dirty = False
-        if layout_dirty:
-            self._schedule_deferred_draw_node()
+            pass
         try:
             self._ensure_inline_command_widget()
         except (AttributeError, RuntimeError, TypeError):
             pass
+        self._prepare_layout_metrics()
 
         header_h = float(self._text_item.boundingRect().height() + 4.0)
-
-        # Hide all port text items for viz nodes (ports are color-coded).
-        for port, text in self._input_items.items():
-            try:
-                if port.isVisible():
-                    text.setVisible(False)
-            except (AttributeError, RuntimeError, TypeError):
-                pass
-        for port, text in self._output_items.items():
-            try:
-                if port.isVisible():
-                    text.setVisible(False)
-            except (AttributeError, RuntimeError, TypeError):
-                pass
+        target_proxy_mode = self._should_enable_proxy_mode()
 
         # setup initial base size.
         self._set_base_size(add_h=header_h)
@@ -536,5 +487,12 @@ class F8StudioVizOperatorNodeItem(F8StudioOperatorNodeItem):
         self.align_widgets(v_offset=header_h)
         # 3) ports aligned to widget region
         self._align_viz_ports_to_widgets(v_offset=header_h)
+        self.sync_proxy_mode(force=True)
+
+        if self._proxy_mode != target_proxy_mode:
+            self._align_viz_state(v_offset=header_h)
+            self.align_widgets(v_offset=header_h)
+            self._align_viz_ports_to_widgets(v_offset=header_h)
+            self.sync_proxy_mode(force=True)
 
         self.update()

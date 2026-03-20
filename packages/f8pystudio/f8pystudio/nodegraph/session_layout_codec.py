@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from f8pysdk.msgspec_codec import copy_model, dump_json, validate_as
 import json
 import logging
@@ -12,6 +13,7 @@ from NodeGraphQt.errors import NodeCreationError
 from f8pysdk import F8OperatorSpec, F8ServiceSpec
 
 from .edge_rules import EdgeRuleNodeInfo, layout_node_info, validate_layout_connection
+from .viewer import F8StudioNodeViewer
 from ..session_migration import extract_layout as _extract_session_layout
 from ..session_migration import wrap_layout_for_save as _wrap_layout_for_save
 
@@ -22,6 +24,67 @@ logger = logging.getLogger(__name__)
 
 
 class SessionLayoutCodecMixin:
+    @staticmethod
+    def _json_default_redacted_value(value_schema: Any) -> Any:
+        try:
+            schema_json = dump_json(value_schema, mode="json")
+        except (AttributeError, TypeError, ValueError):
+            schema_json = value_schema
+        if not isinstance(schema_json, dict):
+            return None
+
+        if "default" in schema_json:
+            return copy.deepcopy(schema_json.get("default"))
+
+        schema_type = schema_json.get("type")
+        if isinstance(schema_type, list):
+            non_null_types = [item for item in schema_type if isinstance(item, str) and item != "null"]
+            schema_type = non_null_types[0] if non_null_types else None
+
+        if schema_type == "string":
+            return ""
+        if schema_type == "array":
+            return []
+        if schema_type == "object":
+            return {}
+        if schema_type == "number":
+            return 0
+        if schema_type == "integer":
+            return 0
+        if schema_type == "boolean":
+            return False
+        return None
+
+    @classmethod
+    def _redact_publish_session_state_values(cls, layout_data: dict) -> dict:
+        nodes = layout_data.get("nodes")
+        if not isinstance(nodes, dict):
+            return layout_data
+
+        for node_data in nodes.values():
+            if not isinstance(node_data, dict):
+                continue
+            custom = node_data.get("custom")
+            raw_spec = node_data.get("f8_spec")
+            if not isinstance(custom, dict) or not isinstance(raw_spec, dict):
+                continue
+
+            raw_state_fields = raw_spec.get("stateFields")
+            if not isinstance(raw_state_fields, list) or not raw_state_fields:
+                continue
+
+            for raw_field in raw_state_fields:
+                if not isinstance(raw_field, dict):
+                    continue
+                if not bool(raw_field.get("redactOnPublish")):
+                    continue
+                field_name = str(raw_field.get("name") or "").strip()
+                if not field_name or field_name not in custom:
+                    continue
+                custom[field_name] = cls._json_default_redacted_value(raw_field.get("valueSchema"))
+
+        return layout_data
+
     @staticmethod
     def _strip_port_restore_data(layout_data: dict) -> dict:
         """
@@ -556,6 +619,14 @@ class SessionLayoutCodecMixin:
                 self._strip_missing_lock_for_save(node_data)
         return _wrap_layout_for_save(stripped_layout)
 
+    def serialize_publish_session(self) -> dict:
+        payload = self.serialize_session()
+        layout_data = payload.get("layout")
+        if not isinstance(layout_data, dict):
+            return payload
+        payload["layout"] = self._redact_publish_session_state_values(copy.deepcopy(layout_data))
+        return payload
+
     def load_session(self, file_path: str) -> None:
         """
         Load a NodeGraphQt session file.
@@ -586,8 +657,10 @@ class SessionLayoutCodecMixin:
         finally:
             self._loading_session = False
         self._rebind_container_children()
-        self._schedule_node_layout_stabilization()
         # Session load restores connections after nodes are created/drawn, which can
         # leave inline state widgets with stale editability until the user forces a refresh.
         # Do a post-load pass to apply the "state-edge => readonly" rule.
         QtCore.QTimer.singleShot(0, self._refresh_all_inline_state_read_only)
+        viewer = self.viewer()
+        if isinstance(viewer, F8StudioNodeViewer):
+            QtCore.QTimer.singleShot(0, lambda: viewer.refresh_auto_proxy_mode(force=True))

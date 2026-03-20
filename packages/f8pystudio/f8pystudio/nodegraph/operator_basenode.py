@@ -18,7 +18,6 @@ from NodeGraphQt.constants import (
 
 from .port_painter import draw_exec_port, draw_square_port, EXEC_PORT_COLOR, DATA_PORT_COLOR, STATE_PORT_COLOR
 from .service_basenode import F8StudioServiceNodeItem
-from .items.proxy_widget_utils import dispose_detached_proxy_widget
 
 logger = logging.getLogger(__name__)
 WidgetT = TypeVar("WidgetT", bound=NodeBaseWidget)
@@ -554,16 +553,10 @@ class F8StudioOperatorNodeItem(F8StudioServiceNodeItem):
         # Operators don't expose service commands; ensure any previous command proxy is removed.
         proxy = self._cmd_proxy
         if proxy is not None:
-            old = None
-            try:
-                old = proxy.widget()
-            except (AttributeError, RuntimeError, TypeError):
-                old = None
             try:
                 proxy.setWidget(None)
             except (AttributeError, RuntimeError, TypeError):
                 pass
-            dispose_detached_proxy_widget(old, context="operator_inline_command")
             try:
                 proxy.setParentItem(None)
                 if self.scene() is not None:

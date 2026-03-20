@@ -1,15 +1,17 @@
-#### When to Use
+## When to Use
 
-- Use `Pull` only when a graph needs an explicit auto-sampling sink for upstream data nodes.
-- Treat it as an advanced/internal helper rather than a default authoring node.
+- Use `Pull` primarily as an advanced internal helper when your graph requires an explicit "auto-sampling" sink for an upstream data node that doesn't have its own execution trigger.
+- It is useful for bridging between "passive" data providers (nodes that only update when asked) and "active" control consumers.
+- Use it sparingly; most graphs should rely on clear, explicit execution triggers (like `Tick`).
 
-#### Common Wiring Patterns
+## Common Wiring Patterns
 
-- Use it to force periodic upstream evaluation in graphs that are otherwise data-only.
-- Keep it isolated and clearly labeled when it exists in a shared session.
+- **Evaluation Forcing**: Use it to force periodic evaluation of an upstream expression or service port in a graph that lacks a `Tick` source.
+- **Data Sampling**: Place it at the end of a long chain of data-only nodes to ensure the entire chain is sampled at a specific frequency.
+- **Internal Helper**: Use it when creating custom operator groups where a group-internal state needs to be updated without exposing an execution port to the outside.
 
-#### Pitfalls / Gotchas
+## Pitfalls / Gotchas
 
-- It can hide the real execution model if used casually.
-- Prefer clear exec flow first; reach for `Pull` only when the graph genuinely needs passive sampling.
-
+- **Hidden Execution Model**: Relying on `Pull` can make the graph's execution flow opaque to other developers. It is always better to use explicit `exec` wires from a `Tick` node when possible.
+- **Resource Overhead**: Since `Pull` samples autonomously, it can lead to redundant processing if multiple `Pull` nodes are attached to the same data sources.
+- **Drift**: Autonomous sampling may not be perfectly synchronized with the rest of your graph's heartbeat. Use `Tick` for anything where phase-perfect timing matters.

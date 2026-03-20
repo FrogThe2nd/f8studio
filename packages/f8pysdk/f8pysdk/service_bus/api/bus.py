@@ -126,8 +126,8 @@ class ServiceBus:
         mode = _coerce_data_delivery_mode(config.data_delivery)
         if mode is None:
             if self._debug_state or log.isEnabledFor(logging.WARNING):
-                log.warning("Invalid data_delivery=%r; defaulting to 'pull'", config.data_delivery)
-            mode = "pull"
+                log.warning("Invalid data_delivery=%r; defaulting to 'push'", config.data_delivery)
+            mode = "push"
         self._data_delivery = mode
         self._state_sync_concurrency = max(1, int(config.state_sync_concurrency))
         self._state_cache_max_entries = max(0, int(config.state_cache_max_entries))

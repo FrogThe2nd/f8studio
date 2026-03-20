@@ -9,9 +9,9 @@ from f8pysdk.runtime_node import OperatorNode
 UPSTREAM_SAMPLING_MODE_PASSIVE = "passive"
 UPSTREAM_SAMPLING_MODE_AUTO = "auto"
 UPSTREAM_SAMPLING_MODE_VALUES = (UPSTREAM_SAMPLING_MODE_PASSIVE, UPSTREAM_SAMPLING_MODE_AUTO)
-UPSTREAM_SAMPLE_HZ_DEFAULT = 10
-UPSTREAM_SAMPLE_HZ_MIN = 1
-UPSTREAM_SAMPLE_HZ_MAX = 120
+UPSTREAM_SAMPLE_INTERVAL_MS_DEFAULT = 100
+UPSTREAM_SAMPLE_INTERVAL_MS_MIN = 8
+UPSTREAM_SAMPLE_INTERVAL_MS_MAX = 5000
 
 
 def viz_sampling_state_fields(*, show_on_node: bool = False) -> list[F8StateSpec]:
@@ -26,13 +26,13 @@ def viz_sampling_state_fields(*, show_on_node: bool = False) -> list[F8StateSpec
             showOnNode=show_on_node,
         ),
         F8StateSpec(
-            name="upstreamSampleHz",
-            label="Upstream Sample Hz",
-            description="Requested upstream auto sampling frequency in Hz.",
+            name="upstreamSampleIntervalMs",
+            label="Upstream Sample Interval (ms)",
+            description="Requested upstream auto sampling interval in milliseconds.",
             valueSchema=integer_schema(
-                default=UPSTREAM_SAMPLE_HZ_DEFAULT,
-                minimum=UPSTREAM_SAMPLE_HZ_MIN,
-                maximum=UPSTREAM_SAMPLE_HZ_MAX,
+                default=UPSTREAM_SAMPLE_INTERVAL_MS_DEFAULT,
+                minimum=UPSTREAM_SAMPLE_INTERVAL_MS_MIN,
+                maximum=UPSTREAM_SAMPLE_INTERVAL_MS_MAX,
             ),
             access=F8StateAccess.rw,
             required=True,
@@ -76,20 +76,23 @@ class StudioVizRuntimeNodeBase(OperatorNode):
             return UPSTREAM_SAMPLING_MODE_PASSIVE
         return mode
 
-    async def get_upstream_sample_hz(self) -> int:
-        hz_any: Any = None
+    async def get_upstream_sample_interval_ms(self) -> int:
+        interval_any: Any = None
         try:
-            hz_any = await self.get_state_value("upstreamSampleHz")
+            interval_any = await self.get_state_value("upstreamSampleIntervalMs")
         except Exception:
-            hz_any = None
-        if hz_any is None:
-            hz_any = self._initial_state.get("upstreamSampleHz", UPSTREAM_SAMPLE_HZ_DEFAULT)
+            interval_any = None
+        if interval_any is None:
+            interval_any = self._initial_state.get(
+                "upstreamSampleIntervalMs",
+                UPSTREAM_SAMPLE_INTERVAL_MS_DEFAULT,
+            )
         try:
-            hz = int(hz_any) if hz_any is not None else UPSTREAM_SAMPLE_HZ_DEFAULT
+            interval_ms = int(interval_any) if interval_any is not None else UPSTREAM_SAMPLE_INTERVAL_MS_DEFAULT
         except (TypeError, ValueError):
-            hz = UPSTREAM_SAMPLE_HZ_DEFAULT
-        if hz < UPSTREAM_SAMPLE_HZ_MIN:
-            hz = UPSTREAM_SAMPLE_HZ_MIN
-        if hz > UPSTREAM_SAMPLE_HZ_MAX:
-            hz = UPSTREAM_SAMPLE_HZ_MAX
-        return hz
+            interval_ms = UPSTREAM_SAMPLE_INTERVAL_MS_DEFAULT
+        if interval_ms < UPSTREAM_SAMPLE_INTERVAL_MS_MIN:
+            interval_ms = UPSTREAM_SAMPLE_INTERVAL_MS_MIN
+        if interval_ms > UPSTREAM_SAMPLE_INTERVAL_MS_MAX:
+            interval_ms = UPSTREAM_SAMPLE_INTERVAL_MS_MAX
+        return interval_ms

@@ -280,7 +280,8 @@ class DistCiLauncherIsolationTest(unittest.TestCase):
         self.dist_dir.mkdir(parents=True, exist_ok=True)
         launcher_output_dir = self.root / "build" / "dist"
         launcher_output_dir.mkdir(parents=True, exist_ok=True)
-        (launcher_output_dir / "f8studio").write_text("launcher-binary", encoding="utf-8")
+        self.launcher_name = self.module._launcher_binary_name()
+        (launcher_output_dir / self.launcher_name).write_text("launcher-binary", encoding="utf-8")
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
@@ -294,7 +295,7 @@ class DistCiLauncherIsolationTest(unittest.TestCase):
             self.module._bundle_studio_launcher(self.dist_dir)
 
         run_mock.assert_called_once_with(["python", "scripts/build_studio_launcher.py"])
-        self.assertTrue((self.dist_dir / "f8studio").is_file())
+        self.assertTrue((self.dist_dir / self.launcher_name).is_file())
 
     def test_bundle_studio_launcher_uses_isolated_launcher_environment(self) -> None:
         with (
@@ -305,7 +306,7 @@ class DistCiLauncherIsolationTest(unittest.TestCase):
             self.module._bundle_studio_launcher(self.dist_dir)
 
         run_mock.assert_called_once_with(["pixi", "run", "--frozen", "-e", "launcher", "build_studio_launcher"])
-        self.assertTrue((self.dist_dir / "f8studio").is_file())
+        self.assertTrue((self.dist_dir / self.launcher_name).is_file())
 
 
 if __name__ == "__main__":

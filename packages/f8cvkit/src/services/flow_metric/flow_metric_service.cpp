@@ -10,6 +10,7 @@
 #include <opencv2/imgproc.hpp>
 #include <spdlog/spdlog.h>
 
+#include "f8cppsdk/describe_schema.h"
 #include "f8cppsdk/shm/naming.h"
 #include "f8cppsdk/shm/sizing.h"
 #include "f8cppsdk/state_kv.h"
@@ -19,51 +20,13 @@
 namespace f8::cvkit::flow_metric {
 
 using json = nlohmann::json;
+using f8::cppsdk::describe::schema_integer;
+using f8::cppsdk::describe::schema_number;
+using f8::cppsdk::describe::schema_string;
+using f8::cppsdk::describe::schema_string_enum;
+using f8::cppsdk::describe::state_field;
 
 namespace {
-
-json schema_string() { return json{{"type", "string"}}; }
-json schema_number() { return json{{"type", "number"}}; }
-json schema_integer() { return json{{"type", "integer"}}; }
-json schema_string_enum(const std::vector<std::string>& values, const std::string& default_value) {
-  json s{{"type", "string"}};
-  s["enum"] = json::array();
-  for (const std::string& v : values) {
-    s["enum"].push_back(v);
-  }
-  s["default"] = default_value;
-  return s;
-}
-
-json schema_number(double default_value, double minimum, double maximum) {
-  json s{{"type", "number"}};
-  s["default"] = default_value;
-  s["minimum"] = minimum;
-  s["maximum"] = maximum;
-  return s;
-}
-
-json schema_integer(int default_value, int minimum, int maximum) {
-  json s{{"type", "integer"}};
-  s["default"] = default_value;
-  s["minimum"] = minimum;
-  s["maximum"] = maximum;
-  return s;
-}
-
-json state_field(std::string name, const json& value_schema, std::string access, std::string label = {},
-                 std::string description = {}, bool show_on_node = false, std::string ui_control = {}) {
-  json sf;
-  sf["name"] = std::move(name);
-  sf["valueSchema"] = value_schema;
-  sf["access"] = std::move(access);
-  sf["required"] = true;
-  if (!label.empty()) sf["label"] = std::move(label);
-  if (!description.empty()) sf["description"] = std::move(description);
-  if (show_on_node) sf["showOnNode"] = true;
-  if (!ui_control.empty()) sf["uiControl"] = std::move(ui_control);
-  return sf;
-}
 
 float half_to_float(std::uint16_t half_bits) {
   const std::uint32_t sign = static_cast<std::uint32_t>((half_bits >> 15) & 0x1u);
@@ -160,7 +123,6 @@ bool FlowMetricService::start() {
   publish_state_if_changed("computeEveryNFrames", compute_every_n_frames_, "init", json::object());
   publish_state_if_changed("metricMode", metric_mode_state_, "init", json::object());
   publish_state_if_changed("metricScale", metric_scale_, "init", json::object());
-  publish_state_if_changed("divergenceScale", metric_scale_, "init", json::object());
   publish_state_if_changed("scalarShmName", scalar_shm_name_, "init", json::object());
   publish_state_if_changed("scalarShmFormat", scalar_shm_format_, "init", json::object());
   publish_state_if_changed("lastError", "", "init", json::object());
@@ -311,7 +273,7 @@ void FlowMetricService::on_state(const std::string& node_id, const std::string& 
     return;
   }
 
-  if (field == "metricScale" || field == "divergenceScale") {
+  if (field == "metricScale") {
     double v = 0.0;
     if (!service_runtime::parse_json_double(value, v)) {
       publish_state_if_changed("lastError", "invalid metricScale", "state", meta);
@@ -319,7 +281,6 @@ void FlowMetricService::on_state(const std::string& node_id, const std::string& 
     }
     metric_scale_ = std::max(-1000.0, std::min(1000.0, v));
     publish_state_if_changed("metricScale", metric_scale_, "state", meta);
-    publish_state_if_changed("divergenceScale", metric_scale_, "state", meta);
     publish_state_if_changed("lastError", "", "state", meta);
     return;
   }
@@ -536,7 +497,6 @@ void FlowMetricService::process_frame_once() {
   publish_state_if_changed("metricMode", metric_mode_state_, "runtime", json::object());
   publish_state_if_changed("metricScale", metric_scale_, "runtime", json::object());
   publish_state_if_changed("scalarShmFormat", scalar_shm_format_, "runtime", json::object());
-  publish_state_if_changed("divergenceScale", metric_scale_, "runtime", json::object());
   publish_state_if_changed("lastError", "", "runtime", json::object());
 
   const std::int64_t end_ts_ms = f8::cppsdk::now_ms();
@@ -561,8 +521,6 @@ json FlowMetricService::describe() {
                   "Metric Mode", "Flow metric mode: divergence | magnitude | curl | strain.", false),
       state_field("metricScale", schema_number(1.0, -1000.0, 1000.0), "rw", "Metric Scale",
                   "Scale factor applied to computed metric values before output.", false),
-      state_field("divergenceScale", schema_number(1.0, -1000.0, 1000.0), "rw", "Divergence Scale (Legacy)",
-                  "Deprecated alias of metricScale for backward compatibility.", false),
       state_field("scalarShmName", schema_string(), "ro", "Scalar SHM Name", "Output SHM name for scalar metric field.",
                   true),
       state_field("scalarShmFormat", schema_string(), "ro", "Scalar SHM Format",

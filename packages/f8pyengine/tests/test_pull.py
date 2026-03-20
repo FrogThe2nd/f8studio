@@ -31,7 +31,7 @@ class PullNodeTests(unittest.IsolatedAsyncioTestCase):
         host = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
         return bus, host
 
-    async def _install_graph(self, bus: Any, *, enabled: bool, hz: int) -> None:
+    async def _install_graph(self, bus: Any, *, enabled: bool, interval_ms: int) -> None:
         op = F8RuntimeNode(
             nodeId="pull1",
             serviceId="svcA",
@@ -40,7 +40,7 @@ class PullNodeTests(unittest.IsolatedAsyncioTestCase):
             stateFields=list(PullRuntimeNode.SPEC.stateFields or []),
             stateValues={
                 "autoTriggerEnabled": bool(enabled),
-                "autoTriggerHz": int(hz),
+                "autoTriggerIntervalMs": int(interval_ms),
             },
             dataInPorts=[
                 F8DataPortSpec(name="value", description="", valueSchema=any_schema(), required=False),
@@ -54,7 +54,7 @@ class PullNodeTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_auto_trigger_periodically_pulls_inputs(self) -> None:
         bus, _host = await self._build_bus_and_host()
-        await self._install_graph(bus, enabled=True, hz=30)
+        await self._install_graph(bus, enabled=True, interval_ms=33)
 
         node = bus.get_node("pull1")
         self.assertIsInstance(node, PullRuntimeNode)
@@ -74,7 +74,7 @@ class PullNodeTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_auto_trigger_disabled_does_not_pull(self) -> None:
         bus, _host = await self._build_bus_and_host()
-        await self._install_graph(bus, enabled=False, hz=30)
+        await self._install_graph(bus, enabled=False, interval_ms=33)
 
         node = bus.get_node("pull1")
         self.assertIsInstance(node, PullRuntimeNode)
@@ -94,7 +94,7 @@ class PullNodeTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_lifecycle_pause_and_resume_periodic_pull(self) -> None:
         bus, _host = await self._build_bus_and_host()
-        await self._install_graph(bus, enabled=True, hz=20)
+        await self._install_graph(bus, enabled=True, interval_ms=50)
 
         node = bus.get_node("pull1")
         self.assertIsInstance(node, PullRuntimeNode)

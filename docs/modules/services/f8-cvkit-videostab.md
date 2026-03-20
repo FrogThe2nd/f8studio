@@ -8,7 +8,27 @@ No description.
 - Source directory: `f8/cvkit/video_stab`
 - Tags: `cv`, `stabilization`, `video`
 
-## How to Run
+## When to Use
+
+- Use `f8.cvkit.videostab` to remove jitter and small vibrations from a video source (e.g., handheld camera, vibrations on a mounting pole).
+- It is most effective as a "preprocessing" step, improving the performance of downstream nodes like trackers, detectors, and optical flow which depend on frame-to-frame stability.
+- Use it when you need a "steady-cam" effect for better visual inspection or higher machine vision accuracy.
+
+## Common Wiring Patterns
+
+- **Stable Pipeline Build**: Feed video from `f8.implayer` or `f8.screencap`, process it through the stabilizer, and then provide the *stabilized* output SHM to all other analysis nodes (`detector`, `pose`, `tracking`).
+- **A/B Validation**: Temporarily wire one visualizer to the raw source and another to the stabilized output to tune the `smoothing` parameters effectively.
+- **Reference Management**: Set a clear `outputShmName` that clearly indicates it's the stabilized version (e.g., `shm.source.stable`) to avoid confusion in complex graphs.
+
+## Pitfalls / Gotchas
+
+- **Edge Artifacts**: Stabilization works by shifting and rotating frames, which can create black bars or "warping" at the edges. You may need to apply a small crop to the output to hide these artifacts.
+- **Processing Lag**: Real-time stabilization requires a look-ahead buffer. This adds a small amount of latency to the video path; ensure your control logic is robust to a few frames of delay.
+- **Producer Loopback**: Avoid the common mistake of having a consumer read from the raw SHM while expecting stabilized results. Double-check that downstream nodes are explicitly reading from the stabilizer's `outputShmName`.
+
+## Service Reference
+
+### How to Run
 
 ```bash
 ../win/f8cvkit_video_stab_service.exe
@@ -17,7 +37,13 @@ No description.
 - Workdir: `./`
 - Environment overrides: none
 
-## Service State Fields
+### Typical Inputs / Outputs
+
+- Data inputs: none
+- Data outputs: `motion`, `monitor`
+- Commands: `resetStabilizer`
+
+### Service State Fields
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
@@ -40,46 +66,7 @@ No description.
 | `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 
-## Service Commands
-
-### `resetStabilizer`
-Reset internal trajectory/smoothing state.
-
-- Show on node: `true`
-- Params: none
-
-## Service Data Input Ports
-
-_None_
-
-## Service Data Output Ports
-
-| Name | Required | On Node | Schema | Description |
-| --- | --- | --- | --- | --- |
-| `motion` | `true` | `true` | `object{corrAngleDeg, corrScale, corrTx, corrTy, ...}` | Per-frame estimated and smoothed motion parameters. |
-| `monitor` | `true` | `false` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
-
-## Operators
-
-_None_
-
-## When to Use
-
-- Use `f8.cvkit.videostab` when camera or capture jitter hurts downstream CV quality.
-- It is most useful when stabilization is part of preprocessing, not as a cosmetic final pass.
-
-## Typical Inputs / Outputs
-
-- Data inputs: none
-- Data outputs: `motion`, `monitor`
-- Commands: `resetStabilizer`
-
-## Common Wiring Patterns
-
-- Feed it from `f8.implayer` or `f8.screencap`, then hand the stabilized output to detection, tracking, or pose services.
-- Validate the stabilizer before tuning downstream models, otherwise quality issues get misattributed.
-
-## Key Fields That Matter
+### Key Fields That Matter
 
 - `inputShmName` (Input Video SHM, `rw`): Input SHM name (e.g. shm.xxx.video). Schema: `string`.
 - `outputShmName` (Output Video SHM, `ro`): Output SHM name generated from serviceId. Schema: `string`.
@@ -90,10 +77,28 @@ _None_
 - `qualityLevel` (Quality Level, `rw`): goodFeaturesToTrack quality level. Schema: `number / default=0.01`.
 - `minDistance` (Min Distance, `rw`): Minimum corner distance. Schema: `number / default=8.0`.
 
-## Pitfalls / Gotchas
+### Service Commands
 
-- Stabilization can add crop, lag, or edge artifacts that later services still need to tolerate.
-- A wrong output SHM assumption can make downstream consumers silently keep reading the unstabilized source.
+### `resetStabilizer`
+Reset internal trajectory/smoothing state.
+
+- Show on node: `true`
+- Params: none
+
+### Service Data Input Ports
+
+_None_
+
+### Service Data Output Ports
+
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `motion` | `true` | `true` | `object{corrAngleDeg, corrScale, corrTx, corrTy, ...}` | Per-frame estimated and smoothed motion parameters. |
+| `monitor` | `true` | `false` | `object{active, alive, cpu, error, ...}` | Unified runtime monitor snapshots (health/resource/perf/error). |
+
+## Operators
+
+_None_
 
 ## Related Scenarios
 
