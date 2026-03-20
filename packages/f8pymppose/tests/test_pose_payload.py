@@ -1,6 +1,7 @@
 import os
 import sys
 import unittest
+import asyncio
 from dataclasses import dataclass
 
 
@@ -11,15 +12,24 @@ for p in (PKG_MPPOSE, PKG_SDK):
         sys.path.insert(0, p)
 
 
+from f8pymppose.config import (  # noqa: E402
+    DEFAULT_INFER_EVERY_N,
+    DEFAULT_MODEL_COMPLEXITY,
+    DEFAULT_SKELETON_SOURCE,
+)
 from f8pymppose.constants import SKELETON_PROTOCOL_MEDIAPIPE_POSE_33  # noqa: E402
-from f8pymppose.service_node import (  # noqa: E402
-    _tasks_model_spec_for_complexity,
+from f8pymppose.node_registry import _state_fields  # noqa: E402
+from f8pymppose.payloads import (  # noqa: E402
     build_pose_detection_payload,
     build_pose_skeleton_payload,
     compute_bbox_from_keypoints,
     extract_pose_keypoints,
     extract_pose_world_keypoints,
     should_run_inference,
+)
+from f8pymppose.service_node import (  # noqa: E402
+    _tasks_model_spec_for_complexity,
+    MediaPipePoseServiceNode,
 )
 
 
@@ -35,6 +45,11 @@ class _FakeLandmark:
 class _FakeTasksResult:
     pose_landmarks: list[list[_FakeLandmark]]
     pose_world_landmarks: list[list[_FakeLandmark]] | None = None
+
+
+@dataclass(frozen=True)
+class _FakeNode:
+    stateFields: list[object] | None = None
 
 
 class PosePayloadTests(unittest.TestCase):
@@ -54,8 +69,8 @@ class PosePayloadTests(unittest.TestCase):
         )
         keypoints = extract_pose_keypoints(result, width=200, height=100, visibility_threshold=0.5)
         self.assertEqual(len(keypoints), 2)
-        self.assertAlmostEqual(float(keypoints[0]["x"] or 0.0), 20.0, places=3)
-        self.assertAlmostEqual(float(keypoints[0]["y"] or 0.0), 20.0, places=3)
+        self.assertAlmostEqual(float(keypoints[0]["x"] or 0.0), 0.1, places=3)
+        self.assertAlmostEqual(float(keypoints[0]["y"] or 0.0), 0.2, places=3)
         self.assertIsNone(keypoints[1]["x"])
         self.assertIsNone(keypoints[1]["y"])
 
@@ -70,8 +85,8 @@ class PosePayloadTests(unittest.TestCase):
         )
         keypoints = extract_pose_keypoints(result, width=100, height=200, visibility_threshold=0.5)
         self.assertEqual(len(keypoints), 2)
-        self.assertAlmostEqual(float(keypoints[0]["x"] or 0.0), 50.0, places=3)
-        self.assertAlmostEqual(float(keypoints[0]["y"] or 0.0), 100.0, places=3)
+        self.assertAlmostEqual(float(keypoints[0]["x"] or 0.0), 0.5, places=3)
+        self.assertAlmostEqual(float(keypoints[0]["y"] or 0.0), 0.5, places=3)
 
     def test_extract_pose_world_keypoints(self) -> None:
         result = _FakeTasksResult(
@@ -142,8 +157,6 @@ class PosePayloadTests(unittest.TestCase):
             ts_ms=2345,
             keypoints=keypoints,
             world_keypoints=None,
-            width=200,
-            height=100,
             skeleton_source="camera",
         )
         self.assertEqual(payload["type"], "skeleton_binary")
@@ -156,8 +169,8 @@ class PosePayloadTests(unittest.TestCase):
         self.assertEqual(bones[0]["name"], "nose")
         self.assertEqual(len(bones[0]["rot"]), 4)
         self.assertAlmostEqual(float(bones[0]["pos"][0]), 1.0, places=6)
-        self.assertAlmostEqual(float(bones[0]["pos"][1]), 2.0, places=6)
-        self.assertAlmostEqual(float(bones[0]["pos"][2]), 14.1421356, places=5)
+        self.assertAlmostEqual(float(bones[0]["pos"][1]), -2.0, places=6)
+        self.assertAlmostEqual(float(bones[0]["pos"][2]), 0.1, places=5)
         self.assertEqual(bones[11]["name"], "left_shoulder")
         self.assertEqual(payload["trailer"], None)
 
@@ -168,8 +181,6 @@ class PosePayloadTests(unittest.TestCase):
             ts_ms=3456,
             keypoints=keypoints,
             world_keypoints=None,
-            width=1280,
-            height=720,
             skeleton_source="camera",
         )
         self.assertEqual(payload["boneCount"], 0)
@@ -178,14 +189,12 @@ class PosePayloadTests(unittest.TestCase):
     def test_bone_orientation_identity_when_direction_is_positive_y(self) -> None:
         keypoints = [{"x": None, "y": None, "z": None, "score": 0.0} for _ in range(33)]
         keypoints[11] = {"x": 100.0, "y": 100.0, "z": 0.0, "score": 1.0}
-        keypoints[13] = {"x": 100.0, "y": 200.0, "z": 0.0, "score": 1.0}
+        keypoints[13] = {"x": 100.0, "y": 0.0, "z": 0.0, "score": 1.0}
         payload = build_pose_skeleton_payload(
             frame_id=101,
             ts_ms=4567,
             keypoints=keypoints,
             world_keypoints=None,
-            width=1000,
-            height=1000,
             skeleton_source="camera",
         )
         by_name = {str(item["name"]): item for item in payload["bones"]}
@@ -201,8 +210,6 @@ class PosePayloadTests(unittest.TestCase):
             ts_ms=5678,
             keypoints=keypoints,
             world_keypoints=None,
-            width=1000,
-            height=1000,
             skeleton_source="camera",
         )
         by_name = {str(item["name"]): item for item in payload["bones"]}
@@ -227,8 +234,6 @@ class PosePayloadTests(unittest.TestCase):
             ts_ms=6789,
             keypoints=keypoints,
             world_keypoints=world_keypoints,
-            width=1920,
-            height=1080,
             skeleton_source="world",
         )
         bones = payload["bones"]
@@ -251,15 +256,73 @@ class PosePayloadTests(unittest.TestCase):
             ts_ms=6790,
             keypoints=keypoints,
             world_keypoints=world_keypoints,
-            width=200,
-            height=100,
             skeleton_source="camera",
         )
         bones = payload["bones"]
         self.assertEqual(bones[10]["name"], "mouth_right")
         self.assertAlmostEqual(float(bones[10]["pos"][0]), 11.0, places=6)
-        self.assertAlmostEqual(float(bones[10]["pos"][1]), 12.0, places=6)
-        self.assertAlmostEqual(float(bones[10]["pos"][2]), 155.563492, places=5)
+        self.assertAlmostEqual(float(bones[10]["pos"][1]), -12.0, places=6)
+        self.assertAlmostEqual(float(bones[10]["pos"][2]), 110.0, places=5)
+
+    def test_build_skeleton_payload_camera_source_uses_image_depth_without_world_keypoints(self) -> None:
+        keypoints = [
+            {"x": float(i + 1), "y": float(i + 2), "z": 0.1 * float(i + 1), "score": 0.95}
+            for i in range(33)
+        ]
+        payload = build_pose_skeleton_payload(
+            frame_id=122,
+            ts_ms=6791,
+            keypoints=keypoints,
+            world_keypoints=None,
+            skeleton_source="camera",
+        )
+        bones = payload["bones"]
+        self.assertEqual(bones[10]["name"], "mouth_right")
+        self.assertAlmostEqual(float(bones[10]["pos"][0]), 11.0, places=6)
+        self.assertAlmostEqual(float(bones[10]["pos"][1]), -12.0, places=6)
+        self.assertAlmostEqual(float(bones[10]["pos"][2]), 1.1, places=6)
+
+    def test_build_skeleton_payload_default_source_matches_service_default(self) -> None:
+        keypoints = [
+            {"x": float(i + 1), "y": float(i + 2), "z": 0.1 * float(i + 1), "score": 0.95}
+            for i in range(33)
+        ]
+        world_keypoints = [
+            {"x": 100.0 + float(i), "y": 100.0 + float(i), "z": 100.0 + float(i), "score": 0.95}
+            for i in range(33)
+        ]
+        payload = build_pose_skeleton_payload(
+            frame_id=123,
+            ts_ms=6792,
+            keypoints=keypoints,
+            world_keypoints=world_keypoints,
+        )
+        bones = payload["bones"]
+        self.assertEqual(DEFAULT_SKELETON_SOURCE, "camera")
+        self.assertAlmostEqual(float(bones[10]["pos"][0]), 11.0, places=6)
+        self.assertAlmostEqual(float(bones[10]["pos"][1]), -12.0, places=6)
+        self.assertAlmostEqual(float(bones[10]["pos"][2]), 110.0, places=5)
+
+    def test_node_registry_defaults_share_config_constants(self) -> None:
+        defaults = {field.name: field.valueSchema.default for field in _state_fields()}
+        self.assertEqual(defaults["inferEveryN"], DEFAULT_INFER_EVERY_N)
+        self.assertEqual(defaults["modelComplexity"], DEFAULT_MODEL_COMPLEXITY)
+        self.assertEqual(defaults["skeletonSource"], DEFAULT_SKELETON_SOURCE)
+
+    def test_initial_state_allows_zero_thresholds(self) -> None:
+        node = MediaPipePoseServiceNode(
+            node_id="pose_test",
+            node=_FakeNode(stateFields=[]),
+            initial_state={
+                "minDetectionConfidence": 0.0,
+                "minTrackingConfidence": 0.0,
+                "visibilityThreshold": 0.0,
+            },
+        )
+        asyncio.run(node._ensure_config_loaded())
+        self.assertEqual(node._min_detection_confidence, 0.0)
+        self.assertEqual(node._min_tracking_confidence, 0.0)
+        self.assertEqual(node._visibility_threshold, 0.0)
 
     def test_tasks_model_spec_mapping(self) -> None:
         lite = _tasks_model_spec_for_complexity("lite")

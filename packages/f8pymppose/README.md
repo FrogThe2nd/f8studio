@@ -13,13 +13,14 @@ Output schema:
 
 - `detections` (`f8visionDetections/1`)
   - Uses MediaPipe `pose_landmarks` (image landmarks).
-  - `keypoints[].x/.y` are **pixel coordinates** (not normalized) for TrackViz rendering.
+  - `keypoints[].x/.y` currently mirror the incoming image-landmark coordinates after clamping to the image bounds.
+  - The service does not currently scale normalized landmark coordinates into pixel space.
   - `keypoints[].z` follows MediaPipe image-landmark depth convention.
   - `skeletonProtocol` is `mediapipe_pose_33` (payload level and detection level).
 
 - `skeletons` (UDP-skeleton-compatible list)
   - Controlled by state `skeletonSource`:
-    - `world` (default): use MediaPipe `pose_world_landmarks` directly and convert to **Y-up** (`y = -world_y`).
-    - `camera`: use MediaPipe `pose_landmarks` in pixel space (`x_px`, `y_px`), and scale depth as `z * sqrt(width * height)`.
+    - `camera` (default): use MediaPipe `pose_landmarks` directly, flip Y (`y = -image_y`), and prefer `pose_world_landmarks.z` as depth when world landmarks are available.
+    - `world`: use MediaPipe `pose_world_landmarks` directly and convert to **Y-up** (`y = -world_y`).
   - In `world` mode, if world landmarks are unavailable, it falls back to the `camera` mapping above.
   - Bone `rot` is estimated from neighbor links defined by the `mediapipe_pose_33` skeleton graph.
