@@ -32,7 +32,7 @@ class LauncherEnvironmentDiscoveryTest(unittest.TestCase):
     def test_discover_launcher_install_environments_uses_marker_feature(self) -> None:
         (self.root / "pixi.toml").write_text(
             "[environments]\n"
-            'default = { features = ["python", "studio", "launcher-runtime"] }\n'
+            'studio-runtime = { features = ["python", "studio", "launcher-runtime"] }\n'
             'onnx = { features = ["python", "onnx", "launcher-runtime"] }\n'
             'ci = { features = ["ci"] }\n',
             encoding="utf-8",
@@ -40,7 +40,7 @@ class LauncherEnvironmentDiscoveryTest(unittest.TestCase):
 
         env_names = self.module._discover_launcher_install_environments(self.root)
 
-        self.assertEqual(env_names, ["default", "onnx"])
+        self.assertEqual(env_names, ["studio-runtime", "onnx"])
 
     def test_discover_launcher_install_environments_fails_without_marker_feature(self) -> None:
         (self.root / "pixi.toml").write_text(
@@ -54,6 +54,17 @@ class LauncherEnvironmentDiscoveryTest(unittest.TestCase):
 
         self.assertIn("launcher-runtime", str(ctx.exception))
 
+    def test_read_workspace_version_returns_workspace_version(self) -> None:
+        (self.root / "pixi.toml").write_text(
+            "[workspace]\n"
+            'version = "0.2.0"\n',
+            encoding="utf-8",
+        )
+
+        version = self.module._read_workspace_version(self.root)
+
+        self.assertEqual(version, "0.2.0")
+
 
 class LauncherInstallCommandTest(unittest.TestCase):
     def setUp(self) -> None:
@@ -66,25 +77,144 @@ class LauncherInstallCommandTest(unittest.TestCase):
 
     def test_install_workspace_environments_uses_targeted_environment_flags(self) -> None:
         with (
-            mock.patch.object(self.module.subprocess, "run", return_value=subprocess.CompletedProcess([], 0)) as run_mock,
+            mock.patch.object(
+                self.module,
+                "_run_subprocess_with_status",
+                return_value=subprocess.CompletedProcess([], 0),
+            ) as run_mock,
             mock.patch.object(
                 self.module,
                 "_installed_pixi_environment_names",
-                return_value={"default", "onnx"},
+                return_value={"studio-runtime", "onnx"},
             ),
         ):
             ok = self.module._install_workspace_environments(
                 "pixi",
                 self.root,
-                ["default", "onnx"],
+                ["studio-runtime", "onnx"],
             )
 
         self.assertTrue(ok)
         run_mock.assert_called_once_with(
-            ["pixi", "install", "-e", "default", "-e", "onnx"],
+            ["pixi", "install", "-e", "studio-runtime", "-e", "onnx"],
             cwd=self.root,
             check=False,
+            status_title="f8studio",
+            status_message=self.module.SPLASH_RUNTIME_INSTALL_MESSAGE,
+            status_window=None,
         )
+
+    def test_main_launches_studio_runtime_explicitly(self) -> None:
+        splash_window = mock.Mock()
+        launch_proc = mock.Mock()
+        with (
+            mock.patch.object(self.module, "_find_workspace_root", return_value=self.root),
+            mock.patch.object(self.module, "_find_pixi_executable", return_value="pixi"),
+            mock.patch.object(
+                self.module,
+                "_discover_launcher_install_environments",
+                return_value=["studio-runtime", "onnx"],
+            ),
+            mock.patch.object(
+                self.module,
+                "_installed_pixi_environment_names",
+                return_value={"studio-runtime", "onnx"},
+            ),
+            mock.patch.object(self.module, "_create_status_window", return_value=splash_window),
+            mock.patch.object(self.module, "_show_error_dialog") as error_dialog_mock,
+            mock.patch.object(self.module, "_start_subprocess", return_value=launch_proc) as start_mock,
+            mock.patch.object(self.module, "_complete_startup_splash", return_value=None) as complete_mock,
+        ):
+            exit_code = self.module.main([])
+
+        self.assertEqual(exit_code, 0)
+        error_dialog_mock.assert_not_called()
+        splash_window.set_message.assert_called_once_with(
+            self.module.SPLASH_LAUNCH_MESSAGE
+        )
+        start_mock.assert_called_once_with(
+            ["pixi", "run", "-e", "studio-runtime", "f8pystudio"],
+            cwd=self.root,
+        )
+        complete_mock.assert_called_once_with(
+            splash_window,
+            launch_proc=launch_proc,
+            min_visible_s=self.module.SPLASH_MIN_VISIBLE_S,
+            fade_duration_s=self.module.SPLASH_FADE_DURATION_S,
+        )
+
+    def test_run_subprocess_hides_windows_console(self) -> None:
+        with mock.patch.object(self.module.subprocess, "run", return_value=subprocess.CompletedProcess([], 0)) as run_mock:
+            self.module._run_subprocess(["pixi", "run", "f8pystudio"], check=False)
+
+        expected_kwargs: dict[str, object] = {"check": False}
+        if self.module.os.name == "nt":
+            expected_kwargs["creationflags"] = self.module.subprocess.CREATE_NO_WINDOW
+        run_mock.assert_called_once_with(["pixi", "run", "f8pystudio"], **expected_kwargs)
+
+    def test_run_subprocess_with_status_waits_for_process_completion(self) -> None:
+        status_window = mock.Mock()
+        proc = mock.Mock()
+        proc.poll.side_effect = [None, None, 0]
+
+        with (
+            mock.patch.object(self.module, "_create_status_window", return_value=status_window),
+            mock.patch.object(self.module.subprocess, "Popen", return_value=proc) as popen_mock,
+        ):
+            completed = self.module._run_subprocess_with_status(
+                ["pixi", "run", "-e", "studio-runtime", "f8pystudio"],
+                cwd=self.root,
+                check=False,
+                status_title="f8studio",
+                status_message="Starting Studio...",
+            )
+
+        expected_popen_kwargs: dict[str, object] = {"cwd": self.root}
+        if self.module.os.name == "nt":
+            expected_popen_kwargs["creationflags"] = self.module.subprocess.CREATE_NO_WINDOW
+        popen_mock.assert_called_once_with(
+            ["pixi", "run", "-e", "studio-runtime", "f8pystudio"],
+            **expected_popen_kwargs,
+        )
+        self.assertEqual(completed.returncode, 0)
+        self.assertGreaterEqual(status_window.update.call_count, 2)
+        self.assertGreaterEqual(status_window.wait.call_count, 2)
+        status_window.close.assert_called_once_with()
+
+    def test_complete_startup_splash_fades_after_minimum_visible_time(self) -> None:
+        status_window = mock.Mock()
+        status_window.elapsed_s.side_effect = [0.4, 1.2, 2.1]
+        proc = mock.Mock()
+        proc.poll.side_effect = [None, None, None, None]
+
+        returncode = self.module._complete_startup_splash(
+            status_window,
+            launch_proc=proc,
+            min_visible_s=2.0,
+            fade_duration_s=1.0,
+        )
+
+        self.assertIsNone(returncode)
+        self.assertGreaterEqual(status_window.update.call_count, 2)
+        self.assertGreaterEqual(status_window.wait.call_count, 2)
+        status_window.fade_out.assert_called_once_with(duration_s=1.0)
+
+    def test_complete_startup_splash_returns_early_exit_code(self) -> None:
+        status_window = mock.Mock()
+        status_window.elapsed_s.side_effect = [0.2]
+        proc = mock.Mock()
+        proc.poll.return_value = 7
+
+        returncode = self.module._complete_startup_splash(
+            status_window,
+            launch_proc=proc,
+            min_visible_s=2.0,
+            fade_duration_s=1.0,
+        )
+
+        self.assertEqual(returncode, 7)
+        status_window.close.assert_called_once_with()
+        status_window.fade_out.assert_not_called()
 
 
 if __name__ == "__main__":

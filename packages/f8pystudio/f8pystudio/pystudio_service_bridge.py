@@ -4,7 +4,7 @@ from f8pysdk.msgspec_codec import dump_json
 import asyncio
 import concurrent.futures
 import logging
-import time
+import threading
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -20,8 +20,6 @@ from .bridge.json_codec import coerce_json_value
 from .bridge.managed_service_inventory import collect_managed_service_inventory
 from .bridge.nats_lifecycle import (
     NatsConnectionManager,
-    ensure_nats_server_owned_pid,
-    stop_owned_nats_server,
 )
 from .bridge.process_action_scheduler import ServiceProcessActionScheduler
 from .bridge.runtime_graph_projection import (
@@ -58,8 +56,8 @@ from .bridge.rungraph_deployer import (
 )
 from .error_reporting import ExceptionLogOnce, report_exception
 from .nodegraph.runtime_compiler import CompiledRuntimeGraphs
-from .pystudio_service import PyStudioService, PyStudioServiceConfig
-from .service_process_manager import ServiceProcessConfig, ServiceProcessManager
+from .pystudio_service import PyStudioService
+from .service_process_manager import ServiceProcessManager
 from .pystudio_node_registry import SERVICE_CLASS, STUDIO_SERVICE_ID
 from .remote_state_watcher import RemoteStateWatcher, WatchTarget
 from .ui_bus import UiCommand
@@ -67,6 +65,7 @@ from .monitoring import MonitorCenter
 from .monitoring.service_rows import ServiceMonitorRow, build_service_monitor_rows, collect_known_service_ids
 
 logger = logging.getLogger(__name__)
+STARTUP_GATE_TIMEOUT_S = 6.0
 
 
 @dataclass(frozen=True)
@@ -136,6 +135,11 @@ class PyStudioServiceBridge(RuntimeSessionControllerMixin, ServiceLifecycleContr
         self._nc: Any = None
         self._owned_nats_server_pid: int | None = None
         self._pending_remote_command_cbs: dict[str, Callable[[dict[str, Any] | None, str | None], None]] = {}
+        self._async_started: bool = False
+        self._startup_future: concurrent.futures.Future[Any] | None = None
+        self._startup_preflight_ready = threading.Event()
+        self._startup_continue_requested = threading.Event()
+        self._startup_preflight_message: str | None = None
         self._process_actions = ServiceProcessActionScheduler(
             owner=self,
             is_service_running=self.is_service_running,
@@ -182,7 +186,6 @@ class PyStudioServiceBridge(RuntimeSessionControllerMixin, ServiceLifecycleContr
         except RuntimeError as exc:
             self._report_exception(f"emit service process state failed serviceId={service_id}", exc)
 
-
     def _submit_async(self, coro: Any, *, context: str) -> bool:
         if self._shutting_down or (not self._async.is_accepting_submissions()):
             if asyncio.iscoroutine(coro):
@@ -201,6 +204,105 @@ class PyStudioServiceBridge(RuntimeSessionControllerMixin, ServiceLifecycleContr
         except Exception as exc:
             self._report_exception(context, exc)
             return False
+
+    def _ensure_async_runtime_started(self) -> None:
+        if self._async_started:
+            return
+        self._async.start()
+        self._async_started = True
+
+    def _submit_startup(self) -> concurrent.futures.Future[Any] | None:
+        future = self._startup_future
+        if future is not None:
+            return future
+        try:
+            future = self._async.submit(self._run_startup_sequence_async())
+        except Exception as exc:
+            self._report_exception("submit startup wait failed", exc)
+            return None
+        self._startup_future = future
+        return future
+
+    async def _run_startup_sequence_async(self) -> str | None:
+        try:
+            startup_blocked_message = await self._run_startup_preflight_async()
+        except Exception:
+            self._startup_preflight_message = None
+            self._startup_preflight_ready.set()
+            raise
+        self._startup_preflight_message = None
+        if isinstance(startup_blocked_message, str):
+            message = startup_blocked_message.strip()
+            if message:
+                self._startup_preflight_message = message
+        self._startup_preflight_ready.set()
+        if self._startup_preflight_message is not None:
+            return self._startup_preflight_message
+        await asyncio.to_thread(self._startup_continue_requested.wait)
+        if self._shutting_down:
+            return None
+        return await self._start_after_preflight_async()
+
+    def _wait_for_future_message(
+        self,
+        future: concurrent.futures.Future[Any] | None,
+        *,
+        timeout_s: float,
+        timeout_log_line: str,
+        error_context: str,
+    ) -> tuple[bool, str | None]:
+        if future is None:
+            return False, None
+        try:
+            result = future.result(timeout=float(timeout_s))
+        except concurrent.futures.TimeoutError:
+            self._emit_log_line(timeout_log_line)
+            return False, None
+        except Exception as exc:
+            self._report_exception(error_context, exc)
+            return True, None
+
+        if not isinstance(result, str):
+            return True, None
+        message = result.strip()
+        if not message:
+            return True, None
+        return True, message
+
+    def _wait_for_startup_preflight_message(self, *, timeout_s: float) -> tuple[bool, str | None]:
+        if self._startup_preflight_ready.wait(timeout=float(timeout_s)):
+            return True, self._startup_preflight_message
+        self._emit_log_line("bridge startup preflight timed out; continuing UI startup")
+        return False, None
+
+    def wait_for_startup_preflight(self, *, timeout_s: float = STARTUP_GATE_TIMEOUT_S) -> str | None:
+        self._shutting_down = False
+        self._ensure_async_runtime_started()
+        future = self._submit_startup()
+        if future is None:
+            return None
+        _completed, message = self._wait_for_startup_preflight_message(timeout_s=float(timeout_s))
+        return message
+
+    def start_and_wait_for_startup(self, *, timeout_s: float = STARTUP_GATE_TIMEOUT_S) -> str | None:
+        self._shutting_down = False
+        self._ensure_async_runtime_started()
+        future = self._submit_startup()
+        if future is None:
+            return None
+        preflight_completed, preflight_message = self._wait_for_startup_preflight_message(timeout_s=float(timeout_s))
+        if preflight_message is not None:
+            return preflight_message
+        self._startup_continue_requested.set()
+        if not preflight_completed:
+            return None
+        _completed, message = self._wait_for_future_message(
+            future,
+            timeout_s=float(timeout_s),
+            timeout_log_line="bridge startup wait timed out; continuing UI startup",
+            error_context="wait for bridge startup failed",
+        )
+        return message
 
     @property
     def studio_service_id(self) -> str:
@@ -241,25 +343,25 @@ class PyStudioServiceBridge(RuntimeSessionControllerMixin, ServiceLifecycleContr
             service_alive_cache=self._service_alive_cache,
         )
 
-    @QtCore.Slot(bool)
-
-    def start(self) -> None:
-        self._shutting_down = False
-        self._async.start()
-        self._submit_async(self._start_async(), context="submit start failed")
-
     def stop(self) -> None:
         self._shutting_down = True
         self._process_actions.cancel_all()
-        try:
-            fut = self._async.submit(self._stop_async())
+        self._startup_continue_requested.set()
+        if self._async_started:
             try:
-                fut.result(timeout=2)
-            except concurrent.futures.TimeoutError:
-                self._emit_log_line("bridge stop timeout; continue shutdown")
-        except Exception as exc:
-            self._report_exception("submit stop failed", exc)
-        self._async.stop()
+                fut = self._async.submit(self._stop_async())
+                try:
+                    fut.result(timeout=2)
+                except concurrent.futures.TimeoutError:
+                    self._emit_log_line("bridge stop timeout; continue shutdown")
+            except Exception as exc:
+                self._report_exception("submit stop failed", exc)
+            self._async.stop()
+            self._async_started = False
+        self._startup_future = None
+        self._startup_preflight_ready = threading.Event()
+        self._startup_continue_requested = threading.Event()
+        self._startup_preflight_message = None
 
         # Best-effort stop all launched processes.
         for sid in list(self._process_gateway.service_ids()):

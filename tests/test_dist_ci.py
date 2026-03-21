@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import importlib.util
+import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -66,6 +68,33 @@ class DistCiDiscoveryTest(unittest.TestCase):
             {
                 "pkg-a": "packages/pkg_a",
                 "pkg-c": "packages/pkg_c",
+            },
+        )
+
+    def test_discover_local_editable_packages_can_filter_to_runtime_features(self) -> None:
+        self._write_pyproject("packages/pkg_runtime", "pkg-runtime")
+        self._write_pyproject("packages/pkg_dev_only", "pkg-dev-only")
+
+        pixi_toml_path = self.root / "pixi.toml"
+        pixi_toml_path.write_text(
+            "[feature.runtime.pypi-dependencies]\n"
+            'pkg-runtime = { path = "packages/pkg_runtime", editable = true }\n'
+            "\n"
+            "[feature.dev-only.pypi-dependencies]\n"
+            'pkg-dev-only = { path = "packages/pkg_dev_only", editable = true }\n',
+            encoding="utf-8",
+        )
+
+        dependencies = self.module._discover_local_editable_package_dirs(
+            pixi_toml_path=pixi_toml_path,
+            repo_root=self.root,
+            allowed_feature_names={"runtime"},
+        )
+
+        self.assertEqual(
+            dependencies,
+            {
+                "pkg-runtime": "packages/pkg_runtime",
             },
         )
 
@@ -142,7 +171,7 @@ class DistCiDiscoveryTest(unittest.TestCase):
         pixi_toml_path = self.root / "pixi.toml"
         pixi_toml_path.write_text(
             "[environments]\n"
-            'default = { features = ["python", "studio", "launcher-runtime"] }\n'
+            'studio-runtime = { features = ["python", "studio", "launcher-runtime"] }\n'
             'onnx = { features = ["python", "onnx", "launcher-runtime"] }\n'
             'ci = { features = ["ci"] }\n',
             encoding="utf-8",
@@ -150,7 +179,29 @@ class DistCiDiscoveryTest(unittest.TestCase):
 
         environments = self.module._discover_launcher_runtime_environments(pixi_toml_path=pixi_toml_path)
 
-        self.assertEqual(environments, ["default", "onnx"])
+        self.assertEqual(environments, ["studio-runtime", "onnx"])
+
+    def test_discover_environment_feature_names_collects_runtime_closure(self) -> None:
+        pixi_toml_path = self.root / "pixi.toml"
+        pixi_toml_path.write_text(
+            "[feature.python]\n"
+            "[feature.sdk]\n"
+            "[feature.studio]\n"
+            "[feature.onnx]\n"
+            "[feature.launcher-runtime]\n"
+            "\n"
+            "[environments]\n"
+            'studio-runtime = { features = ["python", "sdk", "studio", "launcher-runtime"] }\n'
+            'onnx = { features = ["python", "sdk", "onnx", "launcher-runtime"] }\n',
+            encoding="utf-8",
+        )
+
+        feature_names = self.module._discover_environment_feature_names(
+            pixi_toml_path=pixi_toml_path,
+            environment_names=["studio-runtime", "onnx"],
+        )
+
+        self.assertEqual(feature_names, ["python", "sdk", "studio", "launcher-runtime", "onnx"])
 
     def test_discover_launcher_runtime_environments_fails_without_marker(self) -> None:
         pixi_toml_path = self.root / "pixi.toml"
@@ -166,9 +217,9 @@ class DistCiDiscoveryTest(unittest.TestCase):
         self.assertIn("launcher-runtime", str(ctx.exception))
 
     def test_env_install_script_text_installs_only_runtime_environments(self) -> None:
-        script_text = self.module._env_install_script_text(["default", "onnx"])
+        script_text = self.module._env_install_script_text(["studio-runtime", "onnx"])
 
-        self.assertIn("pixi install -e default -e onnx", script_text)
+        self.assertIn("pixi install -e studio-runtime -e onnx", script_text)
         self.assertNotIn("pixi install -a", script_text)
 
     def test_filter_dist_environments_keeps_only_runtime_environments(self) -> None:
@@ -177,8 +228,9 @@ class DistCiDiscoveryTest(unittest.TestCase):
             'name = "demo"\n'
             "\n"
             "[environments]\n"
-            'default = { features = ["python", "launcher-runtime"] }\n'
+            'studio-runtime = { features = ["python", "launcher-runtime"] }\n'
             'onnx = { features = ["python", "launcher-runtime"] }\n'
+            'mediapipe = { features = ["python", "launcher-runtime"] }\n'
             'ci = { features = ["ci"] }\n'
             'launcher = { features = ["launcher"] }\n'
             "\n"
@@ -186,10 +238,11 @@ class DistCiDiscoveryTest(unittest.TestCase):
             'demo = "echo ok"\n'
         )
 
-        filtered = self.module._filter_dist_environments(pixi_text, ["default", "onnx"])
+        filtered = self.module._filter_dist_environments(pixi_text, ["studio-runtime", "onnx", "mediapipe"])
 
-        self.assertIn('default = { features = ["python", "launcher-runtime"] }', filtered)
+        self.assertIn('studio-runtime = { features = ["python", "launcher-runtime"] }', filtered)
         self.assertIn('onnx = { features = ["python", "launcher-runtime"] }', filtered)
+        self.assertIn('mediapipe = { features = ["python", "launcher-runtime"] }', filtered)
         self.assertNotIn('ci = { features = ["ci"] }', filtered)
         self.assertNotIn('launcher = { features = ["launcher"] }', filtered)
         self.assertIn("[tasks]", filtered)
@@ -197,13 +250,88 @@ class DistCiDiscoveryTest(unittest.TestCase):
     def test_filter_dist_environments_fails_when_runtime_environment_missing(self) -> None:
         pixi_text = (
             "[environments]\n"
-            'default = { features = ["python", "launcher-runtime"] }\n'
+            'studio-runtime = { features = ["python", "launcher-runtime"] }\n'
         )
 
         with self.assertRaises(ValueError) as ctx:
-            self.module._filter_dist_environments(pixi_text, ["default", "onnx"])
+            self.module._filter_dist_environments(pixi_text, ["studio-runtime", "onnx"])
 
         self.assertIn("onnx", str(ctx.exception))
+
+    def test_filter_dist_feature_sections_removes_unused_feature_sections(self) -> None:
+        pixi_text = (
+            "[feature.python.dependencies]\n"
+            'python = ">=3.13,<3.14"\n'
+            "\n"
+            "[feature.studio.pypi-dependencies]\n"
+            'f8pystudio = { path = "packages/f8pystudio", editable = true }\n'
+            "\n"
+            "[feature.launcher-runtime]\n"
+            "\n"
+            "[feature.test.dependencies]\n"
+            'pytest = ">=8"\n'
+            "\n"
+            "[feature.ci.tasks]\n"
+            'dist_ci = "python scripts/dist_ci.py"\n'
+        )
+
+        filtered = self.module._filter_dist_feature_sections(
+            pixi_text,
+            ["python", "studio", "launcher-runtime"],
+        )
+
+        self.assertIn("[feature.python.dependencies]", filtered)
+        self.assertIn("[feature.studio.pypi-dependencies]", filtered)
+        self.assertIn("[feature.launcher-runtime]", filtered)
+        self.assertNotIn("[feature.test.dependencies]", filtered)
+        self.assertNotIn("[feature.ci.tasks]", filtered)
+
+    def test_rewrite_service_entry_environment_args_swaps_default_for_dist_runtime(self) -> None:
+        service_text = (
+            "launch:\n"
+            '  command: pixi\n'
+            '  args: ["run", "-e", "default", "f8pyengine"]\n'
+        )
+
+        rewritten = self.module._rewrite_service_entry_environment_args(
+            service_text,
+            source_environment_name="default",
+            target_environment_name="studio-runtime",
+        )
+
+        self.assertIn('"run", "-e", "studio-runtime", "f8pyengine"', rewritten)
+        self.assertNotIn('"run", "-e", "default", "f8pyengine"', rewritten)
+
+    def test_rewrite_dist_service_entries_only_updates_default_runtime_services(self) -> None:
+        services_root = self.root / "services"
+        engine_service_path = services_root / "f8" / "engine" / "service.yml"
+        detector_service_path = services_root / "f8" / "dl" / "detector" / "service.yml"
+        engine_service_path.parent.mkdir(parents=True, exist_ok=True)
+        detector_service_path.parent.mkdir(parents=True, exist_ok=True)
+        engine_service_path.write_text(
+            "launch:\n"
+            '  command: pixi\n'
+            '  args: ["run", "-e", "default", "f8pyengine"]\n',
+            encoding="utf-8",
+        )
+        detector_service_path.write_text(
+            "launch:\n"
+            '  command: pixi\n'
+            '  args: ["run", "-e", "onnx", "f8pydl_detector"]\n',
+            encoding="utf-8",
+        )
+
+        rewritten_paths = self.module._rewrite_dist_service_entries(services_root)
+
+        self.assertEqual(rewritten_paths, [engine_service_path])
+        self.assertIn(
+            '"run", "-e", "studio-runtime", "f8pyengine"',
+            engine_service_path.read_text(encoding="utf-8"),
+        )
+        self.assertIn(
+            '"run", "-e", "onnx", "f8pydl_detector"',
+            detector_service_path.read_text(encoding="utf-8"),
+        )
 
 
 class DistCiCppBuildTest(unittest.TestCase):
@@ -307,6 +435,55 @@ class DistCiLauncherIsolationTest(unittest.TestCase):
 
         run_mock.assert_called_once_with(["pixi", "run", "--frozen", "-e", "launcher", "build_studio_launcher"])
         self.assertTrue((self.dist_dir / self.launcher_name).is_file())
+
+
+class DistCiManifestValidationTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.module = _load_dist_ci_module()
+
+    def test_runtime_dist_manifest_locks_without_unused_feature_warnings(self) -> None:
+        if shutil.which("pixi") is None:
+            self.skipTest("pixi executable is not available")
+
+        runtime_environment_names = self.module._discover_launcher_runtime_environments()
+        self.assertEqual(runtime_environment_names, ["studio-runtime", "onnx", "mediapipe"])
+
+        runtime_feature_names = self.module._discover_environment_feature_names(
+            environment_names=runtime_environment_names
+        )
+        dist_pixi_text = self.module._render_dist_pixi_toml(
+            {},
+            runtime_environment_names,
+            runtime_feature_names,
+        )
+        dependency_to_package_dir = self.module._discover_local_editable_package_dirs(
+            allowed_feature_names=set(runtime_feature_names)
+        )
+        for relative_path in dependency_to_package_dir.values():
+            absolute_path = (Path.cwd() / relative_path).resolve()
+            dist_pixi_text = dist_pixi_text.replace(
+                f'path = "{relative_path}"',
+                f'path = "{absolute_path.as_posix()}"',
+            )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manifest_path = Path(temp_dir) / "pixi.toml"
+            manifest_path.write_text(dist_pixi_text, encoding="utf-8")
+            completed = subprocess.run(
+                ["pixi", "lock", "--manifest-path", os.fspath(manifest_path), "--no-install"],
+                cwd=Path(temp_dir),
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        combined_output = completed.stdout + completed.stderr
+        self.assertEqual(completed.returncode, 0, combined_output)
+        self.assertNotIn("feature 'doc' is defined but not used", combined_output)
+        self.assertNotIn("feature 'cpp' is defined but not used", combined_output)
+        self.assertNotIn("feature 'ci' is defined but not used", combined_output)
+        self.assertNotIn("feature 'launcher' is defined but not used", combined_output)
+        self.assertNotIn("feature 'test' is defined but not used", combined_output)
 
 
 if __name__ == "__main__":

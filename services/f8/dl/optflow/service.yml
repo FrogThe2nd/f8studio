@@ -4,6 +4,6 @@ label: DL Optical Flow
 version: 0.0.1
 launch:
   command: pixi
-  args: ["run", "f8pydl_optflow"]
+  args: ["run", "-e", "onnx", "f8pydl_optflow"]
   env: {}
   workdir: "../../../../"

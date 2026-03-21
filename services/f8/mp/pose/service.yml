@@ -4,6 +4,6 @@ label: MediaPipe Pose
 version: 0.0.1
 launch:
   command: pixi
-  args: ["run", "f8pymppose"]
+  args: ["run", "-e", "mediapipe", "f8pymppose"]
   env: {}
   workdir: "../../../../"

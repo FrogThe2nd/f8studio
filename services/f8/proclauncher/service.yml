@@ -4,7 +4,7 @@ label: Proc Launcher
 version: 0.0.1
 launch:
   command: pixi
-  args: ["run", "f8proclauncher"]
+  args: ["run", "-e", "default", "f8proclauncher"]
   env: {}
   workdir: "../../../"
 

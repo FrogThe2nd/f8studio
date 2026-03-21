@@ -4,6 +4,6 @@ label: DL Human Detector
 version: 0.0.1
 launch:
   command: pixi
-  args: ["run", "f8pydl_humandetector"]
+  args: ["run", "-e", "onnx", "f8pydl_humandetector"]
   env: {}
   workdir: "../../../../"

@@ -10,7 +10,7 @@ from ..nodegraph.edge_rules import EDGE_KIND_DATA, EDGE_KIND_EXEC, EDGE_KIND_STA
 from ..nodegraph.session import last_session_path
 from ..nodegraph.runtime_compiler import compile_runtime_graphs_from_studio
 from ..nodegraph.viewer import F8StudioNodeViewer
-from ..pystudio_service_bridge import PyStudioServiceBridge, PyStudioServiceBridgeConfig
+from ..pystudio_service_bridge import STARTUP_GATE_TIMEOUT_S, PyStudioServiceBridge, PyStudioServiceBridgeConfig
 from ..pystudio_node_registry import SERVICE_CLASS as STUDIO_SERVICE_CLASS
 from ..ui_notifications import show_info, show_warning
 from ..ui_bus import UiCommand, UiCommandApplier
@@ -98,7 +98,13 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
     _periodic_auto_save_timer: QtCore.QTimer
     _auto_deploy_timer: QtCore.QTimer
 
-    def __init__(self, node_classes: Iterable[type], parent=None):
+    def __init__(
+        self,
+        node_classes: Iterable[type],
+        parent=None,
+        *,
+        bridge: PyStudioServiceBridge | None = None,
+    ):
         super().__init__(parent)
         self.setWindowTitle("F8PyStudio")
         self.resize(1920, 980)
@@ -106,6 +112,7 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         self._session_file = last_session_path()
         self._session_dialog_dir = str(self._session_file.parent)
         self._exit_autosaved: bool = False
+        self._bridge_stopped: bool = False
         self._dock_widgets = []
         self._log_level_actions = {}
         self._default_dock_layout_state = QtCore.QByteArray()
@@ -144,7 +151,9 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         self._setup_toolbar()
         self._service_manager: ServiceManagerWidget | None = None
 
-        self._bridge = PyStudioServiceBridge(PyStudioServiceBridgeConfig(), parent=self)
+        self._bridge = bridge or PyStudioServiceBridge(PyStudioServiceBridgeConfig(), parent=self)
+        if bridge is not None and self._bridge.parent() is None:
+            self._bridge.setParent(self)
         self._bridge.ui_command.connect(self._on_ui_command)  # type: ignore[attr-defined]
         self._bridge.service_output.connect(self._on_service_output)  # type: ignore[attr-defined]
         self._bridge.service_process_state.connect(self._on_service_process_state)  # type: ignore[attr-defined]
@@ -158,7 +167,6 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         self._shortcut_escape_cancel = QtGui.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key_Escape), self)
         self._shortcut_escape_cancel.setContext(QtCore.Qt.ShortcutContext.WindowShortcut)
         self._shortcut_escape_cancel.activated.connect(self._on_escape_cancel_placement)  # type: ignore[attr-defined]
-        self._bridge.start()
         try:
             self.studio_graph.set_service_bridge(self._bridge)
         except Exception as exc:
@@ -173,6 +181,31 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
 
         QtCore.QTimer.singleShot(0, self._auto_load_session)
         QtWidgets.QApplication.instance().aboutToQuit.connect(self._auto_save_session)  # type: ignore[attr-defined]
+
+    def start_bridge_and_wait_for_startup(self, *, timeout_s: float = STARTUP_GATE_TIMEOUT_S) -> str | None:
+        return self._bridge.start_and_wait_for_startup(timeout_s=float(timeout_s))
+
+    def stop_bridge(self) -> None:
+        if self._bridge_stopped:
+            return
+        try:
+            self._bridge.stop()
+        except Exception as exc:
+            self._log_dock.report_exception("studio", "bridge.stop failed", exc)
+            return
+        self._bridge_stopped = True
+
+    def append_discovery_logs(self, *, timing_lines: Iterable[str], error_lines: Iterable[str]) -> None:
+        try:
+            timing_line_texts = [str(line) for line in timing_lines]
+            for line in timing_line_texts:
+                self._log_dock.append("studio", line)
+            if any("discovery errors:" in line for line in timing_line_texts):
+                return
+            for line in error_lines:
+                self._log_dock.append("studio", str(line))
+        except Exception:
+            logger.exception("Failed to emit discovery logs to studio log dock")
 
     @QtCore.Slot(str, str)
     def _on_service_output(self, service_id: str, line: str) -> None:
@@ -624,10 +657,7 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
     def closeEvent(self, event):
         self._save_window_layout()
         self._auto_save_session()
-        try:
-            self._bridge.stop()
-        except Exception as exc:
-            self._log_dock.report_exception("studio", "bridge.stop failed", exc)
+        self.stop_bridge()
         super().closeEvent(event)
 
     @QtCore.Slot()

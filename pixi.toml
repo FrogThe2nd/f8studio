@@ -2,7 +2,7 @@
 authors = ["sis92 <feel8.fun@gmail.com>"]
 channels = ["conda-forge"]
 name = "feel8-build"
-version = "0.2.0"
+version = "0.2.1"
 description = "Feel8 meta package"
 platforms = ["win-64", "linux-64"]
 preview = ["pixi-build"]
@@ -151,7 +151,13 @@ build_studio_launcher = "python scripts/build_studio_launcher.py"
 [feature.launcher-runtime]
 
 [environments]
-default = { features = ["python", "sdk", "engine", "studio", "vision", "audio", "test", "launcher-runtime"], solve-group = "default" }
+# Pixi tasks are feature-scoped, not environment-scoped. If a task's feature is
+# included by multiple environments (for example both `default` and
+# `studio-runtime`), `pixi run <task>` without `-e` can resolve differently
+# depending on the active Pixi environment. Keep `service.yml` launch entries
+# explicit with `-e` for shared runtime tasks.
+default = { features = ["python", "sdk", "engine", "studio", "vision", "audio", "test"], solve-group = "default" }
+studio-runtime = { features = ["python", "sdk", "engine", "studio", "vision", "audio", "launcher-runtime"], solve-group = "default" }
 onnx = { features = ["python", "sdk", "onnx", "vision", "launcher-runtime"], solve-group = "onnx" }
 mediapipe = { features = ["python", "sdk", "vision", "mediapipe", "launcher-runtime"], solve-group = "mediapipe" }
 doc = { features = ["python", "doc"] }

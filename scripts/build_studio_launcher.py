@@ -9,18 +9,30 @@ from typing import Final
 
 
 DEFAULT_APP_NAME: Final[str] = "f8studio"
+DEFAULT_SPLASH_LOGO: Final[str] = "assets/logo_transparent.png"
+DEFAULT_SPLASH_ICON: Final[str] = "assets/icon.png"
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Build Studio launcher executable with Nuitka.")
     parser.add_argument("--name", default=DEFAULT_APP_NAME, help="Executable base name.")
     parser.add_argument("--icon-ico", default="assets/icon.ico", help="Source ICO icon path.")
+    parser.add_argument("--splash-logo", default=DEFAULT_SPLASH_LOGO, help="Splash logo PNG path to bundle.")
+    parser.add_argument("--splash-icon", default=DEFAULT_SPLASH_ICON, help="Splash icon PNG path to bundle.")
     parser.add_argument("--dist", default="build/dist", help="Nuitka output directory.")
     parser.add_argument("--force", action="store_true", help="Force rebuild even if an up-to-date binary exists.")
     return parser
 
 
-def _run_nuitka(*, repo_root: Path, app_name: str, icon_ico: Path | None, dist_dir: Path) -> int:
+def _run_nuitka(
+    *,
+    repo_root: Path,
+    app_name: str,
+    icon_ico: Path | None,
+    splash_logo: Path | None,
+    splash_icon: Path | None,
+    dist_dir: Path,
+) -> int:
     entry_script = repo_root / "scripts" / "f8studio_launcher.py"
 
     cmd = [
@@ -30,10 +42,15 @@ def _run_nuitka(*, repo_root: Path, app_name: str, icon_ico: Path | None, dist_d
         "--onefile",
         "--static-libpython=no",
         "--assume-yes-for-downloads",
+        "--enable-plugin=tk-inter",
         f"--output-dir={dist_dir}",
         f"--output-filename={app_name}",
         str(entry_script),
     ]
+    bundled_data_paths = [path for path in (icon_ico, splash_logo, splash_icon) if path is not None]
+    for data_path in bundled_data_paths:
+        relative_target = data_path.relative_to(repo_root).as_posix()
+        cmd.append(f"--include-data-files={data_path}={relative_target}")
     if sys.platform.startswith("win"):
         cmd.extend(["--windows-console-mode=disable"])
         if icon_ico is not None:
@@ -57,18 +74,32 @@ def _binary_path(*, dist_dir: Path, app_name: str) -> Path:
     return dist_dir / app_name
 
 
-def _latest_input_mtime(*, repo_root: Path, icon_ico: Path | None) -> float:
+def _latest_input_mtime(
+    *,
+    repo_root: Path,
+    icon_ico: Path | None,
+    splash_logo: Path | None,
+    splash_icon: Path | None,
+) -> float:
     inputs = [
         repo_root / "scripts" / "f8studio_launcher.py",
         repo_root / "scripts" / "build_studio_launcher.py",
     ]
-    if icon_ico is not None:
-        inputs.append(icon_ico)
+    for path in (icon_ico, splash_logo, splash_icon):
+        if path is not None:
+            inputs.append(path)
     return max(path.stat().st_mtime for path in inputs)
 
 
 def _should_reuse_existing_binary(
-    *, repo_root: Path, dist_dir: Path, app_name: str, icon_ico: Path | None, force: bool
+    *,
+    repo_root: Path,
+    dist_dir: Path,
+    app_name: str,
+    icon_ico: Path | None,
+    splash_logo: Path | None,
+    splash_icon: Path | None,
+    force: bool,
 ) -> bool:
     if force:
         return False
@@ -77,7 +108,12 @@ def _should_reuse_existing_binary(
     if not executable_path.is_file():
         return False
 
-    latest_input_mtime = _latest_input_mtime(repo_root=repo_root, icon_ico=icon_ico)
+    latest_input_mtime = _latest_input_mtime(
+        repo_root=repo_root,
+        icon_ico=icon_ico,
+        splash_logo=splash_logo,
+        splash_icon=splash_icon,
+    )
     return executable_path.stat().st_mtime >= latest_input_mtime
 
 
@@ -119,10 +155,22 @@ def main(argv: list[str] | None = None) -> int:
         icon_ico = (repo_root / args.icon_ico).resolve()
         if not icon_ico.exists():
             raise FileNotFoundError(f"Icon ICO not found: {icon_ico}")
+    splash_logo = (repo_root / args.splash_logo).resolve()
+    if not splash_logo.exists():
+        raise FileNotFoundError(f"Splash logo PNG not found: {splash_logo}")
+    splash_icon = (repo_root / args.splash_icon).resolve()
+    if not splash_icon.exists():
+        raise FileNotFoundError(f"Splash icon PNG not found: {splash_icon}")
 
     app_name = str(args.name)
     if _should_reuse_existing_binary(
-        repo_root=repo_root, dist_dir=dist_dir, app_name=app_name, icon_ico=icon_ico, force=bool(args.force)
+        repo_root=repo_root,
+        dist_dir=dist_dir,
+        app_name=app_name,
+        icon_ico=icon_ico,
+        splash_logo=splash_logo,
+        splash_icon=splash_icon,
+        force=bool(args.force),
     ):
         print(f"Reusing existing launcher: {_binary_path(dist_dir=dist_dir, app_name=app_name)}")
         return 0
@@ -133,6 +181,8 @@ def main(argv: list[str] | None = None) -> int:
         repo_root=repo_root,
         app_name=app_name,
         icon_ico=icon_ico,
+        splash_logo=splash_logo,
+        splash_icon=splash_icon,
         dist_dir=dist_dir,
     )
 

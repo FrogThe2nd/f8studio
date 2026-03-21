@@ -8,6 +8,13 @@ from typing import Any, Awaitable, Callable, Protocol
 from f8pysdk.nats_naming import svc_micro_name
 from f8pysdk.nats_server_bootstrap import ensure_nats_server_with_result, stop_nats_server_process
 
+SINGLETON_GUARD_LOG_MESSAGE = "Another PyStudio instance is already running (micro service ping responded)."
+SINGLETON_GUARD_DIALOG_TITLE = "F8PyStudio Already Running"
+SINGLETON_GUARD_DIALOG_MESSAGE = (
+    "Another F8PyStudio instance is already running.\n"
+    "Please switch to the existing window."
+)
+
 
 class NatsConnectFunc(Protocol):
     async def __call__(
@@ -98,7 +105,7 @@ class NatsConnectionManager:
                 b"",
                 timeout=float(ping_timeout_s),
             )
-            self.emit_log("Another PyStudio instance is already running (micro service ping responded).")
+            self.emit_log(SINGLETON_GUARD_LOG_MESSAGE)
             await self.close(connection, context="close nats connection failed after singleton ping")
             return NatsSingletonGuardResult(should_start=False, connection=None)
         except Exception as exc:

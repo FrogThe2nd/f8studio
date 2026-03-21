@@ -4,6 +4,6 @@ label: Python Expr Service
 version: 0.0.1
 launch:
   command: pixi
-  args: ["run", "f8pyexpr"]
+  args: ["run", "-e", "default", "f8pyexpr"]
   env: {}
   workdir: "../../../"

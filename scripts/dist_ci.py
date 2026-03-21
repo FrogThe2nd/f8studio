@@ -21,6 +21,8 @@ PACKAGE_PATH_PREFIX = "packages/"
 CPP_DEPLOY_ALL_TARGET = "f8_deploy_all_runtime"
 LAUNCHER_ENVIRONMENT_NAME = "launcher"
 LAUNCHER_RUNTIME_FEATURE = "launcher-runtime"
+DEV_RUNTIME_ENVIRONMENT_NAME = "default"
+DIST_RUNTIME_ENVIRONMENT_NAME = "studio-runtime"
 
 
 def _run(command: list[str]) -> None:
@@ -59,6 +61,7 @@ def _discover_local_editable_package_dirs(
     *,
     pixi_toml_path: Path = PIXI_TOML_PATH,
     repo_root: Path = REPO_ROOT,
+    allowed_feature_names: set[str] | None = None,
 ) -> dict[str, str]:
     with pixi_toml_path.open("rb") as pixi_file:
         manifest = tomllib.load(pixi_file)
@@ -73,6 +76,8 @@ def _discover_local_editable_package_dirs(
         if not isinstance(feature_name, str):
             raise ValueError(f"Feature name must be a string in {pixi_toml_path}")
         if not isinstance(feature_spec, dict):
+            continue
+        if allowed_feature_names is not None and feature_name not in allowed_feature_names:
             continue
 
         pypi_dependencies = feature_spec.get("pypi-dependencies")
@@ -116,6 +121,53 @@ def _discover_local_editable_package_dirs(
     return dependency_to_package_dir
 
 
+def _discover_environment_feature_names(
+    *,
+    environment_names: list[str],
+    pixi_toml_path: Path = PIXI_TOML_PATH,
+) -> list[str]:
+    with pixi_toml_path.open("rb") as pixi_file:
+        manifest = tomllib.load(pixi_file)
+
+    feature_table = manifest.get("feature")
+    if not isinstance(feature_table, dict):
+        raise ValueError(f"Expected [feature] table in {pixi_toml_path}")
+
+    environments_table = manifest.get("environments")
+    if not isinstance(environments_table, dict):
+        raise ValueError(f"Expected [environments] table in {pixi_toml_path}")
+
+    ordered_feature_names: list[str] = []
+    seen_feature_names: set[str] = set()
+    for environment_name in environment_names:
+        environment_spec = environments_table.get(environment_name)
+        if not isinstance(environment_spec, dict):
+            raise ValueError(f"Environment '{environment_name}' was not found in {pixi_toml_path}")
+
+        features = environment_spec.get("features")
+        if not isinstance(features, list):
+            raise ValueError(
+                f"Environment '{environment_name}' must define a list of features in {pixi_toml_path}"
+            )
+
+        for feature_name in features:
+            if not isinstance(feature_name, str):
+                raise ValueError(
+                    f"Environment '{environment_name}' contains a non-string feature in {pixi_toml_path}"
+                )
+            if feature_name not in feature_table:
+                raise ValueError(
+                    f"Environment '{environment_name}' references undefined feature '{feature_name}' "
+                    f"in {pixi_toml_path}"
+                )
+            if feature_name in seen_feature_names:
+                continue
+            seen_feature_names.add(feature_name)
+            ordered_feature_names.append(feature_name)
+
+    return ordered_feature_names
+
+
 def _discover_launcher_runtime_environments(*, pixi_toml_path: Path = PIXI_TOML_PATH) -> list[str]:
     with pixi_toml_path.open("rb") as pixi_file:
         manifest = tomllib.load(pixi_file)
@@ -142,6 +194,62 @@ def _discover_launcher_runtime_environments(*, pixi_toml_path: Path = PIXI_TOML_
         )
 
     return runtime_environment_names
+
+
+def _split_manifest_sections(pixi_text: str) -> list[tuple[str | None, str]]:
+    section_matches = list(re.finditer(r"(?m)^\[([^\[\]\n]+)\]\s*$", pixi_text))
+    if not section_matches:
+        return [(None, pixi_text)]
+
+    sections: list[tuple[str | None, str]] = []
+    if section_matches[0].start() > 0:
+        sections.append((None, pixi_text[: section_matches[0].start()]))
+
+    for index, match in enumerate(section_matches):
+        section_name = match.group(1)
+        section_end = section_matches[index + 1].start() if index + 1 < len(section_matches) else len(pixi_text)
+        sections.append((section_name, pixi_text[match.start() : section_end]))
+
+    return sections
+
+
+def _feature_name_from_section(section_name: str) -> str | None:
+    if not section_name.startswith("feature."):
+        return None
+    parts = section_name.split(".")
+    if len(parts) < 2 or parts[1] == "":
+        return None
+    return parts[1]
+
+
+def _rewrite_service_entry_environment_args(
+    service_text: str,
+    *,
+    source_environment_name: str,
+    target_environment_name: str,
+) -> str:
+    pattern = re.compile(
+        r'(\bargs:\s*\[\s*["\']run["\']\s*,\s*["\']-e["\']\s*,\s*["\'])'
+        + re.escape(source_environment_name)
+        + r'(["\'])'
+    )
+    return pattern.sub(r"\1" + target_environment_name + r"\2", service_text)
+
+
+def _rewrite_dist_service_entries(services_root: Path) -> list[Path]:
+    rewritten_paths: list[Path] = []
+    for service_entry_path in sorted(services_root.rglob("service*.yml")):
+        original_text = service_entry_path.read_text(encoding="utf-8")
+        rewritten_text = _rewrite_service_entry_environment_args(
+            original_text,
+            source_environment_name=DEV_RUNTIME_ENVIRONMENT_NAME,
+            target_environment_name=DIST_RUNTIME_ENVIRONMENT_NAME,
+        )
+        if rewritten_text == original_text:
+            continue
+        service_entry_path.write_text(rewritten_text, encoding="utf-8")
+        rewritten_paths.append(service_entry_path)
+    return rewritten_paths
 
 
 def _build_python_wheels(wheels_dir: Path, dependency_to_package_dir: dict[str, str]) -> dict[str, str]:
@@ -217,7 +325,42 @@ def _filter_dist_environments(pixi_text: str, runtime_environment_names: list[st
     return pixi_text[: start_match.end()] + filtered_section_text + pixi_text[section_end:]
 
 
-def _render_dist_pixi_toml(dependency_to_wheel: dict[str, str], runtime_environment_names: list[str]) -> str:
+def _filter_dist_feature_sections(pixi_text: str, runtime_feature_names: list[str]) -> str:
+    runtime_feature_name_set = set(runtime_feature_names)
+    filtered_sections: list[str] = []
+    retained_feature_names: set[str] = set()
+
+    for section_name, section_text in _split_manifest_sections(pixi_text):
+        if section_name is None:
+            filtered_sections.append(section_text)
+            continue
+
+        feature_name = _feature_name_from_section(section_name)
+        if feature_name is None:
+            filtered_sections.append(section_text)
+            continue
+        if feature_name not in runtime_feature_name_set:
+            continue
+
+        retained_feature_names.add(feature_name)
+        filtered_sections.append(section_text)
+
+    missing_runtime_features = [
+        feature_name for feature_name in runtime_feature_names if feature_name not in retained_feature_names
+    ]
+    if missing_runtime_features:
+        raise ValueError(
+            "Failed to retain runtime features in dist manifest: " + ", ".join(missing_runtime_features)
+        )
+
+    return "".join(filtered_sections)
+
+
+def _render_dist_pixi_toml(
+    dependency_to_wheel: dict[str, str],
+    runtime_environment_names: list[str],
+    runtime_feature_names: list[str],
+) -> str:
     pixi_text = PIXI_TOML_PATH.read_text(encoding="utf-8")
     for dependency_name, wheel_rel_path in dependency_to_wheel.items():
         pattern = re.compile(
@@ -230,7 +373,8 @@ def _render_dist_pixi_toml(dependency_to_wheel: dict[str, str], runtime_environm
             raise ValueError(
                 f"Expected exactly one editable path dependency entry for '{dependency_name}' in pixi.toml"
             )
-    return _filter_dist_environments(pixi_text, runtime_environment_names)
+    pixi_text = _filter_dist_environments(pixi_text, runtime_environment_names)
+    return _filter_dist_feature_sections(pixi_text, runtime_feature_names)
 
 
 def _launcher_binary_name() -> str:
@@ -382,12 +526,20 @@ def main() -> int:
 
     (dist_dir / "services").mkdir(parents=True, exist_ok=True)
     shutil.copytree(REPO_ROOT / "services", dist_dir / "services", dirs_exist_ok=True)
+    _rewrite_dist_service_entries(dist_dir / "services")
 
     wheels_dir = dist_dir / "wheels"
-    dependency_to_package_dir = _discover_local_editable_package_dirs()
     runtime_environment_names = _discover_launcher_runtime_environments()
+    runtime_feature_names = _discover_environment_feature_names(environment_names=runtime_environment_names)
+    dependency_to_package_dir = _discover_local_editable_package_dirs(
+        allowed_feature_names=set(runtime_feature_names)
+    )
     dependency_to_wheel = _build_python_wheels(wheels_dir, dependency_to_package_dir)
-    dist_pixi_text = _render_dist_pixi_toml(dependency_to_wheel, runtime_environment_names)
+    dist_pixi_text = _render_dist_pixi_toml(
+        dependency_to_wheel,
+        runtime_environment_names,
+        runtime_feature_names,
+    )
     dist_manifest_path = dist_dir / "pixi.toml"
     dist_manifest_path.write_text(dist_pixi_text, encoding="utf-8")
 

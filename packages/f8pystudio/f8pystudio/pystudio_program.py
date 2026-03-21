@@ -18,6 +18,8 @@ from f8pysdk.service_runtime_tools.discovery import (
 from .plugin_api import StudioPluginManifest
 from .plugin_loader import load_entrypoint_plugins
 from .pystudio_node_registry import SERVICE_CLASS, register_pystudio_specs
+from .bridge.nats_lifecycle import SINGLETON_GUARD_DIALOG_TITLE
+from .pystudio_service_bridge import STARTUP_GATE_TIMEOUT_S, PyStudioServiceBridge, PyStudioServiceBridgeConfig
 
 logger = logging.getLogger(__name__)
 MISSING_SERVICE_NODE_TYPE = "svc.f8.missing.service"
@@ -178,6 +180,7 @@ class PyStudioProgram:
         self._apply_plugin_manifests_to_renderers(manifests)
 
         node_classes = self.build_node_classes()
+        icon_path = self._studio_icon_path()
 
         try:
             QtCore.QCoreApplication.setAttribute(QtCore.Qt.AA_ShareOpenGLContexts, True)  # type: ignore[attr-defined]
@@ -189,28 +192,36 @@ class PyStudioProgram:
         app.setApplicationName("F8PyStudio")
         normalize_application_font(app)
         configure_default_webengine_profile()
-        icon_path = self._studio_icon_path()
         if icon_path is not None:
             app_icon = QtGui.QIcon(str(icon_path))
             if not app_icon.isNull():
                 app.setWindowIcon(app_icon)
-        mainwin = F8StudioMainWin(node_classes)
+        bridge = PyStudioServiceBridge(PyStudioServiceBridgeConfig())
+        startup_blocked_message = bridge.wait_for_startup_preflight(timeout_s=STARTUP_GATE_TIMEOUT_S)
+        if startup_blocked_message is not None:
+            QtWidgets.QMessageBox.warning(None, SINGLETON_GUARD_DIALOG_TITLE, str(startup_blocked_message))
+            bridge.stop()
+            return 0
+
+        mainwin = F8StudioMainWin(node_classes, bridge=bridge)
         if icon_path is not None:
             mainwin_icon = QtGui.QIcon(str(icon_path))
             if not mainwin_icon.isNull():
                 mainwin.setWindowIcon(mainwin_icon)
+
+        startup_blocked_message = mainwin.start_bridge_and_wait_for_startup(timeout_s=STARTUP_GATE_TIMEOUT_S)
+        if startup_blocked_message is not None:
+            QtWidgets.QMessageBox.warning(None, SINGLETON_GUARD_DIALOG_TITLE, str(startup_blocked_message))
+            mainwin.stop_bridge()
+            mainwin.close()
+            return 0
+
         mainwin.show()
 
-        try:
-            timing_lines = last_discovery_timing_lines()
-            for line in timing_lines:
-                mainwin._bridge.log.emit(str(line))  # type: ignore[attr-defined]
-            # Avoid double-printing errors: timings output can already include them.
-            if not any("discovery errors:" in str(x) for x in timing_lines):
-                for line in last_discovery_error_lines():
-                    mainwin._bridge.log.emit(str(line))  # type: ignore[attr-defined]
-        except Exception:
-            logger.exception("Failed to emit discovery logs to studio log dock")
+        mainwin.append_discovery_logs(
+            timing_lines=last_discovery_timing_lines(),
+            error_lines=last_discovery_error_lines(),
+        )
         return int(app.exec_() or 0)
 
     def describe_json_text(self) -> str:

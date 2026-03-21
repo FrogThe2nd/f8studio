@@ -4,6 +4,6 @@ label: Audio Feature Rhythm
 version: 0.0.1
 launch:
   command: pixi
-  args: ["run", "f8pyaudiofeat_rhythm"]
+  args: ["run", "-e", "default", "f8pyaudiofeat_rhythm"]
   env: {}
   workdir: "../../../../"

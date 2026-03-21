@@ -4,6 +4,6 @@ label: DL Detection Sorter
 version: 0.0.1
 launch:
   command: pixi
-  args: ["run", "f8pydl_detsorter"]
+  args: ["run", "-e", "onnx", "f8pydl_detsorter"]
   env: {}
   workdir: "../../../../"

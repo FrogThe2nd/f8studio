@@ -6,7 +6,11 @@ from typing import Any
 
 from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
 
-from .nats_lifecycle import ensure_nats_server_owned_pid, stop_owned_nats_server
+from .nats_lifecycle import (
+    SINGLETON_GUARD_DIALOG_MESSAGE,
+    ensure_nats_server_owned_pid,
+    stop_owned_nats_server,
+)
 from .remote_state_sync import RemoteStateGatewayAdapter
 from .studio_runtime_flow import wait_for_studio_runtime_ready
 from ..pystudio_service import PyStudioService, PyStudioServiceConfig
@@ -32,7 +36,7 @@ class RuntimeSessionControllerMixin:
             return None
         return svc.bus
 
-    async def _start_async(self) -> None:
+    async def _run_startup_preflight_async(self) -> str | None:
         nats_url = str(self._nats_connection_manager.nats_url).strip() or "nats://127.0.0.1:4222"
         owned_pid = await ensure_nats_server_owned_pid(
             nats_url,
@@ -51,7 +55,11 @@ class RuntimeSessionControllerMixin:
         )
         self._nc = guard.connection
         if not bool(guard.should_start):
-            return
+            return SINGLETON_GUARD_DIALOG_MESSAGE
+        return None
+
+    async def _start_after_preflight_async(self) -> str | None:
+        nats_url = str(self._nats_connection_manager.nats_url).strip() or "nats://127.0.0.1:4222"
 
         try:
             cfg = PyStudioServiceConfig(nats_url=nats_url, studio_service_id=self.studio_service_id)
@@ -147,6 +155,13 @@ class RuntimeSessionControllerMixin:
             await self._set_managed_active_async(bool(self._managed_active))
         except Exception as exc:
             self._report_exception("re-apply managed active failed", exc)
+        return None
+
+    async def _start_async(self) -> str | None:
+        startup_blocked_message = await self._run_startup_preflight_async()
+        if startup_blocked_message is not None:
+            return startup_blocked_message
+        return await self._start_after_preflight_async()
 
     async def _stop_async(self) -> None:
         if self._monitor_sub is not None:

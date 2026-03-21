@@ -4,6 +4,6 @@ label: PyEngine
 version: 0.0.1
 launch:
   command: pixi
-  args: ["run", "f8pyengine"]
+  args: ["run", "-e", "default", "f8pyengine"]
   env: {}
   workdir: "../../../"
