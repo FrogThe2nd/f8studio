@@ -6,6 +6,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import tomllib
 from pathlib import Path
@@ -25,7 +26,12 @@ SPLASH_BOOT_MESSAGE = "Preparing F8Studio launcher resources..."
 SPLASH_RUNTIME_INSTALL_MESSAGE = "Preparing runtime environment..."
 SPLASH_PIXI_INSTALL_MESSAGE = "Installing Pixi..."
 SPLASH_LAUNCH_MESSAGE = "Starting F8Studio..."
+SPLASH_READY_MESSAGE = "F8Studio is ready. Enjoy."
 SPLASH_SUBTITLE = "First launch may take a little longer."
+LAUNCH_READY_FILE_ENV = "F8STUDIO_LAUNCH_READY_FILE"
+LAUNCH_DISMISS_FILE_ENV = "F8STUDIO_LAUNCH_DISMISS_FILE"
+LAUNCH_READY_SIGNAL_FILENAME = "pystudio-ready.signal"
+LAUNCH_DISMISS_SIGNAL_FILENAME = "pystudio-dismiss.signal"
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -331,10 +337,12 @@ def _subprocess_creationflags() -> int:
     return 0
 
 
-def _popen_kwargs(*, cwd: Path | None = None) -> dict[str, object]:
+def _popen_kwargs(*, cwd: Path | None = None, env: dict[str, str] | None = None) -> dict[str, object]:
     kwargs: dict[str, object] = {}
     if cwd is not None:
         kwargs["cwd"] = cwd
+    if env is not None:
+        kwargs["env"] = env
     if os.name == "nt":
         kwargs["creationflags"] = _subprocess_creationflags()
     return kwargs
@@ -384,8 +392,71 @@ def _run_subprocess_with_status(
     return completed
 
 
-def _start_subprocess(command: list[str], *, cwd: Path | None = None) -> subprocess.Popen[object]:
-    return subprocess.Popen(command, **_popen_kwargs(cwd=cwd))
+def _start_subprocess(
+    command: list[str],
+    *,
+    cwd: Path | None = None,
+    env: dict[str, str] | None = None,
+) -> subprocess.Popen[object]:
+    return subprocess.Popen(command, **_popen_kwargs(cwd=cwd, env=env))
+
+
+def _launch_ready_signal_received(launch_ready_file: Path | None) -> bool:
+    if launch_ready_file is None:
+        return False
+    try:
+        return launch_ready_file.is_file()
+    except OSError:
+        return False
+
+
+def _launch_dismiss_signal_received(launch_dismiss_file: Path | None) -> bool:
+    if launch_dismiss_file is None:
+        return False
+    try:
+        return launch_dismiss_file.is_file()
+    except OSError:
+        return False
+
+
+def _build_launch_signal_paths(signal_dir: Path) -> tuple[Path, Path]:
+    return (
+        signal_dir / LAUNCH_READY_SIGNAL_FILENAME,
+        signal_dir / LAUNCH_DISMISS_SIGNAL_FILENAME,
+    )
+
+
+def _build_launch_environment(
+    *,
+    launch_ready_file: Path | None = None,
+    launch_dismiss_file: Path | None = None,
+) -> dict[str, str]:
+    env = os.environ.copy()
+    if launch_ready_file is not None:
+        env[LAUNCH_READY_FILE_ENV] = os.fspath(launch_ready_file)
+    else:
+        env.pop(LAUNCH_READY_FILE_ENV, None)
+    if launch_dismiss_file is not None:
+        env[LAUNCH_DISMISS_FILE_ENV] = os.fspath(launch_dismiss_file)
+    else:
+        env.pop(LAUNCH_DISMISS_FILE_ENV, None)
+    return env
+
+
+def _inspect_launch_state(
+    launch_proc: subprocess.Popen[object],
+    *,
+    launch_ready_file: Path | None = None,
+    launch_dismiss_file: Path | None = None,
+) -> tuple[str, int | None]:
+    returncode = launch_proc.poll()
+    if returncode is not None:
+        return "exited", int(returncode)
+    if _launch_dismiss_signal_received(launch_dismiss_file):
+        return "dismiss", None
+    if _launch_ready_signal_received(launch_ready_file):
+        return "ready", None
+    return "waiting", None
 
 
 def _complete_startup_splash(
@@ -394,6 +465,8 @@ def _complete_startup_splash(
     launch_proc: subprocess.Popen[object],
     min_visible_s: float,
     fade_duration_s: float,
+    launch_ready_file: Path | None = None,
+    launch_dismiss_file: Path | None = None,
 ) -> int | None:
     if status_window is None:
         deadline = time.monotonic() + 0.5
@@ -406,17 +479,37 @@ def _complete_startup_splash(
 
     while status_window.elapsed_s() < min_visible_s:
         status_window.update()
-        returncode = launch_proc.poll()
-        if returncode is not None:
+        state, returncode = _inspect_launch_state(
+            launch_proc,
+            launch_ready_file=launch_ready_file,
+            launch_dismiss_file=launch_dismiss_file,
+        )
+        if state == "exited":
             status_window.close()
             return int(returncode)
+        if state == "dismiss":
+            status_window.close()
+            return None
         status_window.wait(SPLASH_POLL_MS)
 
-    returncode = launch_proc.poll()
-    if returncode is not None:
-        status_window.close()
-        return int(returncode)
+    while True:
+        state, returncode = _inspect_launch_state(
+            launch_proc,
+            launch_ready_file=launch_ready_file,
+            launch_dismiss_file=launch_dismiss_file,
+        )
+        if state == "exited":
+            status_window.close()
+            return int(returncode)
+        if state == "dismiss":
+            status_window.close()
+            return None
+        if state == "ready":
+            break
+        status_window.update()
+        status_window.wait(SPLASH_POLL_MS)
 
+    status_window.set_message(SPLASH_READY_MESSAGE)
     status_window.fade_out(duration_s=fade_duration_s)
 
     returncode = launch_proc.poll()
@@ -617,15 +710,28 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 3
 
+    launch_ready_file: Path | None = None
+    launch_dismiss_file: Path | None = None
+    launch_environment = _build_launch_environment()
     if splash_window is not None:
         splash_window.set_message(SPLASH_LAUNCH_MESSAGE)
-    launch_proc = _start_subprocess(launch_command, cwd=workspace_root)
-    launch_returncode = _complete_startup_splash(
-        splash_window,
-        launch_proc=launch_proc,
-        min_visible_s=SPLASH_MIN_VISIBLE_S,
-        fade_duration_s=SPLASH_FADE_DURATION_S,
-    )
+
+    with tempfile.TemporaryDirectory(prefix="f8studio-launcher-") as ready_dir:
+        if splash_window is not None:
+            launch_ready_file, launch_dismiss_file = _build_launch_signal_paths(Path(ready_dir))
+            launch_environment = _build_launch_environment(
+                launch_ready_file=launch_ready_file,
+                launch_dismiss_file=launch_dismiss_file,
+            )
+        launch_proc = _start_subprocess(launch_command, cwd=workspace_root, env=launch_environment)
+        launch_returncode = _complete_startup_splash(
+            splash_window,
+            launch_proc=launch_proc,
+            min_visible_s=SPLASH_MIN_VISIBLE_S,
+            fade_duration_s=SPLASH_FADE_DURATION_S,
+            launch_ready_file=launch_ready_file,
+            launch_dismiss_file=launch_dismiss_file,
+        )
     if launch_returncode is not None and launch_returncode != 0:
         _show_error_dialog(
             "f8studio launcher",

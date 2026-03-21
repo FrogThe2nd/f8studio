@@ -24,9 +24,31 @@ from .pystudio_service_bridge import STARTUP_GATE_TIMEOUT_S, PyStudioServiceBrid
 logger = logging.getLogger(__name__)
 MISSING_SERVICE_NODE_TYPE = "svc.f8.missing.service"
 MISSING_OPERATOR_NODE_TYPE = "svc.f8.missing.operator"
+LAUNCH_READY_FILE_ENV = "F8STUDIO_LAUNCH_READY_FILE"
+LAUNCH_DISMISS_FILE_ENV = "F8STUDIO_LAUNCH_DISMISS_FILE"
 
 
 class PyStudioProgram:
+    @staticmethod
+    def _write_launcher_signal(*, env_name: str, content: str) -> None:
+        signal_file_raw = (os.environ.get(env_name) or "").strip()
+        if not signal_file_raw:
+            return
+        signal_file = Path(signal_file_raw).expanduser()
+        try:
+            signal_file.parent.mkdir(parents=True, exist_ok=True)
+            signal_file.write_text(str(content), encoding="utf-8")
+        except Exception:
+            logger.exception("Failed to write launcher signal: env=%s path=%s", env_name, signal_file)
+
+    @classmethod
+    def _notify_launcher_ready(cls) -> None:
+        cls._write_launcher_signal(env_name=LAUNCH_READY_FILE_ENV, content="ready\n")
+
+    @classmethod
+    def _dismiss_launcher_for_dialog(cls) -> None:
+        cls._write_launcher_signal(env_name=LAUNCH_DISMISS_FILE_ENV, content="dismiss\n")
+
     @staticmethod
     def _studio_icon_path() -> Path | None:
         env_icon = (os.environ.get("F8_STUDIO_ICON_PATH") or "").strip()
@@ -199,6 +221,7 @@ class PyStudioProgram:
         bridge = PyStudioServiceBridge(PyStudioServiceBridgeConfig())
         startup_blocked_message = bridge.wait_for_startup_preflight(timeout_s=STARTUP_GATE_TIMEOUT_S)
         if startup_blocked_message is not None:
+            self._dismiss_launcher_for_dialog()
             QtWidgets.QMessageBox.warning(None, SINGLETON_GUARD_DIALOG_TITLE, str(startup_blocked_message))
             bridge.stop()
             return 0
@@ -211,12 +234,15 @@ class PyStudioProgram:
 
         startup_blocked_message = mainwin.start_bridge_and_wait_for_startup(timeout_s=STARTUP_GATE_TIMEOUT_S)
         if startup_blocked_message is not None:
+            self._dismiss_launcher_for_dialog()
             QtWidgets.QMessageBox.warning(None, SINGLETON_GUARD_DIALOG_TITLE, str(startup_blocked_message))
             mainwin.stop_bridge()
             mainwin.close()
             return 0
 
         mainwin.show()
+        app.processEvents()
+        self._notify_launcher_ready()
 
         mainwin.append_discovery_logs(
             timing_lines=last_discovery_timing_lines(),

@@ -8,10 +8,14 @@ from f8pystudio.pystudio_service_bridge import STARTUP_GATE_TIMEOUT_S
 
 
 class _FakeApp:
+    last_instance: "_FakeApp | None" = None
+
     def __init__(self, _args: list[str]) -> None:
         self.organization_name = ""
         self.application_name = ""
         self.window_icon: object | None = None
+        self.process_events_called = False
+        _FakeApp.last_instance = self
 
     def setOrganizationName(self, value: str) -> None:
         self.organization_name = str(value)
@@ -21,6 +25,9 @@ class _FakeApp:
 
     def setWindowIcon(self, icon: object) -> None:
         self.window_icon = icon
+
+    def processEvents(self) -> None:
+        self.process_events_called = True
 
     def exec_(self) -> int:
         return 0
@@ -117,11 +124,14 @@ def _patch_program_dependencies(monkeypatch) -> list[tuple[object | None, str, s
     return warnings
 
 
-def test_program_blocks_before_show_when_bridge_startup_is_blocked(monkeypatch) -> None:
+def test_program_blocks_before_show_when_bridge_startup_is_blocked(monkeypatch, tmp_path) -> None:
     warnings = _patch_program_dependencies(monkeypatch)
+    _FakeApp.last_instance = None
     _FakeMainWindow.last_instance = None
     _FakeBridge.preflight_message = "Another F8PyStudio instance is already running."
     _FakeBridge.startup_message = None
+    dismiss_file = tmp_path / "launcher-dismiss.signal"
+    monkeypatch.setenv("F8STUDIO_LAUNCH_DISMISS_FILE", str(dismiss_file))
 
     exit_code = PyStudioProgram().run()
 
@@ -130,13 +140,19 @@ def test_program_blocks_before_show_when_bridge_startup_is_blocked(monkeypatch) 
     assert _FakeBridge.last_instance is not None
     assert _FakeBridge.last_instance.stopped is True
     assert _FakeMainWindow.last_instance is None
+    assert dismiss_file.read_text(encoding="utf-8") == "dismiss\n"
+    assert _FakeApp.last_instance is not None
+    assert _FakeApp.last_instance.process_events_called is False
 
 
-def test_program_shows_main_window_after_bridge_startup_passes(monkeypatch) -> None:
+def test_program_shows_main_window_after_bridge_startup_passes(monkeypatch, tmp_path) -> None:
     warnings = _patch_program_dependencies(monkeypatch)
+    _FakeApp.last_instance = None
     _FakeMainWindow.last_instance = None
     _FakeBridge.preflight_message = None
     _FakeBridge.startup_message = None
+    ready_file = tmp_path / "launcher-ready.signal"
+    monkeypatch.setenv("F8STUDIO_LAUNCH_READY_FILE", str(ready_file))
 
     exit_code = PyStudioProgram().run()
 
@@ -150,3 +166,6 @@ def test_program_shows_main_window_after_bridge_startup_passes(monkeypatch) -> N
     assert _FakeMainWindow.last_instance.discovery_logs == [(["timing-1"], ["error-1"])]
     assert _FakeBridge.last_instance is not None
     assert _FakeBridge.last_instance.stopped is False
+    assert ready_file.read_text(encoding="utf-8") == "ready\n"
+    assert _FakeApp.last_instance is not None
+    assert _FakeApp.last_instance.process_events_called is True
