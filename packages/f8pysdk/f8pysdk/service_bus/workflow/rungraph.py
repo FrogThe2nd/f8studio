@@ -27,6 +27,7 @@ from ..error_utils import log_error_once
 from ..domain.state_pipeline import publish_state
 from ..routing.data_flow import precreate_input_buffers_for_cross_in, sync_subscriptions
 from ..codec import encode_obj
+from ..command_runtime import command_state_bindings_ready
 
 if TYPE_CHECKING:
     from ..api.bus import ServiceBus
@@ -118,6 +119,7 @@ async def apply_rungraph(bus: "ServiceBus", graph: F8RuntimeGraph) -> bool:
     bus._cross_state_last_ts.clear()
     # Cache local node state access for enforcement and filtering.
     bus._state_access_by_node_field = state_access_by_node_field
+    command_state_bindings_ready(bus)
     if bus._debug_state:
         node_count = len(list(graph.nodes or []))
         edge_count = len(list(graph.edges or []))

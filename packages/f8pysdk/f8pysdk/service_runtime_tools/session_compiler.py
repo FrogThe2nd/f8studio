@@ -20,6 +20,12 @@ from f8pysdk.generated import (
     F8RuntimeService,
     F8ServiceSpec,
 )
+from f8pysdk.command_state import (
+    command_input_state_field,
+    command_output_state_field,
+    hidden_command_state_specs,
+    parse_command_port_name,
+)
 from f8pysdk.rungraph_validation import (
     validate_data_edges_or_raise,
     validate_exec_edges_or_raise,
@@ -87,11 +93,19 @@ def _port_kind(name: str) -> F8EdgeKindEnum | None:
         return F8EdgeKindEnum.data
     if n.startswith("[S]") or n.endswith("[S]"):
         return F8EdgeKindEnum.state
+    if n.startswith("[C]") or n.endswith("[C]"):
+        return F8EdgeKindEnum.state
     return None
 
 
 def _raw_port_name(name: str) -> str:
     n = str(name or "")
+    parsed_command = parse_command_port_name(n)
+    if parsed_command is not None:
+        is_in, command_name = parsed_command
+        if is_in:
+            return command_input_state_field(command_name)
+        return command_output_state_field(command_name)
     for prefix in ("[E]", "[D]", "[S]"):
         if n.startswith(prefix):
             n = n[len(prefix) :]
@@ -243,7 +257,11 @@ def _compile_kept_nodes(
             execOutPorts=([] if is_service_node else [str(p) for p in list(spec.execOutPorts or [])]),
             dataInPorts=list(spec.dataInPorts or []),
             dataOutPorts=list(spec.dataOutPorts or []),
-            stateFields=list(spec.stateFields or []),
+            stateFields=(
+                [*list(spec.stateFields or []), *hidden_command_state_specs(list(spec.commands or []))]
+                if is_service_node
+                else list(spec.stateFields or [])
+            ),
             stateValues=_collect_state_values(spec, raw_node_data),
         )
         kept_by_id[node_id] = _KeptNode(

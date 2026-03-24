@@ -11,6 +11,7 @@ from qtpy import QtCore
 from NodeGraphQt.errors import NodeCreationError
 
 from f8pysdk import F8OperatorSpec, F8ServiceSpec
+from f8pysdk.command_state import command_input_port_name, command_output_port_name
 
 from .edge_rules import EdgeRuleNodeInfo, layout_node_info, validate_layout_connection
 from .viewer import F8StudioNodeViewer
@@ -199,6 +200,16 @@ class SessionLayoutCodecMixin:
                     ports.add(f"{name}[S]")
                 except (AttributeError, TypeError):
                     continue
+            if isinstance(spec, F8ServiceSpec):
+                for command in list(spec.commands or []):
+                    try:
+                        command_name = str(command.name or "").strip()
+                    except (AttributeError, TypeError):
+                        command_name = ""
+                    if not command_name:
+                        continue
+                    ports.add(command_input_port_name(command_name))
+                    ports.add(command_output_port_name(command_name))
             port_sets[node_id_str] = ports
 
         kept: list[dict[str, Any]] = []

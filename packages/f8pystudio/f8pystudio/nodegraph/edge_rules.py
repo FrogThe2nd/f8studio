@@ -8,6 +8,7 @@ from f8pysdk import F8OperatorSpec, F8ServiceSpec
 EDGE_KIND_EXEC = "exec"
 EDGE_KIND_DATA = "data"
 EDGE_KIND_STATE = "state"
+EDGE_KIND_COMMAND = "command"
 EDGE_KINDS: tuple[str, str, str] = (EDGE_KIND_EXEC, EDGE_KIND_DATA, EDGE_KIND_STATE)
 
 
@@ -33,6 +34,8 @@ def port_kind(name: str) -> str | None:
         return EDGE_KIND_DATA
     if n.startswith("[S]") or n.endswith("[S]"):
         return EDGE_KIND_STATE
+    if n.startswith("[C]") or n.endswith("[C]"):
+        return EDGE_KIND_COMMAND
     return None
 
 
@@ -41,6 +44,8 @@ def connection_kind(out_port_name: str, in_port_name: str) -> str | None:
     in_kind = port_kind(in_port_name)
     if out_kind is None or in_kind is None:
         return None
+    if out_kind in (EDGE_KIND_STATE, EDGE_KIND_COMMAND) and in_kind in (EDGE_KIND_STATE, EDGE_KIND_COMMAND):
+        return EDGE_KIND_STATE
     if out_kind != in_kind:
         return None
     return out_kind
@@ -168,4 +173,3 @@ def validate_layout_connection(
         out_info=node_info_by_id.get(str(out_node_id)),
         in_info=node_info_by_id.get(str(in_node_id)),
     )
-

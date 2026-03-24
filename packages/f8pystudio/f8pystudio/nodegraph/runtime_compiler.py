@@ -28,6 +28,12 @@ from f8pysdk.builtin_state_fields import (
     operator_state_fields_with_builtins,
     service_state_fields_with_builtins,
 )
+from f8pysdk.command_state import (
+    command_input_state_field,
+    command_output_state_field,
+    hidden_command_state_specs,
+    parse_command_port_name,
+)
 from f8pysdk.rungraph_validation import (
     validate_data_edges_or_raise,
     validate_exec_edges_or_raise,
@@ -56,11 +62,19 @@ def _port_kind(name: str) -> F8EdgeKindEnum | None:
         return F8EdgeKindEnum.data
     if n.startswith("[S]") or n.endswith("[S]"):
         return F8EdgeKindEnum.state
+    if n.startswith("[C]") or n.endswith("[C]"):
+        return F8EdgeKindEnum.state
     return None
 
 
 def _raw_port_name(name: str) -> str:
     n = str(name or "")
+    parsed_command = parse_command_port_name(n)
+    if parsed_command is not None:
+        is_in, command_name = parsed_command
+        if is_in:
+            return command_input_state_field(command_name)
+        return command_output_state_field(command_name)
     for prefix in ("[E]", "[D]", "[S]"):
         if n.startswith(prefix):
             n = n[len(prefix) :]
@@ -436,7 +450,9 @@ def compile_global_runtime_graph(
         # takes precedence over this snapshot on repeated deploys.
 
         if isinstance(spec, F8ServiceSpec):
-            state_fields = service_state_fields_with_builtins(list(spec.stateFields or []))
+            state_fields = service_state_fields_with_builtins(
+                [*list(spec.stateFields or []), *hidden_command_state_specs(list(spec.commands or []))]
+            )
         else:
             state_fields = operator_state_fields_with_builtins(list(spec.stateFields or []))
 

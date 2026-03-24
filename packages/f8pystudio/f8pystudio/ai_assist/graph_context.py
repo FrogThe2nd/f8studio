@@ -786,10 +786,10 @@ def _port_node(port: Any) -> Any | None:
 
 def _raw_port_name(name: str) -> str:
     raw = str(name or "").strip()
-    for prefix in ("[E]", "[D]", "[S]"):
+    for prefix in ("[E]", "[D]", "[S]", "[C]"):
         if raw.startswith(prefix):
             raw = raw[len(prefix) :]
-    for suffix in ("[E]", "[D]", "[S]"):
+    for suffix in ("[E]", "[D]", "[S]", "[C]"):
         if raw.endswith(suffix):
             raw = raw[: -len(suffix)]
     return raw.strip()

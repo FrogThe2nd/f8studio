@@ -8,6 +8,7 @@ from typing import Any
 from .node_base import F8StudioBaseNode
 
 from f8pysdk import F8ServiceSpec, F8StateAccess
+from f8pysdk.command_state import parse_command_port_name
 
 from collections import OrderedDict
 
@@ -113,6 +114,7 @@ from .items.service_node_ports import (
     widgets as _widgets_impl,
 )
 from .service_spec_sync import (
+    build_command_port as _build_command_port_impl,
     build_data_port as _build_data_port_impl,
     build_state_port as _build_state_port_impl,
     build_state_properties as _build_state_properties_impl,
@@ -244,6 +246,7 @@ class F8StudioServiceBaseNode(F8StudioBaseNode):
 
         self._build_data_port()
         self._build_state_port()
+        self._build_command_port()
         self._build_state_properties()
 
     def _build_data_port(self):
@@ -251,6 +254,9 @@ class F8StudioServiceBaseNode(F8StudioBaseNode):
 
     def _build_state_port(self):
         _build_state_port_impl(self)
+
+    def _build_command_port(self):
+        _build_command_port_impl(self)
 
     def _build_state_properties(self) -> None:
         _build_state_properties_impl(self)
@@ -319,6 +325,10 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         self._state_inline_expanded: dict[str, bool] = {}
         self._state_inline_option_pools: dict[str, str] = {}
         self._state_row_y: dict[str, tuple[float, float]] = {}
+        self._command_inline_proxies: OrderedDict[str, QtWidgets.QGraphicsProxyWidget] = OrderedDict()
+        self._command_inline_headers: OrderedDict[str, QtWidgets.QWidget] = OrderedDict()
+        self._command_inline_buttons: OrderedDict[str, QtWidgets.QAbstractButton] = OrderedDict()
+        self._command_inline_serials: dict[str, str] = {}
         self._graph_prop_hooked: bool = False
         self._bridge_proc_hooked: bool = False
         self._state_inline_ctrl_serial: dict[str, str] = {}
@@ -326,6 +336,7 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         self._cmd_proxy: QtWidgets.QGraphicsProxyWidget | None = None
         self._cmd_widget: QtWidgets.QWidget | None = None
         self._cmd_buttons: list[QtWidgets.QAbstractButton] = []
+        self._cmd_buttons_by_name: OrderedDict[str, QtWidgets.QAbstractButton] = OrderedDict()
         self._tooltip_filters: list[QtCore.QObject] = []
         self._svc_toolbar_proxy: QtWidgets.QGraphicsProxyWidget | None = None
         self._ports_end_y: float | None = None
@@ -333,7 +344,7 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         self._layout_metrics_ready: bool = False
         self._embedded_widget_metrics: dict[str, _LayoutMetric] = {}
         self._state_panel_metrics: dict[str, _StatePanelLayoutMetric] = {}
-        self._command_panel_metric = _LayoutMetric()
+        self._command_row_metrics: dict[str, _StatePanelLayoutMetric] = {}
 
     def _backend_node(self) -> Any | None:
         return _backend_node_impl(self)
@@ -802,7 +813,7 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         self._layout_metrics_ready = False
         self._embedded_widget_metrics.clear()
         self._state_panel_metrics.clear()
-        self._command_panel_metric = _LayoutMetric()
+        self._command_row_metrics.clear()
 
     def _prepare_layout_metrics(self) -> None:
         ready = True
@@ -823,16 +834,19 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
                 except (AttributeError, RuntimeError, TypeError):
                     ready = False
                     break
-        if ready and self._cmd_proxy is not None:
-            try:
-                if self._cmd_proxy.widget() is None:
+        if ready:
+            for proxy in self._command_inline_proxies.values():
+                try:
+                    if proxy.widget() is None:
+                        ready = False
+                        break
+                except (AttributeError, RuntimeError, TypeError):
                     ready = False
-            except (AttributeError, RuntimeError, TypeError):
-                ready = False
+                    break
         self._layout_metrics_ready = bool(ready)
 
     def _requires_layout_metrics_for_proxy(self) -> bool:
-        return bool(self._widgets or self._state_inline_proxies or self._cmd_proxy is not None)
+        return bool(self._widgets or self._state_inline_proxies or self._command_inline_proxies)
 
     def _supports_auto_proxy(self) -> bool:
         if not self._requires_layout_metrics_for_proxy():
@@ -1004,24 +1018,42 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         self._state_panel_metrics[cache_key] = metric
         return metric
 
-    def _command_metric_cache_key(self, *, target_width: float) -> str:
+    def _command_row_metric_cache_key(self, name: str, *, target_width: float) -> str:
         width_key = max(1, int(round(target_width)))
-        return f"{width_key}|{str(self._cmd_serial or '')}"
+        serial = str(self._command_inline_serials.get(name, "") or "")
+        return f"{name}|{width_key}|{serial}"
 
-    def _measure_command_panel_metric(self, width: float) -> _LayoutMetric:
-        cache_key = self._command_metric_cache_key(target_width=width)
-        if self._command_panel_metric.cache_key == cache_key:
-            return self._command_panel_metric
+    def _measure_command_row_metric(self, name: str, width: float) -> _StatePanelLayoutMetric:
+        cache_key = self._command_row_metric_cache_key(name, target_width=width)
+        cached = self._command_row_metrics.get(cache_key)
+        if cached is not None:
+            return cached
 
         width_value = max(1, int(round(width)))
-        widget = self._cmd_widget
-        measured_width, measured_height = self._measure_qwidget_geometry(widget, fixed_width=width_value)
-        self._command_panel_metric = _LayoutMetric(
+        panel_proxy = self._command_inline_proxies.get(name)
+        panel_widget = None
+        if panel_proxy is not None:
+            try:
+                panel_widget = panel_proxy.widget()
+            except (AttributeError, RuntimeError, TypeError):
+                panel_widget = None
+        panel_width, panel_height = self._measure_qwidget_geometry(panel_widget, fixed_width=width_value)
+
+        header_height = float(PortEnum.SIZE.value)
+        header = self._command_inline_headers.get(name)
+        if header is not None:
+            _header_width, measured_header_height = self._measure_qwidget_geometry(header, fixed_width=width_value)
+            if measured_header_height > 0.0:
+                header_height = float(measured_header_height)
+
+        metric = _StatePanelLayoutMetric(
             cache_key=cache_key,
-            width=float(max(measured_width, float(width_value))),
-            height=float(measured_height),
+            width=float(max(panel_width, float(width_value))),
+            height=float(max(panel_height, header_height)),
+            header_height=float(header_height),
         )
-        return self._command_panel_metric
+        self._command_row_metrics[cache_key] = metric
+        return metric
 
     def _visible_state_names_for_layout(self) -> list[str]:
         state_names = [str(name) for name in self._state_inline_proxies.keys() if str(name)]
@@ -1038,21 +1070,51 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
                 inferred.append(name[:-3])
         return [value for value in list(OrderedDict.fromkeys(inferred).keys()) if value]
 
+    def _visible_command_names_for_layout(self) -> list[str]:
+        command_names = [str(name) for name in self._command_inline_proxies.keys() if str(name)]
+        if command_names:
+            return command_names
+        inferred: list[str] = []
+        for port in self._input_items.keys():
+            parsed = parse_command_port_name(_port_name(port))
+            if parsed is None or not parsed[0]:
+                continue
+            inferred.append(parsed[1])
+        for port in self._output_items.keys():
+            parsed = parse_command_port_name(_port_name(port))
+            if parsed is None or parsed[0]:
+                continue
+            inferred.append(parsed[1])
+        return [value for value in list(OrderedDict.fromkeys(inferred).keys()) if value]
+
     def _set_port_text_visibility(self, *, visible: bool) -> None:
         for port, text in self._input_items.items():
             if not port.isVisible():
                 continue
-            if self._port_group(_port_name(port)) == "state":
+            port_name = _port_name(port)
+            if self._port_group(port_name) == "state":
+                text.setVisible(False)
+                continue
+            parsed_command = parse_command_port_name(port_name)
+            if parsed_command is not None and parsed_command[1] in self._cmd_buttons_by_name:
                 text.setVisible(False)
                 continue
             text.setVisible(bool(visible and port.display_name))
         for port, text in self._output_items.items():
             if not port.isVisible():
                 continue
-            if self._port_group(_port_name(port)) == "state":
+            port_name = _port_name(port)
+            if self._port_group(port_name) == "state":
+                text.setVisible(False)
+                continue
+            parsed_command = parse_command_port_name(port_name)
+            if parsed_command is not None and parsed_command[1] in self._cmd_buttons_by_name:
                 text.setVisible(False)
                 continue
             text.setVisible(bool(visible and port.display_name))
+
+    def _command_names_with_inline_buttons(self) -> set[str]:
+        return {str(name).strip() for name in self._cmd_buttons_by_name.keys() if str(name).strip()}
 
     def _should_enable_proxy_mode(self) -> bool:
         if ITEM_CACHE_MODE is QtWidgets.QGraphicsItem.ItemCoordinateCache:
@@ -1085,9 +1147,9 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
                     _clear_embedded_text_selection(proxy.widget())
                 except (AttributeError, RuntimeError, TypeError):
                     pass
-            if self._cmd_proxy is not None:
+            for proxy in self._command_inline_proxies.values():
                 try:
-                    _clear_embedded_text_selection(self._cmd_proxy.widget())
+                    _clear_embedded_text_selection(proxy.widget())
                 except (AttributeError, RuntimeError, TypeError):
                     pass
 
@@ -1105,9 +1167,9 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
                 proxy.setVisible(visible)
             except (AttributeError, RuntimeError, TypeError):
                 pass
-        if self._cmd_proxy is not None:
+        for proxy in self._command_inline_proxies.values():
             try:
-                self._cmd_proxy.setVisible(visible)
+                proxy.setVisible(visible)
             except (AttributeError, RuntimeError, TypeError):
                 pass
 
@@ -1117,9 +1179,9 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
                     _clear_embedded_text_selection(proxy.widget())
                 except (AttributeError, RuntimeError, TypeError):
                     pass
-            if self._cmd_proxy is not None:
+            for proxy in self._command_inline_proxies.values():
                 try:
-                    _clear_embedded_text_selection(self._cmd_proxy.widget())
+                    _clear_embedded_text_selection(proxy.widget())
                 except (AttributeError, RuntimeError, TypeError):
                     pass
 
@@ -1190,6 +1252,20 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         exec_out = _names_for("exec", is_in=False)
         data_in = _names_for("data", is_in=True)
         data_out = _names_for("data", is_in=False)
+        standalone_command_in = _names_for("command", is_in=True)
+        standalone_command_out = _names_for("command", is_in=False)
+        inline_command_names = self._command_names_with_inline_buttons()
+        if inline_command_names:
+            standalone_command_in = [
+                name
+                for name in standalone_command_in
+                if (parse_command_port_name(name) or (False, ""))[1] not in inline_command_names
+            ]
+            standalone_command_out = [
+                name
+                for name in standalone_command_out
+                if (parse_command_port_name(name) or (False, ""))[1] not in inline_command_names
+            ]
         state_in = _names_for("state", is_in=True)
         state_out = _names_for("state", is_in=False)
         other_in = _names_for("other", is_in=True)
@@ -1206,9 +1282,11 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
                 if n.endswith("[S]"):
                     tmp.append(n[:-3])
             state_names = [x for x in list(OrderedDict.fromkeys(tmp).keys()) if x]
+        command_names: list[str] = self._visible_command_names_for_layout()
 
         rows_exec = max(len(exec_in), len(exec_out))
         rows_data = max(len(data_in), len(data_out))
+        rows_command = max(len(standalone_command_in), len(standalone_command_out))
         rows_other = max(len(other_in), len(other_out))
 
         widget_width = 0.0
@@ -1268,6 +1346,16 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
                 ports_h += panel_height + spacing
             ports_h = max(0.0, ports_h - spacing)
 
+        if command_names:
+            if ports_h > 0:
+                ports_h += group_gap
+            for command_name in command_names:
+                metric = self._measure_command_row_metric(command_name, inner_width)
+                panel_height = float(max(metric.height, base_port_height))
+                ports_h += panel_height + spacing
+            ports_h = max(0.0, ports_h - spacing)
+
+        _add_group_rows(rows_command)
         _add_group_rows(rows_other)
 
         p_input_height = ports_h
@@ -1281,12 +1369,6 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         if widget_height:
             # add bottom margin for node widget.
             height += 4.0
-
-        # Commands: compute height using the final width (flow wrap depends on width).
-        if self._cmd_widget is not None or self._cmd_proxy is not None:
-            cmd_metric = self._measure_command_panel_metric(inner_width)
-            if cmd_metric.height > 0.0:
-                height = max(height, port_area_height + cmd_metric.height + 10.0)
         height *= 1.05
         return width, height
 
@@ -1460,32 +1542,13 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         inputs = [p for p in self.inputs if p.isVisible()]
         outputs = [p for p in self.outputs if p.isVisible()]
 
-        # Command buttons are placed below the ports area and should span the full node width.
-        cmd_bottom = None
-        if self._cmd_proxy is not None:
-            try:
-                y = float(self._ports_end_y or (rect.y() + v_offset))
-                inner_width = max(10.0, rect.width() - 8.0)
-                cmd_metric = self._measure_command_panel_metric(inner_width)
-                if self._cmd_widget is not None:
-                    self._cmd_widget.setFixedWidth(max(10, int(round(inner_width))))
-                    self._cmd_widget.adjustSize()
-                x = rect.left() + 4.0
-                self._cmd_proxy.setPos(x, y + 6.0)
-                cmd_bottom = y + 6.0 + float(cmd_metric.height)
-            except (AttributeError, RuntimeError, TypeError, ValueError):
-                cmd_bottom = None
-
         if not self._widgets:
             return
         rect = self.boundingRect()
-        # Place regular NodeGraphQt embedded widgets below the ports area (and below
-        # command area if present). This prevents custom widgets from overlapping
-        # the ports/state region.
+        # Place regular NodeGraphQt embedded widgets below the ports area. This
+        # prevents custom widgets from overlapping the ports/state/command region.
         base_y = float(self._ports_end_y or (rect.y() + v_offset))
         y = base_y + 6.0
-        if cmd_bottom is not None:
-            y = max(y, cmd_bottom + 6.0)
         for widget in self._widgets.values():
             content_rect = self._content_rect_for_widgets(top_y=y)
             resized = self._apply_widget_resize_policy(widget, content_rect=content_rect)
@@ -1589,6 +1652,8 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
 
         data_in_names: list[str] = []
         data_out_names: list[str] = []
+        command_in_names: list[str] = []
+        command_out_names: list[str] = []
         if node is not None:
             try:
                 existing_in = {_port_name(p) for p in self._input_items.keys()}
@@ -1601,9 +1666,21 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
                     port_name = f"{p.name}[D]"
                     if node.data_port_show_on_node(str(p.name or ""), is_in=False) or port_name in existing_out:
                         data_out_names.append(port_name)
+                for command in list(node.effective_commands() or []):
+                    command_name = str(command.name or "").strip()
+                    if not command_name:
+                        continue
+                    if not bool(command.showOnNode):
+                        continue
+                    if command_name in self._command_names_with_inline_buttons():
+                        continue
+                    command_in_names.append(f"[C]{command_name}")
+                    command_out_names.append(f"{command_name}[C]")
             except (AttributeError, RuntimeError, TypeError, ValueError):
                 data_in_names = []
                 data_out_names = []
+                command_in_names = []
+                command_out_names = []
 
         state_names: list[str] = []
         for s in eff_states:
@@ -1629,6 +1706,26 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         if not data_out_names:
             data_out_names = [
                 _port_name(p) for p in self._output_items.keys() if self._port_group(_port_name(p)) == "data"
+            ]
+        if not command_in_names:
+            command_in_names = [
+                _port_name(p) for p in self._input_items.keys() if self._port_group(_port_name(p)) == "command"
+            ]
+        if not command_out_names:
+            command_out_names = [
+                _port_name(p) for p in self._output_items.keys() if self._port_group(_port_name(p)) == "command"
+            ]
+        inline_command_names = self._visible_command_names_for_layout()
+        if inline_command_names:
+            command_in_names = [
+                name
+                for name in command_in_names
+                if (parse_command_port_name(name) or (False, ""))[1] not in inline_command_names
+            ]
+            command_out_names = [
+                name
+                for name in command_out_names
+                if (parse_command_port_name(name) or (False, ""))[1] not in inline_command_names
             ]
         if not state_names:
             # Infer state rows from existing ports.
@@ -1681,17 +1778,44 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
                 if p is not None:
                     p.setPos(out_x, y)
 
+        def place_panel_row(
+            *,
+            panel_proxy: Any,
+            metric: _StatePanelLayoutMetric | None,
+            y_value: float,
+        ) -> float:
+            header_h = float(max(port_height, metric.header_height if metric is not None else 0.0))
+            panel_h = float(max(header_h, metric.height if metric is not None else 0.0))
+            if panel_proxy is not None and metric is not None:
+                panel_w = float(max(metric.width, inner_w))
+                panel_x = rect.left() + (rect.width() - panel_w) / 2.0
+                min_x = float(inner_x)
+                max_x = float(rect.right() - 4.0 - panel_w)
+                if max_x < min_x:
+                    panel_x = min_x
+                else:
+                    panel_x = max(min_x, min(panel_x, max_x))
+                try:
+                    panel_proxy.setPos(panel_x, y_value)
+                except (AttributeError, RuntimeError, TypeError, ValueError):
+                    pass
+            return header_h, panel_h
+
         y = float(v_offset)
         groups: list[tuple[str, list[str], list[str]]] = [
             ("exec", exec_in_names, exec_out_names),
             ("data", data_in_names, data_out_names),
             ("state", [f"[S]{n}" for n in state_names], [f"{n}[S]" for n in state_names]),
+            ("command", [f"[C]{n}" for n in inline_command_names], [f"{n}[C]" for n in inline_command_names]),
+            ("command_ports", command_in_names, command_out_names),
             ("other", other_in_names, other_out_names),
         ]
 
         for gi, (gname, ins, outs) in enumerate(groups):
             if gname == "state":
                 rows = len(state_names)
+            elif gname == "command":
+                rows = len(inline_command_names)
             else:
                 rows = max(len(ins), len(outs))
             if rows <= 0:
@@ -1700,33 +1824,21 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
                 in_name = ins[i] if i < len(ins) else None
                 out_name = outs[i] if i < len(outs) else None
 
-                if gname != "state":
+                if gname not in {"state", "command"}:
                     place_row(in_name, out_name, y=y)
                     y += port_height + spacing
                     continue
 
-                # State row: place collapsible panel + ports aligned to header line.
-                state_key = state_names[i] if i < len(state_names) else None
-                panel_proxy = self._state_inline_proxies.get(state_key) if state_key else None
-                metric = None
-                if state_key:
-                    metric = self._measure_state_panel_metric(state_key, inner_w)
-                header_h = float(max(port_height, metric.header_height if metric is not None else 0.0))
-                panel_h = float(max(header_h, metric.height if metric is not None else 0.0))
-                if panel_proxy is not None and metric is not None:
-                    panel_w = float(max(metric.width, inner_w))
-                    panel_x = rect.left() + (rect.width() - panel_w) / 2.0
-                    min_x = float(inner_x)
-                    max_x = float(rect.right() - 4.0 - panel_w)
-                    if max_x < min_x:
-                        panel_x = min_x
-                    else:
-                        panel_x = max(min_x, min(panel_x, max_x))
-                    try:
-                        panel_proxy.setPos(panel_x, y)
-                    except (AttributeError, RuntimeError, TypeError, ValueError):
-                        pass
+                if gname == "state":
+                    state_key = state_names[i] if i < len(state_names) else None
+                    panel_proxy = self._state_inline_proxies.get(state_key) if state_key else None
+                    metric = self._measure_state_panel_metric(state_key, inner_w) if state_key else None
+                else:
+                    command_key = inline_command_names[i] if i < len(inline_command_names) else None
+                    panel_proxy = self._command_inline_proxies.get(command_key) if command_key else None
+                    metric = self._measure_command_row_metric(command_key, inner_w) if command_key else None
 
+                header_h, panel_h = place_panel_row(panel_proxy=panel_proxy, metric=metric, y_value=y)
                 port_y = y + (header_h - port_height) / 2.0
                 place_row(in_name, out_name, y=port_y)
                 y += panel_h + spacing
@@ -1736,6 +1848,10 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
             for _g2, ins2, outs2 in groups[gi + 1 :]:
                 if _g2 == "state":
                     if len(state_names) > 0:
+                        has_later = True
+                        break
+                elif _g2 == "command":
+                    if len(inline_command_names) > 0:
                         has_later = True
                         break
                 else:

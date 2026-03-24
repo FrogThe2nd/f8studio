@@ -134,7 +134,7 @@ bool AudioCapService::start() {
   bus_->add_stateful_node(this);
   bus_->add_set_state_node(this);
   bus_->add_rungraph_node(this);
-  bus_->add_command_node(this);
+  bus_->add_command_node(this, AudioCapService::describe());
   if (!bus_->start()) return false;
 
   shm_ = std::make_unique<f8::cppsdk::AudioSharedMemorySink>();

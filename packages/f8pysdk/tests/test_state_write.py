@@ -1,3 +1,4 @@
+import asyncio
 import os
 import sys
 import unittest
@@ -7,21 +8,28 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from f8pysdk.generated import (  # noqa: E402
+    F8Command,
+    F8CommandInvokeRequest,
+    F8CommandInvokeReply,
+    F8CommandParam,
     F8Edge,
     F8EdgeKindEnum,
     F8EdgeStrategyEnum,
     F8RuntimeGraph,
     F8RuntimeNode,
+    F8ServiceSpec,
     F8StateAccess,
     F8StateSpec,
 )
+from f8pysdk.command_state import command_input_state_field, command_output_state_field, hidden_command_state_specs  # noqa: E402
 from f8pysdk.nats_naming import kv_key_node_state  # noqa: E402
 from f8pysdk.schema_helpers import string_schema  # noqa: E402
 from f8pysdk.runtime_node import RuntimeNode  # noqa: E402
 from f8pysdk.service_bus.bus import ServiceBus, ServiceBusConfig  # noqa: E402
+from f8pysdk.service_bus.adapters.micro import _ServiceBusMicroEndpoints  # noqa: E402
 from f8pysdk.service_bus.state_publish import validate_state_update  # noqa: E402
 from f8pysdk.service_bus.state_write import StateWriteContext, StateWriteError, StateWriteOrigin  # noqa: E402
-from f8pysdk.service_bus.codec import decode_obj  # noqa: E402
+from f8pysdk.service_bus.codec import decode_as, decode_obj, encode_obj  # noqa: E402
 from f8pysdk.testing import InMemoryCluster, InMemoryTransport, ServiceBusHarness  # noqa: E402
 
 
@@ -47,6 +55,66 @@ class _RejectingNode(_DummyNode):
 class _OnStateFailNode(_DummyNode):
     async def on_state(self, field: str, value: object, *, ts_ms: int | None = None) -> None:
         raise RuntimeError("on_state failed")
+
+
+class _RecordingNode(_DummyNode):
+    def __init__(self, node_id: str) -> None:
+        super().__init__(node_id)
+        self.state_calls: list[tuple[str, object]] = []
+
+    async def on_state(self, field: str, value: object, *, ts_ms: int | None = None) -> None:
+        self.state_calls.append((field, value))
+
+
+class _CommandServiceNode(_DummyNode):
+    def __init__(self, node_id: str, *, event: unittest.IsolatedAsyncioTestCase | None = None) -> None:
+        del event
+        super().__init__(node_id)
+        self.spec = F8ServiceSpec(
+            serviceClass="svc.test.command",
+            label="Command Service",
+            commands=[
+                F8Command(
+                    name="run",
+                    params=[
+                        F8CommandParam(name="a", valueSchema=string_schema()),
+                        F8CommandParam(name="b", valueSchema=string_schema()),
+                    ],
+                ),
+                F8Command(name="nop", params=[]),
+            ],
+        )
+        self.on_state_calls: list[tuple[str, object]] = []
+        self.command_calls: list[tuple[str, dict[str, object]]] = []
+        self._block_event: asyncio.Event | None = None
+
+    async def on_state(self, field: str, value: object, *, ts_ms: int | None = None) -> None:
+        self.on_state_calls.append((field, value))
+
+    async def on_command(
+        self,
+        name: str,
+        args: dict[str, object] | None = None,
+        *,
+        meta: dict[str, object] | None = None,
+    ) -> object:
+        del meta
+        call_args = dict(args or {})
+        self.command_calls.append((str(name), call_args))
+        if self._block_event is not None and str(name) == "run":
+            await self._block_event.wait()
+        if str(name) == "nop":
+            return {"called": "nop"}
+        return {"echo": call_args}
+
+
+class _FakeReq:
+    def __init__(self, payload: object) -> None:
+        self.data = encode_obj(payload)
+        self.response: bytes | None = None
+
+    async def respond(self, payload: bytes) -> None:
+        self.response = payload
 
 
 class StateWriteTests(unittest.IsolatedAsyncioTestCase):
@@ -450,6 +518,126 @@ class StateWriteTests(unittest.IsolatedAsyncioTestCase):
             await bus.publish_state_external("opA", "operatorId", "x", ts_ms=2)
         with self.assertRaises(StateWriteError):
             await bus.publish_state_external("svcA", "svcId", "x", ts_ms=2)
+
+    async def test_hidden_command_input_dispatches_and_fanouts_output(self) -> None:
+        harness = ServiceBusHarness()
+        bus = harness.create_bus("svc")
+        service_node = _CommandServiceNode("svc")
+        sink_node = _RecordingNode("sink")
+        bus.register_node(service_node)
+        bus.register_node(sink_node)
+
+        hidden_fields = hidden_command_state_specs(list(service_node.spec.commands or []))
+        graph = F8RuntimeGraph(
+            graphId="g1",
+            revision="r1",
+            nodes=[
+                F8RuntimeNode(
+                    nodeId="svc",
+                    serviceId="svc",
+                    serviceClass="svc.test.command",
+                    stateFields=hidden_fields,
+                ),
+                F8RuntimeNode(
+                    nodeId="sink",
+                    serviceId="svc",
+                    serviceClass="svc.test.command",
+                    operatorClass="Sink",
+                    stateFields=[F8StateSpec(name="value", valueSchema=string_schema(), access=F8StateAccess.rw)],
+                ),
+            ],
+            edges=[
+                F8Edge(
+                    edgeId="e1",
+                    fromServiceId="svc",
+                    fromOperatorId="svc",
+                    fromPort=command_output_state_field("run"),
+                    toServiceId="svc",
+                    toOperatorId="sink",
+                    toPort="value",
+                    kind=F8EdgeKindEnum.state,
+                    strategy=F8EdgeStrategyEnum.latest,
+                )
+            ],
+        )
+        await bus.set_rungraph(graph)
+
+        await bus.publish_state_external("svc", command_input_state_field("run"), [1, 2, 3], ts_ms=10)
+
+        self.assertEqual(service_node.command_calls, [("run", {"a": 1, "b": 2})])
+        self.assertEqual(service_node.on_state_calls, [])
+        self.assertEqual((await bus.get_state("sink", "value")).value, {"echo": {"a": 1, "b": 2}})
+        self.assertEqual(sink_node.state_calls, [("value", {"echo": {"a": 1, "b": 2}})])
+
+    async def test_hidden_command_busy_policy_keeps_latest_pending_value(self) -> None:
+        harness = ServiceBusHarness()
+        bus = harness.create_bus("svc")
+        service_node = _CommandServiceNode("svc")
+        service_node._block_event = asyncio.Event()
+        bus.register_node(service_node)
+
+        graph = F8RuntimeGraph(
+            graphId="g1",
+            revision="r1",
+            nodes=[
+                F8RuntimeNode(
+                    nodeId="svc",
+                    serviceId="svc",
+                    serviceClass="svc.test.command",
+                    stateFields=hidden_command_state_specs(list(service_node.spec.commands or [])),
+                )
+            ],
+            edges=[],
+        )
+        await bus.set_rungraph(graph)
+
+        task1 = asyncio.create_task(bus.publish_state_external("svc", command_input_state_field("run"), 1, ts_ms=1))
+        while service_node.command_calls != [("run", {"a": 1})]:
+            await asyncio.sleep(0)
+        task2 = asyncio.create_task(bus.publish_state_external("svc", command_input_state_field("run"), 2, ts_ms=2))
+        task3 = asyncio.create_task(bus.publish_state_external("svc", command_input_state_field("run"), 3, ts_ms=3))
+        await asyncio.sleep(0)
+        service_node._block_event.set()
+        await asyncio.gather(task1, task2, task3)
+
+        self.assertEqual(service_node.command_calls, [("run", {"a": 1}), ("run", {"a": 3})])
+        self.assertEqual((await bus.get_state("svc", command_output_state_field("run"))).value, {"echo": {"a": 3}})
+
+    async def test_command_endpoint_success_writes_hidden_output_state(self) -> None:
+        harness = ServiceBusHarness()
+        bus = harness.create_bus("svc")
+        service_node = _CommandServiceNode("svc")
+        bus.register_node(service_node)
+        graph = F8RuntimeGraph(
+            graphId="g1",
+            revision="r1",
+            nodes=[
+                F8RuntimeNode(
+                    nodeId="svc",
+                    serviceId="svc",
+                    serviceClass="svc.test.command",
+                    stateFields=hidden_command_state_specs(list(service_node.spec.commands or [])),
+                )
+            ],
+            edges=[],
+        )
+        await bus.set_rungraph(graph)
+
+        endpoint = _ServiceBusMicroEndpoints(bus)
+        req = _FakeReq(
+            F8CommandInvokeRequest(
+                reqId="r1",
+                call="nop",
+                args={},
+                meta={"source": "ui"},
+            )
+        )
+        await endpoint._cmd(req)
+
+        self.assertIsNotNone(req.response)
+        reply = decode_as(req.response or b"", F8CommandInvokeReply)
+        self.assertTrue(reply.ok)
+        self.assertEqual((await bus.get_state("svc", command_output_state_field("nop"))).value, {"called": "nop"})
 
 
 if __name__ == "__main__":

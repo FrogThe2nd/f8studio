@@ -47,6 +47,7 @@ from ..lifecycle import (
 from ..state_read import StateRead
 from .config import DataDeliveryMode, ServiceBusConfig, _debug_state_enabled
 from ..monitor_collector import MonitorCollector, MonitorCollectorConfig
+from ..command_runtime import CommandBinding
 
 if TYPE_CHECKING:
     from ..micro import _ServiceBusMicroEndpoints
@@ -177,6 +178,10 @@ class ServiceBus:
             max_entries=self._state_cache_max_entries
         )
         self._state_access_by_node_field: dict[tuple[str, str], F8StateAccess] = {}
+        self._command_input_bindings: dict[tuple[str, str], CommandBinding] = {}
+        self._command_output_bindings: dict[tuple[str, str], CommandBinding] = {}
+        self._command_hidden_fields: set[tuple[str, str]] = set()
+        self._command_dispatch_states: dict[tuple[str, str], Any] = {}
         self._data_route_subs: dict[str, Any] = {}
         self._custom_subs: list[Any] = []
 
@@ -300,6 +305,10 @@ class ServiceBus:
         node_id = ensure_token(node.node_id, label="node_id")
         self._nodes[node_id] = node
         node.attach(self)
+        if self._graph is not None:
+            from ..command_runtime import command_state_bindings_ready
+
+            command_state_bindings_ready(self)
 
     def unregister_node(self, node_id: str) -> None:
         node_id = ensure_token(node_id, label="node_id")

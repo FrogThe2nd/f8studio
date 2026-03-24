@@ -34,6 +34,7 @@ from ...generated import (
 from ...nats_naming import cmd_channel_subject, ensure_token, new_id, svc_endpoint_subject, svc_micro_name
 from ..codec import decode_as, encode_obj
 from ..state_write import StateWriteError, StateWriteSource
+from ..command_runtime import write_command_output
 
 if TYPE_CHECKING:
     from ..api.bus import ServiceBus
@@ -295,6 +296,17 @@ class _ServiceBusMicroEndpoints:
                 )
             )
             return
+        try:
+            await write_command_output(
+                self._bus,
+                node_id=self._bus.service_id,
+                call=call,
+                result=out,
+                ts_ms=None,
+                meta=meta_dict,
+            )
+        except Exception as exc:
+            log.exception("command output writeback failed service_id=%s call=%s", self._bus.service_id, call, exc_info=exc)
         await req.respond(encode_obj(F8CommandInvokeReply(reqId=req_id, ok=True, result=out, error=None)))
 
     async def _set_state(self, req: Any) -> None:

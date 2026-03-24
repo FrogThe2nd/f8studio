@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Callable
 
 from f8pysdk import F8RuntimeGraph, F8RuntimeGraphMeta
+from f8pysdk.command_state import is_hidden_command_state_field
 from f8pysdk.nats_naming import ensure_token
 
 from ..nodegraph.runtime_compiler import CompiledRuntimeGraphs
@@ -85,6 +86,8 @@ def build_remote_watch_targets(
             except Exception:
                 name = ""
             if name:
+                if is_hidden_command_state_field(name):
+                    continue
                 candidates.append(name)
 
         if "svcId" not in candidates:
@@ -119,7 +122,7 @@ def build_local_state_field_index(
         field_names: list[str] = []
         for field_spec in list(node.stateFields or []):
             name = str(field_spec.name or "").strip()
-            if name:
+            if name and not is_hidden_command_state_field(name):
                 field_names.append(name)
         output[node_id] = dedupe_fields(field_names)
     return output

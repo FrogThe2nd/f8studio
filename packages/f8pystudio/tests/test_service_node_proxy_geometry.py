@@ -56,6 +56,28 @@ def _build_state_panel(item: F8StudioServiceNodeItem, *, name: str) -> QtWidgets
     return proxy
 
 
+def _build_command_row(item: F8StudioServiceNodeItem, *, name: str) -> QtWidgets.QGraphicsProxyWidget:
+    header = QtWidgets.QWidget()
+    header_layout = QtWidgets.QHBoxLayout(header)
+    header_layout.setContentsMargins(0, 0, 0, 0)
+    header_layout.addWidget(QtWidgets.QLabel("Command"))
+
+    panel = QtWidgets.QWidget()
+    panel_layout = QtWidgets.QVBoxLayout(panel)
+    panel_layout.setContentsMargins(0, 0, 0, 0)
+    panel_layout.setSpacing(0)
+    panel_layout.addWidget(header)
+
+    proxy = QtWidgets.QGraphicsProxyWidget(item)
+    proxy.setWidget(panel)
+    proxy.setVisible(False)
+
+    item._command_inline_proxies[name] = proxy
+    item._command_inline_headers[name] = header
+    item._command_inline_serials[name] = "serial"
+    return proxy
+
+
 def test_hidden_state_panel_metric_uses_widget_geometry() -> None:
     _ensure_app()
     item = F8StudioServiceNodeItem(name="svc")
@@ -69,56 +91,40 @@ def test_hidden_state_panel_metric_uses_widget_geometry() -> None:
     assert metric.height >= metric.header_height
 
 
-def test_hidden_command_panel_metric_uses_widget_geometry() -> None:
+def test_hidden_command_row_metric_uses_widget_geometry() -> None:
     _ensure_app()
     item = F8StudioServiceNodeItem(name="svc")
-
-    widget = QtWidgets.QWidget()
-    layout = QtWidgets.QVBoxLayout(widget)
-    layout.setContentsMargins(0, 0, 0, 0)
-    layout.addWidget(QtWidgets.QPushButton("Run"))
-    layout.addWidget(QtWidgets.QPushButton("Stop"))
-
-    proxy = QtWidgets.QGraphicsProxyWidget(item)
-    proxy.setWidget(widget)
-    proxy.setVisible(False)
-
-    item._cmd_proxy = proxy
-    item._cmd_widget = widget
-    item._cmd_serial = "cmd"
+    _build_command_row(item, name="run")
     item._prepare_layout_metrics()
 
-    metric = item._measure_command_panel_metric(220.0)
+    metric = item._measure_command_row_metric("run", 220.0)
 
     assert metric.width >= 220.0
-    assert metric.height > 0.0
+    assert metric.header_height > 0.0
+    assert metric.height >= metric.header_height
 
 
-def test_hidden_command_panel_is_positioned_before_it_becomes_visible() -> None:
+def test_hidden_command_row_is_positioned_before_it_becomes_visible() -> None:
     _ensure_app()
     item = F8StudioServiceNodeItem(name="svc")
-
-    widget = QtWidgets.QWidget()
-    layout = QtWidgets.QVBoxLayout(widget)
-    layout.setContentsMargins(0, 0, 0, 0)
-    layout.addWidget(QtWidgets.QPushButton("Run"))
-
-    proxy = QtWidgets.QGraphicsProxyWidget(item)
-    proxy.setWidget(widget)
-    proxy.setVisible(False)
-
-    item._cmd_proxy = proxy
-    item._cmd_widget = widget
-    item._cmd_serial = "cmd"
+    proxy = _build_command_row(item, name="run")
+    in_port = item.add_input(name="[C]run", display_name=True)
+    out_port = item.add_output(name="run[C]", display_name=True)
     item._width = 240.0
     item._height = 180.0
-    item._ports_end_y = 52.0
     item._prepare_layout_metrics()
 
-    item._align_widgets_horizontal(18.0)
+    item._align_ports_horizontal(18.0)
 
     assert proxy.pos().x() >= 4.0
-    assert proxy.pos().y() >= 58.0
+    assert proxy.pos().y() >= 18.0
+    assert proxy.pos().y() + proxy.size().height() <= item.boundingRect().bottom() + 1.0
+
+    header = item._command_inline_headers["run"]
+    header_height = max(header.sizeHint().height(), in_port.boundingRect().height())
+    header_center_y = proxy.pos().y() + (header_height / 2.0)
+    assert abs((in_port.pos().y() + (in_port.boundingRect().height() / 2.0)) - header_center_y) < 2.0
+    assert abs((out_port.pos().y() + (out_port.boundingRect().height() / 2.0)) - header_center_y) < 2.0
 
 
 def test_hidden_embedded_widget_is_positioned_below_state_region() -> None:
@@ -191,14 +197,18 @@ def test_sync_proxy_mode_force_hides_late_created_proxy_widgets() -> None:
     item = _ForcedProxyItem()
     item.set_proxy_mode(True)
     proxy = _build_state_panel(item, name="alpha")
+    command_proxy = _build_command_row(item, name="run")
     item._prepare_layout_metrics()
 
     assert proxy.isVisible() is False
+    assert command_proxy.isVisible() is False
 
     proxy.setVisible(True)
+    command_proxy.setVisible(True)
     item.sync_proxy_mode(force=True)
 
     assert proxy.isVisible() is False
+    assert command_proxy.isVisible() is False
     assert item._text_item.isVisible() is False
     assert item._icon_item.isVisible() is False
 

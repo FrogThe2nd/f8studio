@@ -3,7 +3,7 @@ from __future__ import annotations
 from f8pysdk.msgspec_codec import dump_json
 from copy import deepcopy
 
-from f8pysdk.generated import F8DataPortSpec, F8ServiceSpec
+from f8pysdk.generated import F8Command, F8DataPortSpec, F8ServiceSpec
 from f8pysdk.schema_helpers import any_schema, number_schema
 from f8pystudio.nodegraph.session_layout_codec import SessionLayoutCodecMixin
 
@@ -13,12 +13,14 @@ def _service_spec_payload(
     service_class: str,
     data_in: list[str] | None = None,
     data_out: list[str] | None = None,
+    commands: list[str] | None = None,
 ) -> dict:
     spec = F8ServiceSpec(
         serviceClass=service_class,
         label="Service",
         dataInPorts=[F8DataPortSpec(name=name, valueSchema=number_schema()) for name in list(data_in or [])],
         dataOutPorts=[F8DataPortSpec(name=name, valueSchema=any_schema()) for name in list(data_out or [])],
+        commands=[F8Command(name=name, params=[]) for name in list(commands or [])],
     )
     return dump_json(spec, mode="json")
 
@@ -90,3 +92,23 @@ def test_strip_invalid_connections_drops_nonexistent_ports() -> None:
     out = SessionLayoutCodecMixin._strip_invalid_connections(deepcopy(layout))
 
     assert out["connections"] == [{"out": ["svc.src", "out[D]"], "in": ["svc.dst", "[D]in"]}]
+
+
+def test_strip_invalid_connections_keeps_command_ports() -> None:
+    layout = {
+        "nodes": {
+            "svc.src": {
+                "f8_spec": _service_spec_payload(service_class="f8.src", commands=["run"]),
+            },
+            "svc.dst": {
+                "f8_spec": _service_spec_payload(service_class="f8.dst", commands=["apply"]),
+            },
+        },
+        "connections": [
+            {"out": ["svc.src", "run[C]"], "in": ["svc.dst", "[C]apply"]},
+        ],
+    }
+
+    out = SessionLayoutCodecMixin._strip_invalid_connections(deepcopy(layout))
+
+    assert out["connections"] == [{"out": ["svc.src", "run[C]"], "in": ["svc.dst", "[C]apply"]}]

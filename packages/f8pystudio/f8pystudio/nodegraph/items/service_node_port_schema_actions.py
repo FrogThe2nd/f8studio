@@ -8,6 +8,7 @@ from typing import Any
 from qtpy import QtCore, QtWidgets
 
 from f8pysdk.schema_helpers import schema_type
+from f8pysdk.command_state import parse_command_port_name
 
 from ...widgets.schema_builder import SchemaBuilderDialog, schema_from_json_obj as _schema_from_json_obj
 from ...widgets.state_controls.schema_introspect import (
@@ -24,6 +25,8 @@ def port_group(name: str) -> str:
         return "data"
     if port_name.startswith("[S]") or port_name.endswith("[S]"):
         return "state"
+    if port_name.startswith("[C]") or port_name.endswith("[C]"):
+        return "command"
     return "other"
 
 
@@ -31,7 +34,7 @@ def display_port_label(name: str, *, max_chars: int | None = None) -> str:
     """
     Display-friendly label for port text items.
 
-    Strip `[E]/[D]/[S]` markers and optionally elide to keep compact.
+    Strip `[E]/[D]/[S]/[C]` markers and optionally elide to keep compact.
     """
     label = str(name or "")
     if label.startswith("[E]"):
@@ -45,6 +48,10 @@ def display_port_label(name: str, *, max_chars: int | None = None) -> str:
     elif label.startswith("[S]"):
         label = label[3:]
     elif label.endswith("[S]"):
+        label = label[:-3]
+    elif label.startswith("[C]"):
+        label = label[3:]
+    elif label.endswith("[C]"):
         label = label[:-3]
     label = label.strip()
     if max_chars is not None and max_chars > 0 and len(label) > max_chars:
@@ -82,6 +89,10 @@ def parse_schema_port_view_name(view_name: str) -> tuple[str, bool, str] | None:
         if not port_name:
             return None
         return "state", False, port_name
+    command = parse_command_port_name(raw)
+    if command is not None:
+        is_in, command_name = command
+        return "command", is_in, command_name
     return None
 
 
@@ -208,7 +219,43 @@ def port_tooltip_text(node_item: Any, view_name: str) -> str:
         return data_port_tooltip(node_item, is_in=bool(is_in), port_name=port_name)
     if kind == "state":
         return state_port_tooltip(node_item, is_in=bool(is_in), field_name=port_name)
+    if kind == "command":
+        return command_port_tooltip(node_item, is_in=bool(is_in), command_name=port_name)
     return str(view_name or "")
+
+
+def find_command_spec(node_item: Any, *, command_name: str) -> tuple[Any, int] | None:
+    node = node_item._backend_node()
+    if node is None:
+        return None
+    target_name = str(command_name or "").strip()
+    try:
+        commands = list(node.effective_commands() or [])
+    except Exception:
+        spec = getattr(node, "spec", None)
+        commands = list(spec.commands or []) if spec is not None else []
+    for index, command in enumerate(commands):
+        if str(command.name or "").strip() == target_name:
+            return command, int(index)
+    return None
+
+
+def command_port_tooltip(node_item: Any, *, is_in: bool, command_name: str) -> str:
+    direction_text = "command input" if bool(is_in) else "command output"
+    found = find_command_spec(node_item, command_name=command_name)
+    if found is None:
+        return f"{command_name} ({direction_text})"
+    command, _index = found
+    desc = str(command.description or "").strip()
+    params = [str(param.name or "").strip() for param in list(command.params or []) if str(param.name or "").strip()]
+    lines = [f"{command_name} ({direction_text})"]
+    if params:
+        lines.append("params: " + ", ".join(params))
+    else:
+        lines.append("params: none")
+    if desc:
+        lines.append(desc)
+    return "\n".join(lines)
 
 
 def refresh_port_tooltips(node_item: Any) -> None:

@@ -34,6 +34,19 @@ from .service_toolbar_host import F8ElideToolButton, F8ForceGlobalToolTipFilter
 
 logger = logging.getLogger(__name__)
 
+INLINE_HEADER_BUTTON_STYLE = """
+    QToolButton {
+        color: rgb(235, 235, 235);
+        background: transparent;
+        border: 1px solid rgba(255, 255, 255, 18);
+        border-radius: 4px;
+        padding: 2px 8px;
+        text-align: left;
+    }
+    QToolButton:hover { background: transparent; }
+    QToolButton:checked { background: transparent; }
+"""
+
 
 def _refresh_embedded_text_palette(widget: QtWidgets.QWidget) -> None:
     palette = widget.palette()
@@ -72,6 +85,39 @@ def _refresh_embedded_text_palette(widget: QtWidgets.QWidget) -> None:
 
 def _apply_text_palette(widget: QtWidgets.QWidget) -> None:
     _refresh_embedded_text_palette(widget)
+
+
+def build_inline_header_button(
+    *,
+    label: str,
+    tooltip: str,
+    expandable: bool,
+    expanded: bool = False,
+) -> tuple[QtWidgets.QWidget, F8ElideToolButton]:
+    header = QtWidgets.QWidget()
+    header_lay = QtWidgets.QHBoxLayout(header)
+    header_lay.setContentsMargins(0, 0, 0, 0)
+    header_lay.setSpacing(6)
+    header.setAttribute(QtCore.Qt.WA_StyledBackground, True)
+    header.setStyleSheet("background: transparent;")
+
+    btn = F8ElideToolButton()
+    btn.setCheckable(bool(expandable))
+    btn.setChecked(bool(expanded) if expandable else False)
+    btn.setAutoRaise(True)
+    if expandable:
+        btn.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
+        btn.setArrowType(QtCore.Qt.DownArrow if expanded else QtCore.Qt.RightArrow)
+    else:
+        btn.setToolButtonStyle(QtCore.Qt.ToolButtonTextOnly)
+        btn.setArrowType(QtCore.Qt.NoArrow)
+    btn.set_full_text(label)
+    btn.setToolTip(tooltip)
+    btn.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+    btn.setStyleSheet(INLINE_HEADER_BUTTON_STYLE)
+
+    header_lay.addWidget(btn, 1)
+    return header, btn
 
 
 def _editor_assist_context(
@@ -632,39 +678,7 @@ def ensure_state_inline_controls(node_item: Any) -> None:
         control = node_item._build_state_inline_control(info)
 
         # Header: toggle button (state name).
-        header = QtWidgets.QWidget()
-        header_lay = QtWidgets.QHBoxLayout(header)
-        header_lay.setContentsMargins(0, 0, 0, 0)
-        header_lay.setSpacing(6)
-        header.setAttribute(QtCore.Qt.WA_StyledBackground, True)
-        header.setStyleSheet("background: transparent;")
-
-        btn = F8ElideToolButton()
-        btn.setCheckable(True)
-        btn.setChecked(expanded)
-        btn.setAutoRaise(True)
-        btn.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
-        btn.setArrowType(QtCore.Qt.DownArrow if expanded else QtCore.Qt.RightArrow)
-
-        btn.set_full_text(label)
-        btn.setToolTip(tip)
-        btn.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
-        btn.setStyleSheet(
-            """
-            QToolButton {
-                color: rgb(235, 235, 235);
-                background: transparent;
-                border: 1px solid rgba(255, 255, 255, 18);
-                border-radius: 4px;
-                padding: 2px 8px;
-                text-align: left;
-            }
-            QToolButton:hover { background: transparent; }
-            QToolButton:checked { background: transparent; }
-            """
-        )
-
-        header_lay.addWidget(btn, 1)
+        header, btn = build_inline_header_button(label=label, tooltip=tip, expandable=True, expanded=expanded)
 
         # Body: control widget (collapsed by default).
         body = QtWidgets.QWidget()

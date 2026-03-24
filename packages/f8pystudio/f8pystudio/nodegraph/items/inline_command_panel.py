@@ -11,9 +11,33 @@ from f8pysdk.schema_helpers import schema_default, schema_type
 from ...command_ui_protocol import CommandUiHandler, CommandUiSource
 from ...components.controls import F8OptionCombo, F8Switch, F8ValueBar, parse_select_pool
 from ...ui_notifications import show_warning
-from .service_toolbar_host import F8ForceGlobalToolTipFilter
+from .state_inline_controls import build_inline_header_button
 
 logger = logging.getLogger(__name__)
+
+COMMAND_INLINE_BUTTON_STYLE = """
+    QToolButton {
+        color: rgb(235, 235, 235);
+        background: rgba(0, 0, 0, 28);
+        border: 1px solid rgba(120, 200, 255, 75);
+        border-radius: 4px;
+        padding: 2px 8px;
+        text-align: left;
+    }
+    QToolButton:hover {
+        background: rgba(120, 200, 255, 18);
+        border-color: rgba(120, 200, 255, 130);
+    }
+    QToolButton:pressed {
+        background: rgba(120, 200, 255, 42);
+        border-color: rgba(120, 200, 255, 170);
+    }
+    QToolButton:disabled {
+        color: rgba(235, 235, 235, 110);
+        background: rgba(0, 0, 0, 20);
+        border-color: rgba(255, 255, 255, 18);
+    }
+"""
 
 
 def _is_missing_locked(node_item: Any) -> bool:
@@ -410,149 +434,34 @@ def ensure_inline_command_widget(node_item: Any) -> None:
     missing_locked = _is_missing_locked(node_item)
     enabled = bool(node_item._is_service_running()) and not missing_locked
 
-    # Rebuild only when command list / enabled state changes.
-    try:
-
-        def _cmd_name_desc(command: Any) -> tuple[str, str]:
-            try:
-                return str(command.name or ""), str(command.description or "")
-            except Exception:
-                return "", ""
-
-        serial = json.dumps(
-            {
-                "cmds": [
-                    {
-                        "name": _cmd_name_desc(command)[0],
-                        "desc": _cmd_name_desc(command)[1],
-                    }
-                    for command in visible_commands
-                ],
-            },
-            ensure_ascii=False,
-            sort_keys=True,
-            default=str,
-        )
-    except Exception:
-        serial = ""
-
-    # Remove if no commands to show.
-    if not visible_commands:
-        if node_item._cmd_proxy is not None:
-            old = None
-            try:
-                old = node_item._cmd_proxy.widget()
-            except Exception:
-                old = None
-            try:
-                node_item._cmd_proxy.setWidget(None)
-            except RuntimeError:
-                pass
-            if old is not None:
-                try:
-                    old.setParent(None)
-                except (AttributeError, RuntimeError, TypeError):
-                    pass
-                try:
-                    old.deleteLater()
-                except (AttributeError, RuntimeError, TypeError):
-                    pass
-            try:
-                node_item._cmd_proxy.setParentItem(None)
-                if node_item.scene() is not None:
-                    node_item.scene().removeItem(node_item._cmd_proxy)
-            except RuntimeError:
-                pass
-            node_item._cmd_proxy = None
-            node_item._cmd_widget = None
-            node_item._cmd_buttons = []
-        return
-
-    if node_item._cmd_proxy is not None and serial and serial == str(node_item._cmd_serial or ""):
-        # Keep enable state in sync (service running can change without spec changes).
-        for button in list(node_item._cmd_buttons or []):
-            try:
-                button.setEnabled(bool(enabled))
-            except (AttributeError, RuntimeError, TypeError):
-                continue
-        return
-
-    node_item._cmd_serial = serial
-
-    # Build widget (only when changed).
-    widget = QtWidgets.QWidget()
-    layout = QtWidgets.QVBoxLayout(widget)
-    layout.setContentsMargins(0, 0, 0, 0)
-    layout.setSpacing(6)
-    widget.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
-    widget.setAttribute(QtCore.Qt.WA_StyledBackground, True)
-    widget.setStyleSheet("background: transparent;")
-
-    node_item._cmd_buttons = []
+    desired_names: list[str] = []
     for command in visible_commands:
         try:
-            btn_label = str(command.name or "")
+            command_name = str(command.name or "").strip()
         except Exception:
-            btn_label = ""
-        try:
-            desc = str(command.description or "").strip()
-        except Exception:
-            desc = ""
-        button = QtWidgets.QPushButton(btn_label)
-        tooltip_filter = F8ForceGlobalToolTipFilter(button)
-        button.installEventFilter(tooltip_filter)
-        node_item._tooltip_filters.append(tooltip_filter)
-        button.setMinimumHeight(24)
-        button.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
-        button.setEnabled(bool(enabled))
-        button.setStyleSheet(
-            """
-            QPushButton {
-                color: rgb(235, 235, 235);
-                background: rgba(0, 0, 0, 35);
-                border: 1px solid rgba(120, 200, 255, 85);
-                border-radius: 6px;
-                padding: 6px 10px;
-                text-align: center;
-                font-weight: 600;
-            }
-            QPushButton:hover {
-                background: rgba(120, 200, 255, 22);
-                border-color: rgba(120, 200, 255, 140);
-            }
-            QPushButton:pressed {
-                background: rgba(120, 200, 255, 35);
-                border-color: rgba(120, 200, 255, 160);
-            }
-            QPushButton:disabled {
-                color: rgba(235, 235, 235, 110);
-                background: rgba(0, 0, 0, 20);
-                border-color: rgba(255, 255, 255, 18);
-            }
-            """
-        )
-        if not enabled:
-            reason = "Missing dependency" if missing_locked else "Service not running"
-            button.setToolTip((desc + "\n" if desc else "") + reason)
-        elif desc:
-            button.setToolTip(desc)
-        button.pressed.connect(lambda _c=command: _on_command_pressed(node_item, _c))  # type: ignore[attr-defined]
-        layout.addWidget(button)
-        node_item._cmd_buttons.append(button)
+            command_name = ""
+        if command_name:
+            desired_names.append(command_name)
 
-    if node_item._cmd_proxy is None:
-        proxy = QtWidgets.QGraphicsProxyWidget(node_item)
-        proxy.setWidget(widget)
-        proxy.setCacheMode(QtWidgets.QGraphicsItem.DeviceCoordinateCache)
-        node_item._cmd_proxy = proxy
-    else:
+    for name in list(node_item._command_inline_proxies.keys()):
+        if name in desired_names:
+            continue
+        proxy = node_item._command_inline_proxies.pop(name, None)
+        node_item._command_inline_headers.pop(name, None)
+        node_item._command_inline_buttons.pop(name, None)
+        node_item._command_inline_serials.pop(name, None)
+        if proxy is None:
+            continue
         old = None
         try:
-            old = node_item._cmd_proxy.widget()
+            old = proxy.widget()
         except Exception:
             old = None
-        node_item._cmd_proxy.setWidget(widget)
-        if old is not None and old is not widget:
+        try:
+            proxy.setWidget(None)
+        except RuntimeError:
+            pass
+        if old is not None:
             try:
                 old.setParent(None)
             except (AttributeError, RuntimeError, TypeError):
@@ -561,7 +470,120 @@ def ensure_inline_command_widget(node_item: Any) -> None:
                 old.deleteLater()
             except (AttributeError, RuntimeError, TypeError):
                 pass
-    node_item._cmd_widget = widget
+        try:
+            proxy.setParentItem(None)
+            if node_item.scene() is not None:
+                node_item.scene().removeItem(proxy)
+        except RuntimeError:
+            pass
+
+    node_item._cmd_buttons = []
+    node_item._cmd_buttons_by_name = {}
+    rebuilt_proxies: dict[str, QtWidgets.QGraphicsProxyWidget] = {}
+    rebuilt_headers: dict[str, QtWidgets.QWidget] = {}
+    rebuilt_buttons: dict[str, QtWidgets.QAbstractButton] = {}
+
+    reason = "Missing dependency" if missing_locked else "Service not running"
+
+    for command in visible_commands:
+        try:
+            command_name = str(command.name or "").strip()
+        except Exception:
+            command_name = ""
+        if not command_name:
+            continue
+        try:
+            description = str(command.description or "").strip()
+        except Exception:
+            description = ""
+        tooltip = description
+        if not enabled:
+            tooltip = (description + "\n" if description else "") + reason
+        try:
+            serial = json.dumps(
+                {
+                    "name": command_name,
+                    "description": description,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+                default=str,
+            )
+        except Exception:
+            serial = command_name
+
+        existing_button = node_item._command_inline_buttons.get(command_name)
+        proxy = node_item._command_inline_proxies.get(command_name)
+        header = node_item._command_inline_headers.get(command_name)
+        existing_serial = str(node_item._command_inline_serials.get(command_name, "") or "")
+        if existing_button is not None and proxy is not None and header is not None and serial == existing_serial:
+            button = existing_button
+            try:
+                button.set_full_text(command_name)
+            except AttributeError:
+                button.setText(command_name)
+            button.setToolTip(tooltip)
+            button.setEnabled(bool(enabled))
+            button.setStyleSheet(COMMAND_INLINE_BUTTON_STYLE)
+            button.setCursor(QtCore.Qt.PointingHandCursor if enabled else QtCore.Qt.ArrowCursor)
+        else:
+            header, button = build_inline_header_button(
+                label=command_name,
+                tooltip=tooltip,
+                expandable=False,
+            )
+            button.setEnabled(bool(enabled))
+            button.setStyleSheet(COMMAND_INLINE_BUTTON_STYLE)
+            button.setCursor(QtCore.Qt.PointingHandCursor if enabled else QtCore.Qt.ArrowCursor)
+            button.pressed.connect(lambda _checked=False, _c=command: _on_command_pressed(node_item, _c))
+
+            panel = QtWidgets.QWidget()
+            panel_lay = QtWidgets.QVBoxLayout(panel)
+            panel_lay.setContentsMargins(0, 0, 0, 0)
+            panel_lay.setSpacing(0)
+            panel_lay.addWidget(header)
+            panel.setProperty("_f8_command_panel", True)
+            panel.setAttribute(QtCore.Qt.WA_StyledBackground, True)
+            panel.setStyleSheet("background: transparent;")
+
+            if proxy is None:
+                proxy = QtWidgets.QGraphicsProxyWidget(node_item)
+            old = None
+            try:
+                old = proxy.widget()
+            except Exception:
+                old = None
+            proxy.setWidget(panel)
+            if old is not None and old is not panel:
+                try:
+                    old.setParent(None)
+                except (AttributeError, RuntimeError, TypeError):
+                    pass
+                try:
+                    old.deleteLater()
+                except (AttributeError, RuntimeError, TypeError):
+                    pass
+            node_item._command_inline_serials[command_name] = serial
+
+        rebuilt_proxies[command_name] = proxy
+        rebuilt_headers[command_name] = header
+        rebuilt_buttons[command_name] = button
+        node_item._cmd_buttons.append(button)
+        node_item._cmd_buttons_by_name[command_name] = button
+
+    node_item._command_inline_proxies.clear()
+    node_item._command_inline_headers.clear()
+    node_item._command_inline_buttons.clear()
+    for name in desired_names:
+        proxy = rebuilt_proxies.get(name)
+        header = rebuilt_headers.get(name)
+        button = rebuilt_buttons.get(name)
+        if proxy is None or header is None or button is None:
+            continue
+        node_item._command_inline_proxies[name] = proxy
+        node_item._command_inline_headers[name] = header
+        node_item._command_inline_buttons[name] = button
+
     try:
         node_item._invalidate_layout_metrics()
         node_item._prepare_layout_metrics()

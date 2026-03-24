@@ -14,6 +14,7 @@ from ..error_utils import log_error_once
 from ..state_write import StateWriteContext, StateWriteError, StateWriteOrigin, StateWriteSource
 from ...time_utils import now_ms
 from ..codec import encode_obj
+from ..command_runtime import dispatch_command_input
 
 if TYPE_CHECKING:
     from ..api.bus import ServiceBus
@@ -156,6 +157,27 @@ async def _deliver_state_local(
 ) -> None:
     node_id_s = str(node_id)
     field_s = str(field)
+    if (node_id_s, field_s) in bus._command_hidden_fields:
+        binding = bus._command_input_bindings.get((node_id_s, field_s))
+        if binding is not None:
+            await dispatch_command_input(
+                bus,
+                node_id=node_id_s,
+                field=field_s,
+                value=value,
+                ts_ms=int(ts_ms),
+                meta=dict(meta_dict),
+            )
+            return
+        await _route_intra_state_edges(
+            bus,
+            node_id=node_id_s,
+            field=field_s,
+            value=value,
+            ts_ms=int(ts_ms),
+            meta_dict=dict(meta_dict),
+        )
+        return
     node = bus._nodes.get(node_id_s)
     if node is None:
         return
@@ -220,6 +242,9 @@ async def validate_state_update(
                 "origin": ctx.origin.value,
             },
         )
+
+    if (node_id_s, field_s) in bus._command_hidden_fields:
+        return value
 
     if node is None:
         return value

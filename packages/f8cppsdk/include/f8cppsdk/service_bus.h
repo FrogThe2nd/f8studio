@@ -8,6 +8,7 @@
 #include <optional>
 #include <unordered_map>
 #include <unordered_set>
+#include <cstddef>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -76,7 +77,7 @@ class ServiceBus final : public ServiceControlHandler {
   void add_data_node(DataReceivableNode* node);
   void add_set_state_node(SetStateHandlerNode* node);
   void add_rungraph_node(RungraphHandlerNode* node);
-  void add_command_node(CommandableNode* node);
+  void add_command_node(CommandableNode* node, const json& service_spec = json::object());
 
   bool start();
   void stop();
@@ -134,6 +135,14 @@ class ServiceBus final : public ServiceControlHandler {
                            const json& meta, bool allow_state_fanout);
   void route_intra_state_edges(const std::string& from_node_id, const std::string& from_field, const json& value,
                                std::int64_t ts_ms);
+  void rebuild_command_bindings_locked();
+  void schedule_command_input_dispatch(const std::string& node_id, const std::string& field, const json& value,
+                                       std::int64_t ts_ms, const json& meta);
+  void run_command_input_dispatch(const std::string& node_id, const std::string& field);
+  bool dispatch_command_call(const std::string& call, const json& args, const json& meta, json& result,
+                             std::string& error_code, std::string& error_message);
+  void write_command_output(const std::string& node_id, const std::string& call, const json& result,
+                            std::int64_t ts_ms, const json& meta);
   void start_monitor_thread();
   void stop_monitor_thread();
   void monitor_loop();
@@ -166,6 +175,7 @@ class ServiceBus final : public ServiceControlHandler {
   std::vector<SetStateHandlerNode*> set_state_nodes_;
   std::vector<RungraphHandlerNode*> rungraph_nodes_;
   std::vector<CommandableNode*> command_nodes_;
+  std::unordered_map<CommandableNode*, json> command_specs_by_node_;
   std::vector<StatefulNode*> stateful_nodes_;
   std::vector<DataReceivableNode*> data_nodes_;
 
@@ -199,6 +209,22 @@ class ServiceBus final : public ServiceControlHandler {
       return peer_service_id == other.peer_service_id && remote_node_id == other.remote_node_id &&
              remote_field == other.remote_field;
     }
+  };
+
+  struct _CommandBinding {
+    std::string node_id;
+    std::string call;
+    std::string input_field;
+    std::string output_field;
+    std::vector<std::string> param_names;
+  };
+
+  struct _CommandDispatchState {
+    bool running = false;
+    std::size_t version = 0;
+    json latest_value = json(nullptr);
+    std::int64_t latest_ts_ms = 0;
+    json latest_meta = json::object();
   };
   struct _RemoteStateKeyHash {
     std::size_t operator()(const _RemoteStateKey& k) const noexcept {
@@ -245,6 +271,10 @@ class ServiceBus final : public ServiceControlHandler {
   std::unordered_map<_NodeFieldKey, std::pair<json, std::int64_t>, _NodeFieldKeyHash> state_cache_;
   std::unordered_map<_NodeFieldKey, std::string, _NodeFieldKeyHash> state_access_;
   std::unordered_map<_NodeFieldKey, std::vector<_NodeFieldKey>, _NodeFieldKeyHash> intra_state_out_;
+  std::unordered_map<_NodeFieldKey, _CommandBinding, _NodeFieldKeyHash> command_input_bindings_;
+  std::unordered_map<std::string, _CommandBinding> command_output_bindings_;
+  std::unordered_set<_NodeFieldKey, _NodeFieldKeyHash> command_hidden_fields_;
+  std::unordered_map<_NodeFieldKey, _CommandDispatchState, _NodeFieldKeyHash> command_dispatch_;
   std::unordered_map<_RemoteStateKey, std::vector<_NodeFieldKey>, _RemoteStateKeyHash> cross_state_in_;
   std::unordered_set<_NodeFieldKey, _NodeFieldKeyHash> cross_state_targets_;
   std::unordered_map<std::string, std::unique_ptr<KvStore>> peer_kv_by_service_id_;

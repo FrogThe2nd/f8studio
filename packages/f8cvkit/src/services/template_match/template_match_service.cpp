@@ -160,7 +160,7 @@ bool TemplateMatchService::start() {
   bus_->add_lifecycle_node(this);
   bus_->add_stateful_node(this);
   bus_->add_data_node(this);
-  bus_->add_command_node(this);
+  bus_->add_command_node(this, TemplateMatchService::describe());
 
   if (!bus_->start()) {
     bus_.reset();

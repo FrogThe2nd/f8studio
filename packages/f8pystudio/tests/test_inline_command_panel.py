@@ -5,6 +5,7 @@ from typing import Any
 from qtpy import QtWidgets
 
 from f8pystudio.nodegraph.items.inline_command_panel import (
+    COMMAND_INLINE_BUTTON_STYLE,
     _on_command_pressed,
     _restore_selected_node_ids,
     _snapshot_selected_node_ids,
@@ -55,7 +56,12 @@ class _FakeNodeItem(QtWidgets.QGraphicsRectItem):
         self._cmd_proxy = None
         self._cmd_widget = None
         self._cmd_buttons: list[QtWidgets.QPushButton] = []
+        self._cmd_buttons_by_name: dict[str, QtWidgets.QPushButton] = {}
         self._cmd_serial = ""
+        self._command_inline_proxies: dict[str, QtWidgets.QGraphicsProxyWidget] = {}
+        self._command_inline_headers: dict[str, QtWidgets.QWidget] = {}
+        self._command_inline_buttons: dict[str, QtWidgets.QPushButton] = {}
+        self._command_inline_serials: dict[str, str] = {}
         self._tooltip_filters: list[Any] = []
 
         self._backend = _FakeBackendNode()
@@ -95,6 +101,16 @@ class _FakeNodeItem(QtWidgets.QGraphicsRectItem):
     def _schema_numeric_range(self, schema: Any) -> tuple[float | None, float | None]:
         del schema
         return None, None
+
+    def _invalidate_layout_metrics(self) -> None:
+        return
+
+    def _prepare_layout_metrics(self) -> None:
+        return
+
+    def sync_proxy_mode(self, *, force: bool = False) -> None:
+        del force
+        return
 
 
 class _FakeBackendNode:
@@ -160,3 +176,17 @@ def test_invoke_command_skips_when_service_not_running() -> None:
     invoke_command(node_item, _FakeCommand("Run", "Run command", True, []))
 
     assert node_item._bridge_obj.calls == []
+
+
+def test_ensure_inline_command_widget_creates_header_only_command_rows() -> None:
+    _ensure_app()
+    node_item = _FakeNodeItem(graph=_FakeGraph([_FakeNode("A")]))
+
+    ensure_inline_command_widget(node_item)
+
+    assert list(node_item._command_inline_proxies.keys()) == ["Run"]
+    assert list(node_item._command_inline_buttons.keys()) == ["Run"]
+    assert node_item._cmd_buttons_by_name["Run"] is node_item._command_inline_buttons["Run"]
+    button = node_item._command_inline_buttons["Run"]
+    assert "QToolButton:pressed" in button.styleSheet()
+    assert button.styleSheet() == COMMAND_INLINE_BUTTON_STYLE

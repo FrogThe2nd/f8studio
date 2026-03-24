@@ -8,6 +8,7 @@ from typing import Any
 
 import msgspec
 from f8pysdk import F8Edge, F8EdgeKindEnum, F8EdgeStrategyEnum, F8RuntimeGraph, F8RuntimeNode, F8StateAccess
+from f8pysdk.command_state import parse_command_port_name, command_input_state_field, command_output_state_field
 from f8pysdk.generated import F8SetRungraphArgs, F8SetRungraphReply, F8SetRungraphRequest
 from f8pysdk.msgspec_codec import copy_model, dump_json
 from f8pysdk.nats_naming import ensure_token, kv_bucket_for_service, new_id, svc_endpoint_subject
@@ -31,11 +32,19 @@ def _port_kind(name: str) -> str | None:
         return "data"
     if n.startswith("[S]") or n.endswith("[S]"):
         return "state"
+    if n.startswith("[C]") or n.endswith("[C]"):
+        return "state"
     return None
 
 
 def _raw_port_name(name: str) -> str:
     n = str(name or "")
+    parsed_command = parse_command_port_name(n)
+    if parsed_command is not None:
+        is_in, command_name = parsed_command
+        if is_in:
+            return command_input_state_field(command_name)
+        return command_output_state_field(command_name)
     for prefix in ("[E]", "[D]", "[S]"):
         if n.startswith(prefix):
             n = n[len(prefix) :]
