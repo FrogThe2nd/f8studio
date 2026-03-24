@@ -5,6 +5,7 @@ from .signal import TempestRuntimeNode
 from .tcode import TCodeRuntimeNode
 from .print import PrintRuntimeNode
 from .serial_out import SerialOutRuntimeNode
+from .udp_out import UdpOutRuntimeNode
 from .tick import TickRuntimeNode
 from .udp_skeleton import UdpSkeletonRuntimeNode
 from .envelope import EnvelopeRuntimeNode
@@ -45,6 +46,7 @@ __all__ = [
     "ProgramWaveRuntimeNode",
     "SequencePlayerRuntimeNode",
     "SerialOutRuntimeNode",
+    "UdpOutRuntimeNode",
     "CosineRuntimeNode",
     "TCodeRuntimeNode",
     "TempestRuntimeNode",
