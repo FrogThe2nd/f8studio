@@ -1,4 +1,5 @@
 add_executable(f8cppsdk_tests
+  test_implayer_playback_state.cpp
   test_main_thread_queue.cpp
   test_protocol_models_parse.cpp
   test_rungraph_routes.cpp

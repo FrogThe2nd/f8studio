@@ -16,6 +16,7 @@
 #include "f8cppsdk/kv_store.h"
 #include "f8cppsdk/service_bus.h"
 #include "f8cppsdk/shm/video.h"
+#include "implayer_playback_state.h"
 #include "sdl_video_window.h"
 
 namespace f8::cppsdk {
@@ -91,6 +92,8 @@ class ImPlayerService final : public f8::cppsdk::LifecycleNode,
                   nlohmann::json& result, std::string& error_code, std::string& error_message) override;
   void publish_static_state();
   void publish_dynamic_state();
+  PlaybackIntent playback_intent() const;
+  void set_playback_intent(PlaybackIntent intent);
 
   void playlist_add(const std::vector<std::string>& items, bool play_if_idle);
   void playlist_play_index(int index);
@@ -139,6 +142,7 @@ class ImPlayerService final : public f8::cppsdk::LifecycleNode,
   std::atomic<double> position_seconds_{0.0};
   std::atomic<double> duration_seconds_{0.0};
   std::atomic<bool> playing_{false};
+  std::atomic<PlaybackIntent> playback_intent_{PlaybackIntent::Playing};
   std::atomic<bool> media_finished_{false};
   std::atomic<bool> eof_reached_{false};
   std::atomic<bool> stopped_{false};

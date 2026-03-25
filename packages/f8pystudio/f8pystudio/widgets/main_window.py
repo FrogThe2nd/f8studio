@@ -8,10 +8,11 @@ from qtpy import QtCore, QtGui, QtWidgets
 from ..nodegraph import F8StudioGraph
 from ..nodegraph.edge_rules import EDGE_KIND_DATA, EDGE_KIND_EXEC, EDGE_KIND_STATE
 from ..nodegraph.session import last_session_path
-from ..nodegraph.runtime_compiler import compile_runtime_graphs_from_studio
+from ..nodegraph.runtime_compiler import CompiledRuntimeGraphs, compile_runtime_graphs_from_studio
 from ..nodegraph.viewer import F8StudioNodeViewer
 from ..pystudio_service_bridge import STARTUP_GATE_TIMEOUT_S, PyStudioServiceBridge, PyStudioServiceBridgeConfig
 from ..pystudio_node_registry import SERVICE_CLASS as STUDIO_SERVICE_CLASS
+from ..bridge.deploy_fingerprint import build_compiled_deploy_fingerprint
 from ..ui_notifications import show_info, show_warning
 from ..ui_bus import UiCommand, UiCommandApplier
 from ..ui_icons import StudioIcon, icon_for
@@ -131,7 +132,8 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         self.studio_graph.install_duplicate_context_menu_for_nodes(list(node_classes))
         self.studio_graph._undo_stack.indexChanged.connect(self._on_graph_undo_index_changed)  # type: ignore[attr-defined]
         self._last_saved_undo_index = self._current_undo_index()
-        self._last_auto_deployed_undo_index = self._current_undo_index()
+        self._last_auto_deploy_observed_undo_index = self._current_undo_index()
+        self._last_auto_deploy_fingerprint = ""
         self._periodic_auto_save_timer = QtCore.QTimer(self)
         self._periodic_auto_save_timer.setInterval(self._PERIODIC_AUTO_SAVE_INTERVAL_MS)
         self._periodic_auto_save_timer.timeout.connect(self._on_periodic_auto_save_timeout)  # type: ignore[attr-defined]
@@ -789,6 +791,7 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         for warning in list(compiled.warnings or ()):
             self._log_dock.append("studio", f"[compile][warn] {warning}\n")
         self._bridge.deploy(compiled)
+        self._mark_auto_deploy_synced(compiled=compiled)
 
     @QtCore.Slot()
     def _on_stop_all_services_action(self) -> None:
@@ -972,8 +975,24 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
     def _mark_session_saved(self) -> None:
         self._last_saved_undo_index = self._current_undo_index()
 
-    def _mark_auto_deploy_synced(self) -> None:
-        self._last_auto_deployed_undo_index = self._current_undo_index()
+    def _mark_auto_deploy_observed(self) -> None:
+        self._last_auto_deploy_observed_undo_index = self._current_undo_index()
+
+    def _deploy_fingerprint_from_compiled(self, compiled: CompiledRuntimeGraphs) -> str:
+        return build_compiled_deploy_fingerprint(compiled)
+
+    def _refresh_auto_deploy_fingerprint(self, *, compiled: CompiledRuntimeGraphs | None = None) -> None:
+        if compiled is None:
+            try:
+                compiled = compile_runtime_graphs_from_studio(self.studio_graph)
+            except Exception:
+                self._last_auto_deploy_fingerprint = ""
+                return
+        self._last_auto_deploy_fingerprint = self._deploy_fingerprint_from_compiled(compiled)
+
+    def _mark_auto_deploy_synced(self, *, compiled: CompiledRuntimeGraphs | None = None) -> None:
+        self._mark_auto_deploy_observed()
+        self._refresh_auto_deploy_fingerprint(compiled=compiled)
 
     @QtCore.Slot(bool)
     def _on_auto_save_toggled(self, checked: bool) -> None:
@@ -987,7 +1006,7 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         if not self._auto_deploy_enabled:
             self._auto_deploy_timer.stop()
             return
-        if self._current_undo_index() != self._last_auto_deployed_undo_index:
+        if self._current_undo_index() != self._last_auto_deploy_observed_undo_index:
             self._auto_deploy_timer.start()
 
     @QtCore.Slot(bool)
@@ -1024,7 +1043,7 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         if not self._auto_deploy_enabled:
             return
         current_undo_index = self._current_undo_index()
-        if current_undo_index == self._last_auto_deployed_undo_index:
+        if current_undo_index == self._last_auto_deploy_observed_undo_index:
             return
 
         try:
@@ -1032,14 +1051,22 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         except ValueError as exc:
             msg = str(exc or "").strip() or "auto deploy blocked by invalid graph"
             self._log_dock.append("studio", f"[deploy][auto][blocked] {msg}\n")
+            self._mark_auto_deploy_observed()
             return
         except Exception as exc:
             self._log_dock.append("studio", f"[deploy][auto][error] {exc}\n")
             self._log_dock.report_exception("studio", "auto deploy compile failed", exc)
+            self._mark_auto_deploy_observed()
             return
 
         for warning in list(compiled.warnings or ()):
             self._log_dock.append("studio", f"[compile][warn] {warning}\n")
+
+        fingerprint = self._deploy_fingerprint_from_compiled(compiled)
+        if fingerprint == self._last_auto_deploy_fingerprint:
+            self._log_dock.append("studio", "[deploy][auto][skip] deploy fingerprint unchanged\n")
+            self._mark_auto_deploy_synced(compiled=compiled)
+            return
 
         running_service_ids: list[str] = []
         for service_id in sorted(self._declared_graph_services().keys()):
@@ -1052,12 +1079,17 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
                 running_service_ids.append(service_id)
 
         if not running_service_ids:
-            self._last_auto_deployed_undo_index = current_undo_index
+            self._log_dock.append("studio", "[deploy][auto][skip] no running services\n")
+            self._mark_auto_deploy_synced(compiled=compiled)
             return
 
+        self._log_dock.append(
+            "studio",
+            f"[deploy][auto] applying rungraph to {len(running_service_ids)} running service(s)\n",
+        )
         for service_id in running_service_ids:
             try:
                 self._bridge.deploy_service_rungraph(service_id, compiled=compiled)
             except Exception as exc:
                 self._log_dock.report_exception("studio", f"auto deploy failed ({service_id})", exc)
-        self._last_auto_deployed_undo_index = current_undo_index
+        self._mark_auto_deploy_synced(compiled=compiled)

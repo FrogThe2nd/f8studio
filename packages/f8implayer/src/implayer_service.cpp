@@ -647,7 +647,7 @@ void ImPlayerService::tick() {
         ImPlayerGui::Callbacks cb;
         cb.open = [this](const std::string& url) {
           std::string err;
-          (void)open_media_internal(url, false, err);
+          (void)cmd_open(json{{"url", url}}, err);
         };
         cb.play = [this]() {
           std::string err;
@@ -941,16 +941,20 @@ void ImPlayerService::processSdlEvent(const SDL_Event& ev) {
       return;
     }
     if (key == SDLK_SPACE) {
-      if (playing_.load(std::memory_order_relaxed))
-        player_->pause();
-      else
-        (void)player_->play();
+      std::string err;
+      if (playing_.load(std::memory_order_relaxed)) {
+        (void)cmd_pause(err);
+      } else {
+        (void)cmd_play(err);
+      }
     } else if (key == SDLK_LEFT) {
       const double p = position_seconds_.load(std::memory_order_relaxed);
-      player_->seek(std::max(0.0, p - 5.0));
+      std::string err;
+      (void)cmd_seek(json{{"position", std::max(0.0, p - 5.0)}}, err);
     } else if (key == SDLK_RIGHT) {
       const double p = position_seconds_.load(std::memory_order_relaxed);
-      player_->seek(p + 5.0);
+      std::string err;
+      (void)cmd_seek(json{{"position", p + 5.0}}, err);
     } else if (key == SDLK_UP) {
       double v = 1.0;
       {
@@ -975,17 +979,16 @@ void ImPlayerService::processSdlEvent(const SDL_Event& ev) {
   }
 }
 
+PlaybackIntent ImPlayerService::playback_intent() const {
+  return playback_intent_.load(std::memory_order_acquire);
+}
+
+void ImPlayerService::set_playback_intent(PlaybackIntent intent) {
+  playback_intent_.store(intent, std::memory_order_release);
+}
+
 void ImPlayerService::set_active_local(bool active) {
   active_.store(active, std::memory_order_release);
-  {
-    std::lock_guard<std::mutex> lock(state_mu_);
-    if (player_) {
-      if (active)
-        player_->play();
-      else
-        player_->pause();
-    }
-  }
 }
 
 bool ImPlayerService::on_set_state(const std::string& node_id, const std::string& field, const nlohmann::json& value,
@@ -1447,6 +1450,9 @@ void ImPlayerService::playlist_add(const std::vector<std::string>& items, bool p
 
   if (!url_to_open.empty()) {
     std::string err;
+    if (play_if_idle) {
+      set_playback_intent(PlaybackIntent::Playing);
+    }
     (void)open_media_internal(url_to_open, true, err);
   }
 }
@@ -1554,6 +1560,25 @@ bool ImPlayerService::open_media_internal(const std::string& url, bool keep_play
     err = "missing url";
     return false;
   }
+  const PlaybackIntent intent = playback_intent();
+  const bool wants_loaded_media = playback_intent_wants_loaded_media(intent);
+  const bool wants_playback = playback_intent_wants_playback(intent);
+
+  if (!wants_loaded_media) {
+    eof_reached_.store(false, std::memory_order_release);
+    media_finished_.store(false, std::memory_order_release);
+    {
+      std::lock_guard<std::mutex> lock(state_mu_);
+      media_url_ = u;
+      last_error_.clear();
+      if (!keep_playlist) {
+        playlist_.clear();
+        playlist_.push_back(u);
+        playlist_index_ = 0;
+      }
+    }
+    return true;
+  }
 
   {
     std::lock_guard<std::mutex> lock(state_mu_);
@@ -1566,14 +1591,15 @@ bool ImPlayerService::open_media_internal(const std::string& url, bool keep_play
       }
       // If the user previously hit Stop, mpv likely unloaded the file. Reload it.
       if (stopped_.load(std::memory_order_acquire)) {
-        // fallthrough and call mpv loadfile again
+        if (!playback_intent_should_reload_stopped_media(intent))
+          return true;
       } else {
         if (eof_reached_.load(std::memory_order_acquire)) {
           eof_reached_.store(false, std::memory_order_release);
           media_finished_.store(false, std::memory_order_release);
           player_->seek(0.0);
         }
-        if (active_.load(std::memory_order_acquire)) {
+        if (wants_playback) {
           (void)player_->play();
         } else {
           player_->pause();
@@ -1623,7 +1649,7 @@ bool ImPlayerService::open_media_internal(const std::string& url, bool keep_play
     vr_fov_deg_ = 90.0f;
     vr_dragging_ = false;
   }
-  if (active_.load(std::memory_order_acquire)) {
+  if (wants_playback) {
     (void)player_->play();
   } else {
     player_->pause();
@@ -1641,6 +1667,7 @@ bool ImPlayerService::cmd_open(const nlohmann::json& args, std::string& err) {
       url = args["mediaUrl"].get<std::string>();
   }
   url = normalize_url(std::move(url));
+  set_playback_intent(PlaybackIntent::Playing);
   return open_media_internal(url, false, err);
 }
 
@@ -1649,6 +1676,7 @@ bool ImPlayerService::cmd_play(std::string& err) {
     err = "player not initialized";
     return false;
   }
+  set_playback_intent(PlaybackIntent::Playing);
   if (stopped_.load(std::memory_order_acquire)) {
     std::string url;
     {
@@ -1672,6 +1700,11 @@ bool ImPlayerService::cmd_play(std::string& err) {
     }
     stopped_.store(false, std::memory_order_release);
     eof_reached_.store(false, std::memory_order_release);
+    {
+      std::lock_guard<std::mutex> lock(state_mu_);
+      last_error_.clear();
+      video_id_ = new_video_id();
+    }
     player_->seek(0.0);
   }
   if (eof_reached_.load(std::memory_order_acquire)) {
@@ -1687,6 +1720,7 @@ bool ImPlayerService::cmd_pause(std::string& err) {
     err = "player not initialized";
     return false;
   }
+  set_playback_intent(PlaybackIntent::Paused);
   player_->pause();
   return true;
 }
@@ -1696,6 +1730,7 @@ bool ImPlayerService::cmd_stop(std::string& err) {
     err = "player not initialized";
     return false;
   }
+  set_playback_intent(PlaybackIntent::Stopped);
   player_->stop();
   player_->resetPlaybackState();
   eof_reached_.store(false, std::memory_order_release);
@@ -1746,7 +1781,15 @@ bool ImPlayerService::cmd_seek(const nlohmann::json& args, std::string& err) {
     err = "missing position";
     return false;
   }
-  if (eof_reached_.load(std::memory_order_acquire) || stopped_.load(std::memory_order_acquire)) {
+  const PlaybackIntent intent = playback_intent();
+  const bool wants_loaded_media = playback_intent_wants_loaded_media(intent);
+  const bool wants_playback = playback_intent_wants_playback(intent);
+  if (!wants_loaded_media) {
+    position_seconds_.store(pos, std::memory_order_release);
+    return true;
+  }
+  const bool was_stopped = stopped_.load(std::memory_order_acquire);
+  if (eof_reached_.load(std::memory_order_acquire) || was_stopped) {
     std::string url;
     {
       std::lock_guard<std::mutex> lock(state_mu_);
@@ -1771,9 +1814,14 @@ bool ImPlayerService::cmd_seek(const nlohmann::json& args, std::string& err) {
     }
     eof_reached_.store(false, std::memory_order_release);
     stopped_.store(false, std::memory_order_release);
+    if (was_stopped) {
+      std::lock_guard<std::mutex> lock(state_mu_);
+      last_error_.clear();
+      video_id_ = new_video_id();
+    }
   }
   player_->seek(pos);
-  if (active_.load(std::memory_order_acquire)) {
+  if (wants_playback) {
     (void)player_->play();
   } else {
     player_->pause();
