@@ -6,6 +6,8 @@ from typing import Any
 
 from qtpy import QtCore, QtWidgets
 
+from f8pysdk import F8OperatorSpec
+from f8pysdk.command_state import command_input_state_field
 from f8pysdk.schema_helpers import schema_default, schema_type
 
 from ...command_ui_protocol import CommandUiHandler, CommandUiSource
@@ -15,6 +17,9 @@ from .state_inline_controls import build_inline_header_button
 
 logger = logging.getLogger(__name__)
 
+# Command rows are now first-class inline panels.
+# They share the same layout model as state inline rows, and `showOnNode`
+# controls both row visibility and command-port visibility.
 COMMAND_INLINE_BUTTON_STYLE = """
     QToolButton {
         color: rgb(235, 235, 235);
@@ -363,6 +368,14 @@ def invoke_command(node_item: Any, cmd: Any) -> None:
         call = ""
     if not call:
         return
+    try:
+        node = node_item._backend_node()
+    except Exception:
+        node = None
+    try:
+        node_spec = node.spec if node is not None else None
+    except Exception:
+        node_spec = None
     bridge = node_item._bridge()
     if bridge is None:
         return
@@ -376,10 +389,6 @@ def invoke_command(node_item: Any, cmd: Any) -> None:
         return
 
     # Allow a node to intercept command invocation with custom UI logic.
-    try:
-        node = node_item._backend_node()
-    except Exception:
-        node = None
     if isinstance(node, CommandUiHandler):
         parent = None
         try:
@@ -403,6 +412,22 @@ def invoke_command(node_item: Any, cmd: Any) -> None:
         params = []
 
     if not params:
+        if isinstance(node_spec, F8OperatorSpec):
+            try:
+                bridge.set_remote_state(  # type: ignore[attr-defined]
+                    sid,
+                    str(node_item.id or "").strip(),
+                    command_input_state_field(call),
+                    {},
+                )
+            except Exception:
+                logger.exception(
+                    "set_remote_state failed serviceId=%s nodeId=%s call=%s",
+                    sid,
+                    _node_item_id(node_item),
+                    call,
+                )
+            return
         try:
             bridge.invoke_remote_command(sid, call, {})
         except Exception:
@@ -411,6 +436,17 @@ def invoke_command(node_item: Any, cmd: Any) -> None:
 
     args = prompt_command_args(node_item, cmd)
     if args is None:
+        return
+    if isinstance(node_spec, F8OperatorSpec):
+        try:
+            bridge.set_remote_state(  # type: ignore[attr-defined]
+                sid,
+                str(node_item.id or "").strip(),
+                command_input_state_field(call),
+                args,
+            )
+        except Exception:
+            logger.exception("set_remote_state failed serviceId=%s nodeId=%s call=%s", sid, _node_item_id(node_item), call)
         return
     try:
         bridge.invoke_remote_command(sid, call, args)
@@ -657,7 +693,7 @@ def prompt_command_args(node_item: Any, cmd: Any) -> dict[str, Any] | None:
         return args
 
 
-def ensure_inline_command_widget(node_item: Any) -> None:
+def ensure_inline_command_rows(node_item: Any) -> None:
     node_item._ensure_bridge_process_hook()
     visible_commands = _visible_commands(node_item)
     desired_names: list[str] = []
@@ -715,3 +751,10 @@ def ensure_inline_command_widget(node_item: Any) -> None:
         node_item.sync_proxy_mode(force=True)
     except (AttributeError, RuntimeError, TypeError):
         pass
+
+
+def ensure_inline_command_widget(node_item: Any) -> None:
+    """
+    Backward-compatible alias for callers still using the old singular name.
+    """
+    ensure_inline_command_rows(node_item)

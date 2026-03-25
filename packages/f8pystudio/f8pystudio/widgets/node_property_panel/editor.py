@@ -751,9 +751,8 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
 
         # built-in spec editors (if node has F8 spec).
         if isinstance(spec, (F8OperatorSpec, F8ServiceSpec)):
-            if isinstance(spec, F8ServiceSpec):
-                cmd_editor = _F8SpecCommandEditor(self, node=node, on_apply=self._on_spec_applied)
-                self.__tab.addTab(cmd_editor, "Commands")
+            cmd_editor = _F8SpecCommandEditor(self, node=node, on_apply=self._on_spec_applied)
+            self.__tab.addTab(cmd_editor, "Commands")
             spec_ports = _F8SpecPortEditor(self, node=node, on_apply=self._on_spec_applied)
             self.__tab.addTab(spec_ports, "Port")
 

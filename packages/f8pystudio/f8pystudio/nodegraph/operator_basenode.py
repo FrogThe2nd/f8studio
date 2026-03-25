@@ -16,8 +16,17 @@ from NodeGraphQt.constants import (
     NodePropWidgetEnum,
 )
 
-from .port_painter import draw_exec_port, draw_square_port, EXEC_PORT_COLOR, DATA_PORT_COLOR, STATE_PORT_COLOR
+from .port_painter import (
+    COMMAND_PORT_COLOR,
+    DATA_PORT_COLOR,
+    EXEC_PORT_COLOR,
+    STATE_PORT_COLOR,
+    draw_exec_port,
+    draw_square_port,
+)
 from .service_basenode import F8StudioServiceNodeItem
+from .service_spec_sync import build_command_port as _build_command_port_impl
+from .items.inline_command_panel import ensure_inline_command_rows as _ensure_inline_command_rows_impl
 
 logger = logging.getLogger(__name__)
 WidgetT = TypeVar("WidgetT", bound=NodeBaseWidget)
@@ -48,6 +57,7 @@ class F8StudioOperatorBaseNode(F8StudioBaseNode):
         self._build_exec_port()
         self._build_data_port()
         self._build_state_port()
+        self._build_command_port()
         self._build_state_properties()
 
     def _build_exec_port(self):
@@ -109,6 +119,9 @@ class F8StudioOperatorBaseNode(F8StudioBaseNode):
                     color=STATE_PORT_COLOR,
                     painter_func=draw_square_port,
                 )
+
+    def _build_command_port(self) -> None:
+        _build_command_port_impl(self)
 
     def _build_state_properties(self) -> None:
         for s in self.effective_state_fields() or []:
@@ -339,6 +352,21 @@ class F8StudioOperatorBaseNode(F8StudioBaseNode):
                     "multi_output": True,
                 }
 
+        for command in list(self.effective_commands() or []):
+            name = str(command.name or "").strip()
+            if not name or not bool(command.showOnNode):
+                continue
+            desired_inputs[f"[C]{name}"] = {
+                "color": COMMAND_PORT_COLOR,
+                "painter_func": draw_square_port,
+                "multi_input": False,
+            }
+            desired_outputs[f"{name}[C]"] = {
+                "color": COMMAND_PORT_COLOR,
+                "painter_func": draw_square_port,
+                "multi_output": True,
+            }
+
         # Remove ports that no longer exist in spec (disconnect first).
         current_input_names = set(self.inputs().keys())
         current_output_names = set(self.outputs().keys())
@@ -457,9 +485,8 @@ class F8StudioOperatorNodeItem(F8StudioServiceNodeItem):
     Operator node item: reuse the service-node layout (grouped ports + inline collapsible
     state widgets + persisted expand state), but without service process controls.
 
-    This intentionally disables:
-    - service process toolbar
-    - service command buttons
+    This intentionally disables the service process toolbar only.
+    Operator command rows reuse the same inline-row presentation as service nodes.
     """
 
     def __init__(self, name="node", parent=None):
@@ -549,21 +576,49 @@ class F8StudioOperatorNodeItem(F8StudioServiceNodeItem):
     def _position_service_toolbar(self) -> None:  # type: ignore[override]
         return
 
+    def _service_id(self) -> str:  # type: ignore[override]
+        node = self._backend_node()
+        if node is not None:
+            try:
+                service_id = str(node.svcId or "").strip()
+            except (AttributeError, RuntimeError, TypeError):
+                service_id = ""
+            if service_id:
+                return service_id
+        container = self._container_item
+        if container is not None:
+            try:
+                service_id = str(container.id or "").strip()
+            except (AttributeError, RuntimeError, TypeError):
+                service_id = ""
+            if service_id:
+                return service_id
+        return ""
+
+    def _is_service_running(self) -> bool:  # type: ignore[override]
+        bridge = self._bridge()
+        service_id = self._service_id()
+        if bridge is None or not service_id:
+            return False
+        try:
+            return bool(bridge.is_service_running(service_id))
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return False
+
+    def _on_bridge_service_process_state(self, service_id: str, running: bool) -> None:  # type: ignore[override]
+        if str(service_id or "").strip() != self._service_id():
+            return
+        try:
+            self._refresh_inline_command_rows()
+        except (AttributeError, RuntimeError, TypeError):
+            pass
+        try:
+            QtCore.QTimer.singleShot(0, self.draw_node)
+        except (AttributeError, RuntimeError, TypeError):
+            pass
+
+    def _ensure_inline_command_rows(self) -> None:  # type: ignore[override]
+        _ensure_inline_command_rows_impl(self)
+
     def _ensure_inline_command_widget(self) -> None:  # type: ignore[override]
-        # Operators don't expose service commands; ensure any previous command widgets are removed.
-        for proxy in list(self._command_inline_proxies.values()):
-            try:
-                proxy.setWidget(None)
-            except (AttributeError, RuntimeError, TypeError):
-                pass
-            try:
-                proxy.setParentItem(None)
-                if self.scene() is not None:
-                    self.scene().removeItem(proxy)
-            except (AttributeError, RuntimeError, TypeError):
-                pass
-        self._command_inline_proxies.clear()
-        self._command_inline_headers.clear()
-        self._command_inline_buttons.clear()
-        self._command_inline_descriptions.clear()
-        self._command_inline_serials.clear()
+        self._ensure_inline_command_rows()

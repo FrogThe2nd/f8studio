@@ -78,6 +78,32 @@ components:
         - enabled
         - source
       additionalProperties: false
+    F8DynamicBindingsOutputsSpec:
+      title: F8DynamicBindingsOutputsSpec
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        source:
+          type: string
+          enum:
+            - data_out_ports
+        type_name:
+          type: string
+        module_name:
+          type: string
+        schema_mode:
+          type: string
+          enum:
+            - basic_recursive
+        access_mode:
+          type: string
+          enum:
+            - object_and_mapping
+      required:
+        - enabled
+        - source
+      additionalProperties: false
     F8DynamicBindingsSpec:
       title: F8DynamicBindingsSpec
       type: object
@@ -86,6 +112,8 @@ components:
           $ref: "#/components/schemas/F8DynamicBindingsInputsSpec"
         states:
           $ref: "#/components/schemas/F8DynamicBindingsStatesSpec"
+        outputs:
+          $ref: "#/components/schemas/F8DynamicBindingsOutputsSpec"
       additionalProperties: false
     F8PythonEditorAssistSpec:
       title: F8PythonEditorAssistSpec
@@ -1019,6 +1047,15 @@ components:
           type: boolean
           default: false
           description: Allow modification of state fields at runtime.
+        commands:
+          type: array
+          items:
+            $ref: "#/components/schemas/F8Command"
+          default: []
+        editableCommands:
+          type: boolean
+          default: false
+          description: Allow dynamic addition of commands beyond the declared list.
         execInPorts:
           type: array
           description:

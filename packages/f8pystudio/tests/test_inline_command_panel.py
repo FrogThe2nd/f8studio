@@ -4,11 +4,15 @@ from typing import Any
 
 from qtpy import QtCore, QtWidgets
 
+from f8pysdk import F8Command, F8OperatorSpec
+from f8pysdk.command_state import command_input_state_field
+
 from f8pystudio.nodegraph.items.inline_command_panel import (
     COMMAND_INLINE_BUTTON_STYLE,
     _on_command_pressed,
     _restore_selected_node_ids,
     _snapshot_selected_node_ids,
+    ensure_inline_command_rows,
     ensure_inline_command_widget,
     refresh_inline_command_rows,
     invoke_command,
@@ -41,9 +45,13 @@ class _FakeGraph:
 class _FakeBridge:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str, dict[str, Any]]] = []
+        self.state_writes: list[tuple[str, str, str, Any]] = []
 
     def invoke_remote_command(self, service_id: str, name: str, args: dict[str, Any] | None = None) -> None:
         self.calls.append((service_id, name, dict(args or {})))
+
+    def set_remote_state(self, service_id: str, node_id: str, field: str, value: Any) -> None:
+        self.state_writes.append((service_id, node_id, field, value))
 
 
 class _FakeNodeItem(QtWidgets.QGraphicsRectItem):
@@ -136,9 +144,11 @@ class _FakeCommand:
 
 
 class _InvokeNodeItem:
-    def __init__(self, *, service_running: bool) -> None:
+    def __init__(self, *, service_running: bool, backend_node: Any | None = None, node_id: str = "nodeA") -> None:
         self._service_running = service_running
         self._bridge_obj = _FakeBridge()
+        self._backend = backend_node
+        self.id = node_id
 
     def _bridge(self) -> _FakeBridge:
         return self._bridge_obj
@@ -149,8 +159,8 @@ class _InvokeNodeItem:
     def _is_service_running(self) -> bool:
         return self._service_running
 
-    def _backend_node(self) -> None:
-        return None
+    def _backend_node(self) -> Any | None:
+        return self._backend
 
 
 def _ensure_app() -> QtWidgets.QApplication:
@@ -184,11 +194,11 @@ def test_invoke_command_skips_when_service_not_running() -> None:
     assert node_item._bridge_obj.calls == []
 
 
-def test_ensure_inline_command_widget_creates_header_only_command_rows() -> None:
+def test_ensure_inline_command_rows_creates_header_only_command_rows() -> None:
     _ensure_app()
     node_item = _FakeNodeItem(graph=_FakeGraph([_FakeNode("A")]))
 
-    ensure_inline_command_widget(node_item)
+    ensure_inline_command_rows(node_item)
 
     assert list(node_item._command_inline_proxies.keys()) == ["Run"]
     assert list(node_item._command_inline_buttons.keys()) == ["Run"]
@@ -197,17 +207,17 @@ def test_ensure_inline_command_widget_creates_header_only_command_rows() -> None
     assert button.styleSheet() == COMMAND_INLINE_BUTTON_STYLE
 
 
-def test_ensure_inline_command_widget_reuses_row_when_only_description_changes() -> None:
+def test_ensure_inline_command_rows_reuses_row_when_only_description_changes() -> None:
     _ensure_app()
     node_item = _FakeNodeItem(graph=_FakeGraph([_FakeNode("A")]))
 
-    ensure_inline_command_widget(node_item)
+    ensure_inline_command_rows(node_item)
 
     proxy_before = node_item._command_inline_proxies["Run"]
     button_before = node_item._command_inline_buttons["Run"]
     node_item._backend.commands = [_FakeCommand("Run", "Updated description", True, [])]
 
-    ensure_inline_command_widget(node_item)
+    ensure_inline_command_rows(node_item)
 
     assert node_item._command_inline_proxies["Run"] is proxy_before
     assert node_item._command_inline_buttons["Run"] is button_before
@@ -215,15 +225,15 @@ def test_ensure_inline_command_widget_reuses_row_when_only_description_changes()
     assert button_before.toolTip() == "Updated description"
 
 
-def test_ensure_inline_command_widget_removes_row_when_show_on_node_becomes_false() -> None:
+def test_ensure_inline_command_rows_removes_row_when_show_on_node_becomes_false() -> None:
     _ensure_app()
     node_item = _FakeNodeItem(graph=_FakeGraph([_FakeNode("A")]))
 
-    ensure_inline_command_widget(node_item)
+    ensure_inline_command_rows(node_item)
     assert "Run" in node_item._command_inline_proxies
 
     node_item._backend.commands = [_FakeCommand("Run", "Run command", False, [])]
-    ensure_inline_command_widget(node_item)
+    ensure_inline_command_rows(node_item)
 
     assert node_item._command_inline_proxies == {}
     assert node_item._command_inline_buttons == {}
@@ -233,7 +243,7 @@ def test_ensure_inline_command_widget_removes_row_when_show_on_node_becomes_fals
 def test_refresh_inline_command_rows_updates_existing_button_state() -> None:
     _ensure_app()
     node_item = _FakeNodeItem(graph=_FakeGraph([_FakeNode("A")]))
-    ensure_inline_command_widget(node_item)
+    ensure_inline_command_rows(node_item)
 
     button = node_item._command_inline_buttons["Run"]
     assert button.isEnabled() is True
@@ -249,7 +259,7 @@ def test_refresh_inline_command_rows_updates_existing_button_state() -> None:
 def test_service_process_hook_refreshes_new_command_row_buttons() -> None:
     _ensure_app()
     node_item = _FakeNodeItem(graph=_FakeGraph([_FakeNode("A")]))
-    ensure_inline_command_widget(node_item)
+    ensure_inline_command_rows(node_item)
     button = node_item._command_inline_buttons["Run"]
 
     node_item._service_running = False
@@ -259,7 +269,7 @@ def test_service_process_hook_refreshes_new_command_row_buttons() -> None:
     assert "Service not running" in button.toolTip()
 
 
-def test_ensure_inline_command_widget_logs_and_skips_failed_row_build(monkeypatch, caplog) -> None:
+def test_ensure_inline_command_rows_logs_and_skips_failed_row_build(monkeypatch, caplog) -> None:
     _ensure_app()
     node_item = _FakeNodeItem(graph=_FakeGraph([_FakeNode("A")]))
 
@@ -271,7 +281,34 @@ def test_ensure_inline_command_widget_logs_and_skips_failed_row_build(monkeypatc
         _fail_build,
     )
 
-    ensure_inline_command_widget(node_item)
+    ensure_inline_command_rows(node_item)
 
     assert node_item._command_inline_proxies == {}
     assert "build command row failed" in caplog.text
+
+
+def test_ensure_inline_command_widget_alias_still_builds_rows() -> None:
+    _ensure_app()
+    node_item = _FakeNodeItem(graph=_FakeGraph([_FakeNode("A")]))
+
+    ensure_inline_command_widget(node_item)
+
+    assert list(node_item._command_inline_proxies.keys()) == ["Run"]
+
+
+def test_invoke_command_uses_hidden_input_state_for_operator_commands() -> None:
+    operator_spec = F8OperatorSpec(
+        serviceClass="f8.test.service",
+        operatorClass="f8.test.operator",
+        label="Operator",
+        commands=[F8Command(name="Run", description="Run command", showOnNode=True, params=[])],
+    )
+    backend = type("Backend", (), {"spec": operator_spec})()
+    node_item = _InvokeNodeItem(service_running=True, backend_node=backend, node_id="opA")
+
+    invoke_command(node_item, _FakeCommand("Run", "Run command", True, []))
+
+    assert node_item._bridge_obj.calls == []
+    assert node_item._bridge_obj.state_writes == [
+        ("svcA", "opA", command_input_state_field("Run"), {})
+    ]

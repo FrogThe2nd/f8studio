@@ -454,7 +454,9 @@ def compile_global_runtime_graph(
                 [*list(spec.stateFields or []), *hidden_command_state_specs(list(spec.commands or []))]
             )
         else:
-            state_fields = operator_state_fields_with_builtins(list(spec.stateFields or []))
+            state_fields = operator_state_fields_with_builtins(
+                [*list(spec.stateFields or []), *hidden_command_state_specs(list(spec.commands or []))]
+            )
 
         runtime_nodes.append(
             F8RuntimeNode(

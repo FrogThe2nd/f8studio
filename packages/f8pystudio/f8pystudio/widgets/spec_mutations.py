@@ -67,7 +67,7 @@ def delete_state_field(spec: F8ServiceSpec | F8OperatorSpec, *, name: str) -> An
     return _mutate_or_copy(spec, mutate=_mutate, update={"stateFields": fields})
 
 
-def add_command(spec: F8ServiceSpec, *, cmd: F8Command) -> F8ServiceSpec:
+def add_command(spec: F8ServiceSpec | F8OperatorSpec, *, cmd: F8Command) -> F8ServiceSpec | F8OperatorSpec:
     cmds = list(spec.commands or [])
     cmds.append(cmd)
 
@@ -77,7 +77,9 @@ def add_command(spec: F8ServiceSpec, *, cmd: F8Command) -> F8ServiceSpec:
     return _mutate_or_copy(spec, mutate=_mutate, update={"commands": cmds})
 
 
-def replace_command(spec: F8ServiceSpec, *, name: str, cmd: F8Command) -> F8ServiceSpec:
+def replace_command(
+    spec: F8ServiceSpec | F8OperatorSpec, *, name: str, cmd: F8Command
+) -> F8ServiceSpec | F8OperatorSpec:
     n = str(name or "").strip()
     cmds = list(spec.commands or [])
     out: list[F8Command] = []
@@ -97,7 +99,7 @@ def replace_command(spec: F8ServiceSpec, *, name: str, cmd: F8Command) -> F8Serv
     return _mutate_or_copy(spec, mutate=_mutate, update={"commands": out})
 
 
-def delete_command(spec: F8ServiceSpec, *, name: str) -> F8ServiceSpec:
+def delete_command(spec: F8ServiceSpec | F8OperatorSpec, *, name: str) -> F8ServiceSpec | F8OperatorSpec:
     n = str(name or "").strip()
     for c in list(spec.commands or []):
         if str(c.name or "").strip() == n and bool(c.required):

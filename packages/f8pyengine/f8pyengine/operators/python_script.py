@@ -1179,6 +1179,7 @@ PythonScriptRuntimeNode.SPEC = F8OperatorSpec(
         ),
     ],
     editableStateFields=True,
+    editableCommands=True
 )
 
 

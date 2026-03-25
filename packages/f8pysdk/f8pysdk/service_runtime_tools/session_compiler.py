@@ -260,7 +260,7 @@ def _compile_kept_nodes(
             stateFields=(
                 [*list(spec.stateFields or []), *hidden_command_state_specs(list(spec.commands or []))]
                 if is_service_node
-                else list(spec.stateFields or [])
+                else [*list(spec.stateFields or []), *hidden_command_state_specs(list(spec.commands or []))]
             ),
             stateValues=_collect_state_values(spec, raw_node_data),
         )

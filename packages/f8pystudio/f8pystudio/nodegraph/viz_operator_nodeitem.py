@@ -23,6 +23,7 @@ class F8StudioVizOperatorNodeItem(F8StudioOperatorNodeItem):
 
     Intended for render/viz nodes where:
     - state controls are placed first (top-to-bottom)
+    - command rows follow visible state rows
     - embedded widgets come after state
     - data/exec/other ports are aligned alongside the widget region (no port rows)
     """
@@ -78,6 +79,7 @@ class F8StudioVizOperatorNodeItem(F8StudioOperatorNodeItem):
 
         # State inline panel heights (span node width).
         state_h = 0.0
+        command_h = 0.0
         spacing = 1.0
         group_gap = 6.0
 
@@ -107,6 +109,15 @@ class F8StudioVizOperatorNodeItem(F8StudioOperatorNodeItem):
                 panel_h = float(max(metric.height, port_height or float(PortEnum.SIZE.value)))
                 state_h += panel_h + spacing
             state_h = max(0.0, state_h - spacing) + group_gap
+
+        command_names = self._visible_command_names_for_layout()
+        if command_names:
+            inner_width = max(float(NodeEnum.WIDTH.value) - 8.0, 10.0)
+            for command_name in command_names:
+                metric = self._measure_command_row_metric(command_name, inner_width)
+                panel_h = float(max(metric.height, port_height or float(PortEnum.SIZE.value)))
+                command_h += panel_h + spacing
+            command_h = max(0.0, command_h - spacing) + group_gap
 
         # Embedded widgets (eg. plot canvas).
         widget_width = 0.0
@@ -148,7 +159,7 @@ class F8StudioVizOperatorNodeItem(F8StudioOperatorNodeItem):
         side_padding = 10.0 if widget_width else 0.0
         width = max(float(NodeEnum.WIDTH.value), float(text_w + 18.0), float(widget_width + side_padding))
 
-        port_region_h = state_h + max(widget_height, required_port_region_h)
+        port_region_h = state_h + command_h + max(widget_height, required_port_region_h)
         height = max(float(NodeEnum.HEIGHT.value), float(text_h), float(port_region_h))
         if widget_height:
             height += 10.0
@@ -239,7 +250,8 @@ class F8StudioVizOperatorNodeItem(F8StudioOperatorNodeItem):
 
     def _align_viz_state(self, v_offset: float) -> float:
         """
-        Align state inline panels top-to-bottom and return the y position after the state block.
+        Align visible state rows first, then visible command rows, and return the y
+        position after the inline-row block.
         """
         width = float(self._width)
         spacing = 1.0
@@ -275,6 +287,7 @@ class F8StudioVizOperatorNodeItem(F8StudioOperatorNodeItem):
             nm = self._state_field_name_if_visible(s)
             if nm:
                 state_names.append(nm)
+        command_names = self._visible_command_names_for_layout()
 
         inputs_by_name = {self._port_name(p): p for p in self.inputs if p.isVisible()}
         outputs_by_name = {self._port_name(p): p for p in self.outputs if p.isVisible()}
@@ -335,6 +348,35 @@ class F8StudioVizOperatorNodeItem(F8StudioOperatorNodeItem):
             y += panel_h + spacing
 
         if state_names:
+            y += group_gap
+
+        for command_name in command_names:
+            in_name = f"[C]{command_name}"
+            out_name = f"{command_name}[C]"
+
+            panel_proxy = self._command_inline_proxies.get(command_name)
+            metric = self._measure_command_row_metric(command_name, inner_w)
+            header_h = float(max(port_height or float(PortEnum.SIZE.value), metric.header_height))
+            panel_h = float(max(header_h, metric.height))
+            if panel_proxy is not None:
+                panel_w = float(max(metric.width, inner_w))
+                panel_x = rect.left() + (rect.width() - panel_w) / 2.0
+                min_x = float(inner_x)
+                max_x = float(rect.right() - 4.0 - panel_w)
+                if max_x < min_x:
+                    panel_x = min_x
+                else:
+                    panel_x = max(min_x, min(panel_x, max_x))
+                try:
+                    panel_proxy.setPos(panel_x, y)
+                except (AttributeError, RuntimeError, TypeError, ValueError):
+                    pass
+
+            port_y = y + (header_h - port_height) / 2.0 if port_height else y
+            place_row(in_name, out_name, y=port_y)
+            y += panel_h + spacing
+
+        if command_names:
             y += group_gap
 
         self._ports_end_y = y
@@ -465,7 +507,7 @@ class F8StudioVizOperatorNodeItem(F8StudioOperatorNodeItem):
         except (AttributeError, RuntimeError, TypeError):
             pass
         try:
-            self._ensure_inline_command_widget()
+            self._ensure_inline_command_rows()
         except (AttributeError, RuntimeError, TypeError):
             pass
         self._prepare_layout_metrics()

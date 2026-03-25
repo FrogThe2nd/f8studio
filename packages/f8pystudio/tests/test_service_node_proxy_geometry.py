@@ -213,20 +213,25 @@ def test_sync_proxy_mode_force_hides_late_created_proxy_widgets() -> None:
     assert item._icon_item.isVisible() is False
 
 
-def test_operator_command_cleanup_only_depends_on_inline_command_rows() -> None:
+def test_operator_command_rows_are_preserved_by_inline_row_builder() -> None:
     _ensure_app()
     item = F8StudioVizOperatorNodeItem(name="viz")
     _build_command_row(item, name="run")
     item._command_inline_buttons["run"] = QtWidgets.QToolButton()
     item._command_inline_descriptions["run"] = "Run command"
 
+    calls: list[bool] = []
+
+    def _record_rows() -> None:
+        calls.append(True)
+
+    item._ensure_inline_command_rows = _record_rows  # type: ignore[method-assign]
     item._ensure_inline_command_widget()
 
-    assert item._command_inline_proxies == {}
-    assert item._command_inline_headers == {}
-    assert item._command_inline_buttons == {}
-    assert item._command_inline_descriptions == {}
-    assert item._command_inline_serials == {}
+    assert calls == [True]
+    assert "run" in item._command_inline_proxies
+    assert "run" in item._command_inline_headers
+    assert "run" in item._command_inline_buttons
 
 
 def test_paint_does_not_trigger_proxy_state_changes(monkeypatch) -> None:

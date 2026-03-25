@@ -11,7 +11,7 @@ from ..command_state import (
     command_key_for_name,
     command_output_state_field,
 )
-from ..generated import F8Command, F8ServiceSpec
+from ..generated import F8Command, F8OperatorSpec, F8ServiceSpec
 from .error_utils import log_error_once
 from .state_write import StateWriteOrigin, StateWriteSource
 
@@ -43,12 +43,12 @@ class _CommandDispatchState:
 
 
 def _command_specs_for_node(node: Any) -> list[F8Command]:
-    spec = getattr(node, "spec", None)
-    if isinstance(spec, F8ServiceSpec):
+    try:
+        spec = node.spec
+    except (AttributeError, RuntimeError, TypeError):
+        spec = None
+    if isinstance(spec, (F8ServiceSpec, F8OperatorSpec)):
         return list(spec.commands or [])
-    commands = getattr(spec, "commands", None)
-    if isinstance(commands, list):
-        return [command for command in commands if isinstance(command, F8Command)]
     return []
 
 

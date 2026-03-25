@@ -4,11 +4,13 @@ from types import SimpleNamespace
 from typing import Any
 
 from qtpy import QtWidgets
+from NodeGraphQt.constants import NodePropWidgetEnum
 
 from f8pysdk import (
     F8Command,
     F8CommandParam,
     F8DataPortSpec,
+    F8OperatorSpec,
     F8ServiceSpec,
     F8StateAccess,
     F8StateSpec,
@@ -51,6 +53,52 @@ class _FakePortNode:
 class _FakeGraph:
     def __init__(self) -> None:
         self.service_bridge = None
+        self.model = _FakeGraphModel()
+
+
+class _FakeGraphModel:
+    def get_node_common_properties(self, _node_type: str) -> dict[str, Any]:
+        return {}
+
+
+class _FakePropertyModel:
+    def __init__(self) -> None:
+        self.f8_sys: dict[str, object] = {}
+        self.custom_properties: dict[str, Any] = {}
+
+    def get_tab_name(self, _prop_name: str) -> str:
+        return "Properties"
+
+    def get_widget_type(self, _prop_name: str) -> int:
+        return int(NodePropWidgetEnum.QLINE_EDIT.value)
+
+    def get_property(self, prop_name: str) -> Any:
+        if prop_name == "type_":
+            return "f8.test.operator"
+        return None
+
+
+class _FakeOperatorPropertyNode:
+    def __init__(self, spec: F8OperatorSpec) -> None:
+        self.spec = spec
+        self.model = _FakePropertyModel()
+        self.id = "op.test"
+        self.svcId = "svc.test"
+        self.graph = _FakeGraph()
+        self.type_ = "f8.test.operator"
+        self.nodePurpose = ""
+
+    def name(self) -> str:
+        return "Operator"
+
+    def icon(self) -> str:
+        return ""
+
+    def effective_commands(self) -> list[F8Command]:
+        return list(self.spec.commands or [])
+
+    def effective_state_fields(self) -> list[F8StateSpec]:
+        return list(self.spec.stateFields or [])
 
 
 class _FakeCommandNode:
@@ -208,3 +256,21 @@ def test_edit_command_allows_missing_locked_read_only_dialog(monkeypatch) -> Non
     editor._edit_command("run")
 
     assert captured["read_only"] is True
+
+
+def test_node_property_widget_shows_commands_tab_for_operator_specs() -> None:
+    _ensure_app()
+    spec = F8OperatorSpec(
+        serviceClass="f8.test",
+        operatorClass="f8.test.operator",
+        label="Operator",
+        editableCommands=True,
+        commands=[F8Command(name="run", params=[])],
+    )
+    node = _FakeOperatorPropertyNode(spec)
+
+    widget = npw.F8StudioNodePropEditorWidget(None, node=node)
+    tabs = widget.get_tab_widget()
+    labels = [tabs.tabText(index) for index in range(tabs.count())]
+
+    assert "Commands" in labels

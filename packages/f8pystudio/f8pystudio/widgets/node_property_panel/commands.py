@@ -4,7 +4,8 @@ import logging
 from typing import Any, Callable
 
 import msgspec
-from f8pysdk import F8Command, F8CommandParam, F8ServiceSpec
+from f8pysdk import F8Command, F8CommandParam, F8OperatorSpec, F8ServiceSpec
+from f8pysdk.command_state import command_input_state_field
 from f8pysdk.schema_helpers import schema_default
 
 from qtpy import QtCore, QtWidgets
@@ -33,6 +34,7 @@ from .containers import _F8SpecListSection, _icon_from_style, _set_icon
 
 
 logger = logging.getLogger(__name__)
+_CommandSpec = F8ServiceSpec | F8OperatorSpec
 
 
 class _F8EditCommandParamDialog(QtWidgets.QDialog):
@@ -420,9 +422,25 @@ class _F8SpecCommandEditor(QtWidgets.QWidget):
 
     def _service_id(self) -> str:
         try:
+            spec = self._node.spec
+        except Exception:
+            spec = None
+        if isinstance(spec, F8OperatorSpec):
+            try:
+                return str(self._node.svcId or "").strip()
+            except Exception:
+                return ""
+        try:
             return str(self._node.id or "").strip()
         except Exception:
             return ""
+
+    @staticmethod
+    def _editable_commands(spec: _CommandSpec) -> bool:
+        try:
+            return bool(spec.editableCommands)
+        except Exception:
+            return False
 
     def _ensure_bridge_process_hook(self) -> None:
         if self._bridge_proc_hooked:
@@ -467,10 +485,10 @@ class _F8SpecCommandEditor(QtWidgets.QWidget):
             spec = self._node.spec
         except Exception:
             spec = None
-        if not isinstance(spec, F8ServiceSpec):
+        if not isinstance(spec, (F8ServiceSpec, F8OperatorSpec)):
             self._sec.set_add_visible(False)
             return
-        editable = bool(spec.editableCommands)
+        editable = self._editable_commands(spec)
         self._sec.set_add_visible(bool(editable) and not self._missing_locked)
 
         running = self._is_service_running()
@@ -639,7 +657,7 @@ class _F8SpecCommandEditor(QtWidgets.QWidget):
             spec = self._node.spec
         except Exception:
             spec = None
-        if not isinstance(spec, F8ServiceSpec):
+        if not isinstance(spec, (F8ServiceSpec, F8OperatorSpec)):
             return
         cmd = None
         for c in list(spec.commands or []):
@@ -686,7 +704,15 @@ class _F8SpecCommandEditor(QtWidgets.QWidget):
             if args is None:
                 return
         try:
-            bridge.invoke_remote_command(sid, str(cmd.name or ""), args or {})
+            if isinstance(spec, F8OperatorSpec):
+                bridge.set_remote_state(
+                    sid,
+                    str(self._node.id or "").strip(),
+                    command_input_state_field(str(cmd.name or "")),
+                    args or {},
+                )
+            else:
+                bridge.invoke_remote_command(sid, str(cmd.name or ""), args or {})
         except Exception as e:
             show_warning(self, "Command failed", str(e))
 
@@ -697,9 +723,9 @@ class _F8SpecCommandEditor(QtWidgets.QWidget):
             spec = self._node.spec
         except Exception:
             spec = None
-        if not isinstance(spec, F8ServiceSpec):
+        if not isinstance(spec, (F8ServiceSpec, F8OperatorSpec)):
             return
-        editable = bool(spec.editableCommands)
+        editable = self._editable_commands(spec)
         if not editable:
             return
         cmd = F8Command(
@@ -728,10 +754,10 @@ class _F8SpecCommandEditor(QtWidgets.QWidget):
             spec = self._node.spec
         except Exception:
             spec = None
-        if not isinstance(spec, F8ServiceSpec):
+        if not isinstance(spec, (F8ServiceSpec, F8OperatorSpec)):
             return
         read_only = bool(self._missing_locked)
-        editable = bool(spec.editableCommands)
+        editable = self._editable_commands(spec)
         cmds = list(spec.commands or [])
         idx = -1
         for i, c in enumerate(cmds):
@@ -793,7 +819,7 @@ class _F8SpecCommandEditor(QtWidgets.QWidget):
             node, name=n, show_on_node=bool(show_on_node), base_show_on_node=bool(base_show)
         )
 
-    def _is_required_command(self, spec: F8ServiceSpec, *, name: str) -> bool:
+    def _is_required_command(self, spec: _CommandSpec, *, name: str) -> bool:
         n = str(name or "").strip()
         if not n:
             return False
@@ -809,9 +835,9 @@ class _F8SpecCommandEditor(QtWidgets.QWidget):
             spec = self._node.spec
         except Exception:
             spec = None
-        if not isinstance(spec, F8ServiceSpec):
+        if not isinstance(spec, (F8ServiceSpec, F8OperatorSpec)):
             return
-        editable = bool(spec.editableCommands)
+        editable = self._editable_commands(spec)
         if not editable:
             return
         n = str(name or "").strip()

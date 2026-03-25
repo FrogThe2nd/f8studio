@@ -52,6 +52,7 @@ from .items.embedded_resize_contract import (
     content_rect_with_minimum,
 )
 from .items.inline_command_panel import (
+    ensure_inline_command_rows as _ensure_inline_command_rows_impl,
     ensure_inline_command_widget as _ensure_inline_command_widget_impl,
     refresh_inline_command_rows as _refresh_inline_command_rows_impl,
     invoke_command as _invoke_command_impl,
@@ -131,6 +132,9 @@ from ..widgets.schema_builder import SchemaBuilderDialog, schema_from_json_obj a
 
 logger = logging.getLogger(__name__)
 
+# Service and operator command rows now share the same inline-panel layout model.
+# There is no separate command button panel anymore; `showOnNode` controls both
+# the inline row and its paired command ports.
 
 @dataclass
 class _LayoutMetric:
@@ -388,6 +392,9 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
 
     def _prompt_command_args(self, cmd: Any) -> dict[str, Any] | None:
         return _prompt_command_args_impl(self, cmd)
+
+    def _ensure_inline_command_rows(self) -> None:
+        _ensure_inline_command_rows_impl(self)
 
     def _ensure_inline_command_widget(self) -> None:
         _ensure_inline_command_widget_impl(self)
@@ -1295,7 +1302,7 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         except (AttributeError, RuntimeError, TypeError):
             pass
         try:
-            self._ensure_inline_command_widget()
+            self._ensure_inline_command_rows()
         except (AttributeError, RuntimeError, TypeError):
             pass
         self._prepare_layout_metrics()
@@ -1921,7 +1928,7 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         except (AttributeError, RuntimeError, TypeError):
             pass
         try:
-            self._ensure_inline_command_widget()
+            self._ensure_inline_command_rows()
         except (AttributeError, RuntimeError, TypeError):
             pass
         self._prepare_layout_metrics()
