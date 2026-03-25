@@ -199,8 +199,9 @@ def test_service_node_draw_places_command_ports_beside_row_and_hides_labels() ->
     proxy.setWidget(widget)
     view._command_inline_proxies["stopTracking"] = proxy
     view._command_inline_headers["stopTracking"] = header
+    view._command_inline_buttons["stopTracking"] = QtWidgets.QToolButton()
+    view._command_inline_descriptions["stopTracking"] = ""
     view._command_inline_serials["stopTracking"] = "serial"
-    view._cmd_buttons_by_name = {"stopTracking": QtWidgets.QToolButton()}
     view._width = 260.0
     view._height = 180.0
     view._prepare_layout_metrics()
@@ -221,3 +222,33 @@ def test_service_node_draw_places_command_ports_beside_row_and_hides_labels() ->
     assert out_port.pos().x() > proxy.pos().x() + header.sizeHint().width()
     assert abs((float(in_port.pos().y()) + float(in_port.boundingRect().height()) / 2.0) - header_mid_y) < 2.0
     assert abs((float(out_port.pos().y()) + float(out_port.boundingRect().height()) / 2.0) - header_mid_y) < 2.0
+
+
+def test_sync_from_spec_hides_command_ports_and_rows_when_show_on_node_turns_off() -> None:
+    _ensure_app()
+    spec = F8ServiceSpec(
+        serviceClass="f8.test.service",
+        label="Service",
+        commands=[F8Command(name="stopTracking", showOnNode=True, params=[])],
+    )
+    node_cls = type(
+        "TmpServiceNodeToggle",
+        (F8StudioServiceBaseNode,),
+        {"__identifier__": "svc", "NODE_NAME": spec.label, "SPEC_TEMPLATE": spec},
+    )
+    node = node_cls()
+    view = node.view
+    view._backend_node = lambda: node  # type: ignore[method-assign]
+
+    view._ensure_inline_command_widget()
+    assert "[C]stopTracking" in node.inputs()
+    assert "stopTracking[C]" in node.outputs()
+    assert "stopTracking" in view._command_inline_proxies
+
+    node.spec.commands = [F8Command(name="stopTracking", showOnNode=False, params=[])]
+    node.sync_from_spec()
+    view._ensure_inline_command_widget()
+
+    assert "[C]stopTracking" not in node.inputs()
+    assert "stopTracking[C]" not in node.outputs()
+    assert "stopTracking" not in view._command_inline_proxies

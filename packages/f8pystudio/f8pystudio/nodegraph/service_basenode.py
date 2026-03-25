@@ -53,6 +53,7 @@ from .items.embedded_resize_contract import (
 )
 from .items.inline_command_panel import (
     ensure_inline_command_widget as _ensure_inline_command_widget_impl,
+    refresh_inline_command_rows as _refresh_inline_command_rows_impl,
     invoke_command as _invoke_command_impl,
     prompt_command_args as _prompt_command_args_impl,
 )
@@ -328,15 +329,11 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         self._command_inline_proxies: OrderedDict[str, QtWidgets.QGraphicsProxyWidget] = OrderedDict()
         self._command_inline_headers: OrderedDict[str, QtWidgets.QWidget] = OrderedDict()
         self._command_inline_buttons: OrderedDict[str, QtWidgets.QAbstractButton] = OrderedDict()
+        self._command_inline_descriptions: dict[str, str] = {}
         self._command_inline_serials: dict[str, str] = {}
         self._graph_prop_hooked: bool = False
         self._bridge_proc_hooked: bool = False
         self._state_inline_ctrl_serial: dict[str, str] = {}
-        self._cmd_serial: str = ""
-        self._cmd_proxy: QtWidgets.QGraphicsProxyWidget | None = None
-        self._cmd_widget: QtWidgets.QWidget | None = None
-        self._cmd_buttons: list[QtWidgets.QAbstractButton] = []
-        self._cmd_buttons_by_name: OrderedDict[str, QtWidgets.QAbstractButton] = OrderedDict()
         self._tooltip_filters: list[QtCore.QObject] = []
         self._svc_toolbar_proxy: QtWidgets.QGraphicsProxyWidget | None = None
         self._ports_end_y: float | None = None
@@ -394,6 +391,9 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
 
     def _ensure_inline_command_widget(self) -> None:
         _ensure_inline_command_widget_impl(self)
+
+    def _refresh_inline_command_rows(self) -> None:
+        _refresh_inline_command_rows_impl(self)
 
     def _sync_state_inline_controls_from_graph_property(self, node: Any, name: str, value: Any) -> None:
         _sync_state_inline_controls_from_graph_property_impl(self, node, name, value)
@@ -988,35 +988,14 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
 
     def _measure_state_panel_metric(self, name: str, width: float) -> _StatePanelLayoutMetric:
         cache_key = self._state_panel_metric_cache_key(name, target_width=width)
-        cached = self._state_panel_metrics.get(cache_key)
-        if cached is not None:
-            return cached
-
-        width_value = max(1, int(round(width)))
-        panel_proxy = self._state_inline_proxies.get(name)
-        panel_widget = None
-        if panel_proxy is not None:
-            try:
-                panel_widget = panel_proxy.widget()
-            except (AttributeError, RuntimeError, TypeError):
-                panel_widget = None
-        panel_width, panel_height = self._measure_qwidget_geometry(panel_widget, fixed_width=width_value)
-
-        header_height = float(PortEnum.SIZE.value)
-        header = self._state_inline_headers.get(name)
-        if header is not None:
-            _header_width, measured_header_height = self._measure_qwidget_geometry(header, fixed_width=width_value)
-            if measured_header_height > 0.0:
-                header_height = float(measured_header_height)
-
-        metric = _StatePanelLayoutMetric(
+        return self._measure_inline_panel_metric(
+            cache=self._state_panel_metrics,
             cache_key=cache_key,
-            width=float(max(panel_width, float(width_value))),
-            height=float(max(panel_height, header_height)),
-            header_height=float(header_height),
+            proxy_map=self._state_inline_proxies,
+            header_map=self._state_inline_headers,
+            name=name,
+            width=width,
         )
-        self._state_panel_metrics[cache_key] = metric
-        return metric
 
     def _command_row_metric_cache_key(self, name: str, *, target_width: float) -> str:
         width_key = max(1, int(round(target_width)))
@@ -1025,12 +1004,31 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
 
     def _measure_command_row_metric(self, name: str, width: float) -> _StatePanelLayoutMetric:
         cache_key = self._command_row_metric_cache_key(name, target_width=width)
-        cached = self._command_row_metrics.get(cache_key)
+        return self._measure_inline_panel_metric(
+            cache=self._command_row_metrics,
+            cache_key=cache_key,
+            proxy_map=self._command_inline_proxies,
+            header_map=self._command_inline_headers,
+            name=name,
+            width=width,
+        )
+
+    def _measure_inline_panel_metric(
+        self,
+        *,
+        cache: dict[str, _StatePanelLayoutMetric],
+        cache_key: str,
+        proxy_map: OrderedDict[str, QtWidgets.QGraphicsProxyWidget],
+        header_map: OrderedDict[str, QtWidgets.QWidget],
+        name: str,
+        width: float,
+    ) -> _StatePanelLayoutMetric:
+        cached = cache.get(cache_key)
         if cached is not None:
             return cached
 
         width_value = max(1, int(round(width)))
-        panel_proxy = self._command_inline_proxies.get(name)
+        panel_proxy = proxy_map.get(name)
         panel_widget = None
         if panel_proxy is not None:
             try:
@@ -1040,7 +1038,7 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         panel_width, panel_height = self._measure_qwidget_geometry(panel_widget, fixed_width=width_value)
 
         header_height = float(PortEnum.SIZE.value)
-        header = self._command_inline_headers.get(name)
+        header = header_map.get(name)
         if header is not None:
             _header_width, measured_header_height = self._measure_qwidget_geometry(header, fixed_width=width_value)
             if measured_header_height > 0.0:
@@ -1052,7 +1050,7 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
             height=float(max(panel_height, header_height)),
             header_height=float(header_height),
         )
-        self._command_row_metrics[cache_key] = metric
+        cache[cache_key] = metric
         return metric
 
     def _visible_state_names_for_layout(self) -> list[str]:
@@ -1096,7 +1094,7 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
                 text.setVisible(False)
                 continue
             parsed_command = parse_command_port_name(port_name)
-            if parsed_command is not None and parsed_command[1] in self._cmd_buttons_by_name:
+            if parsed_command is not None and parsed_command[1] in self._command_inline_buttons:
                 text.setVisible(False)
                 continue
             text.setVisible(bool(visible and port.display_name))
@@ -1108,13 +1106,13 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
                 text.setVisible(False)
                 continue
             parsed_command = parse_command_port_name(port_name)
-            if parsed_command is not None and parsed_command[1] in self._cmd_buttons_by_name:
+            if parsed_command is not None and parsed_command[1] in self._command_inline_buttons:
                 text.setVisible(False)
                 continue
             text.setVisible(bool(visible and port.display_name))
 
     def _command_names_with_inline_buttons(self) -> set[str]:
-        return {str(name).strip() for name in self._cmd_buttons_by_name.keys() if str(name).strip()}
+        return {str(name).strip() for name in self._command_inline_buttons.keys() if str(name).strip()}
 
     def _should_enable_proxy_mode(self) -> bool:
         if ITEM_CACHE_MODE is QtWidgets.QGraphicsItem.ItemCoordinateCache:

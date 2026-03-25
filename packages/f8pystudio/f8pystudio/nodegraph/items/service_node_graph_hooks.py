@@ -128,17 +128,10 @@ def is_service_running(node_item: Any) -> bool:
 def on_bridge_service_process_state(node_item: Any, service_id: str, running: bool) -> None:
     if str(service_id or "").strip() != current_service_id(node_item):
         return
-    enabled = bool(running)
-    for button in list(node_item._cmd_buttons):
-        try:
-            button.setEnabled(enabled)
-            if not enabled:
-                button.setToolTip(
-                    (button.toolTip() or "").strip()
-                    + ("\nService not running" if button.toolTip() else "Service not running")
-                )
-        except (AttributeError, RuntimeError, TypeError):
-            continue
+    try:
+        node_item._refresh_inline_command_rows()
+    except (AttributeError, RuntimeError, TypeError):
+        pass
     try:
         QtCore.QTimer.singleShot(0, node_item.draw_node)
     except (AttributeError, RuntimeError, TypeError):

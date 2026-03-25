@@ -213,6 +213,22 @@ def test_sync_proxy_mode_force_hides_late_created_proxy_widgets() -> None:
     assert item._icon_item.isVisible() is False
 
 
+def test_operator_command_cleanup_only_depends_on_inline_command_rows() -> None:
+    _ensure_app()
+    item = F8StudioVizOperatorNodeItem(name="viz")
+    _build_command_row(item, name="run")
+    item._command_inline_buttons["run"] = QtWidgets.QToolButton()
+    item._command_inline_descriptions["run"] = "Run command"
+
+    item._ensure_inline_command_widget()
+
+    assert item._command_inline_proxies == {}
+    assert item._command_inline_headers == {}
+    assert item._command_inline_buttons == {}
+    assert item._command_inline_descriptions == {}
+    assert item._command_inline_serials == {}
+
+
 def test_paint_does_not_trigger_proxy_state_changes(monkeypatch) -> None:
     _ensure_app()
     item = F8StudioServiceNodeItem(name="svc")

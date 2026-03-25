@@ -551,22 +551,6 @@ class F8StudioOperatorNodeItem(F8StudioServiceNodeItem):
 
     def _ensure_inline_command_widget(self) -> None:  # type: ignore[override]
         # Operators don't expose service commands; ensure any previous command widgets are removed.
-        proxy = self._cmd_proxy
-        if proxy is not None:
-            try:
-                proxy.setWidget(None)
-            except (AttributeError, RuntimeError, TypeError):
-                pass
-            try:
-                proxy.setParentItem(None)
-                if self.scene() is not None:
-                    self.scene().removeItem(proxy)
-            except (AttributeError, RuntimeError, TypeError):
-                pass
-        self._cmd_proxy = None
-        self._cmd_widget = None
-        self._cmd_buttons = []
-        self._cmd_buttons_by_name = {}
         for proxy in list(self._command_inline_proxies.values()):
             try:
                 proxy.setWidget(None)
@@ -581,4 +565,5 @@ class F8StudioOperatorNodeItem(F8StudioServiceNodeItem):
         self._command_inline_proxies.clear()
         self._command_inline_headers.clear()
         self._command_inline_buttons.clear()
+        self._command_inline_descriptions.clear()
         self._command_inline_serials.clear()
