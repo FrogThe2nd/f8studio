@@ -171,8 +171,18 @@ def test_required_state_field_dialog_is_not_ui_only_when_editable(monkeypatch) -
     captured: dict[str, bool] = {}
 
     class _FakeStateDialog:
-        def __init__(self, _parent: Any = None, *, title: str, field: Any, ui_only: bool, read_only: bool):
+        def __init__(
+            self,
+            _parent: Any = None,
+            *,
+            title: str,
+            field: Any,
+            global_hotkey: str = "",
+            ui_only: bool,
+            read_only: bool,
+        ):
             del _parent, title, field
+            _ = global_hotkey
             captured["ui_only"] = bool(ui_only)
             captured["read_only"] = bool(read_only)
 
@@ -211,8 +221,18 @@ def test_add_state_field_defaults_to_optional_and_hidden(monkeypatch) -> None:
     captured: dict[str, Any] = {}
 
     class _FakeStateDialog:
-        def __init__(self, _parent: Any = None, *, title: str, field: Any, ui_only: bool, read_only: bool = False):
+        def __init__(
+            self,
+            _parent: Any = None,
+            *,
+            title: str,
+            field: Any,
+            global_hotkey: str = "",
+            ui_only: bool,
+            read_only: bool = False,
+        ):
             del _parent, title, ui_only, read_only
+            _ = global_hotkey
             captured["required"] = bool(field.required)
             captured["show_on_node"] = bool(field.showOnNode)
 

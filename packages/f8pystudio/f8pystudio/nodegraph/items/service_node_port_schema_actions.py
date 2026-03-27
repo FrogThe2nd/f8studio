@@ -536,24 +536,29 @@ def open_state_field_editor_dialog(node_item: Any, *, field_name: str) -> None:
     from ...widgets.spec_mutations import replace_state_field as _spec_replace_state_field
     from ...widgets.ui_override_mutations import (
         find_base_state_field as _find_base_state_field,
+        set_state_field_global_hotkey_override as _set_state_field_global_hotkey_override,
         set_state_field_ui_override as _set_state_field_ui_override,
+        state_field_global_hotkey as _state_field_global_hotkey,
     )
 
     dlg = _F8EditStateFieldDialog(
         node_item._viewer_safe(),
         title="Edit state field",
         field=current,
+        global_hotkey=_state_field_global_hotkey(node, field_name),
         ui_only=ui_only,
         read_only=read_only,
     )
     if dlg.exec_() != QtWidgets.QDialog.Accepted:
         return
     new_field = dlg.field()
+    global_hotkey = dlg.global_hotkey()
     if ui_only:
         base_field = _find_base_state_field(spec, name=field_name)
         if base_field is None:
             base_field = new_field
         _set_state_field_ui_override(node, field_name=field_name, base=base_field, edited=new_field)
+        _set_state_field_global_hotkey_override(node, field_name=field_name, hotkey=global_hotkey)
         node.sync_from_spec()
         return
     if read_only:
@@ -561,6 +566,9 @@ def open_state_field_editor_dialog(node_item: Any, *, field_name: str) -> None:
 
     updated_spec = _spec_replace_state_field(spec, old_name=field_name, new_field=new_field)
     node.spec = updated_spec
+    if str(new_field.name or "").strip() != str(field_name or "").strip():
+        _set_state_field_global_hotkey_override(node, field_name=field_name, hotkey="")
+    _set_state_field_global_hotkey_override(node, field_name=str(new_field.name or field_name), hotkey=global_hotkey)
 
 
 def on_port_right_click(node_item: Any, port: Any, screen_pos: QtCore.QPoint) -> None:

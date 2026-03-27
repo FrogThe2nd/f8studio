@@ -7,9 +7,10 @@ import msgspec
 from f8pysdk import F8DataPortSpec, F8OperatorSpec, F8StateAccess, F8StateSpec
 from f8pysdk.msgspec_codec import copy_model
 
-from qtpy import QtCore, QtWidgets
+from qtpy import QtCore, QtGui, QtWidgets
 
 from ...ui_notifications import show_warning
+from ...global_hotkeys.parser import parse_global_hotkey
 from ..schema_builder import SchemaBuilderDialog
 from ..spec_mutations import set_ports as _spec_set_ports
 from ..state_controls import schema_type_any as _schema_type
@@ -28,6 +29,66 @@ from .containers import _F8SpecListSection, _F8SpecNameRow
 
 
 logger = logging.getLogger(__name__)
+
+
+class _F8GlobalHotkeyEdit(QtWidgets.QWidget):
+    def __init__(self, parent: QtWidgets.QWidget | None = None, *, value: str = "") -> None:
+        super().__init__(parent)
+        self._editor = QtWidgets.QKeySequenceEdit(self)
+        self._clear_btn = QtWidgets.QPushButton("Clear", self)
+        self._clear_btn.setFixedWidth(56)
+        self._clear_btn.clicked.connect(self.clear)  # type: ignore[attr-defined]
+        self._editor.setToolTip("Click here and press a shortcut, for example Ctrl+Alt+P")
+        self._clear_btn.setToolTip("Clear the current global hotkey")
+
+        try:
+            self._editor.editingFinished.connect(self._normalize_sequence)  # type: ignore[attr-defined]
+        except AttributeError:
+            pass
+
+        layout = QtWidgets.QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+        layout.addWidget(self._editor, 1)
+        layout.addWidget(self._clear_btn)
+        self.set_value(value)
+
+    def setEnabled(self, enabled: bool) -> None:  # type: ignore[override]
+        super().setEnabled(enabled)
+        self._editor.setEnabled(bool(enabled))
+        self._clear_btn.setEnabled(bool(enabled))
+
+    def set_value(self, value: str) -> None:
+        text = str(value or "").strip()
+        with QtCore.QSignalBlocker(self._editor):
+            self._editor.setKeySequence(QtGui.QKeySequence(text))
+
+    def value(self) -> str:
+        try:
+            sequence = self._editor.keySequence()
+        except AttributeError:
+            return ""
+        return str(sequence.toString(QtGui.QKeySequence.SequenceFormat.PortableText) or "").strip()
+
+    def clear(self) -> None:
+        with QtCore.QSignalBlocker(self._editor):
+            self._editor.clear()
+
+    def setToolTip(self, tooltip: str) -> None:  # type: ignore[override]
+        text = str(tooltip or "")
+        super().setToolTip(text)
+        self._editor.setToolTip(text)
+        self._clear_btn.setToolTip("Clear the current global hotkey" if text else "")
+
+    def _normalize_sequence(self) -> None:
+        text = self.value()
+        if not text:
+            return
+        try:
+            normalized = parse_global_hotkey(text).display_text
+        except Exception:
+            return
+        self.set_value(normalized)
 
 
 class _F8EditExecPortDialog(QtWidgets.QDialog):
@@ -153,6 +214,7 @@ class _F8EditStateFieldDialog(QtWidgets.QDialog):
         *,
         title: str,
         field: F8StateSpec,
+        global_hotkey: str = "",
         ui_only: bool = False,
         read_only: bool = False,
     ):
@@ -188,6 +250,8 @@ class _F8EditStateFieldDialog(QtWidgets.QDialog):
         self._ui_control.setClearButtonEnabled(True)
         self._ui_lang = QtWidgets.QLineEdit(str(field.uiLanguage or ""))
         self._ui_lang.setClearButtonEnabled(True)
+        self._global_hotkey = _F8GlobalHotkeyEdit(value=str(global_hotkey or ""))
+        self._ui_control.textChanged.connect(self._refresh_global_hotkey_enabled)  # type: ignore[attr-defined]
 
         self._schema_summary = QtWidgets.QLabel("")
         self._schema_summary.setStyleSheet("color: #888;")
@@ -205,6 +269,7 @@ class _F8EditStateFieldDialog(QtWidgets.QDialog):
         form.addRow("Description", self._desc)
         form.addRow("uiControl", self._ui_control)
         form.addRow("uiLanguage", self._ui_lang)
+        form.addRow("Global Hotkey", self._global_hotkey)
 
         schema_row = QtWidgets.QHBoxLayout()
         schema_row.addWidget(self._schema_summary, 1)
@@ -233,12 +298,14 @@ class _F8EditStateFieldDialog(QtWidgets.QDialog):
                 self._desc,
                 self._ui_control,
                 self._ui_lang,
+                self._global_hotkey,
                 self._schema_btn,
             ):
                 w.setEnabled(False)
             ok_btn = self._buttons.button(QtWidgets.QDialogButtonBox.Ok)
             if ok_btn is not None:
                 ok_btn.setEnabled(False)
+        self._refresh_global_hotkey_enabled()
 
     def _refresh_schema_summary(self) -> None:
         t = _schema_type(self._schema)
@@ -260,6 +327,18 @@ class _F8EditStateFieldDialog(QtWidgets.QDialog):
             show_warning(self, "Invalid schema", str(e))
             return
         self._refresh_schema_summary()
+
+    def _refresh_global_hotkey_enabled(self) -> None:
+        if self._read_only:
+            self._global_hotkey.setEnabled(False)
+            return
+        ui_control = str(self._ui_control.text() or "").strip().lower()
+        enabled = ui_control == "button"
+        self._global_hotkey.setEnabled(enabled)
+        if enabled:
+            self._global_hotkey.setToolTip("Click and press a shortcut, for example Ctrl+Alt+P")
+            return
+        self._global_hotkey.setToolTip("Global hotkeys are only used for uiControl=button fields.")
 
     def field(self) -> F8StateSpec:
         name = str(self._name.text() or "").strip()
@@ -285,6 +364,22 @@ class _F8EditStateFieldDialog(QtWidgets.QDialog):
             uiLanguage=ui_lang,
             showOnNode=show_on_node,
         )
+
+    def global_hotkey(self) -> str:
+        ui_control = str(self._ui_control.text() or "").strip().lower()
+        if ui_control != "button":
+            return ""
+        return self._global_hotkey.value()
+
+    def accept(self) -> None:  # type: ignore[override]
+        hotkey = self.global_hotkey()
+        if hotkey:
+            try:
+                parse_global_hotkey(hotkey)
+            except Exception as exc:
+                show_warning(self, "Invalid global hotkey", str(exc))
+                return
+        super().accept()
 
 
 class _F8SpecPortEditor(QtWidgets.QWidget):

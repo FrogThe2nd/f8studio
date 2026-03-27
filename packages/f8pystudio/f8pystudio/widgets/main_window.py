@@ -16,6 +16,7 @@ from ..bridge.deploy_fingerprint import build_compiled_deploy_fingerprint
 from ..ui_notifications import show_info, show_warning
 from ..ui_bus import UiCommand, UiCommandApplier
 from ..ui_icons import StudioIcon, icon_for
+from ..global_hotkeys.controller import ControlPanelGlobalHotkeyController
 from .node_property_panel import F8StudioSingleNodePropertiesWidget
 from .node_library_widget import F8StudioNodeLibraryWidget
 from .service_manager_widget import ServiceManagerWidget
@@ -179,7 +180,12 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
             bridge=self._bridge,
             studio_service_class=STUDIO_SERVICE_CLASS,
         )
+        self._global_hotkey_controller = ControlPanelGlobalHotkeyController(
+            studio_graph=self.studio_graph,
+            emit_log_line=self._append_studio_log_line,
+        )
         self.studio_graph.property_changed.connect(self._on_ui_property_changed)  # type: ignore[attr-defined]
+        self.studio_graph.nodes_deleted.connect(self._on_graph_nodes_deleted)  # type: ignore[attr-defined]
 
         QtCore.QTimer.singleShot(0, self._auto_load_session)
         QtWidgets.QApplication.instance().aboutToQuit.connect(self._auto_save_session)  # type: ignore[attr-defined]
@@ -659,6 +665,7 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
     def closeEvent(self, event):
         self._save_window_layout()
         self._auto_save_session()
+        self._global_hotkey_controller.close()
         self.stop_bridge()
         super().closeEvent(event)
 
@@ -667,6 +674,7 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         session_auto_load_session(studio_graph=self.studio_graph, log_dock=self._log_dock)
         self._mark_session_saved()
         self._mark_auto_deploy_synced()
+        self._global_hotkey_controller.refresh_bindings()
 
     @QtCore.Slot()
     def _auto_save_session(self) -> None:
@@ -700,6 +708,7 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         if loaded:
             self._mark_session_saved()
             self._mark_auto_deploy_synced()
+            self._global_hotkey_controller.refresh_bindings()
 
     @QtCore.Slot()
     def _on_load_session_action(self) -> None:
@@ -714,6 +723,7 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         if loaded:
             self._mark_session_saved()
             self._mark_auto_deploy_synced()
+            self._global_hotkey_controller.refresh_bindings()
 
     @QtCore.Slot()
     def _on_save_session_as_action(self) -> None:
@@ -864,6 +874,18 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
 
     def _on_ui_property_changed(self, node: Any, name: str, value: Any) -> None:
         self._runtime_state_sync.on_ui_property_changed(node, name, value)
+        self._global_hotkey_controller.on_graph_property_changed(node, name, value)
+
+    def _on_graph_nodes_deleted(self, node_ids: list[str]) -> None:
+        self._global_hotkey_controller.on_nodes_deleted(node_ids)
+
+    def _append_studio_log_line(self, line: str) -> None:
+        text = str(line or "")
+        if not text:
+            return
+        if not text.endswith("\n"):
+            text = text + "\n"
+        self._log_dock.append("studio", text)
 
     @staticmethod
     def _coerce_bool_setting(raw: Any, *, default: bool) -> bool:

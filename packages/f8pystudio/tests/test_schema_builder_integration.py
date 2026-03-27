@@ -159,8 +159,18 @@ def test_open_state_field_editor_allows_missing_locked_read_only_dialog(monkeypa
     captured: dict[str, Any] = {}
 
     class _FakeStateDialog:
-        def __init__(self, _parent: Any = None, *, title: str, field: Any, ui_only: bool, read_only: bool):
+        def __init__(
+            self,
+            _parent: Any = None,
+            *,
+            title: str,
+            field: Any,
+            global_hotkey: str = "",
+            ui_only: bool,
+            read_only: bool,
+        ):
             del title, field
+            _ = global_hotkey
             captured["ui_only"] = bool(ui_only)
             captured["read_only"] = bool(read_only)
 

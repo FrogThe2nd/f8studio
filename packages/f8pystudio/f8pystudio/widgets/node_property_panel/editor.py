@@ -40,6 +40,8 @@ from ..state_controls import (
 )
 from ..ui_override_mutations import (
     find_base_state_field as _find_base_state_field,
+    set_state_field_global_hotkey_override as _set_state_field_global_hotkey_override,
+    state_field_global_hotkey as _state_field_global_hotkey,
     set_state_field_ui_override as _set_state_field_ui_override,
 )
 from .commands import _F8SpecCommandEditor
@@ -270,17 +272,20 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
             self,
             title="Edit state field",
             field=current,
+            global_hotkey=_state_field_global_hotkey(node, name),
             ui_only=ui_only,
             read_only=bool(missing_locked),
         )
         if dlg.exec_() != QtWidgets.QDialog.Accepted:
             return
         new_field = dlg.field()
+        global_hotkey = dlg.global_hotkey()
 
         if ui_only:
             self._apply_state_field_ui_override(name, new_field)
         else:
             self._apply_state_field_spec_replace(name, new_field)
+        self._apply_state_field_global_hotkey_override(name, str(new_field.name or name), global_hotkey)
 
         self._on_spec_applied()
 
@@ -394,6 +399,19 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
         spec = _get_node_spec(node)
         base = _find_base_state_field(spec, name=name) if spec is not None else None
         _set_state_field_ui_override(node, field_name=name, base=base or edited, edited=edited)
+
+    def _apply_state_field_global_hotkey_override(self, old_name: str, new_name: str, hotkey: str) -> None:
+        node = self._node
+        if node is None:
+            return
+        old_field_name = str(old_name or "").strip()
+        new_field_name = str(new_name or "").strip()
+        if old_field_name and old_field_name != new_field_name:
+            _set_state_field_global_hotkey_override(node, field_name=old_field_name, hotkey="")
+        target_field_name = new_field_name or old_field_name
+        if not target_field_name:
+            return
+        _set_state_field_global_hotkey_override(node, field_name=target_field_name, hotkey=hotkey)
 
     def _toggle_state_field_show_on_node(self, field_name: str, show_on_node: bool) -> None:
         missing_locked, _missing_type = _node_missing_lock_info(self._node)

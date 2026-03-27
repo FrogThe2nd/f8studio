@@ -14,6 +14,7 @@ from f8pysdk.generated import (
     F8NumberTypeSchema,
     F8StringTypeSchema,
 )
+from ..ui_override_mutations import state_field_global_hotkey as _state_field_global_hotkey
 
 
 def effective_state_fields(node: Any) -> list[Any]:
@@ -114,6 +115,13 @@ def state_field_label(node: Any, prop_name: str) -> str:
         except AttributeError:
             return ""
     return ""
+
+
+def state_field_global_hotkey(node: Any, prop_name: str) -> str:
+    try:
+        return _state_field_global_hotkey(node, prop_name)
+    except Exception:
+        return ""
 
 
 def schema_type_any(schema: Any) -> str:

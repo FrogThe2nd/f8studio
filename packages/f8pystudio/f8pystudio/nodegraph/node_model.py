@@ -57,6 +57,7 @@ class F8StudioNodeModel(NodeModel):
                         owner.sync_from_spec()  # type: ignore[attr-defined]
                     except Exception:
                         logger.exception("Failed to sync node after f8_spec update.")
+            self._emit_owner_property_changed("f8_spec", self.f8_spec)
             return
         if name == "f8_ui":
             if isinstance(value, dict):
@@ -73,11 +74,33 @@ class F8StudioNodeModel(NodeModel):
                         owner.sync_from_spec()  # type: ignore[attr-defined]
                     except Exception:
                         logger.exception("Failed to sync node after f8_ui update.")
+            self._emit_owner_property_changed("f8_ui", self.f8_ui)
             return
         if name == "nodePurpose":
             self.nodePurpose = "" if value is None else str(value)
             return
         return super().set_property(name, value)
+
+    def _emit_owner_property_changed(self, name: str, value: object) -> None:
+        owner = self._owner_node
+        if owner is None:
+            return
+        try:
+            graph = owner.graph  # type: ignore[attr-defined]
+        except AttributeError:
+            return
+        if graph is None:
+            return
+        try:
+            signal = graph.property_changed  # type: ignore[attr-defined]
+        except AttributeError:
+            return
+        if signal is None:
+            return
+        try:
+            signal.emit(owner, str(name or ""), value)
+        except Exception:
+            logger.exception("Failed to emit property_changed for system property: %s", str(name or ""))
 
     @property
     def to_dict(self):
