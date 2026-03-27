@@ -6,6 +6,7 @@ from .viz_audio import VizAudioRuntimeNode, register_operator as register_viz_au
 from .viz_three_d import VizThreeDRuntimeNode, register_operator as register_viz_three_d
 from .control_panel import ControlPanelRuntimeNode, register_operator as register_control_panel
 from .note import NoteRuntimeNode, register_operator as register_note
+from .value_stepper import ValueStepperRuntimeNode, register_operator as register_value_stepper
 
 __all__ = [
     "VizTextRuntimeNode",
@@ -16,6 +17,7 @@ __all__ = [
     "VizThreeDRuntimeNode",
     "ControlPanelRuntimeNode",
     "NoteRuntimeNode",
+    "ValueStepperRuntimeNode",
     "register_operator",
 ]
 
@@ -32,4 +34,5 @@ def register_operator(registry=None):
     reg = register_viz_three_d(reg)
     reg = register_control_panel(reg)
     reg = register_note(reg)
+    reg = register_value_stepper(reg)
     return reg

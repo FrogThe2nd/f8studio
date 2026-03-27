@@ -4,6 +4,7 @@ from f8pystudio.constants import SERVICE_CLASS as STUDIO_SERVICE_CLASS
 from f8pystudio.nodegraph.operator_basenode import F8StudioOperatorBaseNode
 from f8pystudio.nodegraph.service_basenode import F8StudioServiceBaseNode
 from f8pystudio.operators.note import OPERATOR_CLASS as NOTE_OPERATOR_CLASS
+from f8pystudio.operators.value_stepper import OPERATOR_CLASS as VALUE_STEPPER_OPERATOR_CLASS
 from f8pystudio.pystudio_node_registry import register_pystudio_specs
 from f8pystudio.render_nodes.note import NoteRenderNode
 from f8pystudio.render_nodes.registry import RenderNodeRegistry
@@ -97,3 +98,22 @@ def test_renderer_registry_resolves_note_renderer() -> None:
     reg = RenderNodeRegistry()
     renderer = reg.get("note_markdown", node_kind="operator")
     assert renderer is NoteRenderNode
+
+
+def test_discovery_registers_value_stepper_operator_spec() -> None:
+    catalog = _reset_service_catalog()
+    load_discovery_into_catalog(
+        roots=[],
+        catalog=catalog,
+        builtin_injectors=(_inject_builtin_pystudio_specs,),
+    )
+
+    value_stepper = next(
+        (op for op in catalog.operators.all() if op.operatorClass == VALUE_STEPPER_OPERATOR_CLASS),
+        None,
+    )
+    assert value_stepper is not None
+    state_fields = {field.name: field for field in list(value_stepper.stateFields or [])}
+    assert state_fields["value"].uiControl == "slider"
+    assert state_fields["increaseTrigger"].uiControl == "button"
+    assert state_fields["decreaseTrigger"].uiControl == "button"
