@@ -7,6 +7,7 @@ This module binds state-value controls into the nodegraph item environment,
 handling node callbacks, option-pool refresh, styling, and graph sync.
 """
 
+import enum
 import json
 import logging
 from typing import Any
@@ -46,6 +47,55 @@ INLINE_HEADER_BUTTON_STYLE = """
     QToolButton:hover { background: transparent; }
     QToolButton:checked { background: transparent; }
 """
+
+
+def _json_safe_schema_value(value: Any) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, enum.Enum):
+        return value.value
+    if isinstance(value, (list, tuple)):
+        return [_json_safe_schema_value(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): _json_safe_schema_value(item) for key, item in value.items()}
+    return str(value)
+
+
+def state_inline_control_serial(node_item: Any, info: StateFieldInfo) -> str:
+    """
+    Signature used to decide whether an inline state control must be rebuilt.
+
+    Include schema details that affect the control widget itself, not just
+    cosmetic metadata like label/description.
+    """
+    try:
+        value_schema = info.value_schema
+        enum_items = node_item._schema_enum_items(value_schema)
+        minimum, maximum = node_item._schema_numeric_range(value_schema)
+        default_value = None
+        if value_schema is not None:
+            try:
+                default_value = value_schema.default
+            except AttributeError:
+                default_value = None
+        return json.dumps(
+            {
+                "access": info.access_str,
+                "required": info.required,
+                "uiControl": info.ui_control,
+                "uiLanguage": info.ui_language,
+                "schemaType": str(schema_type(value_schema) or ""),
+                "enum": [str(item) for item in enum_items],
+                "minimum": minimum,
+                "maximum": maximum,
+                "default": _json_safe_schema_value(default_value),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            default=str,
+        )
+    except Exception:
+        return ""
 
 
 def _refresh_embedded_text_palette(widget: QtWidgets.QWidget) -> None:
@@ -624,30 +674,6 @@ def ensure_state_inline_controls(node_item: Any) -> None:
         except RuntimeError:
             pass
 
-    def _ctrl_serial(info: StateFieldInfo) -> str:
-        """
-        Signature for deciding when the control widget must be rebuilt.
-        (Exclude label/description; those can be updated in-place.)
-        """
-        try:
-            vs = info.value_schema
-            enum_items = node_item._schema_enum_items(vs)
-            return json.dumps(
-                {
-                    "access": info.access_str,
-                    "required": info.required,
-                    "uiControl": info.ui_control,
-                    "uiLanguage": info.ui_language,
-                    "schemaType": str(schema_type(vs) or ""),
-                    "enum": [str(item) for item in enum_items],
-                },
-                ensure_ascii=False,
-                sort_keys=True,
-                default=str,
-            )
-        except Exception:
-            return ""
-
     for info in show:
         # Always keep label/tooltip up to date without rebuilding.
         name = info.name
@@ -664,7 +690,7 @@ def ensure_state_inline_controls(node_item: Any) -> None:
             except RuntimeError:
                 pass
 
-        ctrl_sig = _ctrl_serial(info)
+        ctrl_sig = state_inline_control_serial(node_item, info)
         if name in node_item._state_inline_proxies and ctrl_sig and ctrl_sig == node_item._state_inline_ctrl_serial.get(name, ""):
             continue
 

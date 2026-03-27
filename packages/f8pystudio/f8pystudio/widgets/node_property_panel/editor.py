@@ -1334,6 +1334,10 @@ class F8StudioSingleNodePropertiesWidget(QtWidgets.QWidget):
         if not prop_key:
             return
 
+        if prop_key in {"f8_spec", "f8_ui"}:
+            self._editor.reload()
+            return
+
         # Always try pool refresh even if the pool field has no visible editor widget.
         try:
             self._editor.refresh_option_pool(prop_key)

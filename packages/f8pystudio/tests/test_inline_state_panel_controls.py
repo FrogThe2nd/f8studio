@@ -9,6 +9,7 @@ from NodeGraphQt.custom_widgets.properties_bin.node_property_factory import Node
 from f8pysdk import F8StateAccess, F8StateSpec, integer_schema, number_schema, string_schema
 from f8pystudio.nodegraph.items.state_inline_controls import (
     build_state_inline_control,
+    state_inline_control_serial,
     sync_state_inline_controls_from_graph_property,
 )
 from f8pystudio.nodegraph.items.node_item_core import StateFieldInfo
@@ -16,6 +17,7 @@ from f8pystudio.nodegraph.items.service_toolbar_host import F8ForceGlobalToolTip
 from f8pystudio.components.controls import F8Dial, F8OptionCombo
 from f8pystudio.components.state_editors import F8CodeButtonEditor, F8DialEditor, F8IncrementButtonEditor
 from f8pystudio.widgets.state_controls import build_state_panel_control
+from f8pystudio.widgets.state_controls.schema_introspect import schema_numeric_range
 from f8pystudio.components.wave import (
     WaveHeatmapControl,
     WavePatternEditorControl,
@@ -63,6 +65,14 @@ class _FakeNodeItem:
 
     def _backend_node(self) -> _FakeBackendNode:
         return self._backend
+
+
+class _SerialNodeItem(_FakeNodeItem):
+    def __init__(self) -> None:
+        super().__init__(code_value="")
+
+    def _schema_numeric_range(self, schema: Any) -> tuple[float | None, float | None]:
+        return schema_numeric_range(schema)
 
 
 def _ensure_app() -> QtWidgets.QApplication:
@@ -469,6 +479,39 @@ def test_build_state_panel_control_dial_disables_non_numeric_schema() -> None:
     assert dial is not None
     assert not dial.isEnabled()
     assert "integer or number" in str(dial.toolTip() or "")
+
+
+def test_state_inline_control_serial_changes_when_numeric_range_changes() -> None:
+    node_item = _SerialNodeItem()
+    info_a = StateFieldInfo(
+        name="pan",
+        label="Pan",
+        tooltip="Circular pan control.",
+        show_on_node=True,
+        access="rw",
+        access_str="rw",
+        required=True,
+        ui_control="dial",
+        ui_language="",
+        value_schema=number_schema(default=0.0, minimum=-1.0, maximum=1.0),
+    )
+    info_b = StateFieldInfo(
+        name="pan",
+        label="Pan",
+        tooltip="Circular pan control.",
+        show_on_node=True,
+        access="rw",
+        access_str="rw",
+        required=True,
+        ui_control="dial",
+        ui_language="",
+        value_schema=number_schema(default=0.0, minimum=-2.0, maximum=2.0),
+    )
+
+    serial_a = state_inline_control_serial(node_item, info_a)
+    serial_b = state_inline_control_serial(node_item, info_b)
+
+    assert serial_a != serial_b
 
 
 def test_option_combo_read_only_toggle_does_not_call_qlineedit_text_interaction_flags() -> None:
