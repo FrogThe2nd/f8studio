@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from typing import Any, Callable
 
 from qtpy import QtCore, QtWidgets
 
 from ..editor_assist.session import EditorSessionKey
 from ..editor_assist.workspace import EditorAssistContext
-from .controls import F8ImageB64Editor, F8MultiSelect, F8OptionCombo, F8Switch, F8ValueBar
+from .controls import F8Dial, F8ImageB64Editor, F8MultiSelect, F8OptionCombo, F8Switch, F8ValueBar
 from .state_editors import (
     F8BoolSwitchEditor,
     F8CodeButtonEditor,
+    F8DialEditor,
     F8ImageValueEditor,
     F8IncrementButtonEditor,
     F8InlineCodeEditor,
@@ -82,6 +84,12 @@ def set_control_read_only(widget: QtWidgets.QWidget, *, read_only: bool) -> None
     if isinstance(widget, F8ValueBar):
         widget.setEnabled(not bool(read_only))
         return
+    if isinstance(widget, F8Dial):
+        widget.set_read_only(bool(read_only))
+        return
+    if isinstance(widget, F8DialEditor):
+        widget.set_read_only(bool(read_only))
+        return
     if isinstance(widget, F8ImageB64Editor):
         widget.set_disabled(bool(read_only))
         return
@@ -131,6 +139,14 @@ def _binding(
     )
 
 
+def _dial_loop_mode(ui_control: str) -> bool | None:
+    match = re.match(r"^dial(?:\[\s*(loop|noloop)\s*\])?$", str(ui_control or "").strip().lower())
+    if match is None:
+        return None
+    variant = str(match.group(1) or "loop")
+    return variant != "noloop"
+
+
 def build_panel_control_binding(
     *,
     spec: StateControlSpec,
@@ -142,6 +158,7 @@ def build_panel_control_binding(
     editor_session_key: EditorSessionKey | None,
 ) -> StateControlBinding:
     ui = str(spec.ui_control or "").strip().lower()
+    dial_loop = _dial_loop_mode(ui)
 
     if spec.is_image_b64:
         widget = F8ImageValueEditor()
@@ -201,6 +218,21 @@ def build_panel_control_binding(
         widget.set_name(spec.name)
         return _binding(widget, apply_value=widget.set_value)
 
+    if dial_loop is not None:
+        data_type = int if spec.schema_type == "integer" else float
+        widget = F8DialEditor(data_type=data_type)
+        widget.set_name(spec.name)
+        widget.set_loop(dial_loop)
+        if spec.minimum is not None:
+            widget.set_min(spec.minimum)
+        if spec.maximum is not None:
+            widget.set_max(spec.maximum)
+        if spec.field_tooltip:
+            widget.set_context_tooltip(spec.field_tooltip)
+        if spec.schema_type not in {"integer", "number"}:
+            widget.set_invalid_reason("Dial control requires integer or number state schema.")
+        return _binding(widget, apply_value=widget.set_value)
+
     if spec.schema_type in {"integer", "number"} and ui == "slider":
         widget = F8ValueBarEditor(data_type=int if spec.schema_type == "integer" else float)
         widget.set_name(spec.name)
@@ -242,6 +274,7 @@ def build_inline_control_binding(
     tooltip_filter_installer: Callable[[QtWidgets.QWidget], None] | None,
 ) -> StateControlBinding:
     ui = str(spec.ui_control or "").strip().lower()
+    dial_loop = _dial_loop_mode(ui)
 
     if ui in {"wave_preview"}:
         control, apply_value = make_wave_preview_control(
@@ -472,6 +505,22 @@ def build_inline_control_binding(
         _apply_switch_value(value_getter())
         widget.setEnabled(not bool(read_only))
         return _binding(widget, apply_value=_apply_switch_value)
+
+    if dial_loop is not None:
+        widget = F8Dial(integer=(spec.schema_type == "integer"), minimum=0.0, maximum=1.0)
+        widget.set_loop(dial_loop)
+        widget.set_range(spec.minimum, spec.maximum)
+        if spec.field_tooltip:
+            widget.set_context_tooltip(spec.field_tooltip)
+            if tooltip_filter_installer is not None:
+                tooltip_filter_installer(widget)
+        if spec.schema_type not in {"integer", "number"}:
+            widget.set_invalid_reason("Dial control requires integer or number state schema.")
+        widget.valueChanging.connect(lambda value: value_setter(value, push_undo=False))  # type: ignore[attr-defined]
+        widget.valueCommitted.connect(lambda value: value_setter(value, push_undo=True))  # type: ignore[attr-defined]
+        widget.set_value(value_getter())
+        widget.set_read_only(bool(read_only))
+        return _binding(widget, apply_value=widget.set_value)
 
     if spec.schema_type in {"integer", "number"} and ui == "slider":
         widget = F8ValueBar(integer=(spec.schema_type == "integer"), minimum=0.0, maximum=1.0)

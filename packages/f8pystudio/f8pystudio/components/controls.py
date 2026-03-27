@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import math
 import os
 import re
 import time
@@ -686,6 +687,250 @@ class F8ValueBar(QtWidgets.QWidget):
             self.valueChanging.emit(v2)
 
 
+class F8Dial(QtWidgets.QWidget):
+    """
+    Circular numeric dial with a full 360-degree range and a seam at 12 o'clock.
+    """
+
+    valueChanging = QtCore.Signal(object)  # float|int
+    valueCommitted = QtCore.Signal(object)  # float|int
+
+    def __init__(
+        self,
+        parent: QtWidgets.QWidget | None = None,
+        *,
+        minimum: float = 0.0,
+        maximum: float = 1.0,
+        value: float | int | None = None,
+        integer: bool = False,
+        loop: bool = True,
+    ) -> None:
+        super().__init__(parent)
+        self.setMinimumSize(56, 56)
+        self.setSizePolicy(QtWidgets.QSizePolicy.MinimumExpanding, QtWidgets.QSizePolicy.MinimumExpanding)
+        self.setCursor(QtCore.Qt.PointingHandCursor)
+        self._min = float(minimum)
+        self._max = float(maximum)
+        if self._max < self._min:
+            self._min, self._max = self._max, self._min
+        self._integer = bool(integer)
+        self._loop = bool(loop)
+        self._value: float | int = self._coerce(value if value is not None else self._min)
+        self._dragging = False
+        self._drag_fraction = self._value_fraction()
+        self._read_only = False
+        self._invalid_reason = ""
+        self._context_tooltip = ""
+
+    def sizeHint(self) -> QtCore.QSize:  # type: ignore[override]
+        return QtCore.QSize(76, 76)
+
+    def set_range(self, minimum: float | int | None, maximum: float | int | None) -> None:
+        lo = float(0.0 if minimum is None else minimum)
+        hi = float(1.0 if maximum is None else maximum)
+        if hi < lo:
+            lo, hi = hi, lo
+        self._min, self._max = lo, hi
+        self.set_value(self._value)
+
+    def set_value(self, value: Any) -> None:
+        self._value = self._coerce(value)
+        self._drag_fraction = self._value_fraction()
+        self.update()
+
+    def value(self) -> float | int:
+        return self._value
+
+    def set_loop(self, loop: bool) -> None:
+        self._loop = bool(loop)
+
+    def loop(self) -> bool:
+        return self._loop
+
+    def set_read_only(self, read_only: bool) -> None:
+        self._read_only = bool(read_only)
+        self._refresh_enabled()
+
+    def set_invalid_reason(self, reason: str) -> None:
+        self._invalid_reason = str(reason or "").strip()
+        self._refresh_tooltip()
+        self._refresh_enabled()
+
+    def set_context_tooltip(self, tooltip: str) -> None:
+        self._context_tooltip = str(tooltip or "").strip()
+        self._refresh_tooltip()
+
+    def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:  # type: ignore[override]
+        if event.button() == QtCore.Qt.LeftButton and self.isEnabled():
+            self._dragging = True
+            self._set_from_pos(event.position(), commit=False, absolute=True)
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event: QtGui.QMouseEvent) -> None:  # type: ignore[override]
+        if self._dragging and self.isEnabled():
+            self._set_from_pos(event.position(), commit=False, absolute=False)
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event: QtGui.QMouseEvent) -> None:  # type: ignore[override]
+        if self._dragging and event.button() == QtCore.Qt.LeftButton and self.isEnabled():
+            self._dragging = False
+            self._set_from_pos(event.position(), commit=True, absolute=False)
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def paintEvent(self, event: QtGui.QPaintEvent) -> None:  # type: ignore[override]
+        del event
+        painter = QtGui.QPainter(self)
+        painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
+
+        rect = QtCore.QRectF(self.rect()).adjusted(2.0, 2.0, -2.0, -2.0)
+        size = min(rect.width(), rect.height())
+        square = QtCore.QRectF(0.0, 0.0, size, size)
+        square.moveCenter(rect.center())
+        ring_width = max(6.0, size * 0.11)
+
+        enabled = self.isEnabled()
+        border = QtGui.QColor(255, 255, 255, 60 if enabled else 28)
+        bg = QtGui.QColor(0, 0, 0, 45 if enabled else 25)
+        fill = QtGui.QColor(120, 200, 255, 190 if enabled else 70)
+        text = QtGui.QColor(235, 235, 235, 245 if enabled else 120)
+        knob = QtGui.QColor(235, 235, 235, 245 if enabled else 120)
+
+        painter.setPen(QtGui.QPen(border, 1.0))
+        painter.setBrush(bg)
+        painter.drawEllipse(square)
+
+        ring_rect = square.adjusted(ring_width / 2.0, ring_width / 2.0, -ring_width / 2.0, -ring_width / 2.0)
+        painter.setBrush(QtCore.Qt.NoBrush)
+        painter.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255, 32 if enabled else 16), ring_width))
+        painter.drawEllipse(ring_rect)
+
+        fraction = self._value_fraction()
+        if fraction > 0.0:
+            fill_pen = QtGui.QPen(fill, ring_width)
+            fill_pen.setCapStyle(QtCore.Qt.RoundCap)
+            painter.setPen(fill_pen)
+            painter.drawArc(ring_rect, 90 * 16, -int(round(fraction * 360.0 * 16.0)))
+
+        center = ring_rect.center()
+        indicator_radius = (ring_rect.width() / 2.0)
+        indicator_x = center.x() + math.cos((fraction * 2.0 * math.pi) - (math.pi / 2.0)) * indicator_radius
+        indicator_y = center.y() + math.sin((fraction * 2.0 * math.pi) - (math.pi / 2.0)) * indicator_radius
+        knob_radius = max(3.5, ring_width * 0.42)
+        painter.setPen(QtCore.Qt.NoPen)
+        painter.setBrush(knob)
+        painter.drawEllipse(QtCore.QPointF(indicator_x, indicator_y), knob_radius, knob_radius)
+
+        painter.setPen(text)
+        display_text = self._format_value(self._value)
+        inner_rect = square.adjusted(ring_width * 1.9, ring_width * 1.9, -ring_width * 1.9, -ring_width * 1.9)
+        font = QtGui.QFont(painter.font())
+        pixel_size = max(8, int(inner_rect.height() * 0.32))
+        font.setPixelSize(pixel_size)
+        painter.setFont(font)
+        metrics = QtGui.QFontMetrics(font)
+        while pixel_size > 8 and (
+            metrics.horizontalAdvance(display_text) > inner_rect.width() * 0.92 or metrics.height() > inner_rect.height() * 0.8
+        ):
+            pixel_size -= 1
+            font.setPixelSize(pixel_size)
+            painter.setFont(font)
+            metrics = QtGui.QFontMetrics(font)
+        painter.drawText(inner_rect, QtCore.Qt.AlignCenter, display_text)
+
+    def _refresh_enabled(self) -> None:
+        self.setEnabled((not self._read_only) and (not self._invalid_reason))
+
+    def _refresh_tooltip(self) -> None:
+        tip_parts: list[str] = []
+        if self._context_tooltip:
+            tip_parts.append(self._context_tooltip)
+        if self._invalid_reason:
+            tip_parts.append(self._invalid_reason)
+        self.setToolTip("\n".join(tip_parts))
+
+    def _coerce(self, value: Any) -> float | int:
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            numeric = float(self._min)
+        numeric = max(self._min, min(self._max, numeric))
+        if self._integer:
+            return int(round(numeric))
+        return numeric
+
+    def _format_value(self, value: float | int) -> str:
+        if self._integer:
+            return str(int(value))
+        return ("{:.6f}".format(float(value))).rstrip("0").rstrip(".")
+
+    def _span(self) -> float:
+        return max(0.0, self._max - self._min)
+
+    def _value_fraction(self) -> float:
+        span = self._span()
+        if span <= 0.0:
+            return 0.0
+        fraction = (float(self._value) - self._min) / span
+        return max(0.0, min(1.0, fraction))
+
+    def _fraction_to_value(self, fraction: float) -> float | int:
+        span = self._span()
+        if span <= 0.0:
+            return int(round(self._min)) if self._integer else float(self._min)
+        numeric = self._min + max(0.0, min(1.0, fraction)) * span
+        if self._integer:
+            return int(max(self._min, min(self._max, round(numeric))))
+        return float(max(self._min, min(self._max, numeric)))
+
+    def _point_to_fraction(self, pos: QtCore.QPointF) -> float:
+        rect = QtCore.QRectF(self.rect()).adjusted(2.0, 2.0, -2.0, -2.0)
+        center = rect.center()
+        dx = float(pos.x() - center.x())
+        dy = float(pos.y() - center.y())
+        if abs(dx) < 1e-9 and abs(dy) < 1e-9:
+            return self._value_fraction()
+        angle = math.atan2(dy, dx)
+        clockwise_from_top = (angle + (math.pi / 2.0)) % (2.0 * math.pi)
+        return clockwise_from_top / (2.0 * math.pi)
+
+    @staticmethod
+    def _wrap_delta(next_fraction: float, current_fraction: float) -> float:
+        delta = float(next_fraction) - float(current_fraction)
+        if delta > 0.5:
+            return delta - 1.0
+        if delta < -0.5:
+            return delta + 1.0
+        return delta
+
+    def _set_from_pos(self, pos: QtCore.QPointF, *, commit: bool, absolute: bool) -> None:
+        pointer_fraction = self._point_to_fraction(pos)
+        if absolute:
+            value_fraction = pointer_fraction
+        else:
+            delta = self._wrap_delta(pointer_fraction, self._drag_fraction)
+            value_fraction = self._value_fraction() + delta
+            if self._loop:
+                value_fraction = value_fraction % 1.0
+            else:
+                value_fraction = max(0.0, min(1.0, value_fraction))
+        self._drag_fraction = pointer_fraction
+        next_value = self._fraction_to_value(value_fraction)
+        if next_value == self._value and not commit:
+            return
+        self._value = next_value
+        self.update()
+        if commit:
+            self.valueCommitted.emit(next_value)
+        else:
+            self.valueChanging.emit(next_value)
+
+
 @dataclass(frozen=True)
 class _ImageB64Result:
     b64: str
@@ -1105,4 +1350,3 @@ class F8MultiSelect(QtWidgets.QWidget):
             tip_parts.append(self._context_tooltip)
         tip_parts.append(f"Selected: {selected_text}")
         self._button.setToolTip("\n".join(tip_parts))
-

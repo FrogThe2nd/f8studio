@@ -19,7 +19,7 @@ from ..editor_assist.session import EditorSessionKey
 from ..editor_assist.workspace import EditorAssistContext
 from ..ui_notifications import show_warning
 from ..ui_icons import StudioIcon, icon_for
-from .controls import F8ImageB64Editor, F8MultiSelect, F8OptionCombo, F8Switch, F8ValueBar
+from .controls import F8Dial, F8ImageB64Editor, F8MultiSelect, F8OptionCombo, F8Switch, F8ValueBar
 from ..widgets.json_text_editor import attach_json_enhancements
 from ..widgets.monaco_editor_dialog import open_code_editor_window
 
@@ -893,6 +893,64 @@ class F8ValueBarEditor(QtWidgets.QWidget):
         self.value_changed.emit(self.get_name(), out)
 
 
+class F8DialEditor(QtWidgets.QWidget):
+    """
+    Property-value editor wrapper around the reusable circular dial control.
+    """
+
+    value_changed = QtCore.Signal(str, object)
+
+    def __init__(self, parent: QtWidgets.QWidget | None = None, *, data_type: type[int] | type[float]) -> None:
+        super().__init__(parent)
+        self._name = ""
+        self._data_type = data_type
+        self._min: float | int | None = None
+        self._max: float | int | None = None
+        self._dial = F8Dial(integer=(data_type is int), minimum=0.0, maximum=1.0)
+        self._dial.valueCommitted.connect(self._emit)  # type: ignore[attr-defined]
+
+        layout = QtWidgets.QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self._dial, 1)
+
+    def set_name(self, name: str) -> None:
+        self._name = str(name or "")
+
+    def get_name(self) -> str:
+        return self._name
+
+    def set_min(self, value: Any) -> None:
+        self._min = value
+        self._dial.set_range(self._min, self._max)
+
+    def set_max(self, value: Any) -> None:
+        self._max = value
+        self._dial.set_range(self._min, self._max)
+
+    def set_value(self, value: Any) -> None:
+        self._dial.set_value(value)
+
+    def get_value(self) -> Any:
+        value = self._dial.value()
+        return int(value) if self._data_type is int else float(value)
+
+    def set_read_only(self, read_only: bool) -> None:
+        self._dial.set_read_only(bool(read_only))
+
+    def set_loop(self, loop: bool) -> None:
+        self._dial.set_loop(bool(loop))
+
+    def set_context_tooltip(self, tooltip: str) -> None:
+        self._dial.set_context_tooltip(tooltip)
+
+    def set_invalid_reason(self, reason: str) -> None:
+        self._dial.set_invalid_reason(reason)
+
+    def _emit(self, value: Any) -> None:
+        out = int(value) if self._data_type is int else float(value)
+        self.value_changed.emit(self.get_name(), out)
+
+
 class F8ImageValueEditor(QtWidgets.QWidget):
     """
     Property-value editor wrapper around the reusable base64 image control.
@@ -936,6 +994,7 @@ __all__ = [
     "F8OptionComboEditor",
     "F8MultiSelectEditor",
     "F8BoolSwitchEditor",
+    "F8DialEditor",
     "F8ValueBarEditor",
     "F8ImageValueEditor",
 ]

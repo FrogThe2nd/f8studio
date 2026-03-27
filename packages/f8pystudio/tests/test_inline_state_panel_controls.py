@@ -1,19 +1,20 @@
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from qtpy import QtCore, QtGui, QtWidgets
 from NodeGraphQt.custom_widgets.properties_bin.node_property_factory import NodePropertyWidgetFactory
 
-from f8pysdk import F8StateAccess, F8StateSpec, integer_schema, string_schema
+from f8pysdk import F8StateAccess, F8StateSpec, integer_schema, number_schema, string_schema
 from f8pystudio.nodegraph.items.state_inline_controls import (
     build_state_inline_control,
     sync_state_inline_controls_from_graph_property,
 )
 from f8pystudio.nodegraph.items.node_item_core import StateFieldInfo
 from f8pystudio.nodegraph.items.service_toolbar_host import F8ForceGlobalToolTipFilter
-from f8pystudio.components.controls import F8OptionCombo
-from f8pystudio.components.state_editors import F8CodeButtonEditor, F8IncrementButtonEditor
+from f8pystudio.components.controls import F8Dial, F8OptionCombo
+from f8pystudio.components.state_editors import F8CodeButtonEditor, F8DialEditor, F8IncrementButtonEditor
 from f8pystudio.widgets.state_controls import build_state_panel_control
 from f8pystudio.components.wave import (
     WaveHeatmapControl,
@@ -177,6 +178,21 @@ def _invalid_button_field() -> StateFieldInfo:
     )
 
 
+def _dial_field() -> StateFieldInfo:
+    return StateFieldInfo(
+        name="pan",
+        label="Pan",
+        tooltip="Circular pan control.",
+        show_on_node=True,
+        access="rw",
+        access_str="rw",
+        required=True,
+        ui_control="dial",
+        ui_language=None,
+        value_schema=number_schema(default=0.0, minimum=-1.0, maximum=1.0),
+    )
+
+
 class _FakePropertyNode:
     def __init__(self, field: F8StateSpec) -> None:
         self._field = field
@@ -201,6 +217,14 @@ def _mouse_event(
         buttons,
         QtCore.Qt.KeyboardModifier.NoModifier,
     )
+
+
+def _dial_pos(widget: QtWidgets.QWidget, fraction: float) -> QtCore.QPointF:
+    rect = QtCore.QRectF(widget.rect()).adjusted(2.0, 2.0, -2.0, -2.0)
+    center = rect.center()
+    radius = min(rect.width(), rect.height()) / 2.0
+    theta = (float(fraction) * 2.0 * math.pi) - (math.pi / 2.0)
+    return QtCore.QPointF(center.x() + math.cos(theta) * radius, center.y() + math.sin(theta) * radius)
 
 
 def test_build_state_inline_control_code_uses_push_button_and_style() -> None:
@@ -310,6 +334,50 @@ def test_build_state_inline_control_button_disables_non_numeric_schema() -> None
     assert "integer or number" in str(control.toolTip() or "")
 
 
+def test_build_state_inline_control_dial_updates_backend_value() -> None:
+    _ensure_app()
+    node_item = _FakeNodeItem(code_value="")
+    node_item._backend = _FakeBackendNode({"pan": 0.0})
+
+    control = build_state_inline_control(node_item, _dial_field())
+
+    assert isinstance(control, F8Dial)
+    control.resize(96, 96)
+    target = _dial_pos(control, 0.625)
+    control.mousePressEvent(
+        _mouse_event(
+            QtCore.QEvent.Type.MouseButtonPress,
+            target,
+            button=QtCore.Qt.MouseButton.LeftButton,
+            buttons=QtCore.Qt.MouseButton.LeftButton,
+        )
+    )
+    control.mouseReleaseEvent(
+        _mouse_event(
+            QtCore.QEvent.Type.MouseButtonRelease,
+            target,
+            button=QtCore.Qt.MouseButton.LeftButton,
+            buttons=QtCore.Qt.MouseButton.NoButton,
+        )
+    )
+
+    assert float(node_item._backend.get_property("pan")) > 0.2
+
+
+def test_build_state_inline_control_dial_installs_global_tooltip_filter() -> None:
+    _ensure_app()
+    node_item = _FakeNodeItem(code_value="")
+    node_item._backend = _FakeBackendNode({"pan": 0.0})
+
+    control = build_state_inline_control(node_item, _dial_field())
+
+    assert isinstance(control, F8Dial)
+    assert len(node_item._tooltip_filters) == 1
+    tooltip_filter = node_item._tooltip_filters[0]
+    assert isinstance(tooltip_filter, F8ForceGlobalToolTipFilter)
+    assert tooltip_filter.parent() is control
+
+
 def test_build_state_panel_control_button_uses_field_label_and_increments() -> None:
     _ensure_app()
     field = F8StateSpec(
@@ -334,6 +402,73 @@ def test_build_state_panel_control_button_uses_field_label_and_increments() -> N
     widget.click()
     widget.click()
     assert seen == [1, 2]
+
+
+def test_build_state_panel_control_dial_uses_dial_editor() -> None:
+    _ensure_app()
+    field = F8StateSpec(
+        name="pan",
+        label="Pan",
+        valueSchema=number_schema(default=0.0, minimum=-1.0, maximum=1.0),
+        access=F8StateAccess.rw,
+        uiControl="dial",
+    )
+    node = _FakePropertyNode(field)
+    widget = build_state_panel_control(
+        node=node,
+        prop_name="pan",
+        widget_type=1,
+        widget_factory=NodePropertyWidgetFactory(),
+    )
+
+    assert isinstance(widget, F8DialEditor)
+
+
+def test_build_state_panel_control_dial_noloop_sets_loop_mode() -> None:
+    _ensure_app()
+    field = F8StateSpec(
+        name="pan",
+        label="Pan",
+        valueSchema=number_schema(default=0.0, minimum=-1.0, maximum=1.0),
+        access=F8StateAccess.rw,
+        uiControl="dial[noloop]",
+    )
+    node = _FakePropertyNode(field)
+    widget = build_state_panel_control(
+        node=node,
+        prop_name="pan",
+        widget_type=1,
+        widget_factory=NodePropertyWidgetFactory(),
+    )
+
+    assert isinstance(widget, F8DialEditor)
+    dial = widget.findChild(F8Dial)
+    assert dial is not None
+    assert dial.loop() is False
+
+
+def test_build_state_panel_control_dial_disables_non_numeric_schema() -> None:
+    _ensure_app()
+    field = F8StateSpec(
+        name="badDial",
+        label="Bad Dial",
+        valueSchema=string_schema(default="oops"),
+        access=F8StateAccess.rw,
+        uiControl="dial",
+    )
+    node = _FakePropertyNode(field)
+    widget = build_state_panel_control(
+        node=node,
+        prop_name="badDial",
+        widget_type=1,
+        widget_factory=NodePropertyWidgetFactory(),
+    )
+
+    assert isinstance(widget, F8DialEditor)
+    dial = widget.findChild(F8Dial)
+    assert dial is not None
+    assert not dial.isEnabled()
+    assert "integer or number" in str(dial.toolTip() or "")
 
 
 def test_option_combo_read_only_toggle_does_not_call_qlineedit_text_interaction_flags() -> None:

@@ -1,4 +1,5 @@
 from .controls import (
+    F8Dial,
     F8ImageB64Editor,
     F8MultiSelect,
     F8OptionCombo,
@@ -17,6 +18,7 @@ from .state_builders import (
 from .state_editors import (
     F8BoolSwitchEditor,
     F8CodeButtonEditor,
+    F8DialEditor,
     F8ImageValueEditor,
     F8IncrementButtonEditor,
     F8InlineCodeEditor,
@@ -41,6 +43,8 @@ from .wave import (
 __all__ = [
     "F8BoolSwitchEditor",
     "F8CodeButtonEditor",
+    "F8Dial",
+    "F8DialEditor",
     "F8ImageB64Editor",
     "F8ImageValueEditor",
     "F8IncrementButtonEditor",
