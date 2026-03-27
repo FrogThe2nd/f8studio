@@ -9,6 +9,242 @@ from ..pystudio_service_bridge import PyStudioServiceBridge, ServiceMonitorRow
 from ..ui_icons import StudioIcon, icon_for
 
 
+class _ServiceMonitorTableModel(QtCore.QAbstractTableModel):
+    SORT_ROLE = QtCore.Qt.UserRole + 1
+    _HEADERS = (
+        "Service ID",
+        "Service Class",
+        "Running",
+        "Alive",
+        "Ready",
+        "Active",
+        "CPU%",
+        "RAM(MB)",
+        "GPU%",
+        "LatencyP95(ms)",
+        "Errors",
+    )
+
+    def __init__(self, parent: QtCore.QObject | None = None) -> None:
+        super().__init__(parent)
+        self._rows: list[ServiceMonitorRow] = []
+
+    @staticmethod
+    def _format_bool(value: bool | None) -> str:
+        if value is None:
+            return "-"
+        return "true" if bool(value) else "false"
+
+    @staticmethod
+    def _format_float(value: float | None, *, digits: int = 1) -> str:
+        if value is None:
+            return "-"
+        return f"{float(value):.{int(digits)}f}"
+
+    @staticmethod
+    def _format_ram_mb(value: int | None) -> str:
+        if value is None:
+            return "-"
+        return f"{float(value) / 1024.0 / 1024.0:.1f}"
+
+    @classmethod
+    def row_texts(cls, row: ServiceMonitorRow) -> tuple[str, ...]:
+        error_count = "-" if row.error_count_window is None else str(int(row.error_count_window))
+        return (
+            row.service_id,
+            row.service_class,
+            cls._format_bool(row.running),
+            cls._format_bool(row.alive),
+            cls._format_bool(row.ready),
+            cls._format_bool(row.active),
+            cls._format_float(row.cpu_process_percent),
+            cls._format_ram_mb(row.memory_rss_bytes),
+            cls._format_float(row.gpu_util_percent),
+            cls._format_float(row.latency_ms_p95, digits=2),
+            error_count,
+        )
+
+    def rowCount(self, parent: QtCore.QModelIndex = QtCore.QModelIndex()) -> int:
+        if parent.isValid():
+            return 0
+        return len(self._rows)
+
+    def columnCount(self, parent: QtCore.QModelIndex = QtCore.QModelIndex()) -> int:
+        if parent.isValid():
+            return 0
+        return len(self._HEADERS)
+
+    def data(self, index: QtCore.QModelIndex, role: int = QtCore.Qt.DisplayRole) -> str | None:
+        if not index.isValid():
+            return None
+        row_index = int(index.row())
+        column_index = int(index.column())
+        if row_index < 0 or row_index >= len(self._rows):
+            return None
+        if column_index < 0 or column_index >= len(self._HEADERS):
+            return None
+        text = self.row_texts(self._rows[row_index])[column_index]
+        if role in (QtCore.Qt.DisplayRole, QtCore.Qt.ToolTipRole):
+            return text
+        if role == self.SORT_ROLE:
+            return self._sort_value(self._rows[row_index], column_index)
+        return None
+
+    @staticmethod
+    def _sort_value(row: ServiceMonitorRow, column_index: int) -> object:
+        if column_index == 0:
+            return str(row.service_id or "")
+        if column_index == 1:
+            return str(row.service_class or "")
+        if column_index == 2:
+            return _ServiceMonitorTableModel._sort_optional_bool(row.running)
+        if column_index == 3:
+            return _ServiceMonitorTableModel._sort_optional_bool(row.alive)
+        if column_index == 4:
+            return _ServiceMonitorTableModel._sort_optional_bool(row.ready)
+        if column_index == 5:
+            return _ServiceMonitorTableModel._sort_optional_bool(row.active)
+        if column_index == 6:
+            return _ServiceMonitorTableModel._sort_optional_float(row.cpu_process_percent)
+        if column_index == 7:
+            return _ServiceMonitorTableModel._sort_optional_int(row.memory_rss_bytes)
+        if column_index == 8:
+            return _ServiceMonitorTableModel._sort_optional_float(row.gpu_util_percent)
+        if column_index == 9:
+            return _ServiceMonitorTableModel._sort_optional_float(row.latency_ms_p95)
+        if column_index == 10:
+            return _ServiceMonitorTableModel._sort_optional_int(row.error_count_window)
+        return ""
+
+    @staticmethod
+    def _sort_optional_bool(value: bool | None) -> tuple[int, int]:
+        if value is None:
+            return (1, 0)
+        return (0, int(bool(value)))
+
+    @staticmethod
+    def _sort_optional_int(value: int | None) -> tuple[int, int]:
+        if value is None:
+            return (1, 0)
+        return (0, int(value))
+
+    @staticmethod
+    def _sort_optional_float(value: float | None) -> tuple[int, float]:
+        if value is None:
+            return (1, 0.0)
+        return (0, float(value))
+
+    def headerData(
+        self,
+        section: int,
+        orientation: QtCore.Qt.Orientation,
+        role: int = QtCore.Qt.DisplayRole,
+    ) -> str | None:
+        if role != QtCore.Qt.DisplayRole:
+            return None
+        if orientation != QtCore.Qt.Horizontal:
+            return None
+        if section < 0 or section >= len(self._HEADERS):
+            return None
+        return self._HEADERS[section]
+
+    def flags(self, index: QtCore.QModelIndex) -> QtCore.Qt.ItemFlags:
+        if not index.isValid():
+            return QtCore.Qt.NoItemFlags
+        return QtCore.Qt.ItemIsEnabled | QtCore.Qt.ItemIsSelectable
+
+    def row_for_service_id(self, service_id: str) -> ServiceMonitorRow | None:
+        sid = str(service_id or "").strip()
+        for row in self._rows:
+            if row.service_id == sid:
+                return row
+        return None
+
+    def service_id_at_row(self, row_index: int) -> str:
+        if row_index < 0 or row_index >= len(self._rows):
+            return ""
+        return str(self._rows[row_index].service_id or "").strip()
+
+    def update_rows(self, rows: list[ServiceMonitorRow]) -> None:
+        desired_rows = list(rows)
+        desired_service_ids = [row.service_id for row in desired_rows]
+        desired_service_id_set = set(desired_service_ids)
+
+        for row_index in range(len(self._rows) - 1, -1, -1):
+            if self._rows[row_index].service_id in desired_service_id_set:
+                continue
+            self.beginRemoveRows(QtCore.QModelIndex(), row_index, row_index)
+            del self._rows[row_index]
+            self.endRemoveRows()
+
+        for target_index, desired_row in enumerate(desired_rows):
+            desired_service_id = desired_row.service_id
+            if target_index < len(self._rows) and self._rows[target_index].service_id == desired_service_id:
+                continue
+
+            current_index = -1
+            for scan_index, existing_row in enumerate(self._rows):
+                if existing_row.service_id == desired_service_id:
+                    current_index = scan_index
+                    break
+
+            if current_index < 0:
+                self.beginInsertRows(QtCore.QModelIndex(), target_index, target_index)
+                self._rows.insert(target_index, desired_row)
+                self.endInsertRows()
+                continue
+
+            destination_child = target_index
+            if current_index < target_index:
+                destination_child = target_index + 1
+            self.beginMoveRows(
+                QtCore.QModelIndex(),
+                current_index,
+                current_index,
+                QtCore.QModelIndex(),
+                destination_child,
+            )
+            moved_row = self._rows.pop(current_index)
+            self._rows.insert(target_index, moved_row)
+            self.endMoveRows()
+
+        for row_index, desired_row in enumerate(desired_rows):
+            if row_index >= len(self._rows):
+                break
+            current_row = self._rows[row_index]
+            if current_row == desired_row:
+                continue
+            current_texts = self.row_texts(current_row)
+            desired_texts = self.row_texts(desired_row)
+            self._rows[row_index] = desired_row
+
+            changed_columns = [
+                column_index
+                for column_index, (current_text, desired_text) in enumerate(zip(current_texts, desired_texts))
+                if current_text != desired_text
+            ]
+            if not changed_columns:
+                continue
+            first_column = min(changed_columns)
+            last_column = max(changed_columns)
+            top_left = self.index(row_index, first_column)
+            bottom_right = self.index(row_index, last_column)
+            self.dataChanged.emit(top_left, bottom_right, [QtCore.Qt.DisplayRole, QtCore.Qt.ToolTipRole])
+
+
+class _ServiceMonitorSortProxyModel(QtCore.QSortFilterProxyModel):
+    def lessThan(self, source_left: QtCore.QModelIndex, source_right: QtCore.QModelIndex) -> bool:
+        model = self.sourceModel()
+        if model is None:
+            return super().lessThan(source_left, source_right)
+
+        left_value = model.data(source_left, _ServiceMonitorTableModel.SORT_ROLE)
+        right_value = model.data(source_right, _ServiceMonitorTableModel.SORT_ROLE)
+        if left_value is None or right_value is None:
+            return super().lessThan(source_left, source_right)
+        return left_value < right_value
+
+
 class ServiceManagerWidget(QtWidgets.QWidget):
     _COL_SERVICE_ID = 0
     _COL_SERVICE_CLASS = 1
@@ -67,22 +303,13 @@ class ServiceManagerWidget(QtWidgets.QWidget):
         self._deploy_btn.setToolTip("Deploy current rungraph to service")
         self._restart_btn.setToolTip("Restart service (terminate + deploy + activate)")
 
-        self._table = QtWidgets.QTableWidget(0, 11, self)
-        self._table.setHorizontalHeaderLabels(
-            [
-                "Service ID",
-                "Service Class",
-                "Running",
-                "Alive",
-                "Ready",
-                "Active",
-                "CPU%",
-                "RAM(MB)",
-                "GPU%",
-                "LatencyP95(ms)",
-                "Errors",
-            ]
-        )
+        self._model = _ServiceMonitorTableModel(self)
+        self._proxy_model = _ServiceMonitorSortProxyModel(self)
+        self._proxy_model.setSourceModel(self._model)
+        self._proxy_model.setSortRole(_ServiceMonitorTableModel.SORT_ROLE)
+        self._proxy_model.setDynamicSortFilter(True)
+        self._table = QtWidgets.QTableView(self)
+        self._table.setModel(self._proxy_model)
         self._table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
         self._table.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
         self._table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
@@ -92,6 +319,7 @@ class ServiceManagerWidget(QtWidgets.QWidget):
         header.setSectionResizeMode(QtWidgets.QHeaderView.Interactive)
         header.setSectionsMovable(False)
         header.setMinimumSectionSize(52)
+        self._table.setSortingEnabled(True)
         self._apply_default_column_widths()
 
         controls = QtWidgets.QHBoxLayout()
@@ -114,7 +342,7 @@ class ServiceManagerWidget(QtWidgets.QWidget):
         self._stop_btn.clicked.connect(self._on_stop_clicked)  # type: ignore[attr-defined]
         self._deploy_btn.clicked.connect(self._on_deploy_clicked)  # type: ignore[attr-defined]
         self._restart_btn.clicked.connect(self._on_restart_clicked)  # type: ignore[attr-defined]
-        self._table.itemSelectionChanged.connect(self._on_selection_changed)  # type: ignore[attr-defined]
+        self._table.selectionModel().selectionChanged.connect(self._on_selection_changed)  # type: ignore[attr-defined]
 
         self._poll_timer = QtCore.QTimer(self)
         self._poll_timer.setInterval(1000)
@@ -132,31 +360,6 @@ class ServiceManagerWidget(QtWidgets.QWidget):
     def _flush_refresh_queue(self) -> None:
         self._refresh_queued = False
         self.refresh()
-
-    @staticmethod
-    def _format_bool(value: bool | None) -> str:
-        if value is None:
-            return "-"
-        return "true" if bool(value) else "false"
-
-    @staticmethod
-    def _format_float(value: float | None, *, digits: int = 1) -> str:
-        if value is None:
-            return "-"
-        return f"{float(value):.{int(digits)}f}"
-
-    @staticmethod
-    def _format_ram_mb(value: int | None) -> str:
-        if value is None:
-            return "-"
-        return f"{float(value) / 1024.0 / 1024.0:.1f}"
-
-    @staticmethod
-    def _set_item(table: QtWidgets.QTableWidget, row: int, column: int, text: str) -> None:
-        item = QtWidgets.QTableWidgetItem(str(text))
-        item.setFlags(item.flags() & ~QtCore.Qt.ItemIsEditable)
-        item.setToolTip(str(text))
-        table.setItem(row, column, item)
 
     def _apply_default_column_widths(self) -> None:
         for index, width in enumerate(self._DEFAULT_COLUMN_WIDTHS):
@@ -225,17 +428,42 @@ class ServiceManagerWidget(QtWidgets.QWidget):
         selected = self._table.selectionModel().selectedRows()
         if not selected:
             return ""
-        row_index = int(selected[0].row())
-        item = self._table.item(row_index, 0)
-        if item is None:
+        source_index = self._proxy_model.mapToSource(selected[0])
+        if not source_index.isValid():
             return ""
-        return str(item.text() or "").strip()
+        return self._model.service_id_at_row(int(source_index.row()))
 
     def _selected_row(self) -> ServiceMonitorRow | None:
         service_id = self._selected_service_id()
         if not service_id:
             return None
         return self._rows_by_service_id.get(service_id)
+
+    @staticmethod
+    def _restore_scrollbar_value(scrollbar: QtWidgets.QScrollBar, value: int) -> None:
+        clamped_value = max(0, min(int(value), scrollbar.maximum()))
+        scrollbar.setValue(clamped_value)
+
+    def _select_service_id(self, service_id: str) -> None:
+        sid = str(service_id or "").strip()
+        if not sid:
+            return
+        for row_index in range(self._model.rowCount()):
+            if self._model.service_id_at_row(row_index) != sid:
+                continue
+            source_index = self._model.index(row_index, self._COL_SERVICE_ID)
+            if not source_index.isValid():
+                return
+            index = self._proxy_model.mapFromSource(source_index)
+            if not index.isValid():
+                return
+            selection_model = self._table.selectionModel()
+            selection_model.select(
+                index,
+                QtCore.QItemSelectionModel.ClearAndSelect | QtCore.QItemSelectionModel.Rows,
+            )
+            self._table.setCurrentIndex(index)
+            return
 
     def _declared_services(self) -> dict[str, str]:
         callback = self._get_declared_services
@@ -329,6 +557,10 @@ class ServiceManagerWidget(QtWidgets.QWidget):
     @QtCore.Slot()
     def refresh(self) -> None:
         previous_service_id = self._selected_service_id()
+        vertical_scrollbar = self._table.verticalScrollBar()
+        horizontal_scrollbar = self._table.horizontalScrollBar()
+        previous_vertical_scroll = int(vertical_scrollbar.value())
+        previous_horizontal_scroll = int(horizontal_scrollbar.value())
         declared_services = self._declared_services()
         rows = self._rows_for_declared_services(
             bridge_rows=self._bridge.list_service_monitor_rows(),
@@ -336,37 +568,28 @@ class ServiceManagerWidget(QtWidgets.QWidget):
         )
         self._rows_by_service_id = {row.service_id: row for row in rows}
 
-        self._table.setRowCount(len(rows))
-        for row_index, row in enumerate(rows):
-            self._bridge.request_service_status(row.service_id)
-            self._set_item(self._table, row_index, self._COL_SERVICE_ID, row.service_id)
-            self._set_item(self._table, row_index, self._COL_SERVICE_CLASS, row.service_class)
-            self._set_item(self._table, row_index, self._COL_RUNNING, self._format_bool(row.running))
-            self._set_item(self._table, row_index, self._COL_ALIVE, self._format_bool(row.alive))
-            self._set_item(self._table, row_index, self._COL_READY, self._format_bool(row.ready))
-            self._set_item(self._table, row_index, self._COL_ACTIVE, self._format_bool(row.active))
-            self._set_item(self._table, row_index, self._COL_CPU, self._format_float(row.cpu_process_percent))
-            self._set_item(self._table, row_index, self._COL_RAM, self._format_ram_mb(row.memory_rss_bytes))
-            self._set_item(self._table, row_index, self._COL_GPU, self._format_float(row.gpu_util_percent))
-            self._set_item(
-                self._table, row_index, self._COL_LATENCY_P95, self._format_float(row.latency_ms_p95, digits=2)
-            )
-            error_count = "-" if row.error_count_window is None else str(int(row.error_count_window))
-            self._set_item(self._table, row_index, self._COL_ERRORS, error_count)
+        self._table.setUpdatesEnabled(False)
+        try:
+            for row in rows:
+                self._bridge.request_service_status(row.service_id)
+            self._model.update_rows(rows)
 
-        if previous_service_id:
-            for row_index in range(self._table.rowCount()):
-                row_item = self._table.item(row_index, self._COL_SERVICE_ID)
-                if row_item is None:
-                    continue
-                if str(row_item.text() or "").strip() == previous_service_id:
-                    self._table.selectRow(row_index)
-                    break
-        elif self._table.rowCount() > 0:
-            self._table.selectRow(0)
+            if previous_service_id:
+                self._select_service_id(previous_service_id)
+            elif self._proxy_model.rowCount() > 0:
+                index = self._proxy_model.index(0, self._COL_SERVICE_ID)
+                self._table.selectionModel().select(
+                    index,
+                    QtCore.QItemSelectionModel.ClearAndSelect | QtCore.QItemSelectionModel.Rows,
+                )
+                self._table.setCurrentIndex(index)
 
-        self._apply_adaptive_column_widths()
-        self._update_action_state()
+            self._apply_adaptive_column_widths()
+            self._restore_scrollbar_value(vertical_scrollbar, previous_vertical_scroll)
+            self._restore_scrollbar_value(horizontal_scrollbar, previous_horizontal_scroll)
+            self._update_action_state()
+        finally:
+            self._table.setUpdatesEnabled(True)
 
     @QtCore.Slot()
     def _on_selection_changed(self) -> None:
