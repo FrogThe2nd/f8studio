@@ -49,7 +49,6 @@
           "label":"PyEngine",
           "schemaVersion":"f8service/1",
           "rendererClass":"default_container",
-          "rendererProps":{},
           "version":"0.0.1",
           "description":"Python-based execution engine for Feel8 operators.",
           "tags":[
@@ -366,7 +365,6 @@
           "label":"Python Script",
           "schemaVersion":"f8operator/1",
           "rendererClass":"default_op",
-          "rendererProps":{},
           "version":"0.0.1",
           "description":"Execute Python code with onStart/onState/onMsg/onExec/onStop hooks.",
           "tags":[
@@ -673,7 +671,6 @@
           "label":"Symmetric Range Control",
           "schemaVersion":"f8operator/1",
           "rendererClass":"default_op",
-          "rendererProps":{},
           "version":"0.0.1",
           "description":"Symmetric Range Control for range mapping",
           "tags":[
@@ -859,3 +856,4 @@
     }
   }
 }
+

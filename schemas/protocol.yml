@@ -927,11 +927,6 @@ components:
           type: string
           default: default_svc
           description: Optional custom UI renderer key for the node (e.g., realtimePlot, 3dViewer)
-        rendererProps:
-          type: object
-          default: {}
-          description: Optional renderer-specific configuration for the custom node UI
-          additionalProperties: true
         version:
           type: string
           description: SemVer of the service profile
@@ -1016,11 +1011,6 @@ components:
           type: string
           default: default_op
           description: Optional custom UI renderer key for this operator node (e.g., realtimePlot, 3dViewer)
-        rendererProps:
-          type: object
-          default: {}
-          description: Optional renderer-specific configuration for the custom node UI
-          additionalProperties: true
         version:
           type: string
           description: SemVer of the operator profile

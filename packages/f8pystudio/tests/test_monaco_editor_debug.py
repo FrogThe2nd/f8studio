@@ -19,7 +19,6 @@ def _write_session(tmp_path: Path) -> Path:
                         "operatorClass": "f8.other_op",
                         "label": "Other",
                         "rendererClass": "default_op",
-                        "rendererProps": {},
                         "version": "0.0.1",
                         "description": "",
                         "tags": [],
@@ -42,7 +41,6 @@ def _write_session(tmp_path: Path) -> Path:
                         "operatorClass": "f8.python_script",
                         "label": "Python Script",
                         "rendererClass": "default_op",
-                        "rendererProps": {},
                         "version": "0.0.1",
                         "description": "",
                         "tags": ["script"],
@@ -125,7 +123,6 @@ def _write_session(tmp_path: Path) -> Path:
                         "operatorClass": "f8.python_script",
                         "label": "Python Script B",
                         "rendererClass": "default_op",
-                        "rendererProps": {},
                         "version": "0.0.1",
                         "description": "",
                         "tags": ["script"],
@@ -214,3 +211,4 @@ def test_load_session_editor_targets_returns_all_matching_nodes() -> None:
 
     assert [target.node_id for target in targets] == ["nodeA", "nodeB"]
     assert [target.code for target in targets] == ["print('live')\n", "print('live b')\n"]
+
