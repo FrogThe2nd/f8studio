@@ -3,7 +3,9 @@ from __future__ import annotations
 from f8pystudio.constants import SERVICE_CLASS as STUDIO_SERVICE_CLASS
 from f8pystudio.nodegraph.operator_basenode import F8StudioOperatorBaseNode
 from f8pystudio.nodegraph.service_basenode import F8StudioServiceBaseNode
+from f8pystudio.operators.data_expr import OPERATOR_CLASS as DATA_EXPR_OPERATOR_CLASS
 from f8pystudio.operators.note import OPERATOR_CLASS as NOTE_OPERATOR_CLASS
+from f8pystudio.operators.state_expr import OPERATOR_CLASS as STATE_EXPR_OPERATOR_CLASS
 from f8pystudio.operators.value_stepper import OPERATOR_CLASS as VALUE_STEPPER_OPERATOR_CLASS
 from f8pystudio.pystudio_node_registry import register_pystudio_specs
 from f8pystudio.render_nodes.note import NoteRenderNode
@@ -123,3 +125,24 @@ def test_discovery_registers_value_stepper_operator_spec() -> None:
     assert state_fields["value"].uiControl == "slider"
     assert state_fields["increaseTrigger"].uiControl == "button"
     assert state_fields["decreaseTrigger"].uiControl == "button"
+
+
+def test_discovery_registers_expr_operator_specs() -> None:
+    catalog = _reset_service_catalog()
+    load_discovery_into_catalog(
+        roots=[],
+        catalog=catalog,
+        builtin_injectors=(_inject_builtin_pystudio_specs,),
+    )
+
+    data_expr = next((op for op in catalog.operators.all() if op.operatorClass == DATA_EXPR_OPERATOR_CLASS), None)
+    state_expr = next((op for op in catalog.operators.all() if op.operatorClass == STATE_EXPR_OPERATOR_CLASS), None)
+
+    assert data_expr is not None
+    assert state_expr is not None
+    assert data_expr.serviceClass == STUDIO_SERVICE_CLASS
+    assert state_expr.serviceClass == STUDIO_SERVICE_CLASS
+    assert data_expr.paletteCategory == STUDIO_SERVICE_CLASS
+    assert state_expr.paletteCategory == STUDIO_SERVICE_CLASS
+    assert data_expr.label == "Studio Data Expr"
+    assert state_expr.label == "Studio State Expr"

@@ -1,0 +1,261 @@
+from __future__ import annotations
+
+import logging
+import time
+from typing import Any
+
+from f8pysdk import (
+    F8OperatorSchemaVersion,
+    F8OperatorSpec,
+    F8RuntimeNode,
+    F8SpecEditPolicy,
+    F8StateAccess,
+    F8StateSpec,
+    any_schema,
+    boolean_schema,
+    editable_collection_edit_policy,
+    string_schema,
+)
+from f8pysdk.generated import UNSET
+from f8pysdk.nats_naming import ensure_token
+from f8pysdk.runtime_node import OperatorNode
+from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
+
+from ..constants import SERVICE_CLASS
+from ._py_expr_eval import (
+    coerce_bool,
+    compile_expr,
+    is_identifier,
+    normalize_expr_code,
+    safe_eval_compiled,
+    unwrap_wrapped_value,
+    wrap_value,
+)
+
+OPERATOR_CLASS = "f8.state_expr"
+
+logger = logging.getLogger(__name__)
+
+_PROTECTED_STATE_FIELDS = {"allowNumpy", "code", "lastError", "operatorId", "out", "svcId"}
+_UNPUBLISHED = object()
+
+
+def _schema_default_value(schema: Any) -> Any:
+    if isinstance(schema, dict):
+        return schema.get("default")
+    try:
+        default_value = schema.default
+    except AttributeError:
+        return None
+    if default_value is UNSET:
+        return None
+    return default_value
+
+
+def _access_text(access: F8StateAccess | str | None) -> str:
+    if isinstance(access, F8StateAccess):
+        raw_access = access.value
+    else:
+        raw_access = access
+    return str(raw_access or "").strip().lower()
+
+
+def _is_symbol_state_field(field: F8StateSpec) -> bool:
+    name = str(field.name or "").strip()
+    if not name or name in _PROTECTED_STATE_FIELDS:
+        return False
+    return _access_text(field.access) in {"rw", "wo"}
+
+
+class StateExprRuntimeNode(OperatorNode):
+    def __init__(self, *, node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any] | None = None) -> None:
+        state_fields = [str(field.name) for field in list(node.stateFields or [])] or ["allowNumpy", "code", "out", "lastError"]
+        super().__init__(
+            node_id=ensure_token(node_id, label="node_id"),
+            data_in_ports=[],
+            data_out_ports=[],
+            state_fields=state_fields,
+        )
+
+        self._symbol_state_names = [str(field.name) for field in list(node.stateFields or []) if _is_symbol_state_field(field)]
+        self._state_values: dict[str, Any] = {}
+        for field in list(node.stateFields or []):
+            field_name = str(field.name or "").strip()
+            if not field_name:
+                continue
+            default_value = _schema_default_value(field.valueSchema)
+            if default_value is not None:
+                self._state_values[field_name] = default_value
+        self._state_values.update(dict(initial_state or {}))
+
+        self._allow_numpy = coerce_bool(self._state_values.get("allowNumpy"), default=False)
+        self._code = normalize_expr_code(self._state_values.get("code") or "0")
+        self._compiled = None
+        self._compile_error: str | None = None
+        self._out_value: Any = None
+        self._last_error = ""
+        self._published_out_value: Any = _UNPUBLISHED
+        self._published_last_error: Any = _UNPUBLISHED
+        self._last_eval_exc_sig = ""
+        self._last_eval_exc_log_ts_ms = 0
+        self._last_publish_exc_sig = ""
+        self._last_publish_exc_log_ts_ms = 0
+
+        self._recompile()
+        self._evaluate_current_output()
+
+    async def on_lifecycle(self, active: bool, meta: dict[str, Any]) -> None:
+        del meta
+        if active:
+            await self._publish_public_state(force=True)
+
+    async def validate_state(self, field: str, value: Any, *, ts_ms: int, meta: dict[str, Any]) -> Any:
+        del ts_ms, meta
+        name = str(field or "").strip()
+        if name == "allowNumpy":
+            return coerce_bool(value, default=False)
+        if name == "code":
+            return normalize_expr_code(value)
+        return value
+
+    async def on_state(self, field: str, value: Any, *, ts_ms: int | None = None) -> None:
+        del ts_ms
+        name = str(field or "").strip()
+        if name in {"out", "lastError"}:
+            return
+        if name == "allowNumpy":
+            self._allow_numpy = coerce_bool(value, default=self._allow_numpy)
+            self._state_values[name] = self._allow_numpy
+            self._recompile()
+            self._evaluate_current_output()
+            await self._publish_public_state(force=False)
+            return
+        if name == "code":
+            self._code = normalize_expr_code(value)
+            self._state_values[name] = self._code
+            self._recompile()
+            self._evaluate_current_output()
+            await self._publish_public_state(force=False)
+            return
+        self._state_values[name] = value
+        if name in self._symbol_state_names:
+            self._evaluate_current_output()
+            await self._publish_public_state(force=False)
+
+    def _should_log_repeating_error(self, sig: str, *, now_ms: int, kind: str) -> bool:
+        if kind == "eval":
+            if sig != self._last_eval_exc_sig:
+                self._last_eval_exc_sig = sig
+                self._last_eval_exc_log_ts_ms = int(now_ms)
+                return True
+            if (int(now_ms) - int(self._last_eval_exc_log_ts_ms)) >= 5000:
+                self._last_eval_exc_log_ts_ms = int(now_ms)
+                return True
+            return False
+        if kind == "publish":
+            if sig != self._last_publish_exc_sig:
+                self._last_publish_exc_sig = sig
+                self._last_publish_exc_log_ts_ms = int(now_ms)
+                return True
+            if (int(now_ms) - int(self._last_publish_exc_log_ts_ms)) >= 5000:
+                self._last_publish_exc_log_ts_ms = int(now_ms)
+                return True
+            return False
+        return True
+
+    def _recompile(self) -> None:
+        compiled, err = compile_expr(self._code, allow_numpy=self._allow_numpy)
+        self._compiled = compiled
+        self._compile_error = err
+
+    def _build_eval_names(self) -> dict[str, Any]:
+        symbol_values = {name: self._state_values.get(name) for name in self._symbol_state_names}
+        env: dict[str, Any] = {"states": {name: wrap_value(value) for name, value in symbol_values.items()}}
+        for name, value in symbol_values.items():
+            if is_identifier(name):
+                env[name] = wrap_value(value)
+        return env
+
+    def _set_last_error(self, message: str) -> None:
+        self._last_error = str(message or "").strip()
+
+    def _clear_last_error(self) -> None:
+        self._last_error = ""
+
+    def _evaluate_current_output(self) -> None:
+        if self._compiled is None:
+            self._out_value = None
+            self._set_last_error(self._compile_error or "invalid expression")
+            return
+        try:
+            result = safe_eval_compiled(self._compiled, names=self._build_eval_names(), allow_numpy=self._allow_numpy)
+        except Exception as exc:
+            now_ms = int(time.time() * 1000.0)
+            sig = f"{type(exc).__name__}:{exc}"
+            if self._should_log_repeating_error(sig, now_ms=now_ms, kind="eval"):
+                logger.warning("[%s:state_expr] eval failed: %s", self.node_id, exc)
+            self._out_value = None
+            self._set_last_error(f"{type(exc).__name__}: {exc}")
+            return
+        self._out_value = unwrap_wrapped_value(result)
+        self._clear_last_error()
+
+    async def _publish_public_state(self, *, force: bool) -> None:
+        if force or not self._values_equal(self._published_out_value, self._out_value):
+            await self._safe_set_state("out", self._out_value)
+            self._published_out_value = self._out_value
+        if force or not self._values_equal(self._published_last_error, self._last_error):
+            await self._safe_set_state("lastError", self._last_error)
+            self._published_last_error = self._last_error
+
+    async def _safe_set_state(self, field: str, value: Any) -> None:
+        try:
+            await self.set_state(field, value)
+        except Exception as exc:
+            now_ms = int(time.time() * 1000.0)
+            sig = f"{field}:{type(exc).__name__}:{exc}"
+            if self._should_log_repeating_error(sig, now_ms=now_ms, kind="publish"):
+                logger.exception("[%s:state_expr] failed to publish state: %s", self.node_id, field)
+
+    @staticmethod
+    def _values_equal(left: Any, right: Any) -> bool:
+        if left is _UNPUBLISHED or right is _UNPUBLISHED:
+            return False
+        try:
+            return bool(left == right)
+        except Exception:
+            return False
+
+
+StateExprRuntimeNode.SPEC = F8OperatorSpec(
+    schemaVersion=F8OperatorSchemaVersion.f8operator_1,
+    serviceClass=SERVICE_CLASS,
+    paletteCategory=SERVICE_CLASS,
+    operatorClass=OPERATOR_CLASS,
+    version="0.0.1",
+    label="Studio State Expr",
+    description=(
+        "Studio-local state expression node for lightweight derived values inside the embedded PyStudio runtime. "
+        "Useful for simple formulas behind control panels, UI glue, and editor-side automation."
+    ),
+    tags=["studio", "local", "expr", "state", "logic", "transform"],
+    stateFields=[
+        F8StateSpec(name="allowNumpy", label="Allow Numpy", description="Enable `np.*` and `numpy.*` inside the expression.", uiControl="toggle", valueSchema=boolean_schema(default=False), access=F8StateAccess.rw, showOnNode=False, required=False),
+        F8StateSpec(name="x", description="Starter local state symbol for quick editor-side formulas.", valueSchema=any_schema(), access=F8StateAccess.rw, showOnNode=True, required=False),
+        F8StateSpec(name="code", label="Expr", description="Single Python expression. Editable RW/WO state fields are available directly by name for local studio graph evaluation.", uiControl="wrapline[python]", valueSchema=string_schema(default="x"), access=F8StateAccess.rw, showOnNode=True, required=False),
+        F8StateSpec(name="out", label="Out", description="Expression result published by the node.", valueSchema=any_schema(), access=F8StateAccess.ro, showOnNode=True, required=False),
+        F8StateSpec(name="lastError", label="Last Error", description="Last compile or evaluation error.", valueSchema=string_schema(default=""), access=F8StateAccess.ro, showOnNode=False, required=False),
+    ],
+    editPolicy=F8SpecEditPolicy(stateFields=editable_collection_edit_policy()),
+)
+
+
+def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNodeRegistry:
+    reg = registry or RuntimeNodeRegistry.instance()
+
+    def _factory(node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any]) -> OperatorNode:
+        return StateExprRuntimeNode(node_id=node_id, node=node, initial_state=initial_state)
+
+    reg.register(SERVICE_CLASS, OPERATOR_CLASS, _factory, overwrite=True)
+    reg.register_operator_spec(StateExprRuntimeNode.SPEC, overwrite=True)
+    return reg

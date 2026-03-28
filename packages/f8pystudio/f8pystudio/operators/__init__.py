@@ -5,7 +5,9 @@ from .viz_video import VizVideoRuntimeNode, register_operator as register_viz_vi
 from .viz_audio import VizAudioRuntimeNode, register_operator as register_viz_audio
 from .viz_three_d import VizThreeDRuntimeNode, register_operator as register_viz_three_d
 from .control_panel import ControlPanelRuntimeNode, register_operator as register_control_panel
+from .data_expr import DataExprRuntimeNode, register_operator as register_data_expr
 from .note import NoteRuntimeNode, register_operator as register_note
+from .state_expr import StateExprRuntimeNode, register_operator as register_state_expr
 from .value_stepper import ValueStepperRuntimeNode, register_operator as register_value_stepper
 
 __all__ = [
@@ -16,7 +18,9 @@ __all__ = [
     "VizAudioRuntimeNode",
     "VizThreeDRuntimeNode",
     "ControlPanelRuntimeNode",
+    "DataExprRuntimeNode",
     "NoteRuntimeNode",
+    "StateExprRuntimeNode",
     "ValueStepperRuntimeNode",
     "register_operator",
 ]
@@ -33,6 +37,8 @@ def register_operator(registry=None):
     reg = register_viz_audio(reg)
     reg = register_viz_three_d(reg)
     reg = register_control_panel(reg)
+    reg = register_data_expr(reg)
     reg = register_note(reg)
+    reg = register_state_expr(reg)
     reg = register_value_stepper(reg)
     return reg
