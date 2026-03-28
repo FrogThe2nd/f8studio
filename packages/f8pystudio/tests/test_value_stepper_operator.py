@@ -69,9 +69,10 @@ class ValueStepperOperatorSpecTests(unittest.TestCase):
         self.assertTrue(bool(fields["value"].showOnNode))
         self.assertEqual(fields["increaseTrigger"].uiControl, "button")
         self.assertEqual(fields["decreaseTrigger"].uiControl, "button")
+        self.assertEqual(fields["loop"].uiControl, "toggle")
         self.assertEqual(fields["stepMode"].uiControl, "select")
-        self.assertEqual(list(fields["stepMode"].valueSchema.enum or []), ["fixed", "accelerated"])
-        self.assertFalse(bool(fields["lastTriggerTsMs"].showOnNode))
+        self.assertEqual(list(fields["stepMode"].valueSchema.enum or []), ["fixed", "accelerated", "adaptive"])
+        self.assertNotIn("lastTriggerTsMs", fields)
 
 
 class ValueStepperRuntimeTests(unittest.IsolatedAsyncioTestCase):
@@ -98,7 +99,6 @@ class ValueStepperRuntimeTests(unittest.IsolatedAsyncioTestCase):
         await self.bus.publish_state_runtime("stepper", "increaseTrigger", 1, ts_ms=123)
 
         await self._assert_state_value_close("stepper", "value", 0.5)
-        self.assertEqual((await self.bus.get_state("stepper", "lastTriggerTsMs")).value, 123)
 
     async def test_decrease_trigger_clamps_at_minimum(self) -> None:
         stepper_node = _value_stepper_node()
@@ -115,6 +115,38 @@ class ValueStepperRuntimeTests(unittest.IsolatedAsyncioTestCase):
         await self.bus.publish_state_runtime("stepper", "decreaseTrigger", 1, ts_ms=124)
 
         await self._assert_state_value_close("stepper", "value", 0.0)
+
+    async def test_increase_trigger_wraps_when_loop_is_enabled(self) -> None:
+        stepper_node = _value_stepper_node()
+        runtime = ValueStepperRuntimeNode(
+            node_id="stepper",
+            node=stepper_node,
+            initial_state={"value": 0.95, "min": 0.0, "max": 1.0, "step": 0.1, "loop": True},
+        )
+        self.bus.register_node(runtime)
+
+        graph = F8RuntimeGraph(graphId="g1", revision="r1", nodes=[stepper_node], edges=[])
+        await self.bus.set_rungraph(graph)
+
+        await self.bus.publish_state_runtime("stepper", "increaseTrigger", 1, ts_ms=124)
+
+        await self._assert_state_value_close("stepper", "value", 0.05)
+
+    async def test_manual_value_write_wraps_when_loop_is_enabled(self) -> None:
+        stepper_node = _value_stepper_node()
+        runtime = ValueStepperRuntimeNode(
+            node_id="stepper",
+            node=stepper_node,
+            initial_state={"value": 0.25, "min": 0.0, "max": 1.0, "loop": True},
+        )
+        self.bus.register_node(runtime)
+
+        graph = F8RuntimeGraph(graphId="g1", revision="r1", nodes=[stepper_node], edges=[])
+        await self.bus.set_rungraph(graph)
+
+        await self.bus.publish_state_runtime("stepper", "value", 1.2, ts_ms=126)
+
+        await self._assert_state_value_close("stepper", "value", 0.2)
 
     async def test_accelerated_mode_uses_accelerated_step(self) -> None:
         stepper_node = _value_stepper_node()
@@ -138,6 +170,78 @@ class ValueStepperRuntimeTests(unittest.IsolatedAsyncioTestCase):
         await self.bus.publish_state_runtime("stepper", "increaseTrigger", 1, ts_ms=125)
 
         await self._assert_state_value_close("stepper", "value", 0.45)
+
+    async def test_adaptive_mode_uses_fixed_step_for_first_trigger(self) -> None:
+        stepper_node = _value_stepper_node()
+        runtime = ValueStepperRuntimeNode(
+            node_id="stepper",
+            node=stepper_node,
+            initial_state={
+                "value": 0.2,
+                "min": 0.0,
+                "max": 1.0,
+                "step": 0.01,
+                "stepMode": "adaptive",
+                "acceleratedStep": 0.25,
+            },
+        )
+        self.bus.register_node(runtime)
+
+        graph = F8RuntimeGraph(graphId="g1", revision="r1", nodes=[stepper_node], edges=[])
+        await self.bus.set_rungraph(graph)
+
+        await self.bus.publish_state_runtime("stepper", "increaseTrigger", 1, ts_ms=1000)
+
+        await self._assert_state_value_close("stepper", "value", 0.21)
+
+    async def test_adaptive_mode_uses_accelerated_step_for_rapid_repeat_trigger(self) -> None:
+        stepper_node = _value_stepper_node()
+        runtime = ValueStepperRuntimeNode(
+            node_id="stepper",
+            node=stepper_node,
+            initial_state={
+                "value": 0.2,
+                "min": 0.0,
+                "max": 1.0,
+                "step": 0.01,
+                "stepMode": "adaptive",
+                "acceleratedStep": 0.25,
+            },
+        )
+        self.bus.register_node(runtime)
+
+        graph = F8RuntimeGraph(graphId="g1", revision="r1", nodes=[stepper_node], edges=[])
+        await self.bus.set_rungraph(graph)
+
+        await self.bus.publish_state_runtime("stepper", "increaseTrigger", 1, ts_ms=1000)
+        await self.bus.publish_state_runtime("stepper", "increaseTrigger", 2, ts_ms=1100)
+
+        await self._assert_state_value_close("stepper", "value", 0.46)
+
+    async def test_adaptive_mode_falls_back_to_fixed_step_after_pause(self) -> None:
+        stepper_node = _value_stepper_node()
+        runtime = ValueStepperRuntimeNode(
+            node_id="stepper",
+            node=stepper_node,
+            initial_state={
+                "value": 0.2,
+                "min": 0.0,
+                "max": 1.0,
+                "step": 0.01,
+                "stepMode": "adaptive",
+                "acceleratedStep": 0.25,
+            },
+        )
+        self.bus.register_node(runtime)
+
+        graph = F8RuntimeGraph(graphId="g1", revision="r1", nodes=[stepper_node], edges=[])
+        await self.bus.set_rungraph(graph)
+
+        await self.bus.publish_state_runtime("stepper", "increaseTrigger", 1, ts_ms=1000)
+        await self.bus.publish_state_runtime("stepper", "increaseTrigger", 2, ts_ms=1100)
+        await self.bus.publish_state_runtime("stepper", "increaseTrigger", 3, ts_ms=1500)
+
+        await self._assert_state_value_close("stepper", "value", 0.47)
 
     async def test_manual_value_write_is_clamped_by_validate_state(self) -> None:
         stepper_node = _value_stepper_node()

@@ -10,6 +10,7 @@ from f8pysdk import (
     F8SpecEditPolicy,
     F8StateAccess,
     F8StateSpec,
+    boolean_schema,
     integer_schema,
     number_schema,
     string_schema,
@@ -23,7 +24,9 @@ from ..constants import SERVICE_CLASS
 OPERATOR_CLASS = "f8.value_stepper"
 _STEP_MODE_FIXED = "fixed"
 _STEP_MODE_ACCELERATED = "accelerated"
-_STEP_MODE_VALUES = [_STEP_MODE_FIXED, _STEP_MODE_ACCELERATED]
+_STEP_MODE_ADAPTIVE = "adaptive"
+_STEP_MODE_VALUES = [_STEP_MODE_FIXED, _STEP_MODE_ACCELERATED, _STEP_MODE_ADAPTIVE]
+_ADAPTIVE_TRIGGER_WINDOW_MS = 250
 
 
 class ValueStepperRuntimeNode(OperatorNode):
@@ -91,6 +94,16 @@ class ValueStepperRuntimeNode(OperatorNode):
                 showOnNode=False,
             ),
             F8StateSpec(
+                name="loop",
+                label="Loop",
+                description="When enabled, trigger steps wrap around the min/max range instead of clamping.",
+                valueSchema=boolean_schema(default=False),
+                access=F8StateAccess.rw,
+                required=True,
+                uiControl="toggle",
+                showOnNode=False,
+            ),
+            F8StateSpec(
                 name="increaseTrigger",
                 label="Increase",
                 description="Increment trigger input, typically driven by a button state edge.",
@@ -113,7 +126,7 @@ class ValueStepperRuntimeNode(OperatorNode):
             F8StateSpec(
                 name="stepMode",
                 label="Step Mode",
-                description="Whether trigger presses use the fixed or accelerated step size.",
+                description="How trigger presses choose between the fixed and accelerated step sizes.",
                 valueSchema=string_schema(default=_STEP_MODE_FIXED, enum=list(_STEP_MODE_VALUES)),
                 access=F8StateAccess.rw,
                 required=True,
@@ -123,18 +136,9 @@ class ValueStepperRuntimeNode(OperatorNode):
             F8StateSpec(
                 name="acceleratedStep",
                 label="Accelerated Step",
-                description="Larger step size used when stepMode is accelerated.",
+                description="Larger step size used by accelerated mode, or by adaptive mode during rapid repeated triggers.",
                 valueSchema=number_schema(default=0.05, minimum=0.0),
                 access=F8StateAccess.rw,
-                required=True,
-                showOnNode=False,
-            ),
-            F8StateSpec(
-                name="lastTriggerTsMs",
-                label="Last Trigger Ts",
-                description="Last trigger timestamp in milliseconds for debug/inspection.",
-                valueSchema=integer_schema(default=0),
-                access=F8StateAccess.ro,
                 required=True,
                 showOnNode=False,
             ),
@@ -149,10 +153,11 @@ class ValueStepperRuntimeNode(OperatorNode):
         self._step = self._coerce_non_negative_float(initial.get("step"), 0.01)
         self._accelerated_step = self._coerce_non_negative_float(initial.get("acceleratedStep"), 0.05)
         self._step_mode = self._coerce_step_mode(initial.get("stepMode"))
-        self._value = self._clamp_value(self._coerce_float(initial.get("value"), 0.0))
+        self._loop = self._coerce_bool(initial.get("loop"), False)
+        self._value = self._coerce_value_in_bounds(self._coerce_float(initial.get("value"), 0.0))
         self._increase_trigger = self._coerce_int(initial.get("increaseTrigger"), 0)
         self._decrease_trigger = self._coerce_int(initial.get("decreaseTrigger"), 0)
-        self._last_trigger_ts_ms = self._coerce_int(initial.get("lastTriggerTsMs"), 0)
+        self._last_trigger_ts_ms = 0
 
         super().__init__(
             node_id=ensure_token(node_id, label="node_id"),
@@ -193,6 +198,21 @@ class ValueStepperRuntimeNode(OperatorNode):
             return _STEP_MODE_FIXED
         return text
 
+    @staticmethod
+    def _coerce_bool(value: Any, default: bool) -> bool:
+        if value is None:
+            return bool(default)
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return bool(value)
+        text = str(value).strip().lower()
+        if text in {"1", "true", "yes", "on"}:
+            return True
+        if text in {"0", "false", "no", "off"}:
+            return False
+        return bool(default)
+
     def _clamp_value(self, value: float) -> float:
         lower, upper = self._ordered_bounds(self._minimum, self._maximum)
         if value < lower:
@@ -201,17 +221,41 @@ class ValueStepperRuntimeNode(OperatorNode):
             return upper
         return value
 
-    def _effective_step(self) -> float:
+    def _coerce_value_in_bounds(self, value: float) -> float:
+        if self._loop:
+            return self._wrap_value(value)
+        return self._clamp_value(value)
+
+    def _wrap_value(self, value: float) -> float:
+        lower, upper = self._ordered_bounds(self._minimum, self._maximum)
+        span = upper - lower
+        if span <= 0.0:
+            return lower
+        wrapped = (float(value) - lower) % span
+        return lower + wrapped
+
+    def _effective_step(self, *, ts_ms: int | None) -> float:
         if self._step_mode == _STEP_MODE_ACCELERATED:
             return self._accelerated_step
+        if self._step_mode == _STEP_MODE_ADAPTIVE:
+            trigger_ts = 0 if ts_ms is None else int(ts_ms)
+            if self._is_adaptive_accelerated(trigger_ts):
+                return self._accelerated_step
         return self._step
+
+    def _is_adaptive_accelerated(self, trigger_ts_ms: int) -> bool:
+        last_trigger_ts_ms = int(self._last_trigger_ts_ms)
+        if trigger_ts_ms <= 0 or last_trigger_ts_ms <= 0:
+            return False
+        elapsed_ms = trigger_ts_ms - last_trigger_ts_ms
+        return 0 < elapsed_ms <= _ADAPTIVE_TRIGGER_WINDOW_MS
 
     async def validate_state(self, field: str, value: Any, *, ts_ms: int, meta: dict[str, Any]) -> Any:
         del ts_ms
         del meta
 
         if field == "value":
-            return self._clamp_value(self._coerce_float(value, self._value))
+            return self._coerce_value_in_bounds(self._coerce_float(value, self._value))
         if field == "min":
             candidate = self._coerce_float(value, self._minimum)
             return candidate if candidate <= self._maximum else self._maximum
@@ -222,14 +266,14 @@ class ValueStepperRuntimeNode(OperatorNode):
             return self._coerce_non_negative_float(value, self._step)
         if field == "acceleratedStep":
             return self._coerce_non_negative_float(value, self._accelerated_step)
+        if field == "loop":
+            return self._coerce_bool(value, self._loop)
         if field == "increaseTrigger":
             return self._coerce_int(value, self._increase_trigger)
         if field == "decreaseTrigger":
             return self._coerce_int(value, self._decrease_trigger)
         if field == "stepMode":
             return self._coerce_step_mode(value)
-        if field == "lastTriggerTsMs":
-            return self._coerce_int(value, self._last_trigger_ts_ms)
         return value
 
     async def on_state(self, field: str, value: Any, *, ts_ms: int | None = None) -> None:
@@ -255,6 +299,15 @@ class ValueStepperRuntimeNode(OperatorNode):
             self._accelerated_step = self._coerce_non_negative_float(value, self._accelerated_step)
             return
 
+        if field == "loop":
+            self._loop = self._coerce_bool(value, self._loop)
+            coerced_value = self._coerce_value_in_bounds(self._value)
+            if coerced_value == self._value:
+                return
+            self._value = coerced_value
+            await self.set_state("value", coerced_value, ts_ms=ts_ms)
+            return
+
         if field == "stepMode":
             self._step_mode = self._coerce_step_mode(value)
             return
@@ -269,24 +322,20 @@ class ValueStepperRuntimeNode(OperatorNode):
             await self._apply_trigger(delta=-1.0, ts_ms=ts_ms)
             return
 
-        if field == "lastTriggerTsMs":
-            self._last_trigger_ts_ms = self._coerce_int(value, self._last_trigger_ts_ms)
-
     async def _sync_value_after_bounds_change(self, *, ts_ms: int | None) -> None:
         self._minimum, self._maximum = self._ordered_bounds(self._minimum, self._maximum)
-        clamped_value = self._clamp_value(self._value)
-        if clamped_value == self._value:
+        next_value = self._coerce_value_in_bounds(self._value)
+        if next_value == self._value:
             return
-        self._value = clamped_value
-        await self.set_state("value", clamped_value, ts_ms=ts_ms)
+        self._value = next_value
+        await self.set_state("value", next_value, ts_ms=ts_ms)
 
     async def _apply_trigger(self, *, delta: float, ts_ms: int | None) -> None:
-        next_value = self._clamp_value(self._value + (delta * self._effective_step()))
+        next_value = self._coerce_value_in_bounds(self._value + (delta * self._effective_step(ts_ms=ts_ms)))
         self._value = next_value
         await self.set_state("value", next_value, ts_ms=ts_ms)
         trigger_ts = 0 if ts_ms is None else int(ts_ms)
         self._last_trigger_ts_ms = trigger_ts
-        await self.set_state("lastTriggerTsMs", trigger_ts, ts_ms=ts_ms)
 
 
 def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNodeRegistry:

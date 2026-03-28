@@ -388,6 +388,29 @@ def test_build_state_inline_control_dial_installs_global_tooltip_filter() -> Non
     assert tooltip_filter.parent() is control
 
 
+def test_build_state_inline_control_dial_noloop_sets_loop_mode() -> None:
+    _ensure_app()
+    field = StateFieldInfo(
+        name="pan",
+        label="Pan",
+        tooltip="Circular pan control.",
+        show_on_node=True,
+        access="rw",
+        access_str="rw",
+        required=True,
+        ui_control="dial[noloop]",
+        ui_language=None,
+        value_schema=number_schema(default=0.0, minimum=-1.0, maximum=1.0),
+    )
+    node_item = _FakeNodeItem(code_value="")
+    node_item._backend = _FakeBackendNode({"pan": 0.0})
+
+    control = build_state_inline_control(node_item, field)
+
+    assert isinstance(control, F8Dial)
+    assert control.loop() is False
+
+
 def test_build_state_panel_control_button_uses_field_label_and_increments() -> None:
     _ensure_app()
     field = F8StateSpec(

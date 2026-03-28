@@ -505,7 +505,7 @@ def build_state_inline_control(node_item: Any, state_field: StateFieldInfo) -> Q
     spec = StateControlSpec(
         name=name,
         label=state_field.label or name,
-        ui_control=ui,
+        ui_control=ui_raw,
         ui_language=state_field.ui_language or "plaintext",
         schema_type=schema_type_value,
         enum_items=enum_items,
