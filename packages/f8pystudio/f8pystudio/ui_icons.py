@@ -34,9 +34,11 @@ class StudioIcon(Enum):
     ROBOT_FACE = "robot-face.svg"
     MESSAGE_CHATBOT = "message-chatbot.svg"
     X = "x.svg"
+    CHECK = "check.svg"
     ARTICLE = "article.svg"
     PACKAGE_IMPORT = "package-import.svg"
     PACKAGE_EXPORT = "package-export.svg"
+    KEYBOARD = "keyboard.svg"
 
 
 def icon_for(widget: QtWidgets.QWidget, token: StudioIcon) -> QtGui.QIcon:
@@ -95,4 +97,6 @@ _ICON_COLORS: dict[StudioIcon, QtGui.QColor] = {
     StudioIcon.STOP: QtGui.QColor("#E05252"),
     StudioIcon.STOP_ALL: QtGui.QColor("#E05252"),
     StudioIcon.SEND: QtGui.QColor("#7EDB8A"),
+    StudioIcon.CHECK: QtGui.QColor("#4CAF50"),
+    StudioIcon.X: QtGui.QColor("#E05252"),
 }

@@ -71,6 +71,7 @@ class F8StudioGraph(
         self.property_changed.connect(self._on_property_changed)  # type: ignore[attr-defined]
 
         self._service_bridge: ServiceBridge | None = None
+        self._global_hotkey_controller: Any | None = None
         self._reclaim_timers: dict[str, QtCore.QTimer] = {}
 
         self.nodes_deleted.connect(self._on_nodes_deleted)  # type: ignore[attr-defined]
@@ -121,6 +122,13 @@ class F8StudioGraph(
     @property
     def service_bridge(self) -> ServiceBridge | None:
         return self._service_bridge
+
+    def set_global_hotkey_controller(self, controller: Any | None) -> None:
+        self._global_hotkey_controller = controller
+
+    @property
+    def global_hotkey_controller(self) -> Any | None:
+        return self._global_hotkey_controller
 
     def _on_property_changed(self, node: Any, name: str, value: Any) -> None:
         _ = (node, name, value)

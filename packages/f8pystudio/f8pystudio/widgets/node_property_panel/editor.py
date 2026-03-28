@@ -278,11 +278,18 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
 
         # If UI-only, we still want to allow editing UI fields (showOnNode/uiControl/etc).
         dialog_type = _package_attr("_F8EditStateFieldDialog", _F8EditStateFieldDialog)
+        hotkey_controller = getattr(getattr(node, "graph", None), "global_hotkey_controller", None)
         dlg = dialog_type(
             self,
             title="Edit state field",
             field=current,
             global_hotkey=_state_field_global_hotkey(node, name),
+            current_binding_id=f"{str(node.id or '').strip()}:{name}",
+            hotkey_conflict_lookup=(
+                hotkey_controller.entries_for_hotkey if hotkey_controller is not None else None
+            ),
+            hotkey_capture_started=(hotkey_controller.suspend_hotkeys if hotkey_controller is not None else None),
+            hotkey_capture_finished=(hotkey_controller.resume_hotkeys if hotkey_controller is not None else None),
             ui_only=ui_only,
             lock_identity_fields=bool(can_edit_existing),
             read_only=bool(missing_locked),
@@ -320,7 +327,16 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
             showOnNode=False,
         )
         dialog_type = _package_attr("_F8EditStateFieldDialog", _F8EditStateFieldDialog)
-        dlg = dialog_type(self, title="Add state field", field=field, ui_only=False)
+        hotkey_controller = getattr(getattr(node, "graph", None), "global_hotkey_controller", None)
+        dlg = dialog_type(
+            self,
+            title="Add state field",
+            field=field,
+            hotkey_conflict_lookup=(hotkey_controller.entries_for_hotkey if hotkey_controller is not None else None),
+            hotkey_capture_started=(hotkey_controller.suspend_hotkeys if hotkey_controller is not None else None),
+            hotkey_capture_finished=(hotkey_controller.resume_hotkeys if hotkey_controller is not None else None),
+            ui_only=False,
+        )
         if dlg.exec_() != QtWidgets.QDialog.Accepted:
             return
         new_field = dlg.field()

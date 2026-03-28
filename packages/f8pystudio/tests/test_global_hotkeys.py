@@ -1,15 +1,21 @@
 from __future__ import annotations
 
+import ctypes
+import queue
+import threading
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from qtpy import QtGui, QtWidgets
+from qtpy import QtCore, QtGui, QtWidgets
 
 from f8pysdk.generated import F8StateAccess, F8StateSpec
 from f8pysdk.schema_helpers import integer_schema, number_schema, string_schema
 
 from f8pystudio.global_hotkeys.backend import (
+    WM_HOTKEY,
+    Win32GlobalHotkeyBackend,
+    _Win32Apis,
     X11GlobalHotkeyBackend,
     win32_modifiers_for_hotkey,
     win32_vk_for_hotkey,
@@ -54,6 +60,7 @@ class _HotkeyNodeStub:
         value: Any,
     ) -> None:
         self.id = node_id
+        self._node_name = f"Node {node_id}"
         self._fields = [field]
         self._values = {str(field.name): value}
         self._ui_state = {"stateFieldHotkeys": {str(field.name): hotkey}}
@@ -71,6 +78,13 @@ class _HotkeyNodeStub:
     def set_property(self, name: str, value: Any, *, push_undo: bool = True) -> None:
         self._values[name] = value
         self.set_calls.append((name, value, bool(push_undo)))
+
+    def name(self) -> str:
+        return self._node_name
+
+    @property
+    def spec(self) -> Any:
+        return SimpleNamespace(label=f"Label {self.id}")
 
 
 class _GraphStub:
@@ -168,6 +182,65 @@ class _FakeXK:
         return int(cls._KEYSYM_MAP.get(str(name), 0))
 
 
+class _FakeWin32Apis:
+    def __init__(self) -> None:
+        self.register_calls: list[tuple[int, int, int]] = []
+        self.unregister_calls: list[int] = []
+        self._messages: queue.Queue[tuple[int, int, int, int]] = queue.Queue()
+        self._thread_id = 0
+        self._register_error = 0
+
+    def RegisterHotKey(self, hwnd: Any, hotkey_id: int, modifiers: int, vk: int) -> int:
+        _ = hwnd
+        self.register_calls.append((int(hotkey_id), int(modifiers), int(vk)))
+        if self._register_error:
+            if hasattr(ctypes, "set_last_error"):
+                ctypes.set_last_error(int(self._register_error))
+            return 0
+        return 1
+
+    def UnregisterHotKey(self, hwnd: Any, hotkey_id: int) -> int:
+        _ = hwnd
+        self.unregister_calls.append(int(hotkey_id))
+        return 1
+
+    def PeekMessageW(self, msg: Any, hwnd: Any, min_filter: int, max_filter: int, remove_msg: int) -> int:
+        _ = (msg, hwnd, min_filter, max_filter, remove_msg)
+        self._thread_id = int(threading.get_ident())
+        return 0
+
+    def GetMessageW(self, msg: Any, hwnd: Any, min_filter: int, max_filter: int) -> int:
+        _ = (hwnd, min_filter, max_filter)
+        message, w_param, l_param, result = self._messages.get(timeout=2.0)
+        msg._obj.message = int(message)
+        msg._obj.wParam = int(w_param)
+        msg._obj.lParam = int(l_param)
+        return int(result)
+
+    def PostThreadMessageW(self, thread_id: int, message: int, w_param: int, l_param: int) -> int:
+        if int(thread_id) != int(self._thread_id):
+            return 0
+        self._messages.put((int(message), int(w_param), int(l_param), 1))
+        return 1
+
+    def GetCurrentThreadId(self) -> int:
+        return int(threading.get_ident())
+
+    def emit_hotkey(self, hotkey_id: int) -> None:
+        self._messages.put((WM_HOTKEY, int(hotkey_id), 0, 1))
+
+
+def _fake_win32_api_bundle(fake: _FakeWin32Apis) -> _Win32Apis:
+    return _Win32Apis(
+        RegisterHotKey=fake.RegisterHotKey,
+        UnregisterHotKey=fake.UnregisterHotKey,
+        PeekMessageW=fake.PeekMessageW,
+        GetMessageW=fake.GetMessageW,
+        PostThreadMessageW=fake.PostThreadMessageW,
+        GetCurrentThreadId=fake.GetCurrentThreadId,
+    )
+
+
 def test_parse_global_hotkey_normalizes_qt_style_text() -> None:
     spec = parse_global_hotkey(" ctrl + alt + p ")
 
@@ -212,6 +285,116 @@ def test_win32_hotkey_mapping_returns_expected_values() -> None:
     assert win32_vk_for_hotkey(spec) == 0x74
 
 
+def test_win32_backend_dispatches_hotkey_activation_from_worker_thread() -> None:
+    _ensure_app()
+    fake_apis = _FakeWin32Apis()
+    activated: list[str] = []
+    backend = Win32GlobalHotkeyBackend(
+        activation_callback=activated.append,
+        apis=_fake_win32_api_bundle(fake_apis),
+    )
+    binding = GlobalHotkeyBinding(
+        binding_id="nodeA:trigger",
+        node_id="nodeA",
+        node_label="Node A",
+        field_name="trigger",
+        control_label="Trigger",
+        hotkey_text="Ctrl+Alt+P",
+        hotkey_spec=parse_global_hotkey("Ctrl+Alt+P"),
+        numeric_type="integer",
+    )
+
+    backend.register_hotkey(binding)
+    fake_apis.emit_hotkey(1)
+    QtWidgets.QApplication.processEvents()
+    QtCore.QThread.msleep(10)
+    QtWidgets.QApplication.processEvents()
+
+    assert activated == ["nodeA:trigger"]
+    backend.close()
+
+
+def test_win32_backend_unregister_all_ignores_stale_hotkey_ids() -> None:
+    _ensure_app()
+    fake_apis = _FakeWin32Apis()
+    activated: list[str] = []
+    backend = Win32GlobalHotkeyBackend(
+        activation_callback=activated.append,
+        apis=_fake_win32_api_bundle(fake_apis),
+    )
+    binding = GlobalHotkeyBinding(
+        binding_id="nodeA:trigger",
+        node_id="nodeA",
+        node_label="Node A",
+        field_name="trigger",
+        control_label="Trigger",
+        hotkey_text="Ctrl+Alt+P",
+        hotkey_spec=parse_global_hotkey("Ctrl+Alt+P"),
+        numeric_type="integer",
+    )
+
+    backend.register_hotkey(binding)
+    backend.unregister_all()
+    fake_apis.emit_hotkey(1)
+    QtWidgets.QApplication.processEvents()
+    QtCore.QThread.msleep(10)
+    QtWidgets.QApplication.processEvents()
+
+    assert activated == []
+    assert fake_apis.unregister_calls == [1]
+    backend.close()
+
+
+def test_win32_backend_close_stops_worker_and_unregisters_bindings() -> None:
+    _ensure_app()
+    fake_apis = _FakeWin32Apis()
+    backend = Win32GlobalHotkeyBackend(
+        activation_callback=lambda binding_id: None,
+        apis=_fake_win32_api_bundle(fake_apis),
+    )
+    binding = GlobalHotkeyBinding(
+        binding_id="nodeA:trigger",
+        node_id="nodeA",
+        node_label="Node A",
+        field_name="trigger",
+        control_label="Trigger",
+        hotkey_text="Ctrl+Alt+P",
+        hotkey_spec=parse_global_hotkey("Ctrl+Alt+P"),
+        numeric_type="integer",
+    )
+
+    backend.register_hotkey(binding)
+    backend.close()
+
+    assert fake_apis.unregister_calls == [1]
+    assert backend._worker._thread.is_alive() is False
+
+
+def test_win32_backend_register_failure_preserves_error_message() -> None:
+    _ensure_app()
+    fake_apis = _FakeWin32Apis()
+    fake_apis._register_error = 5
+    backend = Win32GlobalHotkeyBackend(
+        activation_callback=lambda binding_id: None,
+        apis=_fake_win32_api_bundle(fake_apis),
+    )
+    binding = GlobalHotkeyBinding(
+        binding_id="nodeA:trigger",
+        node_id="nodeA",
+        node_label="Node A",
+        field_name="trigger",
+        control_label="Trigger",
+        hotkey_text="Ctrl+Alt+P",
+        hotkey_spec=parse_global_hotkey("Ctrl+Alt+P"),
+        numeric_type="integer",
+    )
+
+    with pytest.raises(Exception, match=r"RegisterHotKey failed binding='nodeA:trigger' hotkey='Ctrl\+Alt\+P' error=5"):
+        backend.register_hotkey(binding)
+
+    backend.close()
+
+
 def test_state_field_dialog_captures_hotkey_from_key_sequence_editor() -> None:
     _ensure_app()
     dialog = npw._F8EditStateFieldDialog(
@@ -230,6 +413,7 @@ def test_state_field_dialog_captures_hotkey_from_key_sequence_editor() -> None:
     dialog._global_hotkey._normalize_sequence()
 
     assert dialog.global_hotkey() == "Ctrl+Alt+P"
+    assert dialog._global_hotkey._editor.maximumSequenceLength() == 1
 
 
 def test_state_field_dialog_ignores_hotkey_for_non_button_controls() -> None:
@@ -268,6 +452,111 @@ def test_state_field_dialog_enables_hotkey_for_button_ui_control_with_whitespace
     assert dialog.global_hotkey() == "Ctrl+Alt+P"
 
 
+def test_state_field_dialog_shows_conflict_for_existing_hotkey() -> None:
+    _ensure_app()
+    dialog = npw._F8EditStateFieldDialog(
+        None,
+        title="State",
+        field=F8StateSpec(
+            name="trigger",
+            valueSchema=integer_schema(default=0),
+            access=F8StateAccess.rw,
+            uiControl="button",
+        ),
+        global_hotkey="Ctrl+Alt+P",
+        hotkey_conflict_lookup=lambda hotkey, exclude_binding_id: [
+            SimpleNamespace(
+                node_id="nodeA",
+                node_label="Label nodeA",
+                control_label="Trigger",
+                field_name="trigger",
+            )
+        ],
+    )
+
+    assert "Already used by nodeA" in dialog._global_hotkey._status.text()
+    assert dialog._buttons.button(QtWidgets.QDialogButtonBox.Ok).isEnabled() is False
+
+
+def test_state_field_dialog_commit_button_only_enabled_during_capture() -> None:
+    _ensure_app()
+    dialog = npw._F8EditStateFieldDialog(
+        None,
+        title="State",
+        field=F8StateSpec(
+            name="trigger",
+            valueSchema=integer_schema(default=0),
+            access=F8StateAccess.rw,
+            uiControl="button",
+        ),
+        global_hotkey="",
+    )
+
+    assert dialog._global_hotkey._commit_btn.isEnabled() is False
+    dialog._global_hotkey._on_capture_started()
+    assert dialog._global_hotkey._commit_btn.isEnabled() is False
+    dialog._global_hotkey._editor.setKeySequence(QtGui.QKeySequence("Ctrl+Alt+P"))
+    dialog._global_hotkey._normalize_sequence()
+    assert dialog._global_hotkey._commit_btn.isEnabled() is True
+    dialog._global_hotkey.release_capture()
+    assert dialog._global_hotkey._commit_btn.isEnabled() is False
+
+
+def test_state_field_dialog_commit_button_submits_current_hotkey() -> None:
+    _ensure_app()
+    dialog = npw._F8EditStateFieldDialog(
+        None,
+        title="State",
+        field=F8StateSpec(
+            name="trigger",
+            valueSchema=integer_schema(default=0),
+            access=F8StateAccess.rw,
+            uiControl="button",
+        ),
+        global_hotkey="",
+    )
+    accepted: list[int] = []
+    dialog.accepted.connect(lambda: accepted.append(1))  # type: ignore[attr-defined]
+
+    dialog._global_hotkey._on_capture_started()
+    dialog._global_hotkey._editor.setKeySequence(QtGui.QKeySequence("Ctrl+Alt+P"))
+    dialog._global_hotkey._commit_btn.click()
+
+    assert accepted == [1]
+
+
+def test_state_field_dialog_conflicting_hotkey_disables_commit_controls() -> None:
+    _ensure_app()
+    dialog = npw._F8EditStateFieldDialog(
+        None,
+        title="State",
+        field=F8StateSpec(
+            name="trigger",
+            valueSchema=integer_schema(default=0),
+            access=F8StateAccess.rw,
+            uiControl="button",
+        ),
+        global_hotkey="",
+        hotkey_conflict_lookup=lambda hotkey, exclude_binding_id: [
+            SimpleNamespace(
+                node_id="nodeA",
+                node_label="Label nodeA",
+                control_label="Trigger",
+                field_name="trigger",
+            )
+        ]
+        if str(hotkey).strip() == "Ctrl+Alt+P"
+        else [],
+    )
+
+    dialog._global_hotkey._on_capture_started()
+    dialog._global_hotkey._editor.setKeySequence(QtGui.QKeySequence("Ctrl+Alt+P"))
+    dialog._global_hotkey._normalize_sequence()
+
+    assert dialog._global_hotkey._commit_btn.isEnabled() is False
+    assert dialog._buttons.button(QtWidgets.QDialogButtonBox.Ok).isEnabled() is False
+
+
 def test_x11_backend_registers_and_unregisters_modifier_variants() -> None:
     display = _FakeDisplay()
     backend = X11GlobalHotkeyBackend(
@@ -281,7 +570,9 @@ def test_x11_backend_registers_and_unregisters_modifier_variants() -> None:
     binding = GlobalHotkeyBinding(
         binding_id="nodeA:trigger",
         node_id="nodeA",
+        node_label="Node A",
         field_name="trigger",
+        control_label="Trigger",
         hotkey_text="Ctrl+Alt+P",
         hotkey_spec=parse_global_hotkey("Ctrl+Alt+P"),
         numeric_type="integer",
@@ -331,6 +622,71 @@ def test_controller_discovers_valid_button_bindings_and_triggers_increment() -> 
     assert valid_node.set_calls == [("trigger", 1, False)]
     controller.close()
     assert backend.closed is True
+
+
+def test_controller_registry_marks_duplicate_hotkeys_as_conflict() -> None:
+    _ensure_app()
+    field = F8StateSpec(
+        name="trigger",
+        label="Trigger",
+        valueSchema=integer_schema(default=0),
+        access=F8StateAccess.rw,
+        uiControl="button",
+    )
+    first_node = _HotkeyNodeStub(node_id="nodeA", field=field, hotkey="Ctrl+Alt+P", value=0)
+    second_node = _HotkeyNodeStub(node_id="nodeB", field=field, hotkey="Ctrl+Alt+P", value=0)
+    backend = _BackendStub()
+    graph = _GraphStub([first_node, second_node])
+    controller = ControlPanelGlobalHotkeyController(studio_graph=graph, backend=backend)
+
+    controller.refresh_bindings()
+
+    entries = controller.registry_entries()
+    assert [binding.binding_id for binding in backend.registered] == ["nodeA:trigger"]
+    assert [entry.status for entry in entries] == ["registered", "conflict"]
+    assert controller.entries_for_hotkey("Ctrl+Alt+P", exclude_binding_id="nodeA:trigger")[0].binding_id == "nodeB:trigger"
+
+
+def test_controller_entries_for_hotkey_scans_live_bindings_without_refresh() -> None:
+    _ensure_app()
+    field = F8StateSpec(
+        name="trigger",
+        label="Trigger",
+        valueSchema=integer_schema(default=0),
+        access=F8StateAccess.rw,
+        uiControl="button",
+    )
+    first_node = _HotkeyNodeStub(node_id="nodeA", field=field, hotkey="Ctrl+Alt+P", value=0)
+    second_node = _HotkeyNodeStub(node_id="nodeB", field=field, hotkey="Ctrl+Alt+P", value=0)
+    controller = ControlPanelGlobalHotkeyController(studio_graph=_GraphStub([first_node, second_node]), backend=_BackendStub())
+
+    matches = controller.entries_for_hotkey(" ctrl + alt + p ", exclude_binding_id="nodeA:trigger")
+
+    assert [entry.binding_id for entry in matches] == ["nodeB:trigger"]
+    assert matches[0].status == "configured"
+
+
+def test_controller_suspend_unregisters_and_marks_entries_paused() -> None:
+    _ensure_app()
+    field = F8StateSpec(
+        name="trigger",
+        valueSchema=integer_schema(default=0),
+        access=F8StateAccess.rw,
+        uiControl="button",
+    )
+    node = _HotkeyNodeStub(node_id="nodeA", field=field, hotkey="Ctrl+Alt+P", value=0)
+    backend = _BackendStub()
+    graph = _GraphStub([node])
+    controller = ControlPanelGlobalHotkeyController(studio_graph=graph, backend=backend)
+
+    controller.refresh_bindings()
+    controller.suspend_hotkeys()
+
+    assert backend.unregister_calls >= 2
+    assert controller.registry_entries()[0].status == "paused"
+
+    controller.resume_hotkeys()
+    assert controller.registry_entries()[0].status == "registered"
 
 
 def test_controller_discovers_button_bindings_from_canonical_ui_control_text() -> None:

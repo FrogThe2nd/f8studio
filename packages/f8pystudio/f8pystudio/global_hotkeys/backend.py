@@ -3,6 +3,7 @@ from __future__ import annotations
 import ctypes
 import os
 import platform
+import queue
 import threading
 import time
 from dataclasses import dataclass
@@ -18,6 +19,8 @@ from .models import (
 )
 
 WM_HOTKEY = 0x0312
+WM_APP = 0x8000
+WM_F8_HOTKEY_CONTROL = WM_APP + 1
 
 
 class GlobalHotkeyBackend(Protocol):
@@ -43,29 +46,14 @@ class _Win32Msg(ctypes.Structure):
     ]
 
 
-class _Win32NativeEventFilter(QtCore.QAbstractNativeEventFilter):
-    def __init__(self, *, activation_callback: Callable[[int], None]) -> None:
-        super().__init__()
-        self._activation_callback = activation_callback
-
-    def nativeEventFilter(self, event_type: Any, message: Any) -> tuple[bool, int]:  # type: ignore[override]
-        event_type_text = str(event_type or "")
-        if event_type_text not in {"windows_dispatcher_MSG", "windows_generic_MSG"}:
-            return False, 0
-        try:
-            msg = ctypes.cast(int(message), ctypes.POINTER(_Win32Msg)).contents
-        except (TypeError, ValueError):
-            return False, 0
-        if int(msg.message) != WM_HOTKEY:
-            return False, 0
-        self._activation_callback(int(msg.wParam))
-        return False, 0
-
-
 @dataclass(frozen=True)
 class _Win32Apis:
     RegisterHotKey: Any
     UnregisterHotKey: Any
+    PeekMessageW: Any
+    GetMessageW: Any
+    PostThreadMessageW: Any
+    GetCurrentThreadId: Any
 
 
 def _build_win32_apis() -> _Win32Apis:
@@ -76,7 +64,188 @@ def _build_win32_apis() -> _Win32Apis:
     unregister_hot_key = user32.UnregisterHotKey
     unregister_hot_key.argtypes = [ctypes.c_void_p, ctypes.c_int]
     unregister_hot_key.restype = ctypes.c_int
-    return _Win32Apis(RegisterHotKey=register_hot_key, UnregisterHotKey=unregister_hot_key)
+    peek_message = user32.PeekMessageW
+    peek_message.argtypes = [ctypes.POINTER(_Win32Msg), ctypes.c_void_p, ctypes.c_uint, ctypes.c_uint, ctypes.c_uint]
+    peek_message.restype = ctypes.c_int
+    get_message = user32.GetMessageW
+    get_message.argtypes = [ctypes.POINTER(_Win32Msg), ctypes.c_void_p, ctypes.c_uint, ctypes.c_uint]
+    get_message.restype = ctypes.c_int
+    post_thread_message = user32.PostThreadMessageW
+    post_thread_message.argtypes = [ctypes.c_uint32, ctypes.c_uint32, ctypes.c_size_t, ctypes.c_size_t]
+    post_thread_message.restype = ctypes.c_int
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    get_current_thread_id = kernel32.GetCurrentThreadId
+    get_current_thread_id.argtypes = []
+    get_current_thread_id.restype = ctypes.c_uint32
+    return _Win32Apis(
+        RegisterHotKey=register_hot_key,
+        UnregisterHotKey=unregister_hot_key,
+        PeekMessageW=peek_message,
+        GetMessageW=get_message,
+        PostThreadMessageW=post_thread_message,
+        GetCurrentThreadId=get_current_thread_id,
+    )
+
+
+class _QtBindingActivationProxy(QtCore.QObject):
+    activated = QtCore.Signal(str)
+
+    def __init__(self, *, activation_callback: Callable[[str], None]) -> None:
+        super().__init__()
+        self.activated.connect(self._dispatch, QtCore.Qt.ConnectionType.QueuedConnection)  # type: ignore[arg-type]
+        self._activation_callback = activation_callback
+
+    @QtCore.Slot(str)
+    def _dispatch(self, binding_id: str) -> None:
+        self._activation_callback(binding_id)
+
+    def notify(self, binding_id: str) -> None:
+        self.activated.emit(str(binding_id))
+
+
+@dataclass
+class _Win32Command:
+    kind: str
+    binding: GlobalHotkeyBinding | None = None
+    done_event: threading.Event | None = None
+    error_queue: queue.Queue[BaseException | None] | None = None
+
+
+class _Win32HotkeyThread:
+    def __init__(
+        self,
+        *,
+        apis: _Win32Apis,
+        activation_callback: Callable[[str], None],
+    ) -> None:
+        self._apis = apis
+        self._activation_callback = activation_callback
+        self._commands: queue.Queue[_Win32Command] = queue.Queue()
+        self._ready_event = threading.Event()
+        self._thread_id = 0
+        self._binding_to_id: dict[str, int] = {}
+        self._id_to_binding: dict[int, str] = {}
+        self._next_hotkey_id = 1
+        self._thread = threading.Thread(target=self._run, name="f8pystudio-win32-hotkeys", daemon=True)
+        self._thread.start()
+        self._ready_event.wait(timeout=2.0)
+        if self._thread_id <= 0:
+            raise GlobalHotkeyUnsupportedError("Windows global hotkey worker thread failed to initialize.")
+
+    def register_hotkey(self, binding: GlobalHotkeyBinding) -> None:
+        self._run_command(_Win32Command(kind="register", binding=binding))
+
+    def unregister_all(self) -> None:
+        self._run_command(_Win32Command(kind="unregister_all"))
+
+    def close(self) -> None:
+        self._run_command(_Win32Command(kind="stop"))
+        self._thread.join(timeout=1.0)
+
+    def _run_command(self, command: _Win32Command) -> None:
+        command.done_event = threading.Event()
+        command.error_queue = queue.Queue(maxsize=1)
+        self._commands.put(command)
+        thread_id = int(self._thread_id)
+        if thread_id > 0:
+            posted = int(self._apis.PostThreadMessageW(thread_id, WM_F8_HOTKEY_CONTROL, 0, 0))
+            if not posted:
+                error_code = int(ctypes.get_last_error())
+                raise GlobalHotkeyRegistrationError(f"PostThreadMessageW failed error={error_code}")
+        if not command.done_event.wait(timeout=2.0):
+            raise GlobalHotkeyRegistrationError("Windows global hotkey worker thread did not respond.")
+        error = command.error_queue.get_nowait()
+        if error is not None:
+            raise error
+
+    def _run(self) -> None:
+        self._thread_id = int(self._apis.GetCurrentThreadId())
+        init_msg = _Win32Msg()
+        self._apis.PeekMessageW(ctypes.byref(init_msg), None, 0, 0, 0)
+        self._ready_event.set()
+        while True:
+            msg = _Win32Msg()
+            result = int(self._apis.GetMessageW(ctypes.byref(msg), None, 0, 0))
+            if result == 0:
+                return
+            if result < 0:
+                time.sleep(0.01)
+                continue
+            if int(msg.message) == WM_HOTKEY:
+                self._on_hotkey_id_activated(int(msg.wParam))
+                continue
+            if int(msg.message) == WM_F8_HOTKEY_CONTROL:
+                if self._drain_commands():
+                    return
+
+    def _drain_commands(self) -> bool:
+        should_stop = False
+        while True:
+            try:
+                command = self._commands.get_nowait()
+            except queue.Empty:
+                break
+            error: BaseException | None = None
+            try:
+                if command.kind == "register":
+                    binding = command.binding
+                    if binding is None:
+                        raise GlobalHotkeyRegistrationError("Missing hotkey binding for register command.")
+                    self._register_hotkey(binding)
+                elif command.kind == "unregister_all":
+                    self._unregister_all()
+                elif command.kind == "stop":
+                    self._unregister_all()
+                    should_stop = True
+                else:
+                    raise GlobalHotkeyRegistrationError(f"Unsupported hotkey worker command: {command.kind!r}")
+            except BaseException as exc:
+                error = exc
+            if command.error_queue is not None:
+                command.error_queue.put_nowait(error)
+            if command.done_event is not None:
+                command.done_event.set()
+        return should_stop
+
+    def _register_hotkey(self, binding: GlobalHotkeyBinding) -> None:
+        hotkey_id = self._allocate_hotkey_id(binding.binding_id)
+        modifiers = win32_modifiers_for_hotkey(binding.hotkey_spec)
+        vk = win32_vk_for_hotkey(binding.hotkey_spec)
+        ctypes.set_last_error(0)
+        registered = int(self._apis.RegisterHotKey(None, hotkey_id, modifiers, vk))
+        if registered:
+            return
+        self._binding_to_id.pop(binding.binding_id, None)
+        self._id_to_binding.pop(hotkey_id, None)
+        error_code = int(ctypes.get_last_error())
+        raise GlobalHotkeyRegistrationError(
+            f"RegisterHotKey failed binding={binding.binding_id!r} hotkey={binding.hotkey_spec.display_text!r} "
+            f"error={error_code}"
+        )
+
+    def _unregister_all(self) -> None:
+        for hotkey_id in list(self._id_to_binding.keys()):
+            try:
+                self._apis.UnregisterHotKey(None, int(hotkey_id))
+            except (AttributeError, TypeError, ValueError):
+                continue
+        self._id_to_binding.clear()
+        self._binding_to_id.clear()
+
+    def _allocate_hotkey_id(self, binding_id: str) -> int:
+        existing_id = self._binding_to_id.get(binding_id)
+        if existing_id is not None:
+            return existing_id
+        hotkey_id = int(self._next_hotkey_id)
+        self._next_hotkey_id += 1
+        self._binding_to_id[binding_id] = hotkey_id
+        self._id_to_binding[hotkey_id] = binding_id
+        return hotkey_id
+
+    def _on_hotkey_id_activated(self, hotkey_id: int) -> None:
+        binding_id = self._id_to_binding.get(int(hotkey_id))
+        if binding_id:
+            self._activation_callback(binding_id)
 
 
 def win32_modifiers_for_hotkey(spec: GlobalHotkeySpec) -> int:
@@ -144,62 +313,21 @@ class Win32GlobalHotkeyBackend:
         app: QtCore.QCoreApplication | None = None,
         apis: _Win32Apis | None = None,
     ) -> None:
-        self._activation_callback = activation_callback
         self._app = app or QtCore.QCoreApplication.instance()
         if self._app is None:
             raise GlobalHotkeyUnsupportedError("Qt application instance is required for Windows global hotkeys.")
         self._apis = apis or _build_win32_apis()
-        self._id_to_binding: dict[int, str] = {}
-        self._binding_to_id: dict[str, int] = {}
-        self._next_hotkey_id = 1
-        self._event_filter = _Win32NativeEventFilter(activation_callback=self._on_hotkey_id_activated)
-        self._app.installNativeEventFilter(self._event_filter)
+        self._dispatcher = _QtBindingActivationProxy(activation_callback=activation_callback)
+        self._worker = _Win32HotkeyThread(apis=self._apis, activation_callback=self._dispatcher.notify)
 
     def register_hotkey(self, binding: GlobalHotkeyBinding) -> None:
-        hotkey_id = self._allocate_hotkey_id(binding.binding_id)
-        modifiers = win32_modifiers_for_hotkey(binding.hotkey_spec)
-        vk = win32_vk_for_hotkey(binding.hotkey_spec)
-        registered = int(self._apis.RegisterHotKey(None, hotkey_id, modifiers, vk))
-        if not registered:
-            self._binding_to_id.pop(binding.binding_id, None)
-            self._id_to_binding.pop(hotkey_id, None)
-            error_code = int(ctypes.get_last_error())
-            raise GlobalHotkeyRegistrationError(
-                f"RegisterHotKey failed binding={binding.binding_id!r} hotkey={binding.hotkey_spec.display_text!r} "
-                f"error={error_code}"
-            )
+        self._worker.register_hotkey(binding)
 
     def unregister_all(self) -> None:
-        for hotkey_id in list(self._id_to_binding.keys()):
-            try:
-                self._apis.UnregisterHotKey(None, int(hotkey_id))
-            except (AttributeError, TypeError, ValueError):
-                continue
-        self._id_to_binding.clear()
-        self._binding_to_id.clear()
+        self._worker.unregister_all()
 
     def close(self) -> None:
-        self.unregister_all()
-        if self._app is not None:
-            try:
-                self._app.removeNativeEventFilter(self._event_filter)
-            except (AttributeError, RuntimeError, TypeError):
-                pass
-
-    def _allocate_hotkey_id(self, binding_id: str) -> int:
-        existing_id = self._binding_to_id.get(binding_id)
-        if existing_id is not None:
-            return existing_id
-        hotkey_id = int(self._next_hotkey_id)
-        self._next_hotkey_id += 1
-        self._binding_to_id[binding_id] = hotkey_id
-        self._id_to_binding[hotkey_id] = binding_id
-        return hotkey_id
-
-    def _on_hotkey_id_activated(self, hotkey_id: int) -> None:
-        binding_id = self._id_to_binding.get(int(hotkey_id))
-        if binding_id:
-            self._activation_callback(binding_id)
+        self._worker.close()
 
 
 def x11_modifier_mask_for_hotkey(spec: GlobalHotkeySpec, x_module: Any) -> int:

@@ -548,6 +548,22 @@ def open_state_field_editor_dialog(node_item: Any, *, field_name: str) -> None:
         title="Edit state field",
         field=current,
         global_hotkey=_state_field_global_hotkey(node, field_name),
+        current_binding_id=f"{str(node.id or '').strip()}:{str(field_name or '').strip()}",
+        hotkey_conflict_lookup=(
+            node.graph.global_hotkey_controller.entries_for_hotkey
+            if getattr(getattr(node, "graph", None), "global_hotkey_controller", None) is not None
+            else None
+        ),
+        hotkey_capture_started=(
+            node.graph.global_hotkey_controller.suspend_hotkeys
+            if getattr(getattr(node, "graph", None), "global_hotkey_controller", None) is not None
+            else None
+        ),
+        hotkey_capture_finished=(
+            node.graph.global_hotkey_controller.resume_hotkeys
+            if getattr(getattr(node, "graph", None), "global_hotkey_controller", None) is not None
+            else None
+        ),
         ui_only=ui_only,
         lock_identity_fields=bool(editable),
         read_only=read_only,

@@ -33,8 +33,22 @@ class GlobalHotkeySpec:
 class GlobalHotkeyBinding:
     binding_id: str
     node_id: str
+    node_label: str
     field_name: str
+    control_label: str
     hotkey_text: str
     hotkey_spec: GlobalHotkeySpec
     numeric_type: str
     allow_repeat: bool = True
+
+
+@dataclass(frozen=True)
+class GlobalHotkeyRegistryEntry:
+    binding_id: str
+    node_id: str
+    node_label: str
+    field_name: str
+    control_label: str
+    hotkey_text: str
+    status: str
+    message: str = ""

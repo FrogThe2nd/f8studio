@@ -17,6 +17,7 @@ from ..ui_notifications import show_info, show_warning
 from ..ui_bus import UiCommand, UiCommandApplier
 from ..ui_icons import StudioIcon, icon_for
 from ..global_hotkeys.controller import ControlPanelGlobalHotkeyController
+from .global_hotkey_registry_dialog import GlobalHotkeyRegistryDialog
 from .node_property_panel import F8StudioSingleNodePropertiesWidget
 from .node_library_widget import F8StudioNodeLibraryWidget
 from .service_manager_widget import ServiceManagerWidget
@@ -93,6 +94,7 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
     _auto_deploy_action: QtGui.QAction
     _auto_proxy_action: QtGui.QAction
     _performance_overlay_action: QtGui.QAction
+    _global_hotkeys_action: QtGui.QAction
     _log_level_action_group: QtGui.QActionGroup
     _log_level_actions: dict[int, QtGui.QAction]
     _dock_widgets: list[QtWidgets.QDockWidget]
@@ -184,6 +186,7 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
             studio_graph=self.studio_graph,
             emit_log_line=self._append_studio_log_line,
         )
+        self.studio_graph.set_global_hotkey_controller(self._global_hotkey_controller)
         self.studio_graph.property_changed.connect(self._on_ui_property_changed)  # type: ignore[attr-defined]
         self.studio_graph.nodes_deleted.connect(self._on_graph_nodes_deleted)  # type: ignore[attr-defined]
 
@@ -311,6 +314,8 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         menu.addAction(self._deploy_action)
         menu.addAction(self._stop_all_services_action)
         menu.addAction(self._auto_deploy_action)
+        menu.addSeparator()
+        menu.addAction(self._global_hotkeys_action)
 
     def _setup_view_menu(self) -> None:
         self._view_menu = self.menuBar().addMenu("View")
@@ -553,6 +558,12 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
             handler=self._on_stop_all_services_action,
             icon=StudioIcon.STOP_ALL,
             tool_tip="Stop all services",
+        )
+        self._global_hotkeys_action = self._create_action(
+            "Global Hotkeys…",
+            handler=self._on_global_hotkeys_action,
+            icon=StudioIcon.KEYBOARD,
+            tool_tip="Show the current global hotkey registry",
         )
 
     @QtCore.Slot()
@@ -820,6 +831,45 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
                 self._log_dock.append("studio", f"[service] stop requested: {service_id}\n")
             except Exception as exc:
                 self._log_dock.report_exception("studio", f"stop service failed ({service_id})", exc)
+
+    @QtCore.Slot()
+    def _on_global_hotkeys_action(self) -> None:
+        dialog = GlobalHotkeyRegistryDialog(
+            self,
+            entries_provider=self._global_hotkey_controller.registry_entries,
+        )
+        dialog.node_requested.connect(self._focus_node_by_id)  # type: ignore[attr-defined]
+        self._global_hotkey_controller.registry_changed.connect(dialog.refresh_entries)  # type: ignore[attr-defined]
+        dialog.exec()
+
+    @QtCore.Slot(str)
+    def _focus_node_by_id(self, node_id: str) -> None:
+        target_node_id = str(node_id or "").strip()
+        if not target_node_id:
+            return
+        try:
+            node = self.studio_graph.get_node_by_id(target_node_id)
+        except Exception:
+            node = None
+        if node is None:
+            return
+        try:
+            for existing in list(self.studio_graph.selected_nodes() or []):
+                existing.set_property("selected", False, push_undo=False)
+        except Exception:
+            logger.exception("Failed to clear selection while focusing hotkey row nodeId=%s", target_node_id)
+        try:
+            node.set_property("selected", True, push_undo=False)
+        except Exception:
+            logger.exception("Failed to select hotkey row nodeId=%s", target_node_id)
+        self._prop_editor.set_node(node)
+        viewer = self.studio_graph.viewer()
+        if isinstance(viewer, F8StudioNodeViewer):
+            try:
+                view_item = node.view
+                viewer.centerOn(view_item)
+            except Exception:
+                logger.exception("Failed to center focused hotkey row nodeId=%s", target_node_id)
 
     @QtCore.Slot()
     def _on_escape_cancel_placement(self) -> None:

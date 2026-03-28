@@ -99,8 +99,10 @@ class GraphDuplicateActionsMixin:
         except (AttributeError, RuntimeError, TypeError):
             source_ui_state = {}
         if isinstance(source_ui_state, dict):
+            copied_ui_state = copy.deepcopy(source_ui_state)
+            copied_ui_state.pop("stateFieldHotkeys", None)
             try:
-                target.set_ui_state(copy.deepcopy(source_ui_state))  # type: ignore[attr-defined]
+                target.set_ui_state(copied_ui_state)  # type: ignore[attr-defined]
             except (AttributeError, RuntimeError, TypeError, ValueError):
                 logger.exception("Failed to copy ui state for duplicate node: type=%s", str(source.type_ or ""))
 
