@@ -1,35 +1,37 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from enum import Enum
-from typing import Any
 
-from msgspec import Struct, field
+from f8pysdk import F8VariantKind, F8VariantLibrary, F8VariantRecord, F8VariantRef
 
 
-class F8VariantKind(str, Enum):
-    operator = "operator"
-    service = "service"
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
-class F8NodeVariantRecord(Struct, kw_only=True):
-    variantId: str
-    kind: F8VariantKind
-    baseNodeType: str
-    serviceClass: str
-    operatorClass: str | None = None
-    name: str
-    description: str = ""
-    tags: list[str] = field(default_factory=list)
-    spec: dict[str, Any]
-    createdAt: str
-    updatedAt: str
-
-    @staticmethod
-    def now_iso() -> str:
-        return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+def _variant_ref(self: F8VariantRecord) -> F8VariantRef:
+    return F8VariantRef(
+        variantId=str(self.variantId),
+        kind=self.kind,
+        baseNodeType=str(self.baseNodeType),
+        serviceClass=str(self.serviceClass),
+        operatorClass=(None if self.operatorClass is None else str(self.operatorClass)),
+        name=str(self.name),
+    )
 
 
-class F8NodeVariantLibraryFile(Struct, kw_only=True):
-    schemaVersion: str = "f8variantlib/1"
-    variants: list[F8NodeVariantRecord] = field(default_factory=list)
+F8VariantRecord.now_iso = staticmethod(_now_iso)  # type: ignore[attr-defined]
+F8VariantRecord.variant_ref = _variant_ref  # type: ignore[attr-defined]
+
+# Backward-compatible aliases during the cleanup.
+F8NodeVariantRecord = F8VariantRecord
+F8NodeVariantLibraryFile = F8VariantLibrary
+
+__all__ = [
+    "F8VariantKind",
+    "F8VariantRef",
+    "F8VariantRecord",
+    "F8VariantLibrary",
+    "F8NodeVariantRecord",
+    "F8NodeVariantLibraryFile",
+]

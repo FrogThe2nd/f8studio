@@ -5,6 +5,7 @@ from typing import Any
 
 from NodeGraphQt.base.commands import NodeAddedCmd
 from NodeGraphQt.errors import NodeCreationError
+from f8pysdk.msgspec_codec import dump_json
 
 from f8pysdk import F8OperatorSpec, F8ServiceSpec, F8StateAccess
 
@@ -98,11 +99,11 @@ class GraphFactoryFlowMixin:
             record = self._variant_record(variant_id)
             if record is None:
                 raise NodeCreationError(f'Can\'t find variant: "{variant_id}"')
-            base_node_type = str(record.get("baseNodeType") or "").strip()
+            base_node_type = str(record.baseNodeType or "").strip()
             if not base_node_type:
                 raise NodeCreationError(f'Variant "{variant_id}" has empty baseNodeType')
-            variant_name = str(record.get("name") or "").strip()
-            variant_spec_json = record.get("spec")
+            variant_name = str(record.name or "").strip()
+            variant_spec_json = dump_json(record.spec, mode="json") if not isinstance(record.spec, dict) else record.spec
             if not isinstance(variant_spec_json, dict):
                 raise NodeCreationError(f'Variant "{variant_id}" has invalid spec')
             node = self.create_node(
@@ -118,8 +119,7 @@ class GraphFactoryFlowMixin:
                 return None
             self._apply_variant_to_node(
                 node=node,
-                variant_id=variant_id,
-                variant_name=variant_name,
+                variant_record=record,
                 variant_spec_json=variant_spec_json,
             )
             return node

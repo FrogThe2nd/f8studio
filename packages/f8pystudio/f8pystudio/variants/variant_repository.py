@@ -124,6 +124,17 @@ def variant_exists(variant_id: str) -> bool:
     return False
 
 
+def variant_record(variant_id: str) -> F8NodeVariantRecord | None:
+    vid = str(variant_id or "").strip()
+    if not vid:
+        return None
+    lib = load_library()
+    for variant in lib.variants:
+        if str(variant.variantId or "").strip() == vid:
+            return variant
+    return None
+
+
 def upsert_variant(record: F8NodeVariantRecord) -> F8NodeVariantRecord:
     lib = load_library()
     if _records_name_conflict(

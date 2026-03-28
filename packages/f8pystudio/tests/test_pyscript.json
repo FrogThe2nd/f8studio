@@ -839,8 +839,14 @@
         },
         "f8_sys": {
           "svcId": "NXSA",
-          "variantId": "tkovZZhAtsr7",
-          "variantName": "Symmetric Range Control"
+          "variantRef": {
+            "variantId": "tkovZZhAtsr7",
+            "kind": "operator",
+            "baseNodeType": "f8.pyengine.f8.python_script",
+            "serviceClass": "f8.pyengine",
+            "operatorClass": "f8.python_script",
+            "name": "Symmetric Range Control"
+          }
         },
         "f8_ui": {
           "stateInlineExpanded": {

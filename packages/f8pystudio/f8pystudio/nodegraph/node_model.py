@@ -7,8 +7,9 @@ import msgspec
 
 from NodeGraphQt.base.model import NodeModel
 
-from f8pysdk import F8OperatorSpec, F8ServiceSpec
+from f8pysdk import F8OperatorSpec, F8ServiceSpec, F8VariantRef
 from f8pysdk.spec_metadata import coerce_spec_payload
+from ..variants.variant_metadata import normalize_variant_sys_metadata, variant_ref_from_dict, variant_ref_to_json
 
 
 logger = logging.getLogger(__name__)
@@ -71,6 +72,15 @@ class F8StudioNodeModel(NodeModel):
                         logger.exception("Failed to sync node after f8_ui update.")
             self._emit_owner_property_changed("f8_ui", self.f8_ui)
             return
+        if name == "f8_sys":
+            if isinstance(value, dict):
+                self.f8_sys = normalize_variant_sys_metadata(value)
+            elif value is None:
+                self.f8_sys = {}
+            else:
+                raise TypeError(f"Unsupported `f8_sys` type: {type(value)!r}")
+            self._emit_owner_property_changed("f8_sys", self.f8_sys)
+            return
         if name == "nodePurpose":
             self.nodePurpose = "" if value is None else str(value)
             return
@@ -113,6 +123,8 @@ class F8StudioNodeModel(NodeModel):
         spec = node_dict.get("f8_spec")
         if isinstance(spec, (F8OperatorSpec, F8ServiceSpec)):
             node_dict["f8_spec"] = dump_json(spec, mode="json")
+        if isinstance(self.f8_sys, dict) and self.f8_sys:
+            node_dict["f8_sys"] = normalize_variant_sys_metadata(self.f8_sys)
 
         if isinstance(self.f8_ui, dict) and self.f8_ui:
             node_dict["f8_ui"] = self.f8_ui
@@ -246,3 +258,28 @@ class F8StudioNodeModel(NodeModel):
         if not isinstance(self.f8_sys, dict):
             self.f8_sys = {}
         self.f8_sys["nodePurpose"] = str(value or "").strip()
+
+    @property
+    def variantRef(self) -> F8VariantRef | None:
+        if not isinstance(self.f8_sys, dict):
+            self.f8_sys = {}
+        raw = self.f8_sys.get("variantRef")
+        if not isinstance(raw, dict):
+            return None
+        try:
+            return variant_ref_from_dict(raw)
+        except Exception:
+            return None
+
+    @variantRef.setter
+    def variantRef(self, value: F8VariantRef | None) -> None:
+        if not isinstance(self.f8_sys, dict):
+            self.f8_sys = {}
+        if value is None:
+            self.f8_sys.pop("variantRef", None)
+            self.f8_sys.pop("variantId", None)
+            self.f8_sys.pop("variantName", None)
+            return
+        self.f8_sys["variantRef"] = variant_ref_to_json(value)
+        self.f8_sys.pop("variantId", None)
+        self.f8_sys.pop("variantName", None)

@@ -26,6 +26,98 @@ components:
         - type: array
           items: {}
         - type: "null"
+    F8VariantKind:
+      title: F8VariantKind
+      type: string
+      enum:
+        - service
+        - operator
+    F8VariantRef:
+      title: F8VariantRef
+      type: object
+      properties:
+        variantId:
+          type: string
+        kind:
+          $ref: "#/components/schemas/F8VariantKind"
+        baseNodeType:
+          type: string
+        serviceClass:
+          type: string
+        operatorClass:
+          anyOf:
+            - type: string
+            - type: "null"
+          default: null
+        name:
+          type: string
+      required:
+        - variantId
+        - kind
+        - baseNodeType
+        - serviceClass
+        - name
+      additionalProperties: false
+    F8VariantRecord:
+      title: F8VariantRecord
+      type: object
+      properties:
+        variantId:
+          type: string
+        kind:
+          $ref: "#/components/schemas/F8VariantKind"
+        baseNodeType:
+          type: string
+        serviceClass:
+          type: string
+        operatorClass:
+          anyOf:
+            - type: string
+            - type: "null"
+          default: null
+        name:
+          type: string
+        description:
+          type: string
+          default: ""
+        tags:
+          type: array
+          items:
+            type: string
+          default: []
+        spec:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/F8JsonValue"
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+      required:
+        - variantId
+        - kind
+        - baseNodeType
+        - serviceClass
+        - name
+        - spec
+        - createdAt
+        - updatedAt
+      additionalProperties: false
+    F8VariantLibrary:
+      title: F8VariantLibrary
+      type: object
+      properties:
+        schemaVersion:
+          type: string
+          enum:
+            - f8variantlib/1
+          default: f8variantlib/1
+        variants:
+          type: array
+          items:
+            $ref: "#/components/schemas/F8VariantRecord"
+          default: []
+      additionalProperties: false
     F8DynamicBindingsInputsSpec:
       title: F8DynamicBindingsInputsSpec
       type: object

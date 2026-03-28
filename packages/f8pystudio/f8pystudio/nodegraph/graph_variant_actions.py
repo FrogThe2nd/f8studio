@@ -12,8 +12,16 @@ from f8pysdk.spec_metadata import coerce_spec_payload
 
 from ..ui_notifications import show_info, show_warning
 from ..variants.variant_compose import build_variant_record_from_node
+from ..variants.variant_metadata import variant_ref_from_record, variant_ref_to_json
 from ..variants.variant_ids import build_variant_node_type
-from ..variants.variant_repository import is_variant_name_conflict, load_library, normalize_variant_name, upsert_variant
+from ..variants.variant_models import F8NodeVariantRecord
+from ..variants.variant_repository import (
+    is_variant_name_conflict,
+    load_library,
+    normalize_variant_name,
+    upsert_variant,
+    variant_record,
+)
 
 
 class GraphVariantActionsMixin:
@@ -143,15 +151,8 @@ class GraphVariantActionsMixin:
             self._variant_menu_node_types.add(node_type)
 
     @staticmethod
-    def _variant_record(variant_id: str) -> dict[str, Any] | None:
-        vid = str(variant_id or "").strip()
-        if not vid:
-            return None
-        lib = load_library()
-        for v in lib.variants:
-            if str(v.variantId) == vid:
-                return dump_json(v, mode="json")
-        return None
+    def _variant_record(variant_id: str) -> F8NodeVariantRecord | None:
+        return variant_record(variant_id)
 
     @staticmethod
     def _coerce_variant_spec(value: dict[str, Any]) -> F8OperatorSpec | F8ServiceSpec:
@@ -161,8 +162,7 @@ class GraphVariantActionsMixin:
         self,
         *,
         node: BaseNode,
-        variant_id: str,
-        variant_name: str,
+        variant_record: F8NodeVariantRecord,
         variant_spec_json: dict[str, Any],
     ) -> None:
         spec = self._coerce_variant_spec(variant_spec_json)
@@ -206,8 +206,13 @@ class GraphVariantActionsMixin:
                 continue
         if not isinstance(node.model.f8_sys, dict):
             node.model.f8_sys = {}
-        node.model.f8_sys["variantId"] = str(variant_id)
-        node.model.f8_sys["variantName"] = str(variant_name or "")
+        variant_ref = variant_ref_from_record(variant_record)
+        if hasattr(node.model, "variantRef"):
+            node.model.variantRef = variant_ref
+        else:
+            node.model.f8_sys["variantRef"] = variant_ref_to_json(variant_ref)
+            node.model.f8_sys.pop("variantId", None)
+            node.model.f8_sys.pop("variantName", None)
 
     def create_variant_node(
         self,

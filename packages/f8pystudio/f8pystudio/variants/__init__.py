@@ -5,7 +5,15 @@ from .variant_ids import (
     is_variant_node_type,
     parse_variant_node_type,
 )
-from .variant_models import F8NodeVariantLibraryFile, F8NodeVariantRecord, F8VariantKind
+from .variant_models import (
+    F8NodeVariantLibraryFile,
+    F8NodeVariantRecord,
+    F8VariantKind,
+    F8VariantLibrary,
+    F8VariantRecord,
+    F8VariantRef,
+)
+from .variant_metadata import normalize_variant_sys_metadata, variant_ref_from_dict, variant_ref_from_record, variant_ref_to_json
 from .variant_repository import (
     delete_variant,
     ensure_unique_variant_name,
@@ -17,6 +25,7 @@ from .variant_repository import (
     normalize_variant_name,
     save_library,
     upsert_variant,
+    variant_record,
     variants_file_path,
 )
 
@@ -24,6 +33,13 @@ __all__ = [
     "F8NodeVariantLibraryFile",
     "F8NodeVariantRecord",
     "F8VariantKind",
+    "F8VariantRef",
+    "F8VariantRecord",
+    "F8VariantLibrary",
+    "variant_ref_from_record",
+    "variant_ref_from_dict",
+    "variant_ref_to_json",
+    "normalize_variant_sys_metadata",
     "VARIANT_NODE_TYPE_PREFIX",
     "build_variant_node_type",
     "is_variant_node_type",
@@ -39,6 +55,7 @@ __all__ = [
     "ensure_unique_variant_name",
     "upsert_variant",
     "delete_variant",
+    "variant_record",
     "import_from_json",
     "export_to_json",
 ]
