@@ -9,6 +9,8 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
+from f8pystudio.constants import SERVICE_CLASS as STUDIO_SERVICE_CLASS  # noqa: E402
+from f8pystudio.constants import STUDIO_SERVICE_ID  # noqa: E402
 from f8pystudio.pystudio_service_bridge import ServiceMonitorRow  # noqa: E402
 from f8pystudio.widgets.service_manager_widget import ServiceManagerWidget  # noqa: E402
 
@@ -216,6 +218,60 @@ def test_deploy_button_deploys_current_rungraph_for_running_service() -> None:
 
     widget._on_deploy_clicked()
     assert bridge.deploy_calls == ["svcA"]
+
+
+def test_bridge_only_rows_are_preserved_without_declared_graph_service() -> None:
+    _ensure_app()
+    bridge = _FakeBridge([_row_with_service_id("svc_runtime_only")])
+    widget = ServiceManagerWidget(
+        bridge=bridge,  # type: ignore[arg-type]
+        get_declared_services=lambda: {},
+    )
+    widget.refresh()
+
+    assert widget._model.rowCount() == 1
+    assert _cell_text(widget, 0, widget._COL_SERVICE_ID) == "svc_runtime_only"
+
+
+def test_built_in_studio_service_row_is_read_only() -> None:
+    _ensure_app()
+    studio_row = ServiceMonitorRow(
+        service_id=STUDIO_SERVICE_ID,
+        service_class=STUDIO_SERVICE_CLASS,
+        running=True,
+        alive=True,
+        ready=True,
+        active=True,
+        cpu_process_percent=None,
+        memory_rss_bytes=None,
+        gpu_util_percent=None,
+        latency_ms_p95=None,
+        wait_ms_p95=None,
+        error_count_window=None,
+        latest_snapshot=None,
+    )
+    bridge = _FakeBridge([studio_row])
+    widget = ServiceManagerWidget(
+        bridge=bridge,  # type: ignore[arg-type]
+        get_declared_services=lambda: {},
+    )
+    widget.refresh()
+
+    assert widget._model.rowCount() == 1
+    assert _cell_text(widget, 0, widget._COL_SERVICE_ID) == STUDIO_SERVICE_ID
+    assert widget._toggle_btn.isEnabled() is False
+    assert widget._stop_btn.isEnabled() is False
+    assert widget._deploy_btn.isEnabled() is False
+    assert widget._restart_btn.isEnabled() is False
+
+    widget._on_toggle_clicked()
+    widget._on_stop_clicked()
+    widget._on_deploy_clicked()
+    widget._on_restart_clicked()
+
+    assert bridge.start_calls == []
+    assert bridge.active_calls == []
+    assert bridge.deploy_calls == []
 
 
 def test_refresh_preserves_scroll_position_when_selection_would_jump_to_top() -> None:

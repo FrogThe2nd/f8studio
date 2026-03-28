@@ -74,6 +74,7 @@ class _FakeBridge:
     def __init__(self, *, running: bool) -> None:
         self._running = bool(running)
         self.deploy_calls: list[str] = []
+        self.sync_calls: list[object] = []
 
     def is_service_running(self, service_id: str) -> bool:
         _ = service_id
@@ -83,9 +84,13 @@ class _FakeBridge:
         _ = compiled
         self.deploy_calls.append(str(service_id))
 
+    def sync_studio_runtime(self, compiled: object) -> None:
+        self.sync_calls.append(compiled)
+
 
 class _FakeMain:
     _on_auto_deploy_timeout = F8StudioMainWin._on_auto_deploy_timeout
+    _on_studio_runtime_sync_timeout = F8StudioMainWin._on_studio_runtime_sync_timeout
     _mark_auto_deploy_observed = F8StudioMainWin._mark_auto_deploy_observed
     _deploy_fingerprint_from_compiled = F8StudioMainWin._deploy_fingerprint_from_compiled
     _refresh_auto_deploy_fingerprint = F8StudioMainWin._refresh_auto_deploy_fingerprint
@@ -148,3 +153,15 @@ def test_auto_deploy_redeploys_when_deploy_fingerprint_changes(monkeypatch) -> N
     assert fake_main._last_auto_deploy_observed_undo_index == 9
     assert fake_main._last_auto_deploy_fingerprint == fake_main._deploy_fingerprint_from_compiled(compiled)  # type: ignore[arg-type]
     assert any("applying rungraph" in line for _channel, line in fake_main._log_dock.lines)
+
+
+def test_studio_runtime_sync_updates_local_runtime_without_remote_deploy(monkeypatch) -> None:
+    compiled = _compiled(state_value="pause")
+    fake_main = _FakeMain(compiled=compiled, running=True, current_undo_index=3)
+
+    monkeypatch.setattr("f8pystudio.widgets.main_window.compile_runtime_graphs_from_studio", lambda _graph: compiled)
+
+    F8StudioMainWin._on_studio_runtime_sync_timeout(fake_main)
+
+    assert fake_main._bridge.sync_calls == [compiled]
+    assert fake_main._bridge.deploy_calls == []

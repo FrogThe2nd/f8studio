@@ -5,6 +5,8 @@ from typing import Callable
 
 from qtpy import QtCore, QtGui, QtWidgets
 
+from ..constants import SERVICE_CLASS as STUDIO_SERVICE_CLASS
+from ..constants import STUDIO_SERVICE_ID
 from ..pystudio_service_bridge import PyStudioServiceBridge, ServiceMonitorRow
 from ..ui_icons import StudioIcon, icon_for
 
@@ -494,8 +496,10 @@ class ServiceManagerWidget(QtWidgets.QWidget):
             by_id[row.service_id] = row
 
         rows: list[ServiceMonitorRow] = []
-        for service_id in sorted(declared_services.keys()):
-            service_class = str(declared_services[service_id] or "").strip()
+        all_service_ids = set(by_id.keys())
+        all_service_ids.update(declared_services.keys())
+        for service_id in sorted(all_service_ids):
+            service_class = str(declared_services.get(service_id, "") or "").strip()
             row = by_id.get(service_id)
             if row is None:
                 rows.append(
@@ -521,6 +525,14 @@ class ServiceManagerWidget(QtWidgets.QWidget):
             rows.append(row)
         return rows
 
+    @staticmethod
+    def _is_studio_service_row(row: ServiceMonitorRow | None) -> bool:
+        if row is None:
+            return False
+        service_id = str(row.service_id or "").strip()
+        service_class = str(row.service_class or "").strip()
+        return service_id == STUDIO_SERVICE_ID or service_class == STUDIO_SERVICE_CLASS
+
     def _update_action_state(self) -> None:
         selected = self._selected_row()
         if selected is None:
@@ -530,6 +542,21 @@ class ServiceManagerWidget(QtWidgets.QWidget):
             self._restart_btn.setEnabled(False)
             return
 
+        if self._is_studio_service_row(selected):
+            self._toggle_btn.setEnabled(False)
+            self._stop_btn.setEnabled(False)
+            self._deploy_btn.setEnabled(False)
+            self._restart_btn.setEnabled(False)
+            self._toggle_btn.setIcon(icon_for(self, StudioIcon.PLAY))
+            self._toggle_btn.setToolTip("Built-in studio service is monitored here and cannot be controlled")
+            self._stop_btn.setToolTip("Built-in studio service is monitored here and cannot be controlled")
+            self._deploy_btn.setToolTip("Built-in studio service is monitored here and cannot be controlled")
+            self._restart_btn.setToolTip("Built-in studio service is monitored here and cannot be controlled")
+            return
+
+        self._stop_btn.setToolTip("Terminate service process")
+        self._deploy_btn.setToolTip("Deploy current rungraph to service")
+        self._restart_btn.setToolTip("Restart service (terminate + deploy + activate)")
         running = bool(selected.running)
         has_class = bool(str(selected.service_class or "").strip())
         active = selected.active
@@ -600,6 +627,8 @@ class ServiceManagerWidget(QtWidgets.QWidget):
         row = self._selected_row()
         if row is None:
             return
+        if self._is_studio_service_row(row):
+            return
         if not bool(row.running):
             if not row.service_class:
                 return
@@ -618,13 +647,15 @@ class ServiceManagerWidget(QtWidgets.QWidget):
         row = self._selected_row()
         if row is None:
             return
+        if self._is_studio_service_row(row):
+            return
         self._bridge.stop_service(row.service_id)
         self.queue_refresh()
 
     @QtCore.Slot()
     def _on_deploy_clicked(self) -> None:
         row = self._selected_row()
-        if row is None or not bool(row.running):
+        if row is None or self._is_studio_service_row(row) or not bool(row.running):
             return
         self._bridge.deploy_service_rungraph(row.service_id)
         self.queue_refresh()
@@ -632,7 +663,7 @@ class ServiceManagerWidget(QtWidgets.QWidget):
     @QtCore.Slot()
     def _on_restart_clicked(self) -> None:
         row = self._selected_row()
-        if row is None or not row.service_class:
+        if row is None or self._is_studio_service_row(row) or not row.service_class:
             return
         self._bridge.restart_service_and_deploy(row.service_id, service_class=row.service_class)
         self.queue_refresh()

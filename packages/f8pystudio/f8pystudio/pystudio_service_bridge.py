@@ -322,7 +322,7 @@ class PyStudioServiceBridge(RuntimeSessionControllerMixin, ServiceLifecycleContr
         return dump_json(snapshot, mode="json", by_alias=True)
 
     def _collect_known_service_ids(self) -> list[str]:
-        return collect_known_service_ids(
+        known_service_ids = collect_known_service_ids(
             managed_service_ids=self._managed_service_ids,
             managed_service_classes=self._managed_service_classes,
             service_alive_cache=self._service_alive_cache,
@@ -331,15 +331,20 @@ class PyStudioServiceBridge(RuntimeSessionControllerMixin, ServiceLifecycleContr
             process_service_ids_provider=self._process_gateway.service_ids,
             on_process_ids_error=lambda exc: self._report_exception("list process service ids failed", exc),
         )
+        if self.studio_service_id not in known_service_ids:
+            known_service_ids.append(self.studio_service_id)
+        return known_service_ids
 
     def list_service_monitor_rows(self) -> list[ServiceMonitorRow]:
         latest_by_service = self._monitor_center.latest_snapshots()
+        managed_service_classes = dict(self._managed_service_classes)
+        managed_service_classes[self.studio_service_id] = str(SERVICE_CLASS)
         return build_service_monitor_rows(
             service_ids=self._collect_known_service_ids(),
             latest_snapshot_by_service=latest_by_service,
             is_service_running=self.is_service_running,
             get_cached_service_active=self.get_cached_service_active,
-            managed_service_classes=self._managed_service_classes,
+            managed_service_classes=managed_service_classes,
             service_alive_cache=self._service_alive_cache,
         )
 

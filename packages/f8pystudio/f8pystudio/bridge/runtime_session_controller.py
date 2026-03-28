@@ -67,9 +67,15 @@ class RuntimeSessionControllerMixin:
             await self._svc.start(
                 on_ui_command=lambda cmd: self.ui_command.emit(cmd),
             )
+            self._cache_service_alive(self.studio_service_id, True)
+            self._cache_service_active(self.studio_service_id, True)
+            self._monitor_center.update_service_status(service_id=self.studio_service_id, ready=True)
         except Exception as exc:
             self._emit_log_line(f"studio runtime start failed: {exc}")
             self._svc = None
+            self._cache_service_alive(self.studio_service_id, False)
+            self._cache_service_active(self.studio_service_id, None)
+            self._monitor_center.update_service_status(service_id=self.studio_service_id, ready=False)
 
         # Studio-side remote KV watcher (monitors all remote node state and mirrors into UI).
         if self._remote_state_watcher is None:
@@ -186,6 +192,9 @@ class RuntimeSessionControllerMixin:
         except Exception as exc:
             self._report_exception("stop studio service failed", exc)
         self._svc = None
+        self._cache_service_alive(self.studio_service_id, False)
+        self._cache_service_active(self.studio_service_id, None)
+        self._monitor_center.update_service_status(service_id=self.studio_service_id, ready=False)
 
         try:
             await self._command_gateway.close()

@@ -101,6 +101,7 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
     _default_dock_layout_state: QtCore.QByteArray
     _periodic_auto_save_timer: QtCore.QTimer
     _auto_deploy_timer: QtCore.QTimer
+    _studio_runtime_sync_timer: QtCore.QTimer
 
     def __init__(
         self,
@@ -145,6 +146,10 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         self._auto_deploy_timer.setSingleShot(True)
         self._auto_deploy_timer.setInterval(self._AUTO_DEPLOY_DEBOUNCE_MS)
         self._auto_deploy_timer.timeout.connect(self._on_auto_deploy_timeout)  # type: ignore[attr-defined]
+        self._studio_runtime_sync_timer = QtCore.QTimer(self)
+        self._studio_runtime_sync_timer.setSingleShot(True)
+        self._studio_runtime_sync_timer.setInterval(120)
+        self._studio_runtime_sync_timer.timeout.connect(self._on_studio_runtime_sync_timeout)  # type: ignore[attr-defined]
 
         self.setCentralWidget(self.studio_graph.widget)
 
@@ -1095,8 +1100,30 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         self._exit_autosaved = False
         if bool(self.studio_graph._loading_session):  # type: ignore[attr-defined]
             return
+        self._studio_runtime_sync_timer.start()
         if self._auto_deploy_enabled:
             self._auto_deploy_timer.start()
+
+    @QtCore.Slot()
+    def _on_studio_runtime_sync_timeout(self) -> None:
+        try:
+            compiled = compile_runtime_graphs_from_studio(self.studio_graph)
+        except ValueError as exc:
+            msg = str(exc or "").strip() or "studio runtime sync blocked by invalid graph"
+            self._log_dock.append("studio", f"[studio][sync][blocked] {msg}\n")
+            return
+        except Exception as exc:
+            self._log_dock.append("studio", f"[studio][sync][error] {exc}\n")
+            self._log_dock.report_exception("studio", "studio runtime sync compile failed", exc)
+            return
+
+        for warning in list(compiled.warnings or ()):
+            self._log_dock.append("studio", f"[compile][warn] {warning}\n")
+
+        try:
+            self._bridge.sync_studio_runtime(compiled)
+        except Exception as exc:
+            self._log_dock.report_exception("studio", "studio runtime sync failed", exc)
 
     @QtCore.Slot()
     def _on_periodic_auto_save_timeout(self) -> None:

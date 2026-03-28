@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+from types import SimpleNamespace
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
@@ -79,6 +80,34 @@ def test_list_service_monitor_rows_includes_snapshot_and_managed_services() -> N
     assert svc_b.latest_snapshot is None
     assert svc_b.alive is True
     assert svc_b.active is False
+
+
+def test_list_service_monitor_rows_always_includes_built_in_studio_service() -> None:
+    bridge = PyStudioServiceBridge(PyStudioServiceBridgeConfig())
+
+    rows = bridge.list_service_monitor_rows()
+    by_id = {row.service_id: row for row in rows}
+
+    assert bridge.studio_service_id in by_id
+    studio_row = by_id[bridge.studio_service_id]
+    assert studio_row.service_class == "f8.pystudio"
+    assert studio_row.running is False
+
+
+def test_list_service_monitor_rows_marks_built_in_studio_service_running_when_runtime_started() -> None:
+    bridge = PyStudioServiceBridge(PyStudioServiceBridgeConfig())
+    bridge._svc = SimpleNamespace(bus=object())
+    bridge.request_service_status(bridge.studio_service_id)
+
+    rows = bridge.list_service_monitor_rows()
+    by_id = {row.service_id: row for row in rows}
+
+    assert bridge.studio_service_id in by_id
+    studio_row = by_id[bridge.studio_service_id]
+    assert studio_row.service_class == "f8.pystudio"
+    assert studio_row.running is True
+    assert studio_row.alive is True
+    assert studio_row.active is True
 
 
 def test_unmanage_service_clears_monitor_cache() -> None:
