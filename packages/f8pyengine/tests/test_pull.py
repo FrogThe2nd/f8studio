@@ -115,8 +115,7 @@ class PullNodeTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_spec_is_hidden_and_has_no_exec_inputs(self) -> None:
         spec = PullRuntimeNode.SPEC
-        tags = [str(t) for t in list(spec.tags or [])]
-        self.assertIn("__hidden__", tags)
+        self.assertTrue(spec.hiddenInPalette)
         self.assertEqual(list(spec.execInPorts or []), [])
 
 

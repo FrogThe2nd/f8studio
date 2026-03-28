@@ -144,7 +144,7 @@ class GraphSearchActionsMixin:
     @staticmethod
     def _is_hidden_node_class(node_cls: Any) -> bool:
         """
-        Hide nodes tagged with `__hidden__` from tab search while keeping them registered.
+        Hide nodes explicitly marked `hiddenInPalette` from tab search while keeping them registered.
         """
         return is_hidden_spec_node_class(node_cls)
 

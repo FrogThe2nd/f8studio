@@ -941,6 +941,10 @@ components:
           items:
             type: string
           default: []
+        hiddenInPalette:
+          type: boolean
+          description: If true, keep the spec registered but hide it from Studio palette and tab search surfaces.
+          default: false
         stateFields:
           type: array
           items:
@@ -1025,6 +1029,10 @@ components:
           items:
             type: string
           default: []
+        hiddenInPalette:
+          type: boolean
+          description: If true, keep the spec registered but hide it from Studio palette and tab search surfaces.
+          default: false
         stateFields:
           type: array
           items:

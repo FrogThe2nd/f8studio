@@ -30,7 +30,7 @@ class F8StudioServiceMissingNode(F8StudioServiceBaseNode):
         serviceClass="f8.missing",
         version="0.0.1",
         label="Missing Service",
-        tags=["__hidden__"],
+        hiddenInPalette=True,
     )
 
     def __init__(self, qgraphics_item: type[QtWidgets.QGraphicsItem] | None = None):

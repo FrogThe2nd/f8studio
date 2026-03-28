@@ -32,7 +32,7 @@ class F8StudioOperatorMissingNode(F8StudioOperatorBaseNode):
         operatorClass="f8.missing.operator",
         version="0.0.1",
         label="Missing Operator",
-        tags=["__hidden__"],
+        hiddenInPalette=True,
     )
 
     def __init__(self, qgraphics_item: type[QtWidgets.QGraphicsItem] | None = None):
