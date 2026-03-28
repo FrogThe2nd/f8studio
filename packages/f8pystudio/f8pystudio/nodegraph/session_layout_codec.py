@@ -16,6 +16,11 @@ from f8pysdk.spec_metadata import (
     coerce_spec_payload,
     spec_kind_from_spec,
 )
+from f8pysdk.spec_edit_policy import (
+    can_add as _policy_can_add,
+    can_delete as _policy_can_delete,
+    can_edit_existing as _policy_can_edit_existing,
+)
 
 from .edge_rules import EdgeRuleNodeInfo, layout_node_info, validate_layout_connection
 from .viewer import F8StudioNodeViewer
@@ -292,6 +297,129 @@ class SessionLayoutCodecMixin:
 
         errors: list[str] = []
 
+        def _policy_flags(
+            spec_obj: F8OperatorSpec | F8ServiceSpec,
+            collection: str,
+        ) -> tuple[bool, bool, bool]:
+            return (
+                _policy_can_add(spec_obj, collection),  # type: ignore[arg-type]
+                _policy_can_delete(spec_obj, collection),  # type: ignore[arg-type]
+                _policy_can_edit_existing(spec_obj, collection),  # type: ignore[arg-type]
+            )
+
+        def _entry_name(entry: object) -> str:
+            if not isinstance(entry, dict):
+                return ""
+            return str(entry.get("name") or "").strip()
+
+        def _merge_state_field_item(base: dict[str, Any], session: dict[str, Any]) -> dict[str, Any]:
+            merged_item = dict(base)
+            for key in ("label", "description", "showOnNode", "uiControl", "valueSchema"):
+                if key in session:
+                    merged_item[key] = session.get(key)
+            return merged_item
+
+        def _merge_data_port_item(base: dict[str, Any], session: dict[str, Any]) -> dict[str, Any]:
+            merged_item = dict(base)
+            for key in ("description", "showOnNode", "valueSchema"):
+                if key in session:
+                    merged_item[key] = session.get(key)
+            return merged_item
+
+        def _merge_command_params(base_params_obj: object, session_params_obj: object) -> list[dict[str, Any]]:
+            base_params = [item for item in list(base_params_obj or []) if isinstance(item, dict)]
+            session_params = [item for item in list(session_params_obj or []) if isinstance(item, dict)]
+            session_by_name = {_entry_name(item): item for item in session_params if _entry_name(item)}
+            out: list[dict[str, Any]] = []
+            for base_param in base_params:
+                base_name = _entry_name(base_param)
+                if not base_name:
+                    out.append(dict(base_param))
+                    continue
+                session_param = session_by_name.get(base_name)
+                merged_param = dict(base_param)
+                if session_param is not None:
+                    for key in ("description", "uiControl", "valueSchema"):
+                        if key in session_param:
+                            merged_param[key] = session_param.get(key)
+                out.append(merged_param)
+            return out
+
+        def _merge_command_item(base: dict[str, Any], session: dict[str, Any]) -> dict[str, Any]:
+            merged_item = dict(base)
+            for key in ("description", "showOnNode"):
+                if key in session:
+                    merged_item[key] = session.get(key)
+            if "params" in session:
+                merged_item["params"] = _merge_command_params(base.get("params"), session.get("params"))
+            return merged_item
+
+        def _merge_named_list(
+            *,
+            base_items_obj: object,
+            session_items_obj: object,
+            can_add: bool,
+            can_delete: bool,
+            can_edit_existing: bool,
+            merge_item: Any,
+        ) -> list[dict[str, Any]]:
+            base_items = [item for item in list(base_items_obj or []) if isinstance(item, dict)]
+            session_items = [item for item in list(session_items_obj or []) if isinstance(item, dict)]
+            session_by_name = {_entry_name(item): item for item in session_items if _entry_name(item)}
+            base_names: set[str] = set()
+            out: list[dict[str, Any]] = []
+
+            for base_item in base_items:
+                base_name = _entry_name(base_item)
+                if not base_name:
+                    out.append(dict(base_item))
+                    continue
+                base_names.add(base_name)
+                session_item = session_by_name.get(base_name)
+                if session_item is None:
+                    if can_delete and not bool(base_item.get("required")):
+                        continue
+                    out.append(dict(base_item))
+                    continue
+                if can_edit_existing:
+                    out.append(merge_item(base_item, session_item))
+                else:
+                    out.append(dict(base_item))
+
+            if can_add:
+                for session_item in session_items:
+                    session_name = _entry_name(session_item)
+                    if not session_name or session_name in base_names:
+                        continue
+                    out.append(dict(session_item))
+
+            return out
+
+        def _merge_string_list(
+            *,
+            base_items_obj: object,
+            session_items_obj: object,
+            can_add: bool,
+            can_delete: bool,
+        ) -> list[str]:
+            base_items = [str(item) for item in list(base_items_obj or []) if str(item).strip()]
+            session_items = [str(item) for item in list(session_items_obj or []) if str(item).strip()]
+            if not can_add and not can_delete:
+                return base_items
+            session_set = set(session_items)
+            base_set = set(base_items)
+            out: list[str] = []
+            for item in base_items:
+                if can_delete and item not in session_set:
+                    continue
+                out.append(item)
+            if can_add:
+                for item in session_items:
+                    if item in base_set:
+                        continue
+                    out.append(item)
+            return out
+
         for node_id, node_data in nodes.items():
             if not isinstance(node_data, dict):
                 continue
@@ -370,30 +498,7 @@ class SessionLayoutCodecMixin:
 
             merged = dump_json(template_spec, mode="json")
 
-            def _maybe_override_bool(key: str) -> None:
-                if key in session_spec_raw:
-                    merged[key] = session_spec_raw.get(key)
-
-            def _maybe_override_list(key: str, allow: bool) -> None:
-                if not allow:
-                    # warn (non-fatal) if the session attempted to override a non-editable list.
-                    if key in session_spec_raw and session_spec_raw.get(key) != merged.get(key):
-                        logger.warning(
-                            "Ignoring non-editable session override: nodeId=%s key=%s (template wins).",
-                            node_id,
-                            key,
-                        )
-                    return
-                if key in session_spec_raw:
-                    merged[key] = session_spec_raw.get(key)
-
             if isinstance(template_spec, F8OperatorSpec):
-                _maybe_override_bool("editableStateFields")
-                _maybe_override_bool("editableExecInPorts")
-                _maybe_override_bool("editableExecOutPorts")
-                _maybe_override_bool("editableDataInPorts")
-                _maybe_override_bool("editableDataOutPorts")
-
                 # Keep user metadata from persisted snapshots/variants.
                 if "label" in session_spec_raw:
                     merged["label"] = session_spec_raw.get("label")
@@ -401,21 +506,55 @@ class SessionLayoutCodecMixin:
                     merged["description"] = session_spec_raw.get("description")
                 if "tags" in session_spec_raw:
                     merged["tags"] = session_spec_raw.get("tags")
-                _maybe_override_list("stateFields", bool(merged.get("editableStateFields", False)))
-                _maybe_override_list("execInPorts", bool(merged.get("editableExecInPorts", False)))
-                _maybe_override_list("execOutPorts", bool(merged.get("editableExecOutPorts", False)))
-                _maybe_override_list("dataInPorts", bool(merged.get("editableDataInPorts", False)))
-                _maybe_override_list("dataOutPorts", bool(merged.get("editableDataOutPorts", False)))
+                if "editPolicy" in session_spec_raw:
+                    merged["editPolicy"] = session_spec_raw.get("editPolicy")
+                merged_spec = validate_as(F8OperatorSpec, merged)
+                can_add_state, can_delete_state, can_edit_state = _policy_flags(merged_spec, "stateFields")
+                can_add_exec_in, can_delete_exec_in, _can_edit_exec_in = _policy_flags(merged_spec, "execInPorts")
+                can_add_exec_out, can_delete_exec_out, _can_edit_exec_out = _policy_flags(merged_spec, "execOutPorts")
+                can_add_data_in, can_delete_data_in, can_edit_data_in = _policy_flags(merged_spec, "dataInPorts")
+                can_add_data_out, can_delete_data_out, can_edit_data_out = _policy_flags(merged_spec, "dataOutPorts")
+                merged["stateFields"] = _merge_named_list(
+                    base_items_obj=merged.get("stateFields"),
+                    session_items_obj=session_spec_raw.get("stateFields"),
+                    can_add=can_add_state,
+                    can_delete=can_delete_state,
+                    can_edit_existing=can_edit_state,
+                    merge_item=_merge_state_field_item,
+                )
+                merged["execInPorts"] = _merge_string_list(
+                    base_items_obj=merged.get("execInPorts"),
+                    session_items_obj=session_spec_raw.get("execInPorts"),
+                    can_add=can_add_exec_in,
+                    can_delete=can_delete_exec_in,
+                )
+                merged["execOutPorts"] = _merge_string_list(
+                    base_items_obj=merged.get("execOutPorts"),
+                    session_items_obj=session_spec_raw.get("execOutPorts"),
+                    can_add=can_add_exec_out,
+                    can_delete=can_delete_exec_out,
+                )
+                merged["dataInPorts"] = _merge_named_list(
+                    base_items_obj=merged.get("dataInPorts"),
+                    session_items_obj=session_spec_raw.get("dataInPorts"),
+                    can_add=can_add_data_in,
+                    can_delete=can_delete_data_in,
+                    can_edit_existing=can_edit_data_in,
+                    merge_item=_merge_data_port_item,
+                )
+                merged["dataOutPorts"] = _merge_named_list(
+                    base_items_obj=merged.get("dataOutPorts"),
+                    session_items_obj=session_spec_raw.get("dataOutPorts"),
+                    can_add=can_add_data_out,
+                    can_delete=can_delete_data_out,
+                    can_edit_existing=can_edit_data_out,
+                    merge_item=_merge_data_port_item,
+                )
                 try:
                     node_data["f8_spec"] = dump_json(validate_as(F8OperatorSpec, merged), mode="json")
                 except Exception as e:
                     errors.append(f"nodeId={node_id}: failed to merge operator spec: {e}")
             else:
-                _maybe_override_bool("editableStateFields")
-                _maybe_override_bool("editableCommands")
-                _maybe_override_bool("editableDataInPorts")
-                _maybe_override_bool("editableDataOutPorts")
-
                 # Keep user metadata from persisted snapshots/variants.
                 if "label" in session_spec_raw:
                     merged["label"] = session_spec_raw.get("label")
@@ -423,10 +562,45 @@ class SessionLayoutCodecMixin:
                     merged["description"] = session_spec_raw.get("description")
                 if "tags" in session_spec_raw:
                     merged["tags"] = session_spec_raw.get("tags")
-                _maybe_override_list("stateFields", bool(merged.get("editableStateFields", False)))
-                _maybe_override_list("commands", bool(merged.get("editableCommands", False)))
-                _maybe_override_list("dataInPorts", bool(merged.get("editableDataInPorts", False)))
-                _maybe_override_list("dataOutPorts", bool(merged.get("editableDataOutPorts", False)))
+                if "editPolicy" in session_spec_raw:
+                    merged["editPolicy"] = session_spec_raw.get("editPolicy")
+                merged_spec = validate_as(F8ServiceSpec, merged)
+                can_add_state, can_delete_state, can_edit_state = _policy_flags(merged_spec, "stateFields")
+                can_add_commands, can_delete_commands, can_edit_commands = _policy_flags(merged_spec, "commands")
+                can_add_data_in, can_delete_data_in, can_edit_data_in = _policy_flags(merged_spec, "dataInPorts")
+                can_add_data_out, can_delete_data_out, can_edit_data_out = _policy_flags(merged_spec, "dataOutPorts")
+                merged["stateFields"] = _merge_named_list(
+                    base_items_obj=merged.get("stateFields"),
+                    session_items_obj=session_spec_raw.get("stateFields"),
+                    can_add=can_add_state,
+                    can_delete=can_delete_state,
+                    can_edit_existing=can_edit_state,
+                    merge_item=_merge_state_field_item,
+                )
+                merged["commands"] = _merge_named_list(
+                    base_items_obj=merged.get("commands"),
+                    session_items_obj=session_spec_raw.get("commands"),
+                    can_add=can_add_commands,
+                    can_delete=can_delete_commands,
+                    can_edit_existing=can_edit_commands,
+                    merge_item=_merge_command_item,
+                )
+                merged["dataInPorts"] = _merge_named_list(
+                    base_items_obj=merged.get("dataInPorts"),
+                    session_items_obj=session_spec_raw.get("dataInPorts"),
+                    can_add=can_add_data_in,
+                    can_delete=can_delete_data_in,
+                    can_edit_existing=can_edit_data_in,
+                    merge_item=_merge_data_port_item,
+                )
+                merged["dataOutPorts"] = _merge_named_list(
+                    base_items_obj=merged.get("dataOutPorts"),
+                    session_items_obj=session_spec_raw.get("dataOutPorts"),
+                    can_add=can_add_data_out,
+                    can_delete=can_delete_data_out,
+                    can_edit_existing=can_edit_data_out,
+                    merge_item=_merge_data_port_item,
+                )
                 try:
                     node_data["f8_spec"] = dump_json(validate_as(F8ServiceSpec, merged), mode="json")
                 except Exception as e:

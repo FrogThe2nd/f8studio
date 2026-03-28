@@ -7,6 +7,11 @@ import uuid
 from f8pystudio.editor_assist.debug_monaco_editor import load_session_editor_target, load_session_editor_targets
 
 
+def _editable_policy(*collections: str) -> dict[str, object]:
+    policy = {"canAdd": True, "canDelete": True, "canEditExisting": True}
+    return {name: dict(policy) for name in collections}
+
+
 def _write_session(tmp_path: Path) -> Path:
     payload = {
         "schemaVersion": "f8studio-session/1",
@@ -23,15 +28,11 @@ def _write_session(tmp_path: Path) -> Path:
                         "description": "",
                         "tags": [],
                         "stateFields": [],
-                        "editableStateFields": False,
+                        "editPolicy": {},
                         "execInPorts": [],
                         "execOutPorts": [],
-                        "editableExecInPorts": False,
-                        "editableExecOutPorts": False,
                         "dataInPorts": [],
                         "dataOutPorts": [],
-                        "editableDataInPorts": False,
-                        "editableDataOutPorts": False,
                     }
                 },
                 "nodeA": {
@@ -93,11 +94,15 @@ def _write_session(tmp_path: Path) -> Path:
                                 "required": True,
                             },
                         ],
-                        "editableStateFields": True,
+                        "editPolicy": _editable_policy(
+                            "stateFields",
+                            "execInPorts",
+                            "execOutPorts",
+                            "dataInPorts",
+                            "dataOutPorts",
+                        ),
                         "execInPorts": [],
                         "execOutPorts": [],
-                        "editableExecInPorts": True,
-                        "editableExecOutPorts": True,
                         "dataInPorts": [
                             {
                                 "name": "track",
@@ -111,8 +116,6 @@ def _write_session(tmp_path: Path) -> Path:
                             }
                         ],
                         "dataOutPorts": [],
-                        "editableDataInPorts": True,
-                        "editableDataOutPorts": True,
                     },
                     "custom": {"code": "print('live')\n"},
                 },
@@ -150,15 +153,17 @@ def _write_session(tmp_path: Path) -> Path:
                                 },
                             }
                         ],
-                        "editableStateFields": True,
+                        "editPolicy": _editable_policy(
+                            "stateFields",
+                            "execInPorts",
+                            "execOutPorts",
+                            "dataInPorts",
+                            "dataOutPorts",
+                        ),
                         "execInPorts": [],
                         "execOutPorts": [],
-                        "editableExecInPorts": True,
-                        "editableExecOutPorts": True,
                         "dataInPorts": [],
                         "dataOutPorts": [],
-                        "editableDataInPorts": True,
-                        "editableDataOutPorts": True,
                     },
                     "custom": {"code": "print('live b')\n"},
                 },

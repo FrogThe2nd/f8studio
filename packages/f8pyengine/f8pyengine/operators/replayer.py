@@ -10,9 +10,11 @@ from f8pysdk import (
     F8OperatorSchemaVersion,
     F8OperatorSpec,
     F8RuntimeNode,
+    F8SpecEditPolicy,
     F8StateAccess,
     F8StateSpec,
     boolean_schema,
+    editable_collection_edit_policy,
     integer_schema,
     string_schema,
 )
@@ -361,11 +363,10 @@ ReplayerRuntimeNode.SPEC = F8OperatorSpec(
             required=False,
         ),
     ],
-    editableDataInPorts=False,
-    editableDataOutPorts=True,
-    editableExecInPorts=False,
-    editableExecOutPorts=False,
-    editableStateFields=True,
+    editPolicy=F8SpecEditPolicy(
+        stateFields=editable_collection_edit_policy(),
+        dataOutPorts=editable_collection_edit_policy(),
+    ),
     stateFields=[
         F8StateSpec(
             name="path",

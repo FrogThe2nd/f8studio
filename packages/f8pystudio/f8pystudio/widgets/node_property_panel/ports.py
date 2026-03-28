@@ -4,7 +4,15 @@ import logging
 from typing import Any, Callable
 
 import msgspec
-from f8pysdk import F8DataPortSpec, F8OperatorSpec, F8StateAccess, F8StateSpec
+from f8pysdk import (
+    F8DataPortSpec,
+    F8OperatorSpec,
+    F8StateAccess,
+    F8StateSpec,
+    can_add as _policy_can_add,
+    can_delete as _policy_can_delete,
+    can_edit_existing as _policy_can_edit_existing,
+)
 from f8pysdk.msgspec_codec import copy_model
 
 from qtpy import QtCore, QtGui, QtWidgets
@@ -122,11 +130,13 @@ class _F8EditDataPortDialog(QtWidgets.QDialog):
         title: str,
         port: F8DataPortSpec,
         ui_only: bool = False,
+        lock_identity_fields: bool = False,
         read_only: bool = False,
     ):
         super().__init__(parent)
         self.setWindowTitle(title)
         self._ui_only = bool(ui_only)
+        self._lock_identity_fields = bool(lock_identity_fields)
         self._read_only = bool(read_only)
         self._schema = port.valueSchema or _schema_from_json_obj({"type": "any"})
 
@@ -164,7 +174,7 @@ class _F8EditDataPortDialog(QtWidgets.QDialog):
         layout.addLayout(form)
         layout.addWidget(self._buttons)
 
-        if self._ui_only:
+        if self._ui_only or self._lock_identity_fields:
             for w in (self._name, self._required):
                 w.setEnabled(False)
         if self._read_only:
@@ -216,6 +226,7 @@ class _F8EditStateFieldDialog(QtWidgets.QDialog):
         field: F8StateSpec,
         global_hotkey: str = "",
         ui_only: bool = False,
+        lock_identity_fields: bool = False,
         read_only: bool = False,
     ):
         super().__init__(parent)
@@ -225,6 +236,7 @@ class _F8EditStateFieldDialog(QtWidgets.QDialog):
         except Exception:
             self._schema = _schema_from_json_obj({"type": "any"})
         self._ui_only = bool(ui_only)
+        self._lock_identity_fields = bool(lock_identity_fields)
         self._read_only = bool(read_only)
 
         self._name = QtWidgets.QLineEdit(str(field.name or ""))
@@ -281,10 +293,10 @@ class _F8EditStateFieldDialog(QtWidgets.QDialog):
         layout.addLayout(form)
         layout.addWidget(self._buttons)
 
-        if self._ui_only:
+        if self._ui_only or self._lock_identity_fields:
             for w in (self._name, self._access, self._required, self._schema_summary):
                 w.setEnabled(False)
-            self._name.setToolTip("Locked by spec (required/non-editable).")
+            self._name.setToolTip("Locked by edit policy.")
         if self._read_only:
             for w in (
                 self._name,
@@ -388,10 +400,16 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
         self._node = node
         self._on_apply = on_apply
         self._missing_locked = False
-        self._editable_exec_in = False
-        self._editable_exec_out = False
-        self._editable_data_in = False
-        self._editable_data_out = False
+        self._exec_in_can_add = False
+        self._exec_out_can_add = False
+        self._exec_in_can_delete = False
+        self._exec_out_can_delete = False
+        self._data_in_can_add = False
+        self._data_out_can_add = False
+        self._data_in_can_delete = False
+        self._data_out_can_delete = False
+        self._data_in_can_edit_existing = False
+        self._data_out_can_edit_existing = False
 
         self._sec_exec_in = _F8SpecListSection(title="Exec In")
         self._sec_exec_out = _F8SpecListSection(title="Exec Out")
@@ -437,19 +455,27 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
         if spec is None:
             return
 
-        self._editable_data_in = bool(spec.editableDataInPorts)  # type: ignore[attr-defined]
-        self._editable_data_out = bool(spec.editableDataOutPorts)  # type: ignore[attr-defined]
+        self._data_in_can_add = _policy_can_add(spec, "dataInPorts")
+        self._data_out_can_add = _policy_can_add(spec, "dataOutPorts")
+        self._data_in_can_delete = _policy_can_delete(spec, "dataInPorts")
+        self._data_out_can_delete = _policy_can_delete(spec, "dataOutPorts")
+        self._data_in_can_edit_existing = _policy_can_edit_existing(spec, "dataInPorts")
+        self._data_out_can_edit_existing = _policy_can_edit_existing(spec, "dataOutPorts")
         if is_operator:
-            self._editable_exec_in = bool(spec.editableExecInPorts)  # type: ignore[attr-defined]
-            self._editable_exec_out = bool(spec.editableExecOutPorts)  # type: ignore[attr-defined]
+            self._exec_in_can_add = _policy_can_add(spec, "execInPorts")
+            self._exec_out_can_add = _policy_can_add(spec, "execOutPorts")
+            self._exec_in_can_delete = _policy_can_delete(spec, "execInPorts")
+            self._exec_out_can_delete = _policy_can_delete(spec, "execOutPorts")
         else:
-            self._editable_exec_in = False
-            self._editable_exec_out = False
+            self._exec_in_can_add = False
+            self._exec_out_can_add = False
+            self._exec_in_can_delete = False
+            self._exec_out_can_delete = False
 
-        self._sec_exec_in.set_add_visible(bool(self._editable_exec_in) and not self._missing_locked)
-        self._sec_exec_out.set_add_visible(bool(self._editable_exec_out) and not self._missing_locked)
-        self._sec_data_in.set_add_visible(bool(self._editable_data_in) and not self._missing_locked)
-        self._sec_data_out.set_add_visible(bool(self._editable_data_out) and not self._missing_locked)
+        self._sec_exec_in.set_add_visible(bool(self._exec_in_can_add) and not self._missing_locked)
+        self._sec_exec_out.set_add_visible(bool(self._exec_out_can_add) and not self._missing_locked)
+        self._sec_data_in.set_add_visible(bool(self._data_in_can_add) and not self._missing_locked)
+        self._sec_data_out.set_add_visible(bool(self._data_out_can_add) and not self._missing_locked)
 
         if is_operator:
             for name in list(spec.execInPorts or []):
@@ -477,9 +503,8 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
         row.delete_clicked.connect(lambda: self._delete_row(row))
         row.name_committed.connect(lambda _v: self._commit())
         row.setProperty("_port_dir", "exec_in" if is_in else "exec_out")
-        editable = bool(self._editable_exec_in if is_in else self._editable_exec_out)
-        allow_edit = editable and not self._missing_locked
-        row.set_row_editable(allow_rename=allow_edit, allow_delete=allow_edit, allow_edit=allow_edit)
+        allow_delete = bool((self._exec_in_can_delete if is_in else self._exec_out_can_delete) and not self._missing_locked)
+        row.set_row_editable(allow_rename=False, allow_delete=allow_delete, allow_edit=False)
         return row
 
     def _make_data_row(self, port: F8DataPortSpec, *, is_in: bool) -> _F8SpecNameRow:
@@ -491,17 +516,18 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
         row.show_on_node_changed.connect(lambda v: self._toggle_data_show_on_node(row, bool(v)))  # type: ignore[attr-defined]
         row.setToolTip(self._data_tooltip(port))
         row.setProperty("_port_dir", "data_in" if is_in else "data_out")
-        editable = bool(self._editable_data_in if is_in else self._editable_data_out)
+        can_delete = bool(self._data_in_can_delete if is_in else self._data_out_can_delete)
+        can_edit_existing = bool(self._data_in_can_edit_existing if is_in else self._data_out_can_edit_existing)
         try:
             required = bool(port.required)
         except (AttributeError, TypeError, ValueError):
             required = False
-        allow_mutate = bool(editable and not self._missing_locked and not required)
-        # Even when spec ports are not editable, allow opening the dialog to edit UI-only fields (showOnNode).
+        allow_delete = bool(can_delete and not self._missing_locked and not required)
+        allow_edit = bool(not self._missing_locked)
         row.set_row_editable(
-            allow_rename=allow_mutate,
-            allow_delete=allow_mutate,
-            allow_edit=True,
+            allow_rename=False,
+            allow_delete=allow_delete,
+            allow_edit=allow_edit,
         )
         show = bool(self._node.data_port_show_on_node(str(port.name or ""), is_in=bool(is_in)))  # type: ignore[attr-defined]
         row.set_show_on_node(bool(show))
@@ -544,22 +570,14 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
         if self._missing_locked:
             return
         dir_s = str(row.property("_port_dir") or "")
-        if (dir_s == "exec_in" and not self._editable_exec_in) or (
-            dir_s == "exec_out" and not self._editable_exec_out
-        ):
-            return
-        dlg = _F8EditExecPortDialog(self, title="Edit exec port", name=row.name_edit.text())
-        if dlg.exec_() != QtWidgets.QDialog.Accepted:
-            return
-        row.name_edit.setText(dlg.name())
-        self._commit()
+        return
 
     def _edit_data(self, row: _F8SpecNameRow) -> None:
         dir_s = str(row.property("_port_dir") or "")
-        ui_only = bool(
-            (dir_s == "data_in" and not self._editable_data_in)
-            or (dir_s == "data_out" and not self._editable_data_out)
+        can_edit_existing = bool(
+            self._data_in_can_edit_existing if dir_s == "data_in" else self._data_out_can_edit_existing
         )
+        ui_only = bool(not can_edit_existing)
         read_only = bool(self._missing_locked)
         port = row.property("_port")
         if not isinstance(port, F8DataPortSpec):
@@ -572,6 +590,7 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
             title="Edit data port",
             port=port,
             ui_only=ui_only,
+            lock_identity_fields=bool(can_edit_existing),
             read_only=read_only,
         )
         if dlg.exec_() != QtWidgets.QDialog.Accepted:
@@ -607,10 +626,7 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
         if self._row_is_required_data_port(row):
             return
         dir_s = str(row.property("_port_dir") or "")
-        if (dir_s == "data_in" and not self._editable_data_in) or (
-            dir_s == "data_out" and not self._editable_data_out
-        ):
-            return
+        return
         port = row.property("_port")
         if not isinstance(port, F8DataPortSpec):
             port = F8DataPortSpec(name=name, required=True, valueSchema=_schema_from_json_obj({"type": "any"}))
@@ -625,13 +641,13 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
         if self._missing_locked:
             return
         dir_s = str(row.property("_port_dir") or "")
-        if dir_s == "exec_in" and not self._editable_exec_in:
+        if dir_s == "exec_in" and not self._exec_in_can_delete:
             return
-        if dir_s == "exec_out" and not self._editable_exec_out:
+        if dir_s == "exec_out" and not self._exec_out_can_delete:
             return
-        if dir_s == "data_in" and not self._editable_data_in:
+        if dir_s == "data_in" and not self._data_in_can_delete:
             return
-        if dir_s == "data_out" and not self._editable_data_out:
+        if dir_s == "data_out" and not self._data_out_can_delete:
             return
         if (dir_s == "data_in" or dir_s == "data_out") and self._row_is_required_data_port(row):
             return
@@ -642,7 +658,7 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
     def _add_exec(self, is_in: bool) -> None:
         if self._missing_locked:
             return
-        if not (self._editable_exec_in if is_in else self._editable_exec_out):
+        if not (self._exec_in_can_add if is_in else self._exec_out_can_add):
             return
         row = self._make_exec_row("", is_in=is_in)
         (self._sec_exec_in if is_in else self._sec_exec_out).add_row(row)
@@ -651,7 +667,7 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
     def _add_data(self, is_in: bool) -> None:
         if self._missing_locked:
             return
-        if not (self._editable_data_in if is_in else self._editable_data_out):
+        if not (self._data_in_can_add if is_in else self._data_out_can_add):
             return
         port = F8DataPortSpec(
             name="",

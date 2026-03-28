@@ -39,10 +39,6 @@ def register_pystudio_specs(registry: RuntimeNodeRegistry | None = None) -> Runt
                     showOnNode=True,
                 ),
             ],
-            editableStateFields=False,
-            editableDataInPorts=False,
-            editableDataOutPorts=False,
-            editableCommands=False,
         ),
         overwrite=True,
     )

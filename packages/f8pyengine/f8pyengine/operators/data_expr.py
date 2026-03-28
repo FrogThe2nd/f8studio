@@ -10,10 +10,12 @@ from f8pysdk import (
     F8OperatorSchemaVersion,
     F8OperatorSpec,
     F8RuntimeNode,
+    F8SpecEditPolicy,
     F8StateAccess,
     F8StateSpec,
     any_schema,
     boolean_schema,
+    editable_collection_edit_policy,
     string_schema,
 )
 from f8pysdk.nats_naming import ensure_token
@@ -268,8 +270,10 @@ DataExprRuntimeNode.SPEC = F8OperatorSpec(
     dataOutPorts=[
         F8DataPortSpec(name="out", description="Expression result.", valueSchema=any_schema(), required=False),
     ],
-    editableDataInPorts=True,
-    editableDataOutPorts=True,
+    editPolicy=F8SpecEditPolicy(
+        dataInPorts=editable_collection_edit_policy(),
+        dataOutPorts=editable_collection_edit_policy(),
+    ),
     stateFields=[
         F8StateSpec(
             name="allowNumpy",
@@ -305,7 +309,6 @@ DataExprRuntimeNode.SPEC = F8OperatorSpec(
             required=False,
         ),
     ],
-    editableStateFields=False,
 )
 
 

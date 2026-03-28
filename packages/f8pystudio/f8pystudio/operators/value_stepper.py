@@ -3,9 +3,11 @@ from __future__ import annotations
 from typing import Any
 
 from f8pysdk import (
+    F8CollectionEditPolicy,
     F8OperatorSchemaVersion,
     F8OperatorSpec,
     F8RuntimeNode,
+    F8SpecEditPolicy,
     F8StateAccess,
     F8StateSpec,
     integer_schema,
@@ -47,7 +49,9 @@ class ValueStepperRuntimeNode(OperatorNode):
         execInPorts=[],
         execOutPorts=[],
         rendererClass="default_op",
-        editableStateFields=False,
+        editPolicy=F8SpecEditPolicy(
+            stateFields=F8CollectionEditPolicy(canAdd=False, canDelete=False, canEditExisting=True)
+        ),
         stateFields=[
             F8StateSpec(
                 name="value",

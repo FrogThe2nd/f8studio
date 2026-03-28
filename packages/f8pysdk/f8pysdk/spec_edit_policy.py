@@ -1,0 +1,73 @@
+from __future__ import annotations
+
+from typing import Literal
+
+import msgspec
+
+from .generated import F8CollectionEditPolicy, F8OperatorSpec, F8ServiceSpec, F8SpecEditPolicy
+
+
+EditableCollectionName = Literal["stateFields", "commands", "dataInPorts", "dataOutPorts", "execInPorts", "execOutPorts"]
+SpecLike = F8ServiceSpec | F8OperatorSpec
+
+
+def default_collection_edit_policy() -> F8CollectionEditPolicy:
+    return F8CollectionEditPolicy(canAdd=False, canDelete=False, canEditExisting=False)
+
+
+def editable_collection_edit_policy() -> F8CollectionEditPolicy:
+    return F8CollectionEditPolicy(canAdd=True, canDelete=True, canEditExisting=True)
+
+
+def default_spec_edit_policy() -> F8SpecEditPolicy:
+    return F8SpecEditPolicy(
+        stateFields=default_collection_edit_policy(),
+        commands=default_collection_edit_policy(),
+        dataInPorts=default_collection_edit_policy(),
+        dataOutPorts=default_collection_edit_policy(),
+        execInPorts=default_collection_edit_policy(),
+        execOutPorts=default_collection_edit_policy(),
+    )
+
+
+def _policy_or_default(value: F8SpecEditPolicy | msgspec.UnsetType | None) -> F8SpecEditPolicy:
+    if value is None or isinstance(value, msgspec.UnsetType):
+        return default_spec_edit_policy()
+    return value
+
+
+def _collection_or_default(value: F8CollectionEditPolicy | msgspec.UnsetType | None) -> F8CollectionEditPolicy:
+    if value is None or isinstance(value, msgspec.UnsetType):
+        return default_collection_edit_policy()
+    return value
+
+
+def spec_edit_policy(spec: SpecLike) -> F8SpecEditPolicy:
+    return _policy_or_default(spec.editPolicy)
+
+
+def collection_edit_policy(spec: SpecLike, collection: EditableCollectionName) -> F8CollectionEditPolicy:
+    policy = spec_edit_policy(spec)
+    if collection == "stateFields":
+        return _collection_or_default(policy.stateFields)
+    if collection == "commands":
+        return _collection_or_default(policy.commands)
+    if collection == "dataInPorts":
+        return _collection_or_default(policy.dataInPorts)
+    if collection == "dataOutPorts":
+        return _collection_or_default(policy.dataOutPorts)
+    if collection == "execInPorts":
+        return _collection_or_default(policy.execInPorts)
+    return _collection_or_default(policy.execOutPorts)
+
+
+def can_add(spec: SpecLike, collection: EditableCollectionName) -> bool:
+    return bool(collection_edit_policy(spec, collection).canAdd)
+
+
+def can_delete(spec: SpecLike, collection: EditableCollectionName) -> bool:
+    return bool(collection_edit_policy(spec, collection).canDelete)
+
+
+def can_edit_existing(spec: SpecLike, collection: EditableCollectionName) -> bool:
+    return bool(collection_edit_policy(spec, collection).canEditExisting)

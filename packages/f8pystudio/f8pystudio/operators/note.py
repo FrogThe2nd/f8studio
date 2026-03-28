@@ -43,7 +43,6 @@ class NoteRuntimeNode(OperatorNode):
         execInPorts=[],
         execOutPorts=[],
         rendererClass=RENDERER_CLASS,
-        editableStateFields=False,
         stateFields=[
             F8StateSpec(
                 name="content",

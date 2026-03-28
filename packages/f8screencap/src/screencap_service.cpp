@@ -837,7 +837,6 @@ json ScreenCapService::describe() {
       state_field("videoPitch", schema_integer(), "ro", "Video Pitch", "Number of bytes per row of the video frame",
                   false),
   });
-  service["editableStateFields"] = false;
   service["commands"] = json::array({
       json{{"name", "listDisplays"},
            {"description", "List displays/monitors (backend-specific)"},
@@ -856,11 +855,8 @@ json ScreenCapService::describe() {
            {"required", true},
            {"showOnNode", true}},
   });
-  service["editableCommands"] = false;
   service["dataInPorts"] = json::array();
   service["dataOutPorts"] = json::array();
-  service["editableDataInPorts"] = false;
-  service["editableDataOutPorts"] = false;
 
   json out;
   out["service"] = std::move(service);

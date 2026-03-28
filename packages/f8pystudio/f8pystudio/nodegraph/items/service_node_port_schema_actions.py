@@ -9,6 +9,7 @@ from qtpy import QtCore, QtWidgets
 
 from f8pysdk.schema_helpers import schema_type
 from f8pysdk.command_state import parse_command_port_name
+from f8pysdk.spec_edit_policy import can_edit_existing as _policy_can_edit_existing
 
 from ...widgets.schema_builder import SchemaBuilderDialog, schema_from_json_obj as _schema_from_json_obj
 from ...widgets.state_controls.schema_introspect import (
@@ -292,10 +293,9 @@ def open_data_port_schema_dialog(node_item: Any, *, is_in: bool, port_name: str)
         return
     port, index = found
     spec = node.spec
-    editable = bool(spec.editableDataInPorts) if bool(is_in) else bool(spec.editableDataOutPorts)
-    required = bool(port.required)
+    editable = _policy_can_edit_existing(spec, "dataInPorts" if bool(is_in) else "dataOutPorts")
     missing_locked = bool(node.is_missing_locked())
-    read_only = bool((not editable) or required or missing_locked)
+    read_only = bool((not editable) or missing_locked)
     schema_value = port.valueSchema
     if schema_value is None:
         schema_value = _schema_from_json_obj({"type": "any"})
@@ -340,10 +340,9 @@ def open_state_field_schema_dialog(node_item: Any, *, field_name: str) -> None:
         return
     field, index = found
     spec = node.spec
-    editable = bool(spec.editableStateFields)
-    required = bool(field.required)
+    editable = _policy_can_edit_existing(spec, "stateFields")
     missing_locked = bool(node.is_missing_locked())
-    read_only = bool((not editable) or required or missing_locked)
+    read_only = bool((not editable) or missing_locked)
     schema_value = field.valueSchema
     if schema_value is None:
         schema_value = _schema_from_json_obj({"type": "any"})
@@ -454,7 +453,7 @@ def open_data_port_editor_dialog(node_item: Any, *, is_in: bool, port_name: str)
         return
     port, index = found
     spec = node.spec
-    editable = bool(spec.editableDataInPorts) if bool(is_in) else bool(spec.editableDataOutPorts)
+    editable = _policy_can_edit_existing(spec, "dataInPorts" if bool(is_in) else "dataOutPorts")
     missing_locked = bool(node.is_missing_locked())
     ui_only = bool(not editable)
     read_only = bool(missing_locked)
@@ -470,6 +469,7 @@ def open_data_port_editor_dialog(node_item: Any, *, is_in: bool, port_name: str)
         title="Edit data port",
         port=port,
         ui_only=ui_only,
+        lock_identity_fields=bool(editable),
         read_only=read_only,
     )
     if dlg.exec_() != QtWidgets.QDialog.Accepted:
@@ -527,7 +527,7 @@ def open_state_field_editor_dialog(node_item: Any, *, field_name: str) -> None:
             return
         current, _index = found
 
-    editable = bool(spec.editableStateFields)
+    editable = _policy_can_edit_existing(spec, "stateFields")
     missing_locked = bool(node.is_missing_locked())
     ui_only = bool(not editable)
     read_only = bool(missing_locked)
@@ -547,6 +547,7 @@ def open_state_field_editor_dialog(node_item: Any, *, field_name: str) -> None:
         field=current,
         global_hotkey=_state_field_global_hotkey(node, field_name),
         ui_only=ui_only,
+        lock_identity_fields=bool(editable),
         read_only=read_only,
     )
     if dlg.exec_() != QtWidgets.QDialog.Accepted:
@@ -586,15 +587,16 @@ def on_port_right_click(node_item: Any, port: Any, screen_pos: QtCore.QPoint) ->
         if found_data is None:
             return
         _data_port, _index = found_data
-        editable = bool(node.spec.editableDataInPorts) if bool(is_in) else bool(node.spec.editableDataOutPorts)
-        can_edit = bool(editable and (not bool(node.is_missing_locked())))
+        can_edit = bool(
+            _policy_can_edit_existing(node.spec, "dataInPorts" if bool(is_in) else "dataOutPorts")
+            and (not bool(node.is_missing_locked()))
+        )
     elif kind == "state":
         found_field = find_state_field_spec(node_item, field_name=port_name)
         if found_field is None:
             return
         _field, _index = found_field
-        editable = bool(node.spec.editableStateFields)
-        can_edit = bool(editable and (not bool(node.is_missing_locked())))
+        can_edit = bool(_policy_can_edit_existing(node.spec, "stateFields") and (not bool(node.is_missing_locked())))
     else:
         return
     menu = QtWidgets.QMenu()

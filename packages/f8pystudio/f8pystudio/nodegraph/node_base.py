@@ -143,8 +143,7 @@ class F8StudioBaseNode(BaseNode):
         """
         Return service commands with UI overrides applied.
 
-        Currently only supports overriding `showOnNode` when `editableCommands`
-        is false (UI-only customization).
+        Currently only supports overriding `showOnNode` as UI-only customization.
         """
         spec = self.spec
         cmds = list(spec.commands or [])

@@ -254,11 +254,6 @@ MixSilenceFillRuntimeNode.SPEC = F8OperatorSpec(
             showOnNode=True,
         ),
     ],
-    editableStateFields=False,
-    editableDataInPorts=False,
-    editableDataOutPorts=False,
-    editableExecInPorts=False,
-    editableExecOutPorts=False,
 )
 
 

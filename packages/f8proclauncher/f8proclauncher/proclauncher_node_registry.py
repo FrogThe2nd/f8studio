@@ -54,10 +54,6 @@ def register_proclauncher_specs(registry: RuntimeNodeRegistry | None = None) -> 
                     showOnNode=False,
                 ),
             ],
-            editableStateFields=False,
-            editableDataInPorts=False,
-            editableDataOutPorts=False,
-            editableCommands=False,
         ),
         overwrite=True,
     )

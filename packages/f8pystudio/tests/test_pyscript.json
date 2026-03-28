@@ -98,9 +98,7 @@
               "showOnNode": false
             }
           ],
-          "editableStateFields": false,
           "commands": [],
-          "editableCommands": false,
           "dataInPorts": [],
           "dataOutPorts": [
             {
@@ -306,8 +304,6 @@
               "showOnNode": false
             }
           ],
-          "editableDataInPorts": false,
-          "editableDataOutPorts": false,
           "launch": {
             "command": "pixi",
             "args": [
@@ -468,11 +464,8 @@
               "showOnNode": false
             }
           ],
-          "editableStateFields": true,
           "execInPorts": [],
           "execOutPorts": [],
-          "editableExecInPorts": true,
-          "editableExecOutPorts": true,
           "dataInPorts": [
             {
               "name": "track",
@@ -613,10 +606,35 @@
               "showOnNode": true
             }
           ],
-          "editableDataInPorts": true,
-          "editableDataOutPorts": true,
           "specKind": "operator",
-          "paletteCategory": "f8.pyengine"
+          "paletteCategory": "f8.pyengine",
+          "editPolicy": {
+            "stateFields": {
+              "canAdd": true,
+              "canDelete": true,
+              "canEditExisting": true
+            },
+            "dataInPorts": {
+              "canAdd": true,
+              "canDelete": true,
+              "canEditExisting": true
+            },
+            "dataOutPorts": {
+              "canAdd": true,
+              "canDelete": true,
+              "canEditExisting": true
+            },
+            "execInPorts": {
+              "canAdd": true,
+              "canDelete": true,
+              "canEditExisting": true
+            },
+            "execOutPorts": {
+              "canAdd": true,
+              "canDelete": true,
+              "canEditExisting": true
+            }
+          }
         },
         "f8_sys": {
           "svcId": "NXSA"
@@ -825,17 +843,39 @@
               "showOnNode": true
             }
           ],
-          "editableStateFields": true,
           "execInPorts": [],
           "execOutPorts": [],
-          "editableExecInPorts": true,
-          "editableExecOutPorts": true,
           "dataInPorts": [],
           "dataOutPorts": [],
-          "editableDataInPorts": true,
-          "editableDataOutPorts": true,
           "specKind": "operator",
-          "paletteCategory": "f8.pyengine"
+          "paletteCategory": "f8.pyengine",
+          "editPolicy": {
+            "stateFields": {
+              "canAdd": true,
+              "canDelete": true,
+              "canEditExisting": true
+            },
+            "dataInPorts": {
+              "canAdd": true,
+              "canDelete": true,
+              "canEditExisting": true
+            },
+            "dataOutPorts": {
+              "canAdd": true,
+              "canDelete": true,
+              "canEditExisting": true
+            },
+            "execInPorts": {
+              "canAdd": true,
+              "canDelete": true,
+              "canEditExisting": true
+            },
+            "execOutPorts": {
+              "canAdd": true,
+              "canDelete": true,
+              "canEditExisting": true
+            }
+          }
         },
         "f8_sys": {
           "svcId": "NXSA",

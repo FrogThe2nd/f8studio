@@ -8,10 +8,12 @@ from f8pysdk import (
     F8OperatorSchemaVersion,
     F8OperatorSpec,
     F8RuntimeNode,
+    F8SpecEditPolicy,
     F8StateAccess,
     F8StateSpec,
     any_schema,
     boolean_schema,
+    editable_collection_edit_policy,
     string_schema,
 )
 from f8pysdk.generated import UNSET
@@ -343,11 +345,7 @@ StateExprRuntimeNode.SPEC = F8OperatorSpec(
             required=False,
         ),
     ],
-    editableExecInPorts=False,
-    editableExecOutPorts=False,
-    editableDataInPorts=False,
-    editableDataOutPorts=False,
-    editableStateFields=True,
+    editPolicy=F8SpecEditPolicy(stateFields=editable_collection_edit_policy()),
 )
 
 

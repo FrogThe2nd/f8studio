@@ -5,7 +5,15 @@ import time
 from collections import defaultdict
 from typing import Any
 
-from f8pysdk import F8OperatorSpec, F8ServiceSpec, F8StateAccess, F8StateSpec
+from f8pysdk import (
+    F8OperatorSpec,
+    F8ServiceSpec,
+    F8StateAccess,
+    F8StateSpec,
+    can_add as _policy_can_add,
+    can_delete as _policy_can_delete,
+    can_edit_existing as _policy_can_edit_existing,
+)
 from f8pysdk.msgspec_codec import copy_model
 
 from NodeGraphQt import PropertiesBinWidget
@@ -263,8 +271,8 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
         if current is None:
             return
 
-        editable = bool(spec.editableStateFields)
-        ui_only = not editable
+        can_edit_existing = _policy_can_edit_existing(spec, "stateFields")
+        ui_only = not can_edit_existing
 
         # If UI-only, we still want to allow editing UI fields (showOnNode/uiControl/etc).
         dialog_type = _package_attr("_F8EditStateFieldDialog", _F8EditStateFieldDialog)
@@ -274,6 +282,7 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
             field=current,
             global_hotkey=_state_field_global_hotkey(node, name),
             ui_only=ui_only,
+            lock_identity_fields=bool(can_edit_existing),
             read_only=bool(missing_locked),
         )
         if dlg.exec_() != QtWidgets.QDialog.Accepted:
@@ -299,8 +308,7 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
         spec = _get_node_spec(node)
         if not isinstance(spec, (F8ServiceSpec, F8OperatorSpec)):
             return
-        editable = bool(spec.editableStateFields)
-        if not editable:
+        if not _policy_can_add(spec, "stateFields"):
             return
         field = F8StateSpec(
             name="",
@@ -332,8 +340,7 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
         spec = _get_node_spec(node)
         if not isinstance(spec, (F8ServiceSpec, F8OperatorSpec)):
             return
-        editable = bool(spec.editableStateFields)
-        if not editable:
+        if not _policy_can_delete(spec, "stateFields"):
             return
         # required fields are protected
         eff = _effective_state_fields(node)
@@ -515,10 +522,12 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
             if tab == "State" and isinstance(prop_window, _F8StateStackContainer):
                 # Build the State tab from stateFields so we can attach edit/delete/add UI.
                 if spec is None:
-                    editable_state = False
+                    can_add_state = False
+                    can_delete_state = False
                 else:
-                    editable_state = bool(spec.editableStateFields)  # type: ignore[attr-defined]
-                prop_window.set_add_visible(bool(editable_state) and not missing_locked)
+                    can_add_state = _policy_can_add(spec, "stateFields")
+                    can_delete_state = _policy_can_delete(spec, "stateFields")
+                prop_window.set_add_visible(bool(can_add_state) and not missing_locked)
                 # Map property values.
                 values = dict(model.custom_properties)
                 # Order by effective state fields (applies UI overrides).
@@ -557,9 +566,8 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
                     access = _state_field_access(node, name)
                     read_only = access == F8StateAccess.ro or _state_input_is_connected(node, name) or missing_locked
                     _set_read_only_widget(widget, read_only=bool(read_only))
-                    # Delete is only allowed when editableStateFields and not required.
                     required = bool(f.required)
-                    allow_delete = bool(editable_state and not required)
+                    allow_delete = bool(can_delete_state and not required)
                     label_txt = str(f.label or "").strip()
                     desc_txt = str(f.description or "").strip()
                     show_on_node = bool(f.showOnNode)

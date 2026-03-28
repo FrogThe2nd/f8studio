@@ -279,6 +279,40 @@ components:
         - valueSchema
         - access
       additionalProperties: false
+    F8CollectionEditPolicy:
+      title: F8CollectionEditPolicy
+      type: object
+      properties:
+        canAdd:
+          type: boolean
+          default: false
+          description: Allow adding new items to the collection.
+        canDelete:
+          type: boolean
+          default: false
+          description: Allow deleting existing items from the collection.
+        canEditExisting:
+          type: boolean
+          default: false
+          description: Allow editing existing items without implying add/delete permission.
+      additionalProperties: false
+    F8SpecEditPolicy:
+      title: F8SpecEditPolicy
+      type: object
+      properties:
+        stateFields:
+          $ref: "#/components/schemas/F8CollectionEditPolicy"
+        commands:
+          $ref: "#/components/schemas/F8CollectionEditPolicy"
+        dataInPorts:
+          $ref: "#/components/schemas/F8CollectionEditPolicy"
+        dataOutPorts:
+          $ref: "#/components/schemas/F8CollectionEditPolicy"
+        execInPorts:
+          $ref: "#/components/schemas/F8CollectionEditPolicy"
+        execOutPorts:
+          $ref: "#/components/schemas/F8CollectionEditPolicy"
+      additionalProperties: false
     F8DataPortSpec:
       title: F8DataPortSpec
       type: object
@@ -1051,19 +1085,13 @@ components:
           items:
             $ref: "#/components/schemas/F8StateSpec"
           default: []
-        editableStateFields:
-          type: boolean
-          default: false
-          description: Allow modification of state fields at runtime.
+        editPolicy:
+          $ref: "#/components/schemas/F8SpecEditPolicy"
         commands:
           type: array
           items:
             $ref: "#/components/schemas/F8Command"
           default: []
-        editableCommands:
-          type: boolean
-          default: false
-          description: Allow dynamic addition of commands beyond the declared list.
         dataInPorts:
           type: array
           description: Data bus inputs exposed by this service (for cross-instance data pub/sub).
@@ -1076,14 +1104,6 @@ components:
           items:
             $ref: "#/components/schemas/F8DataPortSpec"
           default: []
-        editableDataInPorts:
-          type: boolean
-          default: false
-          description: Allow dynamic addition of data input ports.
-        editableDataOutPorts:
-          type: boolean
-          default: false
-          description: Allow dynamic addition of data output ports.
         launch:
           $ref: "#/components/schemas/F8ServiceLaunchSpec"
       required:
@@ -1149,19 +1169,13 @@ components:
           items:
             $ref: "#/components/schemas/F8StateSpec"
           default: []
-        editableStateFields:
-          type: boolean
-          default: false
-          description: Allow modification of state fields at runtime.
+        editPolicy:
+          $ref: "#/components/schemas/F8SpecEditPolicy"
         commands:
           type: array
           items:
             $ref: "#/components/schemas/F8Command"
           default: []
-        editableCommands:
-          type: boolean
-          default: false
-          description: Allow dynamic addition of commands beyond the declared list.
         execInPorts:
           type: array
           description:
@@ -1178,12 +1192,6 @@ components:
           items:
             type: string
           default: []
-        editableExecInPorts:
-          type: boolean
-          default: false
-        editableExecOutPorts:
-          type: boolean
-          default: false
         dataInPorts:
           type: array
           description: Data input ports (can be empty).
@@ -1196,14 +1204,6 @@ components:
           items:
             $ref: "#/components/schemas/F8DataPortSpec"
           default: []
-        editableDataInPorts:
-          type: boolean
-          default: false
-          description: Allow dynamic addition of data input ports.
-        editableDataOutPorts:
-          type: boolean
-          default: false
-          description: Allow dynamic addition of data output ports.
       required:
         - specKind
         - serviceClass

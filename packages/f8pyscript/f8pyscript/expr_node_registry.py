@@ -5,12 +5,14 @@ from typing import Any
 from f8pysdk import (
     F8DataPortSpec,
     F8RuntimeNode,
+    F8SpecEditPolicy,
     F8ServiceSchemaVersion,
     F8ServiceSpec,
     F8StateAccess,
     F8StateSpec,
     any_schema,
     boolean_schema,
+    editable_collection_edit_policy,
     string_schema,
 )
 from f8pysdk.runtime_node import RuntimeNode
@@ -77,10 +79,10 @@ def register_expr_specs(registry: RuntimeNodeRegistry | None = None) -> RuntimeN
             dataOutPorts=[
                 F8DataPortSpec(name="out", description="Default expression output value.", valueSchema=any_schema(), required=False)
             ],
-            editableStateFields=False,
-            editableCommands=False,
-            editableDataInPorts=True,
-            editableDataOutPorts=True,
+            editPolicy=F8SpecEditPolicy(
+                dataInPorts=editable_collection_edit_policy(),
+                dataOutPorts=editable_collection_edit_policy(),
+            ),
         ),
         overwrite=True,
     )

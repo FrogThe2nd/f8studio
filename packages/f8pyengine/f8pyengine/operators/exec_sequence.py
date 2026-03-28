@@ -6,6 +6,8 @@ from f8pysdk import (
     F8OperatorSchemaVersion,
     F8OperatorSpec,
     F8RuntimeNode,
+    F8SpecEditPolicy,
+    editable_collection_edit_policy,
 )
 from f8pysdk.nats_naming import ensure_token
 from f8pysdk.runtime_node import OperatorNode
@@ -48,7 +50,7 @@ ExecSequenceRuntimeNode.SPEC = F8OperatorSpec(
     tags=["execution", "flow", "sequence", "branch"],
     execInPorts=["exec"],
     execOutPorts=["0", "1", "2"],
-    editableExecOutPorts=True,
+    editPolicy=F8SpecEditPolicy(execOutPorts=editable_collection_edit_policy()),
 )
 
 

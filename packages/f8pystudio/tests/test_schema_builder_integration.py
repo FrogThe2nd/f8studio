@@ -12,8 +12,10 @@ from f8pysdk import (
     F8DataPortSpec,
     F8OperatorSpec,
     F8ServiceSpec,
+    F8SpecEditPolicy,
     F8StateAccess,
     F8StateSpec,
+    editable_collection_edit_policy,
 )
 from f8pystudio.widgets import node_property_panel as npw
 
@@ -167,11 +169,13 @@ def test_open_state_field_editor_allows_missing_locked_read_only_dialog(monkeypa
             field: Any,
             global_hotkey: str = "",
             ui_only: bool,
+            lock_identity_fields: bool,
             read_only: bool,
         ):
             del title, field
             _ = global_hotkey
             captured["ui_only"] = bool(ui_only)
+            captured["lock_identity_fields"] = bool(lock_identity_fields)
             captured["read_only"] = bool(read_only)
 
         def exec_(self) -> int:
@@ -182,7 +186,7 @@ def test_open_state_field_editor_allows_missing_locked_read_only_dialog(monkeypa
     spec = F8ServiceSpec(
         serviceClass="f8.test",
         label="Test",
-        editableStateFields=True,
+        editPolicy=F8SpecEditPolicy(stateFields=editable_collection_edit_policy()),
         stateFields=[F8StateSpec(name="x", valueSchema=npw._schema_from_json_obj({"type": "number"}), access=F8StateAccess.rw)],
     )
     node = _FakeStateNode(spec, missing_locked=True)
@@ -212,9 +216,19 @@ def test_edit_data_port_allows_missing_locked_read_only_dialog(monkeypatch) -> N
     captured: dict[str, Any] = {}
 
     class _FakeDataDialog:
-        def __init__(self, _parent: Any = None, *, title: str, port: Any, ui_only: bool, read_only: bool):
+        def __init__(
+            self,
+            _parent: Any = None,
+            *,
+            title: str,
+            port: Any,
+            ui_only: bool,
+            lock_identity_fields: bool,
+            read_only: bool,
+        ):
             del title, port
             captured["ui_only"] = bool(ui_only)
+            captured["lock_identity_fields"] = bool(lock_identity_fields)
             captured["read_only"] = bool(read_only)
 
         def exec_(self) -> int:
@@ -225,7 +239,7 @@ def test_edit_data_port_allows_missing_locked_read_only_dialog(monkeypatch) -> N
     spec = F8ServiceSpec(
         serviceClass="f8.test",
         label="Test",
-        editableDataInPorts=True,
+        editPolicy=F8SpecEditPolicy(dataInPorts=editable_collection_edit_policy()),
         dataInPorts=[F8DataPortSpec(name="in", valueSchema=npw._schema_from_json_obj({"type": "any"}))],
         dataOutPorts=[],
     )
@@ -244,9 +258,21 @@ def test_edit_command_allows_missing_locked_read_only_dialog(monkeypatch) -> Non
     captured: dict[str, Any] = {}
 
     class _FakeCommandDialog:
-        def __init__(self, _parent: Any = None, *, title: str, cmd: Any, ui_only: bool, read_only: bool):
+        def __init__(
+            self,
+            _parent: Any = None,
+            *,
+            title: str,
+            cmd: Any,
+            ui_only: bool,
+            lock_identity_fields: bool,
+            allow_param_structure_mutation: bool,
+            read_only: bool,
+        ):
             del title, cmd
             captured["ui_only"] = bool(ui_only)
+            captured["lock_identity_fields"] = bool(lock_identity_fields)
+            captured["allow_param_structure_mutation"] = bool(allow_param_structure_mutation)
             captured["read_only"] = bool(read_only)
 
         def exec_(self) -> int:
@@ -257,7 +283,7 @@ def test_edit_command_allows_missing_locked_read_only_dialog(monkeypatch) -> Non
     spec = F8ServiceSpec(
         serviceClass="f8.test",
         label="Test",
-        editableCommands=True,
+        editPolicy=F8SpecEditPolicy(commands=editable_collection_edit_policy()),
         commands=[F8Command(name="run", params=[])],
     )
     node = _FakeCommandNode(spec, missing_locked=True)
@@ -274,7 +300,7 @@ def test_node_property_widget_shows_commands_tab_for_operator_specs() -> None:
         serviceClass="f8.test",
         operatorClass="f8.test.operator",
         label="Operator",
-        editableCommands=True,
+        editPolicy=F8SpecEditPolicy(commands=editable_collection_edit_policy()),
         commands=[F8Command(name="run", params=[])],
     )
     node = _FakeOperatorPropertyNode(spec)

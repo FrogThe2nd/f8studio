@@ -357,13 +357,9 @@
               "showOnNode": false
             }
           ],
-          "editableStateFields": false,
           "commands": [],
-          "editableCommands": false,
           "dataInPorts": [],
           "dataOutPorts": [],
-          "editableDataInPorts": false,
-          "editableDataOutPorts": false,
           "launch": {
             "command": "H:\\Feel8\\f8studio\\services\\f8\\audiocap\\win\\f8audiocap_service.exe",
             "args": [],
@@ -632,9 +628,7 @@
               "showOnNode": false
             }
           ],
-          "editableStateFields": false,
           "commands": [],
-          "editableCommands": false,
           "dataInPorts": [],
           "dataOutPorts": [
             {
@@ -652,8 +646,6 @@
               "showOnNode": true
             }
           ],
-          "editableDataInPorts": false,
-          "editableDataOutPorts": false,
           "launch": {
             "command": "pixi",
             "args": [
@@ -875,9 +867,7 @@
               "showOnNode": false
             }
           ],
-          "editableStateFields": false,
           "commands": [],
-          "editableCommands": false,
           "dataInPorts": [
             {
               "name": "coreFeatures",
@@ -910,8 +900,6 @@
               "showOnNode": true
             }
           ],
-          "editableDataInPorts": false,
-          "editableDataOutPorts": false,
           "launch": {
             "command": "pixi",
             "args": [
@@ -1130,15 +1118,10 @@
               "showOnNode": false
             }
           ],
-          "editableStateFields": false,
           "execInPorts": [],
           "execOutPorts": [],
-          "editableExecInPorts": false,
-          "editableExecOutPorts": false,
           "dataInPorts": [],
           "dataOutPorts": [],
-          "editableDataInPorts": false,
-          "editableDataOutPorts": false,
           "specKind": "operator",
           "paletteCategory": "f8.pystudio"
         },
@@ -1320,11 +1303,8 @@
               "showOnNode": false
             }
           ],
-          "editableStateFields": false,
           "execInPorts": [],
           "execOutPorts": [],
-          "editableExecInPorts": false,
-          "editableExecOutPorts": false,
           "dataInPorts": [
             {
               "name": "inputData",
@@ -1342,8 +1322,6 @@
             }
           ],
           "dataOutPorts": [],
-          "editableDataInPorts": false,
-          "editableDataOutPorts": false,
           "specKind": "operator",
           "paletteCategory": "f8.pystudio"
         },
@@ -1640,11 +1618,8 @@
               "showOnNode": false
             }
           ],
-          "editableStateFields": false,
           "execInPorts": [],
           "execOutPorts": [],
-          "editableExecInPorts": false,
-          "editableExecOutPorts": false,
           "dataInPorts": [
             {
               "name": "x",
@@ -1708,10 +1683,15 @@
             }
           ],
           "dataOutPorts": [],
-          "editableDataInPorts": true,
-          "editableDataOutPorts": false,
           "specKind": "operator",
-          "paletteCategory": "f8.pystudio"
+          "paletteCategory": "f8.pystudio",
+          "editPolicy": {
+            "dataInPorts": {
+              "canAdd": true,
+              "canDelete": true,
+              "canEditExisting": true
+            }
+          }
         },
         "f8_sys": {
           "svcId": "studio"
@@ -1895,11 +1875,8 @@
               "showOnNode": false
             }
           ],
-          "editableStateFields": false,
           "execInPorts": [],
           "execOutPorts": [],
-          "editableExecInPorts": false,
-          "editableExecOutPorts": false,
           "dataInPorts": [
             {
               "name": "inputData",
@@ -1917,8 +1894,6 @@
             }
           ],
           "dataOutPorts": [],
-          "editableDataInPorts": false,
-          "editableDataOutPorts": false,
           "specKind": "operator",
           "paletteCategory": "f8.pystudio"
         },
@@ -2054,13 +2029,9 @@
               "showOnNode": false
             }
           ],
-          "editableStateFields": false,
           "commands": [],
-          "editableCommands": false,
           "dataInPorts": [],
           "dataOutPorts": [],
-          "editableDataInPorts": false,
-          "editableDataOutPorts": false,
           "launch": {
             "command": "pixi",
             "args": [
@@ -2266,9 +2237,7 @@
               "showOnNode": false
             }
           ],
-          "editableStateFields": false,
           "commands": [],
-          "editableCommands": false,
           "dataInPorts": [
             {
               "name": "msg",
@@ -2301,8 +2270,6 @@
               "showOnNode": true
             }
           ],
-          "editableDataInPorts": true,
-          "editableDataOutPorts": true,
           "launch": {
             "command": "pixi",
             "args": [
@@ -2313,7 +2280,19 @@
             "workdir": "H:\\Feel8\\f8studio"
           },
           "specKind": "service",
-          "paletteCategory": "svc"
+          "paletteCategory": "svc",
+          "editPolicy": {
+            "dataInPorts": {
+              "canAdd": true,
+              "canDelete": true,
+              "canEditExisting": true
+            },
+            "dataOutPorts": {
+              "canAdd": true,
+              "canDelete": true,
+              "canEditExisting": true
+            }
+          }
         },
         "f8_sys": {},
         "f8_ui": {
@@ -2455,11 +2434,8 @@
               "showOnNode": false
             }
           ],
-          "editableStateFields": false,
           "execInPorts": [],
           "execOutPorts": [],
-          "editableExecInPorts": false,
-          "editableExecOutPorts": false,
           "dataInPorts": [
             {
               "name": "L0",
@@ -2704,8 +2680,6 @@
               "showOnNode": true
             }
           ],
-          "editableDataInPorts": false,
-          "editableDataOutPorts": false,
           "specKind": "operator",
           "paletteCategory": "f8.pyengine"
         },
@@ -2910,11 +2884,8 @@
               "showOnNode": false
             }
           ],
-          "editableStateFields": false,
           "execInPorts": [],
           "execOutPorts": [],
-          "editableExecInPorts": false,
-          "editableExecOutPorts": false,
           "dataInPorts": [
             {
               "name": "tcode",
@@ -2938,8 +2909,6 @@
             }
           ],
           "dataOutPorts": [],
-          "editableDataInPorts": false,
-          "editableDataOutPorts": false,
           "specKind": "operator",
           "paletteCategory": "f8.pystudio"
         },
@@ -3097,13 +3066,10 @@
               "showOnNode": false
             }
           ],
-          "editableStateFields": false,
           "execInPorts": [],
           "execOutPorts": [
             "exec"
           ],
-          "editableExecInPorts": false,
-          "editableExecOutPorts": false,
           "dataInPorts": [],
           "dataOutPorts": [
             {
@@ -3167,8 +3133,6 @@
               "showOnNode": false
             }
           ],
-          "editableDataInPorts": false,
-          "editableDataOutPorts": false,
           "specKind": "operator",
           "paletteCategory": "f8.pyengine"
         },
@@ -3347,13 +3311,10 @@
               "showOnNode": false
             }
           ],
-          "editableStateFields": false,
           "execInPorts": [
             "exec"
           ],
           "execOutPorts": [],
-          "editableExecInPorts": false,
-          "editableExecOutPorts": false,
           "dataInPorts": [
             {
               "name": "value",
@@ -3432,8 +3393,6 @@
               "showOnNode": true
             }
           ],
-          "editableDataInPorts": false,
-          "editableDataOutPorts": false,
           "specKind": "operator",
           "paletteCategory": "f8.pyengine"
         },
@@ -4009,11 +3968,8 @@
               "showOnNode": false
             }
           ],
-          "editableStateFields": false,
           "execInPorts": [],
           "execOutPorts": [],
-          "editableExecInPorts": false,
-          "editableExecOutPorts": false,
           "dataInPorts": [
             {
               "name": "value",
@@ -4118,8 +4074,6 @@
               "showOnNode": true
             }
           ],
-          "editableDataInPorts": false,
-          "editableDataOutPorts": false,
           "specKind": "operator",
           "paletteCategory": "f8.pyengine"
         },
@@ -4440,11 +4394,8 @@
               "showOnNode": false
             }
           ],
-          "editableStateFields": false,
           "execInPorts": [],
           "execOutPorts": [],
-          "editableExecInPorts": false,
-          "editableExecOutPorts": false,
           "dataInPorts": [
             {
               "name": "x",
@@ -4508,10 +4459,15 @@
             }
           ],
           "dataOutPorts": [],
-          "editableDataInPorts": true,
-          "editableDataOutPorts": false,
           "specKind": "operator",
-          "paletteCategory": "f8.pystudio"
+          "paletteCategory": "f8.pystudio",
+          "editPolicy": {
+            "dataInPorts": {
+              "canAdd": true,
+              "canDelete": true,
+              "canEditExisting": true
+            }
+          }
         },
         "f8_sys": {
           "svcId": "studio"
@@ -4819,11 +4775,8 @@
               "showOnNode": false
             }
           ],
-          "editableStateFields": false,
           "execInPorts": [],
           "execOutPorts": [],
-          "editableExecInPorts": false,
-          "editableExecOutPorts": false,
           "dataInPorts": [
             {
               "name": "x",
@@ -4887,10 +4840,15 @@
             }
           ],
           "dataOutPorts": [],
-          "editableDataInPorts": true,
-          "editableDataOutPorts": false,
           "specKind": "operator",
-          "paletteCategory": "f8.pystudio"
+          "paletteCategory": "f8.pystudio",
+          "editPolicy": {
+            "dataInPorts": {
+              "canAdd": true,
+              "canDelete": true,
+              "canEditExisting": true
+            }
+          }
         },
         "f8_sys": {
           "svcId": "studio"
@@ -5181,11 +5139,8 @@
               "showOnNode": false
             }
           ],
-          "editableStateFields": false,
           "execInPorts": [],
           "execOutPorts": [],
-          "editableExecInPorts": false,
-          "editableExecOutPorts": false,
           "dataInPorts": [
             {
               "name": "value",
@@ -5218,8 +5173,6 @@
               "showOnNode": true
             }
           ],
-          "editableDataInPorts": false,
-          "editableDataOutPorts": false,
           "specKind": "operator",
           "paletteCategory": "f8.pyengine"
         },
@@ -5464,11 +5417,8 @@
               "showOnNode": false
             }
           ],
-          "editableStateFields": false,
           "execInPorts": [],
           "execOutPorts": [],
-          "editableExecInPorts": false,
-          "editableExecOutPorts": false,
           "dataInPorts": [
             {
               "name": "value",
@@ -5513,8 +5463,6 @@
               "showOnNode": true
             }
           ],
-          "editableDataInPorts": false,
-          "editableDataOutPorts": false,
           "specKind": "operator",
           "paletteCategory": "f8.pyengine"
         },

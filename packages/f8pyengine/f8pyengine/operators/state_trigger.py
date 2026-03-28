@@ -216,11 +216,6 @@ StateTriggerRuntimeNode.SPEC = F8OperatorSpec(
             showOnNode=True,
         ),
     ],
-    editableExecInPorts=False,
-    editableExecOutPorts=False,
-    editableDataInPorts=False,
-    editableDataOutPorts=False,
-    editableStateFields=False,
 )
 
 

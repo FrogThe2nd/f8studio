@@ -174,10 +174,6 @@ def _register_core(reg: RuntimeNodeRegistry) -> None:
                     valueSchema=_core_features_schema(),
                 )
             ],
-            editableStateFields=False,
-            editableDataInPorts=False,
-            editableDataOutPorts=False,
-            editableCommands=False,
         ),
         overwrite=True,
     )
@@ -214,10 +210,6 @@ def _register_rhythm(reg: RuntimeNodeRegistry) -> None:
                     valueSchema=_rhythm_features_schema(),
                 )
             ],
-            editableStateFields=False,
-            editableDataInPorts=False,
-            editableDataOutPorts=False,
-            editableCommands=False,
         ),
         overwrite=True,
     )

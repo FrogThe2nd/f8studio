@@ -934,7 +934,6 @@ json VideoStabService::describe() {
                   "Monotonic counter incremented when a scene cut is detected.", false),
       state_field("lastError", schema_string(), "ro", "Last Error", "Last error message.", false),
   });
-  service["editableStateFields"] = false;
 
   service["commands"] = json::array({
       json{{"name", "resetStabilizer"},
@@ -942,7 +941,6 @@ json VideoStabService::describe() {
            {"required", true},
            {"showOnNode", true}},
   });
-  service["editableCommands"] = false;
 
   service["dataInPorts"] = json::array();
   service["dataOutPorts"] = json::array({
@@ -952,8 +950,6 @@ json VideoStabService::describe() {
            {"required", true},
            {"showOnNode", true}},
   });
-  service["editableDataInPorts"] = false;
-  service["editableDataOutPorts"] = false;
 
   json out;
   out["service"] = std::move(service);

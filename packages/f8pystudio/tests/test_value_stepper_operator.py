@@ -14,6 +14,11 @@ from f8pysdk.generated import (
 from f8pysdk.runtime_node import RuntimeNode
 from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
 from f8pysdk.schema_helpers import integer_schema, number_schema
+from f8pysdk.spec_edit_policy import (
+    can_add as policy_can_add,
+    can_delete as policy_can_delete,
+    can_edit_existing as policy_can_edit_existing,
+)
 from f8pysdk.testing import ServiceBusHarness
 
 from f8pystudio.constants import SERVICE_CLASS
@@ -57,7 +62,9 @@ class ValueStepperOperatorSpecTests(unittest.TestCase):
         fields = {state_field.name: state_field for state_field in list(spec.stateFields or [])}
 
         self.assertEqual(spec.label, "ValueStepper")
-        self.assertFalse(bool(spec.editableStateFields))
+        self.assertFalse(policy_can_add(spec, "stateFields"))
+        self.assertFalse(policy_can_delete(spec, "stateFields"))
+        self.assertTrue(policy_can_edit_existing(spec, "stateFields"))
         self.assertEqual(fields["value"].uiControl, "slider")
         self.assertTrue(bool(fields["value"].showOnNode))
         self.assertEqual(fields["increaseTrigger"].uiControl, "button")

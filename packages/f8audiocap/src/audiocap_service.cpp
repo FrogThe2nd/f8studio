@@ -483,13 +483,9 @@ nlohmann::json AudioCapService::describe() {
            state_field("toneHz", schema_number(), "rw", "Tone Frequency", "Frequency of the generated tone", false),
            state_field("gain", schema_number(), "rw", "Gain", "Gain applied to the audio signal", false),
        })},
-      {"editableStateFields", false},
       {"commands", json::array()},
-      {"editableCommands", false},
       {"dataInPorts", json::array()},
       {"dataOutPorts", json::array()},
-      {"editableDataInPorts", false},
-      {"editableDataOutPorts", false},
   };
   spec["operators"] = json::array();
   return spec;

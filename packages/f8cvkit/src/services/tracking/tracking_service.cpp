@@ -825,14 +825,12 @@ json TrackingService::describe() {
       state_field("isNotTracking", schema_boolean(), "ro", "Is Not Tracking", "Negation of isTracking.", true),
       state_field("lastError", schema_string(), "ro", "Last Error", "Last error message.", true),
   });
-  service["editableStateFields"] = false;
   service["commands"] = json::array({
       json{{"name", "stopTracking"},
            {"description", "Stop current tracking and return to waiting for initBox."},
            {"required", true},
            {"showOnNode", true}},
   });
-  service["editableCommands"] = false;
   service["dataInPorts"] = json::array({
       json{
           {"name", "initBox"},
@@ -850,8 +848,6 @@ json TrackingService::describe() {
            {"required", true},
            {"showOnNode", true}},
   });
-  service["editableDataInPorts"] = false;
-  service["editableDataOutPorts"] = false;
 
   json out;
   out["service"] = std::move(service);

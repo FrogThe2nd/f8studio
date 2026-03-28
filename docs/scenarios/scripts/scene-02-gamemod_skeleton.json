@@ -131,13 +131,9 @@
               "showOnNode": false
             }
           ],
-          "editableStateFields": false,
           "commands": [],
-          "editableCommands": false,
           "dataInPorts": [],
           "dataOutPorts": [],
-          "editableDataInPorts": false,
-          "editableDataOutPorts": false,
           "launch": {
             "command": "pixi",
             "args": [
@@ -446,11 +442,8 @@
               "showOnNode": false
             }
           ],
-          "editableStateFields": false,
           "execInPorts": [],
           "execOutPorts": [],
-          "editableExecInPorts": false,
-          "editableExecOutPorts": false,
           "dataInPorts": [],
           "dataOutPorts": [
             {
@@ -482,8 +475,6 @@
               "showOnNode": true
             }
           ],
-          "editableDataInPorts": false,
-          "editableDataOutPorts": false,
           "specKind": "operator",
           "paletteCategory": "f8.pyengine"
         },
@@ -565,7 +556,7 @@
               "valueSchema": {
                 "title": null,
                 "description": null,
-                "default": "# Define hooks (any subset is ok):\n# - onStart(ctx)\n# - onState(ctx, field, value, tsMs=None)      # called on state updates (except 'code')\n# - onMsg(ctx, inputs)                        # called on data arrival (push mode) or as fallback for exec\n# - onExec(ctx, execIn, inputs)               # called on exec trigger (pull mode)\n# - onStop(ctx)\n# - ctx['state'] is preserved between calls\n# - ctx['execIn'] is set for exec-triggered calls\n# - State helpers:\n#   - await ctx['get_state'](field)           # read state value\n#   - ctx['set_state'](field, value)          # write state (fire-and-forget)\n#   - await ctx['set_state_async'](field, value)\n#   Note: for best UI/graph support, add the target state fields on the node (editableStateFields=True).\n# - inputs is a dict keyed by input port names\n# Return value protocol:\n# - onMsg: return {'outputs': {...}} or any value (emits to 'out' if present)\n# - onExec: return {'exec': ['exec','exec2'], 'outputs': {...}}\n#   - 'exec' selects exec out port(s) to trigger (defaults to pass-through)\n#   - 'outputs' is a dict mapping dataOutPort -> value\n\ndef onStart(ctx):\n    ctx['log']('python_script started')\n\ndef onState(ctx, field, value, tsMs=None):\n    # Example: react to a state change.\n    # ctx['log'](f'state {field}={value} tsMs={tsMs}')\n    return\n\ndef onMsg(ctx, inputs):\n    msg = inputs.get('msg')\n    return {'outputs': {'out': msg}}\n\ndef onExec(ctx, execIn, inputs):\n    # Example: choose different exec outputs by execIn port name.\n    if execIn == 'exec2':\n        return {'exec': ['exec2'], 'outputs': {'out': inputs.get('msg')}}\n    return {'exec': ['exec'], 'outputs': {'out': inputs.get('msg')}}\n\ndef onStop(ctx):\n    ctx['log']('python_script stopped')\n",
+                "default": "# Define hooks (any subset is ok):\n# - onStart(ctx)\n# - onState(ctx, field, value, tsMs=None)      # called on state updates (except 'code')\n# - onMsg(ctx, inputs)                        # called on data arrival (push mode) or as fallback for exec\n# - onExec(ctx, execIn, inputs)               # called on exec trigger (pull mode)\n# - onStop(ctx)\n# - ctx['state'] is preserved between calls\n# - ctx['execIn'] is set for exec-triggered calls\n# - State helpers:\n#   - await ctx['get_state'](field)           # read state value\n#   - ctx['set_state'](field, value)          # write state (fire-and-forget)\n#   - await ctx['set_state_async'](field, value)\n#   Note: for best UI/graph support, add the target state fields on the node with editPolicy.stateFields.canAdd=true.\n# - inputs is a dict keyed by input port names\n# Return value protocol:\n# - onMsg: return {'outputs': {...}} or any value (emits to 'out' if present)\n# - onExec: return {'exec': ['exec','exec2'], 'outputs': {...}}\n#   - 'exec' selects exec out port(s) to trigger (defaults to pass-through)\n#   - 'outputs' is a dict mapping dataOutPort -> value\n\ndef onStart(ctx):\n    ctx['log']('python_script started')\n\ndef onState(ctx, field, value, tsMs=None):\n    # Example: react to a state change.\n    # ctx['log'](f'state {field}={value} tsMs={tsMs}')\n    return\n\ndef onMsg(ctx, inputs):\n    msg = inputs.get('msg')\n    return {'outputs': {'out': msg}}\n\ndef onExec(ctx, execIn, inputs):\n    # Example: choose different exec outputs by execIn port name.\n    if execIn == 'exec2':\n        return {'exec': ['exec2'], 'outputs': {'out': inputs.get('msg')}}\n    return {'exec': ['exec'], 'outputs': {'out': inputs.get('msg')}}\n\ndef onStop(ctx):\n    ctx['log']('python_script stopped')\n",
                 "examples": null,
                 "field_comment": null,
                 "type": "string",
@@ -651,15 +642,12 @@
               "showOnNode": false
             }
           ],
-          "editableStateFields": true,
           "execInPorts": [
             "exec"
           ],
           "execOutPorts": [
             "exec"
           ],
-          "editableExecInPorts": true,
-          "editableExecOutPorts": true,
           "dataInPorts": [
             {
               "name": "msg",
@@ -692,17 +680,42 @@
               "showOnNode": true
             }
           ],
-          "editableDataInPorts": true,
-          "editableDataOutPorts": true,
           "specKind": "operator",
-          "paletteCategory": "f8.pyengine"
+          "paletteCategory": "f8.pyengine",
+          "editPolicy": {
+            "stateFields": {
+              "canAdd": true,
+              "canDelete": true,
+              "canEditExisting": true
+            },
+            "dataInPorts": {
+              "canAdd": true,
+              "canDelete": true,
+              "canEditExisting": true
+            },
+            "dataOutPorts": {
+              "canAdd": true,
+              "canDelete": true,
+              "canEditExisting": true
+            },
+            "execInPorts": {
+              "canAdd": true,
+              "canDelete": true,
+              "canEditExisting": true
+            },
+            "execOutPorts": {
+              "canAdd": true,
+              "canDelete": true,
+              "canEditExisting": true
+            }
+          }
         },
         "f8_sys": {
           "svcId": "a4sQ"
         },
         "f8_ui": {},
         "custom": {
-          "code": "# Define hooks (any subset is ok):\n# - onStart(ctx)\n# - onState(ctx, field, value, tsMs=None)      # called on state updates (except 'code')\n# - onMsg(ctx, inputs)                        # called on data arrival (push mode) or as fallback for exec\n# - onExec(ctx, execIn, inputs)               # called on exec trigger (pull mode)\n# - onStop(ctx)\n# - ctx['state'] is preserved between calls\n# - ctx['execIn'] is set for exec-triggered calls\n# - State helpers:\n#   - await ctx['get_state'](field)           # read state value\n#   - ctx['set_state'](field, value)          # write state (fire-and-forget)\n#   - await ctx['set_state_async'](field, value)\n#   Note: for best UI/graph support, add the target state fields on the node (editableStateFields=True).\n# - inputs is a dict keyed by input port names\n# Return value protocol:\n# - onMsg: return {'outputs': {...}} or any value (emits to 'out' if present)\n# - onExec: return {'exec': ['exec','exec2'], 'outputs': {...}}\n#   - 'exec' selects exec out port(s) to trigger (defaults to pass-through)\n#   - 'outputs' is a dict mapping dataOutPort -> value\nimport numpy as np\n\ndef onStart(ctx):\n    ctx['log']('python_script started')\n\ndef onState(ctx, field, value, tsMs=None):\n    # Example: react to a state change.\n    # ctx['log'](f'state {field}={value} tsMs={tsMs}')\n    return\n\ndef onMsg(ctx, inputs):\n    msg = inputs.get('msg')\n\n    return {'outputs': {'out': msg}}\n\ndef _process(ctx, skeletons) -> dict:\n    penis = None\n    vagina = None\n\n    for model in skeletons:\n        for b in model['bones']:\n            # ctx['log'](b)\n            # break\n            if b['name'] == 'MalePenisBase':\n                penis = b\n                break\n            elif b['name'] == 'Vagina':\n                vagina = b\n                break\n\n    if penis and vagina:\n        p0 = np.array(penis['pos'])\n        p1 = np.array(vagina['pos'])\n        dist = np.linalg.norm(p0-p1)\n    else:\n        dist = 0\n    return dist\n\ndef onExec(ctx, execIn, inputs):\n    # Example: choose different exec outputs by execIn port name.\n    if execIn == 'exec2':        \n        return {'exec': ['exec2'], 'outputs': {'out': inputs.get('msg')}}\n        \n    return {'exec': ['exec'],  'outputs':{\"out\": _process(ctx, inputs.get(\"msg\")) }}\n\ndef onStop(ctx):\n    ctx['log']('python_script stopped')\n",
+          "code": "# Define hooks (any subset is ok):\n# - onStart(ctx)\n# - onState(ctx, field, value, tsMs=None)      # called on state updates (except 'code')\n# - onMsg(ctx, inputs)                        # called on data arrival (push mode) or as fallback for exec\n# - onExec(ctx, execIn, inputs)               # called on exec trigger (pull mode)\n# - onStop(ctx)\n# - ctx['state'] is preserved between calls\n# - ctx['execIn'] is set for exec-triggered calls\n# - State helpers:\n#   - await ctx['get_state'](field)           # read state value\n#   - ctx['set_state'](field, value)          # write state (fire-and-forget)\n#   - await ctx['set_state_async'](field, value)\n#   Note: for best UI/graph support, add the target state fields on the node with editPolicy.stateFields.canAdd=true.\n# - inputs is a dict keyed by input port names\n# Return value protocol:\n# - onMsg: return {'outputs': {...}} or any value (emits to 'out' if present)\n# - onExec: return {'exec': ['exec','exec2'], 'outputs': {...}}\n#   - 'exec' selects exec out port(s) to trigger (defaults to pass-through)\n#   - 'outputs' is a dict mapping dataOutPort -> value\nimport numpy as np\n\ndef onStart(ctx):\n    ctx['log']('python_script started')\n\ndef onState(ctx, field, value, tsMs=None):\n    # Example: react to a state change.\n    # ctx['log'](f'state {field}={value} tsMs={tsMs}')\n    return\n\ndef onMsg(ctx, inputs):\n    msg = inputs.get('msg')\n\n    return {'outputs': {'out': msg}}\n\ndef _process(ctx, skeletons) -> dict:\n    penis = None\n    vagina = None\n\n    for model in skeletons:\n        for b in model['bones']:\n            # ctx['log'](b)\n            # break\n            if b['name'] == 'MalePenisBase':\n                penis = b\n                break\n            elif b['name'] == 'Vagina':\n                vagina = b\n                break\n\n    if penis and vagina:\n        p0 = np.array(penis['pos'])\n        p1 = np.array(vagina['pos'])\n        dist = np.linalg.norm(p0-p1)\n    else:\n        dist = 0\n    return dist\n\ndef onExec(ctx, execIn, inputs):\n    # Example: choose different exec outputs by execIn port name.\n    if execIn == 'exec2':        \n        return {'exec': ['exec2'], 'outputs': {'out': inputs.get('msg')}}\n        \n    return {'exec': ['exec'],  'outputs':{\"out\": _process(ctx, inputs.get(\"msg\")) }}\n\ndef onStop(ctx):\n    ctx['log']('python_script stopped')\n",
           "lastError": "",
           "svcId": "a4sQ",
           "operatorId": "cW4J"
@@ -850,13 +863,10 @@
               "showOnNode": false
             }
           ],
-          "editableStateFields": false,
           "execInPorts": [],
           "execOutPorts": [
             "exec"
           ],
-          "editableExecInPorts": false,
-          "editableExecOutPorts": false,
           "dataInPorts": [],
           "dataOutPorts": [
             {
@@ -920,8 +930,6 @@
               "showOnNode": false
             }
           ],
-          "editableDataInPorts": false,
-          "editableDataOutPorts": false,
           "specKind": "operator",
           "paletteCategory": "f8.pyengine"
         },
@@ -1495,11 +1503,8 @@
               "showOnNode": false
             }
           ],
-          "editableStateFields": false,
           "execInPorts": [],
           "execOutPorts": [],
-          "editableExecInPorts": false,
-          "editableExecOutPorts": false,
           "dataInPorts": [
             {
               "name": "value",
@@ -1604,8 +1609,6 @@
               "showOnNode": true
             }
           ],
-          "editableDataInPorts": false,
-          "editableDataOutPorts": false,
           "specKind": "operator",
           "paletteCategory": "f8.pyengine"
         },
@@ -1762,11 +1765,8 @@
               "showOnNode": false
             }
           ],
-          "editableStateFields": false,
           "execInPorts": [],
           "execOutPorts": [],
-          "editableExecInPorts": false,
-          "editableExecOutPorts": false,
           "dataInPorts": [
             {
               "name": "L0",
@@ -2011,8 +2011,6 @@
               "showOnNode": true
             }
           ],
-          "editableDataInPorts": false,
-          "editableDataOutPorts": false,
           "specKind": "operator",
           "paletteCategory": "f8.pyengine"
         },
@@ -2190,13 +2188,10 @@
               "showOnNode": false
             }
           ],
-          "editableStateFields": false,
           "execInPorts": [
             "exec"
           ],
           "execOutPorts": [],
-          "editableExecInPorts": false,
-          "editableExecOutPorts": false,
           "dataInPorts": [
             {
               "name": "value",
@@ -2275,8 +2270,6 @@
               "showOnNode": true
             }
           ],
-          "editableDataInPorts": false,
-          "editableDataOutPorts": false,
           "specKind": "operator",
           "paletteCategory": "f8.pyengine"
         },
@@ -2508,11 +2501,8 @@
               "showOnNode": false
             }
           ],
-          "editableStateFields": false,
           "execInPorts": [],
           "execOutPorts": [],
-          "editableExecInPorts": false,
-          "editableExecOutPorts": false,
           "dataInPorts": [
             {
               "name": "value",
@@ -2557,8 +2547,6 @@
               "showOnNode": true
             }
           ],
-          "editableDataInPorts": false,
-          "editableDataOutPorts": false,
           "specKind": "operator",
           "paletteCategory": "f8.pyengine"
         },
@@ -2799,11 +2787,8 @@
               "showOnNode": false
             }
           ],
-          "editableStateFields": false,
           "execInPorts": [],
           "execOutPorts": [],
-          "editableExecInPorts": false,
-          "editableExecOutPorts": false,
           "dataInPorts": [
             {
               "name": "value",
@@ -2848,8 +2833,6 @@
               "showOnNode": true
             }
           ],
-          "editableDataInPorts": false,
-          "editableDataOutPorts": false,
           "specKind": "operator",
           "paletteCategory": "f8.pyengine"
         },
@@ -3272,11 +3255,8 @@
               "showOnNode": false
             }
           ],
-          "editableStateFields": false,
           "execInPorts": [],
           "execOutPorts": [],
-          "editableExecInPorts": false,
-          "editableExecOutPorts": false,
           "dataInPorts": [
             {
               "name": "skeletons",
@@ -3294,8 +3274,6 @@
             }
           ],
           "dataOutPorts": [],
-          "editableDataInPorts": false,
-          "editableDataOutPorts": false,
           "specKind": "operator",
           "paletteCategory": "f8.pystudio"
         },
@@ -3607,11 +3585,8 @@
               "showOnNode": false
             }
           ],
-          "editableStateFields": false,
           "execInPorts": [],
           "execOutPorts": [],
-          "editableExecInPorts": false,
-          "editableExecOutPorts": false,
           "dataInPorts": [
             {
               "name": "x",
@@ -3675,10 +3650,15 @@
             }
           ],
           "dataOutPorts": [],
-          "editableDataInPorts": true,
-          "editableDataOutPorts": false,
           "specKind": "operator",
-          "paletteCategory": "f8.pystudio"
+          "paletteCategory": "f8.pystudio",
+          "editPolicy": {
+            "dataInPorts": {
+              "canAdd": true,
+              "canDelete": true,
+              "canEditExisting": true
+            }
+          }
         },
         "f8_sys": {
           "svcId": "studio"
@@ -3989,11 +3969,8 @@
               "showOnNode": false
             }
           ],
-          "editableStateFields": false,
           "execInPorts": [],
           "execOutPorts": [],
-          "editableExecInPorts": false,
-          "editableExecOutPorts": false,
           "dataInPorts": [
             {
               "name": "x",
@@ -4057,10 +4034,15 @@
             }
           ],
           "dataOutPorts": [],
-          "editableDataInPorts": true,
-          "editableDataOutPorts": false,
           "specKind": "operator",
-          "paletteCategory": "f8.pystudio"
+          "paletteCategory": "f8.pystudio",
+          "editPolicy": {
+            "dataInPorts": {
+              "canAdd": true,
+              "canDelete": true,
+              "canEditExisting": true
+            }
+          }
         },
         "f8_sys": {
           "svcId": "studio"
@@ -4258,11 +4240,8 @@
               "showOnNode": false
             }
           ],
-          "editableStateFields": false,
           "execInPorts": [],
           "execOutPorts": [],
-          "editableExecInPorts": false,
-          "editableExecOutPorts": false,
           "dataInPorts": [
             {
               "name": "tcode",
@@ -4286,8 +4265,6 @@
             }
           ],
           "dataOutPorts": [],
-          "editableDataInPorts": false,
-          "editableDataOutPorts": false,
           "specKind": "operator",
           "paletteCategory": "f8.pystudio"
         },

@@ -669,7 +669,6 @@ json TemplateMatchService::describe() {
                   true),
       state_field("lastError", schema_string(), "ro", "Last Error", "Last error message.", false),
   });
-  service["editableStateFields"] = false;
   service["commands"] = json::array({
       json{{"name", "captureTemplateFrame"},
            {"description", "Capture current SHM frame as an encoded image (base64)."},
@@ -684,7 +683,6 @@ json TemplateMatchService::describe() {
                       })}},
       json{{"name", "ping"}, {"description", "Health check."}, {"required", true}, {"showOnNode", false}},
   });
-  service["editableCommands"] = false;
   service["dataInPorts"] = json::array();
   service["dataOutPorts"] = json::array({
       json{{"name", "detections"},
@@ -693,8 +691,6 @@ json TemplateMatchService::describe() {
            {"required", true},
            {"showOnNode", true}},
   });
-  service["editableDataInPorts"] = false;
-  service["editableDataOutPorts"] = false;
 
   json out;
   out["service"] = std::move(service);

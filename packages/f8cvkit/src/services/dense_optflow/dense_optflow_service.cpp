@@ -495,13 +495,9 @@ json DenseOptflowService::describe() {
                   "Farneback compute scale, flow is upscaled back to full size.", false),
       state_field("lastError", schema_string(), "ro", "Last Error", "Last error message.", false),
   });
-  service["editableStateFields"] = false;
   service["commands"] = json::array();
-  service["editableCommands"] = false;
   service["dataInPorts"] = json::array();
   service["dataOutPorts"] = json::array();
-  service["editableDataInPorts"] = false;
-  service["editableDataOutPorts"] = false;
 
   json out;
   out["service"] = std::move(service);

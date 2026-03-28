@@ -13,9 +13,11 @@ from f8pysdk import (
     F8OperatorSchemaVersion,
     F8OperatorSpec,
     F8RuntimeNode,
+    F8SpecEditPolicy,
     F8StateAccess,
     F8StateSpec,
     any_schema,
+    editable_collection_edit_policy,
     string_schema,
 )
 from f8pysdk.capabilities import ClosableNode
@@ -1138,12 +1140,16 @@ PythonScriptRuntimeNode.SPEC = F8OperatorSpec(
     tags=["script", "python", "programmable"],
     execInPorts=["exec"],
     execOutPorts=["exec"],
-    editableExecInPorts=True,
-    editableExecOutPorts=True,
     dataInPorts=[F8DataPortSpec(name="msg", description="Message input", valueSchema=any_schema(), required=False)],
     dataOutPorts=[F8DataPortSpec(name="out", description="Script output", valueSchema=any_schema(), required=False)],
-    editableDataInPorts=True,
-    editableDataOutPorts=True,
+    editPolicy=F8SpecEditPolicy(
+        stateFields=editable_collection_edit_policy(),
+        commands=editable_collection_edit_policy(),
+        dataInPorts=editable_collection_edit_policy(),
+        dataOutPorts=editable_collection_edit_policy(),
+        execInPorts=editable_collection_edit_policy(),
+        execOutPorts=editable_collection_edit_policy(),
+    ),
     stateFields=[
         F8StateSpec(
             name="code",
@@ -1178,8 +1184,6 @@ PythonScriptRuntimeNode.SPEC = F8OperatorSpec(
             showOnNode=False,
         ),
     ],
-    editableStateFields=True,
-    editableCommands=True
 )
 
 

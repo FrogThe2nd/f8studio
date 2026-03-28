@@ -4,7 +4,15 @@ import logging
 from typing import Any, Callable
 
 import msgspec
-from f8pysdk import F8Command, F8CommandParam, F8OperatorSpec, F8ServiceSpec
+from f8pysdk import (
+    F8Command,
+    F8CommandParam,
+    F8OperatorSpec,
+    F8ServiceSpec,
+    can_add as _policy_can_add,
+    can_delete as _policy_can_delete,
+    can_edit_existing as _policy_can_edit_existing,
+)
 from f8pysdk.command_state import command_input_state_field
 from f8pysdk.schema_helpers import schema_default
 
@@ -45,6 +53,7 @@ class _F8EditCommandParamDialog(QtWidgets.QDialog):
         title: str,
         param: F8CommandParam,
         ui_only: bool = False,
+        lock_identity_fields: bool = False,
         read_only: bool = False,
     ):
         super().__init__(parent)
@@ -54,6 +63,7 @@ class _F8EditCommandParamDialog(QtWidgets.QDialog):
         except Exception:
             self._schema = _schema_from_json_obj({"type": "any"})
         self._ui_only = bool(ui_only)
+        self._lock_identity_fields = bool(lock_identity_fields)
         self._read_only = bool(read_only)
 
         self._name = QtWidgets.QLineEdit(str(param.name or ""))
@@ -92,7 +102,7 @@ class _F8EditCommandParamDialog(QtWidgets.QDialog):
         layout.addLayout(form)
         layout.addWidget(self._buttons)
 
-        if self._ui_only:
+        if self._ui_only or self._lock_identity_fields:
             for w in (self._name, self._required):
                 w.setEnabled(False)
         if self._read_only:
@@ -141,11 +151,15 @@ class _F8EditCommandDialog(QtWidgets.QDialog):
         title: str,
         cmd: F8Command,
         ui_only: bool = False,
+        lock_identity_fields: bool = False,
+        allow_param_structure_mutation: bool = True,
         read_only: bool = False,
     ):
         super().__init__(parent)
         self.setWindowTitle(title)
         self._ui_only = bool(ui_only)
+        self._lock_identity_fields = bool(lock_identity_fields)
+        self._allow_param_structure_mutation = bool(allow_param_structure_mutation)
         self._read_only = bool(read_only)
         self._params: list[F8CommandParam] = list(cmd.params or [])
 
@@ -194,6 +208,16 @@ class _F8EditCommandDialog(QtWidgets.QDialog):
         if self._ui_only:
             for w in (self._name, self._required, self._desc, self._btn_add, self._btn_edit, self._btn_del):
                 w.setEnabled(False)
+        elif self._lock_identity_fields:
+            for w in (self._name, self._required, self._btn_add, self._btn_del):
+                w.setEnabled(False)
+        if self._ui_only:
+            self._btn_add.setEnabled(False)
+            self._btn_edit.setEnabled(False)
+            self._btn_del.setEnabled(False)
+        if not self._allow_param_structure_mutation:
+            self._btn_add.setEnabled(False)
+            self._btn_del.setEnabled(False)
         if self._read_only:
             for w in (
                 self._name,
@@ -226,7 +250,7 @@ class _F8EditCommandDialog(QtWidgets.QDialog):
         return row
 
     def _add_param(self) -> None:
-        if self._ui_only or self._read_only:
+        if self._ui_only or self._read_only or not self._allow_param_structure_mutation:
             return
         dlg = _F8EditCommandParamDialog(
             self,
@@ -243,15 +267,16 @@ class _F8EditCommandDialog(QtWidgets.QDialog):
         self._refresh_params_list()
 
     def _edit_param(self) -> None:
-        if self._ui_only or self._read_only:
-            return
         idx = self._selected_index()
         if idx < 0:
             return
+        lock_identity_fields = bool(not self._allow_param_structure_mutation)
         dlg = _F8EditCommandParamDialog(
             self,
             title="Edit command param",
             param=self._params[idx],
+            ui_only=self._ui_only,
+            lock_identity_fields=lock_identity_fields,
             read_only=self._read_only,
         )
         if dlg.exec_() != QtWidgets.QDialog.Accepted:
@@ -260,7 +285,7 @@ class _F8EditCommandDialog(QtWidgets.QDialog):
         self._refresh_params_list()
 
     def _delete_param(self) -> None:
-        if self._ui_only or self._read_only:
+        if self._ui_only or self._read_only or not self._allow_param_structure_mutation:
             return
         idx = self._selected_index()
         if idx < 0:
@@ -437,10 +462,7 @@ class _F8SpecCommandEditor(QtWidgets.QWidget):
 
     @staticmethod
     def _editable_commands(spec: _CommandSpec) -> bool:
-        try:
-            return bool(spec.editableCommands)
-        except Exception:
-            return False
+        return _policy_can_add(spec, "commands")
 
     def _ensure_bridge_process_hook(self) -> None:
         if self._bridge_proc_hooked:
@@ -488,8 +510,10 @@ class _F8SpecCommandEditor(QtWidgets.QWidget):
         if not isinstance(spec, (F8ServiceSpec, F8OperatorSpec)):
             self._sec.set_add_visible(False)
             return
-        editable = self._editable_commands(spec)
-        self._sec.set_add_visible(bool(editable) and not self._missing_locked)
+        can_add = _policy_can_add(spec, "commands")
+        can_delete = _policy_can_delete(spec, "commands")
+        can_edit_existing = _policy_can_edit_existing(spec, "commands")
+        self._sec.set_add_visible(bool(can_add) and not self._missing_locked)
 
         running = self._is_service_running()
         try:
@@ -518,8 +542,8 @@ class _F8SpecCommandEditor(QtWidgets.QWidget):
             row = _F8CommandRow(
                 name=name,
                 description=desc,
-                allow_edit=True,
-                allow_delete=bool(editable) and not self._missing_locked and not required,
+                allow_edit=bool(not self._missing_locked),
+                allow_delete=bool(can_delete) and not self._missing_locked and not required,
                 show_on_node=bool(show_on_node),
             )
             row.invoke_clicked.connect(self._invoke_command)
@@ -725,8 +749,7 @@ class _F8SpecCommandEditor(QtWidgets.QWidget):
             spec = None
         if not isinstance(spec, (F8ServiceSpec, F8OperatorSpec)):
             return
-        editable = self._editable_commands(spec)
-        if not editable:
+        if not _policy_can_add(spec, "commands"):
             return
         cmd = F8Command(
             name="",
@@ -757,7 +780,7 @@ class _F8SpecCommandEditor(QtWidgets.QWidget):
         if not isinstance(spec, (F8ServiceSpec, F8OperatorSpec)):
             return
         read_only = bool(self._missing_locked)
-        editable = self._editable_commands(spec)
+        can_edit_existing = _policy_can_edit_existing(spec, "commands")
         cmds = list(spec.commands or [])
         idx = -1
         for i, c in enumerate(cmds):
@@ -773,7 +796,7 @@ class _F8SpecCommandEditor(QtWidgets.QWidget):
         # If not editable, only allow UI override edits (showOnNode).
         # Apply current UI override to dialog initial state (best-effort).
         init_cmd = cmds[idx]
-        if not editable:
+        if not can_edit_existing:
             try:
                 for c in list(self._node.effective_commands() or []):
                     try:
@@ -789,13 +812,15 @@ class _F8SpecCommandEditor(QtWidgets.QWidget):
             self,
             title="Edit command",
             cmd=init_cmd,
-            ui_only=not editable,
+            ui_only=not can_edit_existing,
+            lock_identity_fields=bool(can_edit_existing),
+            allow_param_structure_mutation=False,
             read_only=read_only,
         )
         if dlg.exec_() != QtWidgets.QDialog.Accepted:
             return
         edited = dlg.command()
-        if editable and not read_only:
+        if can_edit_existing and not read_only:
             spec2 = _spec_replace_command(spec, name=str(name or "").strip(), cmd=edited)
             if spec2 is not spec:
                 self._node.spec = spec2
@@ -837,8 +862,7 @@ class _F8SpecCommandEditor(QtWidgets.QWidget):
             spec = None
         if not isinstance(spec, (F8ServiceSpec, F8OperatorSpec)):
             return
-        editable = self._editable_commands(spec)
-        if not editable:
+        if not _policy_can_delete(spec, "commands"):
             return
         n = str(name or "").strip()
         if self._is_required_command(spec, name=n):

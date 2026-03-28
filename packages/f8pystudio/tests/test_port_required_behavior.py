@@ -5,7 +5,14 @@ from typing import Any
 
 from qtpy import QtWidgets
 
-from f8pysdk import F8DataPortSpec, F8ServiceSpec, F8StateAccess, F8StateSpec
+from f8pysdk import (
+    F8DataPortSpec,
+    F8ServiceSpec,
+    F8SpecEditPolicy,
+    F8StateAccess,
+    F8StateSpec,
+    editable_collection_edit_policy,
+)
 from f8pysdk.schema_helpers import string_schema
 from f8pystudio.widgets import node_property_panel as npw
 from f8pystudio.widgets.node_property_panel import _F8SpecPortEditor
@@ -43,9 +50,11 @@ def _make_spec() -> F8ServiceSpec:
     return F8ServiceSpec(
         serviceClass="f8.test",
         label="Test",
-        editableDataInPorts=True,
-        editableDataOutPorts=True,
-        editableStateFields=True,
+        editPolicy=F8SpecEditPolicy(
+            stateFields=editable_collection_edit_policy(),
+            dataInPorts=editable_collection_edit_policy(),
+            dataOutPorts=editable_collection_edit_policy(),
+        ),
         dataInPorts=[
             F8DataPortSpec(name="required_in", required=True, valueSchema=string_schema()),
             F8DataPortSpec(name="optional_in", required=False, valueSchema=string_schema()),
@@ -95,7 +104,7 @@ def test_port_editor_hides_delete_for_required_port() -> None:
     assert required_row.del_btn.isHidden() is True
     assert required_row.name_edit.isReadOnly() is True
     assert optional_row.del_btn.isHidden() is False
-    assert optional_row.name_edit.isReadOnly() is False
+    assert optional_row.name_edit.isReadOnly() is True
 
 
 def test_port_editor_refuses_delete_or_rename_required_port() -> None:
@@ -123,9 +132,19 @@ def test_required_data_port_dialog_is_not_ui_only_when_editable(monkeypatch) -> 
     captured: dict[str, bool] = {}
 
     class _FakeDataDialog:
-        def __init__(self, _parent: Any = None, *, title: str, port: Any, ui_only: bool, read_only: bool):
+        def __init__(
+            self,
+            _parent: Any = None,
+            *,
+            title: str,
+            port: Any,
+            ui_only: bool,
+            lock_identity_fields: bool,
+            read_only: bool,
+        ):
             del _parent, title, port
             captured["ui_only"] = bool(ui_only)
+            captured["lock_identity_fields"] = bool(lock_identity_fields)
             captured["read_only"] = bool(read_only)
 
         def exec_(self) -> int:
@@ -148,10 +167,20 @@ def test_add_data_port_defaults_to_optional_and_hidden(monkeypatch) -> None:
     captured: dict[str, Any] = {}
 
     class _FakeDataDialog:
-        def __init__(self, _parent: Any = None, *, title: str, port: Any, ui_only: bool, read_only: bool):
+        def __init__(
+            self,
+            _parent: Any = None,
+            *,
+            title: str,
+            port: Any,
+            ui_only: bool,
+            lock_identity_fields: bool,
+            read_only: bool,
+        ):
             del _parent, title, ui_only, read_only
             captured["required"] = bool(port.required)
             captured["show_on_node"] = bool(port.showOnNode)
+            captured["lock_identity_fields"] = bool(lock_identity_fields)
 
         def exec_(self) -> int:
             return QtWidgets.QDialog.Rejected
@@ -179,11 +208,13 @@ def test_required_state_field_dialog_is_not_ui_only_when_editable(monkeypatch) -
             field: Any,
             global_hotkey: str = "",
             ui_only: bool,
+            lock_identity_fields: bool,
             read_only: bool,
         ):
             del _parent, title, field
             _ = global_hotkey
             captured["ui_only"] = bool(ui_only)
+            captured["lock_identity_fields"] = bool(lock_identity_fields)
             captured["read_only"] = bool(read_only)
 
         def exec_(self) -> int:

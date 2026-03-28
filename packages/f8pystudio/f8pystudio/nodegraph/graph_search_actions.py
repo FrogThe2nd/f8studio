@@ -6,7 +6,7 @@ from typing import Any
 
 from .service_basenode import F8StudioServiceNodeItem
 from .session import last_session_path
-from .spec_visibility import is_hidden_spec_node_class
+from .spec_visibility import is_hidden_spec_node_class, typed_spec_template_or_none
 from ..variants.variant_ids import build_variant_node_type
 from f8pysdk.spec_metadata import palette_category_from_spec
 from ..variants.variant_repository import load_library

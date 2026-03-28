@@ -1194,11 +1194,6 @@ ButtplugOutRuntimeNode.SPEC = F8OperatorSpec(
             showOnNode=False,
         ),
     ],
-    editableStateFields=False,
-    editableDataInPorts=False,
-    editableDataOutPorts=False,
-    editableExecInPorts=False,
-    editableExecOutPorts=False,
 )
 
 

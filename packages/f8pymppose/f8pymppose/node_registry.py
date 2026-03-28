@@ -202,10 +202,6 @@ def register_specs(registry: RuntimeNodeRegistry | None = None) -> RuntimeNodeRe
                     valueSchema=array_schema(items=_skeleton_payload_schema()),
                 ),
             ],
-            editableStateFields=False,
-            editableDataInPorts=False,
-            editableDataOutPorts=False,
-            editableCommands=False,
         ),
         overwrite=True,
     )

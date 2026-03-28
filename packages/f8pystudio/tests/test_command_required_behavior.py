@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from qtpy import QtWidgets
 
-from f8pysdk import F8Command, F8ServiceSpec
+from f8pysdk import F8Command, F8ServiceSpec, F8SpecEditPolicy, editable_collection_edit_policy
 from f8pystudio.widgets.spec_mutations import delete_command
 from f8pystudio.widgets.node_property_panel import _F8EditCommandDialog, _F8SpecCommandEditor
 
@@ -30,7 +30,12 @@ def _ensure_app() -> QtWidgets.QApplication:
 
 
 def _make_spec(commands: list[F8Command]) -> F8ServiceSpec:
-    return F8ServiceSpec(serviceClass="f8.test", label="Test", editableCommands=True, commands=commands)
+    return F8ServiceSpec(
+        serviceClass="f8.test",
+        label="Test",
+        editPolicy=F8SpecEditPolicy(commands=editable_collection_edit_policy()),
+        commands=commands,
+    )
 
 
 def test_spec_delete_command_keeps_required() -> None:

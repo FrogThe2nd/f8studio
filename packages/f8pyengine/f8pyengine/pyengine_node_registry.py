@@ -86,10 +86,6 @@ def register_pyengine_specs(registry: RuntimeNodeRegistry | None = None) -> Runt
                     showOnNode=True,
                 ),
             ],
-            editableStateFields=False,
-            editableDataInPorts=False,
-            editableDataOutPorts=False,
-            editableCommands=False,
         ),
         overwrite=True,
     )

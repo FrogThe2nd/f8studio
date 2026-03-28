@@ -7,12 +7,14 @@ import time
 from typing import Any
 
 from f8pysdk import (
-    F8StateAccess,
-    F8StateSpec,
     F8OperatorSchemaVersion,
     F8OperatorSpec,
     F8RuntimeNode,
+    F8SpecEditPolicy,
+    F8StateAccess,
+    F8StateSpec,
     boolean_schema,
+    editable_collection_edit_policy,
     integer_schema,
 )
 from f8pysdk.capabilities import NodeBus
@@ -31,8 +33,8 @@ class PullRuntimeNode(OperatorNode):
     """
     Periodic pull sink.
 
-    This node periodically pulls every connected data input (including ports
-    added dynamically via `editableDataInPorts`) to drive upstream computation.
+    This node periodically pulls every connected data input, including ones
+    added through the spec edit policy, to drive upstream computation.
     """
 
     def __init__(self, *, node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any] | None = None) -> None:
@@ -206,11 +208,7 @@ PullRuntimeNode.SPEC = F8OperatorSpec(
     execInPorts=[],
     dataInPorts=[],
     dataOutPorts=[],
-    editableDataInPorts=True,
-    editableDataOutPorts=False,
-    editableExecInPorts=False,
-    editableExecOutPorts=False,
-    editableStateFields=False,
+    editPolicy=F8SpecEditPolicy(dataInPorts=editable_collection_edit_policy()),
     stateFields=[
         F8StateSpec(
             name="autoTriggerEnabled",

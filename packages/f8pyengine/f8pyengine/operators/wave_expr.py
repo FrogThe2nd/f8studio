@@ -12,8 +12,10 @@ from f8pysdk import (
     F8OperatorSchemaVersion,
     F8OperatorSpec,
     F8RuntimeNode,
+    F8SpecEditPolicy,
     F8StateAccess,
     F8StateSpec,
+    editable_collection_edit_policy,
     number_schema,
     string_schema,
 )
@@ -533,11 +535,7 @@ WaveExprRuntimeNode.SPEC = F8OperatorSpec(
             showOnNode=False,
         ),
     ],
-    editableExecInPorts=False,
-    editableExecOutPorts=False,
-    editableDataInPorts=False,
-    editableDataOutPorts=False,
-    editableStateFields=True,
+    editPolicy=F8SpecEditPolicy(stateFields=editable_collection_edit_policy()),
 )
 
 

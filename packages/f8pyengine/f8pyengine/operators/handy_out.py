@@ -848,11 +848,6 @@ HandyOutRuntimeNode.SPEC = F8OperatorSpec(
             required=False,
         ),
     ],
-    editableStateFields=False,
-    editableDataInPorts=False,
-    editableDataOutPorts=False,
-    editableExecInPorts=False,
-    editableExecOutPorts=False,
 )
 
 

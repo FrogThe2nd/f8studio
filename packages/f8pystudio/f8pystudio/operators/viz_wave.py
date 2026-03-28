@@ -9,9 +9,11 @@ from f8pysdk import (
     F8OperatorSchemaVersion,
     F8OperatorSpec,
     F8RuntimeNode,
+    F8SpecEditPolicy,
     F8StateAccess,
     F8StateSpec,
     boolean_schema,
+    editable_collection_edit_policy,
     integer_schema,
     number_schema,
 )
@@ -316,7 +318,7 @@ def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNod
                 ),
             ],
             dataOutPorts=[],
-            editableDataInPorts=True,
+            editPolicy=F8SpecEditPolicy(dataInPorts=editable_collection_edit_policy()),
             rendererClass=RENDERER_CLASS,
             stateFields=[
                 F8StateSpec(
