@@ -47,9 +47,10 @@ def parse_ui_control(ui_control: str) -> ParsedUiControl:
         )
 
     control_name = str(match.group(1) or "").strip().lower()
-    payload = str(match.group(2) or "").strip().lower()
+    payload_raw = str(match.group(2) or "").strip()
+    payload_lower = payload_raw.lower()
 
-    if not payload:
+    if not payload_raw:
         return ParsedUiControl(
             raw=raw,
             control_name=control_name,
@@ -60,47 +61,47 @@ def parse_ui_control(ui_control: str) -> ParsedUiControl:
             is_valid=True,
         )
 
-    if control_name in {"code", "wrapline"} and _LANGUAGE_RE.fullmatch(payload):
+    if control_name in {"code", "wrapline"} and _LANGUAGE_RE.fullmatch(payload_raw):
         return ParsedUiControl(
             raw=raw,
             control_name=control_name,
-            ui_language=payload,
+            ui_language=payload_lower,
             select_pool_field=None,
             multiselect_pool_field=None,
             dial_loop=None,
             is_valid=True,
         )
 
-    if control_name == "select" and _POOL_FIELD_RE.fullmatch(payload):
+    if control_name == "select" and _POOL_FIELD_RE.fullmatch(payload_raw):
         return ParsedUiControl(
             raw=raw,
             control_name=control_name,
             ui_language="",
-            select_pool_field=payload,
+            select_pool_field=payload_raw,
             multiselect_pool_field=None,
             dial_loop=None,
             is_valid=True,
         )
 
-    if control_name == "multiselect" and _POOL_FIELD_RE.fullmatch(payload):
+    if control_name == "multiselect" and _POOL_FIELD_RE.fullmatch(payload_raw):
         return ParsedUiControl(
             raw=raw,
             control_name=control_name,
             ui_language="",
             select_pool_field=None,
-            multiselect_pool_field=payload,
+            multiselect_pool_field=payload_raw,
             dial_loop=None,
             is_valid=True,
         )
 
-    if control_name == "dial" and payload in {"loop", "noloop"}:
+    if control_name == "dial" and payload_lower in {"loop", "noloop"}:
         return ParsedUiControl(
             raw=raw,
             control_name=control_name,
             ui_language="",
             select_pool_field=None,
             multiselect_pool_field=None,
-            dial_loop=payload == "loop",
+            dial_loop=payload_lower == "loop",
             is_valid=True,
         )
 
@@ -118,4 +119,3 @@ def parse_ui_control(ui_control: str) -> ParsedUiControl:
 
 def ui_control_language(ui_control: str) -> str:
     return parse_ui_control(ui_control).ui_language
-
