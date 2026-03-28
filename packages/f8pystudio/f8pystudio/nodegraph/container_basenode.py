@@ -315,13 +315,27 @@ class F8StudioContainerNodeItem(AbstractNodeItem):
             viewer.node_double_clicked.emit(self.id)
         super().mouseDoubleClickEvent(event)
 
+    def _child_views_to_translate_during_drag(self) -> list[AbstractNodeItem]:
+        if not self.selected:
+            return list(self._child_views)
+        views_to_translate: list[AbstractNodeItem] = []
+        for view in self._child_views:
+            try:
+                child_selected = bool(view.selected)
+            except (AttributeError, RuntimeError, TypeError):
+                child_selected = False
+            if child_selected:
+                continue
+            views_to_translate.append(view)
+        return views_to_translate
+
     def mouseMoveEvent(self, event):
         """Moves child nodes along with the container."""
         prev_pos = self.pos()
         super().mouseMoveEvent(event)
         new_pos = self.pos()
         delta = new_pos - prev_pos
-        for view in self._child_views:
+        for view in self._child_views_to_translate_during_drag():
             p = view.xy_pos
             p[0] += delta.x()
             p[1] += delta.y()

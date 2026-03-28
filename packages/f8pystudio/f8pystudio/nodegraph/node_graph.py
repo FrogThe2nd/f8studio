@@ -5,6 +5,7 @@ from typing import Any
 import shortuuid
 from qtpy import QtCore, QtGui, QtWidgets
 from NodeGraphQt import NodeGraph
+from NodeGraphQt.base.commands import NodeMovedCmd
 
 from .graph_connection_rules import GraphConnectionRulesMixin
 from .graph_container_binding import GraphContainerBindingMixin
@@ -137,6 +138,45 @@ class F8StudioGraph(
     def _on_nodes_moving(self, node_data: Any) -> None:
         _ = node_data
         return
+
+    @staticmethod
+    def _container_parent_view(node_view: Any) -> Any | None:
+        try:
+            container_view = node_view._container_item
+        except (AttributeError, RuntimeError, TypeError):
+            return None
+        return container_view
+
+    @classmethod
+    def _has_moved_container_ancestor(cls, node_view: Any, moved_views: set[Any]) -> bool:
+        container_view = cls._container_parent_view(node_view)
+        while container_view is not None:
+            if container_view in moved_views:
+                return True
+            container_view = cls._container_parent_view(container_view)
+        return False
+
+    @classmethod
+    def _filter_redundant_container_child_moves(cls, node_data: dict[Any, Any]) -> dict[Any, Any]:
+        if len(node_data) < 2:
+            return dict(node_data)
+        moved_views = set(node_data.keys())
+        filtered: dict[Any, Any] = {}
+        for node_view, prev_pos in node_data.items():
+            if cls._has_moved_container_ancestor(node_view, moved_views):
+                continue
+            filtered[node_view] = prev_pos
+        return filtered
+
+    def _on_nodes_moved(self, node_data: dict[Any, Any]) -> None:
+        filtered_node_data = self._filter_redundant_container_child_moves(node_data)
+        if not filtered_node_data:
+            return
+        self._undo_stack.beginMacro("move nodes")
+        for node_view, prev_pos in filtered_node_data.items():
+            node = self._model.nodes[node_view.id]
+            self._undo_stack.push(NodeMovedCmd(node, node.pos(), prev_pos))
+        self._undo_stack.endMacro()
 
 
 __all__ = [
