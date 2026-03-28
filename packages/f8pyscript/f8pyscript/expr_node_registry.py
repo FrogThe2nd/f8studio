@@ -39,8 +39,7 @@ def register_expr_specs(registry: RuntimeNodeRegistry | None = None) -> RuntimeN
                     valueSchema=string_schema(default=DEFAULT_CODE),
                     access=F8StateAccess.rw,
                     required=True,
-                    uiControl="wrapline",
-                    uiLanguage="python",
+                    uiControl="wrapline[python]",
                     showOnNode=True,
                 ),
                 F8StateSpec(

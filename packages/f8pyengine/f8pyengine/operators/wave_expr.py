@@ -465,8 +465,7 @@ WaveExprRuntimeNode.SPEC = F8OperatorSpec(
             access=F8StateAccess.wo,
             required=True,
             showOnNode=True,
-            uiControl="wrapline",
-            uiLanguage="python",
+            uiControl="wrapline[python]",
         ),
         F8StateSpec(
             name="maxT",

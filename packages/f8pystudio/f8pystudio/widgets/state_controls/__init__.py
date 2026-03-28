@@ -17,7 +17,6 @@ from .schema_introspect import (
     state_field_label,
     state_field_schema,
     state_field_ui_control,
-    state_field_ui_language,
 )
 
 __all__ = [
@@ -37,7 +36,6 @@ __all__ = [
     "state_field_label",
     "state_field_schema",
     "state_field_ui_control",
-    "state_field_ui_language",
     "F8StateAccess",
 ]
 

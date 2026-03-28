@@ -158,7 +158,7 @@ class SessionLayoutCodecMixin:
             if isinstance(ui, dict):
                 state_ui = ui.get("stateFields")
             if isinstance(state_ui, dict) and state_ui and state_fields:
-                allowed_keys = {"showOnNode", "uiControl", "uiLanguage", "label", "description"}
+                allowed_keys = {"showOnNode", "uiControl", "label", "description"}
                 patched = []
                 for f in state_fields:
                     name = str(f.name or "").strip()

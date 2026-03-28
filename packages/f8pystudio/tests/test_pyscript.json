@@ -385,8 +385,7 @@
               "label":"Code",
               "description":"Python source code optionally defining hooks: onStart/onState/onMsg/onExec/onStop.",
               "required":true,
-              "uiControl":"code",
-              "uiLanguage":"python",
+              "uiControl":"code[python]",
               "showOnNode":false,
               "editorAssist":{
                 "version":1,
@@ -693,8 +692,7 @@
               "label":"Code",
               "description":"Python source code defining onStart(ctx), onMsg(ctx, inputs), onStop(ctx).",
               "required":true,
-              "uiControl":"code",
-              "uiLanguage":"python",
+              "uiControl":"code[python]",
               "showOnNode":false,
               "editorAssist":{
                 "version":1,

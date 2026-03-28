@@ -140,7 +140,7 @@ def test_editor_assist_context_for_field_returns_error_when_field_missing() -> N
 
 def test_editor_assist_context_for_field_supports_json_language() -> None:
     spec = _operator_spec_with_field_editor_assist(None, state_key="clsWeights")
-    spec.stateFields[0].uiLanguage = "json"
+    spec.stateFields[0].uiControl = "code[json]"
     spec.stateFields[0].label = "Class Weights"
     spec.stateFields[0].description = "JSON map of cls -> weight."
     context = editor_assist_context_for_field(spec, field_kind="state", field_key="clsWeights", language="json")
@@ -383,10 +383,10 @@ def test_editor_assist_context_rejects_when_state_ui_language_mismatches() -> No
             },
         }
     )
-    spec.stateFields[0].uiLanguage = "lua"
+    spec.stateFields[0].uiControl = "code[lua]"
     context = editor_assist_context_for_field(spec, field_kind="state", field_key="code", language="python")
     assert context is not None
-    assert "uiLanguage='lua' does not match requested language='python'" in context.error_message
+    assert "uiControl language='lua' does not match requested language='python'" in context.error_message
 
 
 def test_editor_assist_context_for_field_exposes_target_metadata_for_python() -> None:
@@ -401,7 +401,7 @@ def test_editor_assist_context_for_field_exposes_target_metadata_for_python() ->
         }
     )
     spec.stateFields[0].label = "Script Body"
-    spec.stateFields[0].uiLanguage = "python"
+    spec.stateFields[0].uiControl = "code[python]"
     context = editor_assist_context_for_field(spec, field_kind="state", field_key="code", language="python")
     assert context is not None
     assert context.target_field_kind == "state"

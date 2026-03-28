@@ -317,8 +317,7 @@ StateExprRuntimeNode.SPEC = F8OperatorSpec(
                 "Single Python expression. Editable RW/WO state fields are available directly by name; "
                 "non-identifier names remain available through `states[...]`."
             ),
-            uiControl="wrapline",
-            uiLanguage="python",
+            uiControl="wrapline[python]",
             valueSchema=string_schema(default="0"),
             access=F8StateAccess.rw,
             showOnNode=True,

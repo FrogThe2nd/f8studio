@@ -979,7 +979,7 @@ LovenseOutRuntimeNode.SPEC = F8OperatorSpec(
             valueSchema=string_schema(default=""),
             access=F8StateAccess.rw,
             required=True,
-            uiControl="options:[availableToys]",
+            uiControl="select[availableToys]",
             showOnNode=True,
         ),
         F8StateSpec(

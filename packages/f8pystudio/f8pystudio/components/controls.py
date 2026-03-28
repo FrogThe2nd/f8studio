@@ -12,6 +12,7 @@ from typing import Any, Callable
 
 from qtpy import QtCore, QtGui, QtWidgets
 
+from ..ui_control import parse_ui_control
 from ..ui_notifications import show_warning
 
 _COMBO_REOPEN_GUARD_S = 0.05
@@ -48,26 +49,17 @@ def _b64encode_bytes(data: bytes) -> str:
 def parse_select_pool(ui_control: str) -> str | None:
     """
     Parse uiControl patterns for option pools:
-      "select:[poolStateField]"
-      "options:[poolStateField]"
+      "select[poolStateField]"
     """
-    ui = str(ui_control or "").strip()
-    m = re.match(r"^(select|options)\s*:\s*\[([A-Za-z_][A-Za-z0-9_]*)\]\s*$", ui, flags=re.IGNORECASE)
-    if not m:
-        return None
-    return str(m.group(2))
+    return parse_ui_control(ui_control).select_pool_field
 
 
 def parse_multiselect_pool(ui_control: str) -> str | None:
     """
     Parse uiControl patterns for multi-select pools:
-      "multiselect:[poolStateField]"
+      "multiselect[poolStateField]"
     """
-    ui = str(ui_control or "").strip()
-    m = re.match(r"^multiselect\s*:\s*\[([A-Za-z_][A-Za-z0-9_]*)\]\s*$", ui, flags=re.IGNORECASE)
-    if not m:
-        return None
-    return str(m.group(1))
+    return parse_ui_control(ui_control).multiselect_pool_field
 
 
 def _popup_above_y(anchor_y: int, popup_h: int) -> int:

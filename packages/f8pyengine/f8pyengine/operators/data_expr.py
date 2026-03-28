@@ -297,8 +297,7 @@ DataExprRuntimeNode.SPEC = F8OperatorSpec(
                 "Single Python expression. Reference `x` and any extra input port names directly. Supports literals, "
                 "indexing, comprehensions, conditionals, `math.*`, and optional `np.*` / `numpy.*` when `Allow Numpy` is enabled."
             ),
-            uiControl="wrapline",
-            uiLanguage="python",
+            uiControl="wrapline[python]",
             valueSchema=string_schema(default="x"),
             access=F8StateAccess.rw,
             showOnNode=True,

@@ -31,7 +31,7 @@ def _apply_state_ui_overrides(spec_json: dict[str, Any], ui: dict[str, Any]) -> 
     if not isinstance(state_over, dict):
         return
     fields = _state_fields_by_name(spec_json)
-    allowed_keys = {"showOnNode", "uiControl", "uiLanguage", "label", "description"}
+    allowed_keys = {"showOnNode", "uiControl", "label", "description"}
     for name, patch in state_over.items():
         if not isinstance(patch, dict):
             continue

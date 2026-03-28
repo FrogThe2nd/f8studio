@@ -171,10 +171,7 @@ components:
           description: If true, this state is protected and cannot be deleted from editable state field lists.
         uiControl:
           type: string
-          description: Optional UI hint (slider, spinbox, select, etc.)
-        uiLanguage:
-          type: string
-          description: Optional language hint for code editors (e.g., javascript, typescript)
+          description: Optional UI hint DSL (e.g., slider, code[python], wrapline[json], select[availableItems], multiselect[modelClasses], dial[noloop]).
         showOnNode:
           type: boolean
           default: false
@@ -252,7 +249,7 @@ components:
           description: If true, this parameter is required when invoking the command.
         uiControl:
           type: string
-          description: Optional UI hint (slider, select, etc.)
+          description: Optional UI hint DSL (e.g., slider, select[availableItems], multiselect[modelClasses], dial[noloop]).
       required:
         - name
         - valueSchema

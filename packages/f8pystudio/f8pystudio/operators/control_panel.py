@@ -51,7 +51,7 @@ class ControlPanelRuntimeNode(OperatorNode):
                 valueSchema=string_schema(default=""),
                 access=F8StateAccess.rw,
                 required=False,
-                uiControl="select:[options]",
+                uiControl="select[options]",
                 showOnNode=True,
             ),
             F8StateSpec(

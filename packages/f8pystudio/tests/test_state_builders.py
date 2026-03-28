@@ -7,7 +7,7 @@ from qtpy import QtCore, QtGui, QtWidgets
 
 from f8pystudio.components.controls import F8Dial, F8OptionCombo
 from f8pystudio.components.state_builders import StateControlSpec, build_inline_control_binding
-from f8pystudio.components.state_editors import F8IncrementButtonEditor, F8InlineCodeEditor, F8WrapLineEditor
+from f8pystudio.components.state_editors import F8IncrementButtonEditor, F8WrapLineEditor
 
 
 def _ensure_app() -> QtWidgets.QApplication:
@@ -100,40 +100,6 @@ def test_wrapline_builder_commits_normalized_text() -> None:
 
     assert calls == [("hello world", True)]
     assert widget.toPlainText() == "hello world"
-
-
-def test_code_inline_builder_commits_on_ctrl_enter() -> None:
-    _ensure_app()
-    state = {"value": "before"}
-    calls: list[tuple[Any, bool]] = []
-    binding = _build_inline_binding(
-        spec=StateControlSpec(
-            name="code",
-            label="Code",
-            ui_control="code_inline",
-            ui_language="python",
-            schema_type="string",
-            enum_items=[],
-            minimum=None,
-            maximum=None,
-        ),
-        state=state,
-        calls=calls,
-    )
-
-    widget = binding.widget
-    assert isinstance(widget, F8InlineCodeEditor)
-    widget.focusInEvent(QtGui.QFocusEvent(QtCore.QEvent.Type.FocusIn))
-    widget.setPlainText("x = 1\ny = 2")
-    widget.keyPressEvent(
-        QtGui.QKeyEvent(
-            QtCore.QEvent.Type.KeyPress,
-            QtCore.Qt.Key.Key_Return,
-            QtCore.Qt.KeyboardModifier.ControlModifier,
-        )
-    )
-
-    assert calls == [("x = 1\ny = 2", True)]
 
 
 def test_select_builder_refresh_options_preserves_selected_value() -> None:

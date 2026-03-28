@@ -9,7 +9,6 @@ class StateFieldDescriptor:
     name: str
     access: str
     ui_control: str
-    ui_language: str
     value_schema: Any
 
 

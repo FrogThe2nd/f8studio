@@ -17,6 +17,7 @@ from qtpy import QtCore, QtGui, QtWidgets
 from f8pysdk.schema_helpers import schema_type
 
 from ...components.controls import parse_multiselect_pool, parse_select_pool
+from ...ui_control import parse_ui_control
 from ...components.state_builders import (
     StateControlSpec,
     build_inline_control_binding,
@@ -83,7 +84,6 @@ def state_inline_control_serial(node_item: Any, info: StateFieldInfo) -> str:
                 "access": info.access_str,
                 "required": info.required,
                 "uiControl": info.ui_control,
-                "uiLanguage": info.ui_language,
                 "schemaType": str(schema_type(value_schema) or ""),
                 "enum": [str(item) for item in enum_items],
                 "minimum": minimum,
@@ -418,7 +418,8 @@ def toggle_state_inline_section(node_item: Any, name: str, expanded: bool) -> No
 def build_state_inline_control(node_item: Any, state_field: StateFieldInfo) -> QtWidgets.QWidget:
     name = state_field.name
     ui_raw = state_field.ui_control
-    ui = str(ui_raw or "").strip().lower()
+    parsed_ui = parse_ui_control(ui_raw)
+    ui = parsed_ui.control_name
     schema = state_field.value_schema
     access_s = state_field.access_str
     schema_type_value = (schema_type(schema) or "") if schema is not None else ""
@@ -577,13 +578,13 @@ def build_state_inline_control(node_item: Any, state_field: StateFieldInfo) -> Q
             graph,
             node_id=node_id,
             state_field_name=name,
-            language=state_field.ui_language or "plaintext",
+            language=parsed_ui.ui_language or "plaintext",
         ),
         assist_context_provider=lambda: _editor_assist_context(
             graph,
             node_id=node_id,
             state_field_name=name,
-            language=state_field.ui_language or "plaintext",
+            language=parsed_ui.ui_language or "plaintext",
         ),
         editor_session_key=studio_session_key(graph, node_id, name) if graph is not None and node_id else None,
         style_applier=_common_style,

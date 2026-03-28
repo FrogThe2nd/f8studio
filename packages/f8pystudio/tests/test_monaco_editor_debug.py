@@ -52,8 +52,7 @@ def _write_session(tmp_path: Path) -> Path:
                                 "valueSchema": {"type": "string", "default": "print('default')\n"},
                                 "access": "rw",
                                 "required": True,
-                                "uiControl": "code",
-                                "uiLanguage": "python",
+                                "uiControl": "code[python]",
                                 "showOnNode": False,
                                 "editorAssist": {
                                     "version": 1,
@@ -136,8 +135,7 @@ def _write_session(tmp_path: Path) -> Path:
                                 "valueSchema": {"type": "string", "default": "print('default b')\n"},
                                 "access": "rw",
                                 "required": True,
-                                "uiControl": "code",
-                                "uiLanguage": "python",
+                                "uiControl": "code[python]",
                                 "showOnNode": False,
                                 "editorAssist": {
                                     "version": 1,

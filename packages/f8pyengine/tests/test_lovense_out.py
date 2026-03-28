@@ -234,7 +234,7 @@ class LovenseOutTests(unittest.IsolatedAsyncioTestCase):
                 break
         self.assertIsNotNone(toy_state)
         assert toy_state is not None
-        self.assertEqual(str(toy_state.uiControl or ""), "options:[availableToys]")
+        self.assertEqual(str(toy_state.uiControl or ""), "select[availableToys]")
 
     async def test_api_error_updates_last_error(self) -> None:
         _bus, node = await self._build_node(state_values={"enabled": True, "timeSec": 0, "vibrate": 0.2})

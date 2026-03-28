@@ -108,8 +108,7 @@ def _detection_sorter_state_fields() -> list[F8StateSpec]:
             valueSchema=string_schema(default="{}"),
             access=F8StateAccess.rw,
             required=True,
-            uiControl="code",
-            uiLanguage="json",
+            uiControl="code[json]",
             showOnNode=False,
         ),
         F8StateSpec(
@@ -184,7 +183,7 @@ def _common_state_fields(
             valueSchema=string_schema(default=""),
             access=F8StateAccess.rw,
             required=True,
-            uiControl="select:[availableModels]",
+            uiControl="select[availableModels]",
             showOnNode=True,
         ),
         F8StateSpec(
@@ -270,7 +269,7 @@ def _common_state_fields(
                     valueSchema=array_schema(items=string_schema()),
                     access=F8StateAccess.rw,
                     required=True,
-                    uiControl="multiselect:[modelClasses]",
+                    uiControl="multiselect[modelClasses]",
                     showOnNode=False,
                 ),
                 F8StateSpec(
@@ -376,7 +375,7 @@ def _optflow_state_fields() -> list[F8StateSpec]:
             valueSchema=string_schema(default=""),
             access=F8StateAccess.rw,
             required=True,
-            uiControl="select:[availableModels]",
+            uiControl="select[availableModels]",
             showOnNode=False,
         ),
         F8StateSpec(

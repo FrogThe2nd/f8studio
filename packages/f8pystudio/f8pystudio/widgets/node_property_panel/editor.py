@@ -36,8 +36,8 @@ from ..state_controls import (
     schema_type_any as _schema_type,
     state_field_access as _state_field_access,
     state_field_ui_control as _state_field_ui_control,
-    state_field_ui_language as _state_field_ui_language,
 )
+from ...ui_control import parse_ui_control
 from ..ui_override_mutations import (
     find_base_state_field as _find_base_state_field,
     set_state_field_global_hotkey_override as _set_state_field_global_hotkey_override,
@@ -617,9 +617,10 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
                 # Dialog-backed code editor (eg. python_script code).
                 try:
                     ui_control_raw = _state_field_ui_control(node, prop_name)
-                    ui_control = str(ui_control_raw or "").strip().lower()
+                    parsed_ui = parse_ui_control(ui_control_raw)
+                    ui_control = parsed_ui.control_name
                     if ui_control == "code":
-                        ui_language = _state_field_ui_language(node, prop_name)
+                        ui_language = parsed_ui.ui_language
                         widget = _F8CodeButtonEditor(
                             title=f"{node.name()} - {prop_name}", language=ui_language or "plaintext"
                         )

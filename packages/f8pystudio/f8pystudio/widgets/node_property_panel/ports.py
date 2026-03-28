@@ -248,8 +248,6 @@ class _F8EditStateFieldDialog(QtWidgets.QDialog):
         self._desc = QtWidgets.QPlainTextEdit(str(field.description or ""))
         self._ui_control = QtWidgets.QLineEdit(str(field.uiControl or ""))
         self._ui_control.setClearButtonEnabled(True)
-        self._ui_lang = QtWidgets.QLineEdit(str(field.uiLanguage or ""))
-        self._ui_lang.setClearButtonEnabled(True)
         self._global_hotkey = _F8GlobalHotkeyEdit(value=str(global_hotkey or ""))
         self._ui_control.textChanged.connect(self._refresh_global_hotkey_enabled)  # type: ignore[attr-defined]
 
@@ -268,7 +266,6 @@ class _F8EditStateFieldDialog(QtWidgets.QDialog):
         form.addRow("Label", self._label)
         form.addRow("Description", self._desc)
         form.addRow("uiControl", self._ui_control)
-        form.addRow("uiLanguage", self._ui_lang)
         form.addRow("Global Hotkey", self._global_hotkey)
 
         schema_row = QtWidgets.QHBoxLayout()
@@ -297,7 +294,6 @@ class _F8EditStateFieldDialog(QtWidgets.QDialog):
                 self._label,
                 self._desc,
                 self._ui_control,
-                self._ui_lang,
                 self._global_hotkey,
                 self._schema_btn,
             ):
@@ -352,7 +348,6 @@ class _F8EditStateFieldDialog(QtWidgets.QDialog):
         label = str(self._label.text() or "").strip() or msgspec.UNSET
         desc = str(self._desc.toPlainText() or "").strip() or msgspec.UNSET
         ui_control = str(self._ui_control.text() or "").strip() or msgspec.UNSET
-        ui_lang = str(self._ui_lang.text() or "").strip() or msgspec.UNSET
         return F8StateSpec(
             name=name,
             label=label,
@@ -361,7 +356,6 @@ class _F8EditStateFieldDialog(QtWidgets.QDialog):
             access=access,
             required=required,
             uiControl=ui_control,
-            uiLanguage=ui_lang,
             showOnNode=show_on_node,
         )
 

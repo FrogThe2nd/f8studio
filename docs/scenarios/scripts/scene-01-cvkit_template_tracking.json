@@ -83,7 +83,6 @@
               "access":"rw",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":true
             },
             {
@@ -107,7 +106,6 @@
               "access":"rw",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":true
             },
             {
@@ -131,7 +129,6 @@
               "access":"ro",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":false
             }
           ],
@@ -231,7 +228,6 @@
               "access":"rw",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":true
             },
             {
@@ -255,7 +251,6 @@
               "access":"rw",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":false
             },
             {
@@ -279,7 +274,6 @@
               "access":"ro",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":false
             },
             {
@@ -303,7 +297,6 @@
               "access":"ro",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":false
             }
           ],
@@ -480,7 +473,6 @@
               "access":"rw",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":false
             },
             {
@@ -504,7 +496,6 @@
               "access":"rw",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":false
             },
             {
@@ -528,7 +519,6 @@
               "access":"rw",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":true
             },
             {
@@ -552,7 +542,6 @@
               "access":"rw",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":true
             },
             {
@@ -576,7 +565,6 @@
               "access":"rw",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":false
             },
             {
@@ -600,7 +588,6 @@
               "access":"ro",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":false
             },
             {
@@ -624,7 +611,6 @@
               "access":"ro",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":false
             }
           ],
@@ -779,7 +765,6 @@
               "access":"rw",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":true
             },
             {
@@ -803,7 +788,6 @@
               "access":"rw",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":true
             },
             {
@@ -827,7 +811,6 @@
               "access":"wo",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":false
             },
             {
@@ -851,7 +834,6 @@
               "access":"ro",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":false
             },
             {
@@ -875,7 +857,6 @@
               "access":"ro",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":false
             }
           ],
@@ -1050,7 +1031,6 @@
               "access":"rw",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":true
             },
             {
@@ -1074,7 +1054,6 @@
               "access":"ro",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":false
             },
             {
@@ -1098,7 +1077,6 @@
               "access":"ro",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":false
             }
           ],
@@ -1474,7 +1452,6 @@
               "access":"rw",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":true
             },
             {
@@ -1498,7 +1475,6 @@
               "access":"rw",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":true
             },
             {
@@ -1522,7 +1498,6 @@
               "access":"rw",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":true
             },
             {
@@ -1546,7 +1521,6 @@
               "access":"rw",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":true
             },
             {
@@ -1570,7 +1544,6 @@
               "access":"rw",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":true
             },
             {
@@ -1594,7 +1567,6 @@
               "access":"rw",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":true
             },
             {
@@ -1618,7 +1590,6 @@
               "access":"rw",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":true
             },
             {
@@ -1642,7 +1613,6 @@
               "access":"ro",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":false
             },
             {
@@ -1666,7 +1636,6 @@
               "access":"ro",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":false
             }
           ],
@@ -1816,7 +1785,6 @@
               "access":"rw",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":false
             },
             {
@@ -1840,7 +1808,6 @@
               "access":"rw",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":false
             },
             {
@@ -1864,7 +1831,6 @@
               "access":"rw",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":true
             },
             {
@@ -1888,7 +1854,6 @@
               "access":"rw",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":true
             },
             {
@@ -1919,7 +1884,6 @@
               "access":"rw",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":true
             },
             {
@@ -1943,7 +1907,6 @@
               "access":"ro",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":false
             },
             {
@@ -1967,7 +1930,6 @@
               "access":"ro",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":false
             }
           ],
@@ -2120,7 +2082,6 @@
               "access":"rw",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":false
             },
             {
@@ -2144,7 +2105,6 @@
               "access":"rw",
               "required":false,
               "uiControl":"slider",
-              "uiLanguage":null,
               "showOnNode":true
             },
             {
@@ -2168,7 +2128,6 @@
               "access":"rw",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":false
             },
             {
@@ -2192,7 +2151,6 @@
               "access":"rw",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":true
             },
             {
@@ -2216,7 +2174,6 @@
               "access":"ro",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":false
             },
             {
@@ -2240,7 +2197,6 @@
               "access":"rw",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":true
             },
             {
@@ -2264,7 +2220,6 @@
               "access":"ro",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":false
             }
           ],
@@ -2916,7 +2871,6 @@
               "access":"rw",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":true
             },
             {
@@ -2944,7 +2898,6 @@
               "access":"rw",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":true
             },
             {
@@ -2968,7 +2921,6 @@
               "access":"ro",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":true
             },
             {
@@ -2992,7 +2944,6 @@
               "access":"ro",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":true
             },
             {
@@ -3016,7 +2967,6 @@
               "access":"ro",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":true
             },
             {
@@ -3040,7 +2990,6 @@
               "access":"rw",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":true
             },
             {
@@ -3064,7 +3013,6 @@
               "access":"ro",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":false
             }
           ],
@@ -3471,7 +3419,6 @@
               "access":"rw",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":false
             },
             {
@@ -3495,7 +3442,6 @@
               "access":"rw",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":false
             },
             {
@@ -3519,7 +3465,6 @@
               "access":"rw",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":false
             },
             {
@@ -3543,7 +3488,6 @@
               "access":"rw",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":false
             },
             {
@@ -3567,7 +3511,6 @@
               "access":"rw",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":true
             },
             {
@@ -3591,7 +3534,6 @@
               "access":"rw",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":false
             },
             {
@@ -3615,7 +3557,6 @@
               "access":"rw",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":false
             },
             {
@@ -3639,7 +3580,6 @@
               "access":"rw",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":false
             },
             {
@@ -3666,7 +3606,6 @@
               "access":"rw",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":false
             },
             {
@@ -3690,7 +3629,6 @@
               "access":"rw",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":false
             }
           ],
@@ -3819,7 +3757,6 @@
               "access":"rw",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":false
             },
             {
@@ -3843,7 +3780,6 @@
               "access":"rw",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":false
             },
             {
@@ -3867,7 +3803,6 @@
               "access":"rw",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":false
             },
             {
@@ -3891,7 +3826,6 @@
               "access":"rw",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":false
             },
             {
@@ -3915,7 +3849,6 @@
               "access":"rw",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":false
             },
             {
@@ -3939,7 +3872,6 @@
               "access":"rw",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":false
             },
             {
@@ -3963,7 +3895,6 @@
               "access":"rw",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":false
             },
             {
@@ -3987,7 +3918,6 @@
               "access":"rw",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":false
             },
             {
@@ -4014,7 +3944,6 @@
               "access":"rw",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":false
             },
             {
@@ -4038,7 +3967,6 @@
               "access":"rw",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":false
             }
           ],
@@ -4205,7 +4133,6 @@
               "access":"rw",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":false
             },
             {
@@ -4229,7 +4156,6 @@
               "access":"rw",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":true
             },
             {
@@ -4253,7 +4179,6 @@
               "access":"rw",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":true
             },
             {
@@ -4277,7 +4202,6 @@
               "access":"ro",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":false
             },
             {
@@ -4301,7 +4225,6 @@
               "access":"ro",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":true
             },
             {
@@ -4325,7 +4248,6 @@
               "access":"ro",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":false
             },
             {
@@ -4349,7 +4271,6 @@
               "access":"ro",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":true
             },
             {
@@ -4373,7 +4294,6 @@
               "access":"ro",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":false
             },
             {
@@ -4397,7 +4317,6 @@
               "access":"rw",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":false
             },
             {
@@ -4421,7 +4340,6 @@
               "access":"rw",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":false
             },
             {
@@ -4445,7 +4363,6 @@
               "access":"rw",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":false
             },
             {
@@ -4469,7 +4386,6 @@
               "access":"ro",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":false
             },
             {
@@ -4493,7 +4409,6 @@
               "access":"ro",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":false
             },
             {
@@ -4517,7 +4432,6 @@
               "access":"ro",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":false
             },
             {
@@ -4541,7 +4455,6 @@
               "access":"ro",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":false
             },
             {
@@ -4565,7 +4478,6 @@
               "access":"ro",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":false
             },
             {
@@ -4589,7 +4501,6 @@
               "access":"rw",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":true
             },
             {
@@ -4613,7 +4524,6 @@
               "access":"ro",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":false
             }
           ],
@@ -4976,8 +4886,7 @@
               },
               "access":"rw",
               "required":false,
-              "uiControl":"code",
-              "uiLanguage":"python",
+              "uiControl": "code[python]",
               "showOnNode":false
             },
             {
@@ -5001,7 +4910,6 @@
               "access":"wo",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":false
             },
             {
@@ -5025,7 +4933,6 @@
               "access":"ro",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":false
             },
             {
@@ -5049,7 +4956,6 @@
               "access":"ro",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":false
             }
           ],
@@ -5204,7 +5110,6 @@
               "access":"rw",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":true
             },
             {
@@ -5228,7 +5133,6 @@
               "access":"rw",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":true
             },
             {
@@ -5252,7 +5156,6 @@
               "access":"rw",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":true
             },
             {
@@ -5276,7 +5179,6 @@
               "access":"rw",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":true
             },
             {
@@ -5300,7 +5202,6 @@
               "access":"rw",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":true
             },
             {
@@ -5324,7 +5225,6 @@
               "access":"rw",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":false
             },
             {
@@ -5348,7 +5248,6 @@
               "access":"ro",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":false
             },
             {
@@ -5372,7 +5271,6 @@
               "access":"ro",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":false
             }
           ],
@@ -5559,8 +5457,7 @@
               },
               "access":"rw",
               "required":false,
-              "uiControl":"code",
-              "uiLanguage":"python",
+              "uiControl": "code[python]",
               "showOnNode":false
             },
             {
@@ -5584,7 +5481,6 @@
               "access":"wo",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":false
             },
             {
@@ -5608,7 +5504,6 @@
               "access":"ro",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":false
             },
             {
@@ -5632,7 +5527,6 @@
               "access":"ro",
               "required":false,
               "uiControl":null,
-              "uiLanguage":null,
               "showOnNode":false
             },
             {
@@ -5656,7 +5550,6 @@
               "access":"rw",
               "required":false,
               "uiControl":"slider",
-              "uiLanguage":null,
               "showOnNode":true
             }
           ],
@@ -5915,3 +5808,5 @@
     ]
   }
 }
+
+

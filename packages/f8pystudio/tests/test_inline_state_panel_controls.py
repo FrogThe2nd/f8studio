@@ -138,7 +138,7 @@ def _selected_axis_field() -> StateFieldInfo:
         access="rw",
         access_str="rw",
         required=True,
-        ui_control="options:[allAxes]",
+        ui_control="select[allAxes]",
         ui_language=None,
         value_schema=None,
     )

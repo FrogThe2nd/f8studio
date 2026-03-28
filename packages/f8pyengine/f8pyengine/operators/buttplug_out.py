@@ -1045,7 +1045,7 @@ ButtplugOutRuntimeNode.SPEC = F8OperatorSpec(
             valueSchema=string_schema(default=""),
             access=F8StateAccess.rw,
             required=True,
-            uiControl="select:[availableDevices]",
+            uiControl="select[availableDevices]",
             showOnNode=True,
         ),
         F8StateSpec(

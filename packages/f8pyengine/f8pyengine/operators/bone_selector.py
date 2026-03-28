@@ -202,7 +202,7 @@ BoneSelectorRuntimeNode.SPEC = F8OperatorSpec(
             valueSchema=string_schema(default=""),
             access=F8StateAccess.rw,
             required=True,
-            uiControl="options:[availableBones]",
+            uiControl="select[availableBones]",
             showOnNode=True,
         ),
         F8StateSpec(

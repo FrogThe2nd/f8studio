@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import re
 from typing import Any, Callable
 
 from qtpy import QtCore, QtWidgets
@@ -9,13 +8,13 @@ from qtpy import QtCore, QtWidgets
 from ..editor_assist.session import EditorSessionKey
 from ..editor_assist.workspace import EditorAssistContext
 from .controls import F8Dial, F8ImageB64Editor, F8MultiSelect, F8OptionCombo, F8Switch, F8ValueBar
+from ..ui_control import parse_ui_control
 from .state_editors import (
     F8BoolSwitchEditor,
     F8CodeButtonEditor,
     F8DialEditor,
     F8ImageValueEditor,
     F8IncrementButtonEditor,
-    F8InlineCodeEditor,
     F8MultiSelectEditor,
     F8NumberLineEditor,
     F8OptionComboEditor,
@@ -140,11 +139,7 @@ def _binding(
 
 
 def _dial_loop_mode(ui_control: str) -> bool | None:
-    match = re.match(r"^dial(?:\[\s*(loop|noloop)\s*\])?$", str(ui_control or "").strip().lower())
-    if match is None:
-        return None
-    variant = str(match.group(1) or "loop")
-    return variant != "noloop"
+    return parse_ui_control(ui_control).dial_loop
 
 
 def build_panel_control_binding(
@@ -157,15 +152,16 @@ def build_panel_control_binding(
     assist_context_provider: Callable[[], EditorAssistContext | None] | None,
     editor_session_key: EditorSessionKey | None,
 ) -> StateControlBinding:
-    ui = str(spec.ui_control or "").strip().lower()
-    dial_loop = _dial_loop_mode(ui)
+    parsed_ui = parse_ui_control(spec.ui_control)
+    ui = parsed_ui.control_name
+    dial_loop = parsed_ui.dial_loop
 
     if spec.is_image_b64:
         widget = F8ImageValueEditor()
         widget.set_name(spec.name)
         return _binding(widget, apply_value=widget.set_value)
 
-    if ui in {"code"}:
+    if ui == "code":
         widget = F8CodeButtonEditor(title=editor_title, language=spec.ui_language or "plaintext")
         widget.set_name(spec.name)
         widget.set_editor_assist_context(assist_context)
@@ -173,17 +169,12 @@ def build_panel_control_binding(
         widget.set_editor_session_key(editor_session_key)
         return _binding(widget, apply_value=widget.set_value)
 
-    if ui in {"wrapline"}:
+    if ui == "wrapline":
         widget = F8WrapLineEditor(language=spec.ui_language or "plaintext")
         widget.set_name(spec.name)
         return _binding(widget, apply_value=widget.set_value)
 
-    if ui in {"code_inline", "multiline"}:
-        widget = F8InlineCodeEditor(language=spec.ui_language or "plaintext")
-        widget.set_name(spec.name)
-        return _binding(widget, apply_value=widget.set_value)
-
-    if ui in {"button"}:
+    if ui == "button":
         data_type = int if spec.schema_type == "integer" else float
         widget = F8IncrementButtonEditor(title=spec.label, data_type=data_type)
         widget.set_name(spec.name)
@@ -273,10 +264,11 @@ def build_inline_control_binding(
     text_palette_applier: Callable[[QtWidgets.QWidget], None] | None,
     tooltip_filter_installer: Callable[[QtWidgets.QWidget], None] | None,
 ) -> StateControlBinding:
-    ui = str(spec.ui_control or "").strip().lower()
-    dial_loop = _dial_loop_mode(ui)
+    parsed_ui = parse_ui_control(spec.ui_control)
+    ui = parsed_ui.control_name
+    dial_loop = parsed_ui.dial_loop
 
-    if ui in {"wave_preview"}:
+    if ui == "wave_preview":
         control, apply_value = make_wave_preview_control(
             field_tooltip=spec.field_tooltip,
             preview_value_getter=value_getter,
@@ -284,14 +276,14 @@ def build_inline_control_binding(
         )
         return _binding(control, apply_value=apply_value)
 
-    if ui in {"wave_heatmap"}:
+    if ui == "wave_heatmap":
         control, apply_value = make_wave_heatmap_control(
             field_tooltip=spec.field_tooltip,
             heatmap_value_getter=value_getter,
         )
         return _binding(control, apply_value=apply_value)
 
-    if ui in {"wave_pattern_editor"}:
+    if ui == "wave_pattern_editor":
         control, apply_value = make_wave_pattern_editor_control(
             field_tooltip=spec.field_tooltip,
             points_value_getter=value_getter,
@@ -301,7 +293,7 @@ def build_inline_control_binding(
         control.set_read_only(bool(read_only))
         return _binding(control, apply_value=apply_value, refresh_options=None)
 
-    if ui in {"wrapline"}:
+    if ui == "wrapline":
         widget = F8WrapLineEditor(language=spec.ui_language or "plaintext")
         widget.set_name(spec.name)
         widget.setMinimumWidth(0)
@@ -318,23 +310,7 @@ def build_inline_control_binding(
         widget.setReadOnly(bool(read_only))
         return _binding(widget, apply_value=widget.set_value)
 
-    if ui in {"code_inline", "multiline"}:
-        widget = F8InlineCodeEditor(language=spec.ui_language or "plaintext")
-        widget.set_name(spec.name)
-        widget.setMinimumWidth(160)
-        _apply_inline_text_widget_style(
-            widget,
-            spec.field_tooltip,
-            style_applier=style_applier,
-            text_palette_applier=text_palette_applier,
-            tooltip_filter_installer=tooltip_filter_installer,
-        )
-        widget.value_changed.connect(lambda _field_name, value: value_setter(value, push_undo=True))  # type: ignore[attr-defined]
-        widget.set_value(value_getter())
-        widget.setReadOnly(bool(read_only))
-        return _binding(widget, apply_value=widget.set_value)
-
-    if ui in {"code"}:
+    if ui == "code":
         widget = F8CodeButtonEditor(title=code_title, language=spec.ui_language or "plaintext")
         widget.set_name(spec.name)
         widget.set_editor_assist_context(assist_context)
@@ -386,7 +362,7 @@ def build_inline_control_binding(
         widget.set_read_only(bool(read_only))
         return _binding(widget, apply_value=_apply_code_value)
 
-    if ui in {"button"}:
+    if ui == "button":
         button_data_type: type[int] | type[float] = int if spec.schema_type == "integer" else float
         widget = F8IncrementButtonEditor(title=spec.label, data_type=button_data_type)
         widget.set_name(spec.name)

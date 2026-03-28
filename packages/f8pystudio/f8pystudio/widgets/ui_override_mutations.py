@@ -26,8 +26,6 @@ def _diff_state_ui(base: F8StateSpec, edited: F8StateSpec) -> dict[str, Any]:
         patch["showOnNode"] = edited.showOnNode
     if edited.uiControl != base.uiControl:
         patch["uiControl"] = edited.uiControl
-    if edited.uiLanguage != base.uiLanguage:
-        patch["uiLanguage"] = edited.uiLanguage
     if edited.label != base.label:
         patch["label"] = edited.label
     if edited.description != base.description:

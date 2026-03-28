@@ -5,6 +5,7 @@ from typing import Any
 from f8pysdk import F8StateAccess
 
 from ...components.state_builders import StateControlSpec, build_panel_control_binding
+from ...ui_control import parse_ui_control
 from ...editor_assist.protocol import editor_assist_context_for_field
 from ...editor_assist.session import EditorSessionKey
 from ...editor_assist.workspace import EditorAssistContext
@@ -17,7 +18,6 @@ from .schema_introspect import (
     state_field_label,
     state_field_schema,
     state_field_ui_control,
-    state_field_ui_language,
 )
 
 
@@ -57,8 +57,9 @@ def build_state_panel_control(context: ControlBuildContext) -> Any:
     schema = state_field_schema(node, prop_name)
     schema_t = schema_type_any(schema) if schema is not None else ""
     ui_control = state_field_ui_control(node, prop_name)
-    ui_control_l = str(ui_control).strip().lower()
-    ui_language = state_field_ui_language(node, prop_name)
+    parsed_ui = parse_ui_control(ui_control)
+    ui_control_l = parsed_ui.control_name
+    ui_language = parsed_ui.ui_language
     field_label = state_field_label(node, prop_name) or prop_name
     enum_items = schema_enum_items(schema) if schema is not None else []
     lo, hi = schema_numeric_range(schema) if schema is not None else (None, None)
@@ -69,7 +70,7 @@ def build_state_panel_control(context: ControlBuildContext) -> Any:
     spec = StateControlSpec(
         name=prop_name,
         label=field_label,
-        ui_control=ui_control_l,
+        ui_control=ui_control,
         ui_language=ui_language or "plaintext",
         schema_type=schema_t,
         enum_items=enum_items,

@@ -129,7 +129,7 @@ class F8StudioBaseNode(BaseNode):
         if not isinstance(state_over, dict) or not state_over or not fields:
             return fields
 
-        allowed_keys = {"showOnNode", "uiControl", "uiLanguage", "label", "description"}
+        allowed_keys = {"showOnNode", "uiControl", "label", "description"}
         out = []
         for f in fields:
             name = str(f.name or "").strip()

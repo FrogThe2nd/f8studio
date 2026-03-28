@@ -81,24 +81,6 @@ def state_field_ui_control(node: Any, prop_name: str) -> str:
     return ""
 
 
-def state_field_ui_language(node: Any, prop_name: str) -> str:
-    prop = str(prop_name or "").strip()
-    if not prop:
-        return ""
-    for field in effective_state_fields(node):
-        try:
-            name = str(field.name or "").strip()
-        except AttributeError:
-            continue
-        if name != prop:
-            continue
-        try:
-            return str(field.uiLanguage or "").strip().lower()
-        except AttributeError:
-            return ""
-    return ""
-
-
 def state_field_label(node: Any, prop_name: str) -> str:
     prop = str(prop_name or "").strip()
     if not prop:

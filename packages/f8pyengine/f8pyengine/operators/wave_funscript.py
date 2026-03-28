@@ -584,7 +584,7 @@ WaveFunscriptRuntimeNode.SPEC = F8OperatorSpec(
             valueSchema=string_schema(default=_TOPLEVEL_AXIS),
             access=F8StateAccess.rw,
             required=True,
-            uiControl="options:[allAxes]",
+            uiControl="select[allAxes]",
             showOnNode=True,
         ),
         F8StateSpec(

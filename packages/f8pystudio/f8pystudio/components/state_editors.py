@@ -145,7 +145,7 @@ class F8CodeButtonEditor(QtWidgets.QWidget):
 
 class F8InlineCodeEditor(QtWidgets.QPlainTextEdit):
     """
-    Inline multiline editor used for lightweight expressions (`uiControl=code_inline`).
+    Inline editor used for lightweight expressions (`uiControl=wrapline[...]` is the public path).
 
     Emits `value_changed` on focus-out and on Ctrl+Enter.
     """
