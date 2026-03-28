@@ -8,6 +8,7 @@ import msgspec
 from NodeGraphQt.base.model import NodeModel
 
 from f8pysdk import F8OperatorSpec, F8ServiceSpec
+from f8pysdk.spec_metadata import coerce_spec_payload
 
 
 logger = logging.getLogger(__name__)
@@ -34,13 +35,7 @@ class F8StudioNodeModel(NodeModel):
     def _coerce_spec(value: object) -> F8OperatorSpec | F8ServiceSpec | None:
         if value is None:
             return None
-        if isinstance(value, (F8OperatorSpec, F8ServiceSpec)):
-            return value
-        if isinstance(value, dict):
-            if "operatorClass" in value:
-                return validate_as(F8OperatorSpec, value)
-            return validate_as(F8ServiceSpec, value)
-        raise TypeError(f"Unsupported `f8_spec` type: {type(value)!r}")
+        return coerce_spec_payload(value)
 
     def set_property(self, name, value):
         if name == "f8_spec":

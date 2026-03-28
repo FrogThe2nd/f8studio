@@ -307,6 +307,7 @@ class PlaybackSyncRuntimeNode(OperatorNode):
 PlaybackSyncRuntimeNode.SPEC = F8OperatorSpec(
     schemaVersion=F8OperatorSchemaVersion.f8operator_1,
     serviceClass=SERVICE_CLASS,
+    paletteCategory=SERVICE_CLASS,
     operatorClass=OPERATOR_CLASS,
     version="0.0.1",
     label="Playback Sync",

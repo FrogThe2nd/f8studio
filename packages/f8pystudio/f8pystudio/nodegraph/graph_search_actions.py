@@ -8,6 +8,7 @@ from .service_basenode import F8StudioServiceNodeItem
 from .session import last_session_path
 from .spec_visibility import is_hidden_spec_node_class
 from ..variants.variant_ids import build_variant_node_type
+from f8pysdk.spec_metadata import palette_category_from_spec
 from ..variants.variant_repository import load_library
 
 
@@ -125,14 +126,12 @@ class GraphSearchActionsMixin:
 
     @staticmethod
     def _tab_search_category_for_node(*, node_cls: Any | None, node_type_id: str) -> str:
-        if node_cls is not None:
-            identifier = str(node_cls.__identifier__ or "").strip()
-            if identifier:
-                return identifier
-
-        if "." in node_type_id:
-            return ".".join(node_type_id.split(".")[:-1])
-        return "uncategorized"
+        if node_cls is None:
+            return "uncategorized"
+        spec = typed_spec_template_or_none(node_cls)
+        if spec is None:
+            return "uncategorized"
+        return palette_category_from_spec(spec)
 
     def _on_search_triggered(self, node_type: str, pos: tuple[float, float]) -> None:
         """

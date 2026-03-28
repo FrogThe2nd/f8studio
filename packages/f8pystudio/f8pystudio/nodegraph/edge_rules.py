@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from f8pysdk import F8OperatorSpec, F8ServiceSpec
+from f8pysdk.spec_metadata import coerce_spec_payload, spec_kind_from_spec
 
 EDGE_KIND_EXEC = "exec"
 EDGE_KIND_DATA = "data"
@@ -94,16 +95,11 @@ def runtime_node_info(node: Any) -> EdgeRuleNodeInfo | None:
 def layout_node_info(node_id: str, node_data: dict[str, Any]) -> EdgeRuleNodeInfo | None:
     node_payload = node_data if isinstance(node_data, dict) else {}
     spec_payload = node_payload.get("f8_spec")
-
-    is_operator = False
-    if isinstance(spec_payload, F8OperatorSpec):
-        is_operator = True
-    elif isinstance(spec_payload, F8ServiceSpec):
-        is_operator = False
-    elif isinstance(spec_payload, dict):
-        is_operator = "operatorClass" in spec_payload
-    else:
+    try:
+        spec = coerce_spec_payload(spec_payload)
+    except (TypeError, ValueError):
         return None
+    is_operator = spec_kind_from_spec(spec) == "operator"
 
     node_id_str = str(node_id or "").strip()
     if is_operator:

@@ -160,6 +160,7 @@ def _register_core(reg: RuntimeNodeRegistry) -> None:
         F8ServiceSpec(
             schemaVersion=F8ServiceSchemaVersion.f8service_1,
             serviceClass=CORE_SERVICE_CLASS,
+            paletteCategory="svc",
             version="0.0.1",
             label="Audio Feature Core",
             description="Audio SHM core feature extraction service (rms, onset, centroid).",
@@ -192,6 +193,7 @@ def _register_rhythm(reg: RuntimeNodeRegistry) -> None:
         F8ServiceSpec(
             schemaVersion=F8ServiceSchemaVersion.f8service_1,
             serviceClass=RHYTHM_SERVICE_CLASS,
+            paletteCategory="svc",
             version="0.0.1",
             label="Audio Feature Rhythm",
             description="Rhythm analysis service consuming core features (tempo + pulse clarity).",

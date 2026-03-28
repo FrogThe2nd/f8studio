@@ -914,6 +914,11 @@ components:
       title: F8ServiceSpec
       type: object
       properties:
+        specKind:
+          type: string
+          const: service
+          default: service
+          description: Explicit spec kind discriminator for schema consumers.
         schemaVersion:
           title: F8ServiceSchemaVersion
           type: string
@@ -941,6 +946,10 @@ components:
           items:
             type: string
           default: []
+        paletteCategory:
+          type: string
+          default: svc
+          description: Explicit Studio palette category for this spec. Studio no longer derives categories from serviceClass or node type ids.
         hiddenInPalette:
           type: boolean
           description: If true, keep the spec registered but hide it from Studio palette and tab search surfaces.
@@ -986,6 +995,7 @@ components:
         launch:
           $ref: "#/components/schemas/F8ServiceLaunchSpec"
       required:
+        - specKind
         - serviceClass
         - label
       additionalProperties: true
@@ -994,6 +1004,11 @@ components:
       title: F8OperatorSpec
       type: object
       properties:
+        specKind:
+          type: string
+          const: operator
+          default: operator
+          description: Explicit spec kind discriminator for schema consumers.
         schemaVersion:
           title: F8OperatorSchemaVersion
           type: string
@@ -1029,6 +1044,10 @@ components:
           items:
             type: string
           default: []
+        paletteCategory:
+          type: string
+          default: uncategorized
+          description: Explicit Studio palette category for this spec. Studio no longer derives categories from serviceClass or node type ids.
         hiddenInPalette:
           type: boolean
           description: If true, keep the spec registered but hide it from Studio palette and tab search surfaces.
@@ -1094,6 +1113,7 @@ components:
           default: false
           description: Allow dynamic addition of data output ports.
       required:
+        - specKind
         - serviceClass
         - operatorClass
         - label

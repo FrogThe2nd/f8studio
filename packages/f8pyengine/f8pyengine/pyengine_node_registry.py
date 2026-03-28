@@ -69,6 +69,7 @@ def register_pyengine_specs(registry: RuntimeNodeRegistry | None = None) -> Runt
         F8ServiceSpec(
             schemaVersion=F8ServiceSchemaVersion.f8service_1,
             serviceClass=SERVICE_CLASS,
+            paletteCategory="svc",
             version="0.0.1",
             label="PyEngine",
             description="Python-based execution engine for Feel8 operators.",

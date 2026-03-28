@@ -513,6 +513,7 @@ def _register_classifier(reg: RuntimeNodeRegistry) -> None:
         F8ServiceSpec(
             schemaVersion=F8ServiceSchemaVersion.f8service_1,
             serviceClass=CLASSIFIER_SERVICE_CLASS,
+            paletteCategory="svc",
             version="0.0.1",
             label="DL Classifier",
             description="ONNXRuntime image classifier service (no tracking).",
@@ -557,6 +558,7 @@ def _register_detector(reg: RuntimeNodeRegistry) -> None:
         F8ServiceSpec(
             schemaVersion=F8ServiceSchemaVersion.f8service_1,
             serviceClass=DETECTOR_SERVICE_CLASS,
+            paletteCategory="svc",
             version="0.0.1",
             label="DL Detector",
             description="ONNXRuntime object detector service (no tracking).",
@@ -601,6 +603,7 @@ def _register_human_detector(reg: RuntimeNodeRegistry) -> None:
         F8ServiceSpec(
             schemaVersion=F8ServiceSchemaVersion.f8service_1,
             serviceClass=HUMAN_DETECTOR_SERVICE_CLASS,
+            paletteCategory="svc",
             version="0.0.1",
             label="DL Human Detector",
             description="ONNXRuntime human detection/pose service (no tracking).",
@@ -645,6 +648,7 @@ def _register_optflow(reg: RuntimeNodeRegistry) -> None:
         F8ServiceSpec(
             schemaVersion=F8ServiceSchemaVersion.f8service_1,
             serviceClass=OPTFLOW_SERVICE_CLASS,
+            paletteCategory="svc",
             version="0.0.1",
             label="DL Optical Flow",
             description="ONNXRuntime NeuFlowV2 dense optical flow service (flow SHM output).",
@@ -677,6 +681,7 @@ def _register_detection_sorter(reg: RuntimeNodeRegistry) -> None:
         F8ServiceSpec(
             schemaVersion=F8ServiceSchemaVersion.f8service_1,
             serviceClass=DETECTION_SORTER_SERVICE_CLASS,
+            paletteCategory="svc",
             version="0.0.1",
             label="DL Detection Sorter",
             description="Sort detection payloads by a score-map SHM metric.",
@@ -718,6 +723,7 @@ def _register_tcn_wave(reg: RuntimeNodeRegistry) -> None:
         F8ServiceSpec(
             schemaVersion=F8ServiceSchemaVersion.f8service_1,
             serviceClass=TCNWAVE_SERVICE_CLASS,
+            paletteCategory="svc",
             version="0.0.1",
             label="DL TCN Wave",
             description="ONNXRuntime temporal convolution wave inference service (port output).",

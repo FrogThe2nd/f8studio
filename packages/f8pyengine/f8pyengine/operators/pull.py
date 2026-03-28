@@ -197,6 +197,7 @@ PullRuntimeNode.SPEC = F8OperatorSpec(
     schemaVersion=F8OperatorSchemaVersion.f8operator_1,
     serviceClass=SERVICE_CLASS,
     operatorClass=OPERATOR_CLASS,
+    paletteCategory=SERVICE_CLASS,
     version="0.0.1",
     label="Pull",
     description="Hidden internal sink that periodically pulls all data inputs to trigger upstream computation.",

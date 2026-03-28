@@ -154,6 +154,7 @@ class PhaseRuntimeNode(OperatorNode):
 PhaseRuntimeNode.SPEC = F8OperatorSpec(
     schemaVersion=F8OperatorSchemaVersion.f8operator_1,
     serviceClass=SERVICE_CLASS,
+    paletteCategory=SERVICE_CLASS,
     operatorClass=PHASE_OPERATOR_CLASS,
     version="0.0.1",
     label="Phase",
@@ -253,6 +254,7 @@ class CosineRuntimeNode(OperatorNode):
 CosineRuntimeNode.SPEC = F8OperatorSpec(
     schemaVersion=F8OperatorSchemaVersion.f8operator_1,
     serviceClass=SERVICE_CLASS,
+    paletteCategory=SERVICE_CLASS,
     operatorClass=COSINE_OPERATOR_CLASS,
     version="0.0.1",
     label="Cosine",
@@ -398,6 +400,7 @@ class TempestRuntimeNode(OperatorNode):
 TempestRuntimeNode.SPEC = F8OperatorSpec(
     schemaVersion=F8OperatorSchemaVersion.f8operator_1,
     serviceClass=SERVICE_CLASS,
+    paletteCategory=SERVICE_CLASS,
     operatorClass=TEMPEST_OPERATOR_CLASS,
     version="0.0.1",
     label="Tempest",

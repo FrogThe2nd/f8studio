@@ -8,6 +8,7 @@ from qtpy import QtWidgets
 from NodeGraphQt import BaseNode
 
 from f8pysdk import F8OperatorSpec, F8ServiceSpec, F8StateAccess
+from f8pysdk.spec_metadata import coerce_spec_payload
 
 from ..ui_notifications import show_info, show_warning
 from ..variants.variant_compose import build_variant_record_from_node
@@ -154,9 +155,7 @@ class GraphVariantActionsMixin:
 
     @staticmethod
     def _coerce_variant_spec(value: dict[str, Any]) -> F8OperatorSpec | F8ServiceSpec:
-        if "operatorClass" in value:
-            return validate_as(F8OperatorSpec, value)
-        return validate_as(F8ServiceSpec, value)
+        return coerce_spec_payload(value)
 
     def _apply_variant_to_node(
         self,

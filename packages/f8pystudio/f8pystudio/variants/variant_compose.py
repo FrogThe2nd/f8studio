@@ -106,9 +106,11 @@ def _apply_state_defaults_from_values(spec_json: dict[str, Any], custom_properti
 
 
 def _locked_identity(base_spec_json: dict[str, Any], out_spec_json: dict[str, Any]) -> None:
+    out_spec_json["specKind"] = base_spec_json.get("specKind")
+    out_spec_json["paletteCategory"] = base_spec_json.get("paletteCategory")
     out_spec_json["serviceClass"] = base_spec_json.get("serviceClass")
     out_spec_json["schemaVersion"] = base_spec_json.get("schemaVersion")
-    if "operatorClass" in base_spec_json:
+    if base_spec_json.get("specKind") == "operator":
         out_spec_json["operatorClass"] = base_spec_json.get("operatorClass")
 
 

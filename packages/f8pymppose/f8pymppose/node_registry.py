@@ -183,6 +183,7 @@ def register_specs(registry: RuntimeNodeRegistry | None = None) -> RuntimeNodeRe
         F8ServiceSpec(
             schemaVersion=F8ServiceSchemaVersion.f8service_1,
             serviceClass=POSE_SERVICE_CLASS,
+            paletteCategory="svc",
             version="0.0.1",
             label="MediaPipe Pose",
             description="MediaPipe single-person pose extraction service (33 landmarks).",

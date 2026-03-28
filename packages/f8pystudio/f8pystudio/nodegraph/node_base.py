@@ -10,6 +10,7 @@ from NodeGraphQt.nodes.base_node import NodeBaseWidget
 from NodeGraphQt.errors import NodeWidgetError
 
 from f8pysdk import F8OperatorSpec, F8ServiceSpec
+from f8pysdk.spec_metadata import coerce_spec_payload
 
 from .node_model import F8StudioNodeModel
 
@@ -43,10 +44,7 @@ class F8StudioBaseNode(BaseNode):
         elif isinstance(template, F8ServiceSpec):
             spec = validate_as(F8ServiceSpec, dump_json(template, mode="json"))
         elif isinstance(template, dict):
-            if "operatorClass" in template:
-                spec = validate_as(F8OperatorSpec, template)
-            else:
-                spec = validate_as(F8ServiceSpec, template)
+            spec = coerce_spec_payload(template)
         else:
             spec = copy.deepcopy(template)
 

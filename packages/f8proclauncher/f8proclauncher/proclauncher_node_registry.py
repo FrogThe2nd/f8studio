@@ -18,6 +18,7 @@ def register_proclauncher_specs(registry: RuntimeNodeRegistry | None = None) -> 
         F8ServiceSpec(
             schemaVersion=F8ServiceSchemaVersion.f8service_1,
             serviceClass=SERVICE_CLASS,
+            paletteCategory="svc",
             version="0.0.1",
             label="Proc Launcher",
             description="Launches an external OS process (optionally detached).",

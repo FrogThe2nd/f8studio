@@ -32,6 +32,7 @@ class F8StudioOperatorMissingNode(F8StudioOperatorBaseNode):
         operatorClass="f8.missing.operator",
         version="0.0.1",
         label="Missing Operator",
+        paletteCategory="svc.f8.missing",
         hiddenInPalette=True,
     )
 

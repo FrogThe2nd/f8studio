@@ -9,6 +9,7 @@ try:
     from .generated import *  # type: ignore
     from .msgspec_codec import *  # type: ignore
     from .schema_helpers import *  # type: ignore
+    from .spec_metadata import *  # type: ignore
 except ImportError:
     # Optional deps for generated schemas may be missing in some
     # runtime environments; allow importing lightweight helpers regardless.

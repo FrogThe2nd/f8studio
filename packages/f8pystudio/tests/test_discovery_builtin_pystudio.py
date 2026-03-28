@@ -40,6 +40,10 @@ def test_discovery_injects_builtin_pystudio_without_service_yml() -> None:
 
     assert STUDIO_SERVICE_CLASS in found
     assert catalog.services.has(STUDIO_SERVICE_CLASS)
+    service_spec = catalog.services.get(STUDIO_SERVICE_CLASS)
+    assert service_spec is not None
+    assert service_spec.specKind == "service"
+    assert service_spec.paletteCategory == "svc"
     assert all(op.serviceClass == STUDIO_SERVICE_CLASS for op in catalog.operators.all())
     assert catalog.service_entry_path(STUDIO_SERVICE_CLASS) is None
 
@@ -85,6 +89,8 @@ def test_discovery_registers_note_operator_spec() -> None:
 
     note = next((op for op in catalog.operators.all() if op.operatorClass == NOTE_OPERATOR_CLASS), None)
     assert note is not None
+    assert note.specKind == "operator"
+    assert note.paletteCategory == STUDIO_SERVICE_CLASS
     assert list(note.dataInPorts or []) == []
     assert list(note.dataOutPorts or []) == []
     assert list(note.execInPorts or []) == []

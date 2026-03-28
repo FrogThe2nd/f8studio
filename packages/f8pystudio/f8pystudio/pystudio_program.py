@@ -8,6 +8,7 @@ from typing import Any
 
 from f8pysdk.msgspec_codec import dump_json
 from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
+from f8pysdk.spec_metadata import palette_category_from_spec
 from f8pysdk.service_runtime_tools.catalog import ServiceCatalog
 from f8pysdk.service_runtime_tools.discovery import (
     last_discovery_error_lines,
@@ -154,7 +155,11 @@ class PyStudioProgram:
             node_cls = type(
                 svc.serviceClass,
                 (base_cls,),
-                {"__identifier__": "svc", "NODE_NAME": svc.label, "SPEC_TEMPLATE": svc},
+                {
+                    "__identifier__": palette_category_from_spec(svc),
+                    "NODE_NAME": svc.label,
+                    "SPEC_TEMPLATE": svc,
+                },
             )
             generated_node_cls.append(node_cls)
 
@@ -163,7 +168,11 @@ class PyStudioProgram:
             node_cls = type(
                 op.operatorClass,
                 (base_cls,),
-                {"__identifier__": op.serviceClass, "NODE_NAME": op.label, "SPEC_TEMPLATE": op},
+                {
+                    "__identifier__": palette_category_from_spec(op),
+                    "NODE_NAME": op.label,
+                    "SPEC_TEMPLATE": op,
+                },
             )
             generated_node_cls.append(node_cls)
 

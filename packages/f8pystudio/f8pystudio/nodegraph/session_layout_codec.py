@@ -12,6 +12,10 @@ from NodeGraphQt.errors import NodeCreationError
 
 from f8pysdk import F8OperatorSpec, F8ServiceSpec
 from f8pysdk.command_state import command_input_port_name, command_output_port_name
+from f8pysdk.spec_metadata import (
+    coerce_spec_payload,
+    spec_kind_from_spec,
+)
 
 from .edge_rules import EdgeRuleNodeInfo, layout_node_info, validate_layout_connection
 from .viewer import F8StudioNodeViewer
@@ -125,16 +129,10 @@ class SessionLayoutCodecMixin:
         def _coerce_spec(v: object) -> F8OperatorSpec | F8ServiceSpec | None:
             if v is None:
                 return None
-            if isinstance(v, (F8OperatorSpec, F8ServiceSpec)):
-                return v
-            if isinstance(v, dict):
-                try:
-                    if "operatorClass" in v:
-                        return validate_as(F8OperatorSpec, v)
-                    return validate_as(F8ServiceSpec, v)
-                except Exception:
-                    return None
-            return None
+            try:
+                return coerce_spec_payload(v)
+            except (TypeError, ValueError):
+                return None
 
         port_sets: dict[str, set[str] | None] = {}
         node_info_by_id: dict[str, EdgeRuleNodeInfo | None] = {}
@@ -275,16 +273,10 @@ class SessionLayoutCodecMixin:
         def _coerce_spec(v: object) -> F8OperatorSpec | F8ServiceSpec | None:
             if v is None:
                 return None
-            if isinstance(v, (F8OperatorSpec, F8ServiceSpec)):
-                return v
-            if isinstance(v, dict):
-                try:
-                    if "operatorClass" in v:
-                        return validate_as(F8OperatorSpec, v)
-                    return validate_as(F8ServiceSpec, v)
-                except Exception:
-                    return None
-            return None
+            try:
+                return coerce_spec_payload(v)
+            except (TypeError, ValueError):
+                return None
 
         def _enum_str(v: object) -> str | None:
             if v is None:
@@ -324,13 +316,19 @@ class SessionLayoutCodecMixin:
                 continue
 
             # Reject when spec kind mismatches the node class.
-            session_is_operator = "operatorClass" in session_spec_raw
-            template_is_operator = isinstance(template_spec, F8OperatorSpec)
+            try:
+                session_spec = coerce_spec_payload(session_spec_raw)
+            except (TypeError, ValueError):
+                errors.append(f"nodeId={node_id}: invalid session spec payload for node type {node_type!r}")
+                continue
+            session_kind = spec_kind_from_spec(session_spec)
+            template_kind = spec_kind_from_spec(template_spec)
+            session_is_operator = session_kind == "operator"
+            template_is_operator = template_kind == "operator"
             if session_is_operator != template_is_operator:
                 errors.append(
                     f"nodeId={node_id}: session spec kind mismatch for node type {node_type!r} "
-                    f"(template={'operator' if template_is_operator else 'service'}, "
-                    f"session={'operator' if session_is_operator else 'service'})"
+                    f"(template={template_kind!r}, session={session_kind!r})"
                 )
                 continue
 
@@ -507,8 +505,8 @@ class SessionLayoutCodecMixin:
                 raise NodeCreationError(
                     f"Cannot load unknown node type '{raw_type}' (nodeId={node_id}): missing or invalid `f8_spec`."
                 )
-            is_operator = "operatorClass" in spec_payload
-            placeholder_type = MISSING_OPERATOR_NODE_TYPE if is_operator else MISSING_SERVICE_NODE_TYPE
+            spec_kind = spec_kind_from_spec(coerce_spec_payload(spec_payload))
+            placeholder_type = MISSING_OPERATOR_NODE_TYPE if spec_kind == "operator" else MISSING_SERVICE_NODE_TYPE
             if placeholder_type not in self._node_factory.nodes:
                 raise NodeCreationError(f"Missing placeholder node class '{placeholder_type}' is not registered.")
 

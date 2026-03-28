@@ -32,6 +32,7 @@ from f8pysdk.rungraph_validation import (
     validate_state_edge_targets_writable_or_raise,
     validate_state_edges_or_raise,
 )
+from f8pysdk.spec_metadata import coerce_spec_payload
 
 from .catalog import ServiceCatalog
 
@@ -127,9 +128,7 @@ def _is_disabled_node(node_data: dict[str, Any]) -> bool:
 def _coerce_spec(spec_payload: Any) -> F8ServiceSpec | F8OperatorSpec:
     if not isinstance(spec_payload, dict):
         raise ValueError("node f8_spec must be an object")
-    if "operatorClass" in spec_payload:
-        return validate_as(F8OperatorSpec, spec_payload)
-    return validate_as(F8ServiceSpec, spec_payload)
+    return coerce_spec_payload(spec_payload)
 
 
 def _node_custom_map(node_data: dict[str, Any]) -> dict[str, Any]:

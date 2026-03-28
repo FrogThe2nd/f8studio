@@ -9,6 +9,7 @@ from NodeGraphQt.custom_widgets.nodes_tree import _BaseNodeTreeItem, TYPE_CATEGO
 
 from ..nodegraph.spec_visibility import is_hidden_spec_node_class, typed_spec_template_or_none
 from f8pysdk import F8OperatorSpec, F8ServiceSpec
+from f8pysdk.spec_metadata import palette_category_from_spec
 from ..ui_notifications import show_warning
 from ..variants.variant_ids import build_variant_node_type, is_variant_node_type, parse_variant_node_type
 from ..variants.variant_repository import delete_variant, list_variants_for_base, variant_exists
@@ -288,9 +289,10 @@ class _F8StudioNodesTreeWidget(NodesTreeWidget):
                                 matched_variants.append(v)
                 if not base_match and not matched_variants:
                     continue
-                category = str(node_cls.__identifier__ or "")
-                if not category:
-                    category = ".".join(node_id.split(".")[:-1])
+                category = "uncategorized"
+                spec = typed_spec_template_or_none(node_cls)
+                if spec is not None:
+                    category = palette_category_from_spec(spec)
                 node_types_by_category[category].append((node_id, str(node_name), matched_variants))
 
         self._category_items = {}

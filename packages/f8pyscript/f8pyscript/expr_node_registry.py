@@ -26,6 +26,7 @@ def register_expr_specs(registry: RuntimeNodeRegistry | None = None) -> RuntimeN
         F8ServiceSpec(
             schemaVersion=F8ServiceSchemaVersion.f8service_1,
             serviceClass=EXPR_SERVICE_CLASS,
+            paletteCategory="svc",
             version="0.0.1",
             label="Python Expr Service",
             description="Standalone expression runtime service for simplified data-flow transforms.",

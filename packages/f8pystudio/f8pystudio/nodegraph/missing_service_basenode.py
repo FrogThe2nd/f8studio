@@ -30,6 +30,7 @@ class F8StudioServiceMissingNode(F8StudioServiceBaseNode):
         serviceClass="f8.missing",
         version="0.0.1",
         label="Missing Service",
+        paletteCategory="svc.f8.missing",
         hiddenInPalette=True,
     )
 
