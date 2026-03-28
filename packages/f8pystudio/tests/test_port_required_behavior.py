@@ -127,6 +127,21 @@ def test_port_editor_refuses_delete_or_rename_required_port() -> None:
     assert in_names_after_optional_delete == ["required_in"]
 
 
+def test_port_editor_delete_removes_row_immediately_without_reparenting() -> None:
+    _ensure_app()
+    node = _FakeNode(_make_spec())
+    editor = _F8SpecPortEditor(None, node=node, on_apply=None)
+
+    optional_row = _find_data_row(editor, name="optional_in", is_in=True)
+    assert optional_row is not None
+
+    editor._delete_row(optional_row)
+
+    remaining_rows = editor._sec_data_in.rows()
+    remaining_names = [str(row.name_edit.text() or "").strip() for row in remaining_rows]
+    assert remaining_names == ["required_in"]
+
+
 def test_required_data_port_dialog_is_not_ui_only_when_editable(monkeypatch) -> None:
     _ensure_app()
     captured: dict[str, bool] = {}

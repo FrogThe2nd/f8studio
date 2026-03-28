@@ -126,6 +126,7 @@ def test_select_builder_refresh_options_preserves_selected_value() -> None:
     assert isinstance(widget, F8OptionCombo)
     assert widget.count() == 2
     assert widget.value() == "b"
+    assert widget._popup is None
 
     state["pool:choices"] = ["c", "b", "d"]
     assert binding.refresh_options is not None
@@ -133,6 +134,7 @@ def test_select_builder_refresh_options_preserves_selected_value() -> None:
 
     assert widget.count() == 3
     assert widget.value() == "b"
+    assert widget._popup is None
 
 
 def test_button_builder_marks_invalid_numeric_schema() -> None:

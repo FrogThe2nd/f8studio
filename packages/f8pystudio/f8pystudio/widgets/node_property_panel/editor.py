@@ -75,6 +75,19 @@ from .ports import _F8EditStateFieldDialog, _F8SpecPortEditor
 logger = logging.getLogger(__name__)
 
 
+def _adopt_widget_parent(widget: QtWidgets.QWidget, parent: QtWidgets.QWidget) -> QtWidgets.QWidget:
+    try:
+        current_parent = widget.parentWidget()
+    except (AttributeError, RuntimeError, TypeError):
+        current_parent = None
+    if current_parent is None:
+        try:
+            widget.setParent(parent)
+        except (AttributeError, RuntimeError, TypeError):
+            logger.exception("Failed to adopt temporary parent for property widget")
+    return widget
+
+
 class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
     """
     Node properties editor widget for display a Node object.
@@ -94,7 +107,7 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
         self._node = node
         self.__node_id = node.id
         self.__tab_windows = {}
-        self.__tab = QtWidgets.QTabWidget()
+        self.__tab = QtWidgets.QTabWidget(self)
         self.__tab.setObjectName("f8NodePropTabs")
         self.__tab.setDocumentMode(False)
         self.__tab.setStyleSheet(_TAB_HEADER_STYLE)
@@ -109,7 +122,7 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
         self._reload_timer.setSingleShot(True)
         self._reload_timer.timeout.connect(self._reload_now)
 
-        close_btn = QtWidgets.QPushButton()
+        close_btn = QtWidgets.QPushButton(self)
         close_btn.setIcon(QtGui.QIcon(self.style().standardIcon(QtWidgets.QStyle.SP_DialogCloseButton)))
         close_btn.setFixedSize(24, 24)
         close_btn.setToolTip("close property")
@@ -135,14 +148,14 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
         self._name_label = QtWidgets.QLabel("name", self)
         self._name_label.setStyleSheet("color: rgba(235,235,235,140); font-size: 11px;")
 
-        self.name_wgt = PropLineEdit()
+        self.name_wgt = PropLineEdit(self)
         self.name_wgt.set_name("name")
         self.name_wgt.setToolTip("name\nSet the node name.")
         self.name_wgt.set_value(node.name())
         self.name_wgt.value_changed.connect(self._on_property_changed)
         self.name_wgt.setMinimumHeight(26)
 
-        self.type_wgt = QtWidgets.QLabel(node.type_)
+        self.type_wgt = QtWidgets.QLabel(node.type_, self)
         self.type_wgt.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
         self.type_wgt.setToolTip("type_\nNode type identifier followed by the class name.")
         font = self.type_wgt.font()
@@ -158,7 +171,7 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
         name_layout.addWidget(self.name_wgt)
         name_layout.addWidget(close_btn)
         missing_locked, missing_type = _node_missing_lock_info(node)
-        self._missing_banner = QtWidgets.QLabel()
+        self._missing_banner = QtWidgets.QLabel(self)
         self._missing_banner.setStyleSheet(
             "color: rgb(255, 224, 138); background: rgba(80, 60, 0, 58); border-radius: 4px; padding: 2px 6px;"
         )
@@ -617,6 +630,7 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
                         pool, []
                     ).append(w),
                 )
+                widget = _adopt_widget_parent(widget, self)
 
                 tooltip = None
                 if prop_name in common_props.keys():
@@ -637,7 +651,7 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
                         tooltip = common_props[prop_name]["tooltip"]
 
                 if wid_type == NodePropWidgetEnum.QTEXT_EDIT.value and _is_json_state_value(node, prop_name):
-                    widget = _F8JsonValueEditor()
+                    widget = _F8JsonValueEditor(self)
                     widget.set_name(prop_name)
 
                 # Dialog-backed code editor (eg. python_script code).
@@ -648,7 +662,9 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
                     if ui_control == "code":
                         ui_language = parsed_ui.ui_language
                         widget = _F8CodeButtonEditor(
-                            title=f"{node.name()} - {prop_name}", language=ui_language or "plaintext"
+                            self,
+                            title=f"{node.name()} - {prop_name}",
+                            language=ui_language or "plaintext",
                         )
                         widget.set_name(prop_name)
                         graph = None
@@ -746,6 +762,8 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
         for prop_name, tooltip in default_props.items():
             wid_type = model.get_widget_type(prop_name)
             widget = widget_factory.get_widget(wid_type)
+            if isinstance(widget, QtWidgets.QWidget):
+                widget = _adopt_widget_parent(widget, self)
             widget.set_name(prop_name)
             prop_window.add_widget(
                 name=prop_name,
@@ -767,7 +785,7 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
                 svc_id = str(node.svcId or "")  # type: ignore[attr-defined]
             except Exception:
                 svc_id = ""
-            sys_widget = PropLabel()
+            sys_widget = PropLabel(self)
             sys_widget.set_name("__sys_svcId")
             prop_window.add_widget(
                 name="__sys_svcId",
@@ -777,7 +795,7 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
                 tooltip="Bound service container id.",
             )
 
-        purpose_widget = _F8InlineCodeEditor(language="plaintext")
+        purpose_widget = _F8InlineCodeEditor(self, language="plaintext")
         purpose_widget.set_name("nodePurpose")
         try:
             node_purpose = str(node.nodePurpose or "")  # type: ignore[attr-defined]

@@ -419,17 +419,17 @@ class _F8EditStateFieldDialog(QtWidgets.QDialog):
         self._name = QtWidgets.QLineEdit(str(field.name or ""))
         self._name.setClearButtonEnabled(True)
 
-        self._access = QtWidgets.QComboBox()
+        self._access = QtWidgets.QComboBox(self)
         self._access.addItems([e.value for e in F8StateAccess])
         try:
             self._access.setCurrentText(str(field.access.value))
         except Exception:
             self._access.setCurrentText("rw")
 
-        self._required = QtWidgets.QCheckBox()
+        self._required = QtWidgets.QCheckBox(self)
         self._required.setChecked(bool(field.required))
 
-        self._show_on_node = QtWidgets.QCheckBox()
+        self._show_on_node = QtWidgets.QCheckBox(self)
         self._show_on_node.setChecked(bool(field.showOnNode))
 
         self._label = QtWidgets.QLineEdit(str(field.label or ""))
@@ -448,11 +448,11 @@ class _F8EditStateFieldDialog(QtWidgets.QDialog):
         self._ui_control.textChanged.connect(self._refresh_global_hotkey_enabled)  # type: ignore[attr-defined]
         self._global_hotkey.status_changed.connect(self._refresh_accept_enabled)  # type: ignore[attr-defined]
 
-        self._schema_summary = QtWidgets.QLabel("")
+        self._schema_summary = QtWidgets.QLabel("", self)
         self._schema_summary.setStyleSheet("color: #888;")
         self._refresh_schema_summary()
 
-        self._schema_btn = QtWidgets.QPushButton("Edit Schema...")
+        self._schema_btn = QtWidgets.QPushButton("Edit Schema...", self)
         self._schema_btn.clicked.connect(self._edit_schema)
 
         form = QtWidgets.QFormLayout()
@@ -624,17 +624,17 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
         self._data_in_can_edit_existing = False
         self._data_out_can_edit_existing = False
 
-        self._sec_exec_in = _F8SpecListSection(title="Exec In")
-        self._sec_exec_out = _F8SpecListSection(title="Exec Out")
-        self._sec_data_in = _F8SpecListSection(title="Data In")
-        self._sec_data_out = _F8SpecListSection(title="Data Out")
+        self._sec_exec_in = _F8SpecListSection(self, title="Exec In")
+        self._sec_exec_out = _F8SpecListSection(self, title="Exec Out")
+        self._sec_data_in = _F8SpecListSection(self, title="Data In")
+        self._sec_data_out = _F8SpecListSection(self, title="Data Out")
 
         self._sec_exec_in.add_clicked.connect(lambda: self._add_exec(True))
         self._sec_exec_out.add_clicked.connect(lambda: self._add_exec(False))
         self._sec_data_in.add_clicked.connect(lambda: self._add_data(True))
         self._sec_data_out.add_clicked.connect(lambda: self._add_data(False))
 
-        content = QtWidgets.QWidget()
+        content = QtWidgets.QWidget(self)
         v = QtWidgets.QVBoxLayout(content)
         v.setContentsMargins(_TAB_PANEL_MARGIN, _TAB_PANEL_MARGIN, _TAB_PANEL_MARGIN, _TAB_PANEL_MARGIN)
         v.setSpacing(4)
@@ -711,7 +711,7 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
             self._sec_data_out.add_row(self._make_data_row(p, is_in=False))
 
     def _make_exec_row(self, name: str, *, is_in: bool) -> _F8SpecNameRow:
-        row = _F8SpecNameRow(name=name, placeholder="port name")
+        row = _F8SpecNameRow(self, name=name, placeholder="port name")
         row.edit_clicked.connect(lambda: self._edit_exec(row))
         row.delete_clicked.connect(lambda: self._delete_row(row))
         row.name_committed.connect(lambda _v: self._commit())
@@ -721,7 +721,7 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
         return row
 
     def _make_data_row(self, port: F8DataPortSpec, *, is_in: bool) -> _F8SpecNameRow:
-        row = _F8SpecNameRow(name=str(port.name or ""), placeholder="port name", show_eye=True)
+        row = _F8SpecNameRow(self, name=str(port.name or ""), placeholder="port name", show_eye=True)
         row.setProperty("_port", port)
         row.edit_clicked.connect(lambda: self._edit_data(row))
         row.delete_clicked.connect(lambda: self._delete_row(row))
@@ -864,8 +864,20 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
             return
         if (dir_s == "data_in" or dir_s == "data_out") and self._row_is_required_data_port(row):
             return
-        row.setParent(None)
-        row.deleteLater()
+        if dir_s == "exec_in":
+            self._sec_exec_in.remove_row(row)
+        elif dir_s == "exec_out":
+            self._sec_exec_out.remove_row(row)
+        elif dir_s == "data_in":
+            self._sec_data_in.remove_row(row)
+        elif dir_s == "data_out":
+            self._sec_data_out.remove_row(row)
+        else:
+            try:
+                row.setVisible(False)
+            except (AttributeError, RuntimeError, TypeError):
+                pass
+            row.deleteLater()
         self._commit()
 
     def _add_exec(self, is_in: bool) -> None:

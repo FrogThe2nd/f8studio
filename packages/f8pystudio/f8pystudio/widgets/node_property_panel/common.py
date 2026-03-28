@@ -79,7 +79,7 @@ def _set_read_only_widget(widget: QtWidgets.QWidget, *, read_only: bool) -> None
 
 
 def _wrap_tab_page(content: QtWidgets.QWidget) -> QtWidgets.QWidget:
-    page = QtWidgets.QWidget()
+    page = QtWidgets.QWidget(content.parentWidget())
     layout = QtWidgets.QVBoxLayout(page)
     layout.setContentsMargins(0, 0, 0, 0)
     layout.setSpacing(0)

@@ -33,6 +33,7 @@ from ...widgets.state_controls.pool_resolver import resolve_pool_items
 from ...widgets.studio_node_code_editor import get_node_text, resolve_node, set_node_text, studio_session_key
 from ...widgets.ui_state_mutations import set_state_inline_expanded, state_inline_expanded
 from .node_item_core import StateFieldInfo, state_field_info
+from .proxy_widget_utils import dispose_detached_proxy_widget
 from .service_toolbar_host import F8ElideToolButton, F8ForceGlobalToolTipFilter
 
 logger = logging.getLogger(__name__)
@@ -655,14 +656,7 @@ def ensure_state_inline_controls(node_item: Any) -> None:
         except RuntimeError:
             pass
         if old is not None:
-            try:
-                old.setParent(None)
-            except RuntimeError:
-                pass
-            try:
-                old.deleteLater()
-            except RuntimeError:
-                pass
+            dispose_detached_proxy_widget(old, context=f"inline-state-remove:{name}")
         try:
             proxy.setParentItem(None)
             if node_item.scene() is not None:
@@ -744,16 +738,9 @@ def ensure_state_inline_controls(node_item: Any) -> None:
         except Exception:
             old = None
         proxy.setWidget(panel)
-        
+
         if old is not None and old is not panel:
-            try:
-                old.setParent(None)
-            except RuntimeError:
-                pass
-            try:
-                old.deleteLater()
-            except RuntimeError:
-                pass
+            dispose_detached_proxy_widget(old, context=f"inline-state-replace:{name}")
 
         node_item._state_inline_controls[name] = control
         node_item._state_inline_toggles[name] = btn

@@ -13,6 +13,7 @@ from f8pysdk.schema_helpers import schema_default, schema_type
 from ...command_ui_protocol import CommandUiHandler, CommandUiSource
 from ...components.controls import F8OptionCombo, F8Switch, F8ValueBar, parse_select_pool
 from ...ui_notifications import show_warning
+from .proxy_widget_utils import dispose_detached_proxy_widget
 from .state_inline_controls import build_inline_header_button
 
 logger = logging.getLogger(__name__)
@@ -153,14 +154,7 @@ def _remove_command_row(node_item: Any, command_name: str) -> None:
     except RuntimeError:
         pass
     if old is not None:
-        try:
-            old.setParent(None)
-        except (AttributeError, RuntimeError, TypeError):
-            pass
-        try:
-            old.deleteLater()
-        except (AttributeError, RuntimeError, TypeError):
-            pass
+        dispose_detached_proxy_widget(old, context=f"inline-command-remove:{command_name}")
     try:
         proxy.setParentItem(None)
         if node_item.scene() is not None:
@@ -219,14 +213,7 @@ def _build_command_row_widget(
         old = None
     proxy.setWidget(panel)
     if old is not None and old is not panel:
-        try:
-            old.setParent(None)
-        except (AttributeError, RuntimeError, TypeError):
-            pass
-        try:
-            old.deleteLater()
-        except (AttributeError, RuntimeError, TypeError):
-            pass
+        dispose_detached_proxy_widget(old, context=f"inline-command-replace:{command_name}")
     return proxy, header, button
 
 

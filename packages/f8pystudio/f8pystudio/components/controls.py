@@ -215,12 +215,21 @@ class F8OptionCombo(QtWidgets.QComboBox):
         view.setUniformItemSizes(True)
         self.setView(view)
         self.currentIndexChanged.connect(self._emit)  # type: ignore[attr-defined]
-        self._popup: _F8ComboPopup | None = _F8ComboPopup(self)
-        self._popup.valueSelected.connect(self._on_popup_selected)  # type: ignore[attr-defined]
-        self._popup.destroyed.connect(lambda _obj=None: self._on_popup_destroyed(_obj))  # type: ignore[attr-defined]
+        self._popup: _F8ComboPopup | None = None
 
     def _on_popup_destroyed(self, _obj: Any) -> None:
         self._popup = None
+
+    def _ensure_popup(self) -> _F8ComboPopup:
+        popup = self._popup
+        if popup is not None:
+            return popup
+        popup = _F8ComboPopup(self)
+        popup.valueSelected.connect(self._on_popup_selected)  # type: ignore[attr-defined]
+        popup.destroyed.connect(lambda _obj=None: self._on_popup_destroyed(_obj))  # type: ignore[attr-defined]
+        self.destroyed.connect(lambda _obj=None, current_popup=popup: current_popup.deleteLater())  # type: ignore[attr-defined]
+        self._popup = popup
+        return popup
 
     def _block_popup_for(self, seconds: float) -> None:
         until = time.monotonic() + max(0.0, float(seconds))
@@ -300,9 +309,7 @@ class F8OptionCombo(QtWidgets.QComboBox):
             return
         if time.monotonic() < self._popup_block_until_s:
             return
-        popup = self._popup
-        if popup is None:
-            return
+        popup = self._ensure_popup()
         if popup.isVisible():
             # Toggle behavior: clicking the combobox again collapses the popup.
             self.hidePopup()

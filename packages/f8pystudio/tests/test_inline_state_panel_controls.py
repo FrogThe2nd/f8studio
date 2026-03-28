@@ -9,6 +9,7 @@ from NodeGraphQt.custom_widgets.properties_bin.node_property_factory import Node
 from f8pysdk import F8StateAccess, F8StateSpec, integer_schema, number_schema, string_schema
 from f8pystudio.nodegraph.items.state_inline_controls import (
     build_state_inline_control,
+    ensure_state_inline_controls,
     state_inline_control_serial,
     sync_state_inline_controls_from_graph_property,
 )
@@ -209,6 +210,68 @@ class _FakePropertyNode:
 
     def effective_state_fields(self) -> list[F8StateSpec]:
         return [self._field]
+
+
+class _EnsureStateBackendNode:
+    def __init__(self, fields: list[F8StateSpec]) -> None:
+        self._fields = list(fields)
+        self.spec = None
+        self.id = "nodeA"
+
+    def effective_state_fields(self) -> list[F8StateSpec]:
+        return list(self._fields)
+
+
+class _EnsureStateNodeItem(QtWidgets.QGraphicsRectItem):
+    def __init__(self, fields: list[F8StateSpec]) -> None:
+        super().__init__(0.0, 0.0, 10.0, 10.0)
+        self.id = "nodeA"
+        self.name = "nodeA"
+        self._backend = _EnsureStateBackendNode(fields)
+        self._state_inline_proxies: dict[str, QtWidgets.QGraphicsProxyWidget] = {}
+        self._state_inline_controls: dict[str, QtWidgets.QWidget] = {}
+        self._state_inline_bindings: dict[str, Any] = {}
+        self._state_inline_updaters: dict[str, Any] = {}
+        self._state_inline_toggles: dict[str, Any] = {}
+        self._state_inline_headers: dict[str, QtWidgets.QWidget] = {}
+        self._state_inline_bodies: dict[str, QtWidgets.QWidget] = {}
+        self._state_inline_expanded: dict[str, bool] = {}
+        self._state_inline_option_pools: dict[str, str] = {}
+        self._state_inline_ctrl_serial: dict[str, str] = {}
+        self._tooltip_filters: list[Any] = []
+
+    def _ensure_graph_property_hook(self) -> None:
+        return
+
+    def _backend_node(self) -> _EnsureStateBackendNode:
+        return self._backend
+
+    def _schema_enum_items(self, schema: Any) -> list[str]:
+        del schema
+        return []
+
+    def _schema_numeric_range(self, schema: Any) -> tuple[float | None, float | None]:
+        del schema
+        return None, None
+
+    def _build_state_inline_control(self, info: StateFieldInfo) -> QtWidgets.QWidget:
+        return QtWidgets.QLabel(info.label or info.name)
+
+    def _toggle_state_inline_section(self, name: str, expanded: bool) -> None:
+        self._state_inline_expanded[name] = bool(expanded)
+
+    def _select_node_from_embedded_widget(self) -> None:
+        return
+
+    def _invalidate_layout_metrics(self) -> None:
+        return
+
+    def _prepare_layout_metrics(self) -> None:
+        return
+
+    def sync_proxy_mode(self, *, force: bool = False) -> None:
+        del force
+        return
 
 
 def _mouse_event(
@@ -502,6 +565,47 @@ def test_build_state_panel_control_dial_disables_non_numeric_schema() -> None:
     assert dial is not None
     assert not dial.isEnabled()
     assert "integer or number" in str(dial.toolTip() or "")
+
+
+def test_ensure_state_inline_controls_disposes_detached_widget_without_reparent_flash(monkeypatch) -> None:
+    _ensure_app()
+    first = F8StateSpec(
+        name="code",
+        label="Code",
+        access=F8StateAccess.rw,
+        uiControl="code",
+        showOnNode=True,
+        valueSchema=string_schema(),
+    )
+    second = F8StateSpec(
+        name="preview",
+        label="Preview",
+        access=F8StateAccess.ro,
+        uiControl="text",
+        showOnNode=True,
+        valueSchema=string_schema(),
+    )
+    node_item = _EnsureStateNodeItem([first])
+
+    ensure_state_inline_controls(node_item)
+    old_widget = node_item._state_inline_proxies["code"].widget()
+    assert old_widget is not None
+
+    seen: list[tuple[QtWidgets.QWidget, str]] = []
+
+    def _record(widget: QtWidgets.QWidget | None, *, context: str) -> None:
+        if widget is not None:
+            seen.append((widget, context))
+
+    monkeypatch.setattr(
+        "f8pystudio.nodegraph.items.state_inline_controls.dispose_detached_proxy_widget",
+        _record,
+    )
+
+    node_item._backend = _EnsureStateBackendNode([second])
+    ensure_state_inline_controls(node_item)
+
+    assert seen == [(old_widget, "inline-state-remove:code")]
 
 
 def test_state_inline_control_serial_changes_when_numeric_range_changes() -> None:

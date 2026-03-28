@@ -46,7 +46,9 @@ def test_refresh_option_pool_parses_json_pool_and_reapplies_backend_selection() 
     combo.set_options([], labels=[])
     combo.set_value("beta")
     assert combo.value() is None
+    assert combo._popup is None
 
     refresh_state_inline_option_pools(item, "choices")
 
     assert combo.value() == "beta"
+    assert combo._popup is None

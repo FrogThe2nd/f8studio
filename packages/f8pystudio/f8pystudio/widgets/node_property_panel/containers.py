@@ -65,7 +65,7 @@ class _F8StateContainer(QtWidgets.QWidget):
             tooltip (str): custom tooltip.
         """
         label = label or name
-        label_widget = _F8StateContainer._ElideLabel(label)
+        label_widget = _F8StateContainer._ElideLabel(label, self)
         # Keep the label column bounded so value widgets (eg. sliders) remain usable
         # in narrow PropertiesBin panels.
         label_widget.setMaximumWidth(150)
@@ -153,15 +153,15 @@ class _F8StateStackContainer(QtWidgets.QWidget):
         self._layout.setSpacing(_TAB_PANEL_SPACING)
         self._layout.setAlignment(QtCore.Qt.AlignTop)
 
-        self._header = QtWidgets.QWidget()
+        self._header = QtWidgets.QWidget(self)
         h = QtWidgets.QHBoxLayout(self._header)
         h.setContentsMargins(0, 0, 0, 0)
         h.setSpacing(4)
-        title = QtWidgets.QLabel("State Fields")
+        title = QtWidgets.QLabel("State Fields", self._header)
         f = title.font()
         f.setBold(True)
         title.setFont(f)
-        self._btn_add = QtWidgets.QToolButton()
+        self._btn_add = QtWidgets.QToolButton(self._header)
         self._btn_add.setAutoRaise(True)
         self._btn_add.setToolTip("Add state field")
         self._btn_add.setIcon(_icon_from_style(self._btn_add, QtWidgets.QStyle.SP_FileDialogNewFolder, "list-add"))
@@ -186,29 +186,29 @@ class _F8StateStackContainer(QtWidgets.QWidget):
     ):
         label = label or name
 
-        section = QtWidgets.QWidget()
+        section = QtWidgets.QWidget(self)
         v = QtWidgets.QVBoxLayout(section)
         v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(4)
 
-        header = QtWidgets.QWidget()
+        header = QtWidgets.QWidget(section)
         h = QtWidgets.QHBoxLayout(header)
         h.setContentsMargins(0, 0, 0, 0)
         h.setSpacing(4)
 
-        label_widget = _F8StateStackContainer._ElideLabel(label)
+        label_widget = _F8StateStackContainer._ElideLabel(label, header)
         f = label_widget.font()
         f.setBold(True)
         label_widget.setFont(f)
 
-        edit_btn = QtWidgets.QToolButton()
+        edit_btn = QtWidgets.QToolButton(header)
         edit_btn.setAutoRaise(True)
         edit_btn.setToolTip("Edit stateField...")
         edit_btn.setIcon(_icon_from_style(edit_btn, QtWidgets.QStyle.SP_FileDialogDetailedView, "document-edit"))
         edit_btn.setProperty("_state_field_name", str(name or "").strip())
         edit_btn.clicked.connect(self._on_edit_clicked)
 
-        del_btn = QtWidgets.QToolButton()
+        del_btn = QtWidgets.QToolButton(header)
         del_btn.setAutoRaise(True)
         del_btn.setToolTip("Delete stateField")
         del_btn.setIcon(_icon_from_style(del_btn, QtWidgets.QStyle.SP_TrashIcon, "edit-delete"))
@@ -216,7 +216,7 @@ class _F8StateStackContainer(QtWidgets.QWidget):
         del_btn.setProperty("_state_field_name", str(name or "").strip())
         del_btn.clicked.connect(self._on_delete_clicked)
 
-        eye_btn = QtWidgets.QToolButton()
+        eye_btn = QtWidgets.QToolButton(header)
         eye_btn.setAutoRaise(True)
         eye_btn.setCheckable(True)
         eye_btn.setChecked(bool(show_on_node))
@@ -244,7 +244,7 @@ class _F8StateStackContainer(QtWidgets.QWidget):
         widget.set_value(value)
         v.addWidget(header)
 
-        body = QtWidgets.QWidget()
+        body = QtWidgets.QWidget(section)
         body_l = QtWidgets.QVBoxLayout(body)
         body_l.setContentsMargins(0, 0, 0, 0)
         body_l.setSpacing(0)
@@ -334,7 +334,7 @@ class _F8LabeledStackContainer(QtWidgets.QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
 
-        label_widget = _F8LabeledStackContainer._ElideLabel(label)
+        label_widget = _F8LabeledStackContainer._ElideLabel(label, section)
         font = label_widget.font()
         font.setBold(True)
         label_widget.setFont(font)
@@ -394,12 +394,12 @@ class _F8SpecListSection(QtWidgets.QWidget):
         super().__init__(parent)
         self._title = title
 
-        header_label = QtWidgets.QLabel(title)
+        header_label = QtWidgets.QLabel(title, self)
         f = header_label.font()
         f.setBold(True)
         header_label.setFont(f)
 
-        self._add_btn = QtWidgets.QToolButton()
+        self._add_btn = QtWidgets.QToolButton(self)
         self._add_btn.setAutoRaise(True)
         self._add_btn.setToolTip("Add")
         self._add_btn.setIcon(_icon_from_style(self._add_btn, QtWidgets.QStyle.SP_FileDialogNewFolder, "list-add"))
@@ -436,6 +436,14 @@ class _F8SpecListSection(QtWidgets.QWidget):
     def add_row(self, row: QtWidgets.QWidget) -> None:
         self._list_layout.addWidget(row)
 
+    def remove_row(self, row: QtWidgets.QWidget) -> None:
+        self._list_layout.removeWidget(row)
+        try:
+            row.setVisible(False)
+        except (AttributeError, RuntimeError, TypeError):
+            pass
+        row.deleteLater()
+
     def rows(self) -> list[QtWidgets.QWidget]:
         out: list[QtWidgets.QWidget] = []
         for i in range(self._list_layout.count()):
@@ -454,12 +462,12 @@ class _F8SpecNameRow(QtWidgets.QWidget):
     def __init__(self, parent=None, *, name: str, placeholder: str, show_eye: bool = False):
         super().__init__(parent)
 
-        self.name_edit = QtWidgets.QLineEdit(name)
+        self.name_edit = QtWidgets.QLineEdit(name, self)
         self.name_edit.setPlaceholderText(placeholder)
         self.name_edit.setClearButtonEnabled(True)
         self.name_edit.editingFinished.connect(self._emit_commit)
 
-        self.edit_btn = QtWidgets.QToolButton()
+        self.edit_btn = QtWidgets.QToolButton(self)
         self.edit_btn.setAutoRaise(True)
         self.edit_btn.setToolTip("Edit")
         self.edit_btn.setIcon(
@@ -467,14 +475,14 @@ class _F8SpecNameRow(QtWidgets.QWidget):
         )
         self.edit_btn.clicked.connect(self.edit_clicked.emit)
 
-        self.eye_btn = QtWidgets.QToolButton()
+        self.eye_btn = QtWidgets.QToolButton(self)
         self.eye_btn.setAutoRaise(True)
         self.eye_btn.setCheckable(True)
         self.eye_btn.setToolTip("Show on node")
         self.eye_btn.toggled.connect(self._on_eye_toggled)  # type: ignore[attr-defined]
         self._update_eye_icon(True)
 
-        self.del_btn = QtWidgets.QToolButton()
+        self.del_btn = QtWidgets.QToolButton(self)
         self.del_btn.setAutoRaise(True)
         self.del_btn.setToolTip("Delete")
         self.del_btn.setIcon(_icon_from_style(self.del_btn, QtWidgets.QStyle.SP_TrashIcon, "edit-delete"))

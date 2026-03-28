@@ -69,18 +69,18 @@ class _F8EditCommandParamDialog(QtWidgets.QDialog):
         self._name = QtWidgets.QLineEdit(str(param.name or ""))
         self._name.setClearButtonEnabled(True)
 
-        self._required = QtWidgets.QCheckBox()
+        self._required = QtWidgets.QCheckBox(self)
         self._required.setChecked(bool(param.required))
 
         self._desc = QtWidgets.QPlainTextEdit(str(param.description or ""))
         self._ui_control = QtWidgets.QLineEdit(str(param.uiControl or ""))
         self._ui_control.setClearButtonEnabled(True)
 
-        self._schema_summary = QtWidgets.QLabel("")
+        self._schema_summary = QtWidgets.QLabel("", self)
         self._schema_summary.setStyleSheet("color: #888;")
         self._refresh_schema_summary()
 
-        self._schema_btn = QtWidgets.QPushButton("Edit Schema...")
+        self._schema_btn = QtWidgets.QPushButton("Edit Schema...", self)
         self._schema_btn.clicked.connect(self._edit_schema)
 
         form = QtWidgets.QFormLayout()
@@ -166,9 +166,9 @@ class _F8EditCommandDialog(QtWidgets.QDialog):
         self._name = QtWidgets.QLineEdit(str(cmd.name or ""))
         self._name.setClearButtonEnabled(True)
         self._desc = QtWidgets.QPlainTextEdit(str(cmd.description or ""))
-        self._required = QtWidgets.QCheckBox()
+        self._required = QtWidgets.QCheckBox(self)
         self._required.setChecked(bool(cmd.required))
-        self._show_on_node = QtWidgets.QCheckBox()
+        self._show_on_node = QtWidgets.QCheckBox(self)
         self._show_on_node.setChecked(bool(cmd.showOnNode))
 
         form = QtWidgets.QFormLayout()
@@ -177,13 +177,13 @@ class _F8EditCommandDialog(QtWidgets.QDialog):
         form.addRow("Show On Node", self._show_on_node)
         form.addRow("Description", self._desc)
 
-        self._params_list = QtWidgets.QListWidget()
+        self._params_list = QtWidgets.QListWidget(self)
         self._params_list.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
         self._refresh_params_list()
 
-        self._btn_add = QtWidgets.QPushButton("Add Param...")
-        self._btn_edit = QtWidgets.QPushButton("Edit Param...")
-        self._btn_del = QtWidgets.QPushButton("Delete Param")
+        self._btn_add = QtWidgets.QPushButton("Add Param...", self)
+        self._btn_edit = QtWidgets.QPushButton("Edit Param...", self)
+        self._btn_del = QtWidgets.QPushButton("Delete Param", self)
         self._btn_add.clicked.connect(self._add_param)
         self._btn_edit.clicked.connect(self._edit_param)
         self._btn_del.clicked.connect(self._delete_param)
@@ -200,7 +200,7 @@ class _F8EditCommandDialog(QtWidgets.QDialog):
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.addLayout(form)
-        layout.addWidget(QtWidgets.QLabel("Params"))
+        layout.addWidget(QtWidgets.QLabel("Params", self))
         layout.addWidget(self._params_list, 1)
         layout.addLayout(row)
         layout.addWidget(self._buttons)
@@ -325,13 +325,13 @@ class _F8CommandRow(QtWidgets.QWidget):
         self._btn_invoke.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
         self._btn_invoke.clicked.connect(self._on_invoke_clicked)
 
-        self._eye_btn = QtWidgets.QToolButton()
+        self._eye_btn = QtWidgets.QToolButton(self)
         self._eye_btn.setAutoRaise(True)
         self._eye_btn.setCheckable(True)
         self._eye_btn.setToolTip("Show on node")
         self._eye_btn.toggled.connect(self._on_eye_toggled)  # type: ignore[attr-defined]
 
-        self._btn_edit = QtWidgets.QToolButton()
+        self._btn_edit = QtWidgets.QToolButton(self)
         self._btn_edit.setAutoRaise(True)
         self._btn_edit.setToolTip("Edit command...")
         self._btn_edit.setIcon(
@@ -341,7 +341,7 @@ class _F8CommandRow(QtWidgets.QWidget):
         self._btn_edit.setVisible(True)
         self._btn_edit.clicked.connect(self._on_edit_clicked)
 
-        self._btn_del = QtWidgets.QToolButton()
+        self._btn_del = QtWidgets.QToolButton(self)
         self._btn_del.setAutoRaise(True)
         self._btn_del.setToolTip("Delete command")
         self._btn_del.setIcon(_icon_from_style(self._btn_del, QtWidgets.QStyle.SP_TrashIcon, "edit-delete"))
@@ -419,10 +419,10 @@ class _F8SpecCommandEditor(QtWidgets.QWidget):
         self._bridge_proc_hooked = False
         self._cmd_rows: dict[str, _F8CommandRow] = {}
 
-        self._sec = _F8SpecListSection(title="Commands")
+        self._sec = _F8SpecListSection(self, title="Commands")
         self._sec.add_clicked.connect(self._add_command)
 
-        content = QtWidgets.QWidget()
+        content = QtWidgets.QWidget(self)
         v = QtWidgets.QVBoxLayout(content)
         v.setContentsMargins(_TAB_PANEL_MARGIN, _TAB_PANEL_MARGIN, _TAB_PANEL_MARGIN, _TAB_PANEL_MARGIN)
         v.setSpacing(4)

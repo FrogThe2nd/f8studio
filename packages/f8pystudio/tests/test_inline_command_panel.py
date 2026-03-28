@@ -239,6 +239,30 @@ def test_ensure_inline_command_rows_removes_row_when_show_on_node_becomes_false(
     assert node_item._command_inline_descriptions == {}
 
 
+def test_ensure_inline_command_rows_disposes_detached_widget_without_reparent_flash(monkeypatch) -> None:
+    _ensure_app()
+    node_item = _FakeNodeItem(graph=_FakeGraph([_FakeNode("A")]))
+    ensure_inline_command_rows(node_item)
+    old_widget = node_item._command_inline_proxies["Run"].widget()
+    assert old_widget is not None
+
+    seen: list[tuple[QtWidgets.QWidget, str]] = []
+
+    def _record(widget: QtWidgets.QWidget | None, *, context: str) -> None:
+        if widget is not None:
+            seen.append((widget, context))
+
+    monkeypatch.setattr(
+        "f8pystudio.nodegraph.items.inline_command_panel.dispose_detached_proxy_widget",
+        _record,
+    )
+
+    node_item._backend.commands = [_FakeCommand("Run 2", "Second command", True, [])]
+    ensure_inline_command_rows(node_item)
+
+    assert seen == [(old_widget, "inline-command-remove:Run")]
+
+
 def test_refresh_inline_command_rows_updates_existing_button_state() -> None:
     _ensure_app()
     node_item = _FakeNodeItem(graph=_FakeGraph([_FakeNode("A")]))
