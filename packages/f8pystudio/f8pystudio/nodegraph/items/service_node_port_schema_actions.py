@@ -536,8 +536,10 @@ def open_state_field_editor_dialog(node_item: Any, *, field_name: str) -> None:
     from ...widgets.spec_mutations import replace_state_field as _spec_replace_state_field
     from ...widgets.ui_override_mutations import (
         find_base_state_field as _find_base_state_field,
-        set_state_field_global_hotkey_override as _set_state_field_global_hotkey_override,
         set_state_field_ui_override as _set_state_field_ui_override,
+    )
+    from ...widgets.ui_state_mutations import (
+        set_state_field_global_hotkey_override as _set_state_field_global_hotkey_override,
         state_field_global_hotkey as _state_field_global_hotkey,
     )
 

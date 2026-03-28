@@ -20,7 +20,7 @@ from f8pystudio.global_hotkeys.models import GlobalHotkeyBinding
 from f8pystudio.global_hotkeys.parser import parse_global_hotkey
 from f8pystudio.nodegraph.node_model import F8StudioNodeModel
 from f8pystudio.widgets import node_property_panel as npw
-from f8pystudio.widgets.ui_override_mutations import (
+from f8pystudio.widgets.ui_state_mutations import (
     set_state_field_global_hotkey_override,
     state_field_global_hotkey,
 )
@@ -35,14 +35,13 @@ def _ensure_app() -> QtWidgets.QApplication:
 
 class _UiOverrideNodeStub:
     def __init__(self) -> None:
-        self._ui: dict[str, object] = {}
+        self._ui_state: dict[str, object] = {}
 
-    def ui_overrides(self) -> dict[str, object]:
-        return dict(self._ui)
+    def ui_state(self) -> dict[str, object]:
+        return dict(self._ui_state)
 
-    def set_ui_overrides(self, value: dict[str, object] | None, *, rebuild: bool = True) -> None:
-        _ = rebuild
-        self._ui = dict(value or {})
+    def set_ui_state(self, value: dict[str, object] | None) -> None:
+        self._ui_state = dict(value or {})
 
 
 class _HotkeyNodeStub:
@@ -57,14 +56,14 @@ class _HotkeyNodeStub:
         self.id = node_id
         self._fields = [field]
         self._values = {str(field.name): value}
-        self._ui = {"stateFields": {str(field.name): {"globalHotkey": hotkey}}}
+        self._ui_state = {"stateFieldHotkeys": {str(field.name): hotkey}}
         self.set_calls: list[tuple[str, Any, bool]] = []
 
     def effective_state_fields(self) -> list[F8StateSpec]:
         return list(self._fields)
 
-    def ui_overrides(self) -> dict[str, object]:
-        return dict(self._ui)
+    def ui_state(self) -> dict[str, object]:
+        return dict(self._ui_state)
 
     def get_property(self, name: str) -> Any:
         return self._values[name]
@@ -193,17 +192,17 @@ def test_state_field_global_hotkey_override_round_trip() -> None:
 
     set_state_field_global_hotkey_override(node, field_name="trigger", hotkey="")
     assert state_field_global_hotkey(node, "trigger") == ""
-    assert node.ui_overrides() == {}
+    assert node.ui_state() == {}
 
 
-def test_node_model_serializes_global_hotkey_ui_metadata() -> None:
+def test_node_model_serializes_global_hotkey_ui_state() -> None:
     model = F8StudioNodeModel()
     model.id = "nodeA"  # type: ignore[attr-defined]
-    model.set_property("f8_ui", {"stateFields": {"trigger": {"globalHotkey": "Ctrl+Alt+P"}}})
+    model.set_property("f8_ui_state", {"stateFieldHotkeys": {"trigger": "Ctrl+Alt+P"}})
 
     serialized = model.to_dict["nodeA"]
 
-    assert serialized["f8_ui"]["stateFields"]["trigger"]["globalHotkey"] == "Ctrl+Alt+P"
+    assert serialized["f8_ui_state"]["stateFieldHotkeys"]["trigger"] == "Ctrl+Alt+P"
 
 
 def test_win32_hotkey_mapping_returns_expected_values() -> None:

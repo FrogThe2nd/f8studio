@@ -147,7 +147,7 @@
           "paletteCategory": "svc"
         },
         "f8_sys": {},
-        "f8_ui": {},
+        "f8_ui_overrides": {},
         "custom": {
           "dataDelivery": "pull",
           "active": true,
@@ -481,7 +481,7 @@
         "f8_sys": {
           "svcId": "a4sQ"
         },
-        "f8_ui": {
+        "f8_ui_state": {
           "stateInlineExpanded": {
             "port": true
           }
@@ -713,7 +713,7 @@
         "f8_sys": {
           "svcId": "a4sQ"
         },
-        "f8_ui": {},
+        "f8_ui_overrides": {},
         "custom": {
           "code": "# Define hooks (any subset is ok):\n# - onStart(ctx)\n# - onState(ctx, field, value, tsMs=None)      # called on state updates (except 'code')\n# - onMsg(ctx, inputs)                        # called on data arrival (push mode) or as fallback for exec\n# - onExec(ctx, execIn, inputs)               # called on exec trigger (pull mode)\n# - onStop(ctx)\n# - ctx['state'] is preserved between calls\n# - ctx['execIn'] is set for exec-triggered calls\n# - State helpers:\n#   - await ctx['get_state'](field)           # read state value\n#   - ctx['set_state'](field, value)          # write state (fire-and-forget)\n#   - await ctx['set_state_async'](field, value)\n#   Note: for best UI/graph support, add the target state fields on the node with editPolicy.stateFields.canAdd=true.\n# - inputs is a dict keyed by input port names\n# Return value protocol:\n# - onMsg: return {'outputs': {...}} or any value (emits to 'out' if present)\n# - onExec: return {'exec': ['exec','exec2'], 'outputs': {...}}\n#   - 'exec' selects exec out port(s) to trigger (defaults to pass-through)\n#   - 'outputs' is a dict mapping dataOutPort -> value\nimport numpy as np\n\ndef onStart(ctx):\n    ctx['log']('python_script started')\n\ndef onState(ctx, field, value, tsMs=None):\n    # Example: react to a state change.\n    # ctx['log'](f'state {field}={value} tsMs={tsMs}')\n    return\n\ndef onMsg(ctx, inputs):\n    msg = inputs.get('msg')\n\n    return {'outputs': {'out': msg}}\n\ndef _process(ctx, skeletons) -> dict:\n    penis = None\n    vagina = None\n\n    for model in skeletons:\n        for b in model['bones']:\n            # ctx['log'](b)\n            # break\n            if b['name'] == 'MalePenisBase':\n                penis = b\n                break\n            elif b['name'] == 'Vagina':\n                vagina = b\n                break\n\n    if penis and vagina:\n        p0 = np.array(penis['pos'])\n        p1 = np.array(vagina['pos'])\n        dist = np.linalg.norm(p0-p1)\n    else:\n        dist = 0\n    return dist\n\ndef onExec(ctx, execIn, inputs):\n    # Example: choose different exec outputs by execIn port name.\n    if execIn == 'exec2':        \n        return {'exec': ['exec2'], 'outputs': {'out': inputs.get('msg')}}\n        \n    return {'exec': ['exec'],  'outputs':{\"out\": _process(ctx, inputs.get(\"msg\")) }}\n\ndef onStop(ctx):\n    ctx['log']('python_script stopped')\n",
           "lastError": "",
@@ -936,7 +936,7 @@
         "f8_sys": {
           "svcId": "a4sQ"
         },
-        "f8_ui": {},
+        "f8_ui_overrides": {},
         "custom": {
           "tickMs": 33,
           "hiResTimer": true,
@@ -1615,7 +1615,7 @@
         "f8_sys": {
           "svcId": "a4sQ"
         },
-        "f8_ui": {
+        "f8_ui_state": {
           "stateInlineExpanded": {
             "method": false,
             "min_span": true
@@ -2017,7 +2017,7 @@
         "f8_sys": {
           "svcId": "a4sQ"
         },
-        "f8_ui": {},
+        "f8_ui_overrides": {},
         "custom": {
           "intervalMs": 33,
           "svcId": "a4sQ",
@@ -2276,7 +2276,7 @@
         "f8_sys": {
           "svcId": "a4sQ"
         },
-        "f8_ui": {
+        "f8_ui_state": {
           "stateInlineExpanded": {
             "enabled": false
           }
@@ -2553,7 +2553,7 @@
         "f8_sys": {
           "svcId": "a4sQ"
         },
-        "f8_ui": {
+        "f8_ui_state": {
           "stateInlineExpanded": {
             "maxRateUp": true,
             "maxRateDown": true
@@ -2839,7 +2839,7 @@
         "f8_sys": {
           "svcId": "a4sQ"
         },
-        "f8_ui": {
+        "f8_ui_state": {
           "stateInlineExpanded": {
             "outMin": true,
             "outMax": true
@@ -3280,7 +3280,7 @@
         "f8_sys": {
           "svcId": "studio"
         },
-        "f8_ui": {
+        "f8_ui_state": {
           "stateInlineExpanded": {
             "worldUp": true,
             "showBoneNames": false
@@ -3663,7 +3663,7 @@
         "f8_sys": {
           "svcId": "studio"
         },
-        "f8_ui": {
+        "f8_ui_overrides": {
           "dataPorts": {
             "in": {
               "y": {
@@ -4047,7 +4047,7 @@
         "f8_sys": {
           "svcId": "studio"
         },
-        "f8_ui": {
+        "f8_ui_overrides": {
           "dataPorts": {
             "in": {
               "z": {
@@ -4271,7 +4271,7 @@
         "f8_sys": {
           "svcId": "studio"
         },
-        "f8_ui": {},
+        "f8_ui_overrides": {},
         "custom": {
           "model": "SR6",
           "throttleMs": 0,
@@ -4445,3 +4445,4 @@
     ]
   }
 }
+

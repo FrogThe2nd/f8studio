@@ -23,13 +23,15 @@ class F8StudioNodeModel(NodeModel):
 
     f8_spec: F8OperatorSpec | F8ServiceSpec | None
     f8_sys: dict[str, object]
-    f8_ui: dict[str, object]
+    f8_ui_overrides: dict[str, object]
+    f8_ui_state: dict[str, object]
 
     def __init__(self):
         super().__init__()
         self.f8_spec = None
         self.f8_sys = {}
-        self.f8_ui = {}
+        self.f8_ui_overrides = {}
+        self.f8_ui_state = {}
         self._owner_node: object | None = None
 
     @staticmethod
@@ -55,13 +57,13 @@ class F8StudioNodeModel(NodeModel):
                         logger.exception("Failed to sync node after f8_spec update.")
             self._emit_owner_property_changed("f8_spec", self.f8_spec)
             return
-        if name == "f8_ui":
+        if name == "f8_ui_overrides":
             if isinstance(value, dict):
-                self.f8_ui = value
+                self.f8_ui_overrides = value
             elif value is None:
-                self.f8_ui = {}
+                self.f8_ui_overrides = {}
             else:
-                raise TypeError(f"Unsupported `f8_ui` type: {type(value)!r}")
+                raise TypeError(f"Unsupported `f8_ui_overrides` type: {type(value)!r}")
             # UI changes affect effective state fields/ports, so resync.
             if self.f8_spec is not None:
                 owner = self._owner_node
@@ -69,8 +71,17 @@ class F8StudioNodeModel(NodeModel):
                     try:
                         owner.sync_from_spec()  # type: ignore[attr-defined]
                     except Exception:
-                        logger.exception("Failed to sync node after f8_ui update.")
-            self._emit_owner_property_changed("f8_ui", self.f8_ui)
+                        logger.exception("Failed to sync node after f8_ui_overrides update.")
+            self._emit_owner_property_changed("f8_ui_overrides", self.f8_ui_overrides)
+            return
+        if name == "f8_ui_state":
+            if isinstance(value, dict):
+                self.f8_ui_state = value
+            elif value is None:
+                self.f8_ui_state = {}
+            else:
+                raise TypeError(f"Unsupported `f8_ui_state` type: {type(value)!r}")
+            self._emit_owner_property_changed("f8_ui_state", self.f8_ui_state)
             return
         if name == "f8_sys":
             if isinstance(value, dict):
@@ -126,8 +137,10 @@ class F8StudioNodeModel(NodeModel):
         if isinstance(self.f8_sys, dict) and self.f8_sys:
             node_dict["f8_sys"] = normalize_variant_sys_metadata(self.f8_sys)
 
-        if isinstance(self.f8_ui, dict) and self.f8_ui:
-            node_dict["f8_ui"] = self.f8_ui
+        if isinstance(self.f8_ui_overrides, dict) and self.f8_ui_overrides:
+            node_dict["f8_ui_overrides"] = self.f8_ui_overrides
+        if isinstance(self.f8_ui_state, dict) and self.f8_ui_state:
+            node_dict["f8_ui_state"] = self.f8_ui_state
 
         safe_node_dict = self._json_safe_value(node_dict, seen=set())
         if not isinstance(safe_node_dict, dict):

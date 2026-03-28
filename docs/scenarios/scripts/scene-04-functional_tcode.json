@@ -147,7 +147,7 @@
           "paletteCategory": "svc"
         },
         "f8_sys": {},
-        "f8_ui": {},
+        "f8_ui_overrides": {},
         "custom": {
           "dataDelivery": "pull",
           "active": true,
@@ -525,7 +525,7 @@
         "f8_sys": {
           "svcId": "G2Pq"
         },
-        "f8_ui": {
+        "f8_ui_overrides": {
           "dataPorts": {
             "in": {
               "L1": {
@@ -754,7 +754,7 @@
         "f8_sys": {
           "svcId": "studio"
         },
-        "f8_ui": {
+        "f8_ui_state": {
           "stateInlineExpanded": {
             "model": true
           }
@@ -982,7 +982,7 @@
         "f8_sys": {
           "svcId": "G2Pq"
         },
-        "f8_ui": {
+        "f8_ui_state": {
           "stateInlineExpanded": {
             "tickMs": true
           }
@@ -1246,7 +1246,7 @@
         "f8_sys": {
           "svcId": "G2Pq"
         },
-        "f8_ui": {},
+        "f8_ui_overrides": {},
         "custom": {
           "enabled": true,
           "port": "COM4",
@@ -1486,7 +1486,7 @@
         "f8_sys": {
           "svcId": "G2Pq"
         },
-        "f8_ui": {
+        "f8_ui_state": {
           "stateInlineExpanded": {
             "hz": true
           }
@@ -1817,7 +1817,7 @@
         "f8_sys": {
           "svcId": "G2Pq"
         },
-        "f8_ui": {},
+        "f8_ui_overrides": {},
         "custom": {
           "dc": 0.5,
           "amp": 0.5,
@@ -2186,7 +2186,7 @@
         "f8_sys": {
           "svcId": "studio"
         },
-        "f8_ui": {
+        "f8_ui_overrides": {
           "dataPorts": {
             "in": {
               "y": {
@@ -2401,7 +2401,7 @@
         "f8_sys": {
           "svcId": "studio"
         },
-        "f8_ui": {},
+        "f8_ui_overrides": {},
         "custom": {
           "uiUpdate": true,
           "uiWrap": true,
@@ -2687,7 +2687,7 @@
         "f8_sys": {
           "svcId": "G2Pq"
         },
-        "f8_ui": {},
+        "f8_ui_overrides": {},
         "custom": {
           "dc": 0.5,
           "amp": 0.5,
@@ -2927,7 +2927,7 @@
         "f8_sys": {
           "svcId": "G2Pq"
         },
-        "f8_ui": {
+        "f8_ui_state": {
           "stateInlineExpanded": {
             "hz": true
           }
@@ -3147,7 +3147,7 @@
         "f8_sys": {
           "svcId": "G2Pq"
         },
-        "f8_ui": {
+        "f8_ui_state": {
           "stateInlineExpanded": {
             "code": true
           }
@@ -3314,3 +3314,4 @@
     ]
   }
 }
+

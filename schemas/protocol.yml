@@ -118,6 +118,71 @@ components:
             $ref: "#/components/schemas/F8VariantRecord"
           default: []
       additionalProperties: false
+    F8NodeUiOverridePatch:
+      title: F8NodeUiOverridePatch
+      type: object
+      properties:
+        showOnNode:
+          type: boolean
+        uiControl:
+          type: string
+        label:
+          type: string
+        description:
+          type: string
+      additionalProperties: false
+    F8NodeUiOverrides:
+      title: F8NodeUiOverrides
+      type: object
+      description: Instance-level UI presentation patches only. Does not carry schema edits or interaction/session state.
+      properties:
+        stateFields:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/F8NodeUiOverridePatch"
+        commands:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              showOnNode:
+                type: boolean
+            additionalProperties: false
+        dataPorts:
+          type: object
+          properties:
+            in:
+              type: object
+              additionalProperties:
+                type: object
+                properties:
+                  showOnNode:
+                    type: boolean
+                additionalProperties: false
+            out:
+              type: object
+              additionalProperties:
+                type: object
+                properties:
+                  showOnNode:
+                    type: boolean
+                additionalProperties: false
+          additionalProperties: false
+      additionalProperties: false
+    F8NodeUiState:
+      title: F8NodeUiState
+      type: object
+      description: Instance/session UI interaction state. Not part of spec presentation overrides.
+      properties:
+        stateInlineExpanded:
+          type: object
+          additionalProperties:
+            type: boolean
+        stateFieldHotkeys:
+          type: object
+          additionalProperties:
+            type: string
+      additionalProperties: false
     F8DynamicBindingsInputsSpec:
       title: F8DynamicBindingsInputsSpec
       type: object

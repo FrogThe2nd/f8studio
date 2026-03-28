@@ -156,7 +156,7 @@ class SessionLayoutCodecMixin:
             # Apply UI overrides (eg. showOnNode) so we can strip connections
             # referencing ports that will not be created.
             state_fields = list(spec.stateFields or [])
-            ui = node_data.get("f8_ui")
+            ui = node_data.get("f8_ui_overrides")
             state_ui = None
             if isinstance(ui, dict):
                 state_ui = ui.get("stateFields")

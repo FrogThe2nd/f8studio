@@ -370,7 +370,7 @@
           "paletteCategory": "svc"
         },
         "f8_sys": {},
-        "f8_ui": {
+        "f8_ui_state": {
           "stateInlineExpanded": {
             "audioShmName": false
           }
@@ -659,7 +659,7 @@
           "paletteCategory": "svc"
         },
         "f8_sys": {},
-        "f8_ui": {
+        "f8_ui_state": {
           "stateInlineExpanded": {
             "windowMs": false,
             "channelMode": false,
@@ -913,7 +913,7 @@
           "paletteCategory": "svc"
         },
         "f8_sys": {},
-        "f8_ui": {
+        "f8_ui_state": {
           "stateInlineExpanded": {
             "tempoWindowSec": true,
             "pulseWindowSec": true,
@@ -1128,7 +1128,7 @@
         "f8_sys": {
           "svcId": "studio"
         },
-        "f8_ui": {},
+        "f8_ui_overrides": {},
         "custom": {
           "uiUpdate": true,
           "serviceId": "",
@@ -1328,7 +1328,7 @@
         "f8_sys": {
           "svcId": "studio"
         },
-        "f8_ui": {},
+        "f8_ui_overrides": {},
         "custom": {
           "uiUpdate": false,
           "uiWrap": true,
@@ -1696,7 +1696,7 @@
         "f8_sys": {
           "svcId": "studio"
         },
-        "f8_ui": {},
+        "f8_ui_overrides": {},
         "custom": {
           "uiUpdate": true,
           "bufferLimit": 200,
@@ -1900,7 +1900,7 @@
         "f8_sys": {
           "svcId": "studio"
         },
-        "f8_ui": {},
+        "f8_ui_overrides": {},
         "custom": {
           "uiUpdate": true,
           "uiWrap": true,
@@ -2045,7 +2045,7 @@
           "paletteCategory": "svc"
         },
         "f8_sys": {},
-        "f8_ui": {},
+        "f8_ui_overrides": {},
         "custom": {
           "dataDelivery": "pull",
           "active": true,
@@ -2295,7 +2295,7 @@
           }
         },
         "f8_sys": {},
-        "f8_ui": {
+        "f8_ui_state": {
           "stateInlineExpanded": {
             "code": true,
             "active": false
@@ -2686,7 +2686,7 @@
         "f8_sys": {
           "svcId": "ASAY"
         },
-        "f8_ui": {
+        "f8_ui_overrides": {
           "dataPorts": {
             "in": {
               "L1": {
@@ -2915,7 +2915,7 @@
         "f8_sys": {
           "svcId": "studio"
         },
-        "f8_ui": {},
+        "f8_ui_overrides": {},
         "custom": {
           "model": "SR6",
           "throttleMs": 0,
@@ -3139,7 +3139,7 @@
         "f8_sys": {
           "svcId": "ASAY"
         },
-        "f8_ui": {},
+        "f8_ui_overrides": {},
         "custom": {
           "tickMs": 100,
           "hiResTimer": true,
@@ -3399,7 +3399,7 @@
         "f8_sys": {
           "svcId": "ASAY"
         },
-        "f8_ui": {},
+        "f8_ui_overrides": {},
         "custom": {
           "enabled": true,
           "port": "COM4",
@@ -4080,7 +4080,7 @@
         "f8_sys": {
           "svcId": "ASAY"
         },
-        "f8_ui": {
+        "f8_ui_state": {
           "stateInlineExpanded": {
             "rise_alpha": true,
             "fall_alpha": true,
@@ -4472,7 +4472,7 @@
         "f8_sys": {
           "svcId": "studio"
         },
-        "f8_ui": {
+        "f8_ui_overrides": {
           "dataPorts": {
             "in": {
               "y": {
@@ -4853,7 +4853,7 @@
         "f8_sys": {
           "svcId": "studio"
         },
-        "f8_ui": {
+        "f8_ui_overrides": {
           "dataPorts": {
             "in": {
               "y": {
@@ -5179,7 +5179,7 @@
         "f8_sys": {
           "svcId": "ASAY"
         },
-        "f8_ui": {
+        "f8_ui_state": {
           "stateInlineExpanded": {
             "filter_type": true,
             "ema_alpha": true,
@@ -5469,7 +5469,7 @@
         "f8_sys": {
           "svcId": "ASAY"
         },
-        "f8_ui": {
+        "f8_ui_state": {
           "stateInlineExpanded": {
             "outMin": true,
             "outMax": true
@@ -5690,3 +5690,4 @@
     ]
   }
 }
+

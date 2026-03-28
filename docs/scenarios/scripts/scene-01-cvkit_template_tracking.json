@@ -147,7 +147,7 @@
           "paletteCategory": "svc"
         },
         "f8_sys": {},
-        "f8_ui": {},
+        "f8_ui_overrides": {},
         "custom": {
           "dataDelivery": "pull",
           "active": true,
@@ -369,7 +369,7 @@
         "f8_sys": {
           "svcId": "5TYp"
         },
-        "f8_ui": {
+        "f8_ui_state": {
           "stateInlineExpanded": {
             "tickMs": false
           },
@@ -658,7 +658,7 @@
         "f8_sys": {
           "svcId": "5TYp"
         },
-        "f8_ui": {
+        "f8_ui_state": {
           "stateInlineExpanded": {
             "inMin": false,
             "inMax": false,
@@ -936,7 +936,7 @@
         "f8_sys": {
           "svcId": "5TYp"
         },
-        "f8_ui": {},
+        "f8_ui_overrides": {},
         "custom": {
           "enabled": true,
           "port": "COM4",
@@ -1316,7 +1316,7 @@
         "f8_sys": {
           "svcId": "5TYp"
         },
-        "f8_ui": {
+        "f8_ui_overrides": {
           "dataPorts": {
             "in": {
               "L1": {
@@ -1659,7 +1659,7 @@
         "f8_sys": {
           "svcId": "5TYp"
         },
-        "f8_ui": {
+        "f8_ui_state": {
           "stateInlineExpanded": {
             "filter_type": false,
             "one_euro_min_cutoff": true,
@@ -1961,7 +1961,7 @@
         "f8_sys": {
           "svcId": "5TYp"
         },
-        "f8_ui": {
+        "f8_ui_state": {
           "stateInlineExpanded": {
             "inMin": false,
             "inMax": false,
@@ -2759,7 +2759,7 @@
           "paletteCategory": "svc"
         },
         "f8_sys": {},
-        "f8_ui": {
+        "f8_ui_state": {
           "stateInlineExpanded": {
             "active": true
           }
@@ -3301,7 +3301,7 @@
           "paletteCategory": "svc"
         },
         "f8_sys": {},
-        "f8_ui": {
+        "f8_ui_state": {
           "stateInlineExpanded": {
             "active": false
           }
@@ -3623,7 +3623,7 @@
         "f8_sys": {
           "svcId": "studio"
         },
-        "f8_ui": {
+        "f8_ui_state": {
           "stateInlineExpanded": {
             "videoShmName": false,
             "flowArrowScale": false,
@@ -4010,7 +4010,7 @@
         "f8_sys": {
           "svcId": "studio"
         },
-        "f8_ui": {
+        "f8_ui_overrides": {
           "dataPorts": {
             "in": {
               "y": {
@@ -4754,7 +4754,7 @@
         "f8_sys": {
           "svcId": "player"
         },
-        "f8_ui": {
+        "f8_ui_state": {
           "stateInlineExpanded": {
             "videoShmName": false,
             "mediaUrl": true
@@ -5014,7 +5014,7 @@
         "f8_sys": {
           "svcId": "5TYp"
         },
-        "f8_ui": {},
+        "f8_ui_overrides": {},
         "custom": {
           "code": "# Define hooks (any subset is ok):\n# - onStart(ctx)\n# - onState(ctx, field, value, tsMs=None)      # called on state updates (except 'code')\n# - onMsg(ctx, inputs)                        # called on data arrival (push mode) or as fallback for exec\n# - onExec(ctx, execIn, inputs)               # called on exec trigger (pull mode)\n# - onStop(ctx)\n# - ctx['locals'] is preserved between calls (script-local memory)\n# - ctx['execIn'] is set for exec-triggered calls\n# - State helpers:\n#   - await ctx['get_state'](field)           # read state value\n#   - ctx['set_state'](field, value)          # write state (fire-and-forget)\n#   - await ctx['set_state_async'](field, value)\n#   Note: for best UI/graph support, add the target state fields on the node with editPolicy.stateFields.canAdd=true.\n# - inputs is a dict keyed by input port names\n# Return value protocol:\n# - onMsg: return {'outputs': {...}} or any value (emits to 'out' if present)\n# - onExec: return {'exec': ['exec','exec2'], 'outputs': {...}}\n#   - 'exec' selects exec out port(s) to trigger (defaults to pass-through)\n#   - 'outputs' is a dict mapping dataOutPort -> value\n\ndef onStart(ctx):\n    ctx['log']('python_script started')\n\ndef onState(ctx, field, value, tsMs=None):\n    # Example: react to a state change.\n    # ctx['log'](f'state {field}={value} tsMs={tsMs}')\n    return\n\ndef onMsg(ctx, inputs):\n    msg = inputs.get('msg')\n    x = (msg.bbox[1]+msg.bbox[3])*0.5\n    y = (msg.bbox[0]+msg.bbox[2])*0.5\n    return {'outputs': {'x': x, 'y': y}}\n\ndef onExec(ctx, execIn, inputs):\n    # Example: choose different exec outputs by execIn port name.\n    try:\n        msg = inputs.get('msg')\n        x = (msg['bbox'][1]+msg['bbox'][3])*0.5\n        y = (msg['bbox'][0]+msg['bbox'][2])*0.5\n    except:\n        x = None\n        y = None\n    return {'outputs': {'x': x, 'y': y}}\n\ndef onStop(ctx):\n    ctx['log']('python_script stopped')\n",
           "lastError": "",
@@ -5351,7 +5351,7 @@
         "f8_sys": {
           "svcId": "5TYp"
         },
-        "f8_ui": {
+        "f8_ui_state": {
           "stateInlineExpanded": {
             "method": false,
             "rise_alpha": false,
@@ -5615,7 +5615,7 @@
         "f8_sys": {
           "svcId": "5TYp"
         },
-        "f8_ui": {
+        "f8_ui_state": {
           "stateInlineExpanded": {
             "angle": true
           }
@@ -5813,3 +5813,4 @@
     ]
   }
 }
+

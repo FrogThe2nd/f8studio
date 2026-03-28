@@ -89,8 +89,10 @@ class F8StudioBaseNode(BaseNode):
 
         if not isinstance(self.model.f8_sys, dict):
             self.model.f8_sys = {}
-        if not isinstance(self.model.f8_ui, dict):
-            self.model.f8_ui = {}
+        if not isinstance(self.model.f8_ui_overrides, dict):
+            self.model.f8_ui_overrides = {}
+        if not isinstance(self.model.f8_ui_state, dict):
+            self.model.f8_ui_state = {}
 
     def add_ephemeral_widget(self, widget: NodeBaseWidget) -> None:
         """
@@ -108,13 +110,19 @@ class F8StudioBaseNode(BaseNode):
         widget.parent()
 
     def ui_overrides(self) -> dict[str, object]:
-        return self.model.f8_ui if isinstance(self.model.f8_ui, dict) else {}
+        return self.model.f8_ui_overrides if isinstance(self.model.f8_ui_overrides, dict) else {}
 
     def set_ui_overrides(self, value: dict[str, object] | None, *, rebuild: bool = True) -> None:
-        self.model.set_property("f8_ui", value or {})
+        self.model.set_property("f8_ui_overrides", value or {})
         self._last_ui_serial = self._ui_serial()
         if rebuild:
             self.sync_from_spec()
+
+    def ui_state(self) -> dict[str, object]:
+        return self.model.f8_ui_state if isinstance(self.model.f8_ui_state, dict) else {}
+
+    def set_ui_state(self, value: dict[str, object] | None) -> None:
+        self.model.set_property("f8_ui_state", value or {})
 
     def effective_state_fields(self):
         """
@@ -196,7 +204,7 @@ class F8StudioBaseNode(BaseNode):
 
     def _ui_serial(self) -> str:
         try:
-            ui = self.model.f8_ui if isinstance(self.model.f8_ui, dict) else {}
+            ui = self.model.f8_ui_overrides if isinstance(self.model.f8_ui_overrides, dict) else {}
             return json.dumps(ui, ensure_ascii=False, sort_keys=True, default=str)
         except Exception:
             return ""

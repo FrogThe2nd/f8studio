@@ -94,6 +94,15 @@ class GraphDuplicateActionsMixin:
                 target.set_ui_overrides(copy.deepcopy(source_ui_overrides), rebuild=True)  # type: ignore[attr-defined]
             except (AttributeError, RuntimeError, TypeError, ValueError):
                 logger.exception("Failed to copy ui overrides for duplicate node: type=%s", str(source.type_ or ""))
+        try:
+            source_ui_state = source.ui_state()  # type: ignore[attr-defined]
+        except (AttributeError, RuntimeError, TypeError):
+            source_ui_state = {}
+        if isinstance(source_ui_state, dict):
+            try:
+                target.set_ui_state(copy.deepcopy(source_ui_state))  # type: ignore[attr-defined]
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                logger.exception("Failed to copy ui state for duplicate node: type=%s", str(source.type_ or ""))
 
     @staticmethod
     def _copy_node_custom_properties(*, source: BaseNode, target: BaseNode) -> None:

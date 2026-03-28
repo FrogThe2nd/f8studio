@@ -317,7 +317,7 @@
           "paletteCategory": "svc"
         },
         "f8_sys": {},
-        "f8_ui": {},
+        "f8_ui_overrides": {},
         "custom": {
           "dataDelivery": "pull",
           "active": true,
@@ -639,7 +639,7 @@
         "f8_sys": {
           "svcId": "NXSA"
         },
-        "f8_ui": {
+        "f8_ui_overrides": {
           "stateFields": {
             "code": {
               "showOnNode": true
@@ -888,7 +888,7 @@
             "name": "Symmetric Range Control"
           }
         },
-        "f8_ui": {
+        "f8_ui_state": {
           "stateInlineExpanded": {
             "radius": false
           }

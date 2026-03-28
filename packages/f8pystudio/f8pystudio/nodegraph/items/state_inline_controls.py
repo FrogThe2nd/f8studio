@@ -31,6 +31,7 @@ from ...editor_assist.protocol import editor_assist_context_for_field
 from ...editor_assist.workspace import EditorAssistContext
 from ...widgets.state_controls.pool_resolver import resolve_pool_items
 from ...widgets.studio_node_code_editor import get_node_text, resolve_node, set_node_text, studio_session_key
+from ...widgets.ui_state_mutations import set_state_inline_expanded, state_inline_expanded
 from .node_item_core import StateFieldInfo, state_field_info
 from .service_toolbar_host import F8ElideToolButton, F8ForceGlobalToolTipFilter
 
@@ -373,15 +374,9 @@ def toggle_state_inline_section(node_item: Any, name: str, expanded: bool) -> No
     node = node_item._backend_node()
     if node is not None:
         try:
-            ui = dict(node.ui_overrides() or {})
-            store = ui.get("stateInlineExpanded")
-            if not isinstance(store, dict):
-                store = {}
-            store[state_name] = bool(expanded)
-            ui["stateInlineExpanded"] = store
-            node.set_ui_overrides(ui, rebuild=False)
+            set_state_inline_expanded(node, state_name=state_name, expanded=bool(expanded))
         except AttributeError:
-            logger.exception("node missing ui_overrides/set_ui_overrides; cannot persist expand state")
+            logger.exception("node missing ui_state/set_ui_state; cannot persist expand state")
     btn = node_item._state_inline_toggles.get(state_name)
     if btn is not None:
         try:
@@ -697,10 +692,9 @@ def ensure_state_inline_controls(node_item: Any) -> None:
 
         # Default collapsed; restore persisted expand state from ui overrides.
         expanded = False
-        ui = node.ui_overrides() or {}
-        store = ui.get("stateInlineExpanded") if isinstance(ui, dict) else None
-        if isinstance(store, dict) and name in store:
-            expanded = bool(store.get(name))
+        persisted_expanded = state_inline_expanded(node, name)
+        if persisted_expanded is not None:
+            expanded = bool(persisted_expanded)
         expanded = bool(node_item._state_inline_expanded.get(name, expanded))
         control = node_item._build_state_inline_control(info)
 

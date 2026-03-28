@@ -48,9 +48,11 @@ from ..state_controls import (
 from ...ui_control import parse_ui_control
 from ..ui_override_mutations import (
     find_base_state_field as _find_base_state_field,
+    set_state_field_ui_override as _set_state_field_ui_override,
+)
+from ..ui_state_mutations import (
     set_state_field_global_hotkey_override as _set_state_field_global_hotkey_override,
     state_field_global_hotkey as _state_field_global_hotkey,
-    set_state_field_ui_override as _set_state_field_ui_override,
 )
 from .commands import _F8SpecCommandEditor
 from .common import (
@@ -1343,7 +1345,7 @@ class F8StudioSingleNodePropertiesWidget(QtWidgets.QWidget):
         if not prop_key:
             return
 
-        if prop_key in {"f8_spec", "f8_ui"}:
+        if prop_key in {"f8_spec", "f8_ui_overrides", "f8_ui_state"}:
             self._editor.reload()
             return
 

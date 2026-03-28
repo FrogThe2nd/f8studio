@@ -33,50 +33,6 @@ def _diff_state_ui(base: F8StateSpec, edited: F8StateSpec) -> dict[str, Any]:
     return patch
 
 
-def state_field_global_hotkey(node: _UiOverrideNode, field_name: str) -> str:
-    name = str(field_name or "").strip()
-    if not name:
-        return ""
-    try:
-        ui = get_ui_overrides(node)
-    except AttributeError:
-        return ""
-    state_over = ui.get("stateFields")
-    if not isinstance(state_over, dict):
-        return ""
-    patch = state_over.get(name)
-    if not isinstance(patch, dict):
-        return ""
-    return str(patch.get("globalHotkey") or "").strip()
-
-
-def set_state_field_global_hotkey_override(node: _UiOverrideNode, *, field_name: str, hotkey: str) -> None:
-    name = str(field_name or "").strip()
-    if not name:
-        return
-    normalized_hotkey = str(hotkey or "").strip()
-    ui = get_ui_overrides(node)
-    state_over = ui.get("stateFields")
-    if not isinstance(state_over, dict):
-        state_over = {}
-    patch = state_over.get(name)
-    if not isinstance(patch, dict):
-        patch = {}
-    if normalized_hotkey:
-        patch["globalHotkey"] = normalized_hotkey
-    else:
-        patch.pop("globalHotkey", None)
-    if patch:
-        state_over[name] = patch
-    else:
-        state_over.pop(name, None)
-    if state_over:
-        ui["stateFields"] = state_over
-    else:
-        ui.pop("stateFields", None)
-    set_ui_overrides(node, ui, rebuild=True)
-
-
 def set_state_field_ui_override(node: _UiOverrideNode, *, field_name: str, base: F8StateSpec, edited: F8StateSpec) -> None:
     """
     Persist UI-only overrides for a state field.

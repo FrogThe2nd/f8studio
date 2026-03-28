@@ -6,7 +6,7 @@ from typing import Any, Callable
 from qtpy import QtCore
 
 from ..widgets.state_controls.schema_introspect import effective_state_fields, schema_type_any
-from ..widgets.ui_override_mutations import state_field_global_hotkey
+from ..widgets.ui_state_mutations import state_field_global_hotkey
 from .backend import GlobalHotkeyBackend, create_global_hotkey_backend
 from .models import (
     GlobalHotkeyBinding,
@@ -102,7 +102,7 @@ class ControlPanelGlobalHotkeyController(QtCore.QObject):
     def on_graph_property_changed(self, node: Any, name: str, value: Any) -> None:
         _ = (node, value)
         property_name = str(name or "").strip()
-        if property_name not in {"f8_ui", "f8_spec"}:
+        if property_name not in {"f8_ui_state", "f8_spec"}:
             return
         self.schedule_refresh()
 
