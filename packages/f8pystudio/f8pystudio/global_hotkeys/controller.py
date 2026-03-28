@@ -5,6 +5,7 @@ from typing import Any, Callable
 
 from qtpy import QtCore
 
+from ..ui_control import parse_ui_control
 from ..widgets.state_controls.schema_introspect import effective_state_fields, schema_type_any
 from ..widgets.ui_state_mutations import state_field_global_hotkey
 from .backend import GlobalHotkeyBackend, create_global_hotkey_backend
@@ -205,7 +206,7 @@ class ControlPanelGlobalHotkeyController(QtCore.QObject):
     @staticmethod
     def _field_ui_control(field: Any) -> str:
         try:
-            return str(field.uiControl or "").strip().lower()
+            return parse_ui_control(str(field.uiControl or "")).control_name
         except Exception:
             return ""
 

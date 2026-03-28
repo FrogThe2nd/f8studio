@@ -250,6 +250,24 @@ def test_state_field_dialog_ignores_hotkey_for_non_button_controls() -> None:
     assert dialog.global_hotkey() == ""
 
 
+def test_state_field_dialog_enables_hotkey_for_button_ui_control_with_whitespace() -> None:
+    _ensure_app()
+    dialog = npw._F8EditStateFieldDialog(
+        None,
+        title="State",
+        field=F8StateSpec(
+            name="trigger",
+            valueSchema=integer_schema(default=0),
+            access=F8StateAccess.rw,
+            uiControl="  button  ",
+        ),
+        global_hotkey="Ctrl+Alt+P",
+    )
+
+    assert dialog._global_hotkey.isEnabled() is True
+    assert dialog.global_hotkey() == "Ctrl+Alt+P"
+
+
 def test_x11_backend_registers_and_unregisters_modifier_variants() -> None:
     display = _FakeDisplay()
     backend = X11GlobalHotkeyBackend(
@@ -313,6 +331,24 @@ def test_controller_discovers_valid_button_bindings_and_triggers_increment() -> 
     assert valid_node.set_calls == [("trigger", 1, False)]
     controller.close()
     assert backend.closed is True
+
+
+def test_controller_discovers_button_bindings_from_canonical_ui_control_text() -> None:
+    _ensure_app()
+    valid_field = F8StateSpec(
+        name="trigger",
+        valueSchema=integer_schema(default=0),
+        access=F8StateAccess.rw,
+        uiControl=" button ",
+    )
+    valid_node = _HotkeyNodeStub(node_id="nodeA", field=valid_field, hotkey="Ctrl+Alt+P", value=0)
+    backend = _BackendStub()
+    graph = _GraphStub([valid_node])
+    controller = ControlPanelGlobalHotkeyController(studio_graph=graph, backend=backend)
+
+    controller.refresh_bindings()
+
+    assert [binding.binding_id for binding in backend.registered] == ["nodeA:trigger"]
 
 
 def test_controller_increments_float_bindings_and_ignores_invalid_hotkeys() -> None:

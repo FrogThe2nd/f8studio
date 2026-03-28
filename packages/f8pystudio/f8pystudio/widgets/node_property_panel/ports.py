@@ -19,6 +19,7 @@ from qtpy import QtCore, QtGui, QtWidgets
 
 from ...ui_notifications import show_warning
 from ...global_hotkeys.parser import parse_global_hotkey
+from ...ui_control import parse_ui_control
 from ..schema_builder import SchemaBuilderDialog
 from ..spec_mutations import set_ports as _spec_set_ports
 from ..state_controls import schema_type_any as _schema_type
@@ -340,8 +341,7 @@ class _F8EditStateFieldDialog(QtWidgets.QDialog):
         if self._read_only:
             self._global_hotkey.setEnabled(False)
             return
-        ui_control = str(self._ui_control.text() or "").strip().lower()
-        enabled = ui_control == "button"
+        enabled = parse_ui_control(str(self._ui_control.text() or "")).control_name == "button"
         self._global_hotkey.setEnabled(enabled)
         if enabled:
             self._global_hotkey.setToolTip("Click and press a shortcut, for example Ctrl+Alt+P")
@@ -372,8 +372,7 @@ class _F8EditStateFieldDialog(QtWidgets.QDialog):
         )
 
     def global_hotkey(self) -> str:
-        ui_control = str(self._ui_control.text() or "").strip().lower()
-        if ui_control != "button":
+        if parse_ui_control(str(self._ui_control.text() or "")).control_name != "button":
             return ""
         return self._global_hotkey.value()
 
