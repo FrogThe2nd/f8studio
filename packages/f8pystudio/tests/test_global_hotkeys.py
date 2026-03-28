@@ -434,6 +434,25 @@ def test_state_field_dialog_ignores_hotkey_for_non_button_controls() -> None:
     assert dialog.global_hotkey() == ""
 
 
+def test_state_field_dialog_field_preserves_explicit_empty_ui_control() -> None:
+    _ensure_app()
+    dialog = npw._F8EditStateFieldDialog(
+        None,
+        title="State",
+        field=F8StateSpec(
+            name="label",
+            valueSchema=string_schema(default=""),
+            access=F8StateAccess.rw,
+            uiControl="dial",
+        ),
+        global_hotkey="",
+    )
+
+    dialog._ui_control.setText("")
+
+    assert str(dialog.field().uiControl or "") == ""
+
+
 def test_state_field_dialog_enables_hotkey_for_button_ui_control_with_whitespace() -> None:
     _ensure_app()
     dialog = npw._F8EditStateFieldDialog(

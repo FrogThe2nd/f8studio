@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
+import msgspec
 from f8pysdk import F8OperatorSpec, F8ServiceSpec, F8StateSpec
 
 
@@ -24,8 +25,13 @@ def _diff_state_ui(base: F8StateSpec, edited: F8StateSpec) -> dict[str, Any]:
     patch: dict[str, Any] = {}
     if edited.showOnNode != base.showOnNode:
         patch["showOnNode"] = edited.showOnNode
-    if edited.uiControl != base.uiControl:
-        patch["uiControl"] = edited.uiControl
+    base_ui_control = str(base.uiControl or "").strip()
+    edited_ui_control = str(edited.uiControl or "").strip()
+    if edited_ui_control != base_ui_control:
+        if edited_ui_control:
+            patch["uiControl"] = edited_ui_control
+        else:
+            patch["uiControl"] = msgspec.UNSET
     if edited.label != base.label:
         patch["label"] = edited.label
     if edited.description != base.description:
@@ -48,6 +54,7 @@ def set_state_field_ui_override(node: _UiOverrideNode, *, field_name: str, base:
     state_over = ui.get("stateFields")
     if not isinstance(state_over, dict):
         state_over = {}
+    patch = {key: value for key, value in patch.items() if value is not msgspec.UNSET}
     if patch:
         state_over[name] = patch
     else:

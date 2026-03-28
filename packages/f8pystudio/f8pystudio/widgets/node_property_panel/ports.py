@@ -558,7 +558,7 @@ class _F8EditStateFieldDialog(QtWidgets.QDialog):
         show_on_node = bool(self._show_on_node.isChecked())
         label = str(self._label.text() or "").strip() or msgspec.UNSET
         desc = str(self._desc.toPlainText() or "").strip() or msgspec.UNSET
-        ui_control = str(self._ui_control.text() or "").strip() or msgspec.UNSET
+        ui_control = str(self._ui_control.text() or "").strip()
         return F8StateSpec(
             name=name,
             label=label,

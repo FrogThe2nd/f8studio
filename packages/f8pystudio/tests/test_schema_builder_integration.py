@@ -118,6 +118,7 @@ class _FakeStateNode:
     def __init__(self, spec: F8ServiceSpec, *, missing_locked: bool) -> None:
         self.spec = spec
         self.model = SimpleNamespace(f8_sys={"missingLocked": bool(missing_locked), "missingType": "svc.test"})
+        self.id = "svc.test"
 
     def effective_state_fields(self) -> list[F8StateSpec]:
         return list(self.spec.stateFields or [])
@@ -168,12 +169,22 @@ def test_open_state_field_editor_allows_missing_locked_read_only_dialog(monkeypa
             title: str,
             field: Any,
             global_hotkey: str = "",
+            current_binding_id: str = "",
+            hotkey_conflict_lookup: Any = None,
+            hotkey_capture_started: Any = None,
+            hotkey_capture_finished: Any = None,
             ui_only: bool,
             lock_identity_fields: bool,
             read_only: bool,
         ):
             del title, field
-            _ = global_hotkey
+            _ = (
+                global_hotkey,
+                current_binding_id,
+                hotkey_conflict_lookup,
+                hotkey_capture_started,
+                hotkey_capture_finished,
+            )
             captured["ui_only"] = bool(ui_only)
             captured["lock_identity_fields"] = bool(lock_identity_fields)
             captured["read_only"] = bool(read_only)

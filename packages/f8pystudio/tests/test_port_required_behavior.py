@@ -207,12 +207,22 @@ def test_required_state_field_dialog_is_not_ui_only_when_editable(monkeypatch) -
             title: str,
             field: Any,
             global_hotkey: str = "",
+            current_binding_id: str = "",
+            hotkey_conflict_lookup: Any = None,
+            hotkey_capture_started: Any = None,
+            hotkey_capture_finished: Any = None,
             ui_only: bool,
             lock_identity_fields: bool,
             read_only: bool,
         ):
             del _parent, title, field
-            _ = global_hotkey
+            _ = (
+                global_hotkey,
+                current_binding_id,
+                hotkey_conflict_lookup,
+                hotkey_capture_started,
+                hotkey_capture_finished,
+            )
             captured["ui_only"] = bool(ui_only)
             captured["lock_identity_fields"] = bool(lock_identity_fields)
             captured["read_only"] = bool(read_only)
@@ -225,6 +235,7 @@ def test_required_state_field_dialog_is_not_ui_only_when_editable(monkeypatch) -
     class _FakeEditor:
         def __init__(self, spec: F8ServiceSpec) -> None:
             self._node = SimpleNamespace(
+                id="svc.test",
                 spec=spec,
                 model=SimpleNamespace(f8_sys={}),
                 effective_state_fields=lambda: list(spec.stateFields or []),
@@ -259,11 +270,14 @@ def test_add_state_field_defaults_to_optional_and_hidden(monkeypatch) -> None:
             title: str,
             field: Any,
             global_hotkey: str = "",
+            hotkey_conflict_lookup: Any = None,
+            hotkey_capture_started: Any = None,
+            hotkey_capture_finished: Any = None,
             ui_only: bool,
             read_only: bool = False,
         ):
             del _parent, title, ui_only, read_only
-            _ = global_hotkey
+            _ = (global_hotkey, hotkey_conflict_lookup, hotkey_capture_started, hotkey_capture_finished)
             captured["required"] = bool(field.required)
             captured["show_on_node"] = bool(field.showOnNode)
 
