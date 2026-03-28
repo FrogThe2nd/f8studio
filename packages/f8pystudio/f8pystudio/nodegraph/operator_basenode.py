@@ -620,5 +620,3 @@ class F8StudioOperatorNodeItem(F8StudioServiceNodeItem):
     def _ensure_inline_command_rows(self) -> None:  # type: ignore[override]
         _ensure_inline_command_rows_impl(self)
 
-    def _ensure_inline_command_widget(self) -> None:  # type: ignore[override]
-        self._ensure_inline_command_rows()

@@ -12,7 +12,7 @@ from f8pysdk import F8OperatorSpec, F8ServiceSpec
 from ..ui_notifications import show_info, show_warning
 from ..variants.variant_compose import build_variant_record_from_node
 from ..variants.variant_ids import build_variant_node_type
-from ..variants.variant_models import F8NodeVariantRecord
+from f8pysdk import F8VariantRecord
 from ..variants.variant_repository import (
     delete_variant,
     export_to_json,
@@ -96,7 +96,7 @@ class NodeVariantManagerDialog(QtWidgets.QDialog):
         self._base_node_type = str(base_node_type or "").strip()
         self._base_node_name = str(base_node_name or "").strip() or self._base_node_type
         self._graph = node_graph
-        self._variants: list[F8NodeVariantRecord] = []
+        self._variants: list[F8VariantRecord] = []
         self._variants_changed_unsubscribe: Callable[[], None] | None = subscribe_variants_changed(
             self._on_variants_changed
         )
@@ -180,7 +180,7 @@ class NodeVariantManagerDialog(QtWidgets.QDialog):
             self._list.addItem(item)
         self._on_selection_changed()
 
-    def _selected_variant(self) -> F8NodeVariantRecord | None:
+    def _selected_variant(self) -> F8VariantRecord | None:
         item = self._list.currentItem()
         if item is None:
             return None
@@ -266,9 +266,9 @@ class NodeVariantManagerDialog(QtWidgets.QDialog):
         payload["name"] = name
         payload["description"] = description
         payload["tags"] = tags
-        payload["updatedAt"] = F8NodeVariantRecord.now_iso()
+        payload["updatedAt"] = F8VariantRecord.now_iso()
         try:
-            upsert_variant(validate_as(F8NodeVariantRecord, payload))
+            upsert_variant(validate_as(F8VariantRecord, payload))
         except ValueError as exc:
             show_warning(self, "Invalid name", str(exc))
             return

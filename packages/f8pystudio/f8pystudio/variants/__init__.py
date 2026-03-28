@@ -6,8 +6,6 @@ from .variant_ids import (
     parse_variant_node_type,
 )
 from .variant_models import (
-    F8NodeVariantLibraryFile,
-    F8NodeVariantRecord,
     F8VariantKind,
     F8VariantLibrary,
     F8VariantRecord,
@@ -30,8 +28,6 @@ from .variant_repository import (
 )
 
 __all__ = [
-    "F8NodeVariantLibraryFile",
-    "F8NodeVariantRecord",
     "F8VariantKind",
     "F8VariantRef",
     "F8VariantRecord",

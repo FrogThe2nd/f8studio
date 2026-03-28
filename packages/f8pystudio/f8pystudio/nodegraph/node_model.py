@@ -277,9 +277,5 @@ class F8StudioNodeModel(NodeModel):
             self.f8_sys = {}
         if value is None:
             self.f8_sys.pop("variantRef", None)
-            self.f8_sys.pop("variantId", None)
-            self.f8_sys.pop("variantName", None)
             return
         self.f8_sys["variantRef"] = variant_ref_to_json(value)
-        self.f8_sys.pop("variantId", None)
-        self.f8_sys.pop("variantName", None)

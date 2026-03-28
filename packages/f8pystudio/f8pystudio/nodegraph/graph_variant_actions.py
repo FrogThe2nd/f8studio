@@ -7,14 +7,13 @@ from typing import Any
 from qtpy import QtWidgets
 from NodeGraphQt import BaseNode
 
-from f8pysdk import F8OperatorSpec, F8ServiceSpec, F8StateAccess
+from f8pysdk import F8OperatorSpec, F8ServiceSpec, F8StateAccess, F8VariantRecord
 from f8pysdk.spec_metadata import coerce_spec_payload
 
 from ..ui_notifications import show_info, show_warning
 from ..variants.variant_compose import build_variant_record_from_node
 from ..variants.variant_metadata import variant_ref_from_record, variant_ref_to_json
 from ..variants.variant_ids import build_variant_node_type
-from ..variants.variant_models import F8NodeVariantRecord
 from ..variants.variant_repository import (
     is_variant_name_conflict,
     load_library,
@@ -151,7 +150,7 @@ class GraphVariantActionsMixin:
             self._variant_menu_node_types.add(node_type)
 
     @staticmethod
-    def _variant_record(variant_id: str) -> F8NodeVariantRecord | None:
+    def _variant_record(variant_id: str) -> F8VariantRecord | None:
         return variant_record(variant_id)
 
     @staticmethod
@@ -162,7 +161,7 @@ class GraphVariantActionsMixin:
         self,
         *,
         node: BaseNode,
-        variant_record: F8NodeVariantRecord,
+        variant_record: F8VariantRecord,
         variant_spec_json: dict[str, Any],
     ) -> None:
         spec = self._coerce_variant_spec(variant_spec_json)
@@ -211,8 +210,6 @@ class GraphVariantActionsMixin:
             node.model.variantRef = variant_ref
         else:
             node.model.f8_sys["variantRef"] = variant_ref_to_json(variant_ref)
-            node.model.f8_sys.pop("variantId", None)
-            node.model.f8_sys.pop("variantName", None)
 
     def create_variant_node(
         self,

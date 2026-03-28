@@ -7,7 +7,8 @@ from f8pysdk.generated import F8OperatorSchemaVersion, F8OperatorSpec, F8StateAc
 from f8pysdk.schema_helpers import string_schema
 
 from f8pystudio.nodegraph.node_graph import F8StudioGraph
-from f8pystudio.variants.variant_models import F8NodeVariantRecord, F8VariantKind
+from f8pystudio.variants.variant_models import F8VariantKind
+from f8pysdk import F8VariantRecord
 
 
 class _NodeModelStub:
@@ -73,7 +74,7 @@ def test_apply_variant_to_node_uses_variant_state_defaults_for_writable_fields()
     ), mode="json")
     node = _NodeStub(base_spec)
     graph = F8StudioGraph.__new__(F8StudioGraph)
-    record = F8NodeVariantRecord(
+    record = F8VariantRecord(
         variantId="v_123",
         kind=F8VariantKind.operator,
         baseNodeType="f8.pyengine.f8.python_script",
@@ -83,8 +84,8 @@ def test_apply_variant_to_node_uses_variant_state_defaults_for_writable_fields()
         description="",
         tags=[],
         spec=variant_spec_json,
-        createdAt=F8NodeVariantRecord.now_iso(),
-        updatedAt=F8NodeVariantRecord.now_iso(),
+        createdAt=F8VariantRecord.now_iso(),
+        updatedAt=F8VariantRecord.now_iso(),
     )
 
     graph._apply_variant_to_node(

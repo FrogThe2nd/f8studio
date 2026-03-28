@@ -6,8 +6,9 @@ import logging
 from pathlib import Path
 from typing import Literal
 
+from f8pysdk import F8VariantLibrary, F8VariantRecord
+
 from .variant_events import emit_variants_changed
-from .variant_models import F8NodeVariantLibraryFile, F8NodeVariantRecord
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +22,7 @@ def normalize_variant_name(name: str) -> str:
 
 
 def _records_name_conflict(
-    records: list[F8NodeVariantRecord],
+    records: list[F8VariantRecord],
     *,
     base_node_type: str,
     name: str,
@@ -57,7 +58,7 @@ def ensure_unique_variant_name(
     desired_name: str,
     *,
     exclude_variant_id: str | None = None,
-    existing_records: list[F8NodeVariantRecord] | None = None,
+    existing_records: list[F8VariantRecord] | None = None,
 ) -> str:
     base_name = normalize_variant_name(desired_name) or "Variant"
     records = list(existing_records) if existing_records is not None else list(load_library().variants)
@@ -83,19 +84,19 @@ def ensure_unique_variant_name(
         suffix += 1
 
 
-def load_library() -> F8NodeVariantLibraryFile:
+def load_library() -> F8VariantLibrary:
     path = variants_file_path()
     if not path.is_file():
-        return F8NodeVariantLibraryFile()
+        return F8VariantLibrary()
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-        return validate_as(F8NodeVariantLibraryFile, data)
+        return validate_as(F8VariantLibrary, data)
     except Exception:
         logger.exception("Failed to load variants library from %s", path)
-        return F8NodeVariantLibraryFile()
+        return F8VariantLibrary()
 
 
-def save_library(file_model: F8NodeVariantLibraryFile) -> None:
+def save_library(file_model: F8VariantLibrary) -> None:
     path = variants_file_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
@@ -104,7 +105,7 @@ def save_library(file_model: F8NodeVariantLibraryFile) -> None:
     tmp.replace(path)
 
 
-def list_variants_for_base(base_node_type: str) -> list[F8NodeVariantRecord]:
+def list_variants_for_base(base_node_type: str) -> list[F8VariantRecord]:
     base = str(base_node_type or "").strip()
     if not base:
         return []
@@ -124,7 +125,7 @@ def variant_exists(variant_id: str) -> bool:
     return False
 
 
-def variant_record(variant_id: str) -> F8NodeVariantRecord | None:
+def variant_record(variant_id: str) -> F8VariantRecord | None:
     vid = str(variant_id or "").strip()
     if not vid:
         return None
@@ -135,7 +136,7 @@ def variant_record(variant_id: str) -> F8NodeVariantRecord | None:
     return None
 
 
-def upsert_variant(record: F8NodeVariantRecord) -> F8NodeVariantRecord:
+def upsert_variant(record: F8VariantRecord) -> F8VariantRecord:
     lib = load_library()
     if _records_name_conflict(
         list(lib.variants),
@@ -149,7 +150,7 @@ def upsert_variant(record: F8NodeVariantRecord) -> F8NodeVariantRecord:
         )
 
     found = False
-    out: list[F8NodeVariantRecord] = []
+    out: list[F8VariantRecord] = []
     for v in lib.variants:
         if str(v.variantId) == str(record.variantId):
             found = True
@@ -178,19 +179,19 @@ def delete_variant(variant_id: str) -> bool:
     return changed
 
 
-def import_from_json(path: str, mode: Literal["merge", "replace"] = "merge") -> F8NodeVariantLibraryFile:
+def import_from_json(path: str, mode: Literal["merge", "replace"] = "merge") -> F8VariantLibrary:
     in_path = Path(str(path or "").strip())
     if not in_path.is_file():
         raise FileNotFoundError(f"Variants file not found: {in_path}")
     raw = json.loads(in_path.read_text(encoding="utf-8"))
-    imported = validate_as(F8NodeVariantLibraryFile, raw)
+    imported = validate_as(F8VariantLibrary, raw)
 
     if mode == "replace":
-        current = F8NodeVariantLibraryFile(schemaVersion=imported.schemaVersion, variants=[])
+        current = F8VariantLibrary(schemaVersion=imported.schemaVersion, variants=[])
     else:
         current = load_library()
 
-    target_variants: list[F8NodeVariantRecord] = list(current.variants)
+    target_variants: list[F8VariantRecord] = list(current.variants)
     for variant in imported.variants:
         variant_id = str(variant.variantId or "").strip()
         target_variants = [item for item in target_variants if str(item.variantId or "").strip() != variant_id]

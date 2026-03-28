@@ -6,7 +6,8 @@ from pathlib import Path
 import pytest
 
 from f8pysdk.msgspec_codec import dump_json
-from f8pystudio.variants.variant_models import F8NodeVariantRecord, F8VariantKind
+from f8pystudio.variants.variant_models import F8VariantKind
+from f8pysdk import F8VariantRecord
 from f8pystudio.variants.variant_repository import (
     import_from_json,
     is_variant_name_conflict,
@@ -16,9 +17,9 @@ from f8pystudio.variants.variant_repository import (
 )
 
 
-def _make_variant_record(*, variant_id: str, base_node_type: str, name: str) -> F8NodeVariantRecord:
-    now = F8NodeVariantRecord.now_iso()
-    return F8NodeVariantRecord(
+def _make_variant_record(*, variant_id: str, base_node_type: str, name: str) -> F8VariantRecord:
+    now = F8VariantRecord.now_iso()
+    return F8VariantRecord(
         variantId=variant_id,
         kind=F8VariantKind.operator,
         baseNodeType=base_node_type,

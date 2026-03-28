@@ -53,7 +53,6 @@ from .items.embedded_resize_contract import (
 )
 from .items.inline_command_panel import (
     ensure_inline_command_rows as _ensure_inline_command_rows_impl,
-    ensure_inline_command_widget as _ensure_inline_command_widget_impl,
     refresh_inline_command_rows as _refresh_inline_command_rows_impl,
     invoke_command as _invoke_command_impl,
     prompt_command_args as _prompt_command_args_impl,
@@ -395,9 +394,6 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
 
     def _ensure_inline_command_rows(self) -> None:
         _ensure_inline_command_rows_impl(self)
-
-    def _ensure_inline_command_widget(self) -> None:
-        _ensure_inline_command_widget_impl(self)
 
     def _refresh_inline_command_rows(self) -> None:
         _refresh_inline_command_rows_impl(self)

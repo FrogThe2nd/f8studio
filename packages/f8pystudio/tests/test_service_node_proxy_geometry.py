@@ -226,7 +226,7 @@ def test_operator_command_rows_are_preserved_by_inline_row_builder() -> None:
         calls.append(True)
 
     item._ensure_inline_command_rows = _record_rows  # type: ignore[method-assign]
-    item._ensure_inline_command_widget()
+    item._ensure_inline_command_rows()
 
     assert calls == [True]
     assert "run" in item._command_inline_proxies

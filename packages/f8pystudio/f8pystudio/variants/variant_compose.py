@@ -6,9 +6,9 @@ from typing import Any
 
 import shortuuid
 
-from f8pysdk import F8OperatorSpec, F8ServiceSpec
+from f8pysdk import F8OperatorSpec, F8ServiceSpec, F8VariantRecord
 
-from .variant_models import F8NodeVariantRecord, F8VariantKind
+from .variant_models import F8VariantKind
 
 
 def _state_fields_by_name(spec_json: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -148,7 +148,7 @@ def build_variant_record_from_node(
     description: str,
     tags: list[str],
     variant_id: str | None = None,
-) -> F8NodeVariantRecord:
+) -> F8VariantRecord:
     spec_obj = node.spec
     if not isinstance(spec_obj, (F8OperatorSpec, F8ServiceSpec)):
         raise TypeError("Node spec must be F8OperatorSpec or F8ServiceSpec")
@@ -181,8 +181,8 @@ def build_variant_record_from_node(
     )
 
     is_operator = isinstance(spec_obj, F8OperatorSpec)
-    now = F8NodeVariantRecord.now_iso()
-    return F8NodeVariantRecord(
+    now = F8VariantRecord.now_iso()
+    return F8VariantRecord(
         variantId=str(variant_id or shortuuid.ShortUUID().random(12)),
         kind=F8VariantKind.operator if is_operator else F8VariantKind.service,
         baseNodeType=str(node.type_ or ""),

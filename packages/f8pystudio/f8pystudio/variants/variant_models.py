@@ -23,15 +23,9 @@ def _variant_ref(self: F8VariantRecord) -> F8VariantRef:
 F8VariantRecord.now_iso = staticmethod(_now_iso)  # type: ignore[attr-defined]
 F8VariantRecord.variant_ref = _variant_ref  # type: ignore[attr-defined]
 
-# Backward-compatible aliases during the cleanup.
-F8NodeVariantRecord = F8VariantRecord
-F8NodeVariantLibraryFile = F8VariantLibrary
-
 __all__ = [
     "F8VariantKind",
     "F8VariantRef",
     "F8VariantRecord",
     "F8VariantLibrary",
-    "F8NodeVariantRecord",
-    "F8NodeVariantLibraryFile",
 ]

@@ -358,14 +358,14 @@ def test_sync_from_spec_hides_command_ports_and_rows_when_show_on_node_turns_off
     view = node.view
     view._backend_node = lambda: node  # type: ignore[method-assign]
 
-    view._ensure_inline_command_widget()
+    view._ensure_inline_command_rows()
     assert "[C]stopTracking" in node.inputs()
     assert "stopTracking[C]" in node.outputs()
     assert "stopTracking" in view._command_inline_proxies
 
     node.spec.commands = [F8Command(name="stopTracking", showOnNode=False, params=[])]
     node.sync_from_spec()
-    view._ensure_inline_command_widget()
+    view._ensure_inline_command_rows()
 
     assert "[C]stopTracking" not in node.inputs()
     assert "stopTracking[C]" not in node.outputs()

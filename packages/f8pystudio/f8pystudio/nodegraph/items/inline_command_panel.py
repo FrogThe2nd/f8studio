@@ -751,10 +751,3 @@ def ensure_inline_command_rows(node_item: Any) -> None:
         node_item.sync_proxy_mode(force=True)
     except (AttributeError, RuntimeError, TypeError):
         pass
-
-
-def ensure_inline_command_widget(node_item: Any) -> None:
-    """
-    Backward-compatible alias for callers still using the old singular name.
-    """
-    ensure_inline_command_rows(node_item)

@@ -13,7 +13,6 @@ from f8pystudio.nodegraph.items.inline_command_panel import (
     _restore_selected_node_ids,
     _snapshot_selected_node_ids,
     ensure_inline_command_rows,
-    ensure_inline_command_widget,
     refresh_inline_command_rows,
     invoke_command,
 )
@@ -287,11 +286,11 @@ def test_ensure_inline_command_rows_logs_and_skips_failed_row_build(monkeypatch,
     assert "build command row failed" in caplog.text
 
 
-def test_ensure_inline_command_widget_alias_still_builds_rows() -> None:
+def test_ensure_inline_command_rows_builds_rows() -> None:
     _ensure_app()
     node_item = _FakeNodeItem(graph=_FakeGraph([_FakeNode("A")]))
 
-    ensure_inline_command_widget(node_item)
+    ensure_inline_command_rows(node_item)
 
     assert list(node_item._command_inline_proxies.keys()) == ["Run"]
 
