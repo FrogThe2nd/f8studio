@@ -16,11 +16,13 @@ from f8pysdk import (
     F8StateSpec,
 )
 from f8pysdk.command_state import command_input_state_field, command_output_state_field
+from f8pysdk.msgspec_codec import copy_model
 from f8pysdk.schema_helpers import any_schema, number_schema
 
 from f8pystudio.nodegraph.operator_basenode import F8StudioOperatorBaseNode
 from f8pystudio.nodegraph.service_basenode import F8StudioServiceBaseNode
 from f8pystudio.nodegraph.runtime_compiler import compile_global_runtime_graph
+from f8pystudio.operators.patch_hub import PatchHubRuntimeNode
 from f8pystudio.nodegraph.service_spec_sync import build_command_port
 
 
@@ -147,6 +149,25 @@ class _FakeOperatorNode:
         port = _FakePort(name, self)
         self._outputs.append(port)
         return port
+
+
+def _patch_hub_spec(*, data_terminals: list[str] | None = None, state_terminals: list[str] | None = None) -> F8OperatorSpec:
+    data_ports = [
+        F8DataPortSpec(name=name, valueSchema=any_schema(), required=False, showOnNode=True)
+        for name in list(data_terminals or [])
+    ]
+    state_fields = [
+        F8StateSpec(name=name, valueSchema=any_schema(), access=F8StateAccess.rw, required=False, showOnNode=True)
+        for name in list(state_terminals or [])
+    ]
+    return copy_model(
+        PatchHubRuntimeNode.SPEC,
+        update={
+            "dataInPorts": data_ports,
+            "dataOutPorts": [copy_model(port, update={}) for port in data_ports],
+            "stateFields": state_fields,
+        },
+    )
 
 
 def test_build_command_port_adds_in_and_out_ports() -> None:
@@ -278,6 +299,225 @@ def test_runtime_compiler_maps_operator_command_ports_to_hidden_state_edges() ->
     assert edge.kind == F8EdgeKindEnum.state
     assert str(edge.fromPort) == "value"
     assert str(edge.toPort) == command_input_state_field("Run Value")
+
+
+def test_runtime_compiler_lowers_patch_hub_data_fanout() -> None:
+    source = _FakeOperatorNode(
+        id="op_source",
+        svcId="svc_alpha",
+        spec=F8OperatorSpec(
+            serviceClass="f8.test.service",
+            operatorClass="f8.test.source",
+            label="Source",
+            dataOutPorts=[F8DataPortSpec(name="out", valueSchema=any_schema(), required=False)],
+        ),
+    )
+    hub = _FakeOperatorNode(
+        id="op_hub",
+        svcId="svc_alpha",
+        spec=_patch_hub_spec(data_terminals=["feed"]),
+    )
+    sink_a = _FakeOperatorNode(
+        id="op_sink_a",
+        svcId="svc_alpha",
+        spec=F8OperatorSpec(
+            serviceClass="f8.test.service",
+            operatorClass="f8.test.sink",
+            label="Sink A",
+            dataInPorts=[F8DataPortSpec(name="in", valueSchema=any_schema(), required=False)],
+        ),
+    )
+    sink_b = _FakeOperatorNode(
+        id="op_sink_b",
+        svcId="svc_alpha",
+        spec=F8OperatorSpec(
+            serviceClass="f8.test.service",
+            operatorClass="f8.test.sink",
+            label="Sink B",
+            dataInPorts=[F8DataPortSpec(name="in", valueSchema=any_schema(), required=False)],
+        ),
+    )
+
+    source.add_output_port("out[D]").connect_to(hub.add_input_port("[D]feed"))
+    hub.add_output_port("feed[D]").connect_to(sink_a.add_input_port("[D]in"))
+    hub.add_output_port("feed[D]").connect_to(sink_b.add_input_port("[D]in"))
+
+    graph = compile_global_runtime_graph(services=[], operators=[source, hub, sink_a, sink_b], service_nodes=[])
+
+    assert "op_hub" not in {str(node.nodeId) for node in list(graph.nodes or [])}
+    lowered_edges = [edge for edge in list(graph.edges or []) if edge.kind == F8EdgeKindEnum.data]
+    assert len(lowered_edges) == 2
+    assert {
+        (str(edge.fromOperatorId or ""), str(edge.fromPort or ""), str(edge.toOperatorId or ""), str(edge.toPort or ""))
+        for edge in lowered_edges
+    } == {
+        ("op_source", "out", "op_sink_a", "in"),
+        ("op_source", "out", "op_sink_b", "in"),
+    }
+
+
+def test_runtime_compiler_lowers_patch_hub_state_to_command_input() -> None:
+    source = _FakeOperatorNode(
+        id="op_source",
+        svcId="svc_alpha",
+        spec=F8OperatorSpec(
+            serviceClass="f8.test.service",
+            operatorClass="f8.test.source",
+            label="Source",
+            stateFields=[F8StateSpec(name="value", valueSchema=number_schema(), access=F8StateAccess.rw, showOnNode=True)],
+        ),
+    )
+    hub = _FakeOperatorNode(
+        id="op_hub",
+        svcId="svc_alpha",
+        spec=_patch_hub_spec(state_terminals=["cmd"]),
+    )
+    service = _FakeServiceNode(
+        id="svc_target",
+        spec=F8ServiceSpec(
+            serviceClass="f8.test.target",
+            label="Target",
+            commands=[F8Command(name="Run Value", showOnNode=True, params=[])],
+        ),
+    )
+
+    source.add_output_port("value[S]").connect_to(hub.add_input_port("[S]cmd"))
+    hub.add_output_port("cmd[S]").connect_to(service.add_input_port("[C]Run Value"))
+
+    graph = compile_global_runtime_graph(services=[], operators=[source, hub], service_nodes=[service])
+
+    assert "op_hub" not in {str(node.nodeId) for node in list(graph.nodes or [])}
+    lowered_edges = [edge for edge in list(graph.edges or []) if edge.kind == F8EdgeKindEnum.state]
+    assert len(lowered_edges) == 1
+    edge = lowered_edges[0]
+    assert str(edge.fromOperatorId or "") == "op_source"
+    assert str(edge.fromPort or "") == "value"
+    assert str(edge.toOperatorId or "") == "svc_target"
+    assert str(edge.toPort or "") == command_input_state_field("Run Value")
+
+
+def test_runtime_compiler_lowers_nested_patch_hubs() -> None:
+    source = _FakeOperatorNode(
+        id="op_source",
+        svcId="svc_alpha",
+        spec=F8OperatorSpec(
+            serviceClass="f8.test.service",
+            operatorClass="f8.test.source",
+            label="Source",
+            dataOutPorts=[F8DataPortSpec(name="out", valueSchema=any_schema(), required=False)],
+        ),
+    )
+    hub_a = _FakeOperatorNode(id="op_hub_a", svcId="svc_alpha", spec=_patch_hub_spec(data_terminals=["feed"]))
+    hub_b = _FakeOperatorNode(id="op_hub_b", svcId="svc_alpha", spec=_patch_hub_spec(data_terminals=["feed"]))
+    sink = _FakeOperatorNode(
+        id="op_sink",
+        svcId="svc_alpha",
+        spec=F8OperatorSpec(
+            serviceClass="f8.test.service",
+            operatorClass="f8.test.sink",
+            label="Sink",
+            dataInPorts=[F8DataPortSpec(name="in", valueSchema=any_schema(), required=False)],
+        ),
+    )
+
+    source.add_output_port("out[D]").connect_to(hub_a.add_input_port("[D]feed"))
+    hub_a.add_output_port("feed[D]").connect_to(hub_b.add_input_port("[D]feed"))
+    hub_b.add_output_port("feed[D]").connect_to(sink.add_input_port("[D]in"))
+
+    graph = compile_global_runtime_graph(services=[], operators=[source, hub_a, hub_b, sink], service_nodes=[])
+
+    lowered_edges = [edge for edge in list(graph.edges or []) if edge.kind == F8EdgeKindEnum.data]
+    assert len(lowered_edges) == 1
+    edge = lowered_edges[0]
+    assert str(edge.fromOperatorId or "") == "op_source"
+    assert str(edge.toOperatorId or "") == "op_sink"
+
+
+def test_runtime_compiler_rejects_patch_hub_multi_upstream() -> None:
+    source_a = _FakeOperatorNode(
+        id="op_source_a",
+        svcId="svc_alpha",
+        spec=F8OperatorSpec(
+            serviceClass="f8.test.service",
+            operatorClass="f8.test.source",
+            label="Source A",
+            dataOutPorts=[F8DataPortSpec(name="out", valueSchema=any_schema(), required=False)],
+        ),
+    )
+    source_b = _FakeOperatorNode(
+        id="op_source_b",
+        svcId="svc_alpha",
+        spec=F8OperatorSpec(
+            serviceClass="f8.test.service",
+            operatorClass="f8.test.source",
+            label="Source B",
+            dataOutPorts=[F8DataPortSpec(name="out", valueSchema=any_schema(), required=False)],
+        ),
+    )
+    hub = _FakeOperatorNode(id="op_hub", svcId="svc_alpha", spec=_patch_hub_spec(data_terminals=["feed"]))
+    sink = _FakeOperatorNode(
+        id="op_sink",
+        svcId="svc_alpha",
+        spec=F8OperatorSpec(
+            serviceClass="f8.test.service",
+            operatorClass="f8.test.sink",
+            label="Sink",
+            dataInPorts=[F8DataPortSpec(name="in", valueSchema=any_schema(), required=False)],
+        ),
+    )
+
+    source_a.add_output_port("out[D]").connect_to(hub.add_input_port("[D]feed"))
+    source_b.add_output_port("out[D]").connect_to(hub.add_input_port("[D]feed"))
+    hub.add_output_port("feed[D]").connect_to(sink.add_input_port("[D]in"))
+
+    try:
+        compile_global_runtime_graph(services=[], operators=[source_a, source_b, hub, sink], service_nodes=[])
+    except ValueError as exc:
+        assert "multiple upstreams" in str(exc)
+    else:
+        raise AssertionError("expected patch hub multi-upstream compile error")
+
+
+def test_runtime_compiler_rejects_patch_hub_cycles() -> None:
+    hub_a = _FakeOperatorNode(id="op_hub_a", svcId="svc_alpha", spec=_patch_hub_spec(data_terminals=["feed"]))
+    hub_b = _FakeOperatorNode(id="op_hub_b", svcId="svc_alpha", spec=_patch_hub_spec(data_terminals=["feed"]))
+
+    hub_a.add_output_port("feed[D]").connect_to(hub_b.add_input_port("[D]feed"))
+    hub_b.add_output_port("feed[D]").connect_to(hub_a.add_input_port("[D]feed"))
+
+    try:
+        compile_global_runtime_graph(services=[], operators=[hub_a, hub_b], service_nodes=[])
+    except ValueError as exc:
+        assert "cycle" in str(exc)
+    else:
+        raise AssertionError("expected patch hub cycle compile error")
+
+
+def test_runtime_compiler_warns_on_patch_hub_dangling_terminals() -> None:
+    source = _FakeOperatorNode(
+        id="op_source",
+        svcId="svc_alpha",
+        spec=F8OperatorSpec(
+            serviceClass="f8.test.service",
+            operatorClass="f8.test.source",
+            label="Source",
+            dataOutPorts=[F8DataPortSpec(name="out", valueSchema=any_schema(), required=False)],
+        ),
+    )
+    hub = _FakeOperatorNode(id="op_hub", svcId="svc_alpha", spec=_patch_hub_spec(data_terminals=["feed"]))
+
+    source.add_output_port("out[D]").connect_to(hub.add_input_port("[D]feed"))
+
+    warnings: list[str] = []
+    graph = compile_global_runtime_graph(
+        services=[],
+        operators=[source, hub],
+        service_nodes=[],
+        compile_warnings=warnings,
+    )
+
+    assert not list(graph.edges or [])
+    assert any("no downstream consumers" in warning for warning in warnings)
 
 
 def _ensure_app() -> QtWidgets.QApplication:

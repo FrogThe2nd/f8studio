@@ -75,6 +75,13 @@ from .ports import _F8EditStateFieldDialog, _F8SpecPortEditor
 logger = logging.getLogger(__name__)
 
 
+def _should_show_commands_tab(spec: F8OperatorSpec | F8ServiceSpec) -> bool:
+    command_specs = list(spec.commands or [])
+    if command_specs:
+        return True
+    return _policy_can_add(spec, "commands")
+
+
 def _adopt_widget_parent(widget: QtWidgets.QWidget, parent: QtWidgets.QWidget) -> QtWidgets.QWidget:
     try:
         current_parent = widget.parentWidget()
@@ -814,8 +821,9 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
 
         # built-in spec editors (if node has F8 spec).
         if isinstance(spec, (F8OperatorSpec, F8ServiceSpec)):
-            cmd_editor = _F8SpecCommandEditor(self, node=node, on_apply=self._on_spec_applied)
-            self.__tab.addTab(cmd_editor, "Commands")
+            if _should_show_commands_tab(spec):
+                cmd_editor = _F8SpecCommandEditor(self, node=node, on_apply=self._on_spec_applied)
+                self.__tab.addTab(cmd_editor, "Commands")
             spec_ports = _F8SpecPortEditor(self, node=node, on_apply=self._on_spec_applied)
             self.__tab.addTab(spec_ports, "Port")
 

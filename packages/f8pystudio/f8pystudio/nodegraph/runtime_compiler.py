@@ -47,6 +47,7 @@ from f8pysdk.nats_naming import ensure_token
 
 from ..pystudio_node_registry import SERVICE_CLASS as STUDIO_SERVICE_CLASS
 from ..pystudio_node_registry import STUDIO_SERVICE_ID
+from ..operators.patch_hub import OPERATOR_CLASS as PATCH_HUB_OPERATOR_CLASS
 
 
 logger = logging.getLogger(__name__)
@@ -329,6 +330,168 @@ def _inject_studio_auto_pull_triggers(graph: F8RuntimeGraph) -> tuple[F8RuntimeG
     return patched, warnings
 
 
+def _is_patch_hub_runtime_node(node: F8RuntimeNode | None) -> bool:
+    if node is None:
+        return False
+    return str(node.operatorClass or "").strip() == PATCH_HUB_OPERATOR_CLASS
+
+
+def _patch_hub_terminal_key(*, hub_node_id: str, kind: F8EdgeKindEnum, terminal_name: str) -> tuple[str, str, str]:
+    return (str(hub_node_id), str(kind.value), str(terminal_name or "").strip())
+
+
+def _patch_hub_terminal_text(key: tuple[str, str, str]) -> str:
+    return f"{key[0]}.{key[1]}.{key[2]}"
+
+
+def _lower_patch_hubs(graph: F8RuntimeGraph) -> tuple[F8RuntimeGraph, list[str]]:
+    warnings: list[str] = []
+    nodes_by_id: dict[str, F8RuntimeNode] = {str(node.nodeId): node for node in list(graph.nodes or [])}
+    patch_hub_ids = {
+        str(node.nodeId)
+        for node in list(graph.nodes or [])
+        if _is_patch_hub_runtime_node(node)
+    }
+    if not patch_hub_ids:
+        return graph, warnings
+
+    kept_edges: list[F8Edge] = []
+    inbound_by_terminal: dict[tuple[str, str, str], list[F8Edge]] = {}
+    outbound_by_terminal: dict[tuple[str, str, str], list[F8Edge]] = {}
+
+    for edge in list(graph.edges or []):
+        from_node_id = str(edge.fromOperatorId or "").strip()
+        to_node_id = str(edge.toOperatorId or "").strip()
+        from_is_hub = from_node_id in patch_hub_ids
+        to_is_hub = to_node_id in patch_hub_ids
+
+        if not from_is_hub and not to_is_hub:
+            kept_edges.append(edge)
+            continue
+
+        if edge.kind not in (F8EdgeKindEnum.data, F8EdgeKindEnum.state):
+            raise ValueError(
+                "patch hub only supports data/state edges: "
+                f"{from_node_id or '$service'}.{str(edge.fromPort or '')} -> "
+                f"{to_node_id or '$service'}.{str(edge.toPort or '')}"
+            )
+
+        if from_is_hub:
+            outbound_key = _patch_hub_terminal_key(
+                hub_node_id=from_node_id,
+                kind=edge.kind,
+                terminal_name=str(edge.fromPort or ""),
+            )
+            outbound_by_terminal.setdefault(outbound_key, []).append(edge)
+        if to_is_hub:
+            inbound_key = _patch_hub_terminal_key(
+                hub_node_id=to_node_id,
+                kind=edge.kind,
+                terminal_name=str(edge.toPort or ""),
+            )
+            inbound_by_terminal.setdefault(inbound_key, []).append(edge)
+
+    for terminal_key, inbound_edges in list(inbound_by_terminal.items()):
+        if len(inbound_edges) <= 1:
+            continue
+        upstreams = ", ".join(
+            f"{str(edge.fromServiceId)}.{str(edge.fromOperatorId or '$service')}.{str(edge.fromPort or '')}"
+            for edge in inbound_edges
+        )
+        raise ValueError(
+            f"patch hub terminal has multiple upstreams: {_patch_hub_terminal_text(terminal_key)} <- {upstreams}"
+        )
+
+    def resolve_source_terminal(
+        terminal_key: tuple[str, str, str],
+        *,
+        stack: tuple[tuple[str, str, str], ...],
+    ) -> F8Edge | None:
+        if terminal_key in stack:
+            cycle = " -> ".join(_patch_hub_terminal_text(key) for key in (*stack, terminal_key))
+            raise ValueError(f"patch hub cycle detected: {cycle}")
+
+        inbound_edges = inbound_by_terminal.get(terminal_key)
+        if not inbound_edges:
+            return None
+
+        inbound_edge = inbound_edges[0]
+        upstream_node_id = str(inbound_edge.fromOperatorId or "").strip()
+        if upstream_node_id in patch_hub_ids:
+            upstream_key = _patch_hub_terminal_key(
+                hub_node_id=upstream_node_id,
+                kind=inbound_edge.kind,
+                terminal_name=str(inbound_edge.fromPort or ""),
+            )
+            return resolve_source_terminal(upstream_key, stack=(*stack, terminal_key))
+        return inbound_edge
+
+    lowered_edges: list[F8Edge] = []
+    terminal_keys = set(inbound_by_terminal.keys()) | set(outbound_by_terminal.keys())
+    for terminal_key in terminal_keys:
+        inbound_edges = inbound_by_terminal.get(terminal_key) or []
+        outbound_edges = outbound_by_terminal.get(terminal_key) or []
+        if inbound_edges and not outbound_edges:
+            warnings.append(f"patch hub terminal has no downstream consumers: {_patch_hub_terminal_text(terminal_key)}")
+            continue
+        if outbound_edges and not inbound_edges:
+            warnings.append(f"patch hub terminal has no upstream source: {_patch_hub_terminal_text(terminal_key)}")
+            continue
+        if not inbound_edges or not outbound_edges:
+            continue
+
+        source_edge = resolve_source_terminal(terminal_key, stack=())
+        if source_edge is None:
+            warnings.append(f"patch hub terminal has no resolvable upstream source: {_patch_hub_terminal_text(terminal_key)}")
+            continue
+
+        for outbound_edge in outbound_edges:
+            target_node_id = str(outbound_edge.toOperatorId or "").strip()
+            if target_node_id in patch_hub_ids:
+                continue
+            lowered_edges.append(
+                F8Edge(
+                    edgeId=_stable_id(
+                        "patch_hub_edge",
+                        str(source_edge.kind.value),
+                        str(source_edge.fromServiceId),
+                        str(source_edge.fromOperatorId or "$service"),
+                        str(source_edge.fromPort or ""),
+                        str(outbound_edge.toServiceId),
+                        str(outbound_edge.toOperatorId or "$service"),
+                        str(outbound_edge.toPort or ""),
+                    ),
+                    fromServiceId=source_edge.fromServiceId,
+                    fromOperatorId=source_edge.fromOperatorId,
+                    fromPort=source_edge.fromPort,
+                    toServiceId=outbound_edge.toServiceId,
+                    toOperatorId=outbound_edge.toOperatorId,
+                    toPort=outbound_edge.toPort,
+                    kind=outbound_edge.kind,
+                    strategy=outbound_edge.strategy,
+                    timeoutMs=outbound_edge.timeoutMs,
+                    direction=msgspec.UNSET,
+                )
+            )
+
+    dedup_edges: dict[tuple[str, str, str, str, str, str, str], F8Edge] = {}
+    for edge in [*kept_edges, *lowered_edges]:
+        dedup_edges[
+            (
+                str(edge.kind.value),
+                str(edge.fromServiceId),
+                str(edge.fromOperatorId or ""),
+                str(edge.fromPort or ""),
+                str(edge.toServiceId),
+                str(edge.toOperatorId or ""),
+                str(edge.toPort or ""),
+            )
+        ] = edge
+
+    filtered_nodes = [node for node in list(graph.nodes or []) if str(node.nodeId) not in patch_hub_ids]
+    return copy_model(graph, update={"nodes": filtered_nodes, "edges": list(dedup_edges.values())}), warnings
+
+
 @dataclass(frozen=True)
 class CompiledRuntimeGraphs:
     global_graph: F8RuntimeGraph
@@ -543,6 +706,12 @@ def compile_global_runtime_graph(
         nodes=runtime_nodes,
         edges=edges,
     )
+    graph, patch_hub_warnings = _lower_patch_hubs(graph)
+    if patch_hub_warnings:
+        if compile_warnings is not None:
+            compile_warnings.extend(patch_hub_warnings)
+        for warning in patch_hub_warnings:
+            logger.warning("%s", warning)
     graph, warnings = _inject_studio_auto_pull_triggers(graph)
     if warnings:
         if compile_warnings is not None:

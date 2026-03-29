@@ -21,6 +21,8 @@ from ...ui_notifications import show_warning
 from ...ui_icons import StudioIcon, icon_for
 from ...global_hotkeys.parser import parse_global_hotkey
 from ...ui_control import parse_ui_control
+from ...operators.patch_hub import OPERATOR_CLASS as PATCH_HUB_OPERATOR_CLASS
+from ...operators.patch_hub import normalize_patch_hub_spec
 from ..schema_builder import SchemaBuilderDialog
 from ..spec_mutations import set_ports as _spec_set_ports
 from ..state_controls import schema_type_any as _schema_type
@@ -623,16 +625,27 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
         self._data_out_can_delete = False
         self._data_in_can_edit_existing = False
         self._data_out_can_edit_existing = False
+        self._state_can_add = False
+        self._state_can_delete = False
+        self._state_can_edit_existing = False
+        self._patch_data_can_add = False
+        self._patch_data_can_delete = False
+        self._patch_data_can_edit_existing = False
+        self._is_patch_hub = False
 
         self._sec_exec_in = _F8SpecListSection(self, title="Exec In")
         self._sec_exec_out = _F8SpecListSection(self, title="Exec Out")
         self._sec_data_in = _F8SpecListSection(self, title="Data In")
         self._sec_data_out = _F8SpecListSection(self, title="Data Out")
+        self._sec_patch_data = _F8SpecListSection(self, title="Data Terminals")
+        self._sec_patch_state = _F8SpecListSection(self, title="State Terminals")
 
         self._sec_exec_in.add_clicked.connect(lambda: self._add_exec(True))
         self._sec_exec_out.add_clicked.connect(lambda: self._add_exec(False))
         self._sec_data_in.add_clicked.connect(lambda: self._add_data(True))
         self._sec_data_out.add_clicked.connect(lambda: self._add_data(False))
+        self._sec_patch_data.add_clicked.connect(self._add_patch_data)
+        self._sec_patch_state.add_clicked.connect(self._add_patch_state)
 
         content = QtWidgets.QWidget(self)
         v = QtWidgets.QVBoxLayout(content)
@@ -642,6 +655,8 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
         v.addWidget(self._sec_exec_out)
         v.addWidget(self._sec_data_in)
         v.addWidget(self._sec_data_out)
+        v.addWidget(self._sec_patch_data)
+        v.addWidget(self._sec_patch_state)
         v.addStretch(1)
 
         layout = QtWidgets.QVBoxLayout(self)
@@ -656,14 +671,25 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
             spec = self._node.spec
         except Exception:
             spec = None
+        self._is_patch_hub = bool(
+            isinstance(spec, F8OperatorSpec) and str(spec.operatorClass or "").strip() == PATCH_HUB_OPERATOR_CLASS
+        )
+        if self._is_patch_hub and isinstance(spec, F8OperatorSpec):
+            spec = normalize_patch_hub_spec(spec)
         is_operator = isinstance(spec, F8OperatorSpec)
-        self._sec_exec_in.setVisible(is_operator)
-        self._sec_exec_out.setVisible(is_operator)
+        self._sec_exec_in.setVisible(bool(is_operator and not self._is_patch_hub))
+        self._sec_exec_out.setVisible(bool(is_operator and not self._is_patch_hub))
+        self._sec_data_in.setVisible(not self._is_patch_hub)
+        self._sec_data_out.setVisible(not self._is_patch_hub)
+        self._sec_patch_data.setVisible(self._is_patch_hub)
+        self._sec_patch_state.setVisible(self._is_patch_hub)
 
         self._sec_exec_in.clear()
         self._sec_exec_out.clear()
         self._sec_data_in.clear()
         self._sec_data_out.clear()
+        self._sec_patch_data.clear()
+        self._sec_patch_state.clear()
 
         if spec is None:
             return
@@ -674,6 +700,12 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
         self._data_out_can_delete = _policy_can_delete(spec, "dataOutPorts")
         self._data_in_can_edit_existing = _policy_can_edit_existing(spec, "dataInPorts")
         self._data_out_can_edit_existing = _policy_can_edit_existing(spec, "dataOutPorts")
+        self._state_can_add = _policy_can_add(spec, "stateFields")
+        self._state_can_delete = _policy_can_delete(spec, "stateFields")
+        self._state_can_edit_existing = _policy_can_edit_existing(spec, "stateFields")
+        self._patch_data_can_add = bool(self._data_in_can_add and self._data_out_can_add)
+        self._patch_data_can_delete = bool(self._data_in_can_delete and self._data_out_can_delete)
+        self._patch_data_can_edit_existing = bool(self._data_in_can_edit_existing and self._data_out_can_edit_existing)
         if is_operator:
             self._exec_in_can_add = _policy_can_add(spec, "execInPorts")
             self._exec_out_can_add = _policy_can_add(spec, "execOutPorts")
@@ -689,6 +721,8 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
         self._sec_exec_out.set_add_visible(bool(self._exec_out_can_add) and not self._missing_locked)
         self._sec_data_in.set_add_visible(bool(self._data_in_can_add) and not self._missing_locked)
         self._sec_data_out.set_add_visible(bool(self._data_out_can_add) and not self._missing_locked)
+        self._sec_patch_data.set_add_visible(bool(self._patch_data_can_add) and not self._missing_locked)
+        self._sec_patch_state.set_add_visible(bool(self._state_can_add) and not self._missing_locked)
 
         if is_operator:
             for name in list(spec.execInPorts or []):
@@ -704,6 +738,13 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
             data_out_ports = list(spec.dataOutPorts or [])
         except Exception:
             data_out_ports = []
+
+        if self._is_patch_hub:
+            for p in data_in_ports:
+                self._sec_patch_data.add_row(self._make_patch_data_row(p))
+            for field in list(spec.stateFields or []):
+                self._sec_patch_state.add_row(self._make_patch_state_row(field))
+            return
 
         for p in data_in_ports:
             self._sec_data_in.add_row(self._make_data_row(p, is_in=True))
@@ -746,6 +787,36 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
         row.set_show_on_node(bool(show))
         return row
 
+    def _make_patch_data_row(self, port: F8DataPortSpec) -> _F8SpecNameRow:
+        row = _F8SpecNameRow(self, name=str(port.name or ""), placeholder="terminal name")
+        row.setProperty("_port", port)
+        row.setProperty("_port_dir", "patch_data")
+        row.edit_clicked.connect(lambda: self._edit_patch_data(row))
+        row.delete_clicked.connect(lambda: self._delete_row(row))
+        row.name_committed.connect(lambda value: self._rename_patch_data(row, value))
+        row.setToolTip(self._data_tooltip(port))
+        row.set_row_editable(
+            allow_rename=bool(not self._missing_locked),
+            allow_delete=bool(self._patch_data_can_delete and not self._missing_locked),
+            allow_edit=bool(not self._missing_locked),
+        )
+        return row
+
+    def _make_patch_state_row(self, field: F8StateSpec) -> _F8SpecNameRow:
+        row = _F8SpecNameRow(self, name=str(field.name or ""), placeholder="terminal name")
+        row.setProperty("_field", field)
+        row.setProperty("_port_dir", "patch_state")
+        row.edit_clicked.connect(lambda: self._edit_patch_state(row))
+        row.delete_clicked.connect(lambda: self._delete_row(row))
+        row.name_committed.connect(lambda value: self._rename_patch_state(row, value))
+        row.setToolTip(self._state_terminal_tooltip(field))
+        row.set_row_editable(
+            allow_rename=bool(not self._missing_locked),
+            allow_delete=bool(self._state_can_delete and not self._missing_locked and not bool(field.required)),
+            allow_edit=bool(not self._missing_locked),
+        )
+        return row
+
     def _toggle_data_show_on_node(self, row: _F8SpecNameRow, show_on_node: bool) -> None:
         if self._missing_locked:
             return
@@ -766,6 +837,13 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
         vs = port.valueSchema
         t = _schema_type(vs)
         parts = [f"required={req}", f"type={t or 'unknown'}"]
+        if desc:
+            parts.append(desc)
+        return "\n".join(parts)
+
+    def _state_terminal_tooltip(self, field: F8StateSpec) -> str:
+        desc = str(field.description or "").strip()
+        parts = [f"type={_schema_type(field.valueSchema) or 'unknown'}"]
         if desc:
             parts.append(desc)
         return "\n".join(parts)
@@ -803,7 +881,7 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
             title="Edit data port",
             port=port,
             ui_only=ui_only,
-            lock_identity_fields=bool(can_edit_existing),
+            lock_identity_fields=False,
             read_only=read_only,
         )
         if dlg.exec_() != QtWidgets.QDialog.Accepted:
@@ -817,6 +895,133 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
         row.setProperty("_port", new_port)
         row.name_edit.setText(str(new_port.name or ""))
         row.setToolTip(self._data_tooltip(new_port))
+        self._commit()
+
+    def _edit_patch_data(self, row: _F8SpecNameRow) -> None:
+        can_edit_existing = bool(self._patch_data_can_edit_existing)
+        ui_only = bool(not can_edit_existing)
+        read_only = bool(self._missing_locked)
+        port = row.property("_port")
+        if not isinstance(port, F8DataPortSpec):
+            port = F8DataPortSpec(
+                name=str(row.name_edit.text() or "").strip(),
+                required=False,
+                showOnNode=True,
+                valueSchema=_schema_from_json_obj({"type": "any"}),
+            )
+        dialog_type = _package_attr("_F8EditDataPortDialog", _F8EditDataPortDialog)
+        dlg = dialog_type(
+            self,
+            title="Edit data terminal",
+            port=port,
+            ui_only=ui_only,
+            lock_identity_fields=False,
+            read_only=read_only,
+        )
+        if dlg.exec_() != QtWidgets.QDialog.Accepted:
+            return
+        new_port = dlg.port()
+        row.setProperty(
+            "_port",
+            copy_model(new_port, update={"required": False, "showOnNode": True}),
+        )
+        row.name_edit.setText(str(new_port.name or ""))
+        row.setToolTip(self._data_tooltip(new_port))
+        self._commit()
+
+    def _edit_patch_state(self, row: _F8SpecNameRow) -> None:
+        field = row.property("_field")
+        if not isinstance(field, F8StateSpec):
+            field = F8StateSpec(
+                name=str(row.name_edit.text() or "").strip(),
+                valueSchema=_schema_from_json_obj({"type": "any"}),
+                access=F8StateAccess.rw,
+                required=False,
+                showOnNode=True,
+            )
+        dialog_type = _package_attr("_F8EditStateFieldDialog", _F8EditStateFieldDialog)
+        dlg = dialog_type(
+            self,
+            title="Edit state terminal",
+            field=field,
+            ui_only=False,
+            read_only=bool(self._missing_locked),
+        )
+        for widget in (dlg._access, dlg._required, dlg._show_on_node, dlg._ui_control, dlg._global_hotkey):  # type: ignore[attr-defined]
+            widget.setEnabled(False)
+        dlg._access.setCurrentText(F8StateAccess.rw.value)  # type: ignore[attr-defined]
+        dlg._required.setChecked(False)  # type: ignore[attr-defined]
+        dlg._show_on_node.setChecked(True)  # type: ignore[attr-defined]
+        dlg._ui_control.setText("")  # type: ignore[attr-defined]
+        if dlg.exec_() != QtWidgets.QDialog.Accepted:
+            return
+        edited = dlg.field()
+        normalized = copy_model(
+            edited,
+            update={
+                "access": F8StateAccess.rw,
+                "required": False,
+                "showOnNode": True,
+                "uiControl": msgspec.UNSET,
+                "valueSchema": edited.valueSchema or _schema_from_json_obj({"type": "any"}),
+            },
+        )
+        row.setProperty("_field", normalized)
+        row.name_edit.setText(str(normalized.name or ""))
+        row.setToolTip(self._state_terminal_tooltip(normalized))
+        self._commit()
+
+    def _rename_patch_data(self, row: _F8SpecNameRow, name: str) -> None:
+        if self._missing_locked:
+            return
+        clean_name = str(name or "").strip()
+        port = row.property("_port")
+        if not isinstance(port, F8DataPortSpec):
+            port = F8DataPortSpec(
+                name=clean_name,
+                required=False,
+                showOnNode=True,
+                valueSchema=_schema_from_json_obj({"type": "any"}),
+            )
+        else:
+            port = copy_model(
+                port,
+                update={
+                    "name": clean_name,
+                    "required": False,
+                    "showOnNode": True,
+                },
+            )
+        row.setProperty("_port", port)
+        row.setToolTip(self._data_tooltip(port))
+        self._commit()
+
+    def _rename_patch_state(self, row: _F8SpecNameRow, name: str) -> None:
+        if self._missing_locked:
+            return
+        clean_name = str(name or "").strip()
+        field = row.property("_field")
+        if not isinstance(field, F8StateSpec):
+            field = F8StateSpec(
+                name=clean_name,
+                valueSchema=_schema_from_json_obj({"type": "any"}),
+                access=F8StateAccess.rw,
+                required=False,
+                showOnNode=True,
+            )
+        else:
+            field = copy_model(
+                field,
+                update={
+                    "name": clean_name,
+                    "access": F8StateAccess.rw,
+                    "required": False,
+                    "showOnNode": True,
+                    "uiControl": msgspec.UNSET,
+                },
+            )
+        row.setProperty("_field", field)
+        row.setToolTip(self._state_terminal_tooltip(field))
         self._commit()
 
     def _apply_data_port_ui_override(self, name: str, show_on_node: bool, *, is_in: bool) -> None:
@@ -862,6 +1067,10 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
             return
         if dir_s == "data_out" and not self._data_out_can_delete:
             return
+        if dir_s == "patch_data" and not self._patch_data_can_delete:
+            return
+        if dir_s == "patch_state" and not self._state_can_delete:
+            return
         if (dir_s == "data_in" or dir_s == "data_out") and self._row_is_required_data_port(row):
             return
         if dir_s == "exec_in":
@@ -872,6 +1081,10 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
             self._sec_data_in.remove_row(row)
         elif dir_s == "data_out":
             self._sec_data_out.remove_row(row)
+        elif dir_s == "patch_data":
+            self._sec_patch_data.remove_row(row)
+        elif dir_s == "patch_state":
+            self._sec_patch_state.remove_row(row)
         else:
             try:
                 row.setVisible(False)
@@ -905,6 +1118,34 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
         (self._sec_data_in if is_in else self._sec_data_out).add_row(row)
         self._edit_data(row)
 
+    def _add_patch_data(self) -> None:
+        if self._missing_locked or not self._patch_data_can_add:
+            return
+        port = F8DataPortSpec(
+            name="",
+            required=False,
+            showOnNode=True,
+            description=msgspec.UNSET,
+            valueSchema=_schema_from_json_obj({"type": "any"}),
+        )
+        row = self._make_patch_data_row(port)
+        self._sec_patch_data.add_row(row)
+        self._edit_patch_data(row)
+
+    def _add_patch_state(self) -> None:
+        if self._missing_locked or not self._state_can_add:
+            return
+        field = F8StateSpec(
+            name="",
+            valueSchema=_schema_from_json_obj({"type": "any"}),
+            access=F8StateAccess.rw,
+            required=False,
+            showOnNode=True,
+        )
+        row = self._make_patch_state_row(field)
+        self._sec_patch_state.add_row(row)
+        self._edit_patch_state(row)
+
     def _commit(self) -> None:
         if self._missing_locked:
             return
@@ -912,30 +1153,72 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
             return
         spec = self._node.spec
 
-        exec_in: list[str] = []
-        exec_out: list[str] = []
-        if isinstance(spec, F8OperatorSpec):
-            for r in self._sec_exec_in.rows():
-                name = str(r.name_edit.text() or "").strip()
-                if name:
-                    exec_in.append(name)
-            for r in self._sec_exec_out.rows():
-                name = str(r.name_edit.text() or "").strip()
-                if name:
-                    exec_out.append(name)
+        if self._is_patch_hub and isinstance(spec, F8OperatorSpec):
+            data_terminals: list[F8DataPortSpec] = []
+            for row in self._sec_patch_data.rows():
+                port = row.property("_port")
+                if not isinstance(port, F8DataPortSpec):
+                    continue
+                if not str(port.name or "").strip():
+                    continue
+                data_terminals.append(copy_model(port, update={"required": False, "showOnNode": True}))
 
-        data_in: list[F8DataPortSpec] = []
-        data_out: list[F8DataPortSpec] = []
-        for r in self._sec_data_in.rows():
-            port = r.property("_port")
-            if isinstance(port, F8DataPortSpec) and str(port.name or "").strip():
-                data_in.append(port)
-        for r in self._sec_data_out.rows():
-            port = r.property("_port")
-            if isinstance(port, F8DataPortSpec) and str(port.name or "").strip():
-                data_out.append(port)
+            state_terminals: list[F8StateSpec] = []
+            for row in self._sec_patch_state.rows():
+                field = row.property("_field")
+                if not isinstance(field, F8StateSpec):
+                    continue
+                if not str(field.name or "").strip():
+                    continue
+                state_terminals.append(
+                    copy_model(
+                        field,
+                        update={
+                            "access": F8StateAccess.rw,
+                            "required": False,
+                            "showOnNode": True,
+                            "uiControl": msgspec.UNSET,
+                        },
+                    )
+                )
 
-        spec2 = _spec_set_ports(spec, data_in=data_in, data_out=data_out, exec_in=exec_in, exec_out=exec_out)
+            spec2 = normalize_patch_hub_spec(
+                copy_model(
+                    spec,
+                    update={
+                        "dataInPorts": data_terminals,
+                        "dataOutPorts": [copy_model(port, update={}) for port in data_terminals],
+                        "stateFields": state_terminals,
+                        "execInPorts": [],
+                        "execOutPorts": [],
+                    },
+                )
+            )
+        else:
+            exec_in: list[str] = []
+            exec_out: list[str] = []
+            if isinstance(spec, F8OperatorSpec):
+                for r in self._sec_exec_in.rows():
+                    name = str(r.name_edit.text() or "").strip()
+                    if name:
+                        exec_in.append(name)
+                for r in self._sec_exec_out.rows():
+                    name = str(r.name_edit.text() or "").strip()
+                    if name:
+                        exec_out.append(name)
+
+            data_in: list[F8DataPortSpec] = []
+            data_out: list[F8DataPortSpec] = []
+            for r in self._sec_data_in.rows():
+                port = r.property("_port")
+                if isinstance(port, F8DataPortSpec) and str(port.name or "").strip():
+                    data_in.append(port)
+            for r in self._sec_data_out.rows():
+                port = r.property("_port")
+                if isinstance(port, F8DataPortSpec) and str(port.name or "").strip():
+                    data_out.append(port)
+
+            spec2 = _spec_set_ports(spec, data_in=data_in, data_out=data_out, exec_in=exec_in, exec_out=exec_out)
         if spec2 is not spec:
             self._node.spec = spec2
 

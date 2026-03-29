@@ -17,6 +17,7 @@ from .viz_audio import VizAudioRenderNode
 from .viz_track import VizTrackRenderNode
 from .viz_three_d import VizThreeDRenderNode
 from .note import NoteRenderNode
+from .patch_hub import PatchHubRenderNode
 
 
 class RenderNodeRegistry:
@@ -44,6 +45,7 @@ class RenderNodeRegistry:
         self._renderers["viz_track"] = VizTrackRenderNode
         self._renderers["viz_three_d"] = VizThreeDRenderNode
         self._renderers["note_markdown"] = NoteRenderNode
+        self._renderers["patch_hub"] = PatchHubRenderNode
 
     def register(self, renderer_key: str, renderer: type[NodeObject]) -> None:
         if renderer_key in self._renderers:

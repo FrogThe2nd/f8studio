@@ -7,6 +7,7 @@ from .viz_three_d import VizThreeDRuntimeNode, register_operator as register_viz
 from .control_panel import ControlPanelRuntimeNode, register_operator as register_control_panel
 from .data_expr import DataExprRuntimeNode, register_operator as register_data_expr
 from .note import NoteRuntimeNode, register_operator as register_note
+from .patch_hub import PatchHubRuntimeNode, register_operator as register_patch_hub
 from .state_expr import StateExprRuntimeNode, register_operator as register_state_expr
 from .value_stepper import ValueStepperRuntimeNode, register_operator as register_value_stepper
 
@@ -20,6 +21,7 @@ __all__ = [
     "ControlPanelRuntimeNode",
     "DataExprRuntimeNode",
     "NoteRuntimeNode",
+    "PatchHubRuntimeNode",
     "StateExprRuntimeNode",
     "ValueStepperRuntimeNode",
     "register_operator",
@@ -39,6 +41,7 @@ def register_operator(registry=None):
     reg = register_control_panel(reg)
     reg = register_data_expr(reg)
     reg = register_note(reg)
+    reg = register_patch_hub(reg)
     reg = register_state_expr(reg)
     reg = register_value_stepper(reg)
     return reg
