@@ -755,3 +755,65 @@ def ensure_state_inline_controls(node_item: Any) -> None:
             node_item.sync_proxy_mode(force=True)
         except (AttributeError, RuntimeError, TypeError):
             pass
+
+    reordered_proxies: dict[str, QtWidgets.QGraphicsProxyWidget] = {}
+    reordered_controls: dict[str, QtWidgets.QWidget] = {}
+    reordered_bindings: dict[str, Any] = {}
+    reordered_updaters: dict[str, Any] = {}
+    reordered_toggles: dict[str, Any] = {}
+    reordered_headers: dict[str, QtWidgets.QWidget] = {}
+    reordered_bodies: dict[str, QtWidgets.QWidget] = {}
+    reordered_expanded: dict[str, bool] = {}
+    reordered_option_pools: dict[str, str] = {}
+    reordered_ctrl_serial: dict[str, str] = {}
+
+    for name in desired:
+        proxy = node_item._state_inline_proxies.get(name)
+        control = node_item._state_inline_controls.get(name)
+        binding = node_item._state_inline_bindings.get(name)
+        updater = node_item._state_inline_updaters.get(name)
+        toggle = node_item._state_inline_toggles.get(name)
+        header = node_item._state_inline_headers.get(name)
+        body = node_item._state_inline_bodies.get(name)
+        if proxy is not None:
+            reordered_proxies[name] = proxy
+        if control is not None:
+            reordered_controls[name] = control
+        if binding is not None:
+            reordered_bindings[name] = binding
+        if updater is not None:
+            reordered_updaters[name] = updater
+        if toggle is not None:
+            reordered_toggles[name] = toggle
+        if header is not None:
+            reordered_headers[name] = header
+        if body is not None:
+            reordered_bodies[name] = body
+        if name in node_item._state_inline_expanded:
+            reordered_expanded[name] = bool(node_item._state_inline_expanded.get(name, False))
+        if name in node_item._state_inline_option_pools:
+            reordered_option_pools[name] = str(node_item._state_inline_option_pools.get(name, "") or "")
+        if name in node_item._state_inline_ctrl_serial:
+            reordered_ctrl_serial[name] = str(node_item._state_inline_ctrl_serial.get(name, "") or "")
+
+    node_item._state_inline_proxies.clear()
+    node_item._state_inline_controls.clear()
+    node_item._state_inline_bindings.clear()
+    node_item._state_inline_updaters.clear()
+    node_item._state_inline_toggles.clear()
+    node_item._state_inline_headers.clear()
+    node_item._state_inline_bodies.clear()
+    node_item._state_inline_expanded.clear()
+    node_item._state_inline_option_pools.clear()
+    node_item._state_inline_ctrl_serial.clear()
+
+    node_item._state_inline_proxies.update(reordered_proxies)
+    node_item._state_inline_controls.update(reordered_controls)
+    node_item._state_inline_bindings.update(reordered_bindings)
+    node_item._state_inline_updaters.update(reordered_updaters)
+    node_item._state_inline_toggles.update(reordered_toggles)
+    node_item._state_inline_headers.update(reordered_headers)
+    node_item._state_inline_bodies.update(reordered_bodies)
+    node_item._state_inline_expanded.update(reordered_expanded)
+    node_item._state_inline_option_pools.update(reordered_option_pools)
+    node_item._state_inline_ctrl_serial.update(reordered_ctrl_serial)

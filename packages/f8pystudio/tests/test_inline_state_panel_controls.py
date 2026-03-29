@@ -608,6 +608,22 @@ def test_ensure_state_inline_controls_disposes_detached_widget_without_reparent_
     assert seen == [(old_widget, "inline-state-remove:code")]
 
 
+def test_ensure_state_inline_controls_reorders_renamed_field_to_match_spec_order() -> None:
+    _ensure_app()
+    first = F8StateSpec(name="first", access=F8StateAccess.rw, showOnNode=True, valueSchema=string_schema())
+    second = F8StateSpec(name="second", access=F8StateAccess.rw, showOnNode=True, valueSchema=string_schema())
+    renamed = F8StateSpec(name="renamed", access=F8StateAccess.rw, showOnNode=True, valueSchema=string_schema())
+    node_item = _EnsureStateNodeItem([first, second])
+
+    ensure_state_inline_controls(node_item)
+    assert list(node_item._state_inline_proxies.keys()) == ["first", "second"]
+
+    node_item._backend._fields = [renamed, second]
+    ensure_state_inline_controls(node_item)
+
+    assert list(node_item._state_inline_proxies.keys()) == ["renamed", "second"]
+
+
 def test_state_inline_control_serial_changes_when_numeric_range_changes() -> None:
     node_item = _SerialNodeItem()
     info_a = StateFieldInfo(

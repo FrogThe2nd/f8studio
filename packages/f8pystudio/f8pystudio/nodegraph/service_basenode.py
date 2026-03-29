@@ -7,7 +7,7 @@ from typing import Any
 
 from .node_base import F8StudioBaseNode
 
-from f8pysdk import F8ServiceSpec, F8StateAccess
+from f8pysdk import F8OperatorSpec, F8ServiceSpec, F8StateAccess
 from f8pysdk.command_state import parse_command_port_name
 
 from collections import OrderedDict
@@ -1057,6 +1057,9 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         return metric
 
     def _visible_state_names_for_layout(self) -> list[str]:
+        state_names = self._ordered_visible_state_names_from_spec()
+        if state_names:
+            return state_names
         state_names = [str(name) for name in self._state_inline_proxies.keys() if str(name)]
         if state_names:
             return state_names
@@ -1072,6 +1075,9 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         return [value for value in list(OrderedDict.fromkeys(inferred).keys()) if value]
 
     def _visible_command_names_for_layout(self) -> list[str]:
+        command_names = self._ordered_visible_command_names_from_spec()
+        if command_names:
+            return command_names
         command_names = [str(name) for name in self._command_inline_proxies.keys() if str(name)]
         if command_names:
             return command_names
@@ -1116,6 +1122,108 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
 
     def _command_names_with_inline_buttons(self) -> set[str]:
         return {str(name).strip() for name in self._command_inline_buttons.keys() if str(name).strip()}
+
+    def _ordered_exec_port_names_for_layout(self, *, is_in: bool) -> list[str]:
+        node = self._backend_node()
+        if node is None:
+            return []
+        try:
+            spec = node.spec
+        except (AttributeError, RuntimeError, TypeError):
+            return []
+        if not isinstance(spec, F8OperatorSpec):
+            return []
+
+        raw_names = list(spec.execInPorts or []) if bool(is_in) else list(spec.execOutPorts or [])
+        ordered: list[str] = []
+        for raw_name in raw_names:
+            name = str(raw_name or "").strip()
+            if not name:
+                continue
+            ordered.append(f"[E]{name}" if bool(is_in) else f"{name}[E]")
+        return ordered
+
+    def _ordered_data_port_names_for_layout(self, *, is_in: bool) -> list[str]:
+        node = self._backend_node()
+        if node is None:
+            return []
+        try:
+            spec = node.spec
+        except (AttributeError, RuntimeError, TypeError):
+            return []
+
+        current_names = {
+            _port_name(port)
+            for port in (self._input_items.keys() if bool(is_in) else self._output_items.keys())
+            if _port_name(port)
+        }
+        ports = list(spec.dataInPorts or []) if bool(is_in) else list(spec.dataOutPorts or [])
+        ordered: list[str] = []
+        for port in ports:
+            name = str(port.name or "").strip()
+            if not name:
+                continue
+            view_name = f"[D]{name}" if bool(is_in) else f"{name}[D]"
+            if node.data_port_show_on_node(name, is_in=bool(is_in)) or view_name in current_names:
+                ordered.append(view_name)
+        return ordered
+
+    def _ordered_visible_state_names_from_spec(self) -> list[str]:
+        node = self._backend_node()
+        if node is None:
+            return []
+        try:
+            effective_state_fields = list(node.effective_state_fields() or [])
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            try:
+                spec = node.spec
+            except (AttributeError, RuntimeError, TypeError):
+                return []
+            try:
+                effective_state_fields = list(spec.stateFields or [])
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                return []
+
+        ordered: list[str] = []
+        for state_field in effective_state_fields:
+            info = _state_field_info(state_field)
+            if info is None or not info.show_on_node or not info.name:
+                continue
+            ordered.append(info.name)
+        return ordered
+
+    def _ordered_visible_command_names_from_spec(self) -> list[str]:
+        node = self._backend_node()
+        if node is None:
+            return []
+        try:
+            commands = list(node.effective_commands() or [])
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            try:
+                spec = node.spec
+            except (AttributeError, RuntimeError, TypeError):
+                return []
+            try:
+                commands = list(spec.commands or [])
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                return []
+
+        ordered: list[str] = []
+        for command in commands:
+            name = str(command.name or "").strip()
+            if not name or not bool(command.showOnNode):
+                continue
+            ordered.append(name)
+        return ordered
+
+    def _ordered_command_port_names_for_layout(self, *, is_in: bool) -> list[str]:
+        inline_command_names = self._command_names_with_inline_buttons()
+        ordered: list[str] = []
+        for command_name in self._ordered_visible_command_names_from_spec():
+            if command_name in inline_command_names:
+                continue
+            ordered.append(f"[C]{command_name}" if bool(is_in) else f"{command_name}[C]")
+        return ordered
 
     def _should_enable_proxy_mode(self) -> bool:
         if ITEM_CACHE_MODE is QtWidgets.QGraphicsItem.ItemCoordinateCache:
@@ -1249,12 +1357,16 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
                     continue
             return out
 
-        exec_in = _names_for("exec", is_in=True)
-        exec_out = _names_for("exec", is_in=False)
-        data_in = _names_for("data", is_in=True)
-        data_out = _names_for("data", is_in=False)
-        standalone_command_in = _names_for("command", is_in=True)
-        standalone_command_out = _names_for("command", is_in=False)
+        exec_in = self._ordered_exec_port_names_for_layout(is_in=True) or _names_for("exec", is_in=True)
+        exec_out = self._ordered_exec_port_names_for_layout(is_in=False) or _names_for("exec", is_in=False)
+        data_in = self._ordered_data_port_names_for_layout(is_in=True) or _names_for("data", is_in=True)
+        data_out = self._ordered_data_port_names_for_layout(is_in=False) or _names_for("data", is_in=False)
+        standalone_command_in = self._ordered_command_port_names_for_layout(is_in=True) or _names_for(
+            "command", is_in=True
+        )
+        standalone_command_out = self._ordered_command_port_names_for_layout(is_in=False) or _names_for(
+            "command", is_in=False
+        )
         inline_command_names = self._command_names_with_inline_buttons()
         if inline_command_names:
             standalone_command_in = [
@@ -1648,35 +1760,23 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
                     eff_states = []
 
         # Build ordered port name lists per group.
-        exec_in_names: list[str] = []
-        exec_out_names: list[str] = []
+        exec_in_names = self._ordered_exec_port_names_for_layout(is_in=True)
+        exec_out_names = self._ordered_exec_port_names_for_layout(is_in=False)
 
-        data_in_names: list[str] = []
-        data_out_names: list[str] = []
-        command_in_names: list[str] = []
-        command_out_names: list[str] = []
+        data_in_names = self._ordered_data_port_names_for_layout(is_in=True)
+        data_out_names = self._ordered_data_port_names_for_layout(is_in=False)
+        command_in_names = self._ordered_command_port_names_for_layout(is_in=True)
+        command_out_names = self._ordered_command_port_names_for_layout(is_in=False)
         if node is not None:
             try:
-                existing_in = {_port_name(p) for p in self._input_items.keys()}
-                existing_out = {_port_name(p) for p in self._output_items.keys()}
-                for p in list(spec.dataInPorts or []):
-                    port_name = f"[D]{p.name}"
-                    if node.data_port_show_on_node(str(p.name or ""), is_in=True) or port_name in existing_in:
-                        data_in_names.append(port_name)
-                for p in list(spec.dataOutPorts or []):
-                    port_name = f"{p.name}[D]"
-                    if node.data_port_show_on_node(str(p.name or ""), is_in=False) or port_name in existing_out:
-                        data_out_names.append(port_name)
-                for command in list(node.effective_commands() or []):
-                    command_name = str(command.name or "").strip()
-                    if not command_name:
-                        continue
-                    if not bool(command.showOnNode):
-                        continue
-                    if command_name in self._command_names_with_inline_buttons():
-                        continue
-                    command_in_names.append(f"[C]{command_name}")
-                    command_out_names.append(f"{command_name}[C]")
+                if not data_in_names:
+                    data_in_names = self._ordered_data_port_names_for_layout(is_in=True)
+                if not data_out_names:
+                    data_out_names = self._ordered_data_port_names_for_layout(is_in=False)
+                if not command_in_names:
+                    command_in_names = self._ordered_command_port_names_for_layout(is_in=True)
+                if not command_out_names:
+                    command_out_names = self._ordered_command_port_names_for_layout(is_in=False)
             except (AttributeError, RuntimeError, TypeError, ValueError):
                 data_in_names = []
                 data_out_names = []

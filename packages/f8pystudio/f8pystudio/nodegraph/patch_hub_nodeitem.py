@@ -45,6 +45,41 @@ class F8StudioPatchHubNodeItem(F8StudioOperatorNodeItem):
             text.setVisible(False)
 
     def _terminal_names(self, *, kind: str) -> list[str]:
+        node = self._backend_node()
+        if node is not None:
+            if kind == "data":
+                try:
+                    current_names = {
+                        self._port_name(port)
+                        for port in [*list(self._input_items.keys()), *list(self._output_items.keys())]
+                        if self._port_name(port)
+                    }
+                    ordered: list[str] = []
+                    for port in list(node.spec.dataInPorts or []):
+                        name = str(port.name or "").strip()
+                        if not name:
+                            continue
+                        in_name = f"[D]{name}"
+                        out_name = f"{name}[D]"
+                        if in_name in current_names or out_name in current_names:
+                            ordered.append(name)
+                    if ordered:
+                        return [value for value in list(OrderedDict.fromkeys(ordered).keys()) if value]
+                except (AttributeError, RuntimeError, TypeError, ValueError):
+                    pass
+            if kind == "state":
+                try:
+                    ordered = []
+                    for field in list(node.effective_state_fields() or []):
+                        name = str(field.name or "").strip()
+                        if not name or not bool(field.showOnNode):
+                            continue
+                        ordered.append(name)
+                    if ordered:
+                        return [value for value in list(OrderedDict.fromkeys(ordered).keys()) if value]
+                except (AttributeError, RuntimeError, TypeError, ValueError):
+                    pass
+
         names: list[str] = []
         for port in self._input_items.keys():
             port_name = self._port_name(port)
