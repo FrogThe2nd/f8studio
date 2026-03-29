@@ -4,7 +4,13 @@ from f8pysdk import F8ServiceSpec, F8StateAccess, F8StateSpec
 from f8pysdk.msgspec_codec import copy_model
 from f8pysdk.schema_helpers import string_schema
 
-from f8pystudio.widgets.ui_override_mutations import set_state_field_ui_override
+from f8pystudio.widgets.ui_override_mutations import (
+    apply_named_order,
+    remove_list_order_entry,
+    rename_list_order_entry,
+    set_list_order_override,
+    set_state_field_ui_override,
+)
 
 
 class _TestNode:
@@ -93,3 +99,50 @@ def test_effective_state_fields_fall_back_to_base_ui_control_after_clear() -> No
     fields = node.effective_state_fields()
     assert len(fields) == 1
     assert str(fields[0].uiControl or "") == "slider"
+
+
+def test_apply_named_order_ignores_stale_names_and_collapses_duplicates() -> None:
+    ordered = apply_named_order(
+        base_names=["alpha", "beta", "gamma"],
+        override_names=["gamma", "missing", "gamma", "alpha"],
+    )
+
+    assert ordered == ["gamma", "alpha", "beta"]
+
+
+def test_set_list_order_override_removes_identity_order() -> None:
+    node = _TestNode(F8ServiceSpec(serviceClass="f8.test", label="Test"))
+
+    set_list_order_override(
+        node,
+        key="stateFields",
+        order=["first", "second"],
+        base_order=["first", "second"],
+        rebuild=False,
+    )
+
+    assert node.ui_overrides() == {}
+
+
+def test_rename_and_remove_list_order_entry_preserve_slots_and_cleanup() -> None:
+    node = _TestNode(F8ServiceSpec(serviceClass="f8.test", label="Test"))
+    node.set_ui_overrides({"listOrder": {"stateFields": ["second", "first"]}}, rebuild=False)
+
+    rename_list_order_entry(
+        node,
+        key="stateFields",
+        old_name="second",
+        new_name="renamed",
+        base_order=["first", "renamed"],
+        rebuild=False,
+    )
+    assert node.ui_overrides() == {"listOrder": {"stateFields": ["renamed", "first"]}}
+
+    remove_list_order_entry(
+        node,
+        key="stateFields",
+        entry_name="renamed",
+        base_order=["first"],
+        rebuild=False,
+    )
+    assert node.ui_overrides() == {}

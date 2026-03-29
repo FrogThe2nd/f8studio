@@ -11,6 +11,7 @@ from NodeGraphQt.errors import NodeWidgetError
 
 from f8pysdk import F8OperatorSpec, F8ServiceSpec
 from f8pysdk.spec_metadata import coerce_spec_payload
+from ..widgets.ui_override_mutations import apply_named_order, get_list_order_override
 
 from .node_model import F8StudioNodeModel
 
@@ -124,6 +125,42 @@ class F8StudioBaseNode(BaseNode):
     def set_ui_state(self, value: dict[str, object] | None) -> None:
         self.model.set_property("f8_ui_state", value or {})
 
+    @staticmethod
+    def _named_items_in_order(items: list[Any], *, order: list[str]) -> list[Any]:
+        if not items:
+            return []
+        ordered_names = apply_named_order(
+            base_names=[str(getattr(item, "name", "") or "").strip() for item in items],
+            override_names=order,
+        )
+        items_by_name: dict[str, Any] = {}
+        for item in items:
+            name = str(getattr(item, "name", "") or "").strip()
+            if not name or name in items_by_name:
+                continue
+            items_by_name[name] = item
+        return [items_by_name[name] for name in ordered_names if name in items_by_name]
+
+    def ordered_exec_port_names(self, *, is_in: bool) -> list[str]:
+        spec = self.spec
+        if not isinstance(spec, F8OperatorSpec):
+            return []
+        base_names = list(spec.execInPorts or []) if bool(is_in) else list(spec.execOutPorts or [])
+        key = "execInPorts" if bool(is_in) else "execOutPorts"
+        return apply_named_order(base_names=base_names, override_names=get_list_order_override(self, key=key))
+
+    def ordered_data_port_specs(self, *, is_in: bool) -> list[Any]:
+        spec = self.spec
+        ports = list(spec.dataInPorts or []) if bool(is_in) else list(spec.dataOutPorts or [])
+        key = "dataInPorts" if bool(is_in) else "dataOutPorts"
+        return self._named_items_in_order(ports, order=get_list_order_override(self, key=key))
+
+    def ordered_state_field_specs(self) -> list[Any]:
+        return self._named_items_in_order(list(self.effective_state_fields() or []), order=get_list_order_override(self, key="stateFields"))
+
+    def ordered_command_specs(self) -> list[Any]:
+        return self._named_items_in_order(list(self.effective_commands() or []), order=get_list_order_override(self, key="commands"))
+
     def effective_state_fields(self):
         """
         Return state fields with UI overrides applied (showOnNode/uiControl/etc).
@@ -132,20 +169,19 @@ class F8StudioBaseNode(BaseNode):
         fields = list(spec.stateFields or [])
         ui = self.ui_overrides()
         state_over = ui.get("stateFields") if isinstance(ui, dict) else None
-        if not isinstance(state_over, dict) or not state_over or not fields:
-            return fields
-
-        allowed_keys = {"showOnNode", "uiControl", "label", "description"}
-        out = []
-        for f in fields:
-            name = str(f.name or "").strip()
-            ov = state_over.get(name) if name else None
-            if not isinstance(ov, dict) or not ov:
-                out.append(f)
-                continue
-            patch = {k: ov.get(k) for k in allowed_keys if k in ov}
-            out.append(copy_model(f, update=patch))
-        return out
+        if isinstance(state_over, dict) and state_over and fields:
+            allowed_keys = {"showOnNode", "uiControl", "label", "description"}
+            out = []
+            for f in fields:
+                name = str(f.name or "").strip()
+                ov = state_over.get(name) if name else None
+                if not isinstance(ov, dict) or not ov:
+                    out.append(f)
+                    continue
+                patch = {k: ov.get(k) for k in allowed_keys if k in ov}
+                out.append(copy_model(f, update=patch))
+            fields = out
+        return self._named_items_in_order(fields, order=get_list_order_override(self, key="stateFields"))
 
     def effective_commands(self):
         """
@@ -159,20 +195,19 @@ class F8StudioBaseNode(BaseNode):
             return cmds
         ui = self.ui_overrides()
         cmd_over = ui.get("commands") if isinstance(ui, dict) else None
-        if not isinstance(cmd_over, dict) or not cmd_over:
-            return cmds
-
-        allowed_keys = {"showOnNode"}
-        out = []
-        for c in cmds:
-            name = str(c.name or "").strip()
-            ov = cmd_over.get(name) if name else None
-            if not isinstance(ov, dict) or not ov:
-                out.append(c)
-                continue
-            patch = {k: ov.get(k) for k in allowed_keys if k in ov}
-            out.append(copy_model(c, update=patch))
-        return out
+        if isinstance(cmd_over, dict) and cmd_over:
+            allowed_keys = {"showOnNode"}
+            out = []
+            for c in cmds:
+                name = str(c.name or "").strip()
+                ov = cmd_over.get(name) if name else None
+                if not isinstance(ov, dict) or not ov:
+                    out.append(c)
+                    continue
+                patch = {k: ov.get(k) for k in allowed_keys if k in ov}
+                out.append(copy_model(c, update=patch))
+            cmds = out
+        return self._named_items_in_order(cmds, order=get_list_order_override(self, key="commands"))
 
     def data_port_show_on_node(self, name: str, *, is_in: bool) -> bool:
         """

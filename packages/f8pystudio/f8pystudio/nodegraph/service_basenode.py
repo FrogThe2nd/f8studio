@@ -1128,36 +1128,25 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         if node is None:
             return []
         try:
-            spec = node.spec
-        except (AttributeError, RuntimeError, TypeError):
+            return [f"[E]{name}" for name in list(node.ordered_exec_port_names(is_in=True) or [])] if bool(is_in) else [
+                f"{name}[E]" for name in list(node.ordered_exec_port_names(is_in=False) or [])
+            ]
+        except (AttributeError, RuntimeError, TypeError, ValueError):
             return []
-        if not isinstance(spec, F8OperatorSpec):
-            return []
-
-        raw_names = list(spec.execInPorts or []) if bool(is_in) else list(spec.execOutPorts or [])
-        ordered: list[str] = []
-        for raw_name in raw_names:
-            name = str(raw_name or "").strip()
-            if not name:
-                continue
-            ordered.append(f"[E]{name}" if bool(is_in) else f"{name}[E]")
-        return ordered
 
     def _ordered_data_port_names_for_layout(self, *, is_in: bool) -> list[str]:
         node = self._backend_node()
         if node is None:
             return []
-        try:
-            spec = node.spec
-        except (AttributeError, RuntimeError, TypeError):
-            return []
-
         current_names = {
             _port_name(port)
             for port in (self._input_items.keys() if bool(is_in) else self._output_items.keys())
             if _port_name(port)
         }
-        ports = list(spec.dataInPorts or []) if bool(is_in) else list(spec.dataOutPorts or [])
+        try:
+            ports = list(node.ordered_data_port_specs(is_in=bool(is_in)) or [])
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return []
         ordered: list[str] = []
         for port in ports:
             name = str(port.name or "").strip()
@@ -1173,7 +1162,7 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         if node is None:
             return []
         try:
-            effective_state_fields = list(node.effective_state_fields() or [])
+            effective_state_fields = list(node.ordered_state_field_specs() or [])
         except (AttributeError, RuntimeError, TypeError, ValueError):
             try:
                 spec = node.spec
@@ -1197,7 +1186,7 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         if node is None:
             return []
         try:
-            commands = list(node.effective_commands() or [])
+            commands = list(node.ordered_command_specs() or [])
         except (AttributeError, RuntimeError, TypeError, ValueError):
             try:
                 spec = node.spec

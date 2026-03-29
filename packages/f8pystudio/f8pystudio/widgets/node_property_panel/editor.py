@@ -48,6 +48,9 @@ from ..state_controls import (
 from ...ui_control import parse_ui_control
 from ..ui_override_mutations import (
     find_base_state_field as _find_base_state_field,
+    remove_list_order_entry as _remove_list_order_entry,
+    rename_list_order_entry as _rename_list_order_entry,
+    set_list_order_override as _set_list_order_override,
     set_state_field_ui_override as _set_state_field_ui_override,
 )
 from ..ui_state_mutations import (
@@ -411,6 +414,17 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
         spec2 = _spec_replace_state_field(spec, old_name=old_name, new_field=new_field)
         if spec2 is not spec:
             node.spec = spec2
+        old_field_name = str(old_name or "").strip()
+        new_field_name = str(new_field.name or "").strip() or old_field_name
+        if old_field_name and new_field_name and old_field_name != new_field_name:
+            _rename_list_order_entry(
+                node,
+                key="stateFields",
+                old_name=old_field_name,
+                new_name=new_field_name,
+                base_order=self._state_field_base_order(spec2),
+                rebuild=False,
+            )
         self._resync_node_from_spec()
 
     def _apply_state_field_spec_add(self, new_field: F8StateSpec) -> None:
@@ -435,6 +449,13 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
         spec2 = _spec_delete_state_field(spec, name=name)
         if spec2 is not spec:
             node.spec = spec2
+        _remove_list_order_entry(
+            node,
+            key="stateFields",
+            entry_name=str(name or "").strip(),
+            base_order=self._state_field_base_order(spec2),
+            rebuild=False,
+        )
         self._resync_node_from_spec()
 
     def _apply_state_field_ui_override(self, name: str, edited: F8StateSpec) -> None:
@@ -475,6 +496,32 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
         edited = copy_model(base, deep=True)
         edited.showOnNode = bool(show_on_node)
         self._apply_state_field_ui_override(name, edited)
+
+    def _state_field_base_order(self, spec: F8ServiceSpec | F8OperatorSpec | None = None) -> list[str]:
+        current_spec = spec if spec is not None else _get_node_spec(self._node)
+        if not isinstance(current_spec, (F8ServiceSpec, F8OperatorSpec)):
+            return []
+        ordered: list[str] = []
+        for field in list(current_spec.stateFields or []):
+            name = str(field.name or "").strip()
+            if name:
+                ordered.append(name)
+        return ordered
+
+    def _reorder_state_fields(self, ordered_names: list[str]) -> None:
+        node = self._node
+        if node is None:
+            return
+        missing_locked, _missing_type = _node_missing_lock_info(node)
+        if missing_locked:
+            return
+        _set_list_order_override(
+            node,
+            key="stateFields",
+            order=[str(name or "").strip() for name in list(ordered_names or [])],
+            base_order=self._state_field_base_order(),
+            rebuild=True,
+        )
 
     def _resync_node_from_spec(self) -> None:
         node = self._node
@@ -544,7 +591,7 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
             tab_mapping[tab_name].append((prop_name, prop_val))
 
         # add tabs.
-        reserved_tabs = ["Node", "Port", "Commands"]
+        reserved_tabs = ["Node", "Port", "Command"]
         for tab in sorted(tab_mapping.keys()):
             if tab in reserved_tabs:
                 print('tab name "{}" is reserved by the "NodePropWidget" ' "please use a different tab name.")
@@ -566,6 +613,7 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
                     can_add_state = _policy_can_add(spec, "stateFields")
                     can_delete_state = _policy_can_delete(spec, "stateFields")
                 prop_window.set_add_visible(bool(can_add_state) and not missing_locked)
+                prop_window.set_drag_enabled(not missing_locked)
                 # Map property values.
                 values = dict(model.custom_properties)
                 # Order by effective state fields (applies UI overrides).
@@ -823,7 +871,7 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
         if isinstance(spec, (F8OperatorSpec, F8ServiceSpec)):
             if _should_show_commands_tab(spec):
                 cmd_editor = _F8SpecCommandEditor(self, node=node, on_apply=self._on_spec_applied)
-                self.__tab.addTab(cmd_editor, "Commands")
+                self.__tab.addTab(cmd_editor, "Command")
             spec_ports = _F8SpecPortEditor(self, node=node, on_apply=self._on_spec_applied)
             self.__tab.addTab(spec_ports, "Port")
 
@@ -844,11 +892,11 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
                 current_idx = tab_index[tab_name]
 
         # Order: State, Commands, Port, Node (Node last).
-        _reorder_tabs(self.__tab, ["State", "Commands", "Port", "Node"])
+        _reorder_tabs(self.__tab, ["State", "Command", "Port", "Node"])
 
         # Default tab: first existing among preferred, else 0.
         preferred_default = None
-        for t in ["State", "Commands", "Port", "Node"]:
+        for t in ["State", "Command", "Port", "Node"]:
             for i in range(self.__tab.count()):
                 if self.__tab.tabText(i) == t:
                     preferred_default = i
@@ -1022,6 +1070,7 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
             window.delete_state_field_requested.connect(self.delete_state_field)
             window.add_state_field_requested.connect(self.add_state_field)
             window.toggle_state_field_show_on_node_requested.connect(self._toggle_state_field_show_on_node)
+            window.state_field_order_changed.connect(self._reorder_state_fields)
         self.__tab.addTab(_wrap_tab_page(window), name)
         return window
 

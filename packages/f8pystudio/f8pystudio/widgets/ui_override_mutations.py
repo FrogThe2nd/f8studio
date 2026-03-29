@@ -21,6 +21,119 @@ def set_ui_overrides(node: _UiOverrideNode, ui: dict[str, Any], *, rebuild: bool
     node.set_ui_overrides(ui, rebuild=bool(rebuild))
 
 
+def normalize_named_order(values: list[str] | tuple[str, ...] | None) -> list[str]:
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for raw_value in list(values or []):
+        value = str(raw_value or "").strip()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        ordered.append(value)
+    return ordered
+
+
+def apply_named_order(*, base_names: list[str] | tuple[str, ...], override_names: list[str] | tuple[str, ...] | None) -> list[str]:
+    base = normalize_named_order(list(base_names))
+    override = normalize_named_order(list(override_names or []))
+    if not base:
+        return []
+    if not override:
+        return list(base)
+
+    base_set = set(base)
+    ordered = [name for name in override if name in base_set]
+    ordered_set = set(ordered)
+    for name in base:
+        if name in ordered_set:
+            continue
+        ordered.append(name)
+    return ordered
+
+
+def get_list_order_override(node: _UiOverrideNode, *, key: str) -> list[str]:
+    name = str(key or "").strip()
+    if not name:
+        return []
+    ui = get_ui_overrides(node)
+    list_order = ui.get("listOrder")
+    if not isinstance(list_order, dict):
+        return []
+    values = list_order.get(name)
+    if not isinstance(values, list):
+        return []
+    return normalize_named_order(values)
+
+
+def set_list_order_override(
+    node: _UiOverrideNode,
+    *,
+    key: str,
+    order: list[str] | tuple[str, ...],
+    base_order: list[str] | tuple[str, ...],
+    rebuild: bool = True,
+) -> None:
+    name = str(key or "").strip()
+    if not name:
+        return
+    normalized_base = normalize_named_order(list(base_order))
+    normalized_order = apply_named_order(base_names=normalized_base, override_names=list(order))
+
+    ui = get_ui_overrides(node)
+    list_order = ui.get("listOrder")
+    if not isinstance(list_order, dict):
+        list_order = {}
+
+    if normalized_order == normalized_base or not normalized_order:
+        list_order.pop(name, None)
+    else:
+        list_order[name] = list(normalized_order)
+
+    if list_order:
+        ui["listOrder"] = list_order
+    else:
+        ui.pop("listOrder", None)
+    set_ui_overrides(node, ui, rebuild=bool(rebuild))
+
+
+def rename_list_order_entry(
+    node: _UiOverrideNode,
+    *,
+    key: str,
+    old_name: str,
+    new_name: str,
+    base_order: list[str] | tuple[str, ...],
+    rebuild: bool = True,
+) -> None:
+    normalized_old = str(old_name or "").strip()
+    normalized_new = str(new_name or "").strip()
+    if not normalized_old or not normalized_new:
+        return
+    current_order = get_list_order_override(node, key=key)
+    if not current_order:
+        current_order = normalize_named_order(list(base_order))
+    renamed = [normalized_new if name == normalized_old else name for name in current_order]
+    set_list_order_override(node, key=key, order=renamed, base_order=base_order, rebuild=bool(rebuild))
+
+
+def remove_list_order_entry(
+    node: _UiOverrideNode,
+    *,
+    key: str,
+    entry_name: str,
+    base_order: list[str] | tuple[str, ...],
+    rebuild: bool = True,
+) -> None:
+    normalized_name = str(entry_name or "").strip()
+    if not normalized_name:
+        return
+    current_order = get_list_order_override(node, key=key)
+    if not current_order:
+        current_order = normalize_named_order(list(base_order))
+    filtered = [name for name in current_order if name != normalized_name]
+    set_list_order_override(node, key=key, order=filtered, base_order=base_order, rebuild=bool(rebuild))
+
+
 def _diff_state_ui(base: F8StateSpec, edited: F8StateSpec) -> dict[str, Any]:
     patch: dict[str, Any] = {}
     if edited.showOnNode != base.showOnNode:

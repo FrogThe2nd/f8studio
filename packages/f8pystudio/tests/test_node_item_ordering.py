@@ -13,6 +13,7 @@ from f8pysdk import (
 )
 from f8pystudio.nodegraph.patch_hub_nodeitem import F8StudioPatchHubNodeItem
 from f8pystudio.nodegraph.service_basenode import F8StudioServiceNodeItem
+from f8pystudio.widgets.ui_override_mutations import apply_named_order, get_list_order_override
 
 
 class _FakePort:
@@ -29,16 +30,59 @@ class _FakePort:
 class _BackendStub:
     def __init__(self, spec: F8OperatorSpec) -> None:
         self.spec = spec
+        self._ui_overrides: dict[str, object] = {}
 
     def effective_state_fields(self) -> list[F8StateSpec]:
-        return list(self.spec.stateFields or [])
+        fields = list(self.spec.stateFields or [])
+        order = get_list_order_override(self, key="stateFields")
+        ordered_names = apply_named_order(
+            base_names=[str(field.name or "") for field in fields],
+            override_names=order,
+        )
+        by_name = {str(field.name or ""): field for field in fields}
+        return [by_name[name] for name in ordered_names if name in by_name]
 
     def effective_commands(self) -> list[F8Command]:
-        return list(self.spec.commands or [])
+        commands = list(self.spec.commands or [])
+        order = get_list_order_override(self, key="commands")
+        ordered_names = apply_named_order(
+            base_names=[str(command.name or "") for command in commands],
+            override_names=order,
+        )
+        by_name = {str(command.name or ""): command for command in commands}
+        return [by_name[name] for name in ordered_names if name in by_name]
 
     def data_port_show_on_node(self, name: str, *, is_in: bool) -> bool:
         del name, is_in
         return True
+
+    def ui_overrides(self) -> dict[str, object]:
+        return dict(self._ui_overrides)
+
+    def set_ui_overrides(self, value: dict[str, object] | None, *, rebuild: bool = True) -> None:
+        _ = rebuild
+        self._ui_overrides = dict(value or {})
+
+    def ordered_exec_port_names(self, *, is_in: bool) -> list[str]:
+        base_names = list(self.spec.execInPorts or []) if is_in else list(self.spec.execOutPorts or [])
+        key = "execInPorts" if is_in else "execOutPorts"
+        return apply_named_order(base_names=base_names, override_names=get_list_order_override(self, key=key))
+
+    def ordered_data_port_specs(self, *, is_in: bool) -> list[F8DataPortSpec]:
+        ports = list(self.spec.dataInPorts or []) if is_in else list(self.spec.dataOutPorts or [])
+        key = "dataInPorts" if is_in else "dataOutPorts"
+        ordered_names = apply_named_order(
+            base_names=[str(port.name or "") for port in ports],
+            override_names=get_list_order_override(self, key=key),
+        )
+        by_name = {str(port.name or ""): port for port in ports}
+        return [by_name[name] for name in ordered_names if name in by_name]
+
+    def ordered_state_field_specs(self) -> list[F8StateSpec]:
+        return self.effective_state_fields()
+
+    def ordered_command_specs(self) -> list[F8Command]:
+        return self.effective_commands()
 
 
 class _ServiceItemStub:
@@ -163,3 +207,44 @@ def test_patch_hub_item_uses_spec_order_for_terminal_layout() -> None:
 
     assert data_names == ["top", "bottom"]
     assert state_names == ["first", "second"]
+
+
+def test_service_node_item_uses_list_order_overrides_for_layout() -> None:
+    stub = _ServiceItemStub(_make_spec())
+    stub._backend.set_ui_overrides(
+        {
+            "listOrder": {
+                "execInPorts": ["beta", "alpha"],
+                "dataInPorts": ["bottom", "top"],
+                "commands": ["stop", "go"],
+                "stateFields": ["second", "first"],
+            }
+        },
+        rebuild=False,
+    )
+
+    exec_in = F8StudioServiceNodeItem._ordered_exec_port_names_for_layout(stub, is_in=True)
+    data_in = F8StudioServiceNodeItem._ordered_data_port_names_for_layout(stub, is_in=True)
+    state_names = F8StudioServiceNodeItem._visible_state_names_for_layout(stub)
+    command_names = F8StudioServiceNodeItem._visible_command_names_for_layout(stub)
+    command_ports = F8StudioServiceNodeItem._ordered_command_port_names_for_layout(stub, is_in=True)
+
+    assert exec_in == ["[E]beta", "[E]alpha"]
+    assert data_in == ["[D]bottom", "[D]top"]
+    assert state_names == ["second", "first"]
+    assert command_names == ["stop", "go"]
+    assert command_ports == ["[C]stop"]
+
+
+def test_patch_hub_item_uses_list_order_overrides_for_terminal_layout() -> None:
+    stub = _PatchHubItemStub(_make_spec())
+    stub._backend.set_ui_overrides(
+        {"listOrder": {"dataInPorts": ["bottom", "top"], "stateFields": ["second", "first"]}},
+        rebuild=False,
+    )
+
+    data_names = F8StudioPatchHubNodeItem._terminal_names(stub, kind="data")
+    state_names = F8StudioPatchHubNodeItem._terminal_names(stub, kind="state")
+
+    assert data_names == ["bottom", "top"]
+    assert state_names == ["second", "first"]

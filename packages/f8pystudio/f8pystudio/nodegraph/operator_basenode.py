@@ -61,7 +61,7 @@ class F8StudioOperatorBaseNode(F8StudioBaseNode):
         self._build_state_properties()
 
     def _build_exec_port(self):
-        for p in self.spec.execInPorts:
+        for p in self.ordered_exec_port_names(is_in=True):
             self.add_input(
                 f"[E]{p}",
                 multi_input=False,
@@ -69,7 +69,7 @@ class F8StudioOperatorBaseNode(F8StudioBaseNode):
                 painter_func=draw_exec_port,
             )
 
-        for p in self.spec.execOutPorts:
+        for p in self.ordered_exec_port_names(is_in=False):
             self.add_output(
                 f"{p}[E]",
                 multi_output=False,
@@ -79,7 +79,7 @@ class F8StudioOperatorBaseNode(F8StudioBaseNode):
 
     def _build_data_port(self):
 
-        for p in self.spec.dataInPorts:
+        for p in self.ordered_data_port_specs(is_in=True):
             if not self.data_port_show_on_node(str(p.name or ""), is_in=True):
                 continue
             self.add_input(
@@ -88,7 +88,7 @@ class F8StudioOperatorBaseNode(F8StudioBaseNode):
                 color=DATA_PORT_COLOR,
             )
 
-        for p in self.spec.dataOutPorts:
+        for p in self.ordered_data_port_specs(is_in=False):
             if not self.data_port_show_on_node(str(p.name or ""), is_in=False):
                 continue
             self.add_output(
@@ -275,13 +275,13 @@ class F8StudioOperatorBaseNode(F8StudioBaseNode):
         desired_inputs: dict[str, dict[str, Any]] = {}
         desired_outputs: dict[str, dict[str, Any]] = {}
 
-        for p in list(self.spec.execInPorts or []):
+        for p in list(self.ordered_exec_port_names(is_in=True) or []):
             desired_inputs[f"[E]{p}"] = {
                 "color": EXEC_PORT_COLOR,
                 "painter_func": draw_exec_port,
                 "multi_input": False,
             }
-        for p in list(self.spec.execOutPorts or []):
+        for p in list(self.ordered_exec_port_names(is_in=False) or []):
             desired_outputs[f"{p}[E]"] = {
                 "color": EXEC_PORT_COLOR,
                 "painter_func": draw_exec_port,
@@ -299,7 +299,7 @@ class F8StudioOperatorBaseNode(F8StudioBaseNode):
                 except Exception:
                     return False
 
-        for p in list(self.spec.dataInPorts or []):
+        for p in list(self.ordered_data_port_specs(is_in=True) or []):
             try:
                 n = str(p.name or "").strip()
             except Exception:
@@ -317,7 +317,7 @@ class F8StudioOperatorBaseNode(F8StudioBaseNode):
             if show_on_node:
                 desired_inputs[port_name] = {"color": DATA_PORT_COLOR, "multi_input": False}
 
-        for p in list(self.spec.dataOutPorts or []):
+        for p in list(self.ordered_data_port_specs(is_in=False) or []):
             try:
                 n = str(p.name or "").strip()
             except Exception:
@@ -335,7 +335,7 @@ class F8StudioOperatorBaseNode(F8StudioBaseNode):
             if show_on_node:
                 desired_outputs[port_name] = {"color": DATA_PORT_COLOR, "multi_output": True}
 
-        for s in list(self.effective_state_fields() or []):
+        for s in list(self.ordered_state_field_specs() or []):
             name = str(s.name or "").strip()
             if not name or not bool(s.showOnNode):
                 continue
@@ -352,7 +352,7 @@ class F8StudioOperatorBaseNode(F8StudioBaseNode):
                     "multi_output": True,
                 }
 
-        for command in list(self.effective_commands() or []):
+        for command in list(self.ordered_command_specs() or []):
             name = str(command.name or "").strip()
             if not name or not bool(command.showOnNode):
                 continue

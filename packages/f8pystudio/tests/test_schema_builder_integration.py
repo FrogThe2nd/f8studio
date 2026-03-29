@@ -320,4 +320,4 @@ def test_node_property_widget_shows_commands_tab_for_operator_specs() -> None:
     tabs = widget.get_tab_widget()
     labels = [tabs.tabText(index) for index in range(tabs.count())]
 
-    assert "Commands" in labels
+    assert "Command" in labels

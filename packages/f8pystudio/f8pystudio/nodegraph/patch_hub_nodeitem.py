@@ -55,7 +55,7 @@ class F8StudioPatchHubNodeItem(F8StudioOperatorNodeItem):
                         if self._port_name(port)
                     }
                     ordered: list[str] = []
-                    for port in list(node.spec.dataInPorts or []):
+                    for port in list(node.ordered_data_port_specs(is_in=True) or []):
                         name = str(port.name or "").strip()
                         if not name:
                             continue
@@ -70,7 +70,7 @@ class F8StudioPatchHubNodeItem(F8StudioOperatorNodeItem):
             if kind == "state":
                 try:
                     ordered = []
-                    for field in list(node.effective_state_fields() or []):
+                    for field in list(node.ordered_state_field_specs() or []):
                         name = str(field.name or "").strip()
                         if not name or not bool(field.showOnNode):
                             continue

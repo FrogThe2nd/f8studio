@@ -248,6 +248,49 @@ class F8StudioVizOperatorNodeItem(F8StudioOperatorNodeItem):
         for text in self._output_items.values():
             text.setVisible(False)
 
+    def _ordered_non_state_ports_for_widget_region(self, *, is_in: bool) -> list[Any]:
+        ports = list(self.inputs if bool(is_in) else self.outputs)
+        visible_by_name: dict[str, Any] = {}
+        visible_names_in_insertion_order: list[str] = []
+        for port in ports:
+            try:
+                if not port.isVisible():
+                    continue
+                port_name = self._port_name(port)
+            except (AttributeError, RuntimeError, TypeError):
+                continue
+            if not port_name or self._port_group(port_name) == "state":
+                continue
+            visible_names_in_insertion_order.append(port_name)
+            visible_by_name[port_name] = port
+
+        ordered_names: list[str] = []
+        ordered_names.extend(self._ordered_exec_port_names_for_layout(is_in=bool(is_in)))
+        ordered_names.extend(self._ordered_data_port_names_for_layout(is_in=bool(is_in)))
+        ordered_names.extend(self._ordered_command_port_names_for_layout(is_in=bool(is_in)))
+
+        ordered_ports: list[Any] = []
+        seen_names: set[str] = set()
+        for name in ordered_names:
+            normalized_name = str(name or "").strip()
+            if not normalized_name or normalized_name in seen_names:
+                continue
+            port = visible_by_name.get(normalized_name)
+            if port is None:
+                continue
+            ordered_ports.append(port)
+            seen_names.add(normalized_name)
+
+        for name in visible_names_in_insertion_order:
+            if name in seen_names:
+                continue
+            port = visible_by_name.get(name)
+            if port is None:
+                continue
+            ordered_ports.append(port)
+            seen_names.add(name)
+        return ordered_ports
+
     def _align_viz_state(self, v_offset: float) -> float:
         """
         Align visible state rows first, then visible command rows, and return the y
@@ -408,26 +451,8 @@ class F8StudioVizOperatorNodeItem(F8StudioOperatorNodeItem):
             return
 
         # Non-state ports.
-        in_ports = []
-        out_ports = []
-        for p in self.inputs:
-            try:
-                if not p.isVisible():
-                    continue
-                if self._port_group(self._port_name(p)) == "state":
-                    continue
-                in_ports.append(p)
-            except (AttributeError, RuntimeError, TypeError):
-                continue
-        for p in self.outputs:
-            try:
-                if not p.isVisible():
-                    continue
-                if self._port_group(self._port_name(p)) == "state":
-                    continue
-                out_ports.append(p)
-            except (AttributeError, RuntimeError, TypeError):
-                continue
+        in_ports = self._ordered_non_state_ports_for_widget_region(is_in=True)
+        out_ports = self._ordered_non_state_ports_for_widget_region(is_in=False)
 
         if not in_ports and not out_ports:
             return

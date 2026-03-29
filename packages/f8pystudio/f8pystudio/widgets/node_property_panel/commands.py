@@ -35,6 +35,9 @@ from ..state_controls import (
 )
 from ..ui_override_mutations import (
     base_command_show_on_node as _base_command_show_on_node,
+    remove_list_order_entry as _remove_list_order_entry,
+    rename_list_order_entry as _rename_list_order_entry,
+    set_list_order_override as _set_list_order_override,
     set_command_show_on_node_override as _set_command_show_on_node_override,
 )
 from .common import _TAB_PANEL_MARGIN, _node_missing_lock_info, _package_attr, _schema_from_json_obj, _wrap_tab_page
@@ -320,6 +323,7 @@ class _F8CommandRow(QtWidgets.QWidget):
         super().__init__(parent)
         self._name = str(name or "")
         self._base_tooltip = str(description or "").strip()
+        self.setProperty("_order_key", self._name)
 
         self._btn_invoke = QtWidgets.QPushButton(self._name)
         self._btn_invoke.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
@@ -419,8 +423,9 @@ class _F8SpecCommandEditor(QtWidgets.QWidget):
         self._bridge_proc_hooked = False
         self._cmd_rows: dict[str, _F8CommandRow] = {}
 
-        self._sec = _F8SpecListSection(self, title="Commands")
+        self._sec = _F8SpecListSection(self, title="Command")
         self._sec.add_clicked.connect(self._add_command)
+        self._sec.rows_reordered.connect(self._on_rows_reordered)
 
         content = QtWidgets.QWidget(self)
         v = QtWidgets.QVBoxLayout(content)
@@ -514,6 +519,7 @@ class _F8SpecCommandEditor(QtWidgets.QWidget):
         can_delete = _policy_can_delete(spec, "commands")
         can_edit_existing = _policy_can_edit_existing(spec, "commands")
         self._sec.set_add_visible(bool(can_add) and not self._missing_locked)
+        self._sec.set_drag_enabled(not self._missing_locked)
 
         running = self._is_service_running()
         try:
@@ -558,6 +564,33 @@ class _F8SpecCommandEditor(QtWidgets.QWidget):
                 logger.exception("Failed to apply running-state to command row command=%s", name)
             self._cmd_rows[str(name)] = row
             self._sec.add_row(row)
+
+    def _command_base_order(self, spec: _CommandSpec | None = None) -> list[str]:
+        current_spec = spec
+        if current_spec is None:
+            try:
+                current_spec = self._node.spec
+            except Exception:
+                current_spec = None
+        if not isinstance(current_spec, (F8ServiceSpec, F8OperatorSpec)):
+            return []
+        ordered: list[str] = []
+        for command in list(current_spec.commands or []):
+            name = str(command.name or "").strip()
+            if name:
+                ordered.append(name)
+        return ordered
+
+    def _on_rows_reordered(self, ordered_names: list[str]) -> None:
+        if self._missing_locked:
+            return
+        _set_list_order_override(
+            self._node,
+            key="commands",
+            order=[str(name or "").strip() for name in list(ordered_names or [])],
+            base_order=self._command_base_order(),
+            rebuild=True,
+        )
 
     def _toggle_command_show_on_node(self, name: str, show_on_node: bool) -> None:
         if self._missing_locked:
@@ -821,9 +854,20 @@ class _F8SpecCommandEditor(QtWidgets.QWidget):
             return
         edited = dlg.command()
         if can_edit_existing and not read_only:
+            old_name = str(name or "").strip()
+            new_name = str(edited.name or "").strip() or old_name
             spec2 = _spec_replace_command(spec, name=str(name or "").strip(), cmd=edited)
             if spec2 is not spec:
                 self._node.spec = spec2
+            if old_name != new_name:
+                _rename_list_order_entry(
+                    self._node,
+                    key="commands",
+                    old_name=old_name,
+                    new_name=new_name,
+                    base_order=self._command_base_order(spec2),
+                    rebuild=False,
+                )
             if self._on_apply:
                 self._on_apply()
         elif not read_only:
@@ -872,6 +916,13 @@ class _F8SpecCommandEditor(QtWidgets.QWidget):
         spec2 = _spec_delete_command(spec, name=n)
         if spec2 is not spec:
             self._node.spec = spec2
+        _remove_list_order_entry(
+            self._node,
+            key="commands",
+            entry_name=n,
+            base_order=self._command_base_order(spec2),
+            rebuild=False,
+        )
         if self._on_apply:
             self._on_apply()
         self._load()

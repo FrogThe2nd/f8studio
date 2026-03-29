@@ -28,6 +28,7 @@ from ..spec_mutations import set_ports as _spec_set_ports
 from ..state_controls import schema_type_any as _schema_type
 from ..ui_override_mutations import (
     base_data_port_show_on_node as _base_data_port_show_on_node,
+    set_list_order_override as _set_list_order_override,
     set_data_port_show_on_node_override as _set_data_port_show_on_node_override,
 )
 from .common import (
@@ -646,6 +647,12 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
         self._sec_data_out.add_clicked.connect(lambda: self._add_data(False))
         self._sec_patch_data.add_clicked.connect(self._add_patch_data)
         self._sec_patch_state.add_clicked.connect(self._add_patch_state)
+        self._sec_exec_in.rows_reordered.connect(lambda names: self._on_rows_reordered("execInPorts", names))
+        self._sec_exec_out.rows_reordered.connect(lambda names: self._on_rows_reordered("execOutPorts", names))
+        self._sec_data_in.rows_reordered.connect(lambda names: self._on_rows_reordered("dataInPorts", names))
+        self._sec_data_out.rows_reordered.connect(lambda names: self._on_rows_reordered("dataOutPorts", names))
+        self._sec_patch_data.rows_reordered.connect(lambda names: self._on_rows_reordered("dataInPorts", names))
+        self._sec_patch_state.rows_reordered.connect(lambda names: self._on_rows_reordered("stateFields", names))
 
         content = QtWidgets.QWidget(self)
         v = QtWidgets.QVBoxLayout(content)
@@ -725,34 +732,158 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
         self._sec_patch_state.set_add_visible(bool(self._state_can_add) and not self._missing_locked)
 
         if is_operator:
-            for name in list(spec.execInPorts or []):
+            try:
+                exec_in_names = list(self._node.ordered_exec_port_names(is_in=True) or [])
+            except Exception:
+                exec_in_names = list(spec.execInPorts or [])
+            for name in exec_in_names:
                 self._sec_exec_in.add_row(self._make_exec_row(str(name), is_in=True))
-            for name in list(spec.execOutPorts or []):
+            try:
+                exec_out_names = list(self._node.ordered_exec_port_names(is_in=False) or [])
+            except Exception:
+                exec_out_names = list(spec.execOutPorts or [])
+            for name in exec_out_names:
                 self._sec_exec_out.add_row(self._make_exec_row(str(name), is_in=False))
 
         try:
+            data_in_ports = list(self._node.ordered_data_port_specs(is_in=True) or [])
+        except Exception:
             data_in_ports = list(spec.dataInPorts or [])
-        except Exception:
-            data_in_ports = []
         try:
-            data_out_ports = list(spec.dataOutPorts or [])
+            data_out_ports = list(self._node.ordered_data_port_specs(is_in=False) or [])
         except Exception:
-            data_out_ports = []
+            data_out_ports = list(spec.dataOutPorts or [])
 
         if self._is_patch_hub:
             for p in data_in_ports:
                 self._sec_patch_data.add_row(self._make_patch_data_row(p))
-            for field in list(spec.stateFields or []):
+            try:
+                state_fields = list(self._node.ordered_state_field_specs() or [])
+            except Exception:
+                state_fields = list(spec.stateFields or [])
+            for field in state_fields:
                 self._sec_patch_state.add_row(self._make_patch_state_row(field))
-            return
+        else:
+            for p in data_in_ports:
+                self._sec_data_in.add_row(self._make_data_row(p, is_in=True))
+            for p in data_out_ports:
+                self._sec_data_out.add_row(self._make_data_row(p, is_in=False))
 
-        for p in data_in_ports:
-            self._sec_data_in.add_row(self._make_data_row(p, is_in=True))
-        for p in data_out_ports:
-            self._sec_data_out.add_row(self._make_data_row(p, is_in=False))
+        for section in (
+            self._sec_exec_in,
+            self._sec_exec_out,
+            self._sec_data_in,
+            self._sec_data_out,
+            self._sec_patch_data,
+            self._sec_patch_state,
+        ):
+            section.set_drag_enabled(not self._missing_locked)
+
+    def _base_order_for_key(self, key: str, *, spec: F8OperatorSpec | Any | None = None) -> list[str]:
+        current_spec = spec
+        if current_spec is None:
+            try:
+                current_spec = self._node.spec
+            except Exception:
+                current_spec = None
+        if current_spec is None:
+            return []
+
+        normalized_key = str(key or "").strip()
+        if normalized_key == "execInPorts" and isinstance(current_spec, F8OperatorSpec):
+            return [str(name or "").strip() for name in list(current_spec.execInPorts or []) if str(name or "").strip()]
+        if normalized_key == "execOutPorts" and isinstance(current_spec, F8OperatorSpec):
+            return [str(name or "").strip() for name in list(current_spec.execOutPorts or []) if str(name or "").strip()]
+        if normalized_key == "dataInPorts":
+            return [str(port.name or "").strip() for port in list(current_spec.dataInPorts or []) if str(port.name or "").strip()]
+        if normalized_key == "dataOutPorts":
+            return [str(port.name or "").strip() for port in list(current_spec.dataOutPorts or []) if str(port.name or "").strip()]
+        if normalized_key == "stateFields":
+            return [str(field.name or "").strip() for field in list(current_spec.stateFields or []) if str(field.name or "").strip()]
+        return []
+
+    def _on_rows_reordered(self, key: str, ordered_names: list[str]) -> None:
+        if self._missing_locked or self._node is None:
+            return
+        _set_list_order_override(
+            self._node,
+            key=str(key or "").strip(),
+            order=[str(name or "").strip() for name in list(ordered_names or [])],
+            base_order=self._base_order_for_key(str(key or "").strip()),
+            rebuild=True,
+        )
+
+    @staticmethod
+    def _rows_in_base_order(
+        rows: list[_F8SpecNameRow],
+        *,
+        base_order: list[str],
+    ) -> list[_F8SpecNameRow]:
+        rows_by_original: dict[str, _F8SpecNameRow] = {}
+        appended: list[_F8SpecNameRow] = []
+        for row in rows:
+            original = str(row.property("_original_order_key") or "").strip()
+            current = str(row.property("_order_key") or "").strip()
+            if original:
+                rows_by_original[original] = row
+                continue
+            if current:
+                appended.append(row)
+
+        ordered_rows: list[_F8SpecNameRow] = []
+        for name in list(base_order or []):
+            row = rows_by_original.pop(str(name or "").strip(), None)
+            if row is not None:
+                ordered_rows.append(row)
+        ordered_rows.extend(appended)
+        for row in rows:
+            if row in ordered_rows:
+                continue
+            ordered_rows.append(row)
+        return ordered_rows
+
+    def _sync_list_orders_after_commit(self, spec: Any) -> None:
+        if self._node is None:
+            return
+        _set_list_order_override(
+            self._node,
+            key="execInPorts",
+            order=[str(row.property("_order_key") or "").strip() for row in self._sec_exec_in.rows()],
+            base_order=self._base_order_for_key("execInPorts", spec=spec),
+            rebuild=False,
+        )
+        _set_list_order_override(
+            self._node,
+            key="execOutPorts",
+            order=[str(row.property("_order_key") or "").strip() for row in self._sec_exec_out.rows()],
+            base_order=self._base_order_for_key("execOutPorts", spec=spec),
+            rebuild=False,
+        )
+        _set_list_order_override(
+            self._node,
+            key="dataInPorts",
+            order=[str(row.property("_order_key") or "").strip() for row in (self._sec_patch_data.rows() if self._is_patch_hub else self._sec_data_in.rows())],
+            base_order=self._base_order_for_key("dataInPorts", spec=spec),
+            rebuild=False,
+        )
+        _set_list_order_override(
+            self._node,
+            key="dataOutPorts",
+            order=[str(row.property("_order_key") or "").strip() for row in self._sec_data_out.rows()],
+            base_order=self._base_order_for_key("dataOutPorts", spec=spec),
+            rebuild=False,
+        )
+        _set_list_order_override(
+            self._node,
+            key="stateFields",
+            order=[str(row.property("_order_key") or "").strip() for row in self._sec_patch_state.rows()],
+            base_order=self._base_order_for_key("stateFields", spec=spec),
+            rebuild=False,
+        )
 
     def _make_exec_row(self, name: str, *, is_in: bool) -> _F8SpecNameRow:
         row = _F8SpecNameRow(self, name=name, placeholder="port name")
+        row.setProperty("_original_order_key", str(name or "").strip())
         row.edit_clicked.connect(lambda: self._edit_exec(row))
         row.delete_clicked.connect(lambda: self._delete_row(row))
         row.name_committed.connect(lambda _v: self._commit())
@@ -763,6 +894,7 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
 
     def _make_data_row(self, port: F8DataPortSpec, *, is_in: bool) -> _F8SpecNameRow:
         row = _F8SpecNameRow(self, name=str(port.name or ""), placeholder="port name", show_eye=True)
+        row.setProperty("_original_order_key", str(port.name or "").strip())
         row.setProperty("_port", port)
         row.edit_clicked.connect(lambda: self._edit_data(row))
         row.delete_clicked.connect(lambda: self._delete_row(row))
@@ -789,6 +921,7 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
 
     def _make_patch_data_row(self, port: F8DataPortSpec) -> _F8SpecNameRow:
         row = _F8SpecNameRow(self, name=str(port.name or ""), placeholder="terminal name")
+        row.setProperty("_original_order_key", str(port.name or "").strip())
         row.setProperty("_port", port)
         row.setProperty("_port_dir", "patch_data")
         row.edit_clicked.connect(lambda: self._edit_patch_data(row))
@@ -804,6 +937,7 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
 
     def _make_patch_state_row(self, field: F8StateSpec) -> _F8SpecNameRow:
         row = _F8SpecNameRow(self, name=str(field.name or ""), placeholder="terminal name")
+        row.setProperty("_original_order_key", str(field.name or "").strip())
         row.setProperty("_field", field)
         row.setProperty("_port_dir", "patch_state")
         row.edit_clicked.connect(lambda: self._edit_patch_state(row))
@@ -1155,7 +1289,10 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
 
         if self._is_patch_hub and isinstance(spec, F8OperatorSpec):
             data_terminals: list[F8DataPortSpec] = []
-            for row in self._sec_patch_data.rows():
+            for row in self._rows_in_base_order(
+                self._sec_patch_data.rows(),
+                base_order=self._base_order_for_key("dataInPorts", spec=spec),
+            ):
                 port = row.property("_port")
                 if not isinstance(port, F8DataPortSpec):
                     continue
@@ -1164,7 +1301,10 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
                 data_terminals.append(copy_model(port, update={"required": False, "showOnNode": True}))
 
             state_terminals: list[F8StateSpec] = []
-            for row in self._sec_patch_state.rows():
+            for row in self._rows_in_base_order(
+                self._sec_patch_state.rows(),
+                base_order=self._base_order_for_key("stateFields", spec=spec),
+            ):
                 field = row.property("_field")
                 if not isinstance(field, F8StateSpec):
                     continue
@@ -1198,27 +1338,40 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
             exec_in: list[str] = []
             exec_out: list[str] = []
             if isinstance(spec, F8OperatorSpec):
-                for r in self._sec_exec_in.rows():
+                for r in self._rows_in_base_order(
+                    self._sec_exec_in.rows(),
+                    base_order=self._base_order_for_key("execInPorts", spec=spec),
+                ):
                     name = str(r.name_edit.text() or "").strip()
                     if name:
                         exec_in.append(name)
-                for r in self._sec_exec_out.rows():
+                for r in self._rows_in_base_order(
+                    self._sec_exec_out.rows(),
+                    base_order=self._base_order_for_key("execOutPorts", spec=spec),
+                ):
                     name = str(r.name_edit.text() or "").strip()
                     if name:
                         exec_out.append(name)
 
             data_in: list[F8DataPortSpec] = []
             data_out: list[F8DataPortSpec] = []
-            for r in self._sec_data_in.rows():
+            for r in self._rows_in_base_order(
+                self._sec_data_in.rows(),
+                base_order=self._base_order_for_key("dataInPorts", spec=spec),
+            ):
                 port = r.property("_port")
                 if isinstance(port, F8DataPortSpec) and str(port.name or "").strip():
                     data_in.append(port)
-            for r in self._sec_data_out.rows():
+            for r in self._rows_in_base_order(
+                self._sec_data_out.rows(),
+                base_order=self._base_order_for_key("dataOutPorts", spec=spec),
+            ):
                 port = r.property("_port")
                 if isinstance(port, F8DataPortSpec) and str(port.name or "").strip():
                     data_out.append(port)
 
             spec2 = _spec_set_ports(spec, data_in=data_in, data_out=data_out, exec_in=exec_in, exec_out=exec_out)
+        self._sync_list_orders_after_commit(spec2)
         if spec2 is not spec:
             self._node.spec = spec2
 

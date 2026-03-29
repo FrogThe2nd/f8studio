@@ -375,8 +375,11 @@ class VizWaveRenderNode(F8StudioOperatorBaseNode):
         self._apply_data_port_colors()
 
     def _apply_data_port_colors(self) -> None:
-        spec = self.spec
-        ports = spec.dataInPorts
+        try:
+            ports = list(self.ordered_data_port_specs(is_in=True) or [])
+        except Exception:
+            spec = self.spec
+            ports = list(spec.dataInPorts or [])
         try:
             colors = series_colors([str(p.name) for p in ports])
         except (AttributeError, TypeError):
@@ -449,12 +452,16 @@ class VizWaveRenderNode(F8StudioOperatorBaseNode):
         else:
             # Derive colors from current spec order when runtime didn't provide them.
             try:
-                ports = list(self.spec.dataInPorts or [])
-            except (AttributeError, TypeError):
-                ports = []
+                ports = list(self.ordered_data_port_specs(is_in=True) or [])
+            except Exception:
+                try:
+                    ports = list(self.spec.dataInPorts or [])
+                except (AttributeError, TypeError):
+                    ports = []
             try:
                 colors = series_colors([str(p.name) for p in ports])
             except (AttributeError, TypeError):
+                ports = []
                 colors = {}
 
         y_min: float | None = None
