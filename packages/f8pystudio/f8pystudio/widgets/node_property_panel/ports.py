@@ -75,29 +75,22 @@ class _F8GlobalHotkeyEdit(QtWidgets.QWidget):
         conflict_lookup: Callable[[str, str], list[Any]] | None = None,
         capture_started: Callable[[], None] | None = None,
         capture_finished: Callable[[], None] | None = None,
-        commit_requested: Callable[[], None] | None = None,
     ) -> None:
         super().__init__(parent)
         self._current_binding_id = str(current_binding_id or "").strip()
         self._conflict_lookup = conflict_lookup
         self._capture_started = capture_started
         self._capture_finished = capture_finished
-        self._commit_requested = commit_requested
         self._capture_active = False
         self._editor = _F8HotkeySequenceEdit(self)
-        self._commit_btn = QtWidgets.QPushButton(self)
         self._clear_btn = QtWidgets.QPushButton(self)
         self._status = QtWidgets.QLabel(self)
-        for button in (self._commit_btn, self._clear_btn):
-            button.setFixedSize(28, 28)
-            button.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
-            button.setIconSize(QtCore.QSize(16, 16))
-        self._commit_btn.setIcon(icon_for(self._commit_btn, StudioIcon.CHECK))
+        self._clear_btn.setFixedSize(28, 28)
+        self._clear_btn.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
+        self._clear_btn.setIconSize(QtCore.QSize(16, 16))
         self._clear_btn.setIcon(icon_for(self._clear_btn, StudioIcon.X))
-        self._commit_btn.clicked.connect(self._commit_current_value)  # type: ignore[attr-defined]
         self._clear_btn.clicked.connect(self.clear)  # type: ignore[attr-defined]
         self._editor.setToolTip("Click here and press a shortcut, for example Ctrl+Alt+P")
-        self._commit_btn.setToolTip("Commit the captured global hotkey and validate it")
         self._clear_btn.setToolTip("Clear the current global hotkey")
         self._status.setWordWrap(True)
         self._status.setStyleSheet("color: rgb(170, 170, 170);")
@@ -114,7 +107,6 @@ class _F8GlobalHotkeyEdit(QtWidgets.QWidget):
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(6)
         row.addWidget(self._editor, 1)
-        row.addWidget(self._commit_btn)
         row.addWidget(self._clear_btn)
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -206,21 +198,9 @@ class _F8GlobalHotkeyEdit(QtWidgets.QWidget):
     def _on_capture_finished(self) -> None:
         self.release_capture()
 
-    def _commit_current_value(self) -> None:
-        if not self._capture_active:
-            return
-        self._normalize_sequence()
-        if not self.is_submittable():
-            self._refresh_status()
-            return
-        self.release_capture()
-        if self._commit_requested is not None:
-            self._commit_requested()
-
     def _refresh_action_buttons(self) -> None:
         enabled = self.isEnabled()
         self._clear_btn.setEnabled(bool(enabled))
-        self._commit_btn.setEnabled(bool(enabled and self._capture_active and bool(self.value()) and self.is_submittable()))
 
     def _refresh_status(self) -> None:
         self._refresh_action_buttons()
@@ -247,7 +227,7 @@ class _F8GlobalHotkeyEdit(QtWidgets.QWidget):
                 self.status_changed.emit()
                 return
             self._status.setStyleSheet("color: rgb(132, 196, 132);")
-            self._status.setText("Shortcut is available. Press the green check to commit it.")
+            self._status.setText("Shortcut is available.")
             self.status_changed.emit()
             return
         if not text:
@@ -446,7 +426,6 @@ class _F8EditStateFieldDialog(QtWidgets.QDialog):
             conflict_lookup=hotkey_conflict_lookup,
             capture_started=hotkey_capture_started,
             capture_finished=hotkey_capture_finished,
-            commit_requested=self.accept,
         )
         self._ui_control.textChanged.connect(self._refresh_global_hotkey_enabled)  # type: ignore[attr-defined]
         self._global_hotkey.status_changed.connect(self._refresh_accept_enabled)  # type: ignore[attr-defined]
