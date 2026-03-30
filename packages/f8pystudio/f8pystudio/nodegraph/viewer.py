@@ -303,10 +303,35 @@ class F8StudioNodeViewer(NodeViewer):
                             pipe.output_port.node.isVisible(),
                         )
                     )
+                if pipe_visible:
+                    pipe_visible = self.layer_visible_for_ports(pipe.output_port, pipe.input_port)
                 pipe.setVisible(bool(pipe_visible))
                 pipe.draw_path(pipe.input_port, pipe.output_port)
             except (AttributeError, RuntimeError, TypeError):
                 continue
+
+    def layer_visible_for_ports(self, output_port: Any, input_port: Any) -> bool:
+        graph = self._f8_graph
+        if graph is None:
+            return True
+        try:
+            out_node_id = str(output_port.node.id or "").strip()
+            in_node_id = str(input_port.node.id or "").strip()
+        except (AttributeError, RuntimeError, TypeError):
+            return True
+        if not out_node_id or not in_node_id:
+            return True
+        try:
+            out_node = graph.get_node_by_id(out_node_id)
+            in_node = graph.get_node_by_id(in_node_id)
+        except (AttributeError, KeyError, RuntimeError, TypeError):
+            return True
+        if out_node is None or in_node is None:
+            return True
+        try:
+            return bool(graph.edge_visible_for_nodes(out_node, in_node))
+        except (AttributeError, RuntimeError, TypeError):
+            return True
 
     def begin_node_placement(self, node_type: str, node_label: str) -> None:
         pending_type = str(node_type or "").strip()

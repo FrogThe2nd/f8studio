@@ -133,3 +133,7 @@ class GraphConnectionRulesMixin:
                 continue
             view.refresh_state_inline_control_read_only()
             view.update()
+        try:
+            self.refresh_layer_visibility()
+        except (AttributeError, RuntimeError, TypeError):
+            return

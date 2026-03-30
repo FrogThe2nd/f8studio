@@ -24,6 +24,8 @@ from NodeGraphQt.custom_widgets.properties_bin.prop_widgets_base import PropLabe
 
 from qtpy import QtCore, QtGui, QtWidgets
 
+from ...nodegraph.node_graph import F8StudioGraph
+from ...nodegraph.node_base import F8StudioBaseNode
 from ...components.state_editors import (
     F8BoolSwitchEditor,
     F8CodeButtonEditor as _F8CodeButtonEditor,
@@ -72,6 +74,7 @@ from .common import (
     _wrap_tab_page,
 )
 from .containers import _F8LabeledStackContainer, _F8StateContainer, _F8StateStackContainer
+from .layer_membership_editor import F8LayerMembershipEditor
 from .ports import _F8EditStateFieldDialog, _F8SpecPortEditor
 
 
@@ -96,6 +99,13 @@ def _adopt_widget_parent(widget: QtWidgets.QWidget, parent: QtWidgets.QWidget) -
         except (AttributeError, RuntimeError, TypeError):
             logger.exception("Failed to adopt temporary parent for property widget")
     return widget
+
+
+def _node_hotkey_controller(node: F8StudioBaseNode) -> Any | None:
+    graph = node.graph
+    if not isinstance(graph, F8StudioGraph):
+        return None
+    return graph.global_hotkey_controller
 
 
 class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
@@ -301,7 +311,7 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
 
         # If UI-only, we still want to allow editing UI fields (showOnNode/uiControl/etc).
         dialog_type = _package_attr("_F8EditStateFieldDialog", _F8EditStateFieldDialog)
-        hotkey_controller = getattr(getattr(node, "graph", None), "global_hotkey_controller", None)
+        hotkey_controller = _node_hotkey_controller(node)
         dlg = dialog_type(
             self,
             title="Edit state field",
@@ -350,7 +360,7 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
             showOnNode=False,
         )
         dialog_type = _package_attr("_F8EditStateFieldDialog", _F8EditStateFieldDialog)
-        hotkey_controller = getattr(getattr(node, "graph", None), "global_hotkey_controller", None)
+        hotkey_controller = _node_hotkey_controller(node)
         dlg = dialog_type(
             self,
             title="Add state field",
@@ -532,7 +542,7 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
         except Exception:
             logger.exception("sync_from_spec failed while applying state-field edits")
 
-    def _read_node(self, node):
+    def _read_node(self, node: F8StudioBaseNode):
         """
         Populate widget from a node.
 
@@ -836,10 +846,7 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
 
         spec = _get_node_spec(node)
         if isinstance(spec, F8OperatorSpec):
-            try:
-                svc_id = str(node.svcId or "")  # type: ignore[attr-defined]
-            except Exception:
-                svc_id = ""
+            svc_id = str(node.svcId or "")
             sys_widget = PropLabel(self)
             sys_widget.set_name("__sys_svcId")
             prop_window.add_widget(
@@ -850,12 +857,23 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
                 tooltip="Bound service container id.",
             )
 
+        node_graph = node.graph
+        if not isinstance(node_graph, F8StudioGraph):
+            raise RuntimeError(f"Node '{str(node.id or '')}' is not attached to an F8StudioGraph.")
+        layer_widget = F8LayerMembershipEditor(node_graph=node_graph, parent=self)
+        layer_widget.set_name("f8_ui_state")
+        prop_window.add_widget(
+            name="f8_ui_state",
+            widget=layer_widget,
+            value=node.ui_state(),
+            label="Layers",
+            tooltip="Display-only graph layers for this node. A node can belong to multiple layers.",
+        )
+        layer_widget.value_changed.connect(self._on_property_changed)
+
         purpose_widget = _F8InlineCodeEditor(self, language="plaintext")
         purpose_widget.set_name("nodePurpose")
-        try:
-            node_purpose = str(node.nodePurpose or "")  # type: ignore[attr-defined]
-        except Exception:
-            node_purpose = ""
+        node_purpose = str(node.nodePurpose or "")
         prop_window.add_widget(
             name="nodePurpose",
             widget=purpose_widget,
@@ -1153,7 +1171,7 @@ class F8StudioSingleNodePropertiesWidget(QtWidgets.QWidget):
     we present a single `F8StudioNodePropEditorWidget` inside a QScrollArea.
     """
 
-    def __init__(self, parent: QtWidgets.QWidget | None = None, *, node_graph: Any) -> None:
+    def __init__(self, parent: QtWidgets.QWidget | None = None, *, node_graph: F8StudioGraph) -> None:
         super().__init__(parent)
         self._node_graph = node_graph
         self._node_id: str | None = None
@@ -1214,13 +1232,12 @@ class F8StudioSingleNodePropertiesWidget(QtWidgets.QWidget):
 
     def _wire_graph_signals(self) -> None:
         g = self._node_graph
-        if g is None:
-            return
         g.node_selected.connect(self._on_node_selected)  # type: ignore[attr-defined]
         g.node_double_clicked.connect(self._on_node_selected)  # type: ignore[attr-defined]
         g.node_selection_changed.connect(self._on_node_selection_changed)  # type: ignore[attr-defined]
         g.nodes_deleted.connect(self._on_nodes_deleted)  # type: ignore[attr-defined]
         g.property_changed.connect(self._on_graph_property_changed)  # type: ignore[attr-defined]
+        g.layers_changed.connect(self._on_graph_layers_changed)  # type: ignore[attr-defined]
         g.port_connected.connect(self._on_graph_ports_changed)  # type: ignore[attr-defined]
         g.port_disconnected.connect(self._on_graph_ports_changed)  # type: ignore[attr-defined]
 
@@ -1307,7 +1324,7 @@ class F8StudioSingleNodePropertiesWidget(QtWidgets.QWidget):
         except (AttributeError, RuntimeError, TypeError):
             logger.exception("Failed to connect editor.property_closed")
 
-    def set_node(self, node: Any | None, *, force_clear: bool = False) -> None:
+    def set_node(self, node: F8StudioBaseNode | None, *, force_clear: bool = False) -> None:
         if node is None:
             # Avoid transient clear -> re-set flicker caused by selection jitter.
             # Only clear when explicitly forced (eg. node deleted) or when the
@@ -1315,10 +1332,7 @@ class F8StudioSingleNodePropertiesWidget(QtWidgets.QWidget):
             if force_clear or self._editor is None:
                 self._clear_editor(clear_node_id=True)
             return
-        try:
-            node_id = str(node.id or "")
-        except Exception:
-            node_id = ""
+        node_id = str(node.id or "")
         if not node_id:
             self._clear_editor(clear_node_id=True)
             return
@@ -1368,13 +1382,7 @@ class F8StudioSingleNodePropertiesWidget(QtWidgets.QWidget):
         needs a single active properties view, keep the last shown node until
         another node is selected or the node is deleted.
         """
-        g = self._node_graph
-        selected_nodes: list[Any] = []
-        if g is not None:
-            try:
-                selected_nodes = list(g.selected_nodes() or [])  # type: ignore[attr-defined]
-            except Exception:
-                selected_nodes = []
+        selected_nodes = list(self._node_graph.selected_nodes() or [])
         if selected_nodes:
             self.set_node(selected_nodes[0])
             return
@@ -1384,16 +1392,10 @@ class F8StudioSingleNodePropertiesWidget(QtWidgets.QWidget):
     def _on_editor_property_changed(self, node_id: str, prop_name: str, prop_value: Any) -> None:
         if self._block_signal:
             return
-        g = self._node_graph
-        if g is None:
-            return
         nid = str(node_id or "").strip()
         if not nid:
             return
-        try:
-            node = g.get_node_by_id(nid)  # type: ignore[attr-defined]
-        except Exception:
-            node = None
+        node = self._node_graph.get_node_by_id(nid)
         if node is None:
             return
         try:
@@ -1404,16 +1406,10 @@ class F8StudioSingleNodePropertiesWidget(QtWidgets.QWidget):
     def _on_editor_property_changing(self, node_id: str, prop_name: str, prop_value: Any) -> None:
         if self._block_signal:
             return
-        g = self._node_graph
-        if g is None:
-            return
         nid = str(node_id or "").strip()
         if not nid:
             return
-        try:
-            node = g.get_node_by_id(nid)  # type: ignore[attr-defined]
-        except Exception:
-            node = None
+        node = self._node_graph.get_node_by_id(nid)
         if node is None:
             return
         try:
@@ -1462,6 +1458,11 @@ class F8StudioSingleNodePropertiesWidget(QtWidgets.QWidget):
             logger.exception("Failed to update property widget value key=%s", prop_key)
         finally:
             self._block_signal = False
+
+    def _on_graph_layers_changed(self) -> None:
+        if self._editor is None:
+            return
+        self._editor.reload()
 
 
 def _is_json_state_value(node: Any, prop_name: str) -> bool:

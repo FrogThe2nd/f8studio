@@ -23,6 +23,7 @@ from f8pysdk.spec_edit_policy import (
 )
 
 from .edge_rules import EdgeRuleNodeInfo, layout_node_info, validate_layout_connection
+from .layers import augment_layer_defs_for_layout_nodes, layer_defs_to_json, layout_layer_defs_from_layout
 from .viewer import F8StudioNodeViewer
 from ..session_migration import extract_layout as _extract_session_layout
 from ..session_migration import wrap_layout_for_save as _wrap_layout_for_save
@@ -800,6 +801,7 @@ class SessionLayoutCodecMixin:
                         if missing_original_name:
                             node_data["name"] = missing_original_name
                 self._strip_missing_lock_for_save(node_data)
+        stripped_layout["f8_layers"] = layer_defs_to_json(self.session_layer_defs())
         return _wrap_layout_for_save(stripped_layout)
 
     def serialize_publish_session(self) -> dict:
@@ -827,6 +829,10 @@ class SessionLayoutCodecMixin:
             with open(file_path, encoding="utf-8-sig") as data_file:
                 payload = json.load(data_file)
             layout_data = _extract_session_layout(payload)
+            layer_defs = augment_layer_defs_for_layout_nodes(
+                layout_layer_defs_from_layout(layout_data),
+                layout_data.get("nodes"),
+            )
             self._inject_node_ids(layout_data)
             layout_data = self._restore_missing_session_nodes(layout_data)
             layout_data = self._coerce_missing_session_nodes(layout_data)
@@ -834,7 +840,10 @@ class SessionLayoutCodecMixin:
             layout_data = self._strip_port_restore_data(layout_data)
             layout_data = self._strip_unknown_session_custom_properties(layout_data)
             layout_data = self._strip_invalid_connections(layout_data)
-            super().deserialize_session(layout_data, clear_session=False, clear_undo_stack=True)
+            deserialize_layout = dict(layout_data)
+            deserialize_layout.pop("f8_layers", None)
+            super().deserialize_session(deserialize_layout, clear_session=False, clear_undo_stack=True)
+            self.set_session_layer_defs(layer_defs, preserve_active=False)
             self._model.session = file_path
             self.session_changed.emit(file_path)
         finally:

@@ -10,6 +10,7 @@ class StudioIcon(Enum):
     FOLDER_OPEN = "folder-open.svg"
     FOLDER_PLUS = "folder-plus.svg"
     SAVE = "save.svg"
+    EDIT = "edit.svg"
     TRASH = "trash.svg"
     SEND = "send.svg"
     STOP_ALL = "stop-all.svg"
@@ -25,6 +26,7 @@ class StudioIcon(Enum):
     SQUARE_PLUS = "square-plus.svg"
     EYE = "eye.svg"
     EYE_SLASH = "eye-slash.svg"
+    EYE_STAR = "eye-star.svg"
     AUTOMATION = "automation.svg"
     PLUS = "plus.svg"
     SQUARE_X = "square-x.svg"
@@ -39,6 +41,10 @@ class StudioIcon(Enum):
     PACKAGE_IMPORT = "package-import.svg"
     PACKAGE_EXPORT = "package-export.svg"
     KEYBOARD = "keyboard.svg"
+    ARROW_BIG_UP = "arrow-big-up.svg"
+    ARROW_BIG_DOWN = "arrow-big-down.svg"
+    ARROW_BIG_LEFT = "arrow-big-left.svg"
+    ARROW_BIG_RIGHT = "arrow-big-right.svg"
 
 
 def icon_for(widget: QtWidgets.QWidget, token: StudioIcon) -> QtGui.QIcon:

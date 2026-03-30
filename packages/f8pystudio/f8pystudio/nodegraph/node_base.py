@@ -14,6 +14,7 @@ from f8pysdk.spec_metadata import coerce_spec_payload
 from ..widgets.ui_override_mutations import apply_named_order, get_list_order_override
 
 from .node_model import F8StudioNodeModel
+from .layers import extract_node_layer_ids_from_ui_state, set_node_layer_ids_in_ui_state
 
 
 class F8StudioBaseNode(BaseNode):
@@ -124,6 +125,12 @@ class F8StudioBaseNode(BaseNode):
 
     def set_ui_state(self, value: dict[str, object] | None) -> None:
         self.model.set_property("f8_ui_state", value or {})
+
+    def layer_ids(self) -> tuple[str, ...]:
+        return extract_node_layer_ids_from_ui_state(self.ui_state())
+
+    def set_layer_ids(self, layer_ids: list[str] | tuple[str, ...]) -> None:
+        self.set_ui_state(set_node_layer_ids_in_ui_state(self.ui_state(), layer_ids=layer_ids))
 
     @staticmethod
     def _named_items_in_order(items: list[Any], *, order: list[str]) -> list[Any]:

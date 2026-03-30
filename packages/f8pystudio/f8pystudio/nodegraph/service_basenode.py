@@ -528,7 +528,6 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         else:
             painter.setBrush(QtGui.QColor(0, 0, 0, 80))
         painter.drawRoundedRect(text_rect, 3.0, 3.0)
-
         # node border
         if self.selected:
             border_width = 1.2
@@ -586,7 +585,6 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         for y in [rect.y() + padding, rect.height() - height - 1]:
             edge_rect = QtCore.QRectF(rect.x() + padding, y, rect.width() - (padding * 2), height)
             painter.drawRoundedRect(edge_rect, 3.0, 3.0)
-
         # node border
         border_width = 0.8
         border_color = QtGui.QColor(*self.border_color)
@@ -625,6 +623,10 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
             self._paint_vertical(painter, option, widget)
         else:
             raise RuntimeError("Node graph layout direction not valid!")
+
+    def set_hidden_layer_link_count(self, count: int) -> None:
+        _ = count
+        return
 
     def mousePressEvent(self, event):
         """

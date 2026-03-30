@@ -17,6 +17,12 @@ from .insert_layout_utils import (
     remap_insert_layout,
     shift_insert_layout_nodes,
 )
+from .layers import (
+    augment_layer_defs_for_layout_nodes,
+    extract_node_layer_ids_from_ui_state,
+    layout_layer_defs_from_layout,
+    remap_layout_node_layer_ids,
+)
 from .viewer import F8StudioNodeViewer
 from ..session_migration import extract_layout as _extract_session_layout
 from ..ui_notifications import show_warning
@@ -168,6 +174,12 @@ class GraphInsertFlowMixin:
         import_node_ids = [str(node_id or "").strip() for node_id in list(nodes_obj.keys())]
         remap_plan = self._build_insert_id_remap(import_node_ids)
         remapped_layout = self._remap_insert_layout(source_layout, remap_plan)
+        imported_layer_defs = augment_layer_defs_for_layout_nodes(
+            layout_layer_defs_from_layout(remapped_layout),
+            remapped_layout.get("nodes"),
+        )
+        merged_layer_defs, layer_id_remap = self.merge_imported_layer_defs(imported_layer_defs)
+        remap_layout_node_layer_ids(remapped_layout.get("nodes"), layer_id_remap)
 
         dx = float(anchor_x) - float(request.source_bbox.min_x)
         dy = float(anchor_y) - float(request.source_bbox.min_y)
@@ -185,12 +197,28 @@ class GraphInsertFlowMixin:
             after_connections = len(connections_obj)
         dropped_invalid_connections = max(0, int(before_connections - after_connections))
 
+        activate_layer_ids: set[str] = set(self.active_layer_ids())
+        nodes_after_layer_merge = remapped_layout.get("nodes")
+        if isinstance(nodes_after_layer_merge, dict):
+            for node_data in list(nodes_after_layer_merge.values()):
+                if not isinstance(node_data, dict):
+                    continue
+                for layer_id in extract_node_layer_ids_from_ui_state(node_data.get("f8_ui_state")):
+                    activate_layer_ids.add(layer_id)
+
         prev_loading = bool(self._loading_session)
         self._loading_session = True
         try:
-            super().deserialize_session(remapped_layout, clear_session=False, clear_undo_stack=False)
+            deserialize_layout = dict(remapped_layout)
+            deserialize_layout.pop("f8_layers", None)
+            super().deserialize_session(deserialize_layout, clear_session=False, clear_undo_stack=False)
         finally:
             self._loading_session = prev_loading
+        self.set_session_layer_defs(
+            merged_layer_defs,
+            preserve_active=True,
+            activate_layer_ids=tuple(sorted(activate_layer_ids)),
+        )
         inserted_node_ids = [remap_plan.mapping.get(src, src) for src in import_node_ids]
         self._rebind_container_children()
         self._refresh_all_inline_state_read_only()

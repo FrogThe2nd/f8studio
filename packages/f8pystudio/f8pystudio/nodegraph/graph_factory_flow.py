@@ -13,6 +13,7 @@ from ..constants import SERVICE_CLASS as _CANVAS_SERVICE_CLASS_
 from ..constants import STUDIO_SERVICE_ID
 from ..ui_notifications import show_warning
 from ..variants.variant_ids import parse_variant_node_type
+from .node_base import F8StudioBaseNode
 
 logger = logging.getLogger(__name__)
 
@@ -52,25 +53,19 @@ class GraphFactoryFlowMixin:
             seen_refs.add(marker)
             self._teardown_node(node)
 
-    def _assign_node_id(self, node: BaseNode) -> BaseNode:
+    def _assign_node_id(self, node: F8StudioBaseNode) -> F8StudioBaseNode:
         new_nid = self.new_unique_node_id()
         node.model.id = new_nid
         node.view.id = new_nid
         # Seed identity state into UI properties early (these are runtime-owned readonly
         # fields; the runtime compiler skips ro values so they won't be deployed).
-        try:
-            spec = node.spec  # type: ignore[attr-defined]
-        except Exception:
-            spec = None
-        try:
-            if isinstance(spec, F8OperatorSpec):
-                if "operatorId" in node.model.properties or "operatorId" in node.model.custom_properties:
-                    node.set_property("operatorId", str(new_nid), push_undo=False)
-            elif isinstance(spec, F8ServiceSpec):
-                if "svcId" in node.model.properties or "svcId" in node.model.custom_properties:
-                    node.set_property("svcId", str(new_nid), push_undo=False)
-        except (AttributeError, RuntimeError, TypeError):
-            pass
+        spec = node.spec
+        if isinstance(spec, F8OperatorSpec):
+            if "operatorId" in node.model.properties or "operatorId" in node.model.custom_properties:
+                node.set_property("operatorId", str(new_nid), push_undo=False)
+        elif isinstance(spec, F8ServiceSpec):
+            if "svcId" in node.model.properties or "svcId" in node.model.custom_properties:
+                node.set_property("svcId", str(new_nid), push_undo=False)
         return node
 
     def create_node(self, node_type, name=None, selected=True, color=None, text_color=None, pos=None, push_undo=True):
@@ -126,6 +121,10 @@ class GraphFactoryFlowMixin:
 
         node = self._node_factory.create_node_instance(node_type)
         if node:
+            if not isinstance(node, F8StudioBaseNode):
+                raise NodeCreationError(
+                    f'Node "{node_type}" must inherit from F8StudioBaseNode, got {type(node).__name__}.'
+                )
             node = self._assign_node_id(node)
 
             node._graph = self
@@ -188,6 +187,12 @@ class GraphFactoryFlowMixin:
 
             # initial node direction layout.
             node.model.layout_direction = self.layout_direction()
+            if not self._loading_session:
+                node.set_property(
+                    "f8_ui_state",
+                    self.set_node_layer_ids_in_ui_state_for_editor(node.ui_state(), self.default_layer_ids_for_new_node()),
+                    push_undo=False,
+                )
 
             node.update()
 
@@ -211,6 +216,7 @@ class GraphFactoryFlowMixin:
                     n.set_property("selected", False, push_undo=False)
                 undo_cmd.redo()
 
+            self.refresh_layer_visibility()
             return node
 
         raise NodeCreationError('Can\'t find node: "{}"'.format(node_type))
@@ -241,6 +247,7 @@ class GraphFactoryFlowMixin:
         super().add_node(
             node, pos=pos, selected=selected, push_undo=push_undo, inherite_graph_style=inherite_graph_style
         )
+        self.refresh_layer_visibility()
 
     def delete_node(self, node, push_undo=True):
         """
@@ -289,17 +296,10 @@ class GraphFactoryFlowMixin:
         # hooks consistent with multi-node delete behavior.
         if len(nodes) == 1:
             node = nodes[0]
-            node_id = ""
-            try:
-                node_id = str(node.id or "")
-            except Exception:
-                node_id = ""
+            node_id = str(node.id or "")
             r = super().delete_node(node, push_undo=push_undo)
             if node_id:
-                try:
-                    self.nodes_deleted.emit([node_id])  # type: ignore[attr-defined]
-                except (AttributeError, RuntimeError, TypeError):
-                    pass
+                self.nodes_deleted.emit([node_id])  # type: ignore[attr-defined]
         else:
             r = super().delete_nodes(nodes, push_undo=push_undo)
 

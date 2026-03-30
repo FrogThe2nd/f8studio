@@ -133,6 +133,11 @@ class F8StudioPipeItem(PipeItem):
                 self.output_port.node.isVisible(),
             )
         )
+        if is_visible:
+            try:
+                is_visible = bool(viewer.layer_visible_for_ports(self.output_port, self.input_port))
+            except (AttributeError, RuntimeError, TypeError):
+                is_visible = True
         self.setVisible(bool(is_visible))
         if not bool(is_visible):
             self._dir_pointer.setVisible(False)

@@ -18,6 +18,7 @@ from ..ui_bus import UiCommand, UiCommandApplier
 from ..ui_icons import StudioIcon, icon_for
 from ..global_hotkeys.controller import ControlPanelGlobalHotkeyController
 from .global_hotkey_registry_dialog import GlobalHotkeyRegistryDialog
+from .layers_panel import LayersPanelWidget
 from .node_property_panel import F8StudioSingleNodePropertiesWidget
 from .node_library_widget import F8StudioNodeLibraryWidget
 from .service_manager_widget import ServiceManagerWidget
@@ -267,6 +268,13 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         self._node_library_dock.setWidget(node_library)
         self.addDockWidget(QtCore.Qt.RightDockWidgetArea, self._node_library_dock)
 
+        self._layers_panel = LayersPanelWidget(studio_graph=self.studio_graph, parent=self)
+        self._layers_dock = QtWidgets.QDockWidget("Layers", self)
+        self._layers_dock.setObjectName("LayersDock")
+        self._layers_dock.setWidget(self._layers_panel)
+        self.addDockWidget(QtCore.Qt.RightDockWidgetArea, self._layers_dock)
+        self.tabifyDockWidget(self._node_library_dock, self._layers_dock)
+
         self._ai_assist_sidebar = AiAssistSidebarWidget(studio_graph=self.studio_graph, parent=self)
         self._ai_assist_dock = QtWidgets.QDockWidget("AI Assist", self)
         self._ai_assist_dock.setObjectName("AiAssistDock")
@@ -278,6 +286,7 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
             self._properties_dock,
             self._log_dock,
             self._node_library_dock,
+            self._layers_dock,
             self._ai_assist_dock,
         ]
 

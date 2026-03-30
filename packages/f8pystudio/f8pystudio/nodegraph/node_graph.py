@@ -14,10 +14,12 @@ from .graph_factory_flow import GraphFactoryFlowMixin
 from .graph_identity_actions import GraphIdentityActionsMixin
 from .graph_node_docs_actions import GraphNodeDocsActionsMixin
 from .graph_insert_flow import GraphInsertFlowMixin, GraphInsertRequest, InsertResult
+from .graph_layering import GraphLayeringMixin
 from .graph_search_actions import GraphSearchActionsMixin
 from .graph_service_reclaim import GraphServiceReclaimMixin
 from .graph_variant_actions import GraphVariantActionsMixin
 from .insert_layout_utils import GraphBounds
+from .layers import normalize_layer_defs
 from .service_bridge_protocol import ServiceBridge
 from .session_layout_codec import SessionLayoutCodecMixin
 from .viewer import F8StudioNodeViewer
@@ -32,6 +34,7 @@ class F8StudioGraph(
     GraphIdentityActionsMixin,
     GraphDuplicateActionsMixin,
     GraphNodeDocsActionsMixin,
+    GraphLayeringMixin,
     GraphConnectionRulesMixin,
     GraphInsertFlowMixin,
     SessionLayoutCodecMixin,
@@ -44,6 +47,8 @@ class F8StudioGraph(
     """Main F8PyStudio controller class."""
 
     node_placement_changed = QtCore.Signal(bool, str)
+    layers_changed = QtCore.Signal()
+    active_layers_changed = QtCore.Signal(tuple)
 
     def __init__(self, parent=None, **kwargs):
         """
@@ -74,8 +79,11 @@ class F8StudioGraph(
         self._service_bridge: ServiceBridge | None = None
         self._global_hotkey_controller: Any | None = None
         self._reclaim_timers: dict[str, QtCore.QTimer] = {}
+        self._session_layer_defs = normalize_layer_defs(())
+        self._active_layer_ids = tuple(layer.id for layer in self._session_layer_defs if layer.default_visible)
 
         self.nodes_deleted.connect(self._on_nodes_deleted)  # type: ignore[attr-defined]
+        self.nodes_deleted.connect(self.on_layering_nodes_deleted)  # type: ignore[attr-defined]
         self.port_connected.connect(self._on_port_connected)  # type: ignore[attr-defined]
         self.port_disconnected.connect(self._on_port_disconnected)  # type: ignore[attr-defined]
 

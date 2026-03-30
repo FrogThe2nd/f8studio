@@ -55,3 +55,12 @@ def test_property_panel_reloads_when_system_spec_changes() -> None:
     F8StudioSingleNodePropertiesWidget._on_graph_property_changed(fake_self, node, "f8_spec", {"stateFields": []})
 
     assert seen == ["reload"]
+
+
+def test_property_panel_reloads_when_graph_layers_change() -> None:
+    seen: list[str] = []
+    fake_self = SimpleNamespace(_editor=SimpleNamespace(reload=lambda: seen.append("reload")))
+
+    F8StudioSingleNodePropertiesWidget._on_graph_layers_changed(fake_self)
+
+    assert seen == ["reload"]

@@ -5,7 +5,10 @@ from copy import deepcopy
 
 from f8pysdk.generated import F8Command, F8DataPortSpec, F8ServiceSpec
 from f8pysdk.schema_helpers import any_schema, number_schema
+from f8pystudio.nodegraph.layers import F8LayerDef
 from f8pystudio.nodegraph.session_layout_codec import SessionLayoutCodecMixin
+from NodeGraphQt import NodeGraph
+from unittest.mock import patch
 
 
 def _service_spec_payload(
@@ -112,3 +115,62 @@ def test_strip_invalid_connections_keeps_command_ports() -> None:
     out = SessionLayoutCodecMixin._strip_invalid_connections(deepcopy(layout))
 
     assert out["connections"] == [{"out": ["svc.src", "run[C]"], "in": ["svc.dst", "[C]apply"]}]
+
+
+def test_serialize_session_includes_f8_layers_top_level() -> None:
+    class _Graph(SessionLayoutCodecMixin, NodeGraph):
+        def session_layer_defs(self) -> tuple[F8LayerDef, ...]:
+            return (
+                F8LayerDef(id="base", label="Base", default_visible=True, is_base=True),
+                F8LayerDef(id="logic", label="Logic", color="#112233", default_visible=False),
+            )
+
+    graph = _Graph.__new__(_Graph)
+    raw_layout = {"nodes": {}, "connections": []}
+
+    with patch.object(NodeGraph, "serialize_session", return_value=deepcopy(raw_layout)):
+        out = graph.serialize_session()
+
+    assert out["layout"]["f8_layers"] == [
+        {
+            "id": "base",
+            "label": "Base",
+            "description": "Default compatibility layer for unassigned nodes.",
+            "color": "#64748B",
+            "defaultVisible": True,
+            "isBase": True,
+        },
+        {
+            "id": "logic",
+            "label": "Logic",
+            "description": "",
+            "color": "#112233",
+            "defaultVisible": False,
+            "isBase": False,
+        },
+    ]
+
+
+def test_serialize_session_preserves_base_default_visible_false() -> None:
+    class _Graph(SessionLayoutCodecMixin, NodeGraph):
+        def session_layer_defs(self) -> tuple[F8LayerDef, ...]:
+            return (
+                F8LayerDef(id="base", label="Base", default_visible=False, is_base=True),
+            )
+
+    graph = _Graph.__new__(_Graph)
+    raw_layout = {"nodes": {}, "connections": []}
+
+    with patch.object(NodeGraph, "serialize_session", return_value=deepcopy(raw_layout)):
+        out = graph.serialize_session()
+
+    assert out["layout"]["f8_layers"] == [
+        {
+            "id": "base",
+            "label": "Base",
+            "description": "Default compatibility layer for unassigned nodes.",
+            "color": "#64748B",
+            "defaultVisible": False,
+            "isBase": True,
+        }
+    ]
