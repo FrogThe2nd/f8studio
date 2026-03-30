@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import time
 from collections import defaultdict
+from dataclasses import dataclass, field
 from typing import Any
 
 from f8pysdk import (
@@ -79,6 +80,12 @@ from .ports import _F8EditStateFieldDialog, _F8SpecPortEditor
 
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _NodePropEditorViewState:
+    current_tab: str | None = None
+    tab_scroll_positions: dict[str, int] = field(default_factory=dict)
 
 
 def _should_show_commands_tab(spec: F8OperatorSpec | F8ServiceSpec) -> bool:
@@ -949,6 +956,66 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
         # Debounced rebuild to coalesce bursts of updates.
         self._reload_timer.start(int(self._reload_debounce_ms))
 
+    def snapshot_view_state(self) -> _NodePropEditorViewState:
+        current_tab: str | None = None
+        current_index = self.__tab.currentIndex()
+        if current_index >= 0:
+            current_tab = self.__tab.tabText(current_index)
+
+        scroll_positions: dict[str, int] = {}
+        for i in range(self.__tab.count()):
+            tab_name = self.__tab.tabText(i)
+            widget = self.__tab.widget(i)
+            if widget is None:
+                continue
+            areas = widget.findChildren(QtWidgets.QScrollArea)
+            if not areas:
+                continue
+            try:
+                scroll_positions[tab_name] = int(areas[0].verticalScrollBar().value())
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                continue
+
+        return _NodePropEditorViewState(
+            current_tab=current_tab,
+            tab_scroll_positions=scroll_positions,
+        )
+
+    def restore_view_state(self, state: _NodePropEditorViewState | None) -> bool:
+        if state is None:
+            return False
+
+        restored_current_tab = False
+        if state.current_tab:
+            for i in range(self.__tab.count()):
+                if self.__tab.tabText(i) != state.current_tab:
+                    continue
+                self.__tab.setCurrentIndex(i)
+                restored_current_tab = True
+                break
+
+        if state.tab_scroll_positions:
+
+            def _restore() -> None:
+                for i in range(self.__tab.count()):
+                    tab_name = self.__tab.tabText(i)
+                    if tab_name not in state.tab_scroll_positions:
+                        continue
+                    widget = self.__tab.widget(i)
+                    if widget is None:
+                        continue
+                    areas = widget.findChildren(QtWidgets.QScrollArea)
+                    if not areas:
+                        continue
+                    try:
+                        areas[0].verticalScrollBar().setValue(state.tab_scroll_positions[tab_name])
+                    except (AttributeError, RuntimeError, TypeError):
+                        continue
+
+            QtCore.QTimer.singleShot(0, _restore)
+
+        return restored_current_tab
+
     def _clear_tabs(self) -> None:
         # `removeTab()` does not delete the widget.
         # Avoid `setParent(None)` to prevent transient top-level window flashes.
@@ -968,29 +1035,7 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
         node = self._node
         if node is None:
             return
-        prev_tab = None
-        scroll_pos: dict[str, int] = {}
-        try:
-            idx = self.__tab.currentIndex()
-            if idx >= 0:
-                prev_tab = self.__tab.tabText(idx)
-        except Exception:
-            prev_tab = None
-        try:
-            for i in range(self.__tab.count()):
-                tab_name = self.__tab.tabText(i)
-                w = self.__tab.widget(i)
-                if not w:
-                    continue
-                areas = w.findChildren(QtWidgets.QScrollArea)
-                if not areas:
-                    continue
-                try:
-                    scroll_pos[tab_name] = int(areas[0].verticalScrollBar().value())
-                except (AttributeError, RuntimeError, TypeError, ValueError):
-                    pass
-        except Exception:
-            scroll_pos = {}
+        previous_view_state = self.snapshot_view_state()
 
         self._clear_tabs()
         self.__tab_windows = {}
@@ -1005,33 +1050,7 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
             logger.exception("Failed to update missing banner")
         if missing_locked:
             self._apply_missing_lock_read_only()
-        if prev_tab:
-            try:
-                for i in range(self.__tab.count()):
-                    if self.__tab.tabText(i) == prev_tab:
-                        self.__tab.setCurrentIndex(i)
-                        break
-            except (AttributeError, RuntimeError, TypeError):
-                pass
-        if scroll_pos:
-
-            def _restore() -> None:
-                for i in range(self.__tab.count()):
-                    tab_name = self.__tab.tabText(i)
-                    if tab_name not in scroll_pos:
-                        continue
-                    w = self.__tab.widget(i)
-                    if not w:
-                        continue
-                    areas = w.findChildren(QtWidgets.QScrollArea)
-                    if not areas:
-                        continue
-                    try:
-                        areas[0].verticalScrollBar().setValue(scroll_pos[tab_name])
-                    except (AttributeError, RuntimeError, TypeError):
-                        pass
-
-            QtCore.QTimer.singleShot(0, _restore)
+        self.restore_view_state(previous_view_state)
 
     def node_id(self):
         """
@@ -1324,6 +1343,12 @@ class F8StudioSingleNodePropertiesWidget(QtWidgets.QWidget):
         except (AttributeError, RuntimeError, TypeError):
             logger.exception("Failed to connect editor.property_closed")
 
+    def _restore_outer_scroll_position(self, value: int) -> None:
+        try:
+            self._scroll.verticalScrollBar().setValue(int(value))
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            logger.exception("Failed to restore property panel scroll position")
+
     def set_node(self, node: F8StudioBaseNode | None, *, force_clear: bool = False) -> None:
         if node is None:
             # Avoid transient clear -> re-set flicker caused by selection jitter.
@@ -1338,12 +1363,20 @@ class F8StudioSingleNodePropertiesWidget(QtWidgets.QWidget):
             return
         if self._node_id == node_id and self._editor is not None:
             return
-        self._node_id = node_id
-        self._set_editor(F8StudioNodePropEditorWidget(self._container, node=node))
+        previous_editor = self._editor
+        previous_view_state = previous_editor.snapshot_view_state() if previous_editor is not None else None
         try:
-            self._scroll.verticalScrollBar().setValue(0)
-        except (AttributeError, RuntimeError, TypeError):
-            logger.exception("Failed to reset property panel scroll position")
+            previous_outer_scroll = int(self._scroll.verticalScrollBar().value())
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            previous_outer_scroll = 0
+        self._node_id = node_id
+        editor = F8StudioNodePropEditorWidget(self._container, node=node)
+        self._set_editor(editor)
+        restored_same_tab = editor.restore_view_state(previous_view_state)
+        if restored_same_tab:
+            QtCore.QTimer.singleShot(0, lambda value=previous_outer_scroll: self._restore_outer_scroll_position(value))
+            return
+        self._restore_outer_scroll_position(0)
 
     def _on_node_selected(self, node: Any) -> None:
         self._last_node_click_ts = time.monotonic()
