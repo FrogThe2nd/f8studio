@@ -16,6 +16,7 @@ from f8pysdk import (
 from f8pysdk.nats_naming import ensure_token
 from f8pysdk.runtime_node import OperatorNode
 from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
+from f8pysdk.schema_helpers import integer_schema
 
 from ..constants import SERVICE_CLASS
 
@@ -51,23 +52,12 @@ class ControlPanelRuntimeNode(OperatorNode):
         stateFields=[
             F8StateSpec(
                 name="value",
-                label="Value",
-                description="Selected/current value published to downstream subscribers.",
-                valueSchema=string_schema(default=""),
+                description="The value of this control panel field.",
+                valueSchema=integer_schema(),
                 access=F8StateAccess.rw,
                 required=False,
-                uiControl="select[options]",
                 showOnNode=True,
-            ),
-            F8StateSpec(
-                name="options",
-                label="Options",
-                description="Option pool used by the `value` dropdown control.",
-                valueSchema=array_schema(items=string_schema()),
-                access=F8StateAccess.wo,
-                required=False,
-                showOnNode=True,
-            ),
+            )
         ],
     )
 
