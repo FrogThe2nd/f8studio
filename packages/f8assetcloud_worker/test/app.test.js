@@ -271,6 +271,11 @@ test('variant asset lifecycle includes history, search, subscribe, fork, and con
   assert.equal(bobMine.json.entries.length, 1);
   assert.equal(bobMine.json.entries[0].assetId, 'bob-fork');
 
+  const bobPublicOnly = await jsonRequest(app, env, '/v1/variants?owner=public', { token: bobToken });
+  assert.equal(bobPublicOnly.status, 200);
+  assert.equal(bobPublicOnly.json.entries.length, 1);
+  assert.equal(bobPublicOnly.json.entries[0].assetId, 'alice-variant');
+
   const unsubscribed = await jsonRequest(app, env, '/v1/variants/alice-variant/subscribe', {
     method: 'DELETE',
     token: bobToken,

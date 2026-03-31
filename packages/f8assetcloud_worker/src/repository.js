@@ -900,6 +900,8 @@ function applyVisibilityOwnerFilters({ filters, bindings, userId, visibility, ow
   } else if (normalizedOwner === 'subscribed') {
     filters.push('EXISTS (SELECT 1 FROM asset_subscriptions s WHERE s.asset_id = h.asset_id AND s.subscriber_user_id = ?)');
     bindings.push(viewerUserId);
+  } else if (normalizedOwner === 'public') {
+    filters.push(`h.visibility = 'public'`);
   } else {
     filters.push('(h.visibility = \'public\' OR h.owner_user_id = ?)');
     bindings.push(viewerUserId);
