@@ -1,0 +1,15 @@
+{
+  "name": "@feel8/f8assetcloud-worker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "node --test",
+    "d1:migrate": "wrangler d1 migrations apply feel8-assets",
+    "d1:migrate:local": "wrangler d1 migrations apply feel8-assets --local"
+  },
+  "devDependencies": {
+    "wrangler": "^4.40.0"
+  }
+}

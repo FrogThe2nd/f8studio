@@ -1,0 +1,4 @@
+# Copy this file to `.dev.vars` for local development only.
+# Never commit real secrets.
+JWT_SECRET="replace-with-a-long-random-secret"
+BOOTSTRAP_ADMIN_PASSWORD="replace-with-a-local-only-password"
