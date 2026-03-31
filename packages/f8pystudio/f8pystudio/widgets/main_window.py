@@ -17,6 +17,7 @@ from ..ui_notifications import show_info, show_warning
 from ..ui_bus import UiCommand, UiCommandApplier
 from ..ui_icons import StudioIcon, icon_for
 from ..global_hotkeys.controller import ControlPanelGlobalHotkeyController
+from ..variants.variant_sync import VariantSyncClient
 from .global_hotkey_registry_dialog import GlobalHotkeyRegistryDialog
 from .layers_panel import LayersPanelWidget
 from .node_property_panel import F8StudioSingleNodePropertiesWidget
@@ -26,6 +27,7 @@ from .service_inventory import collect_declared_service_ids, collect_declared_se
 from .service_log_widget import ServiceLogDock
 from .runtime_state_sync import RuntimeStateSyncController
 from .ai_assist_sidebar import AiAssistSidebarWidget
+from .variant_cloud_account_menu import build_variant_cloud_account_menu
 from .session_actions import (
     auto_load_session as session_auto_load_session,
     auto_save_session as session_auto_save_session,
@@ -126,6 +128,8 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         self._auto_deploy_enabled = self._read_saved_auto_deploy_enabled()
         self._auto_proxy_enabled = self._read_saved_auto_proxy_enabled()
         self._performance_overlay_enabled = self._read_saved_performance_overlay_enabled()
+        self._variant_sync_client = VariantSyncClient()
+        self._variant_cloud_account_button: QtWidgets.QToolButton | None = None
 
         self.studio_graph = F8StudioGraph()
         self.studio_graph.node_factory.clear_registered_nodes()
@@ -616,6 +620,13 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         toolbar_spacer.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred)
         tb.addWidget(toolbar_spacer)
 
+        account_button = QtWidgets.QToolButton(tb)
+        account_button.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
+        account_button.clicked.connect(self._on_variant_cloud_account_clicked)  # type: ignore[attr-defined]
+        tb.addWidget(account_button)
+        self._variant_cloud_account_button = account_button
+        self._refresh_variant_cloud_account_button()
+
         edge_tb = QtWidgets.QToolBar("Pipe Visibility", self)
         edge_tb.setObjectName("PipeVisibilityToolBar")
         edge_tb.setMovable(False)
@@ -668,6 +679,33 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
     def _set_edge_visibility_action_icon(self, action: QtGui.QAction, visible: bool) -> None:
         token = StudioIcon.EYE if visible else StudioIcon.EYE_SLASH
         action.setIcon(icon_for(self, token))
+
+    def _refresh_variant_cloud_account_button(self) -> None:
+        button = self._variant_cloud_account_button
+        if button is None:
+            return
+        user = self._variant_sync_client.current_user()
+        if user is None:
+            button.setText("Cloud")
+            button.setIcon(icon_for(button, StudioIcon.USER_OFF))
+            button.setToolTip("Manage Feel8 asset cloud accounts")
+            return
+        button.setText(str(user.username or user.displayName or "Cloud"))
+        button.setIcon(icon_for(button, StudioIcon.USER))
+        button.setToolTip(f"Cloud account: {user.displayName} @ {self._variant_sync_client.base_url()}")
+
+    @QtCore.Slot()
+    def _on_variant_cloud_account_clicked(self) -> None:
+        button = self._variant_cloud_account_button
+        if button is None:
+            return
+        self._refresh_variant_cloud_account_button()
+        menu = build_variant_cloud_account_menu(
+            parent=self,
+            sync_client=self._variant_sync_client,
+            on_changed=self._refresh_variant_cloud_account_button,
+        )
+        menu.exec(button.mapToGlobal(QtCore.QPoint(0, button.height())))
 
     @QtCore.Slot(bool)
     def _on_exec_lines_toggled(self, checked: bool) -> None:

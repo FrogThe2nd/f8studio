@@ -9,7 +9,7 @@ from .session import last_session_path
 from .spec_visibility import is_hidden_spec_node_class, typed_spec_template_or_none
 from ..variants.variant_ids import build_variant_node_type
 from f8pysdk.spec_metadata import palette_category_from_spec
-from ..variants.variant_repository import load_library
+from ..variants.variant_repository import list_entries_for_base
 
 
 class GraphSearchActionsMixin:
@@ -71,49 +71,51 @@ class GraphSearchActionsMixin:
         """
         Add saved variants to tab-search without requiring dynamic node-class registration.
         """
-        lib = load_library()
-        for variant in list(lib.variants or []):
-            base_node_type = str(variant.baseNodeType or "").strip()
-            if not base_node_type:
-                continue
-            base_node_cls = nodes.get(base_node_type)
-            if base_node_cls is not None and self._is_hidden_node_class(base_node_cls):
-                continue
-            category = str(base_node_categories.get(base_node_type) or "").strip()
-            if not category:
-                category = self._tab_search_category_for_node(node_cls=base_node_cls, node_type_id=base_node_type)
-            if not category:
-                category = "uncategorized"
+        seen_variant_ids: set[str] = set()
+        for base_node_type in list(base_node_names.keys()):
+            for entry in list_entries_for_base(base_node_type):
+                variant = entry.record
+                variant_id = str(variant.variantId or "").strip()
+                if not variant_id or variant_id in seen_variant_ids:
+                    continue
+                seen_variant_ids.add(variant_id)
+                base_node_type = str(variant.baseNodeType or "").strip()
+                if not base_node_type:
+                    continue
+                base_node_cls = nodes.get(base_node_type)
+                if base_node_cls is not None and self._is_hidden_node_class(base_node_cls):
+                    continue
+                category = str(base_node_categories.get(base_node_type) or "").strip()
+                if not category:
+                    category = self._tab_search_category_for_node(node_cls=base_node_cls, node_type_id=base_node_type)
+                if not category:
+                    category = "uncategorized"
 
-            base_node_name = str(base_node_names.get(base_node_type) or "").strip()
-            if not base_node_name:
-                if base_node_cls is not None:
-                    try:
-                        base_node_name = str(base_node_cls.NODE_NAME or "").strip()
-                    except (AttributeError, RuntimeError, TypeError):
-                        base_node_name = ""
-            if not base_node_name:
-                base_node_name = base_node_type.split(".")[-1] if "." in base_node_type else base_node_type
+                base_node_name = str(base_node_names.get(base_node_type) or "").strip()
+                if not base_node_name:
+                    if base_node_cls is not None:
+                        try:
+                            base_node_name = str(base_node_cls.NODE_NAME or "").strip()
+                        except (AttributeError, RuntimeError, TypeError):
+                            base_node_name = ""
+                if not base_node_name:
+                    base_node_name = base_node_type.split(".")[-1] if "." in base_node_type else base_node_type
 
-            variant_id = str(variant.variantId or "").strip()
-            if not variant_id:
-                continue
-            variant_name = str(variant.name or "").strip() or variant_id
+                variant_name = str(variant.name or "").strip() or variant_id
+                base_leaf = base_node_type.split(".")[-1] if "." in base_node_type else base_node_type
+                variant_leaf = self._tab_search_leaf_token(variant_name)
+                alias_base = f"{category}.{base_leaf}_variant_{variant_leaf}"
+                count = int(alias_counts.get(alias_base, 0)) + 1
+                alias_counts[alias_base] = count
+                alias_id = alias_base if count == 1 else f"{alias_base}_{count}"
+                self._tab_search_node_type_aliases[alias_id] = build_variant_node_type(variant_id)
 
-            base_leaf = base_node_type.split(".")[-1] if "." in base_node_type else base_node_type
-            variant_leaf = self._tab_search_leaf_token(variant_name)
-            alias_base = f"{category}.{base_leaf}_variant_{variant_leaf}"
-            count = int(alias_counts.get(alias_base, 0)) + 1
-            alias_counts[alias_base] = count
-            alias_id = alias_base if count == 1 else f"{alias_base}_{count}"
-            self._tab_search_node_type_aliases[alias_id] = build_variant_node_type(variant_id)
-
-            display_name = f"{base_node_name} | {variant_name}"
-            existing = filtered_names.get(display_name)
-            if existing is None:
-                filtered_names[display_name] = [alias_id]
-            else:
-                existing.append(alias_id)
+                display_name = f"{base_node_name} | {variant_name}"
+                existing = filtered_names.get(display_name)
+                if existing is None:
+                    filtered_names[display_name] = [alias_id]
+                else:
+                    existing.append(alias_id)
 
     @staticmethod
     def _tab_search_leaf_token(value: str) -> str:

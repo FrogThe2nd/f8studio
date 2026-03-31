@@ -45,6 +45,20 @@ class StudioIcon(Enum):
     ARROW_BIG_DOWN = "arrow-big-down.svg"
     ARROW_BIG_LEFT = "arrow-big-left.svg"
     ARROW_BIG_RIGHT = "arrow-big-right.svg"
+    CLOUD_DOWN = "cloud-down.svg"
+    CLOUD_SEARCH = "cloud-search.svg"
+    CLOUD_UP = "cloud-up.svg"
+    DOWNLOAD = "download.svg"
+    HEART_OFF = "heart-off.svg"
+    HEART_ON = "heart-on.svg"
+    UPLOAD = "upload.svg"
+    USER = "user.svg"
+    USER_CHECK = "user-check.svg"
+    USER_OFF = "user-off.svg"
+    USER_PLUS = "user-plus.svg"
+    USER_MINUS = "user-minus.svg"
+    USER_CANCEL = "user-cancel.svg"
+    USER_X = "user-x.svg"
 
 
 def icon_for(widget: QtWidgets.QWidget, token: StudioIcon) -> QtGui.QIcon:

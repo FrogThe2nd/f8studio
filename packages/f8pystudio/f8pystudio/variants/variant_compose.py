@@ -4,7 +4,7 @@ from f8pysdk.msgspec_codec import dump_json, validate_as
 from copy import deepcopy
 from typing import Any
 
-import shortuuid
+from uuid import uuid4
 
 from f8pysdk import F8OperatorSpec, F8ServiceSpec, F8VariantRecord
 
@@ -183,7 +183,7 @@ def build_variant_record_from_node(
     is_operator = isinstance(spec_obj, F8OperatorSpec)
     now = F8VariantRecord.now_iso()
     return F8VariantRecord(
-        variantId=str(variant_id or shortuuid.ShortUUID().random(12)),
+        variantId=str(variant_id or uuid4().hex),
         kind=F8VariantKind.operator if is_operator else F8VariantKind.service,
         baseNodeType=str(node.type_ or ""),
         serviceClass=str(spec_obj.serviceClass),

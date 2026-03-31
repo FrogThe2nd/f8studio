@@ -30,6 +30,7 @@ include = [
     "f8pystudio/assets/**/*.png",
     "f8pystudio/assets/**/*.ico",
     "f8pystudio/assets/**/*.txt",
+    "f8pystudio/assets/**/*.json",
 ]
 
 [tool.uv]

@@ -1,52 +1,54 @@
 from __future__ import annotations
 
-from f8pysdk.msgspec_codec import copy_model, dump_json, validate_as
 import json
-import logging
 from pathlib import Path
 from typing import Literal
 
+from f8pysdk.msgspec_codec import dump_json, validate_as
+
 from f8pysdk import F8VariantLibrary, F8VariantRecord
 
+from .variant_catalog import (
+    LocalVariantProvider,
+    RemoteCacheProvider,
+    VariantCatalogService,
+    _records_name_conflict,
+    local_variants_file_path,
+    normalize_variant_name,
+    remote_cache_file_path,
+    variants_file_path,
+)
 from .variant_events import emit_variants_changed
-
-logger = logging.getLogger(__name__)
-
-
-def variants_file_path() -> Path:
-    return Path.home() / ".f8" / "studio" / "nodeVariants.json"
+from .variant_models import F8VariantEntry
 
 
-def normalize_variant_name(name: str) -> str:
-    return str(name or "").strip()
+def _service() -> VariantCatalogService:
+    return VariantCatalogService(
+        local_provider=LocalVariantProvider(path=variants_file_path()),
+        remote_provider=RemoteCacheProvider(path=remote_cache_file_path()),
+    )
 
 
-def _records_name_conflict(
-    records: list[F8VariantRecord],
-    *,
-    base_node_type: str,
-    name: str,
-    exclude_variant_id: str | None = None,
-) -> bool:
-    base = str(base_node_type or "").strip()
-    target = normalize_variant_name(name)
-    exclude_id = str(exclude_variant_id or "").strip()
-    if not base or not target:
-        return False
-    for variant in records:
-        if str(variant.baseNodeType or "").strip() != base:
-            continue
-        if exclude_id and str(variant.variantId or "").strip() == exclude_id:
-            continue
-        if normalize_variant_name(variant.name) == target:
-            return True
-    return False
+def load_library() -> F8VariantLibrary:
+    return _service().export_local_library()
+
+
+def save_library(file_model: F8VariantLibrary) -> None:
+    _service().import_local_library(file_model, mode="replace")
+
+
+def list_entries_for_base(base_node_type: str, *, include_uninstalled: bool = False) -> list[F8VariantEntry]:
+    return _service().list_entries_for_base(base_node_type, include_uninstalled=include_uninstalled)
+
+
+def list_variants_for_base(base_node_type: str) -> list[F8VariantRecord]:
+    return _service().list_records_for_base(base_node_type)
 
 
 def is_variant_name_conflict(base_node_type: str, name: str, *, exclude_variant_id: str | None = None) -> bool:
-    lib = load_library()
+    records = [entry.record for entry in _service()._local_provider.load_entries()]
     return _records_name_conflict(
-        list(lib.variants),
+        records,
         base_node_type=base_node_type,
         name=name,
         exclude_variant_id=exclude_variant_id,
@@ -61,8 +63,7 @@ def ensure_unique_variant_name(
     existing_records: list[F8VariantRecord] | None = None,
 ) -> str:
     base_name = normalize_variant_name(desired_name) or "Variant"
-    records = list(existing_records) if existing_records is not None else list(load_library().variants)
-
+    records = list(existing_records) if existing_records is not None else [entry.record for entry in _service()._local_provider.load_entries()]
     if not _records_name_conflict(
         records,
         base_node_type=base_node_type,
@@ -70,7 +71,6 @@ def ensure_unique_variant_name(
         exclude_variant_id=exclude_variant_id,
     ):
         return base_name
-
     suffix = 2
     while True:
         candidate = f"{base_name} ({suffix})"
@@ -84,99 +84,32 @@ def ensure_unique_variant_name(
         suffix += 1
 
 
-def load_library() -> F8VariantLibrary:
-    path = variants_file_path()
-    if not path.is_file():
-        return F8VariantLibrary()
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        return validate_as(F8VariantLibrary, data)
-    except Exception:
-        logger.exception("Failed to load variants library from %s", path)
-        return F8VariantLibrary()
-
-
-def save_library(file_model: F8VariantLibrary) -> None:
-    path = variants_file_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    payload = dump_json(file_model, mode="json")
-    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
-    tmp.replace(path)
-
-
-def list_variants_for_base(base_node_type: str) -> list[F8VariantRecord]:
-    base = str(base_node_type or "").strip()
-    if not base:
-        return []
-    lib = load_library()
-    out = [v for v in lib.variants if str(v.baseNodeType or "").strip() == base]
-    return sorted(out, key=lambda v: (str(v.name or "").lower(), str(v.variantId or "")))
-
-
 def variant_exists(variant_id: str) -> bool:
-    vid = str(variant_id or "").strip()
-    if not vid:
-        return False
-    lib = load_library()
-    for variant in lib.variants:
-        if str(variant.variantId or "").strip() == vid:
-            return True
-    return False
+    return _service().variant_exists(variant_id)
 
 
 def variant_record(variant_id: str) -> F8VariantRecord | None:
-    vid = str(variant_id or "").strip()
-    if not vid:
-        return None
-    lib = load_library()
-    for variant in lib.variants:
-        if str(variant.variantId or "").strip() == vid:
-            return variant
-    return None
+    return _service().record(variant_id)
+
+
+def variant_entry(variant_id: str, *, include_uninstalled: bool = True) -> F8VariantEntry | None:
+    return _service().entry(variant_id, include_uninstalled=include_uninstalled)
 
 
 def upsert_variant(record: F8VariantRecord) -> F8VariantRecord:
-    lib = load_library()
-    if _records_name_conflict(
-        list(lib.variants),
-        base_node_type=record.baseNodeType,
-        name=record.name,
-        exclude_variant_id=record.variantId,
-    ):
-        normalized = normalize_variant_name(record.name)
-        raise ValueError(
-            f'Variant name "{normalized}" already exists for base node type "{record.baseNodeType}".'
-        )
+    from .variant_models import F8VariantSourceKind
 
-    found = False
-    out: list[F8VariantRecord] = []
-    for v in lib.variants:
-        if str(v.variantId) == str(record.variantId):
-            found = True
-            out.append(record)
-        else:
-            out.append(v)
-    if not found:
-        out.append(record)
-    lib.variants = out
-    save_library(lib)
-    emit_variants_changed()
+    _service().upsert_local_entry(
+        F8VariantEntry(
+            record=record,
+            source=F8VariantSourceKind.local,
+        )
+    )
     return record
 
 
 def delete_variant(variant_id: str) -> bool:
-    vid = str(variant_id or "").strip()
-    if not vid:
-        return False
-    lib = load_library()
-    before = len(lib.variants)
-    lib.variants = [v for v in lib.variants if str(v.variantId) != vid]
-    changed = len(lib.variants) != before
-    if changed:
-        save_library(lib)
-        emit_variants_changed()
-    return changed
+    return _service().delete_local_entry(variant_id)
 
 
 def import_from_json(path: str, mode: Literal["merge", "replace"] = "merge") -> F8VariantLibrary:
@@ -185,38 +118,7 @@ def import_from_json(path: str, mode: Literal["merge", "replace"] = "merge") -> 
         raise FileNotFoundError(f"Variants file not found: {in_path}")
     raw = json.loads(in_path.read_text(encoding="utf-8"))
     imported = validate_as(F8VariantLibrary, raw)
-
-    if mode == "replace":
-        current = F8VariantLibrary(schemaVersion=imported.schemaVersion, variants=[])
-    else:
-        current = load_library()
-
-    target_variants: list[F8VariantRecord] = list(current.variants)
-    for variant in imported.variants:
-        variant_id = str(variant.variantId or "").strip()
-        target_variants = [item for item in target_variants if str(item.variantId or "").strip() != variant_id]
-
-        unique_name = ensure_unique_variant_name(
-            variant.baseNodeType,
-            variant.name,
-            existing_records=target_variants,
-        )
-        if unique_name != variant.name:
-            logger.info(
-                "Renamed imported variant name for base=%s variantId=%s from %r to %r",
-                variant.baseNodeType,
-                variant.variantId,
-                variant.name,
-                unique_name,
-            )
-            target_variants.append(copy_model(variant, update={"name": unique_name}))
-        else:
-            target_variants.append(variant)
-
-    current.variants = target_variants
-    save_library(current)
-    emit_variants_changed()
-    return current
+    return _service().import_local_library(imported, mode=mode)
 
 
 def export_to_json(path: str) -> Path:
@@ -232,3 +134,25 @@ def export_to_json(path: str) -> Path:
         encoding="utf-8",
     )
     return out_path
+
+
+__all__ = [
+    "variants_file_path",
+    "local_variants_file_path",
+    "remote_cache_file_path",
+    "load_library",
+    "save_library",
+    "list_entries_for_base",
+    "list_variants_for_base",
+    "normalize_variant_name",
+    "is_variant_name_conflict",
+    "ensure_unique_variant_name",
+    "variant_exists",
+    "variant_record",
+    "variant_entry",
+    "upsert_variant",
+    "delete_variant",
+    "import_from_json",
+    "export_to_json",
+    "emit_variants_changed",
+]
