@@ -13,6 +13,13 @@ export function createApp() {
         const repo = new AssetRepository(env.DB);
         await ensureBootstrapUser(env, repo);
 
+        if (!url.pathname.startsWith('/v1/')) {
+          if (request.method === 'GET' || request.method === 'HEAD') {
+            return await serveFrontend(request, env, url);
+          }
+          return jsonResponse(404, { message: 'not found' });
+        }
+
         if (request.method === 'POST' && url.pathname === '/v1/auth/register') {
           const payload = await readJsonBody(request);
           const result = await register({ env, repo, payload });
@@ -33,9 +40,18 @@ export function createApp() {
           await repo.revokeRefreshTokensForUser(authUser.userId);
           return jsonResponse(200, {});
         }
+        if (url.pathname.startsWith('/v1/admin/')) {
+          const adminUser = await requireAdminUser({ request, env, repo });
+          return await routeAdminRequest({ request, url, repo, adminUser });
+        }
         if (request.method === 'GET' && url.pathname === '/v1/me') {
           const user = await requireAuthenticatedUser({ request, env, repo });
-          return jsonResponse(200, { userId: user.userId, username: user.username, displayName: user.displayName });
+          return jsonResponse(200, {
+            userId: user.userId,
+            username: user.username,
+            displayName: user.displayName,
+            isAdmin: user.isAdmin,
+          });
         }
         if (request.method === 'POST' && url.pathname === '/v1/me/password') {
           const user = await requireAuthenticatedUser({ request, env, repo });
@@ -184,6 +200,167 @@ async function routeAssetRequest({ request, env, repo, url, assetType }) {
   return jsonResponse(404, { message: 'not found' });
 }
 
+async function routeAdminRequest({ request, url, repo, adminUser }) {
+  if (request.method === 'GET' && url.pathname === '/v1/admin/users') {
+    const users = await repo.listUsers({
+      query: url.searchParams.get('q') || '',
+      cursor: url.searchParams.get('cursor') || '',
+    });
+    return jsonResponse(200, users);
+  }
+
+  if (request.method === 'POST' && url.pathname === '/v1/admin/users') {
+    const payload = await readJsonBody(request);
+    const username = requireBodyString(payload.username, 'username is required');
+    const password = requireBodyString(payload.password, 'password is required');
+    const displayName = bodyStringOrDefault(payload.displayName, username);
+    const passwordHash = await hashPassword(password);
+    const user = await repo.createUser({
+      username,
+      passwordHash,
+      displayName,
+      isAdmin: Boolean(payload.isAdmin),
+    });
+    return jsonResponse(200, {
+      userId: user.userId,
+      username: user.username,
+      displayName: user.displayName,
+      isAdmin: user.isAdmin,
+      createdAt: user.createdAt,
+      updatedAt: user.updatedAt,
+    });
+  }
+
+  if (request.method === 'GET' && url.pathname.startsWith('/v1/admin/users/')) {
+    const userPath = '/v1/admin/users/';
+    const tail = decodeURIComponent(url.pathname.slice(userPath.length));
+    const parts = tail.split('/').filter((part) => part.length > 0);
+    const userId = parts[0] || '';
+    if (!userId) {
+      return jsonResponse(404, { message: 'not found' });
+    }
+    if (parts.length === 1) {
+      const user = await repo.getUserByIdWithStats(userId);
+      if (user === null) {
+        return jsonResponse(404, { message: 'user not found' });
+      }
+      return jsonResponse(200, user);
+    }
+    if (parts.length === 2 && parts[1] === 'assets') {
+      const result = await repo.listAssetsByOwnerForAdmin({
+        ownerUserId: userId,
+        assetType: url.searchParams.get('assetType') || '',
+        includeDeleted: url.searchParams.get('includeDeleted') || '',
+        cursor: url.searchParams.get('cursor') || '',
+      });
+      return jsonResponse(200, result);
+    }
+  }
+
+  if (request.method === 'PUT' && url.pathname.startsWith('/v1/admin/users/')) {
+    const userId = decodeURIComponent(url.pathname.slice('/v1/admin/users/'.length));
+    if (!userId || userId.includes('/')) {
+      return jsonResponse(404, { message: 'not found' });
+    }
+    const payload = await readJsonBody(request);
+    if (payload.password !== undefined) {
+      const passwordHash = await hashPassword(requireBodyString(payload.password, 'password is required'));
+      await repo.updateUserPassword({ userId, passwordHash });
+      await repo.revokeRefreshTokensForUser(userId);
+    }
+    const updated = await repo.updateUserProfileByAdmin({
+      userId,
+      displayName: payload.displayName,
+      isAdmin: payload.isAdmin,
+    });
+    if (updated === null) {
+      return jsonResponse(404, { message: 'user not found' });
+    }
+    return jsonResponse(200, updated);
+  }
+
+  if (request.method === 'DELETE' && url.pathname.startsWith('/v1/admin/users/')) {
+    const userId = decodeURIComponent(url.pathname.slice('/v1/admin/users/'.length));
+    if (!userId || userId.includes('/')) {
+      return jsonResponse(404, { message: 'not found' });
+    }
+    if (userId === adminUser.userId) {
+      throw new HttpError(400, 'admin cannot delete self');
+    }
+    const deleted = await repo.deleteUserByAdmin(userId);
+    if (!deleted) {
+      return jsonResponse(404, { message: 'user not found' });
+    }
+    return jsonResponse(200, {});
+  }
+
+  if (request.method === 'GET' && url.pathname === '/v1/admin/assets') {
+    const result = await repo.listAssetsForAdmin({
+      assetType: url.searchParams.get('assetType') || '',
+      ownerUserId: url.searchParams.get('ownerUserId') || '',
+      query: url.searchParams.get('q') || '',
+      includeDeleted: url.searchParams.get('includeDeleted') || '',
+      cursor: url.searchParams.get('cursor') || '',
+    });
+    return jsonResponse(200, result);
+  }
+
+  if (request.method === 'GET' && url.pathname.startsWith('/v1/admin/assets/')) {
+    const assetId = decodeURIComponent(url.pathname.slice('/v1/admin/assets/'.length));
+    if (!assetId || assetId.includes('/')) {
+      return jsonResponse(404, { message: 'not found' });
+    }
+    const asset = await repo.getAssetForAdmin({
+      assetId,
+      includeDeleted: url.searchParams.get('includeDeleted') || '',
+    });
+    if (asset === null) {
+      return jsonResponse(404, { message: 'asset not found' });
+    }
+    return jsonResponse(200, asset);
+  }
+
+  if (request.method === 'PUT' && url.pathname.startsWith('/v1/admin/assets/')) {
+    const assetId = decodeURIComponent(url.pathname.slice('/v1/admin/assets/'.length));
+    if (!assetId || assetId.includes('/')) {
+      return jsonResponse(404, { message: 'not found' });
+    }
+    const payload = await readJsonBody(request);
+    if (payload.restore === true) {
+      const restored = await repo.adminRestoreAsset({ assetId });
+      if (!restored) {
+        return jsonResponse(404, { message: 'asset not found' });
+      }
+    }
+    if (payload.visibility !== undefined) {
+      const updated = await repo.adminUpdateAssetVisibility({ assetId, visibility: payload.visibility });
+      if (updated === null) {
+        return jsonResponse(404, { message: 'asset not found' });
+      }
+      return jsonResponse(200, updated);
+    }
+    const current = await repo.getAssetForAdmin({ assetId, includeDeleted: true });
+    if (current === null) {
+      return jsonResponse(404, { message: 'asset not found' });
+    }
+    return jsonResponse(200, current);
+  }
+
+  if (request.method === 'DELETE' && url.pathname.startsWith('/v1/admin/assets/')) {
+    const assetId = decodeURIComponent(url.pathname.slice('/v1/admin/assets/'.length));
+    if (!assetId || assetId.includes('/')) {
+      return jsonResponse(404, { message: 'not found' });
+    }
+    const deleted = await repo.adminDeleteAsset({ assetId });
+    if (!deleted) {
+      return jsonResponse(404, { message: 'asset not found' });
+    }
+    return jsonResponse(200, {});
+  }
+
+  return jsonResponse(404, { message: 'not found' });
+}
+
 async function ensureBootstrapUser(env, repo) {
   const username = String(env.BOOTSTRAP_ADMIN_USERNAME || '').trim();
   const password = String(env.BOOTSTRAP_ADMIN_PASSWORD || '').trim();
@@ -274,7 +451,12 @@ async function issueAuthResponse({ env, repo, user, refreshTokenId = null }) {
   return {
     accessToken: tokens.accessToken,
     refreshToken: tokens.refreshToken,
-    user: { userId: user.userId, username: user.username, displayName: user.displayName },
+    user: {
+      userId: user.userId,
+      username: user.username,
+      displayName: user.displayName,
+      isAdmin: user.isAdmin,
+    },
   };
 }
 
@@ -298,6 +480,14 @@ async function requireAuthenticatedUser({ request, env, repo }) {
   const user = await repo.findUserById(String(payload.sub || ''));
   if (user === null) {
     throw new HttpError(401, 'user not found');
+  }
+  return user;
+}
+
+async function requireAdminUser({ request, env, repo }) {
+  const user = await requireAuthenticatedUser({ request, env, repo });
+  if (!user.isAdmin) {
+    throw new HttpError(403, 'admin only');
   }
   return user;
 }
@@ -357,6 +547,9 @@ function handleError(error) {
   if (error instanceof Error && error.message === 'username already exists') {
     return jsonResponse(409, { message: error.message });
   }
+  if (error instanceof Error && error.message === 'cannot delete user with existing assets') {
+    return jsonResponse(409, { message: error.message });
+  }
   if (
     error instanceof Error &&
     (
@@ -386,6 +579,73 @@ function jsonResponse(status, payload) {
       'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
     },
   });
+}
+
+function frontendFallbackResponse() {
+  return new Response(buildAdminFallbackHtml(), {
+    status: 200,
+    headers: {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-store',
+    },
+  });
+}
+
+async function serveFrontend(request, env, url) {
+  const assets = getAssetsBinding(env);
+  if (assets === null) {
+    return frontendFallbackResponse();
+  }
+
+  let assetPath = '/index.html';
+  if (url.pathname.startsWith('/assets/')) {
+    assetPath = url.pathname;
+  } else if (url.pathname === '/favicon.ico') {
+    assetPath = '/favicon.ico';
+  } else {
+    // All application routes are SPA routes resolved by index.html.
+    assetPath = '/index.html';
+  }
+
+  const assetRequest = new Request(new URL(assetPath, request.url), request);
+  return assets.fetch(assetRequest);
+}
+
+function getAssetsBinding(env) {
+  if (!env || typeof env !== 'object') {
+    return null;
+  }
+  const assets = env.ASSETS;
+  if (assets && typeof assets.fetch === 'function') {
+    return assets;
+  }
+  return null;
+}
+
+function buildAdminFallbackHtml() {
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Feel8 Admin</title>
+    <style>
+      body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; background: #0c1220; color: #edf2ff; }
+      main { max-width: 760px; margin: 48px auto; padding: 24px; border: 1px solid #30456b; border-radius: 12px; background: #121c31; }
+      h1 { margin-top: 0; }
+      code { background: #0b1426; padding: 2px 6px; border-radius: 6px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Feel8 Admin</h1>
+      <p>Frontend assets are not available yet.</p>
+      <p>Build the Vite app first:</p>
+      <p><code>npm run admin:build</code></p>
+      <p>Then run Worker dev/deploy again.</p>
+    </main>
+  </body>
+</html>`;
 }
 
 function futureIso(seconds) {

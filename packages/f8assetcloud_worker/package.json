@@ -4,7 +4,10 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
+    "deploy": "npm run admin:build && wrangler deploy",
+    "admin:dev": "npm --prefix ./console_web run dev",
+    "admin:build": "npm --prefix ./console_web run build",
+    "admin:preview": "npm --prefix ./console_web run preview",
     "test": "node --test",
     "d1:migrate": "wrangler d1 migrations apply feel8-assets",
     "d1:migrate:local": "wrangler d1 migrations apply feel8-assets --local"

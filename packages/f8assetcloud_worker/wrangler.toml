@@ -3,6 +3,10 @@ main = "src/index.js"
 compatibility_date = "2026-03-31"
 workers_dev = true
 
+[assets]
+directory = "./console_web/dist"
+binding = "ASSETS"
+
 [vars]
 JWT_ISSUER = "feel8-asset-cloud"
 BOOTSTRAP_ADMIN_USERNAME = "admin"

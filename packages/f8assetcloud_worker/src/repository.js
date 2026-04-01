@@ -140,6 +140,277 @@ export class AssetRepository {
       .run();
   }
 
+  async listUsers({ query, cursor }) {
+    const filters = ['1 = 1'];
+    const bindings = [];
+    if (String(query || '').trim()) {
+      const match = `%${String(query).trim().toLowerCase()}%`;
+      filters.push('(LOWER(u.username) LIKE ? OR LOWER(u.display_name) LIKE ?)');
+      bindings.push(match, match);
+    }
+    const start = parseCursor(cursor);
+    const sql = `
+      SELECT
+        u.user_id,
+        u.username,
+        u.display_name,
+        u.password_hash,
+        u.is_admin,
+        u.created_at,
+        u.updated_at,
+        COALESCE(assets.asset_count, 0) AS asset_count
+      FROM users u
+      LEFT JOIN (
+        SELECT owner_user_id, COUNT(*) AS asset_count
+        FROM asset_heads
+        WHERE deleted_at IS NULL
+        GROUP BY owner_user_id
+      ) assets ON assets.owner_user_id = u.user_id
+      WHERE ${filters.join(' AND ')}
+      ORDER BY LOWER(u.username), u.user_id
+      LIMIT ? OFFSET ?
+    `;
+    const result = await this._db.prepare(sql).bind(...bindings, PAGE_SIZE + 1, start).all();
+    const rows = Array.isArray(result.results) ? result.results : [];
+    const hasMore = rows.length > PAGE_SIZE;
+    const items = hasMore ? rows.slice(0, PAGE_SIZE) : rows;
+    return {
+      entries: items.map((row) => ({
+        userId: String(row.user_id),
+        username: String(row.username),
+        displayName: String(row.display_name),
+        isAdmin: Number(row.is_admin || 0) !== 0,
+        assetCount: Number(row.asset_count || 0),
+        createdAt: String(row.created_at),
+        updatedAt: String(row.updated_at),
+      })),
+      nextCursor: hasMore ? String(start + PAGE_SIZE) : null,
+    };
+  }
+
+  async getUserByIdWithStats(userId) {
+    const row = await this._db.prepare(
+      `SELECT
+         u.user_id,
+         u.username,
+         u.display_name,
+         u.password_hash,
+         u.is_admin,
+         u.created_at,
+         u.updated_at,
+         COALESCE(assets.asset_count, 0) AS asset_count
+       FROM users u
+       LEFT JOIN (
+         SELECT owner_user_id, COUNT(*) AS asset_count
+         FROM asset_heads
+         WHERE deleted_at IS NULL
+         GROUP BY owner_user_id
+       ) assets ON assets.owner_user_id = u.user_id
+       WHERE u.user_id = ?`,
+    )
+      .bind(String(userId))
+      .first();
+    if (row === null) {
+      return null;
+    }
+    return {
+      userId: String(row.user_id),
+      username: String(row.username),
+      displayName: String(row.display_name),
+      isAdmin: Number(row.is_admin || 0) !== 0,
+      assetCount: Number(row.asset_count || 0),
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at),
+    };
+  }
+
+  async updateUserProfileByAdmin({ userId, displayName, isAdmin }) {
+    const existing = await this.findUserById(userId);
+    if (existing === null) {
+      return null;
+    }
+    const nextDisplayName = displayName === undefined
+      ? existing.displayName
+      : normalizeDisplayName(displayName);
+    const nextIsAdmin = isAdmin === undefined
+      ? existing.isAdmin
+      : Boolean(isAdmin);
+    await this._db.prepare(
+      `UPDATE users
+       SET display_name = ?,
+           is_admin = ?,
+           updated_at = ?
+       WHERE user_id = ?`,
+    )
+      .bind(nextDisplayName, nextIsAdmin ? 1 : 0, nowIso(), String(userId))
+      .run();
+    return this.getUserByIdWithStats(userId);
+  }
+
+  async deleteUserByAdmin(userId) {
+    const userIdText = String(userId);
+    const ownedAssets = await this._db.prepare(
+      `SELECT COUNT(*) AS count
+       FROM asset_heads
+       WHERE owner_user_id = ? AND deleted_at IS NULL`,
+    )
+      .bind(userIdText)
+      .first();
+    const activeAssetCount = Number(ownedAssets?.count || 0);
+    if (activeAssetCount > 0) {
+      throw new Error('cannot delete user with existing assets');
+    }
+    await this._db.prepare('DELETE FROM asset_subscriptions WHERE subscriber_user_id = ?')
+      .bind(userIdText)
+      .run();
+    await this._db.prepare('DELETE FROM refresh_tokens WHERE user_id = ?')
+      .bind(userIdText)
+      .run();
+    const deleted = await this._db.prepare('DELETE FROM users WHERE user_id = ?')
+      .bind(userIdText)
+      .run();
+    return Number(deleted.meta?.changes || 0) > 0;
+  }
+
+  async listAssetsForAdmin({ assetType, ownerUserId, query, includeDeleted, cursor }) {
+    const filters = ['1 = 1'];
+    const bindings = [];
+    const normalizedAssetType = String(assetType || '').trim();
+    if (normalizedAssetType) {
+      if (normalizedAssetType !== 'variant' && normalizedAssetType !== 'component') {
+        throw new Error('assetType must be variant or component');
+      }
+      filters.push('h.asset_type = ?');
+      bindings.push(normalizedAssetType);
+    }
+    const ownerFilter = String(ownerUserId || '').trim();
+    if (ownerFilter) {
+      filters.push('h.owner_user_id = ?');
+      bindings.push(ownerFilter);
+    }
+    if (!toBoolean(includeDeleted)) {
+      filters.push('h.deleted_at IS NULL');
+    }
+    if (String(query || '').trim()) {
+      const match = `%${String(query).trim().toLowerCase()}%`;
+      filters.push('(LOWER(h.name) LIKE ? OR LOWER(h.description) LIKE ? OR LOWER(h.tags_json) LIKE ?)');
+      bindings.push(match, match, match);
+    }
+    const start = parseCursor(cursor);
+    const sql = `
+      SELECT
+        h.asset_id,
+        h.asset_type,
+        h.owner_user_id,
+        h.visibility,
+        h.latest_revision,
+        h.latest_version_number,
+        h.name,
+        h.description,
+        h.tags_json,
+        h.schema_version,
+        h.variant_kind,
+        h.base_node_type,
+        h.service_class,
+        h.operator_class,
+        h.deleted_at,
+        h.created_at,
+        h.updated_at,
+        u.display_name AS owner_display_name,
+        v.content_json,
+        v.created_at AS version_created_at,
+        v.created_by_user_id,
+        v.change_summary,
+        v.version_number,
+        v.revision
+      FROM asset_heads h
+      JOIN asset_versions v
+        ON v.asset_id = h.asset_id AND v.version_number = h.latest_version_number
+      LEFT JOIN users u ON u.user_id = h.owner_user_id
+      WHERE ${filters.join(' AND ')}
+      ORDER BY h.updated_at DESC, h.asset_id
+      LIMIT ? OFFSET ?
+    `;
+    const result = await this._db.prepare(sql).bind(...bindings, PAGE_SIZE + 1, start).all();
+    const rows = Array.isArray(result.results) ? result.results : [];
+    const hasMore = rows.length > PAGE_SIZE;
+    const items = hasMore ? rows.slice(0, PAGE_SIZE) : rows;
+    return {
+      entries: items.map((row) => adminAssetPayloadFromRow(row)),
+      nextCursor: hasMore ? String(start + PAGE_SIZE) : null,
+    };
+  }
+
+  async listAssetsByOwnerForAdmin({ ownerUserId, assetType, includeDeleted, cursor }) {
+    return this.listAssetsForAdmin({
+      ownerUserId,
+      assetType,
+      includeDeleted,
+      query: '',
+      cursor,
+    });
+  }
+
+  async getAssetForAdmin({ assetId, includeDeleted }) {
+    const head = await this._findAssetHeadRow(assetId, { includeDeleted: toBoolean(includeDeleted) });
+    if (head === null) {
+      return null;
+    }
+    const version = await this._findAssetVersionRow(assetId, Number(head.latest_version_number));
+    if (version === null) {
+      return null;
+    }
+    return adminAssetPayloadFromRow({ ...head, ...version });
+  }
+
+  async adminDeleteAsset({ assetId }) {
+    const existing = await this._findAssetHeadRow(assetId, { includeDeleted: true });
+    if (existing === null) {
+      return false;
+    }
+    await this._db.prepare(
+      `UPDATE asset_heads
+       SET deleted_at = ?,
+           updated_at = ?
+       WHERE asset_id = ?`,
+    )
+      .bind(nowIso(), nowIso(), String(assetId))
+      .run();
+    return true;
+  }
+
+  async adminRestoreAsset({ assetId }) {
+    const existing = await this._findAssetHeadRow(assetId, { includeDeleted: true });
+    if (existing === null) {
+      return false;
+    }
+    await this._db.prepare(
+      `UPDATE asset_heads
+       SET deleted_at = NULL,
+           updated_at = ?
+       WHERE asset_id = ?`,
+    )
+      .bind(nowIso(), String(assetId))
+      .run();
+    return true;
+  }
+
+  async adminUpdateAssetVisibility({ assetId, visibility }) {
+    const existing = await this._findAssetHeadRow(assetId, { includeDeleted: true });
+    if (existing === null) {
+      return null;
+    }
+    await this._db.prepare(
+      `UPDATE asset_heads
+       SET visibility = ?,
+           updated_at = ?
+       WHERE asset_id = ?`,
+    )
+      .bind(normalizeVisibility(visibility), nowIso(), String(assetId))
+      .run();
+    return this.getAssetForAdmin({ assetId, includeDeleted: true });
+  }
+
   async createVariant({ payload, user }) {
     const normalized = normalizeVariantCreatePayload(payload, user);
     return this._createAsset({ normalized, userId: user.userId });
@@ -849,6 +1120,27 @@ function assetPayloadFromRows({ head, version, subscription, viewerUserId }) {
   };
 }
 
+function adminAssetPayloadFromRow(row) {
+  const content = parseJsonObject(row.content_json);
+  const record = parseAssetRecord({ assetType: String(row.asset_type), content });
+  return {
+    assetId: String(row.asset_id),
+    assetType: String(row.asset_type),
+    ownerUserId: String(row.owner_user_id),
+    ownerDisplayName: nullableString(row.owner_display_name),
+    visibility: String(row.visibility),
+    revision: String(row.revision),
+    latestRevision: String(row.latest_revision),
+    versionNumber: Number(row.version_number),
+    latestVersionNumber: Number(row.latest_version_number),
+    changeSummary: nullableString(row.change_summary),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at),
+    deletedAt: nullableString(row.deleted_at),
+    record,
+  };
+}
+
 function parseAssetRecord({ assetType, content }) {
   const record = content.record;
   if (!isPlainObject(record)) {
@@ -1067,4 +1359,12 @@ function nullableString(value) {
 
 function isPlainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function toBoolean(value) {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+  const text = String(value || '').trim().toLowerCase();
+  return text === '1' || text === 'true' || text === 'yes';
 }

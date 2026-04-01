@@ -387,3 +387,149 @@ test('component asset lifecycle validates published session envelope and visibil
   assert.equal(forked.json.assetId, 'component-b');
   assert.equal(forked.json.visibility, 'private');
 });
+
+test('admin APIs support user and asset management', async (t) => {
+  const env = createEnv();
+  t.after(() => env.DB.close());
+  const app = createApp();
+
+  const adminLogin = await jsonRequest(app, env, '/v1/auth/login', {
+    method: 'POST',
+    payload: { username: 'admin', password: 'pw' },
+  });
+  assert.equal(adminLogin.status, 200);
+  const adminToken = String(adminLogin.json.accessToken);
+
+  const alice = await jsonRequest(app, env, '/v1/auth/register', {
+    method: 'POST',
+    payload: { username: 'alice', password: 'pw', displayName: 'Alice' },
+  });
+  assert.equal(alice.status, 200);
+  const aliceToken = String(alice.json.accessToken);
+  const aliceUserId = String(alice.json.user.userId);
+
+  const createdByAlice = await jsonRequest(app, env, '/v1/variants', {
+    method: 'POST',
+    token: aliceToken,
+    payload: variantPayload({ variantId: 'alice-private-asset', name: 'Alice Private Asset', visibility: 'private' }),
+  });
+  assert.equal(createdByAlice.status, 200);
+
+  const nonAdminDenied = await jsonRequest(app, env, '/v1/admin/users', { token: aliceToken });
+  assert.equal(nonAdminDenied.status, 403);
+
+  const adminUsers = await jsonRequest(app, env, '/v1/admin/users', { token: adminToken });
+  assert.equal(adminUsers.status, 200);
+  assert.equal(adminUsers.json.entries.length >= 2, true);
+
+  const adminCreatesUser = await jsonRequest(app, env, '/v1/admin/users', {
+    method: 'POST',
+    token: adminToken,
+    payload: {
+      username: 'ops',
+      password: 'pw',
+      displayName: 'Ops',
+      isAdmin: true,
+    },
+  });
+  assert.equal(adminCreatesUser.status, 200);
+  const opsUserId = String(adminCreatesUser.json.userId);
+
+  const adminUpdatesUser = await jsonRequest(app, env, `/v1/admin/users/${opsUserId}`, {
+    method: 'PUT',
+    token: adminToken,
+    payload: {
+      displayName: 'Ops Team',
+      isAdmin: false,
+      password: 'pw2',
+    },
+  });
+  assert.equal(adminUpdatesUser.status, 200);
+  assert.equal(adminUpdatesUser.json.displayName, 'Ops Team');
+  assert.equal(adminUpdatesUser.json.isAdmin, false);
+
+  const adminViewsAliceAssets = await jsonRequest(app, env, `/v1/admin/users/${aliceUserId}/assets`, {
+    token: adminToken,
+  });
+  assert.equal(adminViewsAliceAssets.status, 200);
+  assert.equal(adminViewsAliceAssets.json.entries.length, 1);
+  assert.equal(adminViewsAliceAssets.json.entries[0].assetId, 'alice-private-asset');
+
+  const adminListsAssets = await jsonRequest(app, env, '/v1/admin/assets?assetType=variant', {
+    token: adminToken,
+  });
+  assert.equal(adminListsAssets.status, 200);
+  assert.equal(adminListsAssets.json.entries.length >= 1, true);
+
+  const adminChangesVisibility = await jsonRequest(app, env, '/v1/admin/assets/alice-private-asset', {
+    method: 'PUT',
+    token: adminToken,
+    payload: { visibility: 'public' },
+  });
+  assert.equal(adminChangesVisibility.status, 200);
+  assert.equal(adminChangesVisibility.json.visibility, 'public');
+
+  const adminDeletesAsset = await jsonRequest(app, env, '/v1/admin/assets/alice-private-asset', {
+    method: 'DELETE',
+    token: adminToken,
+  });
+  assert.equal(adminDeletesAsset.status, 200);
+
+  const hiddenFromDefaultAdminList = await jsonRequest(app, env, '/v1/admin/assets?assetType=variant', {
+    token: adminToken,
+  });
+  assert.equal(hiddenFromDefaultAdminList.status, 200);
+  assert.equal(
+    hiddenFromDefaultAdminList.json.entries.some((entry) => entry.assetId === 'alice-private-asset'),
+    false,
+  );
+
+  const includeDeleted = await jsonRequest(app, env, '/v1/admin/assets?assetType=variant&includeDeleted=true', {
+    token: adminToken,
+  });
+  assert.equal(includeDeleted.status, 200);
+  assert.equal(
+    includeDeleted.json.entries.some((entry) => entry.assetId === 'alice-private-asset' && entry.deletedAt !== null),
+    true,
+  );
+
+  const adminRestoresAsset = await jsonRequest(app, env, '/v1/admin/assets/alice-private-asset', {
+    method: 'PUT',
+    token: adminToken,
+    payload: { restore: true },
+  });
+  assert.equal(adminRestoresAsset.status, 200);
+  assert.equal(adminRestoresAsset.json.deletedAt, null);
+
+  const deleteAliceBlocked = await jsonRequest(app, env, `/v1/admin/users/${aliceUserId}`, {
+    method: 'DELETE',
+    token: adminToken,
+  });
+  assert.equal(deleteAliceBlocked.status, 409);
+
+  const adminSelf = String(adminLogin.json.user.userId);
+  const selfDelete = await jsonRequest(app, env, `/v1/admin/users/${adminSelf}`, {
+    method: 'DELETE',
+    token: adminToken,
+  });
+  assert.equal(selfDelete.status, 400);
+
+  const deleteOps = await jsonRequest(app, env, `/v1/admin/users/${opsUserId}`, {
+    method: 'DELETE',
+    token: adminToken,
+  });
+  assert.equal(deleteOps.status, 200);
+});
+
+test('admin page is served as html', async (t) => {
+  const env = createEnv();
+  t.after(() => env.DB.close());
+  const app = createApp();
+
+  const response = await app.fetch(new Request('http://worker.test/admin'), env, {});
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get('Content-Type') || '', /text\/html/);
+
+  const html = await response.text();
+  assert.match(html, /Feel8 Admin/);
+});

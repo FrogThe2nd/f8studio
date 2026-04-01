@@ -4,4 +4,5 @@
 !.env.example
 .wrangler/
 node_modules/
+console_web/dist/
 coverage/

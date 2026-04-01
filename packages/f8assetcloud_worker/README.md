@@ -97,14 +97,46 @@ Search:
 
 - `GET /v1/search?assetType=variant|component&q=&visibility=&owner=me|subscribed|public&cursor=`
 
+Admin (requires access token for `isAdmin = true` user):
+
+- `GET /` React dashboard frontend (root path)
+- `GET /v1/admin/users?q=&cursor=`
+- `POST /v1/admin/users`
+- `GET /v1/admin/users/:userId`
+- `PUT /v1/admin/users/:userId` (supports `displayName`, `isAdmin`, `password`)
+- `DELETE /v1/admin/users/:userId`
+- `GET /v1/admin/users/:userId/assets?assetType=variant|component&includeDeleted=true|false&cursor=`
+- `GET /v1/admin/assets?assetType=variant|component&ownerUserId=&q=&includeDeleted=true|false&cursor=`
+- `GET /v1/admin/assets/:assetId?includeDeleted=true|false`
+- `PUT /v1/admin/assets/:assetId` (supports `visibility`, `restore`)
+- `DELETE /v1/admin/assets/:assetId`
+
+Admin behavior notes:
+
+- non-admin users receive `403` on `/v1/admin/*`
+- admin cannot delete themselves
+- deleting users with active assets is blocked with `409`
+- asset deletion is soft-delete (`deleted_at`), and can be restored
+- frontend is served from Vite + React build output (`console_web/dist`) at root path via Worker assets binding
+
 ## Local development
 
 ```bash
 cd packages/f8assetcloud_worker
 cp .dev.vars.example .dev.vars
 npm install
+npm --prefix console_web install
+npm run admin:build
 npm test
 npx wrangler dev
+```
+
+Admin frontend development:
+
+```bash
+cd packages/f8assetcloud_worker
+npm --prefix console_web install
+npm run admin:dev
 ```
 
 ## D1 setup
