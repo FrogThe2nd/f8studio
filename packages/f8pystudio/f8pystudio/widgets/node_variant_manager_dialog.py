@@ -133,6 +133,7 @@ class NodeVariantManagerDialog(QtWidgets.QDialog):
             "mine": "",
             "community": "",
         }
+        self._is_loading_remote_scope = False
         self._variants_changed_unsubscribe: Callable[[], None] | None = subscribe_variants_changed(
             self._on_variants_changed
         )
@@ -159,9 +160,6 @@ class NodeVariantManagerDialog(QtWidgets.QDialog):
         self._search_btn.clicked.connect(self._on_search_submitted)  # type: ignore[attr-defined]
         self._filter_combo = QtWidgets.QComboBox(self)
         self._filter_combo.currentIndexChanged.connect(self._on_filter_changed)  # type: ignore[attr-defined]
-        self._load_more_btn = QtWidgets.QPushButton("Load More", self)
-        self._load_more_btn.setIcon(icon_for(self._load_more_btn, StudioIcon.DOWNLOAD))
-        self._load_more_btn.clicked.connect(self._on_load_more_clicked)  # type: ignore[attr-defined]
 
         self._toolbar = QtWidgets.QToolBar("Variant Cloud", self)
         self._toolbar.setMovable(False)
@@ -233,7 +231,6 @@ class NodeVariantManagerDialog(QtWidgets.QDialog):
 
         self._toolbar.addSeparator()
         self._toolbar.addWidget(btn_refresh)
-        self._toolbar.addWidget(self._load_more_btn)
         toolbar_row = QtWidgets.QHBoxLayout()
         toolbar_row.addWidget(self._toolbar)
         toolbar_row.addStretch(1)
@@ -260,6 +257,7 @@ class NodeVariantManagerDialog(QtWidgets.QDialog):
         self._list.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
         self._list.itemSelectionChanged.connect(self._on_selection_changed)  # type: ignore[attr-defined]
         self._list.itemDoubleClicked.connect(self._on_item_double_clicked)  # type: ignore[attr-defined]
+        self._list.verticalScrollBar().valueChanged.connect(self._on_list_scrolled)  # type: ignore[attr-defined]
         self._raw = QtWidgets.QPlainTextEdit(self)
         self._raw.setReadOnly(True)
         self._raw.setLineWrapMode(QtWidgets.QPlainTextEdit.NoWrap)
@@ -380,6 +378,7 @@ class NodeVariantManagerDialog(QtWidgets.QDialog):
         self._reload_filter_combo()
         self._refresh_auth_controls()
         self._on_selection_changed()
+        self._schedule_auto_load_more_if_needed()
 
     def _build_list_row(self, entry: F8VariantEntry) -> QtWidgets.QWidget:
         container = QtWidgets.QWidget(self._list)
@@ -619,15 +618,40 @@ class NodeVariantManagerDialog(QtWidgets.QDialog):
     def _refresh_auth_controls(self) -> None:
         logged_in = self._sync_client.current_user() is not None and bool(self._sync_client.current_access_token())
         self._btn_refresh.setEnabled(True)
-        remote_scope = self._remote_scope_for_current_tab()
-        self._load_more_btn.setVisible(remote_scope is not None)
-        self._load_more_btn.setEnabled(bool(remote_scope and self._remote_next_cursor_by_scope.get(remote_scope)))
         self._account_button.setIcon(
             icon_for(
                 self._account_button,
                 StudioIcon.USER if logged_in else StudioIcon.USER_OFF,
             )
         )
+
+    def _on_list_scrolled(self, _value: int) -> None:
+        self._schedule_auto_load_more_if_needed()
+
+    def _schedule_auto_load_more_if_needed(self) -> None:
+        if not self._should_auto_load_more():
+            return
+        # Queue the pagination call to keep scroll handling smooth.
+        QtCore.QTimer.singleShot(0, self._auto_load_more_if_needed)
+
+    def _auto_load_more_if_needed(self) -> None:
+        if not self._should_auto_load_more():
+            return
+        self._refresh_current_remote_scope(reset=False)
+
+    def _should_auto_load_more(self) -> bool:
+        if self._is_loading_remote_scope:
+            return False
+        remote_scope = self._remote_scope_for_current_tab()
+        if remote_scope is None:
+            return False
+        if not self._remote_next_cursor_by_scope.get(remote_scope):
+            return False
+        scroll_bar = self._list.verticalScrollBar()
+        max_value = int(scroll_bar.maximum())
+        if max_value <= 0:
+            return True
+        return int(scroll_bar.value()) >= max_value - 8
 
     def _on_item_double_clicked(self, _item: QtWidgets.QListWidgetItem) -> None:
         self._on_create_clicked()
@@ -1065,10 +1089,9 @@ class NodeVariantManagerDialog(QtWidgets.QDialog):
         self._tab_filters[current_tab] = filter_value
         self._reload()
 
-    def _on_load_more_clicked(self) -> None:
-        self._refresh_current_remote_scope(reset=False)
-
     def _refresh_current_remote_scope(self, *, reset: bool) -> None:
+        if self._is_loading_remote_scope:
+            return
         remote_scope = self._remote_scope_for_current_tab()
         if remote_scope is None:
             self._reload()
@@ -1085,6 +1108,8 @@ class NodeVariantManagerDialog(QtWidgets.QDialog):
             append = bool(cursor)
             if not append:
                 return
+        self._is_loading_remote_scope = True
+        self._refresh_auth_controls()
         try:
             page = self._sync_client.refresh_scope_page(
                 scope=remote_scope,
@@ -1096,6 +1121,8 @@ class NodeVariantManagerDialog(QtWidgets.QDialog):
         except Exception as exc:
             show_warning(self, "Refresh failed", str(exc))
             return
+        finally:
+            self._is_loading_remote_scope = False
         self._remote_next_cursor_by_scope[remote_scope] = page.nextCursor
         self._remote_loaded_query_by_scope[remote_scope] = current_query
         self._remote_loaded_base_by_scope[remote_scope] = current_base
