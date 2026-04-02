@@ -33,6 +33,8 @@ def _cpp_ident(s: str) -> str:
         return "X"
     if s[0].isdigit():
         s = "X_" + s
+    if s in _CPP_KEYWORDS:
+        s = s + "_"
     return s
 
 
@@ -162,12 +164,7 @@ def _cpp_member_name(json_key: str) -> str:
 
 
 def _enum_member(v: str) -> str:
-    s = _cpp_ident(v)
-    if s in {"class", "struct", "namespace"}:
-        s = s + "_"
-    if s == "in":
-        return "in_"
-    return s
+    return _cpp_ident(v)
 
 
 @dataclass
