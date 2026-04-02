@@ -1,17 +1,19 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
+const workerOrigin = 'http://127.0.0.1:8787';
+
 export default defineConfig({
   plugins: [react()],
   base: '/console/',
   server: {
     proxy: {
       '/api/auth': {
-        target: 'http://127.0.0.1:8787',
+        target: workerOrigin,
         changeOrigin: true,
       },
       '/v1': {
-        target: 'http://127.0.0.1:8787',
+        target: workerOrigin,
         changeOrigin: true,
       },
     },

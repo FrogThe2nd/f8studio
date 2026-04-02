@@ -58,7 +58,7 @@ CREATE INDEX idx_account_userId ON account(userId);
 CREATE TABLE verification (
   id TEXT PRIMARY KEY,
   identifier TEXT NOT NULL,
-  value TEXT NOT NULL UNIQUE,
+  value TEXT NOT NULL,
   expiresAt INTEGER NOT NULL,
   createdAt INTEGER NOT NULL,
   updatedAt INTEGER NOT NULL

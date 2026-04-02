@@ -161,6 +161,16 @@ body {
   position: relative;
 }
 
+.social-hint {
+  margin-top: 0;
+  margin-bottom: 12px;
+}
+
+.field-note {
+  margin-top: 0;
+  margin-bottom: 12px;
+}
+
 .form {
   display: grid;
   gap: 10px;
@@ -189,6 +199,16 @@ button {
   background: #204064;
 }
 
+.password-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.password-toggle {
+  white-space: nowrap;
+}
+
 .actions {
   display: flex;
   gap: 8px;
@@ -204,6 +224,46 @@ button {
   display: grid;
   gap: 8px;
   margin-bottom: 16px;
+}
+
+.auth-methods {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.auth-methods h3 {
+  margin: 0;
+}
+
+.account-chip-list {
+  display: grid;
+  gap: 10px;
+}
+
+.account-chip {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-alt);
+}
+
+.field-hint {
+  margin-top: -2px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.field-hint-success {
+  color: #81f0bf;
+}
+
+.field-hint-error {
+  color: #ff9f9f;
 }
 
 .section-head {

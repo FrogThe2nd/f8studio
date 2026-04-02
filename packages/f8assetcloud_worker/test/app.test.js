@@ -77,7 +77,16 @@ function extractDebugToken(logs, label) {
     return '';
   }
   const url = new URL(line.slice(prefix.length));
-  return String(url.searchParams.get('token') || '');
+  const queryToken = String(url.searchParams.get('token') || '');
+  if (queryToken) {
+    return queryToken;
+  }
+  const pathParts = url.pathname.split('/').filter((part) => part.length > 0);
+  const resetPasswordIndex = pathParts.findIndex((part) => part === 'reset-password');
+  if (resetPasswordIndex >= 0 && resetPasswordIndex + 1 < pathParts.length) {
+    return String(pathParts[resetPasswordIndex + 1] || '');
+  }
+  return '';
 }
 
 function responseCookie(headers) {
@@ -289,6 +298,11 @@ test('auth flows use Better Auth cookie sessions and email actions', async (t) =
   assert.equal(resetRequest.status, 200);
   assert.equal(resetRequest.json.status, true);
   assert.ok(resetRequest.resetToken);
+
+  const secondResetRequest = await requestPasswordReset(app, env, 'alice@example.com');
+  assert.equal(secondResetRequest.status, 200);
+  assert.equal(secondResetRequest.json.status, true);
+  assert.ok(secondResetRequest.resetToken);
 
   const reset = await jsonRequest(app, env, '/v1/auth/reset-password', {
     method: 'POST',

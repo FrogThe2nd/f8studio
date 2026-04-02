@@ -3,8 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev",
-    "dev:single": "npm run web:build && wrangler dev",
+    "dev": "wrangler dev --port 8787",
+    "dev:single": "npm run web:build && wrangler dev --port 8787",
     "deploy": "npm run web:build && wrangler deploy",
     "web:dev": "npm --prefix ./console_web run dev",
     "web:build": "npm --prefix ./console_web run build",

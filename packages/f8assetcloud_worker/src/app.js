@@ -483,9 +483,12 @@ function createAuth(env, request) {
       requireEmailVerification: true,
       revokeSessionsOnPasswordReset: true,
       resetPasswordTokenExpiresIn: secondsFromEnv(env.PASSWORD_RESET_TOKEN_TTL_SECONDS, 1800),
-      sendResetPassword: async ({ user, token }) => {
+      sendResetPassword: async ({ user, token, url }) => {
         const appUser = toAppUser(user);
-        const resetUrl = buildResetPasswordUrl({ env, request, token });
+        const resetUrl = resolveAuthActionUrl({
+          preferredUrl: url,
+          fallbackUrl: buildResetPasswordUrl({ env, request, token }),
+        });
         await sendResetPasswordMessage({
           env,
           toEmail: appUser.email,
@@ -499,9 +502,12 @@ function createAuth(env, request) {
       sendOnSignUp: true,
       autoSignInAfterVerification: false,
       expiresIn: secondsFromEnv(env.EMAIL_VERIFY_TOKEN_TTL_SECONDS, 1800),
-      sendVerificationEmail: async ({ user, token }) => {
+      sendVerificationEmail: async ({ user, token, url }) => {
         const appUser = toAppUser(user);
-        const verificationUrl = buildVerifyEmailUrl({ env, request, token });
+        const verificationUrl = resolveAuthActionUrl({
+          preferredUrl: url,
+          fallbackUrl: buildVerifyEmailUrl({ env, request, token }),
+        });
         await sendVerifyEmailMessage({
           env,
           toEmail: appUser.email,
@@ -740,7 +746,7 @@ function validateIdentityName(value) {
   if (RESERVED_IDENTITY_NAMES.has(canonical)) {
     return false;
   }
-  return /^[A-Za-z0-9_ -]{3,64}$/.test(text);
+  return isSafeDisplayText(text);
 }
 
 function validateUsername(value, allowedReservedValue = '') {
@@ -764,7 +770,18 @@ function validateDisplayName(value, allowedReservedValue = '') {
   if (RESERVED_IDENTITY_NAMES.has(canonical) && canonical !== canonicalizeIdentityName(allowedReservedValue)) {
     return false;
   }
-  return /^[A-Za-z0-9_ -]{3,64}$/.test(text);
+  return isSafeDisplayText(text);
+}
+
+function isSafeDisplayText(value) {
+  const text = String(value || '').trim();
+  if (text.length < 2 || text.length > 64) {
+    return false;
+  }
+  if (/[\u0000-\u001F\u007F]/.test(text)) {
+    return false;
+  }
+  return true;
 }
 
 function canonicalizeIdentityName(value) {
@@ -913,6 +930,14 @@ function buildResetPasswordUrl({ env, request, token }) {
   return base.toString();
 }
 
+function resolveAuthActionUrl({ preferredUrl, fallbackUrl }) {
+  const candidate = String(preferredUrl || '').trim();
+  if (candidate) {
+    return candidate;
+  }
+  return String(fallbackUrl || '').trim();
+}
+
 async function sendVerifyEmailMessage({ env, toEmail, username, verificationUrl }) {
   await sendAuthEmail({
     env,
@@ -978,7 +1003,7 @@ async function serveFrontend(request, env, url) {
     return frontendFallbackResponse();
   }
 
-  let assetPath = '/index.html';
+  let assetPath = '/';
   if (url.pathname.startsWith(`${CONSOLE_BASE_PATH}/assets/`)) {
     assetPath = url.pathname.slice(CONSOLE_BASE_PATH.length);
   } else if (url.pathname === `${CONSOLE_BASE_PATH}/favicon.ico`) {
@@ -987,7 +1012,7 @@ async function serveFrontend(request, env, url) {
     return jsonResponse(404, { message: 'not found' });
   }
 
-  const assetRequest = new Request(new URL(assetPath, request.url), request);
+  const assetRequest = new Request(new URL(assetPath, 'https://assets.invalid'), request);
   return assets.fetch(assetRequest);
 }
 

@@ -40,20 +40,30 @@ function ConsoleApp() {
   const sessionQuery = authClient.useSession();
   const session = sessionQuery.data;
   const isLoggedIn = Boolean(session?.user);
+  const registerUsernameAbortRef = useRef(null);
 
   const [authMode, setAuthMode] = useState('login');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [loginPasswordVisible, setLoginPasswordVisible] = useState(false);
   const [registerDisplayName, setRegisterDisplayName] = useState('');
   const [registerEmail, setRegisterEmail] = useState('');
   const [registerUsername, setRegisterUsername] = useState('');
   const [registerPassword, setRegisterPassword] = useState('');
+  const [registerConfirmPassword, setRegisterConfirmPassword] = useState('');
+  const [registerPasswordVisible, setRegisterPasswordVisible] = useState(false);
+  const [registerConfirmPasswordVisible, setRegisterConfirmPasswordVisible] = useState(false);
   const [forgotEmail, setForgotEmail] = useState('');
   const [currentUser, setCurrentUser] = useState(null);
   const [activePage, setActivePage] = useState('profile');
   const [loading, setLoading] = useState(false);
   const [statusText, setStatusText] = useState('Ready');
   const [googleEnabled, setGoogleEnabled] = useState(false);
+  const [linkedAccounts, setLinkedAccounts] = useState([]);
+  const [usernameAvailability, setUsernameAvailability] = useState({
+    state: 'idle',
+    message: 'Choose a username with letters, numbers, or underscores.',
+  });
 
   const [mineAssetType, setMineAssetType] = useState('variant');
   const [mineQuery, setMineQuery] = useState('');
@@ -77,6 +87,10 @@ function ConsoleApp() {
 
   const [currentPassword, setCurrentPassword] = useState('');
   const [nextPassword, setNextPassword] = useState('');
+  const [confirmNextPassword, setConfirmNextPassword] = useState('');
+  const [currentPasswordVisible, setCurrentPasswordVisible] = useState(false);
+  const [nextPasswordVisible, setNextPasswordVisible] = useState(false);
+  const [confirmNextPasswordVisible, setConfirmNextPasswordVisible] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -101,6 +115,7 @@ function ConsoleApp() {
   useEffect(() => {
     if (!isLoggedIn) {
       setCurrentUser(null);
+      setLinkedAccounts([]);
       setUsers([]);
       setMineAssets([]);
       setAllAssets([]);
@@ -109,6 +124,79 @@ function ConsoleApp() {
       }
     }
   }, [activePage, isLoggedIn]);
+
+  useEffect(() => {
+    if (authMode !== 'register') {
+      if (registerUsernameAbortRef.current) {
+        registerUsernameAbortRef.current.abort();
+        registerUsernameAbortRef.current = null;
+      }
+      setUsernameAvailability({
+        state: 'idle',
+        message: 'Choose a username with letters, numbers, or underscores.',
+      });
+      return;
+    }
+
+    const normalizedUsername = registerUsername.trim();
+    if (!normalizedUsername) {
+      setUsernameAvailability({
+        state: 'idle',
+        message: 'Username is required.',
+      });
+      return;
+    }
+    if (!/^[A-Za-z0-9_]{3,64}$/.test(normalizedUsername)) {
+      setUsernameAvailability({
+        state: 'invalid',
+        message: 'Use 3-64 letters, numbers, or underscores.',
+      });
+      return;
+    }
+
+    const controller = new AbortController();
+    registerUsernameAbortRef.current = controller;
+    const timeoutId = window.setTimeout(async () => {
+      setUsernameAvailability({
+        state: 'checking',
+        message: 'Checking availability...',
+      });
+      try {
+        const response = await fetch('/api/auth/is-username-available', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ username: normalizedUsername }),
+          signal: controller.signal,
+        });
+        const data = await parseJsonResponse(response);
+        if (!response.ok) {
+          throw new Error(data.message || 'Unable to validate username.');
+        }
+        setUsernameAvailability(data.available ? {
+          state: 'available',
+          message: 'Username is available.',
+        } : {
+          state: 'taken',
+          message: 'Username is already taken.',
+        });
+      } catch (error) {
+        if (controller.signal.aborted) {
+          return;
+        }
+        setUsernameAvailability({
+          state: 'error',
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }, 350);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+      controller.abort();
+    };
+  }, [authMode, registerUsername]);
 
   async function apiRequest(path, options = {}) {
     const headers = {};
@@ -129,6 +217,11 @@ function ConsoleApp() {
   async function loadProfile() {
     const me = await apiRequest('/v1/me');
     setCurrentUser(me);
+  }
+
+  async function loadLinkedAccounts() {
+    const accounts = await apiRequest('/api/auth/list-accounts');
+    setLinkedAccounts(Array.isArray(accounts) ? accounts : []);
   }
 
   async function loadMineAssets() {
@@ -161,7 +254,7 @@ function ConsoleApp() {
     setStatusText('Loading...');
     try {
       if (activePage === 'profile') {
-        await loadProfile();
+        await Promise.all([loadProfile(), loadLinkedAccounts()]);
       }
       if (activePage === 'my-assets') {
         await loadMineAssets();
@@ -189,6 +282,10 @@ function ConsoleApp() {
 
   async function onLogin(event) {
     event.preventDefault();
+    if (!username.trim() || !password) {
+      setStatusText('Username and password are required.');
+      return;
+    }
     setLoading(true);
     setStatusText('Signing in...');
     try {
@@ -197,7 +294,7 @@ function ConsoleApp() {
         password,
       });
       await sessionQuery.refetch();
-      await loadProfile();
+      await Promise.all([loadProfile(), loadLinkedAccounts()]);
       setPassword('');
       setActivePage('profile');
       setStatusText(`Signed in as ${username.trim()}`);
@@ -222,23 +319,66 @@ function ConsoleApp() {
     }
   }
 
+  async function onLinkGoogle() {
+    setLoading(true);
+    setStatusText('Redirecting to Google account linking...');
+    try {
+      const result = await apiRequest('/api/auth/link-social', {
+        method: 'POST',
+        body: JSON.stringify({
+          provider: 'google',
+          callbackURL: `${window.location.origin}${CONSOLE_BASE_PATH}/`,
+          disableRedirect: true,
+        }),
+      });
+      if (result.url) {
+        window.location.assign(String(result.url));
+        return;
+      }
+      await Promise.all([sessionQuery.refetch(), loadProfile(), loadLinkedAccounts()]);
+      setStatusText('Google account linked');
+    } catch (error) {
+      setStatusText(error instanceof Error ? error.message : String(error));
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function onRegister(event) {
     event.preventDefault();
+    if (!registerEmail.trim() || !registerUsername.trim() || !registerPassword) {
+      setStatusText('Email, username, and password are required.');
+      return;
+    }
+    if (registerPassword !== registerConfirmPassword) {
+      setStatusText('Registration passwords do not match.');
+      return;
+    }
+    if (usernameAvailability.state === 'checking') {
+      setStatusText('Please wait until username availability is checked.');
+      return;
+    }
+    if (usernameAvailability.state === 'taken' || usernameAvailability.state === 'invalid') {
+      setStatusText(usernameAvailability.message);
+      return;
+    }
+    const normalizedDisplayName = registerDisplayName.trim() || registerUsername.trim();
     setLoading(true);
     setStatusText('Creating account...');
     try {
       await authClient.signUp.email({
-        name: registerDisplayName.trim(),
+        name: normalizedDisplayName,
         email: registerEmail.trim(),
         username: registerUsername.trim(),
-        displayUsername: registerDisplayName.trim(),
+        displayUsername: normalizedDisplayName,
         password: registerPassword,
-        callbackURL: `${window.location.origin}${VERIFY_EMAIL_PATH}`,
+        callbackURL: `${window.location.origin}${VERIFY_EMAIL_PATH}?verified=1`,
       });
       setRegisterDisplayName('');
       setRegisterEmail('');
       setRegisterUsername('');
       setRegisterPassword('');
+      setRegisterConfirmPassword('');
       setAuthMode('login');
       setStatusText('Account created. Please verify your email before signing in.');
     } catch (error) {
@@ -250,6 +390,10 @@ function ConsoleApp() {
 
   async function onForgotPassword(event) {
     event.preventDefault();
+    if (!forgotEmail.trim()) {
+      setStatusText('Email is required.');
+      return;
+    }
     setLoading(true);
     setStatusText('Submitting password reset request...');
     try {
@@ -273,9 +417,13 @@ function ConsoleApp() {
       await authClient.signOut();
       await sessionQuery.refetch();
       setCurrentUser(null);
+      setLinkedAccounts([]);
       setUsers([]);
       setMineAssets([]);
       setAllAssets([]);
+      setCurrentPassword('');
+      setNextPassword('');
+      setConfirmNextPassword('');
       setStatusText('Logged out');
     } catch (error) {
       setStatusText(error instanceof Error ? error.message : String(error));
@@ -286,6 +434,18 @@ function ConsoleApp() {
 
   async function onChangePassword(event) {
     event.preventDefault();
+    if (!hasCredentialAccount) {
+      setStatusText('This account does not currently support password sign-in.');
+      return;
+    }
+    if (!currentPassword || !nextPassword || !confirmNextPassword) {
+      setStatusText('Current password, new password, and confirmation are required.');
+      return;
+    }
+    if (nextPassword !== confirmNextPassword) {
+      setStatusText('New passwords do not match.');
+      return;
+    }
     setLoading(true);
     setStatusText('Changing password...');
     try {
@@ -296,7 +456,33 @@ function ConsoleApp() {
       });
       setCurrentPassword('');
       setNextPassword('');
+      setConfirmNextPassword('');
       setStatusText('Password updated');
+    } catch (error) {
+      setStatusText(error instanceof Error ? error.message : String(error));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function onUnlinkAccount(account) {
+    const providerLabel = formatAccountProvider(account.providerId);
+    const confirmed = window.confirm(`Unlink ${providerLabel} from this account?`);
+    if (!confirmed) {
+      return;
+    }
+    setLoading(true);
+    setStatusText(`Unlinking ${providerLabel}...`);
+    try {
+      await apiRequest('/api/auth/unlink-account', {
+        method: 'POST',
+        body: JSON.stringify({
+          providerId: account.providerId,
+          accountId: account.accountId,
+        }),
+      });
+      await Promise.all([sessionQuery.refetch(), loadProfile(), loadLinkedAccounts()]);
+      setStatusText(`${providerLabel} unlinked`);
     } catch (error) {
       setStatusText(error instanceof Error ? error.message : String(error));
     } finally {
@@ -447,6 +633,8 @@ function ConsoleApp() {
   }
 
   const hasManagementAccess = Boolean(currentUser?.isAdmin);
+  const hasCredentialAccount = linkedAccounts.some((account) => account.providerId === 'credential');
+  const hasGoogleAccount = linkedAccounts.some((account) => account.providerId === 'google');
   const pageTitle = useMemo(() => {
     if (activePage === 'profile') {
       return 'Profile';
@@ -481,6 +669,12 @@ function ConsoleApp() {
             {authMode === 'register' ? 'Create a new account.' : null}
             {authMode === 'forgot' ? 'Request a password reset link by email.' : null}
           </p>
+          {googleEnabled ? (
+            <p className="muted social-hint">
+              Google sign-in is available for direct login and for linking to an existing account.
+            </p>
+          ) : null}
+          <p className="muted field-note">Fields marked * are required.</p>
           <div className="auth-switch">
             <button type="button" className={authMode === 'login' ? 'active' : ''} onClick={() => setAuthMode('login')}>Sign In</button>
             <button type="button" className={authMode === 'register' ? 'active' : ''} onClick={() => setAuthMode('register')}>Register</button>
@@ -490,24 +684,25 @@ function ConsoleApp() {
             {authMode === 'login' ? (
               <>
                 <label>
-                  Username
+                  Username *
                   <input
                     autoComplete="username"
                     value={username}
                     onChange={(event) => setUsername(event.target.value)}
                     placeholder="username"
+                    required
                   />
                 </label>
-                <label>
-                  Password
-                  <input
-                    autoComplete="current-password"
-                    type="password"
-                    value={password}
-                    onChange={(event) => setPassword(event.target.value)}
-                    placeholder="password"
-                  />
-                </label>
+                <PasswordField
+                  label="Password *"
+                  autoComplete="current-password"
+                  value={password}
+                  onChange={setPassword}
+                  placeholder="password"
+                  visible={loginPasswordVisible}
+                  onToggleVisibility={() => setLoginPasswordVisible((visible) => !visible)}
+                  required
+                />
               </>
             ) : null}
             {authMode === 'register' ? (
@@ -517,53 +712,96 @@ function ConsoleApp() {
                   <input
                     value={registerDisplayName}
                     onChange={(event) => setRegisterDisplayName(event.target.value)}
-                    placeholder="Your Name"
+                    placeholder="Optional, defaults to username"
                   />
                 </label>
                 <label>
-                  Email
+                  Email *
                   <input
                     autoComplete="email"
                     type="email"
                     value={registerEmail}
                     onChange={(event) => setRegisterEmail(event.target.value)}
                     placeholder="you@example.com"
+                    required
                   />
                 </label>
                 <label>
-                  Username
+                  Username *
                   <input
                     autoComplete="username"
                     value={registerUsername}
                     onChange={(event) => setRegisterUsername(event.target.value)}
                     placeholder="username"
+                    required
                   />
                 </label>
-                <label>
-                  Password
-                  <input
-                    autoComplete="new-password"
-                    type="password"
-                    value={registerPassword}
-                    onChange={(event) => setRegisterPassword(event.target.value)}
-                    placeholder="password"
-                  />
-                </label>
+                <FieldHint
+                  tone={
+                    usernameAvailability.state === 'available' ? 'success'
+                      : usernameAvailability.state === 'taken' || usernameAvailability.state === 'invalid' || usernameAvailability.state === 'error' ? 'error'
+                        : 'muted'
+                  }
+                >
+                  {usernameAvailability.message}
+                </FieldHint>
+                <FieldHint>Display name supports Chinese and other normal text. Leave it empty to use your username.</FieldHint>
+                <PasswordField
+                  label="Password *"
+                  autoComplete="new-password"
+                  value={registerPassword}
+                  onChange={setRegisterPassword}
+                  placeholder="password"
+                  visible={registerPasswordVisible}
+                  onToggleVisibility={() => setRegisterPasswordVisible((visible) => !visible)}
+                  required
+                />
+                <PasswordField
+                  label="Confirm Password *"
+                  autoComplete="new-password"
+                  value={registerConfirmPassword}
+                  onChange={setRegisterConfirmPassword}
+                  placeholder="confirm password"
+                  visible={registerConfirmPasswordVisible}
+                  onToggleVisibility={() => setRegisterConfirmPasswordVisible((visible) => !visible)}
+                  required
+                />
+                {registerConfirmPassword ? (
+                  <FieldHint tone={registerPassword === registerConfirmPassword ? 'success' : 'error'}>
+                    {registerPassword === registerConfirmPassword ? 'Passwords match.' : 'Passwords do not match.'}
+                  </FieldHint>
+                ) : null}
               </>
             ) : null}
             {authMode === 'forgot' ? (
               <label>
-                Email
+                Email *
                 <input
                   autoComplete="email"
                   type="email"
                   value={forgotEmail}
                   onChange={(event) => setForgotEmail(event.target.value)}
                   placeholder="you@example.com"
+                  required
                 />
               </label>
             ) : null}
-            <button type="submit" disabled={loading}>
+            <button
+              type="submit"
+              disabled={
+                loading
+                || (authMode === 'register' && (
+                  !registerEmail.trim()
+                  || !registerUsername.trim()
+                  || !registerPassword
+                  || !registerConfirmPassword
+                  || registerPassword !== registerConfirmPassword
+                  || usernameAvailability.state === 'checking'
+                  || usernameAvailability.state === 'taken'
+                  || usernameAvailability.state === 'invalid'
+                ))
+              }
+            >
               {authMode === 'login' ? 'Sign In' : null}
               {authMode === 'register' ? 'Create Account' : null}
               {authMode === 'forgot' ? 'Send Reset Link' : null}
@@ -638,30 +876,92 @@ function ConsoleApp() {
               <div className="profile-grid">
                 <div><strong>Username:</strong> {currentUser?.username}</div>
                 <div><strong>Display Name:</strong> {currentUser?.displayName}</div>
-                <div><strong>Email:</strong> {currentUser?.email}</div>
-                <div><strong>Email Verified:</strong> {currentUser?.emailVerified ? 'Yes' : 'No'}</div>
-                <div><strong>Access Level:</strong> {hasManagementAccess ? 'Management' : 'User'}</div>
+              <div><strong>Email:</strong> {currentUser?.email}</div>
+              <div><strong>Email Verified:</strong> {currentUser?.emailVerified ? 'Yes' : 'No'}</div>
+              <div><strong>Access Level:</strong> {hasManagementAccess ? 'Management' : 'User'}</div>
+            </div>
+              <div className="auth-methods">
+                <div className="section-head">
+                  <h3>Sign-In Methods</h3>
+                  <div className="inline-form">
+                    <button type="button" onClick={() => void loadLinkedAccounts()} disabled={loading}>Refresh Methods</button>
+                    {googleEnabled && !hasGoogleAccount ? (
+                      <button type="button" onClick={() => void onLinkGoogle()} disabled={loading}>
+                        Link Google
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+                {linkedAccounts.length > 0 ? (
+                  <div className="account-chip-list">
+                    {linkedAccounts.map((account) => (
+                      <div className="account-chip" key={`${account.providerId}:${account.accountId}`}>
+                        <div>
+                          <strong>{formatAccountProvider(account.providerId)}</strong>
+                          <div className="muted">
+                            {account.providerId === 'credential' ? 'Password sign-in enabled' : `Connected as ${account.accountId}`}
+                          </div>
+                        </div>
+                        {account.providerId !== 'credential' ? (
+                          <button type="button" onClick={() => void onUnlinkAccount(account)} disabled={loading}>
+                            Unlink
+                          </button>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="muted">No linked sign-in methods found yet.</p>
+                )}
+                {!hasCredentialAccount ? (
+                  <p className="muted">
+                    This account currently does not have password sign-in enabled. Use a linked provider such as Google to continue signing in.
+                  </p>
+                ) : null}
               </div>
               <form onSubmit={onChangePassword} className="form">
-                <label>
-                  Current Password
-                  <input
-                    autoComplete="current-password"
-                    type="password"
-                    value={currentPassword}
-                    onChange={(event) => setCurrentPassword(event.target.value)}
-                  />
-                </label>
-                <label>
-                  New Password
-                  <input
-                    autoComplete="new-password"
-                    type="password"
-                    value={nextPassword}
-                    onChange={(event) => setNextPassword(event.target.value)}
-                  />
-                </label>
-                <button type="submit" disabled={loading || !currentPassword || !nextPassword}>Change Password</button>
+                <p className="muted field-note">Fields marked * are required.</p>
+                <PasswordField
+                  label="Current Password *"
+                  autoComplete="current-password"
+                  value={currentPassword}
+                  onChange={setCurrentPassword}
+                  visible={currentPasswordVisible}
+                  onToggleVisibility={() => setCurrentPasswordVisible((visible) => !visible)}
+                  disabled={!hasCredentialAccount}
+                  required
+                />
+                <PasswordField
+                  label="New Password *"
+                  autoComplete="new-password"
+                  value={nextPassword}
+                  onChange={setNextPassword}
+                  visible={nextPasswordVisible}
+                  onToggleVisibility={() => setNextPasswordVisible((visible) => !visible)}
+                  disabled={!hasCredentialAccount}
+                  required
+                />
+                <PasswordField
+                  label="Confirm New Password *"
+                  autoComplete="new-password"
+                  value={confirmNextPassword}
+                  onChange={setConfirmNextPassword}
+                  visible={confirmNextPasswordVisible}
+                  onToggleVisibility={() => setConfirmNextPasswordVisible((visible) => !visible)}
+                  disabled={!hasCredentialAccount}
+                  required
+                />
+                {confirmNextPassword ? (
+                  <FieldHint tone={nextPassword === confirmNextPassword ? 'success' : 'error'}>
+                    {nextPassword === confirmNextPassword ? 'Passwords match.' : 'Passwords do not match.'}
+                  </FieldHint>
+                ) : null}
+                <button
+                  type="submit"
+                  disabled={loading || !hasCredentialAccount || !currentPassword || !nextPassword || !confirmNextPassword || nextPassword !== confirmNextPassword}
+                >
+                  Change Password
+                </button>
               </form>
             </section>
           ) : null}
@@ -866,11 +1166,21 @@ function ConsoleApp() {
 }
 
 function VerifyEmailPage() {
-  const [initialToken] = useState(() => new URL(window.location.href).searchParams.get('token') || '');
+  const searchParams = new URL(window.location.href).searchParams;
+  const [initialToken] = useState(() => searchParams.get('token') || '');
   const [token, setToken] = useState(initialToken);
   const [loading, setLoading] = useState(false);
-  const [statusText, setStatusText] = useState('Ready');
-  const [verified, setVerified] = useState(false);
+  const [statusText, setStatusText] = useState(() => {
+    if (searchParams.get('verified')) {
+      return 'Email verified. You can sign in now.';
+    }
+    const error = searchParams.get('error');
+    if (error) {
+      return `Verification failed: ${error}`;
+    }
+    return 'Ready';
+  });
+  const [verified, setVerified] = useState(() => Boolean(searchParams.get('verified')));
   const autoVerifyStarted = useRef(false);
 
   useEffect(() => {
@@ -921,23 +1231,26 @@ function VerifyEmailPage() {
         <span className="eyebrow">Feel8 Account</span>
         <h1>Verify Email</h1>
         <p className="muted">Confirm your account email before signing in.</p>
-        <form
-          onSubmit={(event) => {
-            event.preventDefault();
-            void onVerify();
-          }}
-          className="form"
-        >
-          <label>
-            Verification Token
-            <input
-              value={token}
-              onChange={(event) => setToken(event.target.value)}
-              placeholder="token from email"
-            />
-          </label>
-          <button type="submit" disabled={loading || !token.trim()}>Verify Email</button>
-        </form>
+        {!verified ? (
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              void onVerify();
+            }}
+            className="form"
+          >
+            <p className="muted field-note">Paste a token only if you opened this page manually.</p>
+            <label>
+              Verification Token
+              <input
+                value={token}
+                onChange={(event) => setToken(event.target.value)}
+                placeholder="token from email"
+              />
+            </label>
+            <button type="submit" disabled={loading || !token.trim()}>Verify Email</button>
+          </form>
+        ) : null}
         <div className="auth-links">
           <a href={`${CONSOLE_BASE_PATH}/`}>Back to Sign In</a>
           <a href={RESET_PASSWORD_PATH}>Reset Password</a>
@@ -950,11 +1263,20 @@ function VerifyEmailPage() {
 }
 
 function ResetPasswordPage() {
-  const [token, setToken] = useState(() => new URL(window.location.href).searchParams.get('token') || '');
+  const searchParams = new URL(window.location.href).searchParams;
+  const [token, setToken] = useState(() => searchParams.get('token') || '');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [newPasswordVisible, setNewPasswordVisible] = useState(false);
+  const [confirmPasswordVisible, setConfirmPasswordVisible] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [statusText, setStatusText] = useState('Ready');
+  const [statusText, setStatusText] = useState(() => {
+    const error = searchParams.get('error');
+    if (error) {
+      return `Reset link error: ${error}`;
+    }
+    return 'Ready';
+  });
   const [completed, setCompleted] = useState(false);
 
   async function apiRequest(path, options = {}) {
@@ -1006,36 +1328,43 @@ function ResetPasswordPage() {
         <span className="eyebrow">Feel8 Account</span>
         <h1>Reset Password</h1>
         <p className="muted">Set a new password for your account.</p>
+        <p className="muted field-note">Fields marked * are required.</p>
         <form onSubmit={onReset} className="form">
           <label>
-            Reset Token
+            Reset Token *
             <input
               value={token}
               onChange={(event) => setToken(event.target.value)}
               placeholder="token from email"
+              required
             />
           </label>
-          <label>
-            New Password
-            <input
-              autoComplete="new-password"
-              type="password"
-              value={newPassword}
-              onChange={(event) => setNewPassword(event.target.value)}
-              placeholder="new password"
-            />
-          </label>
-          <label>
-            Confirm Password
-            <input
-              autoComplete="new-password"
-              type="password"
-              value={confirmPassword}
-              onChange={(event) => setConfirmPassword(event.target.value)}
-              placeholder="confirm password"
-            />
-          </label>
-          <button type="submit" disabled={loading || !token.trim() || !newPassword || !confirmPassword}>
+          <PasswordField
+            label="New Password *"
+            autoComplete="new-password"
+            value={newPassword}
+            onChange={setNewPassword}
+            placeholder="new password"
+            visible={newPasswordVisible}
+            onToggleVisibility={() => setNewPasswordVisible((visible) => !visible)}
+            required
+          />
+          <PasswordField
+            label="Confirm Password *"
+            autoComplete="new-password"
+            value={confirmPassword}
+            onChange={setConfirmPassword}
+            placeholder="confirm password"
+            visible={confirmPasswordVisible}
+            onToggleVisibility={() => setConfirmPasswordVisible((visible) => !visible)}
+            required
+          />
+          {confirmPassword ? (
+            <FieldHint tone={newPassword === confirmPassword ? 'success' : 'error'}>
+              {newPassword === confirmPassword ? 'Passwords match.' : 'Passwords do not match.'}
+            </FieldHint>
+          ) : null}
+          <button type="submit" disabled={loading || !token.trim() || !newPassword || !confirmPassword || newPassword !== confirmPassword}>
             Reset Password
           </button>
         </form>
@@ -1078,6 +1407,61 @@ function stripConsoleBasePath(pathname) {
     return pathname.slice(CONSOLE_BASE_PATH.length);
   }
   return pathname;
+}
+
+function formatAccountProvider(providerId) {
+  if (providerId === 'credential') {
+    return 'Password';
+  }
+  if (providerId === 'google') {
+    return 'Google';
+  }
+  const text = String(providerId || '').trim();
+  if (!text) {
+    return 'Unknown';
+  }
+  return text.slice(0, 1).toUpperCase() + text.slice(1);
+}
+
+function PasswordField({
+  label,
+  value,
+  onChange,
+  visible,
+  onToggleVisibility,
+  autoComplete,
+  placeholder,
+  disabled = false,
+  required = false,
+}) {
+  return (
+    <label>
+      {label}
+      <div className="password-row">
+        <input
+          autoComplete={autoComplete}
+          type={visible ? 'text' : 'password'}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          placeholder={placeholder}
+          disabled={disabled}
+          required={required}
+        />
+        <button type="button" className="password-toggle" onClick={onToggleVisibility} disabled={disabled}>
+          {visible ? 'Hide' : 'Show'}
+        </button>
+      </div>
+    </label>
+  );
+}
+
+function FieldHint({ children, tone = 'muted' }) {
+  const className = tone === 'success'
+    ? 'field-hint field-hint-success'
+    : tone === 'error'
+      ? 'field-hint field-hint-error'
+      : 'field-hint';
+  return <div className={className}>{children}</div>;
 }
 
 function SimpleTable({ columns, rows, emptyText }) {
