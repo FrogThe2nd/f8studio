@@ -1,4 +1,4 @@
-import { nowIso, randomToken } from './auth.js';
+import { nowIso } from './auth.js';
 
 const PAGE_SIZE = 100;
 const COMPONENT_SCHEMA_VERSION = 'f8studio-session/1';
@@ -19,155 +19,36 @@ export class AssetRepository {
     this._db = db;
   }
 
-  async createUser({ username, passwordHash, displayName, isAdmin = false }) {
-    const normalizedUsername = normalizeUsername(username);
-    const normalizedDisplayName = normalizeDisplayName(displayName || username);
-    const existing = await this.findUserByUsername(normalizedUsername);
-    if (existing !== null) {
-      throw new Error('username already exists');
-    }
-    const timestamp = nowIso();
-    const user = {
-      userId: crypto.randomUUID(),
-      username: normalizedUsername,
-      displayName: normalizedDisplayName,
-      passwordHash: String(passwordHash),
-      isAdmin: Boolean(isAdmin),
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    };
-    await this._db.prepare(
-      `INSERT INTO users (
-         user_id, username, display_name, password_hash, is_admin, created_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    )
-      .bind(
-        user.userId,
-        user.username,
-        user.displayName,
-        user.passwordHash,
-        user.isAdmin ? 1 : 0,
-        user.createdAt,
-        user.updatedAt,
-      )
-      .run();
-    return user;
-  }
-
-  async ensureBootstrapUser({ username, passwordHash, displayName, isAdmin }) {
-    const existing = await this.findUserByUsername(username);
-    if (existing !== null) {
-      return existing;
-    }
-    return this.createUser({ username, passwordHash, displayName, isAdmin });
-  }
-
-  async findUserByUsername(username) {
-    const row = await this._db.prepare(
-      `SELECT user_id, username, display_name, password_hash, is_admin, created_at, updated_at
-       FROM users WHERE username = ?`,
-    )
-      .bind(normalizeUsername(username))
-      .first();
-    return row === null ? null : mapUserRow(row);
-  }
-
-  async findUserById(userId) {
-    const row = await this._db.prepare(
-      `SELECT user_id, username, display_name, password_hash, is_admin, created_at, updated_at
-       FROM users WHERE user_id = ?`,
-    )
-      .bind(String(userId))
-      .first();
-    return row === null ? null : mapUserRow(row);
-  }
-
-  async updateUserPassword({ userId, passwordHash }) {
-    await this._db.prepare(
-      `UPDATE users SET password_hash = ?, updated_at = ? WHERE user_id = ?`,
-    )
-      .bind(String(passwordHash), nowIso(), String(userId))
-      .run();
-  }
-
-  async issueRefreshToken({ userId, expiresAt }) {
-    const token = {
-      tokenId: randomToken(24),
-      userId: String(userId),
-      createdAt: nowIso(),
-      expiresAt: String(expiresAt),
-    };
-    await this._db.prepare(
-      `INSERT INTO refresh_tokens (token_id, user_id, revoked_at, created_at, expires_at)
-       VALUES (?, ?, NULL, ?, ?)`,
-    )
-      .bind(token.tokenId, token.userId, token.createdAt, token.expiresAt)
-      .run();
-    return token;
-  }
-
-  async findActiveRefreshToken(tokenId) {
-    const row = await this._db.prepare(
-      `SELECT token_id, user_id, revoked_at, created_at, expires_at
-       FROM refresh_tokens
-       WHERE token_id = ? AND revoked_at IS NULL`,
-    )
-      .bind(String(tokenId))
-      .first();
-    if (row === null) {
-      return null;
-    }
-    const token = mapRefreshTokenRow(row);
-    if (Date.parse(token.expiresAt) <= Date.now()) {
-      return null;
-    }
-    return token;
-  }
-
-  async revokeRefreshToken(tokenId) {
-    await this._db.prepare(
-      `UPDATE refresh_tokens SET revoked_at = ? WHERE token_id = ? AND revoked_at IS NULL`,
-    )
-      .bind(nowIso(), String(tokenId))
-      .run();
-  }
-
-  async revokeRefreshTokensForUser(userId) {
-    await this._db.prepare(
-      `UPDATE refresh_tokens SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL`,
-    )
-      .bind(nowIso(), String(userId))
-      .run();
-  }
-
   async listUsers({ query, cursor }) {
     const filters = ['1 = 1'];
     const bindings = [];
     if (String(query || '').trim()) {
       const match = `%${String(query).trim().toLowerCase()}%`;
-      filters.push('(LOWER(u.username) LIKE ? OR LOWER(u.display_name) LIKE ?)');
-      bindings.push(match, match);
+      filters.push('(LOWER(COALESCE(u.username, \'\')) LIKE ? OR LOWER(COALESCE(u.displayUsername, u.name, \'\')) LIKE ? OR LOWER(u.email) LIKE ?)');
+      bindings.push(match, match, match);
     }
     const start = parseCursor(cursor);
     const sql = `
       SELECT
-        u.user_id,
+        u.id,
         u.username,
-        u.display_name,
-        u.password_hash,
-        u.is_admin,
-        u.created_at,
-        u.updated_at,
+        u.displayUsername,
+        u.name,
+        u.email,
+        u.emailVerified,
+        u.role,
+        u.createdAt,
+        u.updatedAt,
         COALESCE(assets.asset_count, 0) AS asset_count
-      FROM users u
+      FROM user u
       LEFT JOIN (
         SELECT owner_user_id, COUNT(*) AS asset_count
         FROM asset_heads
         WHERE deleted_at IS NULL
         GROUP BY owner_user_id
-      ) assets ON assets.owner_user_id = u.user_id
+      ) assets ON assets.owner_user_id = u.id
       WHERE ${filters.join(' AND ')}
-      ORDER BY LOWER(u.username), u.user_id
+      ORDER BY LOWER(COALESCE(u.username, u.email)), u.id
       LIMIT ? OFFSET ?
     `;
     const result = await this._db.prepare(sql).bind(...bindings, PAGE_SIZE + 1, start).all();
@@ -176,13 +57,15 @@ export class AssetRepository {
     const items = hasMore ? rows.slice(0, PAGE_SIZE) : rows;
     return {
       entries: items.map((row) => ({
-        userId: String(row.user_id),
-        username: String(row.username),
-        displayName: String(row.display_name),
-        isAdmin: Number(row.is_admin || 0) !== 0,
+        userId: String(row.id),
+        username: stringOrDefault(row.username, String(row.email || '')),
+        displayName: stringOrDefault(row.displayUsername, stringOrDefault(row.name, String(row.email || ''))),
+        email: String(row.email || ''),
+        emailVerified: Number(row.emailVerified || 0) !== 0,
+        isAdmin: String(row.role || '') === 'admin',
         assetCount: Number(row.asset_count || 0),
-        createdAt: String(row.created_at),
-        updatedAt: String(row.updated_at),
+        createdAt: normalizeDbTimestamp(row.createdAt),
+        updatedAt: normalizeDbTimestamp(row.updatedAt),
       })),
       nextCursor: hasMore ? String(start + PAGE_SIZE) : null,
     };
@@ -191,22 +74,24 @@ export class AssetRepository {
   async getUserByIdWithStats(userId) {
     const row = await this._db.prepare(
       `SELECT
-         u.user_id,
+         u.id,
          u.username,
-         u.display_name,
-         u.password_hash,
-         u.is_admin,
-         u.created_at,
-         u.updated_at,
+         u.displayUsername,
+         u.name,
+         u.email,
+         u.emailVerified,
+         u.role,
+         u.createdAt,
+         u.updatedAt,
          COALESCE(assets.asset_count, 0) AS asset_count
-       FROM users u
+       FROM user u
        LEFT JOIN (
          SELECT owner_user_id, COUNT(*) AS asset_count
          FROM asset_heads
          WHERE deleted_at IS NULL
          GROUP BY owner_user_id
-       ) assets ON assets.owner_user_id = u.user_id
-       WHERE u.user_id = ?`,
+       ) assets ON assets.owner_user_id = u.id
+       WHERE u.id = ?`,
     )
       .bind(String(userId))
       .first();
@@ -214,65 +99,19 @@ export class AssetRepository {
       return null;
     }
     return {
-      userId: String(row.user_id),
-      username: String(row.username),
-      displayName: String(row.display_name),
-      isAdmin: Number(row.is_admin || 0) !== 0,
+      userId: String(row.id),
+      username: stringOrDefault(row.username, String(row.email || '')),
+      displayName: stringOrDefault(row.displayUsername, stringOrDefault(row.name, String(row.email || ''))),
+      email: String(row.email || ''),
+      emailVerified: Number(row.emailVerified || 0) !== 0,
+      isAdmin: String(row.role || '') === 'admin',
       assetCount: Number(row.asset_count || 0),
-      createdAt: String(row.created_at),
-      updatedAt: String(row.updated_at),
+      createdAt: normalizeDbTimestamp(row.createdAt),
+      updatedAt: normalizeDbTimestamp(row.updatedAt),
     };
   }
 
-  async updateUserProfileByAdmin({ userId, displayName, isAdmin }) {
-    const existing = await this.findUserById(userId);
-    if (existing === null) {
-      return null;
-    }
-    const nextDisplayName = displayName === undefined
-      ? existing.displayName
-      : normalizeDisplayName(displayName);
-    const nextIsAdmin = isAdmin === undefined
-      ? existing.isAdmin
-      : Boolean(isAdmin);
-    await this._db.prepare(
-      `UPDATE users
-       SET display_name = ?,
-           is_admin = ?,
-           updated_at = ?
-       WHERE user_id = ?`,
-    )
-      .bind(nextDisplayName, nextIsAdmin ? 1 : 0, nowIso(), String(userId))
-      .run();
-    return this.getUserByIdWithStats(userId);
-  }
-
-  async deleteUserByAdmin(userId) {
-    const userIdText = String(userId);
-    const ownedAssets = await this._db.prepare(
-      `SELECT COUNT(*) AS count
-       FROM asset_heads
-       WHERE owner_user_id = ? AND deleted_at IS NULL`,
-    )
-      .bind(userIdText)
-      .first();
-    const activeAssetCount = Number(ownedAssets?.count || 0);
-    if (activeAssetCount > 0) {
-      throw new Error('cannot delete user with existing assets');
-    }
-    await this._db.prepare('DELETE FROM asset_subscriptions WHERE subscriber_user_id = ?')
-      .bind(userIdText)
-      .run();
-    await this._db.prepare('DELETE FROM refresh_tokens WHERE user_id = ?')
-      .bind(userIdText)
-      .run();
-    const deleted = await this._db.prepare('DELETE FROM users WHERE user_id = ?')
-      .bind(userIdText)
-      .run();
-    return Number(deleted.meta?.changes || 0) > 0;
-  }
-
-  async listAssetsForAdmin({ assetType, ownerUserId, query, includeDeleted, cursor }) {
+  async listManagedAssets({ assetType, ownerUserId, query, includeDeleted, cursor }) {
     const filters = ['1 = 1'];
     const bindings = [];
     const normalizedAssetType = String(assetType || '').trim();
@@ -316,7 +155,7 @@ export class AssetRepository {
         h.deleted_at,
         h.created_at,
         h.updated_at,
-        u.display_name AS owner_display_name,
+        COALESCE(u.displayUsername, u.name) AS owner_display_name,
         v.content_json,
         v.created_at AS version_created_at,
         v.created_by_user_id,
@@ -326,7 +165,7 @@ export class AssetRepository {
       FROM asset_heads h
       JOIN asset_versions v
         ON v.asset_id = h.asset_id AND v.version_number = h.latest_version_number
-      LEFT JOIN users u ON u.user_id = h.owner_user_id
+      LEFT JOIN user u ON u.id = h.owner_user_id
       WHERE ${filters.join(' AND ')}
       ORDER BY h.updated_at DESC, h.asset_id
       LIMIT ? OFFSET ?
@@ -341,8 +180,8 @@ export class AssetRepository {
     };
   }
 
-  async listAssetsByOwnerForAdmin({ ownerUserId, assetType, includeDeleted, cursor }) {
-    return this.listAssetsForAdmin({
+  async listAssetsByOwnerForManagement({ ownerUserId, assetType, includeDeleted, cursor }) {
+    return this.listManagedAssets({
       ownerUserId,
       assetType,
       includeDeleted,
@@ -351,7 +190,7 @@ export class AssetRepository {
     });
   }
 
-  async getAssetForAdmin({ assetId, includeDeleted }) {
+  async getManagedAsset({ assetId, includeDeleted }) {
     const head = await this._findAssetHeadRow(assetId, { includeDeleted: toBoolean(includeDeleted) });
     if (head === null) {
       return null;
@@ -408,7 +247,7 @@ export class AssetRepository {
     )
       .bind(normalizeVisibility(visibility), nowIso(), String(assetId))
       .run();
-    return this.getAssetForAdmin({ assetId, includeDeleted: true });
+    return this.getManagedAsset({ assetId, includeDeleted: true });
   }
 
   async createVariant({ payload, user }) {
@@ -694,7 +533,7 @@ export class AssetRepository {
         h.deleted_at,
         h.created_at,
         h.updated_at,
-        u.display_name AS owner_display_name,
+        COALESCE(u.displayUsername, u.name) AS owner_display_name,
         s.subscribed_at,
         s.last_seen_revision,
         v.content_json,
@@ -706,7 +545,7 @@ export class AssetRepository {
       FROM asset_heads h
       JOIN asset_versions v
         ON v.asset_id = h.asset_id AND v.version_number = h.latest_version_number
-      LEFT JOIN users u ON u.user_id = h.owner_user_id
+      LEFT JOIN user u ON u.id = h.owner_user_id
       LEFT JOIN asset_subscriptions s ON s.asset_id = h.asset_id AND s.subscriber_user_id = ?
       WHERE ${filters.join(' AND ')}
       ORDER BY LOWER(h.name), h.asset_id
@@ -872,9 +711,9 @@ export class AssetRepository {
          h.deleted_at,
          h.created_at,
          h.updated_at,
-         u.display_name AS owner_display_name
+         COALESCE(u.displayUsername, u.name) AS owner_display_name
        FROM asset_heads h
-       LEFT JOIN users u ON u.user_id = h.owner_user_id
+       LEFT JOIN user u ON u.id = h.owner_user_id
        WHERE h.asset_id = ? ${deletedFilter}`,
     )
       .bind(String(assetId))
@@ -901,6 +740,7 @@ export class AssetRepository {
       .first();
     return row === null ? null : row;
   }
+
 }
 
 function normalizeVariantCreatePayload(payload, user) {
@@ -1217,37 +1057,6 @@ function ensureCanView(head, userId) {
   }
 }
 
-function mapUserRow(row) {
-  return {
-    userId: String(row.user_id),
-    username: String(row.username),
-    displayName: String(row.display_name),
-    passwordHash: String(row.password_hash),
-    isAdmin: Number(row.is_admin || 0) !== 0,
-    createdAt: String(row.created_at),
-    updatedAt: String(row.updated_at),
-  };
-}
-
-function mapRefreshTokenRow(row) {
-  return {
-    tokenId: String(row.token_id),
-    userId: String(row.user_id),
-    revokedAt: nullableString(row.revoked_at),
-    createdAt: String(row.created_at),
-    expiresAt: String(row.expires_at),
-  };
-}
-
-function normalizeUsername(value) {
-  const username = requireNonEmptyString(value, 'username is required');
-  return username.toLowerCase();
-}
-
-function normalizeDisplayName(value) {
-  return requireNonEmptyString(value, 'displayName is required');
-}
-
 function normalizeVisibility(value) {
   return String(value || 'private').trim() === 'public' ? 'public' : 'private';
 }
@@ -1317,6 +1126,24 @@ function parseCursor(value) {
 function normalizeIsoString(value, fallback) {
   const text = String(value || '').trim();
   return text || fallback;
+}
+
+function normalizeDbTimestamp(value) {
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return new Date(value).toISOString();
+  }
+  const text = String(value || '').trim();
+  if (!text) {
+    return '';
+  }
+  const numeric = Number(text);
+  if (Number.isFinite(numeric)) {
+    return new Date(numeric).toISOString();
+  }
+  return text;
 }
 
 function stableJson(value) {

@@ -1,125 +1,191 @@
-import { hashPassword, issueTokenPair, verifyJwt, verifyPassword } from './auth.js';
+import { betterAuth, generateId } from 'better-auth';
+import { drizzleAdapter } from 'better-auth/adapters/drizzle';
+import { hashPassword } from 'better-auth/crypto';
+import { admin, username } from 'better-auth/plugins';
+import { drizzle } from 'drizzle-orm/d1';
+import { Hono } from 'hono';
+
+import { authSchema } from './auth_schema.js';
 import { AssetConflictError, AssetNotFoundError, AssetPermissionError, AssetRepository } from './repository.js';
 
+const AUTH_BASE_PATH = '/api/auth';
+const CONSOLE_BASE_PATH = '/console';
+const MANAGEMENT_API_BASE_PATH = '/v1/management';
+const RESERVED_IDENTITY_NAMES = new Set([
+  'admin',
+  'administrator',
+  'owner',
+  'root',
+  'system',
+  'feel8',
+  'feel8fun',
+  'f8',
+  'f8studio',
+  'support',
+  'staff',
+  'moderator',
+  'official',
+]);
+const bootstrapAdminInitByDb = new WeakMap();
+
 export function createApp() {
-  return {
-    async fetch(request, env) {
-      const url = new URL(request.url);
-      if (request.method === 'OPTIONS') {
-        return jsonResponse(204, {});
-      }
-      try {
-        validateEnv(env);
-        const repo = new AssetRepository(env.DB);
-        await ensureBootstrapUser(env, repo);
+  const app = new Hono();
 
-        if (!url.pathname.startsWith('/v1/')) {
-          if (request.method === 'GET' || request.method === 'HEAD') {
-            return await serveFrontend(request, env, url);
-          }
-          return jsonResponse(404, { message: 'not found' });
-        }
+  app.all(`${AUTH_BASE_PATH}/*`, async (c) => {
+    validateEnv(c.env);
+    const auth = createAuth(c.env, c.req.raw);
+    await ensureBootstrapAdmin({ env: c.env });
+    return auth.handler(c.req.raw);
+  });
 
-        if (request.method === 'POST' && url.pathname === '/v1/auth/register') {
-          const payload = await readJsonBody(request);
-          const result = await register({ env, repo, payload });
-          return jsonResponse(200, result);
-        }
-        if (request.method === 'POST' && url.pathname === '/v1/auth/login') {
-          const payload = await readJsonBody(request);
-          const result = await login({ env, repo, username: payload.username, password: payload.password });
-          return jsonResponse(200, result);
-        }
-        if (request.method === 'POST' && url.pathname === '/v1/auth/refresh') {
-          const payload = await readJsonBody(request);
-          const result = await refreshAuth({ env, repo, refreshToken: payload.refreshToken });
-          return jsonResponse(200, result);
-        }
-        if (request.method === 'POST' && url.pathname === '/v1/auth/logout') {
-          const authUser = await requireAuthenticatedUser({ request, env, repo });
-          await repo.revokeRefreshTokensForUser(authUser.userId);
-          return jsonResponse(200, {});
-        }
-        if (url.pathname.startsWith('/v1/admin/')) {
-          const adminUser = await requireAdminUser({ request, env, repo });
-          return await routeAdminRequest({ request, url, repo, adminUser });
-        }
-        if (request.method === 'GET' && url.pathname === '/v1/me') {
-          const user = await requireAuthenticatedUser({ request, env, repo });
-          return jsonResponse(200, {
-            userId: user.userId,
-            username: user.username,
-            displayName: user.displayName,
-            isAdmin: user.isAdmin,
-          });
-        }
-        if (request.method === 'POST' && url.pathname === '/v1/me/password') {
-          const user = await requireAuthenticatedUser({ request, env, repo });
-          const payload = await readJsonBody(request);
-          await changePassword({ repo, user, payload });
-          return jsonResponse(200, {});
-        }
-        if (request.method === 'GET' && url.pathname === '/v1/search') {
-          const viewer = await optionalAuthenticatedUser({ request, env, repo });
-          const result = await repo.searchAssets({
-            assetType: url.searchParams.get('assetType') || '',
-            userId: viewer === null ? null : viewer.userId,
-            query: url.searchParams.get('q') || '',
-            visibility: url.searchParams.get('visibility') || '',
-            owner: url.searchParams.get('owner') || '',
-            cursor: url.searchParams.get('cursor') || '',
-          });
-          return jsonResponse(200, result);
-        }
-        if (request.method === 'GET' && url.pathname === '/v1/variants') {
-          const viewer = await optionalAuthenticatedUser({ request, env, repo });
-          const result = await repo.listVariants({
-            userId: viewer === null ? null : viewer.userId,
-            kind: url.searchParams.get('kind') || '',
-            baseNodeType: url.searchParams.get('baseNodeType') || '',
-            query: url.searchParams.get('q') || '',
-            visibility: url.searchParams.get('visibility') || '',
-            owner: url.searchParams.get('owner') || '',
-            cursor: url.searchParams.get('cursor') || '',
-          });
-          return jsonResponse(200, result);
-        }
-        if (request.method === 'POST' && url.pathname === '/v1/variants') {
-          const user = await requireAuthenticatedUser({ request, env, repo });
-          const payload = await readJsonBody(request);
-          return jsonResponse(200, await repo.createVariant({ payload, user }));
-        }
-        if (request.method === 'GET' && url.pathname === '/v1/components') {
-          const viewer = await optionalAuthenticatedUser({ request, env, repo });
-          const result = await repo.listComponents({
-            userId: viewer === null ? null : viewer.userId,
-            query: url.searchParams.get('q') || '',
-            visibility: url.searchParams.get('visibility') || '',
-            owner: url.searchParams.get('owner') || '',
-            cursor: url.searchParams.get('cursor') || '',
-          });
-          return jsonResponse(200, result);
-        }
-        if (request.method === 'POST' && url.pathname === '/v1/components') {
-          const user = await requireAuthenticatedUser({ request, env, repo });
-          const payload = await readJsonBody(request);
-          return jsonResponse(200, await repo.createComponent({ payload, user }));
-        }
-        if (url.pathname.startsWith('/v1/variants/')) {
-          return await routeAssetRequest({ request, env, repo, url, assetType: 'variant' });
-        }
-        if (url.pathname.startsWith('/v1/components/')) {
-          return await routeAssetRequest({ request, env, repo, url, assetType: 'component' });
-        }
-        return jsonResponse(404, { message: 'not found' });
-      } catch (error) {
-        return handleError(error);
-      }
-    },
-  };
+  app.use('/v1/*', async (c, next) => {
+    validateEnv(c.env);
+    const auth = createAuth(c.env, c.req.raw);
+    await ensureBootstrapAdmin({ env: c.env });
+    c.set('auth', auth);
+    c.set('repo', new AssetRepository(c.env.DB));
+    await next();
+  });
+
+  app.get('/v1/auth/providers', (c) => c.json({
+    google: hasGoogleProvider(c.env),
+  }));
+
+  app.get('/v1/auth/verify-email', async (c) => {
+    const auth = c.get('auth');
+    const token = requireQueryString(c.req.query('token'), 'token is required');
+    await auth.api.verifyEmail({
+      query: { token },
+      headers: c.req.raw.headers,
+    });
+    return c.json({ verified: true });
+  });
+
+  app.post('/v1/auth/reset-password', async (c) => {
+    const auth = c.get('auth');
+    const payload = await readJsonBody(c.req.raw);
+    await auth.api.resetPassword({
+      body: {
+        token: requireBodyString(payload.token, 'token is required'),
+        newPassword: requireBodyString(payload.newPassword, 'newPassword is required'),
+      },
+      headers: c.req.raw.headers,
+    });
+    return c.json({ reset: true });
+  });
+
+  app.get('/v1/me', async (c) => {
+    const user = await requireAuthenticatedUser({ auth: c.get('auth'), request: c.req.raw });
+    return c.json(toApiUser(user));
+  });
+
+  app.post('/v1/me/password', async (c) => {
+    const auth = c.get('auth');
+    const payload = await readJsonBody(c.req.raw);
+    await requireAuthenticatedUser({ auth, request: c.req.raw });
+    await auth.api.changePassword({
+      body: {
+        currentPassword: requireBodyString(payload.currentPassword, 'currentPassword is required'),
+        newPassword: requireBodyString(payload.newPassword, 'newPassword is required'),
+        revokeOtherSessions: true,
+      },
+      headers: c.req.raw.headers,
+    });
+    return c.json({});
+  });
+
+  app.get('/v1/search', async (c) => {
+    const repo = c.get('repo');
+    const viewer = await optionalAuthenticatedUser({ auth: c.get('auth'), request: c.req.raw });
+    const result = await repo.searchAssets({
+      assetType: c.req.query('assetType') || '',
+      userId: viewer === null ? null : viewer.userId,
+      query: c.req.query('q') || '',
+      visibility: c.req.query('visibility') || '',
+      owner: c.req.query('owner') || '',
+      cursor: c.req.query('cursor') || '',
+    });
+    return c.json(result);
+  });
+
+  app.get('/v1/variants', async (c) => {
+    const repo = c.get('repo');
+    const viewer = await optionalAuthenticatedUser({ auth: c.get('auth'), request: c.req.raw });
+    const result = await repo.listVariants({
+      userId: viewer === null ? null : viewer.userId,
+      kind: c.req.query('kind') || '',
+      baseNodeType: c.req.query('baseNodeType') || '',
+      query: c.req.query('q') || '',
+      visibility: c.req.query('visibility') || '',
+      owner: c.req.query('owner') || '',
+      cursor: c.req.query('cursor') || '',
+    });
+    return c.json(result);
+  });
+
+  app.post('/v1/variants', async (c) => {
+    const repo = c.get('repo');
+    const user = await requireAuthenticatedUser({ auth: c.get('auth'), request: c.req.raw });
+    const payload = await readJsonBody(c.req.raw);
+    return c.json(await repo.createVariant({ payload, user }));
+  });
+
+  app.get('/v1/components', async (c) => {
+    const repo = c.get('repo');
+    const viewer = await optionalAuthenticatedUser({ auth: c.get('auth'), request: c.req.raw });
+    const result = await repo.listComponents({
+      userId: viewer === null ? null : viewer.userId,
+      query: c.req.query('q') || '',
+      visibility: c.req.query('visibility') || '',
+      owner: c.req.query('owner') || '',
+      cursor: c.req.query('cursor') || '',
+    });
+    return c.json(result);
+  });
+
+  app.post('/v1/components', async (c) => {
+    const repo = c.get('repo');
+    const user = await requireAuthenticatedUser({ auth: c.get('auth'), request: c.req.raw });
+    const payload = await readJsonBody(c.req.raw);
+    return c.json(await repo.createComponent({ payload, user }));
+  });
+
+  app.all('/v1/variants/*', async (c) => routeAssetRequest({
+    auth: c.get('auth'),
+    repo: c.get('repo'),
+    request: c.req.raw,
+    url: new URL(c.req.raw.url),
+    assetType: 'variant',
+  }));
+
+  app.all('/v1/components/*', async (c) => routeAssetRequest({
+    auth: c.get('auth'),
+    repo: c.get('repo'),
+    request: c.req.raw,
+    url: new URL(c.req.raw.url),
+    assetType: 'component',
+  }));
+
+  app.all(`${MANAGEMENT_API_BASE_PATH}/*`, async (c) => {
+    const managementUser = await requireManagementUser({ auth: c.get('auth'), request: c.req.raw });
+    return routeManagementRequest({
+      managementUser,
+      auth: c.get('auth'),
+      repo: c.get('repo'),
+      request: c.req.raw,
+      url: new URL(c.req.raw.url),
+    });
+  });
+
+  app.on(['GET', 'HEAD'], '*', async (c) => serveFrontend(c.req.raw, c.env, new URL(c.req.raw.url)));
+
+  app.all('*', () => jsonResponse(404, { message: 'not found' }));
+  app.onError((error) => handleError(error));
+
+  return app;
 }
 
-async function routeAssetRequest({ request, env, repo, url, assetType }) {
+async function routeAssetRequest({ auth, repo, request, url, assetType }) {
   const prefix = assetType === 'variant' ? '/v1/variants/' : '/v1/components/';
   const tail = decodeURIComponent(url.pathname.slice(prefix.length));
   const parts = tail.split('/').filter((part) => part.length > 0);
@@ -130,14 +196,14 @@ async function routeAssetRequest({ request, env, repo, url, assetType }) {
 
   if (parts.length === 1) {
     if (request.method === 'GET') {
-      const viewer = await optionalAuthenticatedUser({ request, env, repo });
+      const viewer = await optionalAuthenticatedUser({ auth, request });
       const result = assetType === 'variant'
         ? await repo.getVariant({ variantId: assetId, userId: viewer === null ? null : viewer.userId })
         : await repo.getComponent({ componentId: assetId, userId: viewer === null ? null : viewer.userId });
       return jsonResponse(200, result);
     }
     if (request.method === 'PUT') {
-      const user = await requireAuthenticatedUser({ request, env, repo });
+      const user = await requireAuthenticatedUser({ auth, request });
       const payload = await readJsonBody(request);
       const result = assetType === 'variant'
         ? await repo.updateVariant({ variantId: assetId, payload, user })
@@ -145,7 +211,7 @@ async function routeAssetRequest({ request, env, repo, url, assetType }) {
       return jsonResponse(200, result);
     }
     if (request.method === 'DELETE') {
-      const user = await requireAuthenticatedUser({ request, env, repo });
+      const user = await requireAuthenticatedUser({ auth, request });
       if (assetType === 'variant') {
         await repo.deleteVariant({ variantId: assetId, userId: user.userId });
       } else {
@@ -156,7 +222,7 @@ async function routeAssetRequest({ request, env, repo, url, assetType }) {
   }
 
   if (parts.length === 2 && parts[1] === 'versions' && request.method === 'GET') {
-    const viewer = await optionalAuthenticatedUser({ request, env, repo });
+    const viewer = await optionalAuthenticatedUser({ auth, request });
     const result = assetType === 'variant'
       ? await repo.listVariantVersions({ variantId: assetId, userId: viewer === null ? null : viewer.userId })
       : await repo.listComponentVersions({ componentId: assetId, userId: viewer === null ? null : viewer.userId });
@@ -164,7 +230,7 @@ async function routeAssetRequest({ request, env, repo, url, assetType }) {
   }
 
   if (parts.length === 3 && parts[1] === 'versions' && request.method === 'GET') {
-    const viewer = await optionalAuthenticatedUser({ request, env, repo });
+    const viewer = await optionalAuthenticatedUser({ auth, request });
     const versionNumber = parts[2];
     const result = assetType === 'variant'
       ? await repo.getVariantVersion({ variantId: assetId, versionNumber, userId: viewer === null ? null : viewer.userId })
@@ -173,7 +239,7 @@ async function routeAssetRequest({ request, env, repo, url, assetType }) {
   }
 
   if (parts.length === 2 && parts[1] === 'subscribe') {
-    const user = await requireAuthenticatedUser({ request, env, repo });
+    const user = await requireAuthenticatedUser({ auth, request });
     if (request.method === 'POST') {
       const result = assetType === 'variant'
         ? await repo.subscribeVariant({ variantId: assetId, userId: user.userId })
@@ -189,7 +255,7 @@ async function routeAssetRequest({ request, env, repo, url, assetType }) {
   }
 
   if (parts.length === 2 && parts[1] === 'fork' && request.method === 'POST') {
-    const user = await requireAuthenticatedUser({ request, env, repo });
+    const user = await requireAuthenticatedUser({ auth, request });
     const payload = await readJsonBody(request);
     const result = assetType === 'variant'
       ? await repo.forkVariant({ variantId: assetId, payload, user })
@@ -200,8 +266,8 @@ async function routeAssetRequest({ request, env, repo, url, assetType }) {
   return jsonResponse(404, { message: 'not found' });
 }
 
-async function routeAdminRequest({ request, url, repo, adminUser }) {
-  if (request.method === 'GET' && url.pathname === '/v1/admin/users') {
+async function routeManagementRequest({ managementUser, auth, repo, request, url }) {
+  if (request.method === 'GET' && url.pathname === `${MANAGEMENT_API_BASE_PATH}/users`) {
     const users = await repo.listUsers({
       query: url.searchParams.get('q') || '',
       cursor: url.searchParams.get('cursor') || '',
@@ -209,45 +275,42 @@ async function routeAdminRequest({ request, url, repo, adminUser }) {
     return jsonResponse(200, users);
   }
 
-  if (request.method === 'POST' && url.pathname === '/v1/admin/users') {
+  if (request.method === 'POST' && url.pathname === `${MANAGEMENT_API_BASE_PATH}/users`) {
     const payload = await readJsonBody(request);
-    const username = requireBodyString(payload.username, 'username is required');
-    const password = requireBodyString(payload.password, 'password is required');
-    const displayName = bodyStringOrDefault(payload.displayName, username);
-    const passwordHash = await hashPassword(password);
-    const user = await repo.createUser({
-      username,
-      passwordHash,
-      displayName,
-      isAdmin: Boolean(payload.isAdmin),
+    const usernameValue = requireBodyString(payload.username, 'username is required');
+    const displayName = bodyStringOrDefault(payload.displayName, usernameValue);
+    const created = await auth.api.createUser({
+      body: {
+        email: requireBodyString(payload.email, 'email is required'),
+        password: requireBodyString(payload.password, 'password is required'),
+        name: displayName,
+        role: Boolean(payload.isAdmin) ? 'admin' : 'user',
+        data: {
+          username: normalizeUsername(usernameValue),
+          displayUsername: displayName,
+        },
+      },
+      headers: request.headers,
     });
-    return jsonResponse(200, {
-      userId: user.userId,
-      username: user.username,
-      displayName: user.displayName,
-      isAdmin: user.isAdmin,
-      createdAt: user.createdAt,
-      updatedAt: user.updatedAt,
-    });
+    const user = await repo.getUserByIdWithStats(String(created.user.id));
+    return jsonResponse(200, user ?? toApiUser(toAppUser(created.user)));
   }
 
-  if (request.method === 'GET' && url.pathname.startsWith('/v1/admin/users/')) {
-    const userPath = '/v1/admin/users/';
-    const tail = decodeURIComponent(url.pathname.slice(userPath.length));
-    const parts = tail.split('/').filter((part) => part.length > 0);
-    const userId = parts[0] || '';
+  if (request.method === 'GET' && url.pathname.startsWith(`${MANAGEMENT_API_BASE_PATH}/users/`)) {
+    const parts = parseManagementUserPath(url.pathname);
+    const userId = parts.userId;
     if (!userId) {
       return jsonResponse(404, { message: 'not found' });
     }
-    if (parts.length === 1) {
+    if (parts.suffix.length === 0) {
       const user = await repo.getUserByIdWithStats(userId);
       if (user === null) {
         return jsonResponse(404, { message: 'user not found' });
       }
       return jsonResponse(200, user);
     }
-    if (parts.length === 2 && parts[1] === 'assets') {
-      const result = await repo.listAssetsByOwnerForAdmin({
+    if (parts.suffix.length === 1 && parts.suffix[0] === 'assets') {
+      const result = await repo.listAssetsByOwnerForManagement({
         ownerUserId: userId,
         assetType: url.searchParams.get('assetType') || '',
         includeDeleted: url.searchParams.get('includeDeleted') || '',
@@ -257,45 +320,73 @@ async function routeAdminRequest({ request, url, repo, adminUser }) {
     }
   }
 
-  if (request.method === 'PUT' && url.pathname.startsWith('/v1/admin/users/')) {
-    const userId = decodeURIComponent(url.pathname.slice('/v1/admin/users/'.length));
-    if (!userId || userId.includes('/')) {
+  if (request.method === 'PUT' && url.pathname.startsWith(`${MANAGEMENT_API_BASE_PATH}/users/`)) {
+    const parts = parseManagementUserPath(url.pathname);
+    if (!parts.userId || parts.suffix.length !== 0) {
       return jsonResponse(404, { message: 'not found' });
     }
     const payload = await readJsonBody(request);
-    if (payload.password !== undefined) {
-      const passwordHash = await hashPassword(requireBodyString(payload.password, 'password is required'));
-      await repo.updateUserPassword({ userId, passwordHash });
-      await repo.revokeRefreshTokensForUser(userId);
+    const data = {};
+    if (payload.username !== undefined) {
+      data.username = normalizeUsername(requireBodyString(payload.username, 'username is required'));
     }
-    const updated = await repo.updateUserProfileByAdmin({
-      userId,
-      displayName: payload.displayName,
-      isAdmin: payload.isAdmin,
-    });
+    if (payload.displayName !== undefined) {
+      const displayName = requireBodyString(payload.displayName, 'displayName is required');
+      data.name = displayName;
+      data.displayUsername = displayName;
+    }
+    if (Object.keys(data).length > 0) {
+      await auth.api.adminUpdateUser({
+        body: {
+          userId: parts.userId,
+          data,
+        },
+        headers: request.headers,
+      });
+    }
+    if (payload.isAdmin !== undefined) {
+      await auth.api.setRole({
+        body: {
+          userId: parts.userId,
+          role: Boolean(payload.isAdmin) ? 'admin' : 'user',
+        },
+        headers: request.headers,
+      });
+    }
+    if (payload.password !== undefined) {
+      await auth.api.setUserPassword({
+        body: {
+          userId: parts.userId,
+          newPassword: requireBodyString(payload.password, 'password is required'),
+        },
+        headers: request.headers,
+      });
+    }
+    const updated = await repo.getUserByIdWithStats(parts.userId);
     if (updated === null) {
       return jsonResponse(404, { message: 'user not found' });
     }
     return jsonResponse(200, updated);
   }
 
-  if (request.method === 'DELETE' && url.pathname.startsWith('/v1/admin/users/')) {
-    const userId = decodeURIComponent(url.pathname.slice('/v1/admin/users/'.length));
-    if (!userId || userId.includes('/')) {
+  if (request.method === 'DELETE' && url.pathname.startsWith(`${MANAGEMENT_API_BASE_PATH}/users/`)) {
+    const parts = parseManagementUserPath(url.pathname);
+    if (!parts.userId || parts.suffix.length !== 0) {
       return jsonResponse(404, { message: 'not found' });
     }
-    if (userId === adminUser.userId) {
-      throw new HttpError(400, 'admin cannot delete self');
+    if (parts.userId === managementUser.userId) {
+      throw new HttpError(400, 'management user cannot delete self');
     }
-    const deleted = await repo.deleteUserByAdmin(userId);
-    if (!deleted) {
-      return jsonResponse(404, { message: 'user not found' });
-    }
+    await assertUserHasNoAssets(repo, parts.userId);
+    await auth.api.removeUser({
+      body: { userId: parts.userId },
+      headers: request.headers,
+    });
     return jsonResponse(200, {});
   }
 
-  if (request.method === 'GET' && url.pathname === '/v1/admin/assets') {
-    const result = await repo.listAssetsForAdmin({
+  if (request.method === 'GET' && url.pathname === `${MANAGEMENT_API_BASE_PATH}/assets`) {
+    const result = await repo.listManagedAssets({
       assetType: url.searchParams.get('assetType') || '',
       ownerUserId: url.searchParams.get('ownerUserId') || '',
       query: url.searchParams.get('q') || '',
@@ -305,12 +396,12 @@ async function routeAdminRequest({ request, url, repo, adminUser }) {
     return jsonResponse(200, result);
   }
 
-  if (request.method === 'GET' && url.pathname.startsWith('/v1/admin/assets/')) {
-    const assetId = decodeURIComponent(url.pathname.slice('/v1/admin/assets/'.length));
-    if (!assetId || assetId.includes('/')) {
+  if (request.method === 'GET' && url.pathname.startsWith(`${MANAGEMENT_API_BASE_PATH}/assets/`)) {
+    const assetId = decodeSinglePathValue(url.pathname, `${MANAGEMENT_API_BASE_PATH}/assets/`);
+    if (!assetId) {
       return jsonResponse(404, { message: 'not found' });
     }
-    const asset = await repo.getAssetForAdmin({
+    const asset = await repo.getManagedAsset({
       assetId,
       includeDeleted: url.searchParams.get('includeDeleted') || '',
     });
@@ -320,9 +411,9 @@ async function routeAdminRequest({ request, url, repo, adminUser }) {
     return jsonResponse(200, asset);
   }
 
-  if (request.method === 'PUT' && url.pathname.startsWith('/v1/admin/assets/')) {
-    const assetId = decodeURIComponent(url.pathname.slice('/v1/admin/assets/'.length));
-    if (!assetId || assetId.includes('/')) {
+  if (request.method === 'PUT' && url.pathname.startsWith(`${MANAGEMENT_API_BASE_PATH}/assets/`)) {
+    const assetId = decodeSinglePathValue(url.pathname, `${MANAGEMENT_API_BASE_PATH}/assets/`);
+    if (!assetId) {
       return jsonResponse(404, { message: 'not found' });
     }
     const payload = await readJsonBody(request);
@@ -339,16 +430,16 @@ async function routeAdminRequest({ request, url, repo, adminUser }) {
       }
       return jsonResponse(200, updated);
     }
-    const current = await repo.getAssetForAdmin({ assetId, includeDeleted: true });
+    const current = await repo.getManagedAsset({ assetId, includeDeleted: true });
     if (current === null) {
       return jsonResponse(404, { message: 'asset not found' });
     }
     return jsonResponse(200, current);
   }
 
-  if (request.method === 'DELETE' && url.pathname.startsWith('/v1/admin/assets/')) {
-    const assetId = decodeURIComponent(url.pathname.slice('/v1/admin/assets/'.length));
-    if (!assetId || assetId.includes('/')) {
+  if (request.method === 'DELETE' && url.pathname.startsWith(`${MANAGEMENT_API_BASE_PATH}/assets/`)) {
+    const assetId = decodeSinglePathValue(url.pathname, `${MANAGEMENT_API_BASE_PATH}/assets/`);
+    if (!assetId) {
       return jsonResponse(404, { message: 'not found' });
     }
     const deleted = await repo.adminDeleteAsset({ assetId });
@@ -361,152 +452,344 @@ async function routeAdminRequest({ request, url, repo, adminUser }) {
   return jsonResponse(404, { message: 'not found' });
 }
 
-async function ensureBootstrapUser(env, repo) {
-  const username = String(env.BOOTSTRAP_ADMIN_USERNAME || '').trim();
-  const password = String(env.BOOTSTRAP_ADMIN_PASSWORD || '').trim();
-  if (!username || !password) {
-    return;
+function createAuth(env, request) {
+  const requestUrl = new URL(request.url);
+  const baseURL = resolveAuthBaseUrl(env, requestUrl);
+  const db = drizzle(env.DB);
+  const bootstrapUsername = String(env.BOOTSTRAP_ADMIN_USERNAME || '').trim().toLowerCase();
+  const bootstrapDisplayName = String(env.BOOTSTRAP_ADMIN_DISPLAY_NAME || '').trim();
+  const socialProviders = {};
+  if (hasGoogleProvider(env)) {
+    socialProviders.google = {
+      clientId: String(env.GOOGLE_CLIENT_ID || '').trim(),
+      clientSecret: String(env.GOOGLE_CLIENT_SECRET || '').trim(),
+    };
   }
-  const displayName = String(env.BOOTSTRAP_ADMIN_DISPLAY_NAME || 'Administrator').trim() || 'Administrator';
-  const existing = await repo.findUserByUsername(username);
-  if (existing !== null) {
-    return;
-  }
-  const passwordHash = await hashPassword(password);
-  await repo.ensureBootstrapUser({ username, passwordHash, displayName, isAdmin: true });
-}
 
-async function register({ env, repo, payload }) {
-  const username = requireBodyString(payload.username, 'username is required');
-  const password = requireBodyString(payload.password, 'password is required');
-  const displayName = bodyStringOrDefault(payload.displayName, username);
-  const passwordHash = await hashPassword(password);
-  const user = await repo.createUser({ username, passwordHash, displayName, isAdmin: false });
-  return issueAuthResponse({ env, repo, user });
-}
-
-async function login({ env, repo, username, password }) {
-  const user = await repo.findUserByUsername(requireBodyString(username, 'username is required'));
-  if (user === null) {
-    throw new HttpError(401, 'invalid username or password');
-  }
-  const valid = await verifyPassword(String(password || ''), user.passwordHash);
-  if (!valid) {
-    throw new HttpError(401, 'invalid username or password');
-  }
-  return issueAuthResponse({ env, repo, user });
-}
-
-async function refreshAuth({ env, repo, refreshToken }) {
-  let payload;
-  try {
-    payload = await verifyJwt({
-      token: String(refreshToken || ''),
-      secret: String(env.JWT_SECRET),
-      issuer: issuer(env),
-      expectedType: 'refresh',
-    });
-  } catch (error) {
-    throw new HttpError(401, 'invalid refresh token');
-  }
-  const tokenId = String(payload.jti || '');
-  const refreshRow = await repo.findActiveRefreshToken(tokenId);
-  if (refreshRow === null) {
-    throw new HttpError(401, 'refresh token revoked');
-  }
-  const user = await repo.findUserById(String(payload.sub || ''));
-  if (user === null) {
-    throw new HttpError(401, 'user not found');
-  }
-  return issueAuthResponse({ env, repo, user, refreshTokenId: refreshRow.tokenId });
-}
-
-async function changePassword({ repo, user, payload }) {
-  const currentPassword = requireBodyString(payload.currentPassword, 'currentPassword is required');
-  const newPassword = requireBodyString(payload.newPassword, 'newPassword is required');
-  const valid = await verifyPassword(currentPassword, user.passwordHash);
-  if (!valid) {
-    throw new HttpError(401, 'invalid current password');
-  }
-  const passwordHash = await hashPassword(newPassword);
-  await repo.updateUserPassword({ userId: user.userId, passwordHash });
-  await repo.revokeRefreshTokensForUser(user.userId);
-}
-
-async function issueAuthResponse({ env, repo, user, refreshTokenId = null }) {
-  let tokenId = refreshTokenId;
-  if (!tokenId) {
-    const refreshExpiry = futureIso(secondsFromEnv(env.REFRESH_TOKEN_TTL_SECONDS, 2592000));
-    const refreshRow = await repo.issueRefreshToken({ userId: user.userId, expiresAt: refreshExpiry });
-    tokenId = refreshRow.tokenId;
-  }
-  const tokens = await issueTokenPair({
-    secret: String(env.JWT_SECRET),
-    issuer: issuer(env),
-    userId: user.userId,
-    accessTtlSeconds: secondsFromEnv(env.ACCESS_TOKEN_TTL_SECONDS, 3600),
-    refreshTtlSeconds: secondsFromEnv(env.REFRESH_TOKEN_TTL_SECONDS, 2592000),
-    refreshTokenId: tokenId,
-  });
-  return {
-    accessToken: tokens.accessToken,
-    refreshToken: tokens.refreshToken,
-    user: {
-      userId: user.userId,
-      username: user.username,
-      displayName: user.displayName,
-      isAdmin: user.isAdmin,
+  return betterAuth({
+    secret: getAuthSecret(env),
+    baseURL,
+    basePath: AUTH_BASE_PATH,
+    trustedOrigins: [requestUrl.origin, new URL(baseURL).origin],
+    database: drizzleAdapter(db, {
+      provider: 'sqlite',
+      schema: authSchema,
+      usePlural: false,
+      transaction: false,
+    }),
+    emailAndPassword: {
+      enabled: true,
+      autoSignIn: false,
+      requireEmailVerification: true,
+      revokeSessionsOnPasswordReset: true,
+      resetPasswordTokenExpiresIn: secondsFromEnv(env.PASSWORD_RESET_TOKEN_TTL_SECONDS, 1800),
+      sendResetPassword: async ({ user, token }) => {
+        const appUser = toAppUser(user);
+        const resetUrl = buildResetPasswordUrl({ env, request, token });
+        await sendResetPasswordMessage({
+          env,
+          toEmail: appUser.email,
+          username: appUser.displayName || appUser.username,
+          resetUrl,
+        });
+      },
     },
+    emailVerification: {
+      sendOnSignIn: true,
+      sendOnSignUp: true,
+      autoSignInAfterVerification: false,
+      expiresIn: secondsFromEnv(env.EMAIL_VERIFY_TOKEN_TTL_SECONDS, 1800),
+      sendVerificationEmail: async ({ user, token }) => {
+        const appUser = toAppUser(user);
+        const verificationUrl = buildVerifyEmailUrl({ env, request, token });
+        await sendVerifyEmailMessage({
+          env,
+          toEmail: appUser.email,
+          username: appUser.displayName || appUser.username,
+          verificationUrl,
+        });
+      },
+    },
+    socialProviders,
+    plugins: [
+      username({
+        usernameNormalization: (value) => String(value || '').trim().toLowerCase(),
+        usernameValidator: (value) => validateUsername(value, bootstrapUsername),
+        displayUsernameValidator: (value) => validateDisplayName(value, bootstrapDisplayName),
+      }),
+      admin({
+        defaultRole: 'user',
+        adminRoles: ['admin'],
+      }),
+    ],
+  });
+}
+
+async function ensureBootstrapAdmin({ env }) {
+  const config = readBootstrapAdminConfig(env);
+  if (config === null) {
+    return;
+  }
+
+  const db = env?.DB;
+  if (db && typeof db === 'object') {
+    const pending = bootstrapAdminInitByDb.get(db);
+    if (pending) {
+      await pending;
+      return;
+    }
+
+    const initPromise = ensureBootstrapAdminOnce(env, config);
+    bootstrapAdminInitByDb.set(db, initPromise);
+    try {
+      await initPromise;
+    } catch (error) {
+      bootstrapAdminInitByDb.delete(db);
+      throw error;
+    }
+    return;
+  }
+
+  await ensureBootstrapAdminOnce(env, config);
+}
+
+function readBootstrapAdminConfig(env) {
+  const usernameValue = String(env.BOOTSTRAP_ADMIN_USERNAME || '').trim().toLowerCase();
+  const password = String(env.BOOTSTRAP_ADMIN_PASSWORD || '').trim();
+  if (!usernameValue || !password) {
+    return null;
+  }
+  return {
+    usernameValue,
+    password,
+    email: String(env.BOOTSTRAP_ADMIN_EMAIL || `${usernameValue}@local.invalid`).trim().toLowerCase(),
+    displayName: String(env.BOOTSTRAP_ADMIN_DISPLAY_NAME || 'Administrator').trim() || 'Administrator',
   };
 }
 
-async function requireAuthenticatedUser({ request, env, repo }) {
-  const authHeader = request.headers.get('Authorization') || '';
-  if (!authHeader.startsWith('Bearer ')) {
-    throw new HttpError(401, 'missing bearer token');
+async function ensureBootstrapAdminOnce(env, config) {
+  const existing = await env.DB.prepare(
+    'SELECT id FROM user WHERE email = ? OR username = ? LIMIT 1',
+  )
+    .bind(config.email, config.usernameValue)
+    .first();
+  const passwordHash = await hashPassword(config.password);
+  const timestamp = Date.now();
+
+  if (existing === null) {
+    const userId = generateId();
+    await env.DB.prepare(
+      `INSERT INTO user
+         ("id", "name", "email", "emailVerified", "image", "createdAt", "updatedAt", "username", "displayUsername", "role", "banned", "banReason", "banExpires")
+       VALUES (?, ?, ?, 1, NULL, ?, ?, ?, ?, 'admin', 0, NULL, NULL)`,
+    )
+      .bind(userId, config.displayName, config.email, timestamp, timestamp, config.usernameValue, config.displayName)
+      .run();
+    await env.DB.prepare(
+      `INSERT INTO account
+         ("id", "accountId", "providerId", "userId", "accessToken", "refreshToken", "idToken", "accessTokenExpiresAt", "refreshTokenExpiresAt", "scope", "password", "createdAt", "updatedAt")
+       VALUES (?, ?, 'credential', ?, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?, ?)`,
+    )
+      .bind(generateId(), userId, userId, passwordHash, timestamp, timestamp)
+      .run();
+    return;
   }
-  const token = authHeader.slice('Bearer '.length).trim();
-  let payload;
-  try {
-    payload = await verifyJwt({
-      token,
-      secret: String(env.JWT_SECRET),
-      issuer: issuer(env),
-      expectedType: 'access',
-    });
-  } catch (error) {
-    throw new HttpError(401, 'invalid access token');
+
+  const userId = String(existing.id);
+  await env.DB.prepare(
+    `UPDATE user
+     SET email = ?,
+         role = 'admin',
+         emailVerified = 1,
+         username = ?,
+         displayUsername = ?,
+         name = ?,
+         updatedAt = ?
+     WHERE id = ?`,
+  )
+    .bind(config.email, config.usernameValue, config.displayName, config.displayName, timestamp, userId)
+    .run();
+
+  const credentialAccount = await env.DB.prepare(
+    `SELECT id
+     FROM account
+     WHERE userId = ? AND providerId = 'credential'
+     LIMIT 1`,
+  )
+    .bind(userId)
+    .first();
+
+  if (credentialAccount === null) {
+    await env.DB.prepare(
+      `INSERT INTO account
+         ("id", "accountId", "providerId", "userId", "accessToken", "refreshToken", "idToken", "accessTokenExpiresAt", "refreshTokenExpiresAt", "scope", "password", "createdAt", "updatedAt")
+       VALUES (?, ?, 'credential', ?, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?, ?)`,
+    )
+      .bind(generateId(), userId, userId, passwordHash, timestamp, timestamp)
+      .run();
+    return;
   }
-  const user = await repo.findUserById(String(payload.sub || ''));
-  if (user === null) {
-    throw new HttpError(401, 'user not found');
-  }
-  return user;
+
+  await env.DB.prepare(
+    `UPDATE account
+     SET accountId = ?,
+         password = ?,
+         updatedAt = ?
+     WHERE id = ?`,
+  )
+    .bind(userId, passwordHash, timestamp, String(credentialAccount.id))
+    .run();
 }
 
-async function requireAdminUser({ request, env, repo }) {
-  const user = await requireAuthenticatedUser({ request, env, repo });
-  if (!user.isAdmin) {
-    throw new HttpError(403, 'admin only');
+async function requireAuthenticatedUser({ auth, request }) {
+  const session = await auth.api.getSession({
+    headers: request.headers,
+  });
+  if (session === null) {
+    throw new HttpError(401, 'authentication required');
   }
-  return user;
+  return toAppUser(session.user);
 }
 
-async function optionalAuthenticatedUser({ request, env, repo }) {
-  const authHeader = request.headers.get('Authorization') || '';
-  if (!authHeader.trim()) {
+async function optionalAuthenticatedUser({ auth, request }) {
+  const cookie = request.headers.get('cookie') || '';
+  if (!cookie.trim()) {
     return null;
   }
-  return requireAuthenticatedUser({ request, env, repo });
+  const session = await auth.api.getSession({
+    headers: request.headers,
+  });
+  return session === null ? null : toAppUser(session.user);
+}
+
+async function requireManagementUser({ auth, request }) {
+  const user = await requireAuthenticatedUser({ auth, request });
+  if (!user.isAdmin) {
+    throw new HttpError(403, 'management access required');
+  }
+  return user;
+}
+
+async function assertUserHasNoAssets(repo, userId) {
+  const countRow = await repo._db.prepare(
+    'SELECT COUNT(*) AS count FROM asset_heads WHERE owner_user_id = ?',
+  )
+    .bind(String(userId))
+    .first();
+  if (Number(countRow?.count || 0) > 0) {
+    throw new HttpError(409, 'cannot delete user with existing assets');
+  }
+}
+
+function toApiUser(user) {
+  return {
+    userId: user.userId,
+    username: user.username,
+    displayName: user.displayName,
+    email: user.email,
+    emailVerified: user.emailVerified,
+    isAdmin: user.isAdmin,
+  };
+}
+
+function toAppUser(user) {
+  const email = stringOrDefault(user.email, '');
+  const usernameValue = stringOrDefault(user.username, email || String(user.id || ''));
+  const displayName = stringOrDefault(user.displayUsername, stringOrDefault(user.name, usernameValue));
+  return {
+    userId: String(user.id),
+    username: usernameValue,
+    displayName,
+    email,
+    emailVerified: Boolean(user.emailVerified),
+    isAdmin: String(user.role || '') === 'admin',
+  };
 }
 
 function validateEnv(env) {
   if (!env || typeof env !== 'object' || env.DB === undefined || env.DB === null) {
     throw new HttpError(500, 'DB binding is not configured');
   }
-  if (!String(env.JWT_SECRET || '').trim()) {
-    throw new HttpError(500, 'JWT_SECRET is not configured');
+  if (!getAuthSecret(env)) {
+    throw new HttpError(500, 'BETTER_AUTH_SECRET is not configured');
   }
+}
+
+function getAuthSecret(env) {
+  return String(env.BETTER_AUTH_SECRET || '').trim();
+}
+
+function hasGoogleProvider(env) {
+  return Boolean(String(env.GOOGLE_CLIENT_ID || '').trim() && String(env.GOOGLE_CLIENT_SECRET || '').trim());
+}
+
+function resolveAuthBaseUrl(env, requestUrl) {
+  const configured = String(env.AUTH_BASE_URL || '').trim();
+  if (configured) {
+    return configured;
+  }
+  return requestUrl.origin;
+}
+
+function validateIdentityName(value) {
+  const text = String(value || '').trim();
+  if (!text) {
+    return false;
+  }
+  const canonical = canonicalizeIdentityName(text);
+  if (RESERVED_IDENTITY_NAMES.has(canonical)) {
+    return false;
+  }
+  return /^[A-Za-z0-9_ -]{3,64}$/.test(text);
+}
+
+function validateUsername(value, allowedReservedValue = '') {
+  const text = String(value || '').trim();
+  if (!text) {
+    return false;
+  }
+  const canonical = canonicalizeIdentityName(text);
+  if (RESERVED_IDENTITY_NAMES.has(canonical) && canonical !== canonicalizeIdentityName(allowedReservedValue)) {
+    return false;
+  }
+  return /^[A-Za-z0-9_]{3,64}$/.test(text);
+}
+
+function validateDisplayName(value, allowedReservedValue = '') {
+  const text = String(value || '').trim();
+  if (!text) {
+    return false;
+  }
+  const canonical = canonicalizeIdentityName(text);
+  if (RESERVED_IDENTITY_NAMES.has(canonical) && canonical !== canonicalizeIdentityName(allowedReservedValue)) {
+    return false;
+  }
+  return /^[A-Za-z0-9_ -]{3,64}$/.test(text);
+}
+
+function canonicalizeIdentityName(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\s._-]+/g, '');
+}
+
+function parseManagementUserPath(pathname) {
+  const prefix = `${MANAGEMENT_API_BASE_PATH}/users/`;
+  const tail = decodeURIComponent(pathname.slice(prefix.length));
+  const parts = tail.split('/').filter((part) => part.length > 0);
+  return {
+    userId: parts[0] || '',
+    suffix: parts.slice(1),
+  };
+}
+
+function decodeSinglePathValue(pathname, prefix) {
+  const value = decodeURIComponent(pathname.slice(prefix.length));
+  if (!value || value.includes('/')) {
+    return '';
+  }
+  return value;
 }
 
 async function readJsonBody(request) {
@@ -530,6 +813,10 @@ function handleError(error) {
   if (error instanceof HttpError) {
     return jsonResponse(error.status, { message: error.message, ...error.payload });
   }
+  const apiError = toAuthApiErrorPayload(error);
+  if (apiError !== null) {
+    return jsonResponse(apiError.status, apiError.payload);
+  }
   if (error instanceof AssetPermissionError) {
     return jsonResponse(403, { message: error.message || 'forbidden' });
   }
@@ -544,29 +831,49 @@ function handleError(error) {
       remoteRevision: error.revision,
     });
   }
-  if (error instanceof Error && error.message === 'username already exists') {
-    return jsonResponse(409, { message: error.message });
-  }
-  if (error instanceof Error && error.message === 'cannot delete user with existing assets') {
-    return jsonResponse(409, { message: error.message });
-  }
-  if (
-    error instanceof Error &&
-    (
+  if (error instanceof Error && error.message) {
+    if (isUniqueConstraintError(error)) {
+      return jsonResponse(409, { message: 'duplicate resource' });
+    }
+    if (error.message.includes('already exists') || error.message.includes('duplicate')) {
+      return jsonResponse(409, { message: error.message });
+    }
+    if (
       error.message.includes('required') ||
       error.message.includes('must be') ||
-      error.message.includes('assetType') ||
-      error.message.includes('visibility') ||
-      error.message.includes('owner')
-    )
-  ) {
-    return jsonResponse(400, { message: error.message });
-  }
-  if (error instanceof Error && error.message.endsWith('already exists')) {
-    return jsonResponse(409, { message: error.message });
+      error.message.includes('not found') ||
+      error.message.includes('reserved')
+    ) {
+      return jsonResponse(400, { message: error.message });
+    }
   }
   console.error('Unhandled unified asset worker error', error);
   return jsonResponse(500, { message: `internal error: ${error?.name || 'Error'}: ${error?.message || error}` });
+}
+
+function toAuthApiErrorPayload(error) {
+  const status = Number(error?.statusCode || 0);
+  if (!Number.isInteger(status) || status < 400 || status > 599) {
+    return null;
+  }
+  const body = isPlainObject(error?.body) ? error.body : {};
+  const message = body.message ? String(body.message) : (error instanceof Error ? error.message : 'request failed');
+  const payload = {
+    ...body,
+    message,
+  };
+  return { status, payload };
+}
+
+function isUniqueConstraintError(error) {
+  const message = error instanceof Error ? error.message : '';
+  const causeMessage = error?.cause instanceof Error ? error.cause.message : '';
+  const causeErrcode = Number(error?.cause?.errcode || 0);
+  return (
+    message.includes('UNIQUE constraint failed')
+    || causeMessage.includes('UNIQUE constraint failed')
+    || causeErrcode === 2067
+  );
 }
 
 function jsonResponse(status, payload) {
@@ -574,15 +881,12 @@ function jsonResponse(status, payload) {
     status,
     headers: {
       'Content-Type': 'application/json',
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Headers': 'Authorization, Content-Type',
-      'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
     },
   });
 }
 
 function frontendFallbackResponse() {
-  return new Response(buildAdminFallbackHtml(), {
+  return new Response(buildConsoleFallbackHtml(), {
     status: 200,
     headers: {
       'Content-Type': 'text/html; charset=utf-8',
@@ -591,24 +895,104 @@ function frontendFallbackResponse() {
   });
 }
 
+function buildVerifyEmailUrl({ env, request, token }) {
+  const configuredBaseUrl = String(env.AUTH_VERIFY_EMAIL_BASE_URL || '').trim();
+  const base = configuredBaseUrl
+    ? new URL(configuredBaseUrl)
+    : new URL(`${CONSOLE_BASE_PATH}/verify-email`, request.url);
+  base.searchParams.set('token', token);
+  return base.toString();
+}
+
+function buildResetPasswordUrl({ env, request, token }) {
+  const configuredBaseUrl = String(env.AUTH_RESET_PASSWORD_BASE_URL || '').trim();
+  const base = configuredBaseUrl
+    ? new URL(configuredBaseUrl)
+    : new URL(`${CONSOLE_BASE_PATH}/reset-password`, request.url);
+  base.searchParams.set('token', token);
+  return base.toString();
+}
+
+async function sendVerifyEmailMessage({ env, toEmail, username, verificationUrl }) {
+  await sendAuthEmail({
+    env,
+    debugLabel: 'verify email',
+    debugUrl: verificationUrl,
+    toEmail,
+    subject: 'Verify your email',
+    text: `Hi ${username}, verify your email: ${verificationUrl}`,
+    html: `<p>Hi ${escapeHtml(username)},</p><p>Please verify your email:</p><p><a href="${escapeHtml(verificationUrl)}">${escapeHtml(verificationUrl)}</a></p>`,
+  });
+}
+
+async function sendResetPasswordMessage({ env, toEmail, username, resetUrl }) {
+  await sendAuthEmail({
+    env,
+    debugLabel: 'reset password',
+    debugUrl: resetUrl,
+    toEmail,
+    subject: 'Reset your password',
+    text: `Hi ${username}, reset your password: ${resetUrl}`,
+    html: `<p>Hi ${escapeHtml(username)},</p><p>Use this link to reset password:</p><p><a href="${escapeHtml(resetUrl)}">${escapeHtml(resetUrl)}</a></p>`,
+  });
+}
+
+async function sendAuthEmail({ env, debugLabel, debugUrl, toEmail, subject, text, html }) {
+  const resendApiKey = String(env.RESEND_API_KEY || '').trim();
+  const fromEmail = String(env.AUTH_EMAIL_FROM || '').trim();
+  if (!resendApiKey || !fromEmail) {
+    if (toBoolean(env.EXPOSE_DEBUG_AUTH_LINKS)) {
+      console.info(`[auth debug] ${debugLabel}: ${debugUrl}`);
+    }
+    return;
+  }
+
+  const response = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${resendApiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      from: fromEmail,
+      to: [toEmail],
+      subject,
+      html,
+      text,
+    }),
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new HttpError(502, `failed to send auth email: ${response.status} ${body}`);
+  }
+}
+
 async function serveFrontend(request, env, url) {
+  if (url.pathname === '/') {
+    return Response.redirect(new URL(`${CONSOLE_BASE_PATH}/`, request.url), 302);
+  }
+
   const assets = getAssetsBinding(env);
   if (assets === null) {
     return frontendFallbackResponse();
   }
 
   let assetPath = '/index.html';
-  if (url.pathname.startsWith('/assets/')) {
-    assetPath = url.pathname;
-  } else if (url.pathname === '/favicon.ico') {
+  if (url.pathname.startsWith(`${CONSOLE_BASE_PATH}/assets/`)) {
+    assetPath = url.pathname.slice(CONSOLE_BASE_PATH.length);
+  } else if (url.pathname === `${CONSOLE_BASE_PATH}/favicon.ico`) {
     assetPath = '/favicon.ico';
-  } else {
-    // All application routes are SPA routes resolved by index.html.
-    assetPath = '/index.html';
+  } else if (!isConsoleAppPath(url.pathname)) {
+    return jsonResponse(404, { message: 'not found' });
   }
 
   const assetRequest = new Request(new URL(assetPath, request.url), request);
   return assets.fetch(assetRequest);
+}
+
+function isConsoleAppPath(pathname) {
+  return pathname === CONSOLE_BASE_PATH || pathname === `${CONSOLE_BASE_PATH}/` || pathname.startsWith(`${CONSOLE_BASE_PATH}/`);
 }
 
 function getAssetsBinding(env) {
@@ -622,13 +1006,13 @@ function getAssetsBinding(env) {
   return null;
 }
 
-function buildAdminFallbackHtml() {
+function buildConsoleFallbackHtml() {
   return `<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Feel8 Admin</title>
+    <title>Feel8 Asset Cloud</title>
     <style>
       body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; background: #0c1220; color: #edf2ff; }
       main { max-width: 760px; margin: 48px auto; padding: 24px; border: 1px solid #30456b; border-radius: 12px; background: #121c31; }
@@ -638,18 +1022,14 @@ function buildAdminFallbackHtml() {
   </head>
   <body>
     <main>
-      <h1>Feel8 Admin</h1>
+      <h1>Feel8 Asset Cloud</h1>
       <p>Frontend assets are not available yet.</p>
       <p>Build the Vite app first:</p>
-      <p><code>npm run admin:build</code></p>
-      <p>Then run Worker dev/deploy again.</p>
+      <p><code>npm run web:build</code></p>
+      <p>Then open <code>${CONSOLE_BASE_PATH}/</code> in the browser.</p>
     </main>
   </body>
 </html>`;
-}
-
-function futureIso(seconds) {
-  return new Date(Date.now() + seconds * 1000).toISOString();
 }
 
 function secondsFromEnv(value, fallback) {
@@ -657,11 +1037,24 @@ function secondsFromEnv(value, fallback) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-function issuer(env) {
-  return String(env.JWT_ISSUER || 'feel8-asset-cloud');
+function escapeHtml(value) {
+  return String(value || '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
 }
 
 function requireBodyString(value, message) {
+  const text = String(value || '').trim();
+  if (!text) {
+    throw new HttpError(400, message);
+  }
+  return text;
+}
+
+function requireQueryString(value, message) {
   const text = String(value || '').trim();
   if (!text) {
     throw new HttpError(400, message);
@@ -674,8 +1067,25 @@ function bodyStringOrDefault(value, fallback) {
   return text || fallback;
 }
 
+function stringOrDefault(value, fallback) {
+  const text = String(value || '').trim();
+  return text || fallback;
+}
+
 function isPlainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function toBoolean(value) {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+  const text = String(value || '').trim().toLowerCase();
+  return text === '1' || text === 'true' || text === 'yes';
+}
+
+function normalizeUsername(value) {
+  return requireBodyString(value, 'username is required').toLowerCase();
 }
 
 class HttpError extends Error {

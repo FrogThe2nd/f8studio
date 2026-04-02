@@ -1,6 +1,7 @@
 name = "f8assetcloud"
 main = "src/index.js"
 compatibility_date = "2026-03-31"
+compatibility_flags = ["nodejs_compat"]
 workers_dev = true
 
 [assets]
@@ -8,15 +9,14 @@ directory = "./console_web/dist"
 binding = "ASSETS"
 
 [vars]
-JWT_ISSUER = "feel8-asset-cloud"
 BOOTSTRAP_ADMIN_USERNAME = "admin"
 BOOTSTRAP_ADMIN_DISPLAY_NAME = "Administrator"
-ACCESS_TOKEN_TTL_SECONDS = "3600"
-REFRESH_TOKEN_TTL_SECONDS = "2592000"
+EMAIL_VERIFY_TOKEN_TTL_SECONDS = "1800"
+PASSWORD_RESET_TOKEN_TTL_SECONDS = "1800"
 
 [[d1_databases]]
 binding = "DB"
 database_name = "feel8-assets"
-database_id = "0967331a-6656-4d74-a385-8baf458f4ecd"
-preview_database_id = "c9b75abc-8ae7-48fa-9ac9-8f5d37f2336c"
+database_id = "53d6ba05-40df-4325-8f3a-e74a9758e5b6"
+preview_database_id = "64bb282a-86ed-4bc8-b061-f0f3b7ca95d4"
 migrations_dir = "migrations"

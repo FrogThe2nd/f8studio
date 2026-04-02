@@ -4,15 +4,22 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "npm run admin:build && wrangler deploy",
-    "admin:dev": "npm --prefix ./console_web run dev",
-    "admin:build": "npm --prefix ./console_web run build",
-    "admin:preview": "npm --prefix ./console_web run preview",
+    "dev:single": "npm run web:build && wrangler dev",
+    "deploy": "npm run web:build && wrangler deploy",
+    "web:dev": "npm --prefix ./console_web run dev",
+    "web:build": "npm --prefix ./console_web run build",
+    "web:preview": "npm --prefix ./console_web run preview",
     "test": "node --test",
-    "d1:migrate": "wrangler d1 migrations apply feel8-assets",
-    "d1:migrate:local": "wrangler d1 migrations apply feel8-assets --local"
+    "d1:migrate": "wrangler d1 migrations apply DB --remote",
+    "d1:migrate:local": "wrangler d1 migrations apply DB --local",
+    "d1:migrate:preview": "wrangler d1 migrations apply DB --remote --preview"
   },
   "devDependencies": {
-    "wrangler": "^4.40.0"
+    "wrangler": "^4.80.0"
+  },
+  "dependencies": {
+    "better-auth": "^1.5.6",
+    "drizzle-orm": "^0.45.2",
+    "hono": "^4.12.10"
   }
 }

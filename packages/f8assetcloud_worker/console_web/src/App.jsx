@@ -1,8 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
-function trimTrailingSlash(value) {
-  return value.endsWith('/') ? value.slice(0, -1) : value;
-}
+import { authClient } from './authClient.js';
+
+const CONSOLE_BASE_PATH = '/console';
+const VERIFY_EMAIL_PATH = `${CONSOLE_BASE_PATH}/verify-email`;
+const RESET_PASSWORD_PATH = `${CONSOLE_BASE_PATH}/reset-password`;
+const MANAGEMENT_API_BASE_PATH = '/v1/management';
 
 async function parseJsonResponse(response) {
   const text = await response.text();
@@ -22,15 +25,35 @@ function downloadJson(filename, data) {
   URL.revokeObjectURL(url);
 }
 
-export function AdminApp() {
-  const [apiBase, setApiBase] = useState('');
-  const [username, setUsername] = useState('admin');
+export function ConsoleRootApp() {
+  const route = resolveRoute(window.location.pathname);
+  if (route === 'verify-email') {
+    return <VerifyEmailPage />;
+  }
+  if (route === 'reset-password') {
+    return <ResetPasswordPage />;
+  }
+  return <ConsoleApp />;
+}
+
+function ConsoleApp() {
+  const sessionQuery = authClient.useSession();
+  const session = sessionQuery.data;
+  const isLoggedIn = Boolean(session?.user);
+
+  const [authMode, setAuthMode] = useState('login');
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-  const [token, setToken] = useState('');
+  const [registerDisplayName, setRegisterDisplayName] = useState('');
+  const [registerEmail, setRegisterEmail] = useState('');
+  const [registerUsername, setRegisterUsername] = useState('');
+  const [registerPassword, setRegisterPassword] = useState('');
+  const [forgotEmail, setForgotEmail] = useState('');
   const [currentUser, setCurrentUser] = useState(null);
   const [activePage, setActivePage] = useState('profile');
   const [loading, setLoading] = useState(false);
   const [statusText, setStatusText] = useState('Ready');
+  const [googleEnabled, setGoogleEnabled] = useState(false);
 
   const [mineAssetType, setMineAssetType] = useState('variant');
   const [mineQuery, setMineQuery] = useState('');
@@ -42,26 +65,57 @@ export function AdminApp() {
 
   const [users, setUsers] = useState([]);
   const [userQuery, setUserQuery] = useState('');
+  const [editingUserId, setEditingUserId] = useState('');
+  const [editUsername, setEditUsername] = useState('');
+  const [editDisplayName, setEditDisplayName] = useState('');
+  const [editHasManagementAccess, setEditHasManagementAccess] = useState(false);
   const [newUsername, setNewUsername] = useState('');
+  const [newEmail, setNewEmail] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [newDisplayName, setNewDisplayName] = useState('');
-  const [newIsAdmin, setNewIsAdmin] = useState(false);
+  const [newHasManagementAccess, setNewHasManagementAccess] = useState(false);
 
   const [currentPassword, setCurrentPassword] = useState('');
   const [nextPassword, setNextPassword] = useState('');
 
   useEffect(() => {
-    setToken(localStorage.getItem('feel8-admin-token') || '');
-    setApiBase(localStorage.getItem('feel8-admin-base') || '');
+    let active = true;
+    void (async () => {
+      try {
+        const response = await fetch('/v1/auth/providers');
+        const data = await parseJsonResponse(response);
+        if (active) {
+          setGoogleEnabled(Boolean(data.google));
+        }
+      } catch (error) {
+        if (active) {
+          setGoogleEnabled(false);
+        }
+      }
+    })();
+    return () => {
+      active = false;
+    };
   }, []);
 
-  async function apiRequest(path, options = {}) {
-    const headers = { 'Content-Type': 'application/json' };
-    if (token) {
-      headers.Authorization = `Bearer ${token}`;
+  useEffect(() => {
+    if (!isLoggedIn) {
+      setCurrentUser(null);
+      setUsers([]);
+      setMineAssets([]);
+      setAllAssets([]);
+      if (activePage === 'users') {
+        setActivePage('profile');
+      }
     }
-    const base = apiBase.trim() ? trimTrailingSlash(apiBase.trim()) : '';
-    const response = await fetch(`${base}${path}`, {
+  }, [activePage, isLoggedIn]);
+
+  async function apiRequest(path, options = {}) {
+    const headers = {};
+    if (options.body !== undefined) {
+      headers['Content-Type'] = 'application/json';
+    }
+    const response = await fetch(path, {
       ...options,
       headers,
     });
@@ -95,11 +149,14 @@ export function AdminApp() {
     if (!currentUser?.isAdmin) {
       return;
     }
-    const result = await apiRequest(`/v1/admin/users?q=${encodeURIComponent(userQuery.trim())}`);
+    const result = await apiRequest(`${MANAGEMENT_API_BASE_PATH}/users?q=${encodeURIComponent(userQuery.trim())}`);
     setUsers(result.entries || []);
   }
 
   async function refreshCurrentPage() {
+    if (!isLoggedIn) {
+      return;
+    }
     setLoading(true);
     setStatusText('Loading...');
     try {
@@ -124,28 +181,26 @@ export function AdminApp() {
   }
 
   useEffect(() => {
-    if (!token) {
+    if (!isLoggedIn) {
       return;
     }
     void refreshCurrentPage();
-  }, [token, activePage, mineAssetType, allAssetType]);
+  }, [isLoggedIn, activePage, mineAssetType, allAssetType]);
 
   async function onLogin(event) {
     event.preventDefault();
     setLoading(true);
     setStatusText('Signing in...');
     try {
-      const result = await apiRequest('/v1/auth/login', {
-        method: 'POST',
-        body: JSON.stringify({ username: username.trim(), password }),
+      await authClient.signIn.username({
+        username: username.trim(),
+        password,
       });
-      localStorage.setItem('feel8-admin-token', result.accessToken);
-      localStorage.setItem('feel8-admin-base', apiBase.trim());
-      setToken(result.accessToken);
-      setCurrentUser(result.user || null);
-      setActivePage('profile');
-      setStatusText(`Signed in as ${result.user.username}`);
+      await sessionQuery.refetch();
       await loadProfile();
+      setPassword('');
+      setActivePage('profile');
+      setStatusText(`Signed in as ${username.trim()}`);
     } catch (error) {
       setStatusText(error instanceof Error ? error.message : String(error));
     } finally {
@@ -153,14 +208,80 @@ export function AdminApp() {
     }
   }
 
-  function onLogout() {
-    localStorage.removeItem('feel8-admin-token');
-    setToken('');
-    setCurrentUser(null);
-    setUsers([]);
-    setMineAssets([]);
-    setAllAssets([]);
-    setStatusText('Logged out');
+  async function onGoogleSignIn() {
+    setLoading(true);
+    setStatusText('Redirecting to Google...');
+    try {
+      await authClient.signIn.social({
+        provider: 'google',
+        callbackURL: `${window.location.origin}${CONSOLE_BASE_PATH}/`,
+      });
+    } catch (error) {
+      setStatusText(error instanceof Error ? error.message : String(error));
+      setLoading(false);
+    }
+  }
+
+  async function onRegister(event) {
+    event.preventDefault();
+    setLoading(true);
+    setStatusText('Creating account...');
+    try {
+      await authClient.signUp.email({
+        name: registerDisplayName.trim(),
+        email: registerEmail.trim(),
+        username: registerUsername.trim(),
+        displayUsername: registerDisplayName.trim(),
+        password: registerPassword,
+        callbackURL: `${window.location.origin}${VERIFY_EMAIL_PATH}`,
+      });
+      setRegisterDisplayName('');
+      setRegisterEmail('');
+      setRegisterUsername('');
+      setRegisterPassword('');
+      setAuthMode('login');
+      setStatusText('Account created. Please verify your email before signing in.');
+    } catch (error) {
+      setStatusText(error instanceof Error ? error.message : String(error));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function onForgotPassword(event) {
+    event.preventDefault();
+    setLoading(true);
+    setStatusText('Submitting password reset request...');
+    try {
+      await authClient.requestPasswordReset({
+        email: forgotEmail.trim(),
+        redirectTo: `${window.location.origin}${RESET_PASSWORD_PATH}`,
+      });
+      setForgotEmail('');
+      setAuthMode('login');
+      setStatusText('If this email exists, a reset link has been sent.');
+    } catch (error) {
+      setStatusText(error instanceof Error ? error.message : String(error));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function onLogout() {
+    setLoading(true);
+    try {
+      await authClient.signOut();
+      await sessionQuery.refetch();
+      setCurrentUser(null);
+      setUsers([]);
+      setMineAssets([]);
+      setAllAssets([]);
+      setStatusText('Logged out');
+    } catch (error) {
+      setStatusText(error instanceof Error ? error.message : String(error));
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function onChangePassword(event) {
@@ -168,12 +289,10 @@ export function AdminApp() {
     setLoading(true);
     setStatusText('Changing password...');
     try {
-      await apiRequest('/v1/me/password', {
-        method: 'POST',
-        body: JSON.stringify({
-          currentPassword,
-          newPassword: nextPassword,
-        }),
+      await authClient.changePassword({
+        currentPassword,
+        newPassword: nextPassword,
+        revokeOtherSessions: true,
       });
       setCurrentPassword('');
       setNextPassword('');
@@ -244,19 +363,21 @@ export function AdminApp() {
     }
     setLoading(true);
     try {
-      await apiRequest('/v1/admin/users', {
+      await apiRequest(`${MANAGEMENT_API_BASE_PATH}/users`, {
         method: 'POST',
         body: JSON.stringify({
           username: newUsername.trim(),
+          email: newEmail.trim(),
           password: newPassword,
           displayName: newDisplayName.trim() || newUsername.trim(),
-          isAdmin: newIsAdmin,
+          isAdmin: newHasManagementAccess,
         }),
       });
       setNewUsername('');
+      setNewEmail('');
       setNewPassword('');
       setNewDisplayName('');
-      setNewIsAdmin(false);
+      setNewHasManagementAccess(false);
       await loadUsers();
       setStatusText('User created');
     } catch (error) {
@@ -276,7 +397,7 @@ export function AdminApp() {
     }
     setLoading(true);
     try {
-      await apiRequest(`/v1/admin/users/${encodeURIComponent(userId)}`, { method: 'DELETE' });
+      await apiRequest(`${MANAGEMENT_API_BASE_PATH}/users/${encodeURIComponent(userId)}`, { method: 'DELETE' });
       await loadUsers();
       setStatusText(`Deleted user ${name}`);
     } catch (error) {
@@ -286,8 +407,46 @@ export function AdminApp() {
     }
   }
 
-  const isLoggedIn = Boolean(token);
-  const isAdmin = Boolean(currentUser?.isAdmin);
+  function onBeginEditUser(user) {
+    setEditingUserId(user.userId);
+    setEditUsername(user.username);
+    setEditDisplayName(user.displayName);
+    setEditHasManagementAccess(Boolean(user.isAdmin));
+  }
+
+  function onCancelEditUser() {
+    setEditingUserId('');
+    setEditUsername('');
+    setEditDisplayName('');
+    setEditHasManagementAccess(false);
+  }
+
+  async function onUpdateUser(event) {
+    event.preventDefault();
+    if (!editingUserId) {
+      return;
+    }
+    setLoading(true);
+    try {
+      await apiRequest(`${MANAGEMENT_API_BASE_PATH}/users/${encodeURIComponent(editingUserId)}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          username: editUsername.trim(),
+          displayName: editDisplayName.trim(),
+          isAdmin: editHasManagementAccess,
+        }),
+      });
+      onCancelEditUser();
+      await loadUsers();
+      setStatusText('User updated');
+    } catch (error) {
+      setStatusText(error instanceof Error ? error.message : String(error));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const hasManagementAccess = Boolean(currentUser?.isAdmin);
   const pageTitle = useMemo(() => {
     if (activePage === 'profile') {
       return 'Profile';
@@ -301,43 +460,122 @@ export function AdminApp() {
     return 'User Management';
   }, [activePage]);
 
+  if (sessionQuery.isPending || (isLoggedIn && currentUser === null)) {
+    return (
+      <div className="shell login-shell">
+        <div className="card panel login-card">
+          <h1>Feel8 Management System</h1>
+          <p className="status">Loading session...</p>
+        </div>
+      </div>
+    );
+  }
+
   if (!isLoggedIn) {
     return (
       <div className="shell login-shell">
         <div className="card panel login-card">
           <h1>Feel8 Management System</h1>
-          <p className="muted">Sign in to continue.</p>
-          <form onSubmit={onLogin} className="form">
-            <label>
-              API Base URL (optional)
-              <input
-                autoComplete="url"
-                value={apiBase}
-                onChange={(event) => setApiBase(event.target.value)}
-                placeholder="http://127.0.0.1:8787"
-              />
-            </label>
-            <label>
-              Username
-              <input
-                autoComplete="username"
-                value={username}
-                onChange={(event) => setUsername(event.target.value)}
-                placeholder="admin"
-              />
-            </label>
-            <label>
-              Password
-              <input
-                autoComplete="current-password"
-                type="password"
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                placeholder="password"
-              />
-            </label>
-            <button type="submit" disabled={loading}>Sign In</button>
+          <p className="muted">
+            {authMode === 'login' ? 'Sign in to continue.' : null}
+            {authMode === 'register' ? 'Create a new account.' : null}
+            {authMode === 'forgot' ? 'Request a password reset link by email.' : null}
+          </p>
+          <div className="auth-switch">
+            <button type="button" className={authMode === 'login' ? 'active' : ''} onClick={() => setAuthMode('login')}>Sign In</button>
+            <button type="button" className={authMode === 'register' ? 'active' : ''} onClick={() => setAuthMode('register')}>Register</button>
+            <button type="button" className={authMode === 'forgot' ? 'active' : ''} onClick={() => setAuthMode('forgot')}>Forgot Password</button>
+          </div>
+          <form onSubmit={authMode === 'login' ? onLogin : authMode === 'register' ? onRegister : onForgotPassword} className="form">
+            {authMode === 'login' ? (
+              <>
+                <label>
+                  Username
+                  <input
+                    autoComplete="username"
+                    value={username}
+                    onChange={(event) => setUsername(event.target.value)}
+                    placeholder="username"
+                  />
+                </label>
+                <label>
+                  Password
+                  <input
+                    autoComplete="current-password"
+                    type="password"
+                    value={password}
+                    onChange={(event) => setPassword(event.target.value)}
+                    placeholder="password"
+                  />
+                </label>
+              </>
+            ) : null}
+            {authMode === 'register' ? (
+              <>
+                <label>
+                  Display Name
+                  <input
+                    value={registerDisplayName}
+                    onChange={(event) => setRegisterDisplayName(event.target.value)}
+                    placeholder="Your Name"
+                  />
+                </label>
+                <label>
+                  Email
+                  <input
+                    autoComplete="email"
+                    type="email"
+                    value={registerEmail}
+                    onChange={(event) => setRegisterEmail(event.target.value)}
+                    placeholder="you@example.com"
+                  />
+                </label>
+                <label>
+                  Username
+                  <input
+                    autoComplete="username"
+                    value={registerUsername}
+                    onChange={(event) => setRegisterUsername(event.target.value)}
+                    placeholder="username"
+                  />
+                </label>
+                <label>
+                  Password
+                  <input
+                    autoComplete="new-password"
+                    type="password"
+                    value={registerPassword}
+                    onChange={(event) => setRegisterPassword(event.target.value)}
+                    placeholder="password"
+                  />
+                </label>
+              </>
+            ) : null}
+            {authMode === 'forgot' ? (
+              <label>
+                Email
+                <input
+                  autoComplete="email"
+                  type="email"
+                  value={forgotEmail}
+                  onChange={(event) => setForgotEmail(event.target.value)}
+                  placeholder="you@example.com"
+                />
+              </label>
+            ) : null}
+            <button type="submit" disabled={loading}>
+              {authMode === 'login' ? 'Sign In' : null}
+              {authMode === 'register' ? 'Create Account' : null}
+              {authMode === 'forgot' ? 'Send Reset Link' : null}
+            </button>
           </form>
+          {googleEnabled && authMode === 'login' ? (
+            <div className="form">
+              <button type="button" onClick={() => void onGoogleSignIn()} disabled={loading}>
+                Continue with Google
+              </button>
+            </div>
+          ) : null}
           <p className="status">{statusText}</p>
         </div>
       </div>
@@ -354,7 +592,7 @@ export function AdminApp() {
         </div>
         <div className="actions">
           <button type="button" onClick={() => void refreshCurrentPage()} disabled={loading}>Refresh</button>
-          <button type="button" onClick={onLogout} disabled={loading}>Logout</button>
+          <button type="button" onClick={() => void onLogout()} disabled={loading}>Logout</button>
         </div>
       </header>
 
@@ -381,7 +619,7 @@ export function AdminApp() {
           >
             All Assets
           </button>
-          {isAdmin ? (
+          {hasManagementAccess ? (
             <button
               type="button"
               className={activePage === 'users' ? 'nav-btn active' : 'nav-btn'}
@@ -400,7 +638,9 @@ export function AdminApp() {
               <div className="profile-grid">
                 <div><strong>Username:</strong> {currentUser?.username}</div>
                 <div><strong>Display Name:</strong> {currentUser?.displayName}</div>
-                <div><strong>Role:</strong> {isAdmin ? 'Admin' : 'User'}</div>
+                <div><strong>Email:</strong> {currentUser?.email}</div>
+                <div><strong>Email Verified:</strong> {currentUser?.emailVerified ? 'Yes' : 'No'}</div>
+                <div><strong>Access Level:</strong> {hasManagementAccess ? 'Management' : 'User'}</div>
               </div>
               <form onSubmit={onChangePassword} className="form">
                 <label>
@@ -498,7 +738,7 @@ export function AdminApp() {
             </section>
           ) : null}
 
-          {activePage === 'users' && isAdmin ? (
+          {activePage === 'users' && hasManagementAccess ? (
             <section className="card panel">
               <div className="section-head">
                 <h2>User Management</h2>
@@ -521,6 +761,15 @@ export function AdminApp() {
                   />
                 </label>
                 <label>
+                  Email
+                  <input
+                    autoComplete="email"
+                    type="email"
+                    value={newEmail}
+                    onChange={(event) => setNewEmail(event.target.value)}
+                  />
+                </label>
+                <label>
                   New Password
                   <input
                     autoComplete="new-password"
@@ -539,30 +788,72 @@ export function AdminApp() {
                 <label>
                   <input
                     type="checkbox"
-                    checked={newIsAdmin}
-                    onChange={(event) => setNewIsAdmin(event.target.checked)}
+                    checked={newHasManagementAccess}
+                    onChange={(event) => setNewHasManagementAccess(event.target.checked)}
                   />
                   {' '}
-                  Create as admin
+                  Grant management access
                 </label>
-                <button type="submit" disabled={loading || !newUsername.trim() || !newPassword}>Create User</button>
+                <button type="submit" disabled={loading || !newUsername.trim() || !newEmail.trim() || !newPassword}>Create User</button>
               </form>
+              {editingUserId ? (
+                <form onSubmit={onUpdateUser} className="form">
+                  <h3>Edit User</h3>
+                  <label>
+                    Username
+                    <input
+                      autoComplete="username"
+                      value={editUsername}
+                      onChange={(event) => setEditUsername(event.target.value)}
+                    />
+                  </label>
+                  <label>
+                    Display Name
+                    <input
+                      value={editDisplayName}
+                      onChange={(event) => setEditDisplayName(event.target.value)}
+                    />
+                  </label>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={editHasManagementAccess}
+                      onChange={(event) => setEditHasManagementAccess(event.target.checked)}
+                    />
+                    {' '}
+                    Management access
+                  </label>
+                  <div className="inline-form">
+                    <button type="submit" disabled={loading || !editUsername.trim() || !editDisplayName.trim()}>Save Changes</button>
+                    <button type="button" onClick={onCancelEditUser} disabled={loading}>Cancel</button>
+                  </div>
+                </form>
+              ) : null}
               <SimpleTable
-                columns={['Username', 'Display Name', 'Admin', 'Assets', 'Created At', 'Actions']}
+                columns={['Username', 'Email', 'Display Name', 'Access', 'Assets', 'Created At', 'Actions']}
                 rows={users.map((user) => [
                   user.username,
+                  user.email || '',
                   user.displayName,
                   user.isAdmin ? 'Yes' : 'No',
                   String(user.assetCount || 0),
                   user.createdAt,
-                  <button
-                    type="button"
-                    key={`${user.userId}-del`}
-                    onClick={() => void onDeleteUser(user.userId, user.username)}
-                    disabled={loading}
-                  >
-                    Delete
-                  </button>,
+                  <div className="inline-form" key={`${user.userId}-actions`}>
+                    <button
+                      type="button"
+                      onClick={() => onBeginEditUser(user)}
+                      disabled={loading}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void onDeleteUser(user.userId, user.username)}
+                      disabled={loading}
+                    >
+                      Delete
+                    </button>
+                  </div>,
                 ])}
                 emptyText="No users"
               />
@@ -572,6 +863,221 @@ export function AdminApp() {
       </div>
     </div>
   );
+}
+
+function VerifyEmailPage() {
+  const [initialToken] = useState(() => new URL(window.location.href).searchParams.get('token') || '');
+  const [token, setToken] = useState(initialToken);
+  const [loading, setLoading] = useState(false);
+  const [statusText, setStatusText] = useState('Ready');
+  const [verified, setVerified] = useState(false);
+  const autoVerifyStarted = useRef(false);
+
+  useEffect(() => {
+    if (autoVerifyStarted.current || !initialToken.trim()) {
+      return;
+    }
+    autoVerifyStarted.current = true;
+    void onVerify(initialToken.trim());
+  }, [initialToken]);
+
+  async function apiRequest(path, options = {}) {
+    const headers = {};
+    if (options.body !== undefined) {
+      headers['Content-Type'] = 'application/json';
+    }
+    const response = await fetch(path, {
+      ...options,
+      headers,
+    });
+    const data = await parseJsonResponse(response);
+    if (!response.ok) {
+      throw new Error(data.message || `Request failed (${response.status})`);
+    }
+    return data;
+  }
+
+  async function onVerify(submitToken = token) {
+    if (!String(submitToken || '').trim()) {
+      setStatusText('token is required');
+      return;
+    }
+    setLoading(true);
+    setStatusText('Verifying email...');
+    try {
+      await apiRequest(`/v1/auth/verify-email?token=${encodeURIComponent(submitToken.trim())}`);
+      setVerified(true);
+      setStatusText('Email verified. You can sign in now.');
+    } catch (error) {
+      setStatusText(error instanceof Error ? error.message : String(error));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="shell login-shell auth-page-shell">
+      <div className="card panel login-card auth-page-card">
+        <span className="eyebrow">Feel8 Account</span>
+        <h1>Verify Email</h1>
+        <p className="muted">Confirm your account email before signing in.</p>
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            void onVerify();
+          }}
+          className="form"
+        >
+          <label>
+            Verification Token
+            <input
+              value={token}
+              onChange={(event) => setToken(event.target.value)}
+              placeholder="token from email"
+            />
+          </label>
+          <button type="submit" disabled={loading || !token.trim()}>Verify Email</button>
+        </form>
+        <div className="auth-links">
+          <a href={`${CONSOLE_BASE_PATH}/`}>Back to Sign In</a>
+          <a href={RESET_PASSWORD_PATH}>Reset Password</a>
+        </div>
+        {verified ? <div className="auth-result">Email verification completed.</div> : null}
+        <p className="status">{statusText}</p>
+      </div>
+    </div>
+  );
+}
+
+function ResetPasswordPage() {
+  const [token, setToken] = useState(() => new URL(window.location.href).searchParams.get('token') || '');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [statusText, setStatusText] = useState('Ready');
+  const [completed, setCompleted] = useState(false);
+
+  async function apiRequest(path, options = {}) {
+    const headers = {};
+    if (options.body !== undefined) {
+      headers['Content-Type'] = 'application/json';
+    }
+    const response = await fetch(path, {
+      ...options,
+      headers,
+    });
+    const data = await parseJsonResponse(response);
+    if (!response.ok) {
+      throw new Error(data.message || `Request failed (${response.status})`);
+    }
+    return data;
+  }
+
+  async function onReset(event) {
+    event.preventDefault();
+    if (newPassword !== confirmPassword) {
+      setStatusText('Passwords do not match');
+      return;
+    }
+    setLoading(true);
+    setStatusText('Resetting password...');
+    try {
+      await apiRequest('/v1/auth/reset-password', {
+        method: 'POST',
+        body: JSON.stringify({
+          token: token.trim(),
+          newPassword,
+        }),
+      });
+      setNewPassword('');
+      setConfirmPassword('');
+      setCompleted(true);
+      setStatusText('Password updated. You can sign in now.');
+    } catch (error) {
+      setStatusText(error instanceof Error ? error.message : String(error));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="shell login-shell auth-page-shell">
+      <div className="card panel login-card auth-page-card">
+        <span className="eyebrow">Feel8 Account</span>
+        <h1>Reset Password</h1>
+        <p className="muted">Set a new password for your account.</p>
+        <form onSubmit={onReset} className="form">
+          <label>
+            Reset Token
+            <input
+              value={token}
+              onChange={(event) => setToken(event.target.value)}
+              placeholder="token from email"
+            />
+          </label>
+          <label>
+            New Password
+            <input
+              autoComplete="new-password"
+              type="password"
+              value={newPassword}
+              onChange={(event) => setNewPassword(event.target.value)}
+              placeholder="new password"
+            />
+          </label>
+          <label>
+            Confirm Password
+            <input
+              autoComplete="new-password"
+              type="password"
+              value={confirmPassword}
+              onChange={(event) => setConfirmPassword(event.target.value)}
+              placeholder="confirm password"
+            />
+          </label>
+          <button type="submit" disabled={loading || !token.trim() || !newPassword || !confirmPassword}>
+            Reset Password
+          </button>
+        </form>
+        <div className="auth-links">
+          <a href={`${CONSOLE_BASE_PATH}/`}>Back to Sign In</a>
+          <a href={VERIFY_EMAIL_PATH}>Verify Email</a>
+        </div>
+        {completed ? <div className="auth-result">Password reset completed.</div> : null}
+        <p className="status">{statusText}</p>
+      </div>
+    </div>
+  );
+}
+
+function resolveRoute(pathname) {
+  const normalized = normalizePathname(pathname);
+  const routePath = stripConsoleBasePath(normalized);
+  if (routePath === '/verify-email') {
+    return 'verify-email';
+  }
+  if (routePath === '/reset-password') {
+    return 'reset-password';
+  }
+  return 'console';
+}
+
+function normalizePathname(pathname) {
+  const text = String(pathname || '/');
+  if (text.length > 1 && text.endsWith('/')) {
+    return text.slice(0, -1);
+  }
+  return text;
+}
+
+function stripConsoleBasePath(pathname) {
+  if (pathname === CONSOLE_BASE_PATH) {
+    return '/';
+  }
+  if (pathname.startsWith(`${CONSOLE_BASE_PATH}/`)) {
+    return pathname.slice(CONSOLE_BASE_PATH.length);
+  }
+  return pathname;
 }
 
 function SimpleTable({ columns, rows, emptyText }) {

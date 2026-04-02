@@ -6,28 +6,40 @@ import path from 'node:path';
 import { createApp } from '../src/app.js';
 import { createSqliteD1Database } from '../test_support/sqlite_d1_adapter.js';
 
-const migrationsSql = fs.readFileSync(
-  path.join(import.meta.dirname, '..', 'migrations', '0001_init.sql'),
-  'utf8',
-);
+const TEST_AUTH_SECRET = '0123456789abcdef0123456789abcdef';
+const TEST_PASSWORD = 'password123';
+const TEST_PASSWORD_2 = 'password456';
+const TEST_PASSWORD_3 = 'password789';
+const CONSOLE_BASE_PATH = '/console';
+const MANAGEMENT_API_BASE_PATH = '/v1/management';
 
-function createEnv() {
+const migrationsDir = path.join(import.meta.dirname, '..', 'migrations');
+const migrationsSql = fs.readdirSync(migrationsDir)
+  .filter((filename) => filename.endsWith('.sql'))
+  .sort()
+  .map((filename) => fs.readFileSync(path.join(migrationsDir, filename), 'utf8'))
+  .join('\n\n');
+
+function createEnv(overrides = {}) {
   return {
     DB: createSqliteD1Database({ migrationsSql }),
-    JWT_SECRET: 'test-secret',
-    JWT_ISSUER: 'feel8-asset-cloud',
+    BETTER_AUTH_SECRET: TEST_AUTH_SECRET,
     BOOTSTRAP_ADMIN_USERNAME: 'admin',
     BOOTSTRAP_ADMIN_DISPLAY_NAME: 'Administrator',
-    BOOTSTRAP_ADMIN_PASSWORD: 'pw',
-    ACCESS_TOKEN_TTL_SECONDS: '3600',
-    REFRESH_TOKEN_TTL_SECONDS: '2592000',
+    BOOTSTRAP_ADMIN_PASSWORD: TEST_PASSWORD,
+    BOOTSTRAP_ADMIN_EMAIL: 'admin@example.com',
+    EXPOSE_DEBUG_AUTH_LINKS: 'true',
+    ...overrides,
   };
 }
 
-async function jsonRequest(app, env, pathname, { method, payload, token } = {}) {
-  const headers = { 'Content-Type': 'application/json' };
-  if (token) {
-    headers.Authorization = `Bearer ${token}`;
+async function jsonRequest(app, env, pathname, { method, payload, cookie } = {}) {
+  const headers = {};
+  if (payload !== undefined) {
+    headers['Content-Type'] = 'application/json';
+  }
+  if (cookie) {
+    headers.cookie = cookie;
   }
   const request = new Request(`http://worker.test${pathname}`, {
     method: method || 'GET',
@@ -39,6 +51,103 @@ async function jsonRequest(app, env, pathname, { method, payload, token } = {}) 
   return {
     status: response.status,
     json: bodyText ? JSON.parse(bodyText) : {},
+    text: bodyText,
+    headers: response.headers,
+  };
+}
+
+async function captureConsoleInfo(run) {
+  const logs = [];
+  const originalInfo = console.info;
+  console.info = (...args) => {
+    logs.push(args.map((value) => String(value)).join(' '));
+  };
+  try {
+    const result = await run();
+    return { result, logs };
+  } finally {
+    console.info = originalInfo;
+  }
+}
+
+function extractDebugToken(logs, label) {
+  const prefix = `[auth debug] ${label}: `;
+  const line = [...logs].reverse().find((entry) => entry.startsWith(prefix));
+  if (!line) {
+    return '';
+  }
+  const url = new URL(line.slice(prefix.length));
+  return String(url.searchParams.get('token') || '');
+}
+
+function responseCookie(headers) {
+  const setCookie = headers.get('set-cookie');
+  return setCookie ? String(setCookie).split(';')[0] : '';
+}
+
+async function signUpUser(app, env, { username, email, displayName, password = TEST_PASSWORD }) {
+  const { result, logs } = await captureConsoleInfo(() => jsonRequest(app, env, '/api/auth/sign-up/email', {
+    method: 'POST',
+    payload: {
+      email,
+      password,
+      name: displayName,
+      username,
+      displayUsername: displayName,
+    },
+  }));
+  return {
+    ...result,
+    verifyToken: extractDebugToken(logs, 'verify email'),
+  };
+}
+
+async function verifyUserEmail(app, env, token) {
+  return jsonRequest(app, env, `/v1/auth/verify-email?token=${encodeURIComponent(token)}`);
+}
+
+async function signInUser(app, env, { username, password = TEST_PASSWORD }) {
+  const result = await jsonRequest(app, env, '/api/auth/sign-in/username', {
+    method: 'POST',
+    payload: {
+      username,
+      password,
+    },
+  });
+  return {
+    ...result,
+    cookie: responseCookie(result.headers),
+  };
+}
+
+async function requestPasswordReset(app, env, email) {
+  const { result, logs } = await captureConsoleInfo(() => jsonRequest(app, env, '/api/auth/request-password-reset', {
+    method: 'POST',
+    payload: { email },
+  }));
+  return {
+    ...result,
+    resetToken: extractDebugToken(logs, 'reset password'),
+  };
+}
+
+async function createVerifiedSession(app, env, { username, email, displayName, password = TEST_PASSWORD }) {
+  const signedUp = await signUpUser(app, env, { username, email, displayName, password });
+  assert.equal(signedUp.status, 200);
+  assert.ok(signedUp.verifyToken);
+
+  const verified = await verifyUserEmail(app, env, signedUp.verifyToken);
+  assert.equal(verified.status, 200);
+
+  const signedIn = await signInUser(app, env, { username, password });
+  assert.equal(signedIn.status, 200);
+  assert.ok(signedIn.cookie);
+
+  return {
+    userId: String(signedUp.json.user.id),
+    cookie: signedIn.cookie,
+    signUp: signedUp,
+    signIn: signedIn,
   };
 }
 
@@ -94,87 +203,168 @@ function componentPayload({ componentId, name, visibility = 'private', revision 
   };
 }
 
-test('auth register refresh and change password flow works', async (t) => {
+test('auth flows use Better Auth cookie sessions and email actions', async (t) => {
   const env = createEnv();
   t.after(() => env.DB.close());
   const app = createApp();
 
-  const registered = await jsonRequest(app, env, '/v1/auth/register', {
-    method: 'POST',
-    payload: { username: 'alice', password: 'pw1', displayName: 'Alice' },
-  });
-  assert.equal(registered.status, 200);
-  assert.equal(registered.json.user.username, 'alice');
+  const providers = await jsonRequest(app, env, '/v1/auth/providers');
+  assert.equal(providers.status, 200);
+  assert.equal(providers.json.google, false);
 
-  const duplicate = await jsonRequest(app, env, '/v1/auth/register', {
-    method: 'POST',
-    payload: { username: 'alice', password: 'pw1', displayName: 'Alice 2' },
+  const signedUp = await signUpUser(app, env, {
+    username: 'alice',
+    email: 'alice@example.com',
+    displayName: 'Alice',
   });
-  assert.equal(duplicate.status, 409);
+  assert.equal(signedUp.status, 200);
+  assert.equal(signedUp.json.user.username, 'alice');
+  assert.equal(signedUp.json.user.emailVerified, false);
+  assert.ok(signedUp.verifyToken);
 
-  const loginFail = await jsonRequest(app, env, '/v1/auth/login', {
+  const loginBeforeVerify = await signInUser(app, env, {
+    username: 'alice',
+  });
+  assert.equal(loginBeforeVerify.status, 403);
+  assert.equal(loginBeforeVerify.json.code, 'EMAIL_NOT_VERIFIED');
+
+  const verified = await verifyUserEmail(app, env, signedUp.verifyToken);
+  assert.equal(verified.status, 200);
+  assert.equal(verified.json.verified, true);
+
+  const duplicate = await jsonRequest(app, env, '/api/auth/sign-up/email', {
     method: 'POST',
-    payload: { username: 'alice', password: 'bad' },
+    payload: {
+      email: 'alice2@example.com',
+      password: TEST_PASSWORD,
+      name: 'Alice 2',
+      username: 'alice',
+      displayUsername: 'Alice 2',
+    },
+  });
+  assert.equal(duplicate.status, 400);
+  assert.equal(duplicate.json.code, 'USERNAME_IS_ALREADY_TAKEN');
+
+  const loginFail = await signInUser(app, env, {
+    username: 'alice',
+    password: 'wrong-password',
   });
   assert.equal(loginFail.status, 401);
 
-  const login = await jsonRequest(app, env, '/v1/auth/login', {
-    method: 'POST',
-    payload: { username: 'alice', password: 'pw1' },
+  const signedIn = await signInUser(app, env, {
+    username: 'alice',
   });
-  assert.equal(login.status, 200);
-  const accessToken = String(login.json.accessToken);
-  const refreshToken = String(login.json.refreshToken);
+  assert.equal(signedIn.status, 200);
+  assert.ok(signedIn.cookie);
 
-  const me = await jsonRequest(app, env, '/v1/me', { token: accessToken });
+  const me = await jsonRequest(app, env, '/v1/me', { cookie: signedIn.cookie });
   assert.equal(me.status, 200);
   assert.equal(me.json.displayName, 'Alice');
+  assert.equal(me.json.email, 'alice@example.com');
+  assert.equal(me.json.emailVerified, true);
 
-  const refreshed = await jsonRequest(app, env, '/v1/auth/refresh', {
+  const changedPassword = await jsonRequest(app, env, '/v1/me/password', {
     method: 'POST',
-    payload: { refreshToken },
+    cookie: signedIn.cookie,
+    payload: {
+      currentPassword: TEST_PASSWORD,
+      newPassword: TEST_PASSWORD_2,
+    },
   });
-  assert.equal(refreshed.status, 200);
+  assert.equal(changedPassword.status, 200);
 
-  const passwordChanged = await jsonRequest(app, env, '/v1/me/password', {
-    method: 'POST',
-    token: accessToken,
-    payload: { currentPassword: 'pw1', newPassword: 'pw2' },
-  });
-  assert.equal(passwordChanged.status, 200);
-
-  const oldLogin = await jsonRequest(app, env, '/v1/auth/login', {
-    method: 'POST',
-    payload: { username: 'alice', password: 'pw1' },
+  const oldLogin = await signInUser(app, env, {
+    username: 'alice',
+    password: TEST_PASSWORD,
   });
   assert.equal(oldLogin.status, 401);
 
-  const newLogin = await jsonRequest(app, env, '/v1/auth/login', {
-    method: 'POST',
-    payload: { username: 'alice', password: 'pw2' },
+  const newLogin = await signInUser(app, env, {
+    username: 'alice',
+    password: TEST_PASSWORD_2,
   });
   assert.equal(newLogin.status, 200);
+
+  const resetRequest = await requestPasswordReset(app, env, 'alice@example.com');
+  assert.equal(resetRequest.status, 200);
+  assert.equal(resetRequest.json.status, true);
+  assert.ok(resetRequest.resetToken);
+
+  const reset = await jsonRequest(app, env, '/v1/auth/reset-password', {
+    method: 'POST',
+    payload: {
+      token: resetRequest.resetToken,
+      newPassword: TEST_PASSWORD_3,
+    },
+  });
+  assert.equal(reset.status, 200);
+  assert.equal(reset.json.reset, true);
+
+  const resetLogin = await signInUser(app, env, {
+    username: 'alice',
+    password: TEST_PASSWORD_3,
+  });
+  assert.equal(resetLogin.status, 200);
+
+  const reservedUsername = await jsonRequest(app, env, '/api/auth/sign-up/email', {
+    method: 'POST',
+    payload: {
+      email: 'owner@example.com',
+      password: TEST_PASSWORD,
+      name: 'Owner User',
+      username: 'owner',
+      displayUsername: 'Owner User',
+    },
+  });
+  assert.equal(reservedUsername.status, 400);
+  assert.equal(reservedUsername.json.code, 'INVALID_USERNAME');
+
+  const reservedDisplayName = await jsonRequest(app, env, '/api/auth/sign-up/email', {
+    method: 'POST',
+    payload: {
+      email: 'support@example.com',
+      password: TEST_PASSWORD,
+      name: 'Support',
+      username: 'normal_user',
+      displayUsername: 'Support',
+    },
+  });
+  assert.equal(reservedDisplayName.status, 400);
+  assert.equal(reservedDisplayName.json.code, 'INVALID_DISPLAY_USERNAME');
 });
 
-test('variant asset lifecycle includes history, search, subscribe, fork, and conflicts', async (t) => {
+test('providers endpoint reflects Google auth configuration', async (t) => {
+  const env = createEnv({
+    GOOGLE_CLIENT_ID: 'google-client-id',
+    GOOGLE_CLIENT_SECRET: 'google-client-secret',
+  });
+  t.after(() => env.DB.close());
+  const app = createApp();
+
+  const providers = await jsonRequest(app, env, '/v1/auth/providers');
+  assert.equal(providers.status, 200);
+  assert.equal(providers.json.google, true);
+});
+
+test('variant asset lifecycle works with Better Auth cookie sessions', async (t) => {
   const env = createEnv();
   t.after(() => env.DB.close());
   const app = createApp();
 
-  const alice = await jsonRequest(app, env, '/v1/auth/register', {
-    method: 'POST',
-    payload: { username: 'alice', password: 'pw', displayName: 'Alice' },
+  const alice = await createVerifiedSession(app, env, {
+    username: 'alice',
+    email: 'alice@example.com',
+    displayName: 'Alice',
   });
-  const bob = await jsonRequest(app, env, '/v1/auth/register', {
-    method: 'POST',
-    payload: { username: 'bob', password: 'pw', displayName: 'Bob' },
+  const bob = await createVerifiedSession(app, env, {
+    username: 'bob',
+    email: 'bob@example.com',
+    displayName: 'Bob',
   });
-  const aliceToken = String(alice.json.accessToken);
-  const bobToken = String(bob.json.accessToken);
 
   const created = await jsonRequest(app, env, '/v1/variants', {
     method: 'POST',
-    token: aliceToken,
+    cookie: alice.cookie,
     payload: variantPayload({ variantId: 'alice-variant', name: 'Alice Private', visibility: 'private' }),
   });
   assert.equal(created.status, 200);
@@ -186,12 +376,12 @@ test('variant asset lifecycle includes history, search, subscribe, fork, and con
   assert.equal(publicSearchBefore.status, 200);
   assert.equal(publicSearchBefore.json.entries.length, 0);
 
-  const privateByBob = await jsonRequest(app, env, '/v1/variants/alice-variant', { token: bobToken });
+  const privateByBob = await jsonRequest(app, env, '/v1/variants/alice-variant', { cookie: bob.cookie });
   assert.equal(privateByBob.status, 403);
 
   const updated = await jsonRequest(app, env, '/v1/variants/alice-variant', {
     method: 'PUT',
-    token: aliceToken,
+    cookie: alice.cookie,
     payload: variantPayload({
       variantId: 'alice-variant',
       name: 'Alice Public',
@@ -209,14 +399,14 @@ test('variant asset lifecycle includes history, search, subscribe, fork, and con
 
   const subscribed = await jsonRequest(app, env, '/v1/variants/alice-variant/subscribe', {
     method: 'POST',
-    token: bobToken,
+    cookie: bob.cookie,
   });
   assert.equal(subscribed.status, 200);
   assert.equal(subscribed.json.subscribed, true);
   assert.equal(subscribed.json.editable, false);
 
   const subscribedSearch = await jsonRequest(app, env, '/v1/search?assetType=variant&owner=subscribed', {
-    token: bobToken,
+    cookie: bob.cookie,
   });
   assert.equal(subscribedSearch.status, 200);
   assert.equal(subscribedSearch.json.entries.length, 1);
@@ -224,7 +414,7 @@ test('variant asset lifecycle includes history, search, subscribe, fork, and con
 
   const forbiddenEdit = await jsonRequest(app, env, '/v1/variants/alice-variant', {
     method: 'PUT',
-    token: bobToken,
+    cookie: bob.cookie,
     payload: variantPayload({
       variantId: 'alice-variant',
       name: 'Bob Edit',
@@ -234,18 +424,18 @@ test('variant asset lifecycle includes history, search, subscribe, fork, and con
   });
   assert.equal(forbiddenEdit.status, 403);
 
-  const history = await jsonRequest(app, env, '/v1/variants/alice-variant/versions', { token: aliceToken });
+  const history = await jsonRequest(app, env, '/v1/variants/alice-variant/versions', { cookie: alice.cookie });
   assert.equal(history.status, 200);
   assert.equal(history.json.versions.length, 2);
   assert.equal(history.json.versions[0].versionNumber, 2);
 
-  const oldVersion = await jsonRequest(app, env, '/v1/variants/alice-variant/versions/1', { token: aliceToken });
+  const oldVersion = await jsonRequest(app, env, '/v1/variants/alice-variant/versions/1', { cookie: alice.cookie });
   assert.equal(oldVersion.status, 200);
   assert.equal(oldVersion.json.record.name, 'Alice Private');
 
   const conflict = await jsonRequest(app, env, '/v1/variants/alice-variant', {
     method: 'PUT',
-    token: aliceToken,
+    cookie: alice.cookie,
     payload: variantPayload({
       variantId: 'alice-variant',
       name: 'Stale Update',
@@ -258,7 +448,7 @@ test('variant asset lifecycle includes history, search, subscribe, fork, and con
 
   const forked = await jsonRequest(app, env, '/v1/variants/alice-variant/fork', {
     method: 'POST',
-    token: bobToken,
+    cookie: bob.cookie,
     payload: { variantId: 'bob-fork', name: 'Bob Fork' },
   });
   assert.equal(forked.status, 200);
@@ -266,25 +456,25 @@ test('variant asset lifecycle includes history, search, subscribe, fork, and con
   assert.equal(forked.json.visibility, 'private');
   assert.equal(forked.json.editable, true);
 
-  const bobMine = await jsonRequest(app, env, '/v1/variants?owner=me', { token: bobToken });
+  const bobMine = await jsonRequest(app, env, '/v1/variants?owner=me', { cookie: bob.cookie });
   assert.equal(bobMine.status, 200);
   assert.equal(bobMine.json.entries.length, 1);
   assert.equal(bobMine.json.entries[0].assetId, 'bob-fork');
 
-  const bobPublicOnly = await jsonRequest(app, env, '/v1/variants?owner=public', { token: bobToken });
+  const bobPublicOnly = await jsonRequest(app, env, '/v1/variants?owner=public', { cookie: bob.cookie });
   assert.equal(bobPublicOnly.status, 200);
   assert.equal(bobPublicOnly.json.entries.length, 1);
   assert.equal(bobPublicOnly.json.entries[0].assetId, 'alice-variant');
 
   const unsubscribed = await jsonRequest(app, env, '/v1/variants/alice-variant/subscribe', {
     method: 'DELETE',
-    token: bobToken,
+    cookie: bob.cookie,
   });
   assert.equal(unsubscribed.status, 200);
 
   const removed = await jsonRequest(app, env, '/v1/variants/alice-variant', {
     method: 'DELETE',
-    token: aliceToken,
+    cookie: alice.cookie,
   });
   assert.equal(removed.status, 200);
 
@@ -293,25 +483,25 @@ test('variant asset lifecycle includes history, search, subscribe, fork, and con
   assert.equal(publicAfterDelete.json.entries.length, 0);
 });
 
-test('component asset lifecycle validates published session envelope and visibility rules', async (t) => {
+test('component asset lifecycle validates session envelope and visibility rules', async (t) => {
   const env = createEnv();
   t.after(() => env.DB.close());
   const app = createApp();
 
-  const alice = await jsonRequest(app, env, '/v1/auth/register', {
-    method: 'POST',
-    payload: { username: 'alice', password: 'pw', displayName: 'Alice' },
+  const alice = await createVerifiedSession(app, env, {
+    username: 'alice',
+    email: 'alice@example.com',
+    displayName: 'Alice',
   });
-  const bob = await jsonRequest(app, env, '/v1/auth/register', {
-    method: 'POST',
-    payload: { username: 'bob', password: 'pw', displayName: 'Bob' },
+  const bob = await createVerifiedSession(app, env, {
+    username: 'bob',
+    email: 'bob@example.com',
+    displayName: 'Bob',
   });
-  const aliceToken = String(alice.json.accessToken);
-  const bobToken = String(bob.json.accessToken);
 
   const invalid = await jsonRequest(app, env, '/v1/components', {
     method: 'POST',
-    token: aliceToken,
+    cookie: alice.cookie,
     payload: {
       record: {
         componentId: 'bad-component',
@@ -327,7 +517,7 @@ test('component asset lifecycle validates published session envelope and visibil
 
   const created = await jsonRequest(app, env, '/v1/components', {
     method: 'POST',
-    token: aliceToken,
+    cookie: alice.cookie,
     payload: componentPayload({ componentId: 'component-a', name: 'Published Session', visibility: 'public' }),
   });
   assert.equal(created.status, 200);
@@ -339,19 +529,19 @@ test('component asset lifecycle validates published session envelope and visibil
 
   const subscribed = await jsonRequest(app, env, '/v1/components/component-a/subscribe', {
     method: 'POST',
-    token: bobToken,
+    cookie: bob.cookie,
   });
   assert.equal(subscribed.status, 200);
   assert.equal(subscribed.json.subscribed, true);
   assert.equal(subscribed.json.editable, false);
 
-  const history1 = await jsonRequest(app, env, '/v1/components/component-a/versions', { token: aliceToken });
+  const history1 = await jsonRequest(app, env, '/v1/components/component-a/versions', { cookie: alice.cookie });
   assert.equal(history1.status, 200);
   assert.equal(history1.json.versions.length, 1);
 
   const updated = await jsonRequest(app, env, '/v1/components/component-a', {
     method: 'PUT',
-    token: aliceToken,
+    cookie: alice.cookie,
     payload: componentPayload({
       componentId: 'component-a',
       name: 'Published Session v2',
@@ -362,13 +552,13 @@ test('component asset lifecycle validates published session envelope and visibil
   assert.equal(updated.status, 200);
   assert.equal(updated.json.revision, 'r2');
 
-  const oldVersion = await jsonRequest(app, env, '/v1/components/component-a/versions/1', { token: bobToken });
+  const oldVersion = await jsonRequest(app, env, '/v1/components/component-a/versions/1', { cookie: bob.cookie });
   assert.equal(oldVersion.status, 200);
   assert.equal(oldVersion.json.record.name, 'Published Session');
 
   const forbidden = await jsonRequest(app, env, '/v1/components/component-a', {
     method: 'PUT',
-    token: bobToken,
+    cookie: bob.cookie,
     payload: componentPayload({
       componentId: 'component-a',
       name: 'Bob Edit',
@@ -380,7 +570,7 @@ test('component asset lifecycle validates published session envelope and visibil
 
   const forked = await jsonRequest(app, env, '/v1/components/component-a/fork', {
     method: 'POST',
-    token: bobToken,
+    cookie: bob.cookie,
     payload: { componentId: 'component-b', name: 'Bob Session Copy' },
   });
   assert.equal(forked.status, 200);
@@ -388,104 +578,113 @@ test('component asset lifecycle validates published session envelope and visibil
   assert.equal(forked.json.visibility, 'private');
 });
 
-test('admin APIs support user and asset management', async (t) => {
+test('management APIs support Better Auth backed user and asset management', async (t) => {
   const env = createEnv();
   t.after(() => env.DB.close());
   const app = createApp();
 
-  const adminLogin = await jsonRequest(app, env, '/v1/auth/login', {
-    method: 'POST',
-    payload: { username: 'admin', password: 'pw' },
+  const managementLogin = await signInUser(app, env, {
+    username: 'admin',
   });
-  assert.equal(adminLogin.status, 200);
-  const adminToken = String(adminLogin.json.accessToken);
+  assert.equal(managementLogin.status, 200);
+  assert.ok(managementLogin.cookie);
 
-  const alice = await jsonRequest(app, env, '/v1/auth/register', {
-    method: 'POST',
-    payload: { username: 'alice', password: 'pw', displayName: 'Alice' },
+  const alice = await createVerifiedSession(app, env, {
+    username: 'alice',
+    email: 'alice@example.com',
+    displayName: 'Alice',
   });
-  assert.equal(alice.status, 200);
-  const aliceToken = String(alice.json.accessToken);
-  const aliceUserId = String(alice.json.user.userId);
 
   const createdByAlice = await jsonRequest(app, env, '/v1/variants', {
     method: 'POST',
-    token: aliceToken,
+    cookie: alice.cookie,
     payload: variantPayload({ variantId: 'alice-private-asset', name: 'Alice Private Asset', visibility: 'private' }),
   });
   assert.equal(createdByAlice.status, 200);
 
-  const nonAdminDenied = await jsonRequest(app, env, '/v1/admin/users', { token: aliceToken });
+  const nonAdminDenied = await jsonRequest(app, env, `${MANAGEMENT_API_BASE_PATH}/users`, { cookie: alice.cookie });
   assert.equal(nonAdminDenied.status, 403);
 
-  const adminUsers = await jsonRequest(app, env, '/v1/admin/users', { token: adminToken });
-  assert.equal(adminUsers.status, 200);
-  assert.equal(adminUsers.json.entries.length >= 2, true);
+  const managementUsers = await jsonRequest(app, env, `${MANAGEMENT_API_BASE_PATH}/users`, { cookie: managementLogin.cookie });
+  assert.equal(managementUsers.status, 200);
+  assert.equal(managementUsers.json.entries.length >= 2, true);
 
-  const adminCreatesUser = await jsonRequest(app, env, '/v1/admin/users', {
+  const managementCreatesUser = await jsonRequest(app, env, `${MANAGEMENT_API_BASE_PATH}/users`, {
     method: 'POST',
-    token: adminToken,
+    cookie: managementLogin.cookie,
     payload: {
       username: 'ops',
-      password: 'pw',
+      email: 'ops@example.com',
+      password: TEST_PASSWORD,
       displayName: 'Ops',
       isAdmin: true,
     },
   });
-  assert.equal(adminCreatesUser.status, 200);
-  const opsUserId = String(adminCreatesUser.json.userId);
+  assert.equal(managementCreatesUser.status, 200);
+  const opsUserId = String(managementCreatesUser.json.userId);
 
-  const adminUpdatesUser = await jsonRequest(app, env, `/v1/admin/users/${opsUserId}`, {
+  const managementUpdatesUser = await jsonRequest(app, env, `${MANAGEMENT_API_BASE_PATH}/users/${opsUserId}`, {
     method: 'PUT',
-    token: adminToken,
+    cookie: managementLogin.cookie,
     payload: {
+      username: 'ops_team',
       displayName: 'Ops Team',
       isAdmin: false,
-      password: 'pw2',
+      password: TEST_PASSWORD_2,
     },
   });
-  assert.equal(adminUpdatesUser.status, 200);
-  assert.equal(adminUpdatesUser.json.displayName, 'Ops Team');
-  assert.equal(adminUpdatesUser.json.isAdmin, false);
+  assert.equal(managementUpdatesUser.status, 200);
+  assert.equal(managementUpdatesUser.json.username, 'ops_team');
+  assert.equal(managementUpdatesUser.json.displayName, 'Ops Team');
+  assert.equal(managementUpdatesUser.json.isAdmin, false);
 
-  const adminViewsAliceAssets = await jsonRequest(app, env, `/v1/admin/users/${aliceUserId}/assets`, {
-    token: adminToken,
-  });
-  assert.equal(adminViewsAliceAssets.status, 200);
-  assert.equal(adminViewsAliceAssets.json.entries.length, 1);
-  assert.equal(adminViewsAliceAssets.json.entries[0].assetId, 'alice-private-asset');
-
-  const adminListsAssets = await jsonRequest(app, env, '/v1/admin/assets?assetType=variant', {
-    token: adminToken,
-  });
-  assert.equal(adminListsAssets.status, 200);
-  assert.equal(adminListsAssets.json.entries.length >= 1, true);
-
-  const adminChangesVisibility = await jsonRequest(app, env, '/v1/admin/assets/alice-private-asset', {
+  const usernameConflict = await jsonRequest(app, env, `${MANAGEMENT_API_BASE_PATH}/users/${opsUserId}`, {
     method: 'PUT',
-    token: adminToken,
+    cookie: managementLogin.cookie,
+    payload: {
+      username: 'alice',
+    },
+  });
+  assert.equal(usernameConflict.status, 409);
+
+  const managementViewsAliceAssets = await jsonRequest(app, env, `${MANAGEMENT_API_BASE_PATH}/users/${alice.userId}/assets`, {
+    cookie: managementLogin.cookie,
+  });
+  assert.equal(managementViewsAliceAssets.status, 200);
+  assert.equal(managementViewsAliceAssets.json.entries.length, 1);
+  assert.equal(managementViewsAliceAssets.json.entries[0].assetId, 'alice-private-asset');
+
+  const managementListsAssets = await jsonRequest(app, env, `${MANAGEMENT_API_BASE_PATH}/assets?assetType=variant`, {
+    cookie: managementLogin.cookie,
+  });
+  assert.equal(managementListsAssets.status, 200);
+  assert.equal(managementListsAssets.json.entries.length >= 1, true);
+
+  const managementChangesVisibility = await jsonRequest(app, env, `${MANAGEMENT_API_BASE_PATH}/assets/alice-private-asset`, {
+    method: 'PUT',
+    cookie: managementLogin.cookie,
     payload: { visibility: 'public' },
   });
-  assert.equal(adminChangesVisibility.status, 200);
-  assert.equal(adminChangesVisibility.json.visibility, 'public');
+  assert.equal(managementChangesVisibility.status, 200);
+  assert.equal(managementChangesVisibility.json.visibility, 'public');
 
-  const adminDeletesAsset = await jsonRequest(app, env, '/v1/admin/assets/alice-private-asset', {
+  const managementDeletesAsset = await jsonRequest(app, env, `${MANAGEMENT_API_BASE_PATH}/assets/alice-private-asset`, {
     method: 'DELETE',
-    token: adminToken,
+    cookie: managementLogin.cookie,
   });
-  assert.equal(adminDeletesAsset.status, 200);
+  assert.equal(managementDeletesAsset.status, 200);
 
-  const hiddenFromDefaultAdminList = await jsonRequest(app, env, '/v1/admin/assets?assetType=variant', {
-    token: adminToken,
+  const hiddenFromDefaultManagementList = await jsonRequest(app, env, `${MANAGEMENT_API_BASE_PATH}/assets?assetType=variant`, {
+    cookie: managementLogin.cookie,
   });
-  assert.equal(hiddenFromDefaultAdminList.status, 200);
+  assert.equal(hiddenFromDefaultManagementList.status, 200);
   assert.equal(
-    hiddenFromDefaultAdminList.json.entries.some((entry) => entry.assetId === 'alice-private-asset'),
+    hiddenFromDefaultManagementList.json.entries.some((entry) => entry.assetId === 'alice-private-asset'),
     false,
   );
 
-  const includeDeleted = await jsonRequest(app, env, '/v1/admin/assets?assetType=variant&includeDeleted=true', {
-    token: adminToken,
+  const includeDeleted = await jsonRequest(app, env, `${MANAGEMENT_API_BASE_PATH}/assets?assetType=variant&includeDeleted=true`, {
+    cookie: managementLogin.cookie,
   });
   assert.equal(includeDeleted.status, 200);
   assert.equal(
@@ -493,43 +692,65 @@ test('admin APIs support user and asset management', async (t) => {
     true,
   );
 
-  const adminRestoresAsset = await jsonRequest(app, env, '/v1/admin/assets/alice-private-asset', {
+  const managementRestoresAsset = await jsonRequest(app, env, `${MANAGEMENT_API_BASE_PATH}/assets/alice-private-asset`, {
     method: 'PUT',
-    token: adminToken,
+    cookie: managementLogin.cookie,
     payload: { restore: true },
   });
-  assert.equal(adminRestoresAsset.status, 200);
-  assert.equal(adminRestoresAsset.json.deletedAt, null);
+  assert.equal(managementRestoresAsset.status, 200);
+  assert.equal(managementRestoresAsset.json.deletedAt, null);
 
-  const deleteAliceBlocked = await jsonRequest(app, env, `/v1/admin/users/${aliceUserId}`, {
+  const deleteAliceBlocked = await jsonRequest(app, env, `${MANAGEMENT_API_BASE_PATH}/users/${alice.userId}`, {
     method: 'DELETE',
-    token: adminToken,
+    cookie: managementLogin.cookie,
   });
   assert.equal(deleteAliceBlocked.status, 409);
 
-  const adminSelf = String(adminLogin.json.user.userId);
-  const selfDelete = await jsonRequest(app, env, `/v1/admin/users/${adminSelf}`, {
+  const managementSelf = String(managementLogin.json.user.id);
+  const selfDelete = await jsonRequest(app, env, `${MANAGEMENT_API_BASE_PATH}/users/${managementSelf}`, {
     method: 'DELETE',
-    token: adminToken,
+    cookie: managementLogin.cookie,
   });
   assert.equal(selfDelete.status, 400);
 
-  const deleteOps = await jsonRequest(app, env, `/v1/admin/users/${opsUserId}`, {
+  const deleteOps = await jsonRequest(app, env, `${MANAGEMENT_API_BASE_PATH}/users/${opsUserId}`, {
     method: 'DELETE',
-    token: adminToken,
+    cookie: managementLogin.cookie,
   });
   assert.equal(deleteOps.status, 200);
 });
 
-test('admin page is served as html', async (t) => {
+test('console entry page is served as html', async (t) => {
   const env = createEnv();
   t.after(() => env.DB.close());
   const app = createApp();
 
-  const response = await app.fetch(new Request('http://worker.test/admin'), env, {});
+  const rootResponse = await app.fetch(new Request('http://worker.test/'), env, {});
+  assert.equal(rootResponse.status, 302);
+  assert.equal(rootResponse.headers.get('Location'), `http://worker.test${CONSOLE_BASE_PATH}/`);
+
+  const response = await app.fetch(new Request(`http://worker.test${CONSOLE_BASE_PATH}`), env, {});
   assert.equal(response.status, 200);
   assert.match(response.headers.get('Content-Type') || '', /text\/html/);
 
   const html = await response.text();
-  assert.match(html, /Feel8 Admin/);
+  assert.match(html, /Feel8 Asset Cloud/);
+});
+
+test('auth helper pages are served as html', async (t) => {
+  const env = createEnv();
+  t.after(() => env.DB.close());
+  const app = createApp();
+
+  const verifyResponse = await app.fetch(new Request(`http://worker.test${CONSOLE_BASE_PATH}/verify-email?token=test-token`), env, {});
+  assert.equal(verifyResponse.status, 200);
+  assert.match(verifyResponse.headers.get('Content-Type') || '', /text\/html/);
+  const verifyHtml = await verifyResponse.text();
+  assert.match(verifyHtml, /Feel8 Asset Cloud/);
+
+  const resetResponse = await app.fetch(new Request(`http://worker.test${CONSOLE_BASE_PATH}/reset-password?token=test-token`), env, {});
+  assert.equal(resetResponse.status, 200);
+  assert.match(resetResponse.headers.get('Content-Type') || '', /text\/html/);
+  const resetHtml = await resetResponse.text();
+  assert.match(resetHtml, /Feel8 Asset Cloud/);
 });

@@ -9,8 +9,16 @@ export function createSqliteD1Database({ migrationsSql }) {
       let bindings = [];
       return {
         bind(...values) {
-          bindings = values;
+          bindings = values.map((value) => normalizeBindingValue(value));
           return this;
+        },
+        async raw() {
+          statement.setReturnArrays(true);
+          try {
+            return statement.all(...bindings);
+          } finally {
+            statement.setReturnArrays(false);
+          }
         },
         async first() {
           const row = statement.get(...bindings);
@@ -36,4 +44,14 @@ export function createSqliteD1Database({ migrationsSql }) {
       database.close();
     },
   };
+}
+
+function normalizeBindingValue(value) {
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+  if (typeof value === 'boolean') {
+    return value ? 1 : 0;
+  }
+  return value;
 }

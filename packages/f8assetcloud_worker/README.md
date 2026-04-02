@@ -1,77 +1,72 @@
 # f8assetcloud_worker
 
-Cloudflare Worker + D1 backend for the unified Feel8 asset catalog: users, variants, components, subscriptions, and immutable version history.
+Cloudflare Worker + D1 backend for Feel8 asset management, rebuilt around `Hono + Better Auth`.
 
-## Why this deployment shape
+## Architecture
 
-- No VPS is required.
-- Worker execution, HTTPS, and edge routing are managed by Cloudflare.
-- D1 gives us a managed SQLite-compatible store with migrations.
-- Secrets stay outside the repo via Wrangler / Cloudflare secrets.
+- Auth is provided by Better Auth at `/api/auth/*`
+- Business APIs stay under `/v1/*`
+- User and management console is the React app in `console_web`
+- The web UI is served at `/console`, and `/` redirects to `/console/`
+- Authentication uses Better Auth cookie sessions, not custom JWTs
+- D1 schema starts from a single fresh migration: `migrations/0001_init.sql`
 
-Cloudflare docs:
+## Database model
 
-- D1 bindings and setup: https://developers.cloudflare.com/d1/get-started/
-- D1 migrations: https://developers.cloudflare.com/d1/reference/migrations/
-- Worker secrets and `.dev.vars`: https://developers.cloudflare.com/workers/configuration/secrets/
+Core auth tables:
 
-## Open-source safe config
+- `user`
+- `session`
+- `account`
+- `verification`
 
-Committed files stay secret-free:
+Asset tables:
 
-- `wrangler.toml` contains placeholders and non-secret defaults only.
-- `.dev.vars.example` documents required secrets without real values.
-- Real `JWT_SECRET`, bootstrap password, and local `.dev.vars` never belong in git.
-
-Required secrets:
-
-```bash
-cd packages/f8assetcloud_worker
-npx wrangler secret put JWT_SECRET
-npx wrangler secret put BOOTSTRAP_ADMIN_PASSWORD
-```
-
-## Data model
-
-D1 schema uses five tables:
-
-- `users`
-- `refresh_tokens`
 - `asset_heads`
 - `asset_versions`
 - `asset_subscriptions`
 
-Storage rule:
+## Auth features
 
-- searchable metadata lives in first-class columns
-- full variant/component content lives in `content_json TEXT`
-- history is append-only in `asset_versions`
-- no JSON blobs are stored as BLOBs
+- Username + password sign-in
+- Email verification
+- Password reset
+- Google OAuth login
+- Management permissions are backed by Better Auth role support
+- Bootstrap management account creation from environment variables
 
-## Asset model
-
-- `variant` content keeps the existing `record` payload shape used by Studio
-- `component` content stores a published session envelope with `schemaVersion = f8studio-session/1`
-- `private/public` visibility applies to both asset types
-- subscriptions are read-only links; editing requires `fork`
-- updates create a new immutable version and increment `revision`
-
-## API surface
+## Main routes
 
 Auth:
 
-- `POST /v1/auth/register`
-- `POST /v1/auth/login`
-- `POST /v1/auth/refresh`
-- `POST /v1/auth/logout`
+- `POST /api/auth/sign-up/email`
+- `POST /api/auth/sign-in/username`
+- `POST /api/auth/sign-out`
+- `POST /api/auth/request-password-reset`
+- `GET /api/auth/get-session`
+- `GET /api/auth/callback/google`
+
+App wrappers:
+
+- `GET /v1/auth/providers`
+- `GET /v1/auth/verify-email?token=...`
+- `POST /v1/auth/reset-password`
 - `GET /v1/me`
 - `POST /v1/me/password`
 
-Variants:
+Web UI:
 
+- `GET /console`
+- `GET /console/verify-email`
+- `GET /console/reset-password`
+- `GET /` redirects to `/console/`
+
+Assets:
+
+- `GET /v1/search`
 - `GET /v1/variants`
-- `GET /v1/variants/:variantId`
 - `POST /v1/variants`
+- `GET /v1/variants/:variantId`
 - `PUT /v1/variants/:variantId`
 - `DELETE /v1/variants/:variantId`
 - `GET /v1/variants/:variantId/versions`
@@ -79,12 +74,9 @@ Variants:
 - `POST /v1/variants/:variantId/subscribe`
 - `DELETE /v1/variants/:variantId/subscribe`
 - `POST /v1/variants/:variantId/fork`
-
-Components:
-
 - `GET /v1/components`
-- `GET /v1/components/:componentId`
 - `POST /v1/components`
+- `GET /v1/components/:componentId`
 - `PUT /v1/components/:componentId`
 - `DELETE /v1/components/:componentId`
 - `GET /v1/components/:componentId/versions`
@@ -93,31 +85,50 @@ Components:
 - `DELETE /v1/components/:componentId/subscribe`
 - `POST /v1/components/:componentId/fork`
 
-Search:
+Management:
 
-- `GET /v1/search?assetType=variant|component&q=&visibility=&owner=me|subscribed|public&cursor=`
+- `GET /v1/management/users`
+- `POST /v1/management/users`
+- `GET /v1/management/users/:userId`
+- `PUT /v1/management/users/:userId`
+- `DELETE /v1/management/users/:userId`
+- `GET /v1/management/users/:userId/assets`
+- `GET /v1/management/assets`
+- `GET /v1/management/assets/:assetId`
+- `PUT /v1/management/assets/:assetId`
+- `DELETE /v1/management/assets/:assetId`
 
-Admin (requires access token for `isAdmin = true` user):
+## Environment
 
-- `GET /` React dashboard frontend (root path)
-- `GET /v1/admin/users?q=&cursor=`
-- `POST /v1/admin/users`
-- `GET /v1/admin/users/:userId`
-- `PUT /v1/admin/users/:userId` (supports `displayName`, `isAdmin`, `password`)
-- `DELETE /v1/admin/users/:userId`
-- `GET /v1/admin/users/:userId/assets?assetType=variant|component&includeDeleted=true|false&cursor=`
-- `GET /v1/admin/assets?assetType=variant|component&ownerUserId=&q=&includeDeleted=true|false&cursor=`
-- `GET /v1/admin/assets/:assetId?includeDeleted=true|false`
-- `PUT /v1/admin/assets/:assetId` (supports `visibility`, `restore`)
-- `DELETE /v1/admin/assets/:assetId`
+Required:
 
-Admin behavior notes:
+- `BETTER_AUTH_SECRET`
+- `BOOTSTRAP_ADMIN_USERNAME`
+- `BOOTSTRAP_ADMIN_PASSWORD`
 
-- non-admin users receive `403` on `/v1/admin/*`
-- admin cannot delete themselves
-- deleting users with active assets is blocked with `409`
-- asset deletion is soft-delete (`deleted_at`), and can be restored
-- frontend is served from Vite + React build output (`console_web/dist`) at root path via Worker assets binding
+Recommended:
+
+- `BOOTSTRAP_ADMIN_DISPLAY_NAME`
+- `BOOTSTRAP_ADMIN_EMAIL`
+- `AUTH_BASE_URL`
+- `AUTH_VERIFY_EMAIL_BASE_URL`
+- `AUTH_RESET_PASSWORD_BASE_URL`
+- `EMAIL_VERIFY_TOKEN_TTL_SECONDS`
+- `PASSWORD_RESET_TOKEN_TTL_SECONDS`
+
+Google login:
+
+- `GOOGLE_CLIENT_ID`
+- `GOOGLE_CLIENT_SECRET`
+
+Email delivery via Resend:
+
+- `AUTH_EMAIL_FROM`
+- `RESEND_API_KEY`
+
+Local debug only:
+
+- `EXPOSE_DEBUG_AUTH_LINKS=true`
 
 ## Local development
 
@@ -126,33 +137,29 @@ cd packages/f8assetcloud_worker
 cp .dev.vars.example .dev.vars
 npm install
 npm --prefix console_web install
-npm run admin:build
-npm test
+npm run web:dev
+npm run d1:migrate:local
 npx wrangler dev
 ```
 
-Admin frontend development:
+Single-origin mode:
 
 ```bash
 cd packages/f8assetcloud_worker
-npm --prefix console_web install
-npm run admin:dev
+npm run dev:single
 ```
 
-## D1 setup
-
-If you already created the database in Cloudflare, copy its IDs into `wrangler.toml`.
+## Deployment
 
 ```bash
 cd packages/f8assetcloud_worker
-npx wrangler d1 create feel8-assets
-npx wrangler d1 migrations apply feel8-assets --local
-npx wrangler d1 migrations apply feel8-assets
+npm run web:build
+npm run d1:migrate
+npx wrangler deploy
 ```
 
 ## Notes
 
-- unauthenticated search only sees public assets
-- authenticated search sees own private assets plus all public assets
-- historical versions are read-only; rollback should be implemented as a new save from old content
-- password change revokes existing refresh tokens
+- This package now assumes a brand-new database baseline.
+- Old JWT auth tables and compatibility migrations have been removed.
+- To fully reset locally or in a disposable environment, recreate the D1 database and apply `0001_init.sql`.

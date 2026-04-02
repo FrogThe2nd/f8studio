@@ -111,6 +111,56 @@ body {
   padding: 16px;
 }
 
+.auth-switch {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.auth-switch button {
+  flex: 1;
+}
+
+.auth-switch button.active {
+  background: #2a5688;
+  border-color: #4b80bd;
+}
+
+.auth-links {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+
+.auth-links a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.auth-links a:hover {
+  text-decoration: underline;
+}
+
+.auth-result {
+  margin-top: 12px;
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: rgba(93, 213, 255, 0.08);
+  color: var(--text);
+}
+
+.auth-page-shell {
+  padding-top: 40px;
+  padding-bottom: 40px;
+}
+
+.auth-page-card {
+  position: relative;
+}
+
 .form {
   display: grid;
   gap: 10px;
