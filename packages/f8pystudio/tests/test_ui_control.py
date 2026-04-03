@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from f8pystudio.ui_control import parse_ui_control
+from f8pystudio.ui.support.ui_control import parse_ui_control
 
 
 def test_parse_ui_control_select_preserves_pool_field_case() -> None:

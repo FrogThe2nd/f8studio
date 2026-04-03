@@ -9,7 +9,7 @@ import msgspec
 
 from f8pysdk import F8OperatorSpec, F8ServiceSpec
 
-from ..ui_control import ui_control_language
+from ..ui.support.ui_control import ui_control_language
 from .workspace import (
     EditorAssistContext,
     EditorAssistDataInPort,

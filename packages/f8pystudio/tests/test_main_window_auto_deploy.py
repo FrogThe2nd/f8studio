@@ -20,7 +20,7 @@ from f8pysdk.generated import (  # noqa: E402
 )
 from f8pysdk.schema_helpers import string_schema  # noqa: E402
 
-from f8pystudio.widgets.main_window import F8StudioMainWin  # noqa: E402
+from f8pystudio.ui.mainwin.main_window import F8StudioMainWin  # noqa: E402
 
 
 def _compiled(*, state_value: str) -> object:
@@ -118,7 +118,7 @@ def test_auto_deploy_skips_when_only_runtime_state_values_change(monkeypatch) ->
     fake_main = _FakeMain(compiled=compiled, running=True, current_undo_index=5)
     fake_main._last_auto_deploy_fingerprint = fake_main._deploy_fingerprint_from_compiled(compiled)  # type: ignore[arg-type]
 
-    monkeypatch.setattr("f8pystudio.widgets.main_window.compile_runtime_graphs_from_studio", lambda _graph: compiled)
+    monkeypatch.setattr("f8pystudio.ui.mainwin.main_window.compile_runtime_graphs_from_studio", lambda _graph: compiled)
 
     F8StudioMainWin._on_auto_deploy_timeout(fake_main)
 
@@ -131,7 +131,7 @@ def test_auto_deploy_updates_baseline_when_no_services_are_running(monkeypatch) 
     compiled = _compiled(state_value="pause")
     fake_main = _FakeMain(compiled=compiled, running=False, current_undo_index=7)
 
-    monkeypatch.setattr("f8pystudio.widgets.main_window.compile_runtime_graphs_from_studio", lambda _graph: compiled)
+    monkeypatch.setattr("f8pystudio.ui.mainwin.main_window.compile_runtime_graphs_from_studio", lambda _graph: compiled)
 
     F8StudioMainWin._on_auto_deploy_timeout(fake_main)
 
@@ -145,7 +145,7 @@ def test_auto_deploy_redeploys_when_deploy_fingerprint_changes(monkeypatch) -> N
     compiled = _compiled(state_value="pause")
     fake_main = _FakeMain(compiled=compiled, running=True, current_undo_index=9, last_fingerprint="older")
 
-    monkeypatch.setattr("f8pystudio.widgets.main_window.compile_runtime_graphs_from_studio", lambda _graph: compiled)
+    monkeypatch.setattr("f8pystudio.ui.mainwin.main_window.compile_runtime_graphs_from_studio", lambda _graph: compiled)
 
     F8StudioMainWin._on_auto_deploy_timeout(fake_main)
 
@@ -159,7 +159,7 @@ def test_studio_runtime_sync_updates_local_runtime_without_remote_deploy(monkeyp
     compiled = _compiled(state_value="pause")
     fake_main = _FakeMain(compiled=compiled, running=True, current_undo_index=3)
 
-    monkeypatch.setattr("f8pystudio.widgets.main_window.compile_runtime_graphs_from_studio", lambda _graph: compiled)
+    monkeypatch.setattr("f8pystudio.ui.mainwin.main_window.compile_runtime_graphs_from_studio", lambda _graph: compiled)
 
     F8StudioMainWin._on_studio_runtime_sync_timeout(fake_main)
 

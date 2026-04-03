@@ -13,7 +13,7 @@ from .operator_basenode import F8StudioOperatorBaseNode
 from .edge_rules import validate_runtime_connection
 from ..constants import SERVICE_CLASS as _CANVAS_SERVICE_CLASS_
 from ..constants import STUDIO_SERVICE_ID
-from ..ui_notifications import show_warning
+from ..ui.support.ui_notifications import show_warning
 
 _BASE_OPERATOR_CLS_ = F8StudioOperatorBaseNode
 _BASE_CONTAINER_CLS_ = F8StudioContainerBaseNode

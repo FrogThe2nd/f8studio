@@ -15,8 +15,8 @@ from f8pystudio.pystudio_node_registry import register_pystudio_specs
 from f8pystudio.render_nodes.note import NoteRenderNode
 from f8pystudio.render_nodes.patch_hub import PatchHubRenderNode
 from f8pystudio.render_nodes.registry import RenderNodeRegistry
-from f8pystudio.widgets.node_property_panel.editor import _should_show_commands_tab
-from f8pystudio.widgets.node_property_panel.ports import _F8SpecPortEditor
+from f8pystudio.ui.widgets.node_property_panel.editor import _should_show_commands_tab
+from f8pystudio.ui.widgets.node_property_panel.ports import _F8SpecPortEditor
 from f8pysdk.service_runtime_tools.catalog import ServiceCatalog
 from f8pysdk.service_runtime_tools.discovery import load_discovery_into_catalog
 

@@ -8,7 +8,7 @@ from typing import Any
 from qtpy import QtCore, QtWidgets
 
 from ..projects.project_models import F8ProjectSummary
-from ...ui_notifications import show_warning
+from ...ui.support.ui_notifications import show_warning
 
 
 class ProjectAssetMetaDialog(QtWidgets.QDialog):

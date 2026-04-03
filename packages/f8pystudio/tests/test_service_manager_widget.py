@@ -12,7 +12,7 @@ if ROOT not in sys.path:
 from f8pystudio.constants import SERVICE_CLASS as STUDIO_SERVICE_CLASS  # noqa: E402
 from f8pystudio.constants import STUDIO_SERVICE_ID  # noqa: E402
 from f8pystudio.pystudio_service_bridge import ServiceMonitorRow  # noqa: E402
-from f8pystudio.widgets.service_manager_widget import ServiceManagerWidget  # noqa: E402
+from f8pystudio.ui.widgets.service_manager_widget import ServiceManagerWidget  # noqa: E402
 
 
 class _FakeBridge:

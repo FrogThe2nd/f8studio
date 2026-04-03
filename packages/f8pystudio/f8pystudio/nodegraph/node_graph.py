@@ -24,7 +24,8 @@ from .layers import normalize_layer_defs
 from .service_bridge_protocol import ServiceBridge
 from .session_layout_codec import SessionLayoutCodecMixin
 from .viewer import F8StudioNodeViewer
-from ..ui_notifications import show_warning
+from ..ui.support.ui_notifications import show_warning
+from ..ui.dialogs.node_docs_dialog import SpecTemplate
 
 MISSING_SERVICE_NODE_TYPE = "svc.f8.missing.service"
 MISSING_OPERATOR_NODE_TYPE = "svc.f8.missing.operator"
@@ -76,7 +77,7 @@ class F8StudioGraph(
         self._duplicate_menu_node_types: set[str] = set()
         self._node_docs_menu_node_types: set[str] = set()
         self._graph_context_menu_commands_installed = False
-        self._node_docs_dialog_opener: Callable[[Any, str, str], None] | None = None
+        self._node_docs_dialog_opener: Callable[[SpecTemplate, str, str], None] | None = None
         self._component_insert_dialog_opener: Callable[[tuple[float, float] | None], None] | None = None
 
         self.property_changed.connect(self._on_property_changed)  # type: ignore[attr-defined]
@@ -134,11 +135,11 @@ class F8StudioGraph(
 
     def set_node_docs_dialog_opener(
         self,
-        opener: Callable[[Any, str, str], None] | None,
+        opener: Callable[[SpecTemplate, str, str], None] | None,
     ) -> None:
         self._node_docs_dialog_opener = opener
 
-    def open_node_docs_dialog(self, *, spec: Any, node_id: str, node_name: str) -> None:
+    def open_node_docs_dialog(self, *, spec: SpecTemplate, node_id: str, node_name: str) -> None:
         opener = self._node_docs_dialog_opener
         if opener is None:
             parent = self._notification_parent()

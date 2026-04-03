@@ -7,7 +7,7 @@ import sys
 
 from qtpy import QtCore, QtWidgets
 
-from f8pystudio.shared_ui.schema_builder_dialog import (
+from f8pystudio.ui.dialogs.schema_builder_dialog import (
     SchemaBuilderDialog,
     schema_from_json_obj,
     schema_to_json_obj,
@@ -175,7 +175,7 @@ def test_schema_builder_read_only_disables_edits_and_preserves_schema() -> None:
 def test_schema_builder_type_switch_does_not_crash() -> None:
     script = """
 from qtpy import QtWidgets
-from f8pystudio.shared_ui.schema_builder_dialog import SchemaBuilderDialog, schema_from_json_obj
+from f8pystudio.ui.dialogs.schema_builder_dialog import SchemaBuilderDialog, schema_from_json_obj
 app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 dlg = SchemaBuilderDialog(None, title='Schema', schema=schema_from_json_obj({'type': 'string'}))
 root_index = dlg._find_tree_item_for_path(())

@@ -12,7 +12,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from f8pystudio.nodegraph.viewer import F8StudioNodeViewer  # noqa: E402
-from f8pystudio.widgets.main_window import F8StudioMainWin  # noqa: E402
+from f8pystudio.ui.mainwin.main_window import F8StudioMainWin  # noqa: E402
 
 
 def _ensure_app() -> QtWidgets.QApplication:

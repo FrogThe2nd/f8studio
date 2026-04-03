@@ -21,7 +21,7 @@ from .plugin_loader import load_entrypoint_plugins
 from .pystudio_node_registry import SERVICE_CLASS, register_pystudio_specs
 from .bridge.nats_lifecycle import SINGLETON_GUARD_DIALOG_TITLE
 from .pystudio_service_bridge import STARTUP_GATE_TIMEOUT_S, PyStudioServiceBridge, PyStudioServiceBridgeConfig
-from .ui_resources import studio_logo_path
+from .ui.support.ui_resources import studio_logo_path
 
 logger = logging.getLogger(__name__)
 MISSING_SERVICE_NODE_TYPE = "svc.f8.missing.service"
@@ -198,9 +198,9 @@ class PyStudioProgram:
         # Local import: keep `--describe` fast and avoid importing Qt at module import time.
         from qtpy import QtCore, QtGui, QtWidgets
 
-        from .qt_font_utils import normalize_application_font
-        from .webengine_utils import configure_default_webengine_profile
-        from .widgets.main_window import F8StudioMainWin
+        from .ui.support.qt_font_utils import normalize_application_font
+        from .ui.support.webengine_utils import configure_default_webengine_profile
+        from .ui.mainwin.main_window import F8StudioMainWin
 
         manifests = self._load_plugin_manifests()
         self._apply_plugin_manifests_to_runtime_registry(manifests, registry=RuntimeNodeRegistry.instance())

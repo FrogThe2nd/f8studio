@@ -110,7 +110,7 @@ def _patch_program_dependencies(monkeypatch) -> list[tuple[object | None, str, s
         lambda parent, title, message: warnings.append((parent, str(title), str(message))),
     )
     monkeypatch.setattr("f8pystudio.pystudio_program.PyStudioServiceBridge", _FakeBridge)
-    monkeypatch.setattr("f8pystudio.widgets.main_window.F8StudioMainWin", _FakeMainWindow)
+    monkeypatch.setattr("f8pystudio.ui.mainwin.main_window.F8StudioMainWin", _FakeMainWindow)
     monkeypatch.setattr(PyStudioProgram, "_load_plugin_manifests", lambda self: [])
     monkeypatch.setattr(PyStudioProgram, "_apply_plugin_manifests_to_runtime_registry", lambda self, manifests, registry: None)
     monkeypatch.setattr(PyStudioProgram, "_apply_plugin_manifests_to_renderers", lambda self, manifests: None)
@@ -119,8 +119,8 @@ def _patch_program_dependencies(monkeypatch) -> list[tuple[object | None, str, s
     monkeypatch.setattr("f8pystudio.pystudio_program.load_discovery_into_catalog", lambda **_kwargs: None)
     monkeypatch.setattr("f8pystudio.pystudio_program.last_discovery_timing_lines", lambda: ["timing-1"])
     monkeypatch.setattr("f8pystudio.pystudio_program.last_discovery_error_lines", lambda: ["error-1"])
-    monkeypatch.setattr("f8pystudio.qt_font_utils.normalize_application_font", lambda app: None)
-    monkeypatch.setattr("f8pystudio.webengine_utils.configure_default_webengine_profile", lambda: None)
+    monkeypatch.setattr("f8pystudio.ui.support.qt_font_utils.normalize_application_font", lambda app: None)
+    monkeypatch.setattr("f8pystudio.ui.support.webengine_utils.configure_default_webengine_profile", lambda: None)
     return warnings
 
 

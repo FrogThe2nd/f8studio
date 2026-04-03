@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from qtpy import QtTest, QtWidgets
 
-from f8pystudio.ui_notifications import _ACTIVE_TOASTS, _INFO_STYLE, _StudioToast, _TOAST_SPACING, _rich_text_message
+from f8pystudio.ui.support.ui_notifications import _ACTIVE_TOASTS, _INFO_STYLE, _StudioToast, _TOAST_SPACING, _rich_text_message
 
 
 def _ensure_app() -> QtWidgets.QApplication:

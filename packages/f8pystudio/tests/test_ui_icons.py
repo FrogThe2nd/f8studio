@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from qtpy import QtWidgets, QtGui
 
-from f8pystudio.ui_icons import StudioIcon, _icons_dir, _render_svg_icon, icon_for
+from f8pystudio.ui.support.ui_icons import StudioIcon, _icons_dir, _render_svg_icon, icon_for
 
 
 def _ensure_app() -> QtWidgets.QApplication:

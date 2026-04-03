@@ -14,9 +14,9 @@ from f8pysdk.msgspec_codec import dump_json, validate_as
 
 from ..app_logging import configure_root_logging_from_env
 from ..editor_assist.session import EditorSessionKey
-from ..qt_font_utils import normalize_application_font
-from ..webengine_utils import configure_default_webengine_profile
-from ..widgets.monaco_editor_dialog import open_code_editor_window
+from ..ui.support.qt_font_utils import normalize_application_font
+from ..ui.support.webengine_utils import configure_default_webengine_profile
+from ..ui.support.monaco_editor_host import open_code_editor_window
 from .protocol import editor_assist_context_for_field
 from .workspace import EditorAssistContext
 

@@ -6,8 +6,8 @@ from urllib.parse import urlparse
 
 from qtpy import QtCore, QtWidgets
 
-from ...ui_icons import StudioIcon, icon_for
-from ...ui_notifications import show_warning
+from ...ui.support.ui_icons import StudioIcon, icon_for
+from ...ui.support.ui_notifications import show_warning
 
 
 class AssetCloudUserLike(Protocol):

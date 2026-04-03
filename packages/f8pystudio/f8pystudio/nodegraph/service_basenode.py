@@ -127,7 +127,7 @@ from .state_schema import (
     schema_enum_items as _shared_schema_enum_items,
     schema_numeric_range as _shared_schema_numeric_range,
 )
-from ..shared_ui.schema_builder_dialog import SchemaBuilderDialog, schema_from_json_obj as _schema_from_json_obj
+from ..ui.dialogs.schema_builder_dialog import SchemaBuilderDialog, schema_from_json_obj as _schema_from_json_obj
 
 logger = logging.getLogger(__name__)
 

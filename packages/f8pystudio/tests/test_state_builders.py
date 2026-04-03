@@ -5,9 +5,9 @@ from typing import Any
 
 from qtpy import QtCore, QtGui, QtWidgets
 
-from f8pystudio.components.controls import F8Dial, F8OptionCombo
-from f8pystudio.components.state_builders import StateControlSpec, build_inline_control_binding
-from f8pystudio.components.state_editors import F8IncrementButtonEditor, F8WrapLineEditor
+from f8pystudio.ui.components.controls import F8Dial, F8OptionCombo
+from f8pystudio.ui.support.state_builders import StateControlSpec, build_inline_control_binding
+from f8pystudio.ui.components.state_editors import F8IncrementButtonEditor, F8WrapLineEditor
 
 
 def _ensure_app() -> QtWidgets.QApplication:

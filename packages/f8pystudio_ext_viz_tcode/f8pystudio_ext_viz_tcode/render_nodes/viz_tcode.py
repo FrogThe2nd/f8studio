@@ -11,7 +11,10 @@ from qtpy import QtCore, QtWidgets
 from f8pystudio.nodegraph.operator_basenode import F8StudioOperatorBaseNode
 from f8pystudio.nodegraph.viz_operator_nodeitem import F8StudioVizOperatorNodeItem
 from f8pystudio.ui_bus import UiCommand
-from f8pystudio.webengine_utils import configure_default_webengine_profile, webengine_termination_status_text
+from f8pystudio.ui.support.webengine_utils import (
+    configure_default_webengine_profile,
+    webengine_termination_status_text,
+)
 
 logger = logging.getLogger(__name__)
 

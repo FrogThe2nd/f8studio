@@ -15,11 +15,11 @@ from f8pystudio.nodegraph.items.state_inline_controls import (
 )
 from f8pystudio.nodegraph.items.node_item_core import StateFieldInfo
 from f8pystudio.nodegraph.items.service_toolbar_host import F8ForceGlobalToolTipFilter
-from f8pystudio.components.controls import F8Dial, F8OptionCombo
-from f8pystudio.components.state_editors import F8CodeButtonEditor, F8DialEditor, F8IncrementButtonEditor
-from f8pystudio.widgets.state_controls import build_state_panel_control
-from f8pystudio.widgets.state_controls.schema_introspect import schema_numeric_range
-from f8pystudio.components.wave import (
+from f8pystudio.ui.components.controls import F8Dial, F8OptionCombo
+from f8pystudio.ui.components.state_editors import F8CodeButtonEditor, F8DialEditor, F8IncrementButtonEditor
+from f8pystudio.ui.support.state_panel_controls import build_state_panel_control
+from f8pystudio.nodegraph.state_schema import schema_numeric_range
+from f8pystudio.ui.components.wave import (
     WaveHeatmapControl,
     WavePatternEditorControl,
     WavePreviewControl,

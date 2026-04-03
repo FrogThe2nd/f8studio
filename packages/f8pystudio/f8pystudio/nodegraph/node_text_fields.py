@@ -6,7 +6,7 @@ from typing import Any
 from qtpy import QtWidgets
 
 from ..editor_assist.session import EditorSessionKey
-from ..ui_notifications import show_warning
+from ..ui.support.ui_notifications import show_warning
 
 logger = logging.getLogger(__name__)
 

@@ -13,9 +13,9 @@ from ..components.component_events import subscribe_components_changed
 from ..components.component_models import F8ComponentEntry, F8ComponentSourceKind
 from ..components.component_repository import list_component_entries
 from ..components.component_sync import ComponentSyncClient
-from ...ui_icons import StudioIcon, icon_for
-from ...ui_notifications import show_warning
-from ...shared_ui.json_text_editor import attach_json_enhancements
+from ...ui.support.ui_icons import StudioIcon, icon_for
+from ...ui.support.ui_notifications import show_warning
+from ...ui.support.json_text_editor import attach_json_enhancements
 from .asset_cloud_account_menu import build_asset_account_menu
 
 logger = logging.getLogger(__name__)

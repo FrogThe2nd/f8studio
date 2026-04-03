@@ -11,8 +11,8 @@ from qtpy import QtCore, QtWidgets
 
 from f8pysdk import F8OperatorSpec, F8ServiceSpec
 
-from ...ui_icons import StudioIcon, icon_for
-from ...ui_notifications import show_info, show_warning
+from ...ui.support.ui_icons import StudioIcon, icon_for
+from ...ui.support.ui_notifications import show_info, show_warning
 from ..variants.variant_compose import build_variant_record_from_node
 from ..variants.variant_ids import build_variant_node_type
 from f8pysdk import F8VariantRecord
@@ -28,7 +28,7 @@ from ..variants.variant_repository import (
 )
 from ..variants.variant_events import subscribe_variants_changed
 from ..variants.variant_sync import VariantSyncClient
-from ...shared_ui.json_text_editor import attach_json_enhancements
+from ...ui.support.json_text_editor import attach_json_enhancements
 from .asset_cloud_account_menu import build_asset_account_menu, prompt_asset_cloud_sign_in
 
 logger = logging.getLogger(__name__)

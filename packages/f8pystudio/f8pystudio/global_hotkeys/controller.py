@@ -5,7 +5,7 @@ from typing import Any, Callable
 
 from qtpy import QtCore
 
-from ..ui_control import parse_ui_control
+from ..ui.support.ui_control import parse_ui_control
 from ..nodegraph.state_schema import effective_state_fields, schema_type_any
 from ..nodegraph.ui_state_mutations import state_field_global_hotkey
 from .backend import GlobalHotkeyBackend, create_global_hotkey_backend

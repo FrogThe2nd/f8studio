@@ -14,8 +14,10 @@ from f8pysdk import (
     editable_collection_edit_policy,
 )
 from f8pysdk.schema_helpers import string_schema
-from f8pystudio.widgets import node_property_panel as npw
-from f8pystudio.widgets.node_property_panel import _F8SpecPortEditor
+from f8pystudio.ui.widgets import node_property_panel as npw
+from f8pystudio.ui.widgets.node_property_panel import _F8SpecPortEditor
+from f8pystudio.ui.widgets.node_property_panel import editor as property_panel_editor
+from f8pystudio.ui.widgets.node_property_panel import ports as property_panel_ports
 from f8pystudio.nodegraph.spec_mutations import set_ports
 
 
@@ -231,7 +233,7 @@ def test_required_data_port_dialog_is_not_ui_only_when_editable(monkeypatch) -> 
         def exec_(self) -> int:
             return QtWidgets.QDialog.Rejected
 
-    monkeypatch.setattr(npw, "_F8EditDataPortDialog", _FakeDataDialog)
+    monkeypatch.setattr(property_panel_ports, "_F8EditDataPortDialog", _FakeDataDialog)
 
     node = _FakeNode(_make_spec())
     editor = _F8SpecPortEditor(None, node=node, on_apply=None)
@@ -266,7 +268,7 @@ def test_add_data_port_defaults_to_optional_and_hidden(monkeypatch) -> None:
         def exec_(self) -> int:
             return QtWidgets.QDialog.Rejected
 
-    monkeypatch.setattr(npw, "_F8EditDataPortDialog", _FakeDataDialog)
+    monkeypatch.setattr(property_panel_ports, "_F8EditDataPortDialog", _FakeDataDialog)
 
     node = _FakeNode(_make_spec())
     editor = _F8SpecPortEditor(None, node=node, on_apply=None)
@@ -311,7 +313,7 @@ def test_required_state_field_dialog_is_not_ui_only_when_editable(monkeypatch) -
         def exec_(self) -> int:
             return QtWidgets.QDialog.Rejected
 
-    monkeypatch.setattr(npw, "_F8EditStateFieldDialog", _FakeStateDialog)
+    monkeypatch.setattr(property_panel_editor, "_F8EditStateFieldDialog", _FakeStateDialog)
 
     class _FakeEditor:
         def __init__(self, spec: F8ServiceSpec) -> None:
@@ -368,7 +370,7 @@ def test_add_state_field_defaults_to_optional_and_hidden(monkeypatch) -> None:
         def field(self) -> Any:
             raise AssertionError("field() should not be called when dialog is rejected")
 
-    monkeypatch.setattr(npw, "_F8EditStateFieldDialog", _FakeStateDialog)
+    monkeypatch.setattr(property_panel_editor, "_F8EditStateFieldDialog", _FakeStateDialog)
 
     class _FakeEditor:
         def __init__(self, spec: F8ServiceSpec) -> None:

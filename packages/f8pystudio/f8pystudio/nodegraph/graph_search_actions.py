@@ -12,7 +12,7 @@ from f8pysdk.spec_metadata import palette_category_from_spec
 from ..assets.common import JsonObject
 from ..assets.components.component_repository import component_entry, list_component_entries
 from ..assets.projects.project_storage import ProjectStorageService
-from ..ui_notifications import show_warning
+from ..ui.support.ui_notifications import show_warning
 from ..assets.variants.variant_ids import build_variant_node_type
 from ..assets.variants.variant_repository import list_entries_for_base
 from .service_basenode import F8StudioServiceNodeItem

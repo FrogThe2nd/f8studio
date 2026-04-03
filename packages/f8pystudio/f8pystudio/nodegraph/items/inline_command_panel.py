@@ -11,8 +11,8 @@ from f8pysdk.command_state import command_input_state_field
 from f8pysdk.schema_helpers import schema_default, schema_type
 
 from ...command_ui_protocol import CommandUiHandler, CommandUiSource
-from ...components.controls import F8OptionCombo, F8Switch, F8ValueBar, parse_select_pool
-from ...ui_notifications import show_warning
+from ...ui.components.controls import F8OptionCombo, F8Switch, F8ValueBar, parse_select_pool
+from ...ui.support.ui_notifications import show_warning
 from .proxy_widget_utils import dispose_detached_proxy_widget
 from .state_inline_controls import build_inline_header_button
 

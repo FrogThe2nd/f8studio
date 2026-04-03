@@ -17,8 +17,12 @@ from f8pysdk import (
     F8StateSpec,
     editable_collection_edit_policy,
 )
-from f8pystudio.shared_ui import node_spec_edit_dialogs
-from f8pystudio.widgets import node_property_panel as npw
+from f8pystudio.ui.dialogs import node_spec_edit_dialogs
+from f8pystudio.ui.dialogs.schema_builder_dialog import schema_from_json_obj
+from f8pystudio.ui.widgets import node_property_panel as npw
+from f8pystudio.ui.widgets.node_property_panel import commands as property_panel_commands
+from f8pystudio.ui.widgets.node_property_panel import editor as property_panel_editor
+from f8pystudio.ui.widgets.node_property_panel import ports as property_panel_ports
 
 
 def _ensure_app() -> QtWidgets.QApplication:
@@ -128,11 +132,12 @@ class _FakeStateNode:
 def test_edit_schema_dialogs_pass_read_only_when_ui_only(monkeypatch) -> None:
     _ensure_app()
     monkeypatch.setattr(node_spec_edit_dialogs, "SchemaBuilderDialog", _FakeSchemaDialog)
+    monkeypatch.setattr(property_panel_commands, "SchemaBuilderDialog", _FakeSchemaDialog)
 
     data_port = npw._F8EditDataPortDialog(
         None,
         title="Data",
-        port=F8DataPortSpec(name="in", valueSchema=npw._schema_from_json_obj({"type": "any"})),
+        port=F8DataPortSpec(name="in", valueSchema=schema_from_json_obj({"type": "any"})),
         ui_only=True,
     )
     data_port._edit_schema()
@@ -141,7 +146,7 @@ def test_edit_schema_dialogs_pass_read_only_when_ui_only(monkeypatch) -> None:
     state_field = npw._F8EditStateFieldDialog(
         None,
         title="State",
-        field=F8StateSpec(name="x", valueSchema=npw._schema_from_json_obj({"type": "number"}), access=F8StateAccess.rw),
+        field=F8StateSpec(name="x", valueSchema=schema_from_json_obj({"type": "number"}), access=F8StateAccess.rw),
         ui_only=True,
     )
     state_field._edit_schema()
@@ -150,7 +155,7 @@ def test_edit_schema_dialogs_pass_read_only_when_ui_only(monkeypatch) -> None:
     cmd_param = npw._F8EditCommandParamDialog(
         None,
         title="Param",
-        param=F8CommandParam(name="arg", valueSchema=npw._schema_from_json_obj({"type": "string"})),
+        param=F8CommandParam(name="arg", valueSchema=schema_from_json_obj({"type": "string"})),
         ui_only=True,
     )
     cmd_param._edit_schema()
@@ -193,13 +198,13 @@ def test_open_state_field_editor_allows_missing_locked_read_only_dialog(monkeypa
         def exec_(self) -> int:
             return QtWidgets.QDialog.Rejected
 
-    monkeypatch.setattr(npw, "_F8EditStateFieldDialog", _FakeStateDialog)
+    monkeypatch.setattr(property_panel_editor, "_F8EditStateFieldDialog", _FakeStateDialog)
 
     spec = F8ServiceSpec(
         serviceClass="f8.test",
         label="Test",
         editPolicy=F8SpecEditPolicy(stateFields=editable_collection_edit_policy()),
-        stateFields=[F8StateSpec(name="x", valueSchema=npw._schema_from_json_obj({"type": "number"}), access=F8StateAccess.rw)],
+        stateFields=[F8StateSpec(name="x", valueSchema=schema_from_json_obj({"type": "number"}), access=F8StateAccess.rw)],
     )
     node = _FakeStateNode(spec, missing_locked=True)
 
@@ -246,13 +251,13 @@ def test_edit_data_port_allows_missing_locked_read_only_dialog(monkeypatch) -> N
         def exec_(self) -> int:
             return QtWidgets.QDialog.Rejected
 
-    monkeypatch.setattr(npw, "_F8EditDataPortDialog", _FakeDataDialog)
+    monkeypatch.setattr(property_panel_ports, "_F8EditDataPortDialog", _FakeDataDialog)
 
     spec = F8ServiceSpec(
         serviceClass="f8.test",
         label="Test",
         editPolicy=F8SpecEditPolicy(dataInPorts=editable_collection_edit_policy()),
-        dataInPorts=[F8DataPortSpec(name="in", valueSchema=npw._schema_from_json_obj({"type": "any"}))],
+        dataInPorts=[F8DataPortSpec(name="in", valueSchema=schema_from_json_obj({"type": "any"}))],
         dataOutPorts=[],
     )
     node = _FakePortNode(spec, missing_locked=True)
@@ -290,7 +295,7 @@ def test_edit_command_allows_missing_locked_read_only_dialog(monkeypatch) -> Non
         def exec_(self) -> int:
             return QtWidgets.QDialog.Rejected
 
-    monkeypatch.setattr(npw, "_F8EditCommandDialog", _FakeCommandDialog)
+    monkeypatch.setattr(property_panel_commands, "_F8EditCommandDialog", _FakeCommandDialog)
 
     spec = F8ServiceSpec(
         serviceClass="f8.test",

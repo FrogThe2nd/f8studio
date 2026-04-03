@@ -5,10 +5,10 @@ import weakref
 from qtpy import QtCore, QtWidgets
 
 from f8pystudio.editor_assist.session import EditorSessionKey
-from f8pystudio.widgets import monaco_editor_dialog as monaco_dialog_module
-from f8pystudio.widgets.monaco_editor_dialog import MonacoEditorHostDialog, open_code_editor_window
-from f8pystudio.widgets.monaco_editor_page import MonacoEditorPageConfig, build_monaco_editor_html
-from f8pystudio.components.state_editors import F8CodeButtonEditor
+from f8pystudio.ui.support import monaco_editor_host as monaco_host_module
+from f8pystudio.ui.support.monaco_editor_host import MonacoEditorHostDialog, open_code_editor_window
+from f8pystudio.ui.support.monaco_editor_page import MonacoEditorPageConfig, build_monaco_editor_html
+from f8pystudio.ui.components.state_editors import F8CodeButtonEditor
 
 
 def _ensure_app() -> QtWidgets.QApplication:
@@ -51,7 +51,7 @@ class _FakeEditorWidget(QtWidgets.QWidget):
 
 def test_open_code_editor_window_reuses_existing_tab_for_same_session_key(monkeypatch) -> None:
     _ensure_app()
-    monaco_dialog_module._HOST_DIALOGS.clear()
+    monaco_host_module._HOST_DIALOGS.clear()
     monkeypatch.setattr(MonacoEditorHostDialog, "_create_editor_widget", lambda self, controller: _FakeEditorWidget(controller, self))
 
     session_key = EditorSessionKey.studio_node(graph_id="graph:alpha", node_id="nodeA", field_name="code")
@@ -81,9 +81,9 @@ def test_open_code_editor_window_reuses_existing_tab_for_same_session_key(monkey
 
 def test_host_keeps_sessions_isolated_across_tabs(monkeypatch) -> None:
     _ensure_app()
-    monaco_dialog_module._HOST_DIALOGS.clear()
+    monaco_host_module._HOST_DIALOGS.clear()
     monkeypatch.setattr(MonacoEditorHostDialog, "_create_editor_widget", lambda self, controller: _FakeEditorWidget(controller, self))
-    monkeypatch.setattr(monaco_dialog_module, "_ask_save_before_close", lambda parent, title=None: QtWidgets.QMessageBox.StandardButton.No)
+    monkeypatch.setattr(monaco_host_module, "_ask_save_before_close", lambda parent, title=None: QtWidgets.QMessageBox.StandardButton.No)
 
     key_a = EditorSessionKey.studio_node(graph_id="graph:beta", node_id="nodeA", field_name="code")
     key_b = EditorSessionKey.studio_node(graph_id="graph:beta", node_id="nodeB", field_name="code")
@@ -124,7 +124,7 @@ def test_host_keeps_sessions_isolated_across_tabs(monkeypatch) -> None:
 
 def test_open_code_editor_window_reuses_host_for_children_of_same_window(monkeypatch) -> None:
     _ensure_app()
-    monaco_dialog_module._HOST_DIALOGS.clear()
+    monaco_host_module._HOST_DIALOGS.clear()
     monkeypatch.setattr(
         MonacoEditorHostDialog,
         "_create_editor_widget",
@@ -164,7 +164,7 @@ def test_open_code_editor_window_reuses_host_for_children_of_same_window(monkeyp
 
 def test_code_button_widget_calls_persisted_setter_even_if_widget_destroyed(monkeypatch) -> None:
     _ensure_app()
-    monaco_dialog_module._HOST_DIALOGS.clear()
+    monaco_host_module._HOST_DIALOGS.clear()
     monkeypatch.setattr(
         MonacoEditorHostDialog,
         "_create_editor_widget",
@@ -183,8 +183,8 @@ def test_code_button_widget_calls_persisted_setter_even_if_widget_destroyed(monk
 
     widget._on_edit_clicked()
 
-    host_key = monaco_dialog_module._host_registry_key(widget)
-    host = monaco_dialog_module._HOST_DIALOGS[host_key]
+    host_key = monaco_host_module._host_registry_key(widget)
+    host = monaco_host_module._HOST_DIALOGS[host_key]
     editor_widget = host._sessions[session_key.as_id()]
 
     widget_ref = weakref.ref(widget)
@@ -203,7 +203,7 @@ def test_code_button_widget_calls_persisted_setter_even_if_widget_destroyed(monk
 
 def test_open_code_editor_window_recovers_if_cached_host_wrapper_is_invalid(monkeypatch) -> None:
     _ensure_app()
-    monaco_dialog_module._HOST_DIALOGS.clear()
+    monaco_host_module._HOST_DIALOGS.clear()
     monkeypatch.setattr(
         MonacoEditorHostDialog,
         "_create_editor_widget",
@@ -220,14 +220,14 @@ def test_open_code_editor_window_recovers_if_cached_host_wrapper_is_invalid(monk
         session_key=key_a,
     )
 
-    reg_key = monaco_dialog_module._host_registry_key(None)
+    reg_key = monaco_host_module._host_registry_key(None)
     host1.close()
     QtWidgets.QApplication.processEvents()
 
-    assert monaco_dialog_module._qt_object_is_valid(host1) is False
+    assert monaco_host_module._qt_object_is_valid(host1) is False
 
     # Simulate the bug: the Python wrapper is still referenced and ends up in the cache.
-    monaco_dialog_module._HOST_DIALOGS[reg_key] = host1
+    monaco_host_module._HOST_DIALOGS[reg_key] = host1
 
     key_b = EditorSessionKey.studio_node(graph_id="graph:invalid", node_id="nodeB", field_name="code")
     host2 = open_code_editor_window(
@@ -239,13 +239,13 @@ def test_open_code_editor_window_recovers_if_cached_host_wrapper_is_invalid(monk
         session_key=key_b,
     )
     assert isinstance(host2, MonacoEditorHostDialog)
-    assert monaco_dialog_module._qt_object_is_valid(host2) is True
+    assert monaco_host_module._qt_object_is_valid(host2) is True
     host2.close()
 
 
 def test_open_code_editor_window_replaces_clean_session_when_language_changes(monkeypatch) -> None:
     _ensure_app()
-    monaco_dialog_module._HOST_DIALOGS.clear()
+    monaco_host_module._HOST_DIALOGS.clear()
     monkeypatch.setattr(
         MonacoEditorHostDialog,
         "_create_editor_widget",

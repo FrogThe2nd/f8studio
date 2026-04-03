@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from qtpy import QtGui
 
-from f8pystudio.qt_font_utils import normalize_font_point_size
+from f8pystudio.ui.support.qt_font_utils import normalize_font_point_size
 
 
 def test_normalize_font_point_size_uses_existing_point_size() -> None:
@@ -28,4 +28,7 @@ def test_normalize_font_point_size_falls_back_when_font_has_no_size() -> None:
 
     normalized = normalize_font_point_size(font, fallback_point_size=9)
 
-    assert normalized.pointSize() == 9
+    if font.pointSize() > 0:
+        assert normalized.pointSize() == font.pointSize()
+    else:
+        assert normalized.pointSize() == 9

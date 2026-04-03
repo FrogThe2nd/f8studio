@@ -4,7 +4,7 @@ from qtpy import QtWidgets
 
 from f8pysdk import F8Command, F8ServiceSpec, F8SpecEditPolicy, editable_collection_edit_policy
 from f8pystudio.nodegraph.spec_mutations import delete_command
-from f8pystudio.widgets.node_property_panel import _F8EditCommandDialog, _F8SpecCommandEditor
+from f8pystudio.ui.widgets.node_property_panel import _F8EditCommandDialog, _F8SpecCommandEditor
 
 
 class _FakeModel:

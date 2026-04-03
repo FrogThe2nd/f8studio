@@ -11,7 +11,7 @@ from qtpy import QtWidgets
 
 from ..assets.common import JsonObject, json_object_from_value
 from ..session_migration import extract_layout as _extract_session_layout
-from ..ui_notifications import show_warning
+from ..ui.support.ui_notifications import show_warning
 from .insert_layout_utils import (
     GraphBounds,
     IdRemapPlan,

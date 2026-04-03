@@ -16,14 +16,14 @@ from qtpy import QtCore, QtGui, QtWidgets
 
 from f8pysdk.schema_helpers import schema_type
 
-from ...components.controls import parse_multiselect_pool, parse_select_pool
-from ...ui_control import parse_ui_control
-from ...components.state_builders import (
+from ...ui.components.controls import parse_multiselect_pool, parse_select_pool
+from ...ui.support.ui_control import parse_ui_control
+from ...ui.support.state_builders import (
     StateControlSpec,
     build_inline_control_binding,
     set_control_read_only,
 )
-from ...components.wave import (
+from ...ui.components.wave import (
     WAVE_PATTERN_EDITOR_DEPENDENCY_FIELDS,
     WAVE_PREVIEW_DEPENDENCY_FIELDS,
 )

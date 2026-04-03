@@ -5,8 +5,8 @@ from types import SimpleNamespace
 from qtpy import QtCore, QtWidgets
 
 from f8pystudio.nodegraph.node_model import F8StudioNodeModel
-import f8pystudio.widgets.node_property_panel.editor as editor_module
-from f8pystudio.widgets.node_property_panel.editor import (
+import f8pystudio.ui.widgets.node_property_panel.editor as editor_module
+from f8pystudio.ui.widgets.node_property_panel.editor import (
     F8StudioSingleNodePropertiesWidget,
     _NodePropEditorViewState,
 )

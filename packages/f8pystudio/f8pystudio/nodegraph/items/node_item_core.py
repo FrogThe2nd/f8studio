@@ -4,7 +4,7 @@ import enum
 from dataclasses import dataclass
 from typing import Any
 
-from ...ui_control import ui_control_language
+from ...ui.support.ui_control import ui_control_language
 
 @dataclass(frozen=True)
 class StateFieldInfo:

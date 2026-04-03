@@ -29,15 +29,15 @@ from ..components.component_repository import (
     upsert_component,
 )
 from ..components.component_sync import ComponentSyncClient
-from ...ui_icons import StudioIcon, icon_for
-from ...ui_notifications import show_info, show_warning
+from ...ui.support.ui_icons import StudioIcon, icon_for
+from ...ui.support.ui_notifications import show_info, show_warning
 from .project_asset_dialogs import (
     AssetVersionBrowserAction,
     AssetVersionBrowserDialog,
     AssetVersionBrowserItem,
     ProjectAssetMetaDialog,
 )
-from ...shared_ui.json_text_editor import attach_json_enhancements
+from ...ui.support.json_text_editor import attach_json_enhancements
 from .asset_cloud_account_menu import build_asset_account_menu, prompt_asset_cloud_sign_in
 
 logger = logging.getLogger(__name__)

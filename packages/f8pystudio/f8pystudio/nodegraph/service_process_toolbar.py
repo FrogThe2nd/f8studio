@@ -5,7 +5,7 @@ from typing import Any, Callable
 from qtpy import QtCore, QtWidgets
 
 from ..constants import STUDIO_SERVICE_ID
-from ..ui_icons import StudioIcon, icon_for
+from ..ui.support.ui_icons import StudioIcon, icon_for
 
 from .service_bridge_protocol import ServiceBridge
 

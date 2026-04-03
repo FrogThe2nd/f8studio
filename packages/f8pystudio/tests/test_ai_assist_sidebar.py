@@ -11,7 +11,7 @@ from qtpy import QtCore, QtWidgets
 
 from f8pysdk import F8OperatorSpec
 
-from f8pystudio.widgets.ai_assist_sidebar import AiAssistSidebarWidget
+from f8pystudio.ui.mainwin.ai_assist_sidebar import AiAssistSidebarWidget
 
 
 def _ensure_app() -> QtWidgets.QApplication:
@@ -113,7 +113,7 @@ def _make_sidebar(monkeypatch) -> tuple[AiAssistSidebarWidget, _FakeGraph]:
     temp_dir = Path(".tmp") / "test_ai_assist_sidebar" / uuid.uuid4().hex
     temp_dir.mkdir(parents=True, exist_ok=True)
     store_path = temp_dir / "ai_providers.json"
-    with patch("f8pystudio.widgets.ai_assist_sidebar.AiProviderStore._resolve_storage_path", return_value=store_path):
+    with patch("f8pystudio.ui.mainwin.ai_assist_sidebar.AiProviderStore._resolve_storage_path", return_value=store_path):
         widget = AiAssistSidebarWidget(studio_graph=graph)
     return widget, graph
 

@@ -4,7 +4,7 @@ import math
 
 from qtpy import QtCore, QtGui, QtWidgets
 
-from f8pystudio.components.controls import F8Dial
+from f8pystudio.ui.components.controls import F8Dial
 
 
 def _ensure_app() -> QtWidgets.QApplication:

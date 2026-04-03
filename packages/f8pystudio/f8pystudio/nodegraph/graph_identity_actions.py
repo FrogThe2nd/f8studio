@@ -10,7 +10,7 @@ from f8pysdk import F8OperatorSpec, F8ServiceSpec
 from f8pysdk.nats_naming import ensure_token
 
 from ..constants import STUDIO_SERVICE_ID
-from ..ui_notifications import show_warning
+from ..ui.support.ui_notifications import show_warning
 
 logger = logging.getLogger(__name__)
 

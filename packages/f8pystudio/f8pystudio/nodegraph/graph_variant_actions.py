@@ -12,7 +12,7 @@ from f8pysdk import F8OperatorSpec, F8ServiceSpec, F8StateAccess, F8VariantRecor
 from f8pysdk.spec_metadata import coerce_spec_payload
 
 from ..assets.common import JsonObject, json_object_from_value
-from ..ui_notifications import show_info, show_warning
+from ..ui.support.ui_notifications import show_info, show_warning
 from ..assets.variants.variant_compose import _VariantNode as _ComposeVariantNode
 from ..assets.variants.variant_compose import build_variant_record_from_node
 from ..assets.variants.variant_ids import build_variant_node_type
