@@ -35,12 +35,13 @@ from ...components.state_editors import (
     F8MultiSelectEditor,
     F8OptionComboEditor,
 )
-from ..studio_node_code_editor import get_node_text, set_node_text, studio_session_key
-from ..spec_mutations import (
+from ...nodegraph.node_text_fields import get_node_text, set_node_text, studio_session_key
+from ...nodegraph.spec_mutations import (
     add_state_field as _spec_add_state_field,
     delete_state_field as _spec_delete_state_field,
     replace_state_field as _spec_replace_state_field,
 )
+from ...shared_ui.node_spec_edit_dialogs import _F8EditStateFieldDialog
 from ..state_controls import (
     build_state_panel_control as _build_state_panel_control,
     effective_state_fields as _effective_state_fields,
@@ -49,14 +50,14 @@ from ..state_controls import (
     state_field_ui_control as _state_field_ui_control,
 )
 from ...ui_control import parse_ui_control
-from ..ui_override_mutations import (
+from ...nodegraph.ui_override_mutations import (
     find_base_state_field as _find_base_state_field,
     remove_list_order_entry as _remove_list_order_entry,
     rename_list_order_entry as _rename_list_order_entry,
     set_list_order_override as _set_list_order_override,
     set_state_field_ui_override as _set_state_field_ui_override,
 )
-from ..ui_state_mutations import (
+from ...nodegraph.ui_state_mutations import (
     set_state_field_global_hotkey_override as _set_state_field_global_hotkey_override,
     state_field_global_hotkey as _state_field_global_hotkey,
 )
@@ -76,7 +77,7 @@ from .common import (
 )
 from .containers import _F8LabeledStackContainer, _F8StateContainer, _F8StateStackContainer
 from .layer_membership_editor import F8LayerMembershipEditor
-from .ports import _F8EditStateFieldDialog, _F8SpecPortEditor
+from .ports import _F8SpecPortEditor
 
 
 logger = logging.getLogger(__name__)
@@ -109,7 +110,10 @@ def _adopt_widget_parent(widget: QtWidgets.QWidget, parent: QtWidgets.QWidget) -
 
 
 def _node_hotkey_controller(node: F8StudioBaseNode) -> Any | None:
-    graph = node.graph
+    try:
+        graph = node.graph
+    except AttributeError:
+        return None
     if not isinstance(graph, F8StudioGraph):
         return None
     return graph.global_hotkey_controller
@@ -865,18 +869,17 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
             )
 
         node_graph = node.graph
-        if not isinstance(node_graph, F8StudioGraph):
-            raise RuntimeError(f"Node '{str(node.id or '')}' is not attached to an F8StudioGraph.")
-        layer_widget = F8LayerMembershipEditor(node_graph=node_graph, parent=self)
-        layer_widget.set_name("f8_ui_state")
-        prop_window.add_widget(
-            name="f8_ui_state",
-            widget=layer_widget,
-            value=node.ui_state(),
-            label="Layers",
-            tooltip="Display-only graph layers for this node. A node can belong to multiple layers.",
-        )
-        layer_widget.value_changed.connect(self._on_property_changed)
+        if isinstance(node_graph, F8StudioGraph):
+            layer_widget = F8LayerMembershipEditor(node_graph=node_graph, parent=self)
+            layer_widget.set_name("f8_ui_state")
+            prop_window.add_widget(
+                name="f8_ui_state",
+                widget=layer_widget,
+                value=node.ui_state(),
+                label="Layers",
+                tooltip="Display-only graph layers for this node. A node can belong to multiple layers.",
+            )
+            layer_widget.value_changed.connect(self._on_property_changed)
 
         purpose_widget = _F8InlineCodeEditor(self, language="plaintext")
         purpose_widget.set_name("nodePurpose")

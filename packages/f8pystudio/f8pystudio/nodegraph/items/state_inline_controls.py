@@ -29,9 +29,9 @@ from ...components.wave import (
 )
 from ...editor_assist.protocol import editor_assist_context_for_field
 from ...editor_assist.workspace import EditorAssistContext
-from ...widgets.state_controls.pool_resolver import resolve_pool_items
-from ...widgets.studio_node_code_editor import get_node_text, resolve_node, set_node_text, studio_session_key
-from ...widgets.ui_state_mutations import set_state_inline_expanded, state_inline_expanded
+from ...nodegraph.state_pool_resolver import resolve_pool_items
+from ...nodegraph.node_text_fields import get_node_text, resolve_node, set_node_text, studio_session_key
+from ...nodegraph.ui_state_mutations import set_state_inline_expanded, state_inline_expanded
 from .node_item_core import StateFieldInfo, state_field_info
 from .proxy_widget_utils import dispose_detached_proxy_widget
 from .service_toolbar_host import F8ElideToolButton, F8ForceGlobalToolTipFilter

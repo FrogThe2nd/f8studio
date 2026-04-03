@@ -19,7 +19,7 @@ from f8pystudio.nodegraph.viz_operator_nodeitem import (
     F8StudioVizOperatorNodeItem,
     _required_non_state_port_region_height,
 )
-from f8pystudio.widgets.ui_override_mutations import apply_named_order, get_list_order_override
+from f8pystudio.nodegraph.ui_override_mutations import apply_named_order, get_list_order_override
 
 
 def test_required_non_state_port_region_height_zero_when_no_ports() -> None:

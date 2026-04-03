@@ -13,7 +13,7 @@ from f8pysdk import (
 )
 from f8pystudio.nodegraph.patch_hub_nodeitem import F8StudioPatchHubNodeItem
 from f8pystudio.nodegraph.service_basenode import F8StudioServiceNodeItem
-from f8pystudio.widgets.ui_override_mutations import apply_named_order, get_list_order_override
+from f8pystudio.nodegraph.ui_override_mutations import apply_named_order, get_list_order_override
 
 
 class _FakePort:

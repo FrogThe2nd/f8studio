@@ -17,6 +17,7 @@ from f8pysdk import (
     F8StateSpec,
     editable_collection_edit_policy,
 )
+from f8pystudio.shared_ui import node_spec_edit_dialogs
 from f8pystudio.widgets import node_property_panel as npw
 
 
@@ -126,7 +127,7 @@ class _FakeStateNode:
 
 def test_edit_schema_dialogs_pass_read_only_when_ui_only(monkeypatch) -> None:
     _ensure_app()
-    monkeypatch.setattr(npw, "SchemaBuilderDialog", _FakeSchemaDialog)
+    monkeypatch.setattr(node_spec_edit_dialogs, "SchemaBuilderDialog", _FakeSchemaDialog)
 
     data_port = npw._F8EditDataPortDialog(
         None,

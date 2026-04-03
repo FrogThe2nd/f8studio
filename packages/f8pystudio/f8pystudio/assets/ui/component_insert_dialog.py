@@ -15,7 +15,7 @@ from ..components.component_repository import list_component_entries
 from ..components.component_sync import ComponentSyncClient
 from ...ui_icons import StudioIcon, icon_for
 from ...ui_notifications import show_warning
-from ...widgets.json_text_editor import attach_json_enhancements
+from ...shared_ui.json_text_editor import attach_json_enhancements
 from .asset_cloud_account_menu import build_asset_account_menu
 
 logger = logging.getLogger(__name__)

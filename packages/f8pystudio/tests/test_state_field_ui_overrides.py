@@ -4,7 +4,7 @@ from f8pysdk import F8ServiceSpec, F8StateAccess, F8StateSpec
 from f8pysdk.msgspec_codec import copy_model
 from f8pysdk.schema_helpers import string_schema
 
-from f8pystudio.widgets.ui_override_mutations import (
+from f8pystudio.nodegraph.ui_override_mutations import (
     apply_named_order,
     remove_list_order_entry,
     rename_list_order_entry,

@@ -37,7 +37,7 @@ from .project_asset_dialogs import (
     AssetVersionBrowserItem,
     ProjectAssetMetaDialog,
 )
-from ...widgets.json_text_editor import attach_json_enhancements
+from ...shared_ui.json_text_editor import attach_json_enhancements
 from .asset_cloud_account_menu import build_asset_account_menu, prompt_asset_cloud_sign_in
 
 logger = logging.getLogger(__name__)

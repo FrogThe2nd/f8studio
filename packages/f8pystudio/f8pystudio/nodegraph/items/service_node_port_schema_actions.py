@@ -11,8 +11,8 @@ from f8pysdk.schema_helpers import schema_type
 from f8pysdk.command_state import parse_command_port_name
 from f8pysdk.spec_edit_policy import can_edit_existing as _policy_can_edit_existing
 
-from ...widgets.schema_builder import SchemaBuilderDialog, schema_from_json_obj as _schema_from_json_obj
-from ...widgets.state_controls.schema_introspect import (
+from ...shared_ui.schema_builder_dialog import SchemaBuilderDialog, schema_from_json_obj as _schema_from_json_obj
+from ...nodegraph.state_schema import (
     schema_enum_items as _shared_schema_enum_items,
     schema_numeric_range as _shared_schema_numeric_range,
 )
@@ -458,8 +458,8 @@ def open_data_port_editor_dialog(node_item: Any, *, is_in: bool, port_name: str)
     ui_only = bool(not editable)
     read_only = bool(missing_locked)
 
-    from ...widgets.node_property_panel import _F8EditDataPortDialog
-    from ...widgets.ui_override_mutations import (
+    from ...shared_ui.node_spec_edit_dialogs import _F8EditDataPortDialog
+    from ...nodegraph.ui_override_mutations import (
         base_data_port_show_on_node as _base_data_port_show_on_node,
         set_data_port_show_on_node_override as _set_data_port_show_on_node_override,
     )
@@ -532,13 +532,13 @@ def open_state_field_editor_dialog(node_item: Any, *, field_name: str) -> None:
     ui_only = bool(not editable)
     read_only = bool(missing_locked)
 
-    from ...widgets.node_property_panel import _F8EditStateFieldDialog
-    from ...widgets.spec_mutations import replace_state_field as _spec_replace_state_field
-    from ...widgets.ui_override_mutations import (
+    from ...shared_ui.node_spec_edit_dialogs import _F8EditStateFieldDialog
+    from ...nodegraph.spec_mutations import replace_state_field as _spec_replace_state_field
+    from ...nodegraph.ui_override_mutations import (
         find_base_state_field as _find_base_state_field,
         set_state_field_ui_override as _set_state_field_ui_override,
     )
-    from ...widgets.ui_state_mutations import (
+    from ...nodegraph.ui_state_mutations import (
         set_state_field_global_hotkey_override as _set_state_field_global_hotkey_override,
         state_field_global_hotkey as _state_field_global_hotkey,
     )

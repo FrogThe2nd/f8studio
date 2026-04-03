@@ -123,11 +123,11 @@ from .service_spec_sync import (
     state_widget_for_schema as _state_widget_for_schema_impl,
     sync_from_spec as _sync_from_spec_impl,
 )
-from ..widgets.state_controls.schema_introspect import (
+from .state_schema import (
     schema_enum_items as _shared_schema_enum_items,
     schema_numeric_range as _shared_schema_numeric_range,
 )
-from ..widgets.schema_builder import SchemaBuilderDialog, schema_from_json_obj as _schema_from_json_obj
+from ..shared_ui.schema_builder_dialog import SchemaBuilderDialog, schema_from_json_obj as _schema_from_json_obj
 
 logger = logging.getLogger(__name__)
 

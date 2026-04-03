@@ -11,7 +11,7 @@ from NodeGraphQt.errors import NodeWidgetError
 
 from f8pysdk import F8OperatorSpec, F8ServiceSpec
 from f8pysdk.spec_metadata import coerce_spec_payload
-from ..widgets.ui_override_mutations import apply_named_order, get_list_order_override
+from .ui_override_mutations import apply_named_order, get_list_order_override
 
 from .node_model import F8StudioNodeModel
 from .layers import extract_node_layer_ids_from_ui_state, set_node_layer_ids_in_ui_state

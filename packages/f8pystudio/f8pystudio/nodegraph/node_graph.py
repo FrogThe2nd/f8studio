@@ -76,6 +76,7 @@ class F8StudioGraph(
         self._duplicate_menu_node_types: set[str] = set()
         self._node_docs_menu_node_types: set[str] = set()
         self._graph_context_menu_commands_installed = False
+        self._node_docs_dialog_opener: Callable[[Any, str, str], None] | None = None
         self._component_insert_dialog_opener: Callable[[tuple[float, float] | None], None] | None = None
 
         self.property_changed.connect(self._on_property_changed)  # type: ignore[attr-defined]
@@ -130,6 +131,21 @@ class F8StudioGraph(
         opener: Callable[[tuple[float, float] | None], None] | None,
     ) -> None:
         self._component_insert_dialog_opener = opener
+
+    def set_node_docs_dialog_opener(
+        self,
+        opener: Callable[[Any, str, str], None] | None,
+    ) -> None:
+        self._node_docs_dialog_opener = opener
+
+    def open_node_docs_dialog(self, *, spec: Any, node_id: str, node_name: str) -> None:
+        opener = self._node_docs_dialog_opener
+        if opener is None:
+            parent = self._notification_parent()
+            if parent is not None:
+                show_warning(parent, "Node docs unavailable", "No node docs dialog handler is configured.")
+            return
+        opener(spec, node_id, node_name)
 
     def open_component_insert_dialog(self, *, scene_pos: tuple[float, float] | None = None) -> None:
         opener = self._component_insert_dialog_opener

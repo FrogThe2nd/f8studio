@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from f8pysdk import F8ServiceSpec
 from qtpy import QtGui, QtWidgets
 
-from f8pystudio.widgets.json_text_editor import (
+from f8pystudio.shared_ui.json_text_editor import (
     BracketMatch,
     attach_json_enhancements,
     compute_line_end_depth,

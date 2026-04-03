@@ -28,7 +28,7 @@ from ..variants.variant_repository import (
 )
 from ..variants.variant_events import subscribe_variants_changed
 from ..variants.variant_sync import VariantSyncClient
-from ...widgets.json_text_editor import attach_json_enhancements
+from ...shared_ui.json_text_editor import attach_json_enhancements
 from .asset_cloud_account_menu import build_asset_account_menu, prompt_asset_cloud_sign_in
 
 logger = logging.getLogger(__name__)

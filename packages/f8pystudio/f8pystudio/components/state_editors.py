@@ -20,7 +20,7 @@ from ..editor_assist.workspace import EditorAssistContext
 from ..ui_notifications import show_warning
 from ..ui_icons import StudioIcon, icon_for
 from .controls import F8Dial, F8ImageB64Editor, F8MultiSelect, F8OptionCombo, F8Switch, F8ValueBar
-from ..widgets.json_text_editor import attach_json_enhancements
+from ..shared_ui.json_text_editor import attach_json_enhancements
 from ..widgets.monaco_editor_dialog import open_code_editor_window
 
 logger = logging.getLogger(__name__)

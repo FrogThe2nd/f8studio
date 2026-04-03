@@ -10,8 +10,8 @@ from ...editor_assist.protocol import editor_assist_context_for_field
 from ...editor_assist.session import EditorSessionKey
 from ...editor_assist.workspace import EditorAssistContext
 from .descriptors import ControlBuildContext
-from .pool_resolver import build_node_pool_resolver, parse_multiselect_pool, parse_select_pool
-from .schema_introspect import (
+from ...nodegraph.state_pool_resolver import build_node_pool_resolver, parse_multiselect_pool, parse_select_pool
+from ...nodegraph.state_schema import (
     schema_enum_items,
     schema_numeric_range,
     schema_type_any,

@@ -14,7 +14,7 @@ from f8pysdk.generated import (
     F8NumberTypeSchema,
     F8StringTypeSchema,
 )
-from ..ui_state_mutations import state_field_global_hotkey as _state_field_global_hotkey
+from .ui_state_mutations import state_field_global_hotkey as _state_field_global_hotkey
 
 
 def effective_state_fields(node: Any) -> list[Any]:

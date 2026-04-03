@@ -14,7 +14,7 @@ from ..ui_notifications import show_warning
 from ..assets.variants.variant_ids import build_variant_node_type, is_variant_node_type, parse_variant_node_type
 from ..assets.variants.variant_repository import delete_variant, list_variants_for_base, variant_exists
 from ..assets.variants.variant_events import subscribe_variants_changed
-from .node_docs_dialog import show_node_docs_dialog
+from ..shared_ui.node_docs_dialog import show_node_docs_dialog
 
 
 class _F8StudioNodesTreeWidget(NodesTreeWidget):

@@ -18,6 +18,7 @@ from ..ui_bus import UiCommand, UiCommandApplier
 from ..ui_icons import StudioIcon, icon_for
 from ..global_hotkeys.controller import ControlPanelGlobalHotkeyController
 from ..assets.variants.variant_sync import VariantSyncClient
+from ..shared_ui.node_docs_dialog import show_node_docs_dialog
 from .global_hotkey_registry_dialog import GlobalHotkeyRegistryDialog
 from .layers_panel import LayersPanelWidget
 from .node_property_panel import F8StudioSingleNodePropertiesWidget
@@ -211,6 +212,7 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         self.studio_graph.set_global_hotkey_controller(self._global_hotkey_controller)
         self.studio_graph.property_changed.connect(self._on_ui_property_changed)  # type: ignore[attr-defined]
         self.studio_graph.nodes_deleted.connect(self._on_graph_nodes_deleted)  # type: ignore[attr-defined]
+        self.studio_graph.set_node_docs_dialog_opener(self._open_node_docs_dialog_for_graph)
         self.studio_graph.set_component_insert_dialog_opener(self._open_component_insert_dialog_for_graph)
 
         QtCore.QTimer.singleShot(0, self._auto_load_project)
@@ -928,6 +930,9 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
             studio_graph=self.studio_graph,
             insert_scene_pos=scene_pos,
         )
+
+    def _open_node_docs_dialog_for_graph(self, spec: Any, node_id: str, node_name: str) -> None:
+        show_node_docs_dialog(parent=self, spec=spec, node_id=node_id, node_name=node_name)
 
     @QtCore.Slot()
     def _on_export_published_session_action(self) -> None:

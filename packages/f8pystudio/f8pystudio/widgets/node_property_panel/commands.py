@@ -22,8 +22,8 @@ from ...command_ui_protocol import CommandUiHandler, CommandUiSource
 from ...components.controls import F8OptionCombo, F8Switch, F8ValueBar
 from ...ui_notifications import show_warning
 from ...ui_icons import StudioIcon
-from ..schema_builder import SchemaBuilderDialog
-from ..spec_mutations import (
+from ...shared_ui.schema_builder_dialog import SchemaBuilderDialog
+from ...nodegraph.spec_mutations import (
     add_command as _spec_add_command,
     delete_command as _spec_delete_command,
     replace_command as _spec_replace_command,
@@ -33,7 +33,7 @@ from ..state_controls import (
     schema_numeric_range as _schema_numeric_range,
     schema_type_any as _schema_type,
 )
-from ..ui_override_mutations import (
+from ...nodegraph.ui_override_mutations import (
     base_command_show_on_node as _base_command_show_on_node,
     remove_list_order_entry as _remove_list_order_entry,
     rename_list_order_entry as _rename_list_order_entry,

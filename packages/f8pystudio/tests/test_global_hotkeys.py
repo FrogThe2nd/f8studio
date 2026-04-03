@@ -26,7 +26,7 @@ from f8pystudio.global_hotkeys.models import GlobalHotkeyBinding
 from f8pystudio.global_hotkeys.parser import parse_global_hotkey
 from f8pystudio.nodegraph.node_model import F8StudioNodeModel
 from f8pystudio.widgets import node_property_panel as npw
-from f8pystudio.widgets.ui_state_mutations import (
+from f8pystudio.nodegraph.ui_state_mutations import (
     set_state_field_global_hotkey_override,
     state_field_global_hotkey,
 )

@@ -13,13 +13,13 @@ from qtpy import QtCore, QtWidgets
 from ...editor_assist.protocol import editor_assist_context_for_field
 from ...editor_assist.workspace import EditorAssistContext
 from ...ui_icons import StudioIcon, icon_for
-from ..json_text_editor import attach_json_enhancements
-from ..schema_builder import (
+from ...shared_ui.json_text_editor import attach_json_enhancements
+from ...shared_ui.schema_builder_dialog import (
     schema_from_json_obj as _schema_from_json_obj_strict,
     schema_to_json_obj as _schema_to_json_obj_strict,
 )
 from ..state_controls.readonly_policy import set_widget_read_only as _set_widget_read_only
-from ..studio_node_code_editor import resolve_node
+from ...nodegraph.node_text_fields import resolve_node
 from ..state_controls import schema_type_any as _schema_type
 
 

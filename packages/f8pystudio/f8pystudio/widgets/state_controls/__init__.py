@@ -6,9 +6,9 @@ from f8pysdk import F8StateAccess
 
 from .descriptors import ControlBuildContext, ControlBuildResult, StateFieldDescriptor
 from .factory import build_state_panel_control as _build_state_panel_control
-from .pool_resolver import parse_multiselect_pool, parse_select_pool, resolve_pool_items
+from ...nodegraph.state_pool_resolver import parse_multiselect_pool, parse_select_pool, resolve_pool_items
 from .readonly_policy import set_widget_read_only
-from .schema_introspect import (
+from ...nodegraph.state_schema import (
     effective_state_fields,
     schema_enum_items,
     schema_numeric_range,
