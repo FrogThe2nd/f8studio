@@ -1,6 +1,7 @@
-import { nowIso } from './auth.js';
+import { escapeLikePattern, isPlainObject, nowIso, nullableString, stringOrDefault, toBoolean } from './utils.js';
 
 const PAGE_SIZE = 100;
+const MAX_CONTENT_JSON_BYTES = 2 * 1024 * 1024;
 const COMPONENT_SCHEMA_VERSION = 'f8studio-session/1';
 
 export class AssetConflictError extends Error {
@@ -13,6 +14,7 @@ export class AssetConflictError extends Error {
 
 export class AssetPermissionError extends Error {}
 export class AssetNotFoundError extends Error {}
+export class AssetValidationError extends Error {}
 
 export class AssetRepository {
   constructor(db) {
@@ -23,8 +25,8 @@ export class AssetRepository {
     const filters = ['1 = 1'];
     const bindings = [];
     if (String(query || '').trim()) {
-      const match = `%${String(query).trim().toLowerCase()}%`;
-      filters.push('(LOWER(COALESCE(u.username, \'\')) LIKE ? OR LOWER(COALESCE(u.displayUsername, u.name, \'\')) LIKE ? OR LOWER(u.email) LIKE ?)');
+      const match = `%${escapeLikePattern(String(query).trim().toLowerCase())}%`;
+      filters.push("(LOWER(COALESCE(u.username, '')) LIKE ? ESCAPE '\\' OR LOWER(COALESCE(u.displayUsername, u.name, '')) LIKE ? ESCAPE '\\' OR LOWER(u.email) LIKE ? ESCAPE '\\')");
       bindings.push(match, match, match);
     }
     const start = parseCursor(cursor);
@@ -117,7 +119,7 @@ export class AssetRepository {
     const normalizedAssetType = String(assetType || '').trim();
     if (normalizedAssetType) {
       if (normalizedAssetType !== 'variant' && normalizedAssetType !== 'component') {
-        throw new Error('assetType must be variant or component');
+        throw new AssetValidationError('assetType must be variant or component');
       }
       filters.push('h.asset_type = ?');
       bindings.push(normalizedAssetType);
@@ -131,8 +133,8 @@ export class AssetRepository {
       filters.push('h.deleted_at IS NULL');
     }
     if (String(query || '').trim()) {
-      const match = `%${String(query).trim().toLowerCase()}%`;
-      filters.push('(LOWER(h.name) LIKE ? OR LOWER(h.description) LIKE ? OR LOWER(h.tags_json) LIKE ?)');
+      const match = `%${escapeLikePattern(String(query).trim().toLowerCase())}%`;
+      filters.push("(LOWER(h.name) LIKE ? ESCAPE '\\' OR LOWER(h.description) LIKE ? ESCAPE '\\' OR LOWER(h.tags_json) LIKE ? ESCAPE '\\')");
       bindings.push(match, match, match);
     }
     const start = parseCursor(cursor);
@@ -284,8 +286,8 @@ export class AssetRepository {
     });
   }
 
-  async listVariantVersions({ variantId, userId }) {
-    return this._listAssetVersions({ assetId: variantId, assetType: 'variant', userId });
+  async listVariantVersions({ variantId, userId, cursor }) {
+    return this._listAssetVersions({ assetId: variantId, assetType: 'variant', userId, cursor });
   }
 
   async getVariantVersion({ variantId, versionNumber, userId }) {
@@ -335,8 +337,8 @@ export class AssetRepository {
     });
   }
 
-  async listComponentVersions({ componentId, userId }) {
-    return this._listAssetVersions({ assetId: componentId, assetType: 'component', userId });
+  async listComponentVersions({ componentId, userId, cursor }) {
+    return this._listAssetVersions({ assetId: componentId, assetType: 'component', userId, cursor });
   }
 
   async getComponentVersion({ componentId, versionNumber, userId }) {
@@ -370,8 +372,9 @@ export class AssetRepository {
   async _createAsset({ normalized, userId }) {
     const existing = await this._findAssetHeadRow(normalized.assetId, { includeDeleted: false });
     if (existing !== null) {
-      throw new Error('assetId already exists');
+      throw new AssetValidationError('assetId already exists');
     }
+    enforceContentJsonSizeLimit(normalized.contentJson);
     await this._db.prepare(
       `INSERT INTO asset_heads (
          asset_id, asset_type, owner_user_id, visibility, latest_revision, latest_version_number,
@@ -414,6 +417,7 @@ export class AssetRepository {
     if (String(normalized.revision || '') !== String(existing.latest_revision || '')) {
       throw new AssetConflictError({ assetId: existing.asset_id, revision: String(existing.latest_revision) });
     }
+    enforceContentJsonSizeLimit(normalized.contentJson);
     const nextVersionNumber = Number(existing.latest_version_number) + 1;
     const nextRevision = nextRevisionForAsset(String(existing.latest_revision));
     await this._db.prepare(
@@ -498,8 +502,8 @@ export class AssetRepository {
     const bindings = [assetType];
     applyVisibilityOwnerFilters({ filters, bindings, userId, visibility, owner });
     if (query) {
-      const match = `%${String(query).trim().toLowerCase()}%`;
-      filters.push('(LOWER(h.name) LIKE ? OR LOWER(h.description) LIKE ? OR LOWER(h.tags_json) LIKE ? OR LOWER(COALESCE(h.base_node_type, \'\')) LIKE ?)');
+      const match = `%${escapeLikePattern(String(query).trim().toLowerCase())}%`;
+      filters.push("(LOWER(h.name) LIKE ? ESCAPE '\\' OR LOWER(h.description) LIKE ? ESCAPE '\\' OR LOWER(h.tags_json) LIKE ? ESCAPE '\\' OR LOWER(COALESCE(h.base_node_type, '')) LIKE ? ESCAPE '\\')");
       bindings.push(match, match, match, match);
     }
     if (assetType === 'variant') {
@@ -561,7 +565,7 @@ export class AssetRepository {
     };
   }
 
-  async _listAssetVersions({ assetId, assetType, userId }) {
+  async _listAssetVersions({ assetId, assetType, userId, cursor }) {
     const head = await this._findAssetHeadRow(assetId);
     if (head === null || String(head.asset_type) !== assetType) {
       throw new AssetNotFoundError(`Asset ${assetId} not found`);
@@ -570,15 +574,19 @@ export class AssetRepository {
     if (String(head.visibility) !== 'public' && String(head.owner_user_id) !== String(userId || '')) {
       throw new AssetPermissionError('forbidden');
     }
+    const start = parseCursor(cursor);
     const result = await this._db.prepare(
-      `SELECT asset_id, version_number, revision, content_json, created_at, created_by_user_id, change_summary
-       FROM asset_versions WHERE asset_id = ? ORDER BY version_number DESC`,
+      `SELECT asset_id, version_number, revision, created_at, created_by_user_id, change_summary
+       FROM asset_versions WHERE asset_id = ? ORDER BY version_number DESC
+       LIMIT ? OFFSET ?`,
     )
-      .bind(String(assetId))
+      .bind(String(assetId), PAGE_SIZE + 1, start)
       .all();
     const rows = Array.isArray(result.results) ? result.results : [];
+    const hasMore = rows.length > PAGE_SIZE;
+    const items = hasMore ? rows.slice(0, PAGE_SIZE) : rows;
     return {
-      versions: rows.map((row) => ({
+      versions: items.map((row) => ({
         assetId: String(row.asset_id),
         assetType,
         versionNumber: Number(row.version_number),
@@ -587,6 +595,7 @@ export class AssetRepository {
         createdByUserId: String(row.created_by_user_id),
         changeSummary: row.change_summary === null ? null : String(row.change_summary),
       })),
+      nextCursor: hasMore ? String(start + PAGE_SIZE) : null,
     };
   }
 
@@ -741,6 +750,24 @@ export class AssetRepository {
     return row === null ? null : row;
   }
 
+  async hasAssets(userId) {
+    const row = await this._db.prepare(
+      'SELECT COUNT(*) AS count FROM asset_heads WHERE owner_user_id = ?',
+    )
+      .bind(String(userId))
+      .first();
+    return Number(row?.count || 0) > 0;
+  }
+
+}
+
+function enforceContentJsonSizeLimit(contentJson) {
+  const byteLength = new TextEncoder().encode(String(contentJson)).length;
+  if (byteLength > MAX_CONTENT_JSON_BYTES) {
+    throw new AssetValidationError(
+      `content exceeds maximum allowed size (${Math.round(byteLength / 1024)}KB, limit ${Math.round(MAX_CONTENT_JSON_BYTES / 1024)}KB)`,
+    );
+  }
 }
 
 function normalizeVariantCreatePayload(payload, user) {
@@ -865,11 +892,11 @@ function normalizeComponentUpdatePayload(payload, existing, user) {
 
 function normalizeVariantRecord(record, { expectedVariantId }) {
   if (!isPlainObject(record)) {
-    throw new Error('record is required');
+    throw new AssetValidationError('record is required');
   }
   const variantId = requireNonEmptyString(record.variantId, 'record.variantId is required');
   if (expectedVariantId && variantId !== expectedVariantId) {
-    throw new Error('record.variantId must match the request path');
+    throw new AssetValidationError('record.variantId must match the request path');
   }
   const kind = requireNonEmptyString(record.kind, 'record.kind is required');
   const baseNodeType = requireNonEmptyString(record.baseNodeType, 'record.baseNodeType is required');
@@ -877,7 +904,7 @@ function normalizeVariantRecord(record, { expectedVariantId }) {
   const name = requireNonEmptyString(record.name, 'record.name is required');
   const tags = normalizeTags(record.tags);
   if (!isPlainObject(record.spec)) {
-    throw new Error('record.spec must be a JSON object');
+    throw new AssetValidationError('record.spec must be a JSON object');
   }
   return {
     variantId,
@@ -896,26 +923,26 @@ function normalizeVariantRecord(record, { expectedVariantId }) {
 
 function normalizeComponentRecord(record, { expectedComponentId }) {
   if (!isPlainObject(record)) {
-    throw new Error('record is required');
+    throw new AssetValidationError('record is required');
   }
   const componentId = requireNonEmptyString(record.componentId, 'record.componentId is required');
   if (expectedComponentId && componentId !== expectedComponentId) {
-    throw new Error('record.componentId must match the request path');
+    throw new AssetValidationError('record.componentId must match the request path');
   }
   const schemaVersion = requireNonEmptyString(record.schemaVersion, 'record.schemaVersion is required');
   if (schemaVersion !== COMPONENT_SCHEMA_VERSION) {
-    throw new Error(`record.schemaVersion must be ${COMPONENT_SCHEMA_VERSION}`);
+    throw new AssetValidationError(`record.schemaVersion must be ${COMPONENT_SCHEMA_VERSION}`);
   }
   if (!isPlainObject(record.content)) {
-    throw new Error('record.content must be a JSON object');
+    throw new AssetValidationError('record.content must be a JSON object');
   }
   const contentSchemaVersion = requireNonEmptyString(record.content.schemaVersion, 'record.content.schemaVersion is required');
   if (contentSchemaVersion !== COMPONENT_SCHEMA_VERSION) {
-    throw new Error(`record.content.schemaVersion must be ${COMPONENT_SCHEMA_VERSION}`);
+    throw new AssetValidationError(`record.content.schemaVersion must be ${COMPONENT_SCHEMA_VERSION}`);
   }
   const layout = record.content.layout;
   if (!isPlainObject(layout)) {
-    throw new Error('record.content.layout must be a JSON object');
+    throw new AssetValidationError('record.content.layout must be a JSON object');
   }
   return {
     componentId,
@@ -1064,7 +1091,7 @@ function normalizeVisibility(value) {
 function normalizeAssetType(value) {
   const text = String(value || '').trim();
   if (text !== 'variant' && text !== 'component') {
-    throw new Error('assetType must be variant or component');
+    throw new AssetValidationError('assetType must be variant or component');
   }
   return text;
 }
@@ -1077,7 +1104,7 @@ function normalizeOwnerFilter(value) {
   if (text === 'me' || text === 'subscribed' || text === 'public') {
     return text;
   }
-  throw new Error('owner must be me, subscribed, or public');
+  throw new AssetValidationError('owner must be me, subscribed, or public');
 }
 
 function normalizeVisibilityFilter(value) {
@@ -1088,13 +1115,13 @@ function normalizeVisibilityFilter(value) {
   if (text === 'public' || text === 'private') {
     return text;
   }
-  throw new Error('visibility must be public or private');
+  throw new AssetValidationError('visibility must be public or private');
 }
 
 function normalizeVersionNumber(value) {
   const versionNumber = Number.parseInt(String(value), 10);
   if (!Number.isFinite(versionNumber) || versionNumber <= 0) {
-    throw new Error('versionNumber must be a positive integer');
+    throw new AssetValidationError('versionNumber must be a positive integer');
   }
   return versionNumber;
 }
@@ -1153,8 +1180,13 @@ function stableJson(value) {
 function parseJsonObject(value) {
   try {
     const parsed = JSON.parse(String(value || '{}'));
-    return isPlainObject(parsed) ? parsed : {};
-  } catch (error) {
+    if (!isPlainObject(parsed)) {
+      console.warn('parseJsonObject: expected object, got', typeof parsed);
+      return {};
+    }
+    return parsed;
+  } catch (parseError) {
+    console.warn('parseJsonObject: corrupt JSON content_json', parseError.message);
     return {};
   }
 }
@@ -1166,32 +1198,8 @@ function deepCloneJson(value) {
 function requireNonEmptyString(value, message) {
   const text = String(value || '').trim();
   if (!text) {
-    throw new Error(message);
+    throw new AssetValidationError(message);
   }
   return text;
 }
 
-function stringOrDefault(value, fallback) {
-  const text = String(value || '').trim();
-  return text || fallback;
-}
-
-function nullableString(value) {
-  if (value === null || value === undefined) {
-    return null;
-  }
-  const text = String(value).trim();
-  return text ? text : null;
-}
-
-function isPlainObject(value) {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
-
-function toBoolean(value) {
-  if (typeof value === 'boolean') {
-    return value;
-  }
-  const text = String(value || '').trim().toLowerCase();
-  return text === '1' || text === 'true' || text === 'yes';
-}

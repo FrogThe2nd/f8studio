@@ -4,9 +4,11 @@ import { hashPassword } from 'better-auth/crypto';
 import { admin, username } from 'better-auth/plugins';
 import { drizzle } from 'drizzle-orm/d1';
 import { Hono } from 'hono';
+import { cors } from 'hono/cors';
 
 import { authSchema } from './auth_schema.js';
-import { AssetConflictError, AssetNotFoundError, AssetPermissionError, AssetRepository } from './repository.js';
+import { AssetConflictError, AssetNotFoundError, AssetPermissionError, AssetValidationError, AssetRepository } from './repository.js';
+import { isPlainObject, stringOrDefault, toBoolean } from './utils.js';
 
 const AUTH_BASE_PATH = '/api/auth';
 const CONSOLE_BASE_PATH = '/console';
@@ -27,20 +29,28 @@ const RESERVED_IDENTITY_NAMES = new Set([
   'official',
 ]);
 const bootstrapAdminInitByDb = new WeakMap();
+const authInstanceByDb = new WeakMap();
 
 export function createApp() {
   const app = new Hono();
 
+  app.use('*', cors({
+    origin: (origin, c) => resolveAllowedOrigin(c.env, origin),
+    credentials: true,
+    allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'HEAD'],
+    allowHeaders: ['Content-Type'],
+  }));
+
   app.all(`${AUTH_BASE_PATH}/*`, async (c) => {
     validateEnv(c.env);
-    const auth = createAuth(c.env, c.req.raw);
+    const auth = getOrCreateAuth(c.env, c.req.raw);
     await ensureBootstrapAdmin({ env: c.env });
     return auth.handler(c.req.raw);
   });
 
   app.use('/v1/*', async (c, next) => {
     validateEnv(c.env);
-    const auth = createAuth(c.env, c.req.raw);
+    const auth = getOrCreateAuth(c.env, c.req.raw);
     await ensureBootstrapAdmin({ env: c.env });
     c.set('auth', auth);
     c.set('repo', new AssetRepository(c.env.DB));
@@ -470,7 +480,7 @@ function createAuth(env, request) {
     secret: getAuthSecret(env),
     baseURL,
     basePath: AUTH_BASE_PATH,
-    trustedOrigins: [requestUrl.origin, new URL(baseURL).origin],
+    trustedOrigins: [new URL(baseURL).origin],
     database: drizzleAdapter(db, {
       provider: 'sqlite',
       schema: authSchema,
@@ -529,6 +539,21 @@ function createAuth(env, request) {
       }),
     ],
   });
+}
+
+function getOrCreateAuth(env, request) {
+  const db = env?.DB;
+  if (db && typeof db === 'object') {
+    const cached = authInstanceByDb.get(db);
+    if (cached) {
+      return cached;
+    }
+  }
+  const auth = createAuth(env, request);
+  if (db && typeof db === 'object') {
+    authInstanceByDb.set(db, auth);
+  }
+  return auth;
 }
 
 async function ensureBootstrapAdmin({ env }) {
@@ -677,12 +702,8 @@ async function requireManagementUser({ auth, request }) {
 }
 
 async function assertUserHasNoAssets(repo, userId) {
-  const countRow = await repo._db.prepare(
-    'SELECT COUNT(*) AS count FROM asset_heads WHERE owner_user_id = ?',
-  )
-    .bind(String(userId))
-    .first();
-  if (Number(countRow?.count || 0) > 0) {
+  const ownsAssets = await repo.hasAssets(userId);
+  if (ownsAssets) {
     throw new HttpError(409, 'cannot delete user with existing assets');
   }
 }
@@ -735,6 +756,26 @@ function resolveAuthBaseUrl(env, requestUrl) {
     return configured;
   }
   return requestUrl.origin;
+}
+
+function resolveAllowedOrigin(env, origin) {
+  const baseUrl = String(env.AUTH_BASE_URL || '').trim();
+  if (!baseUrl) {
+    return origin || '*';
+  }
+  const primaryOrigin = new URL(baseUrl).origin;
+  if (!origin || origin === primaryOrigin) {
+    return primaryOrigin;
+  }
+  const extra = String(env.CORS_ALLOWED_ORIGINS || '').trim();
+  if (extra) {
+    for (const allowed of extra.split(',')) {
+      if (allowed.trim() === origin) {
+        return origin;
+      }
+    }
+  }
+  return primaryOrigin;
 }
 
 function validateIdentityName(value) {
@@ -835,7 +876,7 @@ function handleError(error) {
     return jsonResponse(apiError.status, apiError.payload);
   }
   if (error instanceof AssetPermissionError) {
-    return jsonResponse(403, { message: error.message || 'forbidden' });
+    return jsonResponse(403, { message: 'forbidden' });
   }
   if (error instanceof AssetNotFoundError) {
     return jsonResponse(404, { message: 'asset not found' });
@@ -848,24 +889,19 @@ function handleError(error) {
       remoteRevision: error.revision,
     });
   }
+  if (error instanceof AssetValidationError) {
+    return jsonResponse(400, { message: error.message });
+  }
+  if (error instanceof Error && isUniqueConstraintError(error)) {
+    return jsonResponse(409, { message: 'duplicate resource' });
+  }
   if (error instanceof Error && error.message) {
-    if (isUniqueConstraintError(error)) {
+    if (error.message.includes('already exists') || error.message.includes('duplicate')) {
       return jsonResponse(409, { message: 'duplicate resource' });
     }
-    if (error.message.includes('already exists') || error.message.includes('duplicate')) {
-      return jsonResponse(409, { message: error.message });
-    }
-    if (
-      error.message.includes('required') ||
-      error.message.includes('must be') ||
-      error.message.includes('not found') ||
-      error.message.includes('reserved')
-    ) {
-      return jsonResponse(400, { message: error.message });
-    }
   }
-  console.error('Unhandled unified asset worker error', error);
-  return jsonResponse(500, { message: `internal error: ${error?.name || 'Error'}: ${error?.message || error}` });
+  console.error('Unhandled asset worker error', error);
+  return jsonResponse(500, { message: 'internal error' });
 }
 
 function toAuthApiErrorPayload(error) {
@@ -968,6 +1004,8 @@ async function sendAuthEmail({ env, debugLabel, debugUrl, toEmail, subject, text
   if (!resendApiKey || !fromEmail) {
     if (toBoolean(env.EXPOSE_DEBUG_AUTH_LINKS)) {
       console.info(`[auth debug] ${debugLabel}: ${debugUrl}`);
+    } else {
+      console.warn(`[auth] email delivery skipped (RESEND_API_KEY / AUTH_EMAIL_FROM not configured): ${debugLabel}`);
     }
     return;
   }
@@ -1090,23 +1128,6 @@ function requireQueryString(value, message) {
 function bodyStringOrDefault(value, fallback) {
   const text = String(value || '').trim();
   return text || fallback;
-}
-
-function stringOrDefault(value, fallback) {
-  const text = String(value || '').trim();
-  return text || fallback;
-}
-
-function isPlainObject(value) {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
-
-function toBoolean(value) {
-  if (typeof value === 'boolean') {
-    return value;
-  }
-  const text = String(value || '').trim().toLowerCase();
-  return text === '1' || text === 'true' || text === 'yes';
 }
 
 function normalizeUsername(value) {

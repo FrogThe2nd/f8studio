@@ -116,6 +116,10 @@ Recommended:
 - `EMAIL_VERIFY_TOKEN_TTL_SECONDS`
 - `PASSWORD_RESET_TOKEN_TTL_SECONDS`
 
+CORS:
+
+- `CORS_ALLOWED_ORIGINS` — comma-separated list of extra allowed origins (e.g. `http://localhost:5173`)
+
 Google login:
 
 - `GOOGLE_CLIENT_ID`
@@ -128,7 +132,7 @@ Email delivery via Resend:
 
 Local debug only:
 
-- `EXPOSE_DEBUG_AUTH_LINKS=true`
+- `EXPOSE_DEBUG_AUTH_LINKS=true` — prints verification/reset links to console (only effective when email delivery is not configured)
 
 ## Local development
 
@@ -163,3 +167,5 @@ npx wrangler deploy
 - This package now assumes a brand-new database baseline.
 - Old JWT auth tables and compatibility migrations have been removed.
 - To fully reset locally or in a disposable environment, recreate the D1 database and apply `0001_init.sql`.
+- A cron trigger runs daily at 03:00 UTC to clean up expired sessions.
+- Asset `content_json` is limited to 2 MB per version.
