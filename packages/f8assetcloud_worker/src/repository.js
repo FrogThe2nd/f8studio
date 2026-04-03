@@ -1,7 +1,7 @@
-import { escapeLikePattern, isPlainObject, nowIso, nullableString, stringOrDefault, toBoolean } from './utils.js';
+import { compressGzip, decompressGzip, escapeLikePattern, isPlainObject, nowIso, nullableString, stringOrDefault, toBoolean } from './utils.js';
 
 const PAGE_SIZE = 100;
-const MAX_CONTENT_JSON_BYTES = 2 * 1024 * 1024;
+const MAX_CONTENT_BYTES = 10 * 1024 * 1024;
 const COMPONENT_SCHEMA_VERSION = 'f8studio-session/1';
 
 export class AssetConflictError extends Error {
@@ -158,7 +158,7 @@ export class AssetRepository {
         h.created_at,
         h.updated_at,
         COALESCE(u.displayUsername, u.name) AS owner_display_name,
-        v.content_json,
+        v.content,
         v.created_at AS version_created_at,
         v.created_by_user_id,
         v.change_summary,
@@ -374,13 +374,15 @@ export class AssetRepository {
     if (existing !== null) {
       throw new AssetValidationError('assetId already exists');
     }
-    enforceContentJsonSizeLimit(normalized.contentJson);
+    const compressedContent = await compressGzip(normalized.content);
+    enforceContentSizeLimit(compressedContent);
+
     await this._db.prepare(
       `INSERT INTO asset_heads (
          asset_id, asset_type, owner_user_id, visibility, latest_revision, latest_version_number,
          name, description, tags_json, schema_version, variant_kind, base_node_type,
-         service_class, operator_class, deleted_at, created_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
+         service_class, operator_class, content, deleted_at, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
     )
       .bind(
         normalized.assetId,
@@ -397,15 +399,17 @@ export class AssetRepository {
         normalized.baseNodeType,
         normalized.serviceClass,
         normalized.operatorClass,
+        compressedContent,
         normalized.createdAt,
         normalized.updatedAt,
       )
       .run();
+
     await this._insertAssetVersion({
       assetId: normalized.assetId,
       versionNumber: 1,
       revision: normalized.revision,
-      contentJson: normalized.contentJson,
+      content: compressedContent,
       createdAt: normalized.updatedAt,
       createdByUserId: userId,
       changeSummary: normalized.changeSummary,
@@ -417,7 +421,8 @@ export class AssetRepository {
     if (String(normalized.revision || '') !== String(existing.latest_revision || '')) {
       throw new AssetConflictError({ assetId: existing.asset_id, revision: String(existing.latest_revision) });
     }
-    enforceContentJsonSizeLimit(normalized.contentJson);
+    const compressedContent = await compressGzip(normalized.content);
+    enforceContentSizeLimit(compressedContent);
     const nextVersionNumber = Number(existing.latest_version_number) + 1;
     const nextRevision = nextRevisionForAsset(String(existing.latest_revision));
     await this._db.prepare(
@@ -433,6 +438,7 @@ export class AssetRepository {
            base_node_type = ?,
            service_class = ?,
            operator_class = ?,
+           content = ?,
            deleted_at = NULL,
            updated_at = ?
        WHERE asset_id = ?`,
@@ -449,15 +455,16 @@ export class AssetRepository {
         normalized.baseNodeType,
         normalized.serviceClass,
         normalized.operatorClass,
+        compressedContent,
         normalized.updatedAt,
         normalized.assetId,
       )
       .run();
     await this._insertAssetVersion({
-      assetId: normalized.assetId,
+      ...normalized,
       versionNumber: nextVersionNumber,
       revision: nextRevision,
-      contentJson: normalized.contentJson,
+      content: normalized.content,
       createdAt: normalized.updatedAt,
       createdByUserId: userId,
       changeSummary: normalized.changeSummary,
@@ -480,7 +487,7 @@ export class AssetRepository {
   }
 
   async _getAssetPayload({ assetId, assetType, userId, versionNumber }) {
-    const head = await this._findAssetHeadRow(assetId);
+    const head = await this.getAssetById(assetId);
     if (head === null || String(head.asset_type) !== assetType) {
       throw new AssetNotFoundError(`Asset ${assetId} not found`);
     }
@@ -489,12 +496,12 @@ export class AssetRepository {
     if (targetVersionNumber !== Number(head.latest_version_number) && String(head.visibility) !== 'public' && String(head.owner_user_id) !== String(userId || '')) {
       throw new AssetPermissionError('forbidden');
     }
-    const version = await this._findAssetVersionRow(assetId, targetVersionNumber);
+    const version = await this.getAssetVersion(assetId, targetVersionNumber);
     if (version === null) {
       throw new AssetNotFoundError(`Asset version ${assetId}:${targetVersionNumber} not found`);
     }
     const subscription = userId ? await this._findSubscriptionRow(assetId, userId) : null;
-    return assetPayloadFromRows({ head, version, subscription, viewerUserId: userId });
+    return assetPayloadFromRows({ head, version, subscription, viewerUserId: userId, content: version.content });
   }
 
   async _listAssets({ assetType, userId, query, cursor, visibility, owner, extraFilters }) {
@@ -520,27 +527,11 @@ export class AssetRepository {
     bindings.push(PAGE_SIZE + 1, start);
     const sql = `
       SELECT
-        h.asset_id,
-        h.asset_type,
-        h.owner_user_id,
-        h.visibility,
-        h.latest_revision,
-        h.latest_version_number,
-        h.name,
-        h.description,
-        h.tags_json,
-        h.schema_version,
-        h.variant_kind,
-        h.base_node_type,
-        h.service_class,
-        h.operator_class,
-        h.deleted_at,
-        h.created_at,
-        h.updated_at,
+        h.*,
         COALESCE(u.displayUsername, u.name) AS owner_display_name,
         s.subscribed_at,
         s.last_seen_revision,
-        v.content_json,
+        v.content AS version_content,
         v.created_at AS version_created_at,
         v.created_by_user_id,
         v.change_summary,
@@ -559,14 +550,22 @@ export class AssetRepository {
     const rows = Array.isArray(result.results) ? result.results : [];
     const hasMore = rows.length > PAGE_SIZE;
     const items = hasMore ? rows.slice(0, PAGE_SIZE) : rows;
+    const assets = [];
+    for (const row of items) {
+      const processed = await this._decompressRowContent({
+        ...row,
+        content: row.version_content || row.content,
+      });
+      assets.push(processed);
+    }
     return {
-      entries: items.map((row) => assetPayloadFromRows({ head: row, version: row, subscription: row, viewerUserId: userId })),
+      entries: assets.map((row) => assetPayloadFromRows({ head: row, version: row, subscription: row, viewerUserId: userId, content: row.content })),
       nextCursor: hasMore ? String(start + PAGE_SIZE) : null,
     };
   }
 
   async _listAssetVersions({ assetId, assetType, userId, cursor }) {
-    const head = await this._findAssetHeadRow(assetId);
+    const head = await this.getAssetById(assetId);
     if (head === null || String(head.asset_type) !== assetType) {
       throw new AssetNotFoundError(`Asset ${assetId} not found`);
     }
@@ -576,7 +575,7 @@ export class AssetRepository {
     }
     const start = parseCursor(cursor);
     const result = await this._db.prepare(
-      `SELECT asset_id, version_number, revision, created_at, created_by_user_id, change_summary
+      `SELECT *
        FROM asset_versions WHERE asset_id = ? ORDER BY version_number DESC
        LIMIT ? OFFSET ?`,
     )
@@ -585,22 +584,26 @@ export class AssetRepository {
     const rows = Array.isArray(result.results) ? result.results : [];
     const hasMore = rows.length > PAGE_SIZE;
     const items = hasMore ? rows.slice(0, PAGE_SIZE) : rows;
+    const versions = [];
+    for (const row of items) {
+      versions.push(await this._decompressRowContent(row));
+    }
     return {
-      versions: items.map((row) => ({
-        assetId: String(row.asset_id),
+      versions: versions.map((v) => ({
+        assetId: String(v.asset_id),
         assetType,
-        versionNumber: Number(row.version_number),
-        revision: String(row.revision),
-        createdAt: String(row.created_at),
-        createdByUserId: String(row.created_by_user_id),
-        changeSummary: row.change_summary === null ? null : String(row.change_summary),
+        versionNumber: Number(v.version_number),
+        revision: String(v.revision),
+        createdAt: String(v.created_at),
+        createdByUserId: String(v.created_by_user_id),
+        changeSummary: v.change_summary === null ? null : String(v.change_summary),
       })),
       nextCursor: hasMore ? String(start + PAGE_SIZE) : null,
     };
   }
 
   async _subscribeAsset({ assetId, assetType, userId }) {
-    const head = await this._findAssetHeadRow(assetId);
+    const head = await this.getAssetById(assetId);
     if (head === null || String(head.asset_type) !== assetType) {
       throw new AssetNotFoundError(`Asset ${assetId} not found`);
     }
@@ -620,7 +623,7 @@ export class AssetRepository {
   }
 
   async _unsubscribeAsset({ assetId, assetType, userId }) {
-    const head = await this._findAssetHeadRow(assetId);
+    const head = await this.getAssetById(assetId);
     if (head === null || String(head.asset_type) !== assetType) {
       throw new AssetNotFoundError(`Asset ${assetId} not found`);
     }
@@ -671,7 +674,7 @@ export class AssetRepository {
   }
 
   async _requireOwnedAsset({ assetId, assetType, userId }) {
-    const existing = await this._findAssetHeadRow(assetId);
+    const existing = await this.getAssetById(assetId);
     if (existing === null || String(existing.asset_type) !== assetType) {
       throw new AssetNotFoundError(`Asset ${assetId} not found`);
     }
@@ -681,20 +684,21 @@ export class AssetRepository {
     return existing;
   }
 
-  async _insertAssetVersion({ assetId, versionNumber, revision, contentJson, createdAt, createdByUserId, changeSummary }) {
-    await this._db.prepare(
+  async _insertAssetVersion(payload) {
+    const compressedContent = await compressGzip(payload.content);
+    return await this._db.prepare(
       `INSERT INTO asset_versions (
-         asset_id, version_number, revision, content_json, created_at, created_by_user_id, change_summary
+         asset_id, version_number, revision, content, created_at, created_by_user_id, change_summary
        ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
     )
       .bind(
-        String(assetId),
-        Number(versionNumber),
-        String(revision),
-        String(contentJson),
-        String(createdAt),
-        String(createdByUserId),
-        nullableString(changeSummary),
+        String(payload.assetId),
+        Number(payload.versionNumber || 1),
+        String(payload.revision),
+        compressedContent,
+        String(payload.updatedAt),
+        String(payload.ownerUserId),
+        nullableString(payload.changeSummary),
       )
       .run();
   }
@@ -703,23 +707,7 @@ export class AssetRepository {
     const deletedFilter = includeDeleted ? '' : 'AND h.deleted_at IS NULL';
     const row = await this._db.prepare(
       `SELECT
-         h.asset_id,
-         h.asset_type,
-         h.owner_user_id,
-         h.visibility,
-         h.latest_revision,
-         h.latest_version_number,
-         h.name,
-         h.description,
-         h.tags_json,
-         h.schema_version,
-         h.variant_kind,
-         h.base_node_type,
-         h.service_class,
-         h.operator_class,
-         h.deleted_at,
-         h.created_at,
-         h.updated_at,
+         h.*,
          COALESCE(u.displayUsername, u.name) AS owner_display_name
        FROM asset_heads h
        LEFT JOIN user u ON u.id = h.owner_user_id
@@ -727,17 +715,51 @@ export class AssetRepository {
     )
       .bind(String(assetId))
       .first();
-    return row === null ? null : row;
+    if (!row) return null;
+    // asset_heads has no content column; content lives in asset_versions.
+    return row;
   }
 
   async _findAssetVersionRow(assetId, versionNumber) {
     const row = await this._db.prepare(
-      `SELECT asset_id, version_number, revision, content_json, created_at, created_by_user_id, change_summary
+      `SELECT asset_id, version_number, revision, content, created_at, created_by_user_id, change_summary
        FROM asset_versions WHERE asset_id = ? AND version_number = ?`,
     )
       .bind(String(assetId), Number(versionNumber))
       .first();
-    return row === null ? null : row;
+    if (!row) return null;
+    return await this._decompressRowContent(row);
+  }
+
+  /**
+   * Decompress a GZIP-compressed `content` BLOB back into a parsed JSON object.
+   * Falls back gracefully for legacy plaintext or missing content.
+   */
+  async _decompressRowContent(row) {
+    if (!row || !row.content) return row;
+    try {
+      const decompressed = await decompressGzip(row.content);
+      return { ...row, content: JSON.parse(decompressed) };
+    } catch (e) {
+      // Fallback: try parsing as plaintext JSON (legacy data)
+      try {
+        const text = typeof row.content === 'string'
+          ? row.content
+          : new TextDecoder().decode(row.content);
+        return { ...row, content: JSON.parse(text) };
+      } catch (e2) {
+        console.error('_decompressRowContent: failed to parse content', e2.message);
+        return { ...row, content: {} };
+      }
+    }
+  }
+
+  async getAssetById(assetId) {
+    return await this._findAssetHeadRow(assetId);
+  }
+
+  async getAssetVersion(assetId, versionNumber) {
+    return await this._findAssetVersionRow(assetId, versionNumber);
   }
 
   async _findSubscriptionRow(assetId, userId) {
@@ -761,11 +783,11 @@ export class AssetRepository {
 
 }
 
-function enforceContentJsonSizeLimit(contentJson) {
-  const byteLength = new TextEncoder().encode(String(contentJson)).length;
-  if (byteLength > MAX_CONTENT_JSON_BYTES) {
+function enforceContentSizeLimit(content) {
+  const byteLength = new TextEncoder().encode(String(content)).length;
+  if (byteLength > MAX_CONTENT_BYTES) {
     throw new AssetValidationError(
-      `content exceeds maximum allowed size (${Math.round(byteLength / 1024)}KB, limit ${Math.round(MAX_CONTENT_JSON_BYTES / 1024)}KB)`,
+      `content exceeds maximum allowed size (${Math.round(byteLength / 1024)}KB, limit ${Math.round(MAX_CONTENT_BYTES / 1024)}KB)`,
     );
   }
 }
@@ -790,7 +812,7 @@ function normalizeVariantCreatePayload(payload, user) {
     createdAt: normalizeIsoString(record.createdAt, timestamp),
     updatedAt: timestamp,
     changeSummary: nullableString(payload.changeSummary),
-    contentJson: stableJson({
+    content: stableJson({
       record: {
         ...record,
         createdAt: normalizeIsoString(record.createdAt, timestamp),
@@ -820,7 +842,7 @@ function normalizeVariantUpdatePayload(payload, existing, user) {
     createdAt: String(existing.created_at),
     updatedAt: timestamp,
     changeSummary: nullableString(payload.changeSummary),
-    contentJson: stableJson({
+    content: stableJson({
       record: {
         ...record,
         createdAt: String(existing.created_at),
@@ -850,7 +872,7 @@ function normalizeComponentCreatePayload(payload, user) {
     createdAt: normalizeIsoString(record.createdAt, timestamp),
     updatedAt: timestamp,
     changeSummary: nullableString(payload.changeSummary),
-    contentJson: stableJson({
+    content: stableJson({
       record: {
         ...record,
         createdAt: normalizeIsoString(record.createdAt, timestamp),
@@ -880,7 +902,7 @@ function normalizeComponentUpdatePayload(payload, existing, user) {
     createdAt: String(existing.created_at),
     updatedAt: timestamp,
     changeSummary: nullableString(payload.changeSummary),
-    contentJson: stableJson({
+    content: stableJson({
       record: {
         ...record,
         createdAt: String(existing.created_at),
@@ -956,8 +978,7 @@ function normalizeComponentRecord(record, { expectedComponentId }) {
   };
 }
 
-function assetPayloadFromRows({ head, version, subscription, viewerUserId }) {
-  const content = parseJsonObject(version.content_json);
+function assetPayloadFromRows({ head, version, subscription, viewerUserId, content }) {
   const record = parseAssetRecord({ assetType: String(head.asset_type), content });
   const isOwner = String(head.owner_user_id) === String(viewerUserId || '');
   const isSubscribed = subscription !== null && subscription !== undefined && subscription.subscribed_at !== undefined && subscription.subscribed_at !== null;
@@ -987,8 +1008,7 @@ function assetPayloadFromRows({ head, version, subscription, viewerUserId }) {
   };
 }
 
-function adminAssetPayloadFromRow(row) {
-  const content = parseJsonObject(row.content_json);
+function adminAssetPayloadFromRow(row, content) {
   const record = parseAssetRecord({ assetType: String(row.asset_type), content });
   return {
     assetId: String(row.asset_id),
@@ -1009,7 +1029,16 @@ function adminAssetPayloadFromRow(row) {
 }
 
 function parseAssetRecord({ assetType, content }) {
-  const record = content.record;
+  let data = content;
+  if (typeof content === 'string') {
+    try {
+      data = JSON.parse(content);
+    } catch (e) {
+      data = {};
+    }
+  }
+  
+  const record = (data && data.record) ? data.record : {};
   if (!isPlainObject(record)) {
     return {};
   }
@@ -1177,6 +1206,29 @@ function stableJson(value) {
   return JSON.stringify(value);
 }
 
+/**
+ * Transparently decompress content if it's binary, then parse as JSON.
+ */
+async function decompressJsonObject(value) {
+  if (value === null || value === undefined) {
+    return {};
+  }
+  let text;
+  if (typeof value === 'string') {
+    text = value;
+  } else {
+    // Binary (BLOB) from D1
+    try {
+      text = await decompressGzip(value);
+    } catch (error) {
+      console.error('decompressJsonObject: decompression failed', error.message);
+      // Fallback for non-gzip junk in blob field
+      text = new TextDecoder().decode(value);
+    }
+  }
+  return parseJsonObject(text);
+}
+
 function parseJsonObject(value) {
   try {
     const parsed = JSON.parse(String(value || '{}'));
@@ -1186,7 +1238,7 @@ function parseJsonObject(value) {
     }
     return parsed;
   } catch (parseError) {
-    console.warn('parseJsonObject: corrupt JSON content_json', parseError.message);
+    console.warn('parseJsonObject: corrupt JSON content', parseError.message);
     return {};
   }
 }

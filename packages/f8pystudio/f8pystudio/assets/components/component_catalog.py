@@ -5,6 +5,7 @@ import logging
 from pathlib import Path
 from typing import cast
 
+import zlib
 from sqlalchemy import and_, delete, func, insert, select, update
 from f8pysdk.msgspec_codec import copy_model
 
@@ -12,7 +13,6 @@ from ..db import (
     AssetsDatabase,
     component_heads_local_table,
     component_remote_cache_table,
-    component_versions_local_table,
 )
 from ..common import (
     JsonObject,
@@ -56,18 +56,10 @@ class LocalComponentProvider:
                 component_heads_local_table.c.usage_notes,
                 component_heads_local_table.c.tags_json,
                 component_heads_local_table.c.schema_version,
+                component_heads_local_table.c.latest_version_number,
+                component_heads_local_table.c.content,
                 component_heads_local_table.c.created_at,
                 component_heads_local_table.c.updated_at,
-                component_versions_local_table.c.content_json,
-            )
-            .select_from(
-                component_heads_local_table.join(
-                    component_versions_local_table,
-                    and_(
-                        component_versions_local_table.c.component_id == component_heads_local_table.c.component_id,
-                        component_versions_local_table.c.version_number == component_heads_local_table.c.latest_version_number,
-                    ),
-                )
             )
             .order_by(func.lower(component_heads_local_table.c.name), component_heads_local_table.c.component_id)
         )
@@ -87,6 +79,7 @@ class LocalComponentProvider:
             component_heads_local_table.c.created_at,
             component_heads_local_table.c.latest_version_number,
         ).where(component_heads_local_table.c.component_id == str(record.componentId))
+        
         with self._db.begin_sqla() as conn:
             existing = conn.execute(existing_statement).mappings().first()
             if existing is None:
@@ -101,6 +94,7 @@ class LocalComponentProvider:
                         tags_json=stable_json_dumps(list(record.tags or [])),
                         schema_version=str(record.schemaVersion),
                         latest_version_number=version_number,
+                        content=_compress_content(stable_json_dumps(record.content)),
                         created_at=created_at,
                         updated_at=version_timestamp,
                     )
@@ -119,17 +113,11 @@ class LocalComponentProvider:
                         tags_json=stable_json_dumps(list(record.tags or [])),
                         schema_version=str(record.schemaVersion),
                         latest_version_number=version_number,
+                        content=_compress_content(stable_json_dumps(record.content)),
                         updated_at=version_timestamp,
                     )
                 )
-            _ = conn.execute(
-                insert(component_versions_local_table).values(
-                    component_id=str(record.componentId),
-                    version_number=version_number,
-                    content_json=stable_json_dumps(record.content),
-                    created_at=version_timestamp,
-                )
-            )
+        
         saved_record = F8ComponentRecord(
             componentId=str(record.componentId),
             name=str(record.name),
@@ -155,79 +143,15 @@ class LocalComponentProvider:
             subscribed=entry.subscribed,
         )
 
-    def list_versions(self, component_id: str) -> list[F8ComponentLocalVersionSummary]:
-        normalized_component_id = str(component_id or "").strip()
-        if not normalized_component_id:
-            return []
-        statement = (
-            select(
-                component_versions_local_table.c.component_id,
-                component_versions_local_table.c.version_number,
-                component_versions_local_table.c.created_at,
-            )
-            .where(component_versions_local_table.c.component_id == normalized_component_id)
-            .order_by(component_versions_local_table.c.version_number.desc())
-        )
-        with self._db.connect_sqla() as conn:
-            rows = conn.execute(statement).mappings().all()
-        out: list[F8ComponentLocalVersionSummary] = []
-        for row in rows:
-            row_mapping = _row_mapping(row)
-            out.append(
-                F8ComponentLocalVersionSummary(
-                    componentId=mapping_str(row_mapping, "component_id"),
-                    versionNumber=mapping_int(row_mapping, "version_number"),
-                    createdAt=mapping_str(row_mapping, "created_at"),
-                )
-            )
-        return out
-
-    def version_record(self, component_id: str, version_number: int) -> F8ComponentRecord | None:
-        normalized_component_id = str(component_id or "").strip()
-        if not normalized_component_id:
-            return None
-        statement = (
-            select(
-                component_heads_local_table.c.component_id,
-                component_heads_local_table.c.name,
-                component_heads_local_table.c.description,
-                component_heads_local_table.c.usage_notes,
-                component_heads_local_table.c.tags_json,
-                component_heads_local_table.c.schema_version,
-                component_heads_local_table.c.created_at,
-                component_heads_local_table.c.updated_at,
-                component_versions_local_table.c.content_json,
-                component_versions_local_table.c.created_at.label("version_created_at"),
-            )
-            .select_from(
-                component_heads_local_table.join(
-                    component_versions_local_table,
-                    and_(
-                        component_versions_local_table.c.component_id == component_heads_local_table.c.component_id,
-                        component_versions_local_table.c.version_number == int(version_number),
-                    ),
-                )
-            )
-            .where(component_heads_local_table.c.component_id == normalized_component_id)
-        )
-        with self._db.connect_sqla() as conn:
-            row = conn.execute(statement).mappings().first()
-        if row is None:
-            return None
-        return _component_record_from_row(_row_mapping(row), updated_at_key="version_created_at")
-
     def delete_entry(self, component_id: str) -> bool:
         normalized_component_id = str(component_id or "").strip()
         if not normalized_component_id:
             return False
         with self._db.begin_sqla() as conn:
-            cursor = conn.execute(
-                delete(component_versions_local_table).where(component_versions_local_table.c.component_id == normalized_component_id)
-            )
             head_cursor = conn.execute(
                 delete(component_heads_local_table).where(component_heads_local_table.c.component_id == normalized_component_id)
             )
-        return bool(cursor.rowcount or head_cursor.rowcount)
+        return bool(head_cursor.rowcount)
 
 
 class RemoteComponentCacheProvider:
@@ -240,7 +164,7 @@ class RemoteComponentCacheProvider:
         statement = (
             select(
                 component_remote_cache_table.c.component_id,
-                component_remote_cache_table.c.record_json,
+                component_remote_cache_table.c.content,
                 component_remote_cache_table.c.source,
                 component_remote_cache_table.c.visibility,
                 component_remote_cache_table.c.owner_user_id,
@@ -293,7 +217,7 @@ class RemoteComponentCacheProvider:
                         downloaded_at=metadata.downloaded_at,
                         installed=1 if metadata.installed else 0,
                         subscribed=1 if metadata.subscribed else 0,
-                        record_json=stable_json_dumps(_component_record_payload(entry.record)),
+                        content=_compress_content(stable_json_dumps(_component_record_payload(entry.record))),
                         updated_at=component_now_iso(),
                     )
                 )
@@ -349,10 +273,20 @@ class ComponentCatalogService:
         return deleted
 
     def list_local_versions(self, component_id: str) -> list[F8ComponentLocalVersionSummary]:
-        return self._local_provider.list_versions(component_id)
+        entry = self.entry(component_id)
+        if entry is None:
+            return []
+        return [
+            F8ComponentLocalVersionSummary(
+                componentId=str(entry.record.componentId),
+                versionNumber=int(entry.record.latestVersionNumber or 1),
+                createdAt=str(entry.record.createdAt),
+            )
+        ]
 
     def local_version_record(self, component_id: str, version_number: int) -> F8ComponentRecord | None:
-        return self._local_provider.version_record(component_id, version_number)
+        entry = self.entry(component_id)
+        return None if entry is None else entry.record
 
     def replace_remote_entries(self, entries: list[F8ComponentEntry]) -> None:
         self._remote_provider.save_entries(entries)
@@ -405,8 +339,7 @@ def _row_mapping(row: object) -> Mapping[object, object]:
     return cast(Mapping[object, object], row)
 
 
-def _component_record_from_row(row: Mapping[object, object], *, updated_at_key: str) -> F8ComponentRecord:
-    updated_at = mapping_optional_str(row, updated_at_key)
+    content_raw = row.get("content")
     return F8ComponentRecord(
         componentId=mapping_str(row, "component_id"),
         name=mapping_str(row, "name"),
@@ -414,10 +347,25 @@ def _component_record_from_row(row: Mapping[object, object], *, updated_at_key: 
         usageNotes=mapping_str(row, "usage_notes"),
         tags=json_string_list_loads(row.get("tags_json")),
         schemaVersion=mapping_str(row, "schema_version"),
-        content=json_object_loads(row.get("content_json")),
+        content=json_object_loads(_decompress_content(content_raw)),
         createdAt=mapping_str(row, "created_at"),
         updatedAt=updated_at if updated_at is not None else mapping_str(row, "updated_at"),
     )
+
+
+def _compress_content(json_str: str) -> bytes:
+    return zlib.compress(json_str.encode("utf-8"), level=6, wbits=31)
+
+
+def _decompress_content(data: bytes | None) -> str:
+    if data is None:
+        return "{}"
+    try:
+        return zlib.decompress(data, wbits=31).decode("utf-8")
+    except Exception:
+        if isinstance(data, str):
+            return data
+        return (data or b"").decode("utf-8", errors="replace")
 
 
 def _component_record_from_payload(payload: JsonObject) -> F8ComponentRecord:

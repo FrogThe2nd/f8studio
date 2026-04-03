@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import zlib
 from typing import Protocol, cast
 from urllib import error, parse, request
 
@@ -366,27 +367,51 @@ class VariantSyncClient:
         data: bytes | None = None
         headers = {
             "Accept": "application/json",
+            "Accept-Encoding": "gzip",
             "Content-Type": "application/json",
             "User-Agent": self._USER_AGENT,
         }
         if payload is not None:
-            data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            raw_data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            if len(raw_data) > 4096:
+                # compress with wbits=31 for gzip format (not just deflate)
+                data = zlib.compress(raw_data, level=6, wbits=31)
+                headers["Content-Encoding"] = "gzip"
+            else:
+                data = raw_data
+
         if authorized:
             access_token = self.current_access_token()
             if not access_token:
                 raise F8VariantRemoteAuthError("Not logged in.")
             headers["Authorization"] = f"Bearer {access_token}"
+
         req = request.Request(url=url, data=data, headers=headers, method=method)
         try:
             response_context = cast(_HttpResponseContext, request.urlopen(req, timeout=10))
             with response_context as response_like:
-                raw_body = response_like.read().decode("utf-8")
-                logger.info("Variant cloud %s %s status=%s body=%s", method, url, response_like.status, raw_body[:1200])
+                content_encoding = response_like.headers.get("Content-Encoding")
+                raw_bytes = response_like.read()
+                if content_encoding == "gzip":
+                    try:
+                        raw_bytes = zlib.decompress(raw_bytes, wbits=31)
+                    except Exception:
+                        logger.exception("Failed to decompress variant cloud response")
+
+                raw_body = raw_bytes.decode("utf-8")
+                logger.debug("Variant cloud %s %s status=%s body=%s", method, url, response_like.status, raw_body[:1000])
                 if not raw_body:
                     return {}
                 return json_object_loads(raw_body)
         except error.HTTPError as exc:
-            body_text = exc.read().decode("utf-8", errors="replace")
+            content_encoding = exc.headers.get("Content-Encoding")
+            body_bytes = exc.read()
+            if content_encoding == "gzip":
+                try:
+                    body_bytes = zlib.decompress(body_bytes, wbits=31)
+                except Exception:
+                    pass
+            body_text = body_bytes.decode("utf-8", errors="replace")
             logger.warning("Variant cloud %s %s failed status=%s body=%s", method, url, exc.code, body_text[:1200])
             payload_obj = _try_parse_json_object(body_text)
             message = _error_message(payload_obj) or body_text or str(exc)

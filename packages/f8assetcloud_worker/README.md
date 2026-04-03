@@ -168,4 +168,5 @@ npx wrangler deploy
 - Old JWT auth tables and compatibility migrations have been removed.
 - To fully reset locally or in a disposable environment, recreate the D1 database and apply `0001_init.sql`.
 - A cron trigger runs daily at 03:00 UTC to clean up expired sessions.
-- Asset `content_json` is limited to 2 MB per version.
+- Asset `content` is stored as GZIP-compressed BLOB.
+- Limit: 10 MB per version (raw JSON size), significantly optimized for storage.

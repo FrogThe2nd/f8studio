@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Protocol, cast
 
 import msgspec
+import zlib
 from sqlalchemy import delete, func, insert, select
 from sqlalchemy.engine import Connection as SqlAlchemyConnection
 from f8pysdk.msgspec_codec import copy_model
@@ -47,7 +48,7 @@ class LocalVariantProvider:
         statement = (
             select(
                 variant_heads_local_table.c.variant_id,
-                variant_heads_local_table.c.record_json,
+                variant_heads_local_table.c.content,
             )
             .order_by(func.lower(variant_heads_local_table.c.name), variant_heads_local_table.c.variant_id)
         )
@@ -74,7 +75,7 @@ class RemoteCacheProvider:
         statement = (
             select(
                 variant_remote_cache_table.c.variant_id,
-                variant_remote_cache_table.c.record_json,
+                variant_remote_cache_table.c.content,
                 variant_remote_cache_table.c.source,
                 variant_remote_cache_table.c.visibility,
                 variant_remote_cache_table.c.owner_user_id,
@@ -377,7 +378,7 @@ def _validate_unique_name(entries: list[F8VariantEntry], record: F8VariantRecord
 
 def _variant_entry_from_local_row(row: object) -> F8VariantEntry:
     row_mapping = _row_mapping(row)
-    record_payload = json_object_loads(row_mapping.get("record_json"))
+    record_payload = json_object_loads(_decompress_content(row_mapping.get("content")))
     return F8VariantEntry(
         record=_variant_record_from_payload(record_payload),
         source=F8VariantSourceKind.local,
@@ -388,7 +389,7 @@ def _variant_entry_from_local_row(row: object) -> F8VariantEntry:
 
 def _variant_entry_from_remote_row(row: object) -> F8VariantEntry:
     row_mapping = _row_mapping(row)
-    record_payload = json_object_loads(row_mapping.get("record_json"))
+    record_payload = json_object_loads(_decompress_content(row_mapping.get("content")))
     metadata = RemoteCacheMetadata.from_row(row_mapping)
     visibility = None if metadata.visibility is None else F8VariantVisibility(metadata.visibility)
     return F8VariantEntry(
@@ -420,7 +421,7 @@ def _insert_local_variant_entry(conn: SqlAlchemyConnection, entry: F8VariantEntr
             base_node_type=str(record.baseNodeType),
             service_class=str(record.serviceClass),
             operator_class=operator_class,
-            record_json=stable_json_dumps(_variant_record_payload(record)),
+            content=_compress_content(stable_json_dumps(_variant_record_payload(record))),
             created_at=str(record.createdAt),
             updated_at=str(record.updatedAt),
         )
@@ -453,10 +454,26 @@ def _insert_remote_variant_entry(conn: SqlAlchemyConnection, entry: F8VariantEnt
             downloaded_at=metadata.downloaded_at,
             installed=1 if metadata.installed else 0,
             subscribed=1 if metadata.subscribed else 0,
-            record_json=stable_json_dumps(_variant_record_payload(entry.record)),
+            content=_compress_content(stable_json_dumps(_variant_record_payload(entry.record))),
             updated_at=variant_now_iso(),
         )
     )
+
+
+def _compress_content(json_str: str) -> bytes:
+    return zlib.compress(json_str.encode("utf-8"), level=6, wbits=31)
+
+
+def _decompress_content(data: bytes | None) -> str:
+    if data is None:
+        return "{}"
+    try:
+        return zlib.decompress(data, wbits=31).decode("utf-8")
+    except Exception:
+        # Fallback for unexpected corruption or if somehow a string leaked in
+        if isinstance(data, str):
+            return data
+        return data.decode("utf-8", errors="replace")
 
 
 def _row_mapping(row: object) -> Mapping[object, object]:

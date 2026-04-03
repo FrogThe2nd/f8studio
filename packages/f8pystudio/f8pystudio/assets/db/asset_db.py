@@ -5,7 +5,7 @@ from contextlib import contextmanager
 from pathlib import Path
 import sqlite3
 
-from sqlalchemy import Column, ForeignKey, Index, Integer, MetaData, Table, Text, create_engine, event, inspect, text
+from sqlalchemy import Column, ForeignKey, Index, Integer, LargeBinary, MetaData, Table, Text, create_engine, event, inspect, text
 from sqlalchemy.engine import Connection as SqlAlchemyConnection
 from sqlalchemy.engine import URL, Engine
 from sqlalchemy.engine.reflection import Inspector
@@ -29,7 +29,7 @@ project_versions_table = Table(
     _METADATA,
     Column("project_id", Text, ForeignKey("project_heads.project_id"), primary_key=True),
     Column("version_number", Integer, primary_key=True),
-    Column("content_json", Text, nullable=False),
+    Column("content", LargeBinary, nullable=False),
     Column("created_at", Text, nullable=False),
 )
 
@@ -43,18 +43,11 @@ component_heads_local_table = Table(
     Column("tags_json", Text, nullable=False),
     Column("schema_version", Text, nullable=False),
     Column("latest_version_number", Integer, nullable=False),
+    Column("content", LargeBinary, nullable=False),
     Column("created_at", Text, nullable=False),
     Column("updated_at", Text, nullable=False),
 )
 
-component_versions_local_table = Table(
-    "component_versions_local",
-    _METADATA,
-    Column("component_id", Text, ForeignKey("component_heads_local.component_id"), primary_key=True),
-    Column("version_number", Integer, primary_key=True),
-    Column("content_json", Text, nullable=False),
-    Column("created_at", Text, nullable=False),
-)
 
 component_remote_cache_table = Table(
     "component_remote_cache",
@@ -70,7 +63,7 @@ component_remote_cache_table = Table(
     Column("downloaded_at", Text, nullable=True),
     Column("installed", Integer, nullable=False),
     Column("subscribed", Integer, nullable=False),
-    Column("record_json", Text, nullable=False),
+    Column("content", LargeBinary, nullable=False),
     Column("updated_at", Text, nullable=False),
 )
 
@@ -87,7 +80,7 @@ variant_heads_local_table = Table(
     Column("base_node_type", Text, nullable=False),
     Column("service_class", Text, nullable=False),
     Column("operator_class", Text, nullable=True),
-    Column("record_json", Text, nullable=False),
+    Column("content", LargeBinary, nullable=False),
     Column("created_at", Text, nullable=False),
     Column("updated_at", Text, nullable=False),
 )
@@ -106,13 +99,12 @@ variant_remote_cache_table = Table(
     Column("downloaded_at", Text, nullable=True),
     Column("installed", Integer, nullable=False),
     Column("subscribed", Integer, nullable=False),
-    Column("record_json", Text, nullable=False),
+    Column("content", LargeBinary, nullable=False),
     Column("updated_at", Text, nullable=False),
 )
 
 Index("idx_project_heads_updated_at", project_heads_table.c.updated_at)
 Index("idx_component_heads_local_updated_at", component_heads_local_table.c.updated_at)
-Index("idx_component_remote_cache_updated_at", component_remote_cache_table.c.updated_at)
 Index("idx_variant_heads_local_updated_at", variant_heads_local_table.c.updated_at)
 Index("idx_variant_remote_cache_updated_at", variant_remote_cache_table.c.updated_at)
 
@@ -203,7 +195,6 @@ __all__ = [
     "project_heads_table",
     "project_versions_table",
     "component_heads_local_table",
-    "component_versions_local_table",
     "component_remote_cache_table",
     "variant_heads_local_table",
     "variant_remote_cache_table",

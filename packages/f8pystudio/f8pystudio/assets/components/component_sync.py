@@ -4,6 +4,7 @@ import json
 import logging
 from typing import Protocol, cast
 from urllib import error, parse, request
+import zlib
 
 from qtpy import QtCore
 
@@ -302,10 +303,17 @@ class ComponentSyncClient:
         headers = {
             "Accept": "application/json",
             "Content-Type": "application/json",
+            "Accept-Encoding": "gzip",
             "User-Agent": self._USER_AGENT,
         }
         if payload is not None:
-            data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            raw_json = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            if len(raw_json) > 4096:
+                data = zlib.compress(raw_json, level=6, wbits=31)
+                headers["Content-Encoding"] = "gzip"
+            else:
+                data = raw_json
+
         if authorized:
             access_token = self.current_access_token()
             if not access_token:
@@ -315,7 +323,17 @@ class ComponentSyncClient:
         try:
             response_context = cast(_HttpResponseContext, request.urlopen(req, timeout=10))
             with response_context as response_like:
-                raw_body = response_like.read().decode("utf-8")
+                response_data = response_like.read()
+                content_encoding = response_like.headers.get("Content-Encoding", "").lower()
+                
+                if "gzip" in content_encoding:
+                    try:
+                        raw_body = zlib.decompress(response_data, wbits=31).decode("utf-8")
+                    except Exception:
+                        raw_body = response_data.decode("utf-8", errors="replace")
+                else:
+                    raw_body = response_data.decode("utf-8")
+
                 if not raw_body:
                     return {}
                 return json_object_loads(raw_body)

@@ -28,6 +28,22 @@ export function toBoolean(value) {
 }
 
 /**
+ * Use standard CompressionStream to GZIP a string into a Uint8Array.
+ */
+export async function compressGzip(text) {
+  const stream = new Blob([text]).stream().pipeThrough(new CompressionStream('gzip'));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+/**
+ * Use standard DecompressionStream to turn a GZIP'd buffer back into original text.
+ */
+export async function decompressGzip(buffer) {
+  const stream = new Blob([buffer]).stream().pipeThrough(new DecompressionStream('gzip'));
+  return await new Response(stream).text();
+}
+
+/**
  * Escape SQL LIKE wildcard characters so they are matched literally.
  * Use with an `ESCAPE '\'` clause in the SQL query.
  */

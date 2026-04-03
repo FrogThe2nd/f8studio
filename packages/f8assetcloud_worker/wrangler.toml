@@ -3,6 +3,11 @@ main = "src/index.js"
 compatibility_date = "2026-03-31"
 compatibility_flags = ["nodejs_compat"]
 workers_dev = false
+preview_urls = false
+
+[[routes]]
+pattern = "assetcloud.feel8.fun"
+custom_domain = true
 
 [assets]
 directory = "./console_web/dist"
@@ -11,6 +16,8 @@ binding = "ASSETS"
 [vars]
 BOOTSTRAP_ADMIN_USERNAME = "admin"
 BOOTSTRAP_ADMIN_DISPLAY_NAME = "Administrator"
+BOOTSTRAP_ADMIN_EMAIL = "feel8.fun@gmail.com"
+AUTH_EMAIL_FROM = "Feel8 <no-reply@feel8.fun>"
 EMAIL_VERIFY_TOKEN_TTL_SECONDS = "1800"
 PASSWORD_RESET_TOKEN_TTL_SECONDS = "1800"
 # Comma-separated list of extra origins allowed for CORS (in addition to AUTH_BASE_URL).

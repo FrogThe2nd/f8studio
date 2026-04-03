@@ -4,6 +4,7 @@ from collections.abc import Mapping
 import json
 from pathlib import Path
 from typing import cast
+import zlib
 
 from qtpy import QtCore
 from sqlalchemy import and_, func, insert, select, update
@@ -128,7 +129,7 @@ class ProjectStorageService:
                 project_heads_table.c.tags_json,
                 project_heads_table.c.created_at,
                 project_heads_table.c.updated_at,
-                project_versions_table.c.content_json,
+                project_versions_table.c.content,
                 project_versions_table.c.created_at.label("version_created_at"),
             )
             .select_from(
@@ -147,7 +148,7 @@ class ProjectStorageService:
         if row is None:
             return None
         row_mapping = _row_mapping(row)
-        payload = json_object_loads(row_mapping.get("content_json"))
+        payload = json_object_loads(_decompress_content(row_mapping.get("content")))
         return F8ProjectRecord(
             projectId=mapping_str(row_mapping, "project_id"),
             name=mapping_str(row_mapping, "name"),
@@ -212,7 +213,7 @@ class ProjectStorageService:
                 insert(project_versions_table).values(
                     project_id=normalized_project_id,
                     version_number=version_number,
-                    content_json=stable_json_dumps(content),
+                    content=_compress_content(stable_json_dumps(content)),
                     created_at=timestamp,
                 )
             )
@@ -342,6 +343,21 @@ class ProjectStorageService:
             self._settings.sync()
         finally:
             self._settings.endGroup()
+
+
+def _compress_content(json_str: str) -> bytes:
+    return zlib.compress(json_str.encode("utf-8"), level=6, wbits=31)
+
+
+def _decompress_content(data: bytes | None) -> str:
+    if data is None:
+        return "{}"
+    try:
+        return zlib.decompress(data, wbits=31).decode("utf-8")
+    except Exception:
+        if isinstance(data, str):
+            return data
+        return (data or b"").decode("utf-8", errors="replace")
 
 
 def _row_mapping(row: object) -> Mapping[object, object]:

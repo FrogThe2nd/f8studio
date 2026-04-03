@@ -100,7 +100,7 @@ CREATE TABLE asset_versions (
   asset_id TEXT NOT NULL,
   version_number INTEGER NOT NULL,
   revision TEXT NOT NULL,
-  content_json TEXT NOT NULL,
+  content BLOB NOT NULL,
   created_at TEXT NOT NULL,
   created_by_user_id TEXT NOT NULL,
   change_summary TEXT,
