@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import shortuuid
@@ -75,6 +76,7 @@ class F8StudioGraph(
         self._duplicate_menu_node_types: set[str] = set()
         self._node_docs_menu_node_types: set[str] = set()
         self._graph_context_menu_commands_installed = False
+        self._component_insert_dialog_opener: Callable[[tuple[float, float] | None], None] | None = None
 
         self.property_changed.connect(self._on_property_changed)  # type: ignore[attr-defined]
 
@@ -123,17 +125,20 @@ class F8StudioGraph(
         if isinstance(viewer, F8StudioNodeViewer):
             viewer.begin_graph_placement(request=request, label=label)
 
-    def open_component_insert_dialog(self, *, scene_pos: tuple[float, float] | None = None) -> None:
-        from ..widgets.project_asset_actions import open_component_insert_dialog as open_component_insert_dialog
+    def set_component_insert_dialog_opener(
+        self,
+        opener: Callable[[tuple[float, float] | None], None] | None,
+    ) -> None:
+        self._component_insert_dialog_opener = opener
 
-        parent = self._notification_parent()
-        if parent is None:
+    def open_component_insert_dialog(self, *, scene_pos: tuple[float, float] | None = None) -> None:
+        opener = self._component_insert_dialog_opener
+        if opener is None:
+            parent = self._notification_parent()
+            if parent is not None:
+                show_warning(parent, "Insert component unavailable", "No component insert dialog handler is configured.")
             return
-        open_component_insert_dialog(
-            parent=parent,
-            studio_graph=self,
-            insert_scene_pos=scene_pos,
-        )
+        opener(scene_pos)
 
     def _install_graph_context_menu_commands(self) -> None:
         if self._graph_context_menu_commands_installed:

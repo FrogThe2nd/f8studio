@@ -9,14 +9,19 @@ from qtpy import QtWidgets
 
 from f8pysdk.msgspec_codec import dump_json
 
+from ..assets.ui.component_catalog_dialog import ComponentCatalogDialog
+from ..assets.ui.component_insert_dialog import ComponentInsertDialog
+from ..assets.ui.project_asset_dialogs import (
+    AssetVersionBrowserDialog,
+    AssetVersionBrowserItem,
+    ProjectAssetMetaDialog,
+    ProjectPickerDialog,
+)
 from ..assets.common import new_asset_id
 from ..assets.components.component_models import F8ComponentRecord
 from ..assets.components.component_repository import upsert_component
 from ..assets.projects.project_storage import ProjectStorageService
 from ..ui_notifications import show_info
-from ..assets.ui.component_catalog_dialog import ComponentCatalogDialog
-from ..assets.ui.project_asset_dialogs import AssetVersionBrowserDialog, AssetVersionBrowserItem, ProjectAssetMetaDialog, ProjectPickerDialog
-from ..assets.ui.component_insert_dialog import ComponentInsertDialog
 
 logger = logging.getLogger(__name__)
 

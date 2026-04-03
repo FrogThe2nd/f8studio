@@ -28,7 +28,7 @@ from .service_log_widget import ServiceLogDock
 from .runtime_state_sync import RuntimeStateSyncController
 from .ai_assist_sidebar import AiAssistSidebarWidget
 from ..assets.ui.asset_cloud_account_menu import build_asset_account_menu
-from .project_asset_actions import (
+from ..studio_actions.project_asset_actions import (
     auto_load_project as project_auto_load,
     auto_save_project as project_auto_save,
     export_project_json_as_dialog as project_export_json_dialog,
@@ -211,6 +211,7 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         self.studio_graph.set_global_hotkey_controller(self._global_hotkey_controller)
         self.studio_graph.property_changed.connect(self._on_ui_property_changed)  # type: ignore[attr-defined]
         self.studio_graph.nodes_deleted.connect(self._on_graph_nodes_deleted)  # type: ignore[attr-defined]
+        self.studio_graph.set_component_insert_dialog_opener(self._open_component_insert_dialog_for_graph)
 
         QtCore.QTimer.singleShot(0, self._auto_load_project)
         QtWidgets.QApplication.instance().aboutToQuit.connect(self._auto_save_project)  # type: ignore[attr-defined]
@@ -920,6 +921,13 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
     @QtCore.Slot()
     def _on_insert_component_action(self) -> None:
         open_component_insert_dialog(parent=self, studio_graph=self.studio_graph)
+
+    def _open_component_insert_dialog_for_graph(self, scene_pos: tuple[float, float] | None) -> None:
+        open_component_insert_dialog(
+            parent=self,
+            studio_graph=self.studio_graph,
+            insert_scene_pos=scene_pos,
+        )
 
     @QtCore.Slot()
     def _on_export_published_session_action(self) -> None:
