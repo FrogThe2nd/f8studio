@@ -12,14 +12,14 @@ from f8pysdk.msgspec_codec import copy_model
 
 from f8pysdk import F8JsonValue, F8VariantKind, F8VariantLibrary, F8VariantRecord
 
-from ..graph_assets.asset_db import AssetsDatabase, variant_heads_local_table, variant_remote_cache_table
-from ..graph_assets.common import (
+from ..db import AssetsDatabase, variant_heads_local_table, variant_remote_cache_table
+from ..common import (
     JsonObject,
     json_object_loads,
     json_string_list_loads,
     stable_json_dumps,
 )
-from ..graph_assets.remote_cache_common import (
+from ..common.remote_cache_common import (
     RemoteCacheMetadata,
     remote_cache_metadata_from_fields,
 )

@@ -8,9 +8,9 @@ from typing import Any
 from qtpy import QtCore
 
 from f8pysdk.msgspec_codec import copy_model
-from f8pystudio.graph_assets.asset_db import AssetsDatabase
-from f8pystudio.graph_assets.component_catalog import ComponentCatalogService
-from f8pystudio.graph_assets.component_models import (
+from f8pystudio.assets.db import AssetsDatabase
+from f8pystudio.assets.components.component_catalog import ComponentCatalogService
+from f8pystudio.assets.components.component_models import (
     F8ComponentEntry,
     component_now_iso,
     F8ComponentRecord,
@@ -18,7 +18,7 @@ from f8pystudio.graph_assets.component_models import (
     F8ComponentSyncState,
     F8ComponentVisibility,
 )
-from f8pystudio.graph_assets.project_storage import ProjectStorageService
+from f8pystudio.assets.projects.project_storage import ProjectStorageService
 
 
 def test_assets_database_initializes_component_project_and_variant_tables(tmp_path: Path) -> None:
@@ -148,7 +148,7 @@ def test_project_storage_save_load_export_and_import_round_trip(tmp_path: Path) 
     )
 
     assert service.current_project_id() == saved.projectId
-    loaded = service.load_last_session()
+    loaded = service.load_last_project()
     assert loaded is not None
     assert loaded.projectId == saved.projectId
     assert loaded.content["layout"]["nodes"]["alpha"]["name"] == "alpha"

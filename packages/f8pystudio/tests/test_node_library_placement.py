@@ -10,7 +10,7 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from f8pystudio.variants.variant_ids import build_variant_node_type  # noqa: E402
+from f8pystudio.assets.variants.variant_ids import build_variant_node_type  # noqa: E402
 from f8pystudio.widgets.main_window import F8StudioMainWin  # noqa: E402
 from f8pystudio.widgets.node_library_widget import F8StudioNodeLibraryWidget  # noqa: E402
 

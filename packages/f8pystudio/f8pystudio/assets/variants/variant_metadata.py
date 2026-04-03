@@ -7,7 +7,7 @@ import msgspec
 from f8pysdk import F8VariantRecord, F8VariantRef
 from f8pysdk.msgspec_codec import validate_as
 
-from ..graph_assets.common import JsonObject, json_object_from_value
+from ..common import JsonObject, json_object_from_value
 
 logger = logging.getLogger(__name__)
 

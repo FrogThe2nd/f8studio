@@ -9,7 +9,7 @@ from qtpy import QtCore
 
 from f8pysdk.msgspec_codec import copy_model, validate_as
 
-from .common import JsonObject, json_object_from_value, json_object_loads
+from ..common import JsonObject, json_object_from_value, json_object_loads
 from .component_catalog import ComponentCatalogService
 from .component_models import (
     F8ComponentEntry,

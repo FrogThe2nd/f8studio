@@ -4,8 +4,8 @@ from pathlib import Path
 
 import msgspec
 
-from f8pystudio.variants.variant_catalog import LocalVariantProvider, RemoteCacheProvider, VariantCatalogService
-from f8pystudio.variants.variant_models import (
+from f8pystudio.assets.variants.variant_catalog import LocalVariantProvider, RemoteCacheProvider, VariantCatalogService
+from f8pystudio.assets.variants.variant_models import (
     F8VariantEntry,
     F8VariantKind,
     F8VariantSourceKind,

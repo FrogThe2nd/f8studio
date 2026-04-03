@@ -11,8 +11,8 @@ from qtpy import QtCore, QtWidgets
 
 from f8pysdk import F8OperatorSpec, F8ServiceSpec
 
-from ..ui_icons import StudioIcon, icon_for
-from ..ui_notifications import show_info, show_warning
+from ...ui_icons import StudioIcon, icon_for
+from ...ui_notifications import show_info, show_warning
 from ..variants.variant_compose import build_variant_record_from_node
 from ..variants.variant_ids import build_variant_node_type
 from f8pysdk import F8VariantRecord
@@ -28,10 +28,13 @@ from ..variants.variant_repository import (
 )
 from ..variants.variant_events import subscribe_variants_changed
 from ..variants.variant_sync import VariantSyncClient
-from .json_text_editor import attach_json_enhancements
-from .variant_cloud_account_menu import build_variant_cloud_account_menu, prompt_variant_cloud_login
+from ...widgets.json_text_editor import attach_json_enhancements
+from .asset_cloud_account_menu import build_asset_account_menu, prompt_asset_cloud_sign_in
 
 logger = logging.getLogger(__name__)
+
+# Compatibility alias used by older tests/callers that patched the dialog module directly.
+list_variants_for_base = list_entries_for_base
 
 
 class _VariantMetaDialog(QtWidgets.QDialog):
@@ -91,7 +94,7 @@ class _VariantMetaDialog(QtWidgets.QDialog):
         )
 
 
-class NodeVariantManagerDialog(QtWidgets.QDialog):
+class VariantManagerDialog(QtWidgets.QDialog):
     _TAB_MINE = 0
     _TAB_COMMUNITY = 1
     _TAB_INSTALLED = 2
@@ -161,7 +164,7 @@ class NodeVariantManagerDialog(QtWidgets.QDialog):
         self._filter_combo = QtWidgets.QComboBox(self)
         self._filter_combo.currentIndexChanged.connect(self._on_filter_changed)  # type: ignore[attr-defined]
 
-        self._toolbar = QtWidgets.QToolBar("Variant Cloud", self)
+        self._toolbar = QtWidgets.QToolBar("Variants", self)
         self._toolbar.setMovable(False)
         self._toolbar.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
         self._toolbar.setIconSize(QtCore.QSize(16, 16))
@@ -842,7 +845,7 @@ class NodeVariantManagerDialog(QtWidgets.QDialog):
         graph.begin_node_placement(variant_node_type, placement_label)
 
     def _on_accounts_clicked(self) -> None:
-        menu = build_variant_cloud_account_menu(
+        menu = build_asset_account_menu(
             parent=self,
             sync_client=self._sync_client,
             on_changed=self._on_account_state_changed,
@@ -987,7 +990,7 @@ class NodeVariantManagerDialog(QtWidgets.QDialog):
         self._reload()
 
     def _on_login_clicked(self) -> None:
-        if prompt_variant_cloud_login(parent=self, sync_client=self._sync_client):
+        if prompt_asset_cloud_sign_in(parent=self, sync_client=self._sync_client):
             self._on_account_state_changed()
 
     def _on_logout_clicked(self) -> None:
@@ -1058,7 +1061,7 @@ class NodeVariantManagerDialog(QtWidgets.QDialog):
                 self._reload()
                 return True
             except Exception:
-                logger.exception("Variant manager remembered-session refresh failed")
+                logger.exception("Variant manager remembered account refresh failed")
         self._on_login_clicked()
         return self._sync_client.current_user() is not None and bool(self._sync_client.current_access_token())
 

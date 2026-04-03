@@ -3,10 +3,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ..session_migration import SESSION_SCHEMA_VERSION, extract_layout
+from ...session_migration import SESSION_SCHEMA_VERSION, extract_layout
 from .component_catalog import ComponentCatalogService
 from .component_models import F8ComponentEntry, F8ComponentRecord, F8ComponentSourceKind
-from .common import JsonObject, json_object_loads, json_string_list_loads
+from ..common import JsonObject, json_object_loads, json_string_list_loads
 
 
 def _service() -> ComponentCatalogService:

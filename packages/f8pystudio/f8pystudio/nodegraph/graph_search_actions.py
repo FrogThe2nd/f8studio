@@ -9,12 +9,12 @@ from qtpy import QtWidgets
 
 from f8pysdk.spec_metadata import palette_category_from_spec
 
-from ..graph_assets.common import JsonObject
-from ..graph_assets.component_repository import component_entry, list_component_entries
-from ..graph_assets.project_storage import ProjectStorageService
+from ..assets.common import JsonObject
+from ..assets.components.component_repository import component_entry, list_component_entries
+from ..assets.projects.project_storage import ProjectStorageService
 from ..ui_notifications import show_warning
-from ..variants.variant_ids import build_variant_node_type
-from ..variants.variant_repository import list_entries_for_base
+from ..assets.variants.variant_ids import build_variant_node_type
+from ..assets.variants.variant_repository import list_entries_for_base
 from .service_basenode import F8StudioServiceNodeItem
 from .spec_visibility import is_hidden_spec_node_class, typed_spec_template_or_none
 
@@ -270,12 +270,12 @@ class GraphSearchActionsMixin:
         """
         return is_hidden_spec_node_class(node_cls)
 
-    def save_last_session(self) -> str:
+    def save_last_project(self) -> str:
         """
         Save the current session to the local project store.
         """
         host = cast(_GraphSearchHost, cast(object, self))
-        record = ProjectStorageService().save_last_session(content=host.serialize_session())
+        record = ProjectStorageService().save_last_project(content=host.serialize_session())
         return str(record.projectId)
 
     def save_publish_session(self, file_path: str) -> str:
@@ -288,12 +288,12 @@ class GraphSearchActionsMixin:
         _ = path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         return str(path)
 
-    def load_last_session(self) -> str | None:
+    def load_last_project(self) -> str | None:
         """
         Load the last session from the local project store if it exists.
         """
         host = cast(_GraphSearchHost, cast(object, self))
-        record = ProjectStorageService().load_last_session()
+        record = ProjectStorageService().load_last_project()
         if record is None:
             return None
         host.load_session_payload(record.content)

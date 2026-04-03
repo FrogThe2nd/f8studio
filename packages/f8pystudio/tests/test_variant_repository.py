@@ -6,10 +6,10 @@ from pathlib import Path
 import pytest
 
 from f8pysdk.msgspec_codec import dump_json
-from f8pystudio.variants.variant_models import F8VariantKind, variant_now_iso
+from f8pystudio.assets.variants.variant_models import F8VariantKind, variant_now_iso
 from f8pysdk import F8VariantRecord
-from f8pystudio.variants.variant_catalog import VariantCatalogService
-from f8pystudio.variants.variant_repository import (
+from f8pystudio.assets.variants.variant_catalog import VariantCatalogService
+from f8pystudio.assets.variants.variant_repository import (
     import_from_json,
     is_variant_name_conflict,
     list_variants_for_base,
@@ -38,8 +38,8 @@ def _make_variant_record(*, variant_id: str, base_node_type: str, name: str) -> 
 def _patch_variants_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     target = tmp_path / "nodeVariants.json"
     service = VariantCatalogService(db_path=tmp_path / "assets.db")
-    monkeypatch.setattr("f8pystudio.variants.variant_repository._service", lambda: service)
-    monkeypatch.setattr("f8pystudio.variants.variant_repository.variants_file_path", lambda: target)
+    monkeypatch.setattr("f8pystudio.assets.variants.variant_repository._service", lambda: service)
+    monkeypatch.setattr("f8pystudio.assets.variants.variant_repository.variants_file_path", lambda: target)
     return target
 
 

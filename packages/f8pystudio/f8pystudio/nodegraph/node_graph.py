@@ -123,13 +123,13 @@ class F8StudioGraph(
         if isinstance(viewer, F8StudioNodeViewer):
             viewer.begin_graph_placement(request=request, label=label)
 
-    def show_insert_component_dialog(self, *, scene_pos: tuple[float, float] | None = None) -> None:
-        from ..widgets.session_actions import insert_component_dialog as session_insert_component_dialog
+    def open_component_insert_dialog(self, *, scene_pos: tuple[float, float] | None = None) -> None:
+        from ..widgets.project_asset_actions import open_component_insert_dialog as open_component_insert_dialog
 
         parent = self._notification_parent()
         if parent is None:
             return
-        session_insert_component_dialog(
+        open_component_insert_dialog(
             parent=parent,
             studio_graph=self,
             insert_scene_pos=scene_pos,
@@ -142,16 +142,16 @@ class F8StudioGraph(
         if graph_menu is None:
             return
         graph_menu.add_separator()
-        graph_menu.add_command("Insert Component...", func=self._on_insert_component_graph_menu_action)
+        graph_menu.add_command("Insert Component...", func=self._on_open_component_insert_dialog_action)
         self._graph_context_menu_commands_installed = True
 
-    def _on_insert_component_graph_menu_action(self, _graph: Any) -> None:
+    def _on_open_component_insert_dialog_action(self, _graph: Any) -> None:
         viewer = self.viewer()
         if not isinstance(viewer, F8StudioNodeViewer):
-            self.show_insert_component_dialog(scene_pos=None)
+            self.open_component_insert_dialog(scene_pos=None)
             return
         scene_pos_qt = viewer.scene_cursor_pos()
-        self.show_insert_component_dialog(scene_pos=(float(scene_pos_qt.x()), float(scene_pos_qt.y())))
+        self.open_component_insert_dialog(scene_pos=(float(scene_pos_qt.x()), float(scene_pos_qt.y())))
 
     def cancel_graph_placement(self) -> None:
         viewer = self._viewer

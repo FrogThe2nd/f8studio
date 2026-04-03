@@ -9,21 +9,21 @@ from qtpy import QtWidgets
 
 from f8pysdk.msgspec_codec import dump_json
 
-from ..graph_assets.common import new_asset_id
-from ..graph_assets.component_models import F8ComponentRecord
-from ..graph_assets.component_repository import upsert_component
-from ..graph_assets.project_storage import ProjectStorageService
+from ..assets.common import new_asset_id
+from ..assets.components.component_models import F8ComponentRecord
+from ..assets.components.component_repository import upsert_component
+from ..assets.projects.project_storage import ProjectStorageService
 from ..ui_notifications import show_info
-from .component_manager_dialog import ComponentManagerDialog
-from .graph_asset_dialogs import GraphAssetMetaDialog, JsonVersionBrowserDialog, JsonVersionBrowserItem, ProjectPickerDialog
-from .insert_component_dialog import InsertComponentDialog
+from ..assets.ui.component_catalog_dialog import ComponentCatalogDialog
+from ..assets.ui.project_asset_dialogs import AssetVersionBrowserDialog, AssetVersionBrowserItem, ProjectAssetMetaDialog, ProjectPickerDialog
+from ..assets.ui.component_insert_dialog import ComponentInsertDialog
 
 logger = logging.getLogger(__name__)
 
 
-def auto_load_session(*, studio_graph: Any, log_dock: Any) -> None:
+def auto_load_project(*, studio_graph: Any, log_dock: Any) -> None:
     try:
-        project = ProjectStorageService().load_last_session()
+        project = ProjectStorageService().load_last_project()
         if project is None:
             return
         studio_graph.load_session_payload(project.content)
@@ -33,12 +33,12 @@ def auto_load_session(*, studio_graph: Any, log_dock: Any) -> None:
         logger.exception("Auto-load session failed")
 
 
-def auto_save_session(*, studio_graph: Any, log_dock: Any, already_saved: bool) -> bool:
+def auto_save_project(*, studio_graph: Any, log_dock: Any, already_saved: bool) -> bool:
     if bool(already_saved):
         return True
 
     try:
-        saved = ProjectStorageService().save_last_session(content=studio_graph.serialize_session())
+        saved = ProjectStorageService().save_last_project(content=studio_graph.serialize_session())
         logger.info("Saved project to %s", saved.projectId)
         return True
     except Exception:
@@ -50,14 +50,14 @@ def auto_save_session(*, studio_graph: Any, log_dock: Any, already_saved: bool) 
         return False
 
 
-def save_session(*, parent: QtWidgets.QWidget, studio_graph: Any, show_info: Any) -> None:
-    record = ProjectStorageService().save_last_session(content=studio_graph.serialize_session())
+def save_project(*, parent: QtWidgets.QWidget, studio_graph: Any, show_info: Any) -> None:
+    record = ProjectStorageService().save_last_project(content=studio_graph.serialize_session())
     show_info(parent, "Project saved", f"Saved project:\n{record.name}")
 
 
-def load_last_session(*, parent: QtWidgets.QWidget, studio_graph: Any, session_file: Path, show_info: Any) -> bool:
+def load_last_project(*, parent: QtWidgets.QWidget, studio_graph: Any, session_file: Path, show_info: Any) -> bool:
     _ = session_file
-    record = ProjectStorageService().load_last_session()
+    record = ProjectStorageService().load_last_project()
     if record is None:
         show_info(parent, "No project", "No local project was found.")
         return False
@@ -66,7 +66,7 @@ def load_last_session(*, parent: QtWidgets.QWidget, studio_graph: Any, session_f
     return True
 
 
-def load_session_from_dialog(
+def open_project_dialog(
     *,
     parent: QtWidgets.QWidget,
     studio_graph: Any,
@@ -117,7 +117,7 @@ def import_project_json_as_dialog(
     if not selected_path:
         return str(start_dir or ""), False
 
-    dialog = GraphAssetMetaDialog(
+    dialog = ProjectAssetMetaDialog(
         parent=parent,
         title="Import Project JSON",
         name=Path(selected_path).stem or "Imported Project",
@@ -148,7 +148,7 @@ def import_project_json_as_dialog(
         return str(start_dir or ""), False
 
 
-def save_session_as_dialog(
+def save_project_as_dialog(
     *,
     parent: QtWidgets.QWidget,
     studio_graph: Any,
@@ -156,7 +156,7 @@ def save_session_as_dialog(
     start_dir: str,
     show_warning: Any,
 ) -> tuple[str, bool]:
-    dialog = GraphAssetMetaDialog(
+    dialog = ProjectAssetMetaDialog(
         parent=parent,
         title="Save Project As",
         name="Untitled Project",
@@ -217,7 +217,7 @@ def export_project_json_as_dialog(
         return str(start_dir or ""), None
 
 
-def publish_session_as_dialog(
+def export_publish_json_dialog(
     *,
     parent: QtWidgets.QWidget,
     studio_graph: Any,
@@ -256,7 +256,7 @@ def save_component_as_dialog(
     log_dock: Any,
     show_warning: Any,
 ) -> bool:
-    dialog = GraphAssetMetaDialog(
+    dialog = ProjectAssetMetaDialog(
         parent=parent,
         title="Save As Component",
         name="Untitled Component",
@@ -289,18 +289,18 @@ def save_component_as_dialog(
         return False
 
 
-def manage_components_dialog(*, parent: QtWidgets.QWidget, studio_graph: Any) -> None:
-    dialog = ComponentManagerDialog(parent=parent, node_graph=studio_graph)
+def open_component_catalog_dialog(*, parent: QtWidgets.QWidget, studio_graph: Any) -> None:
+    dialog = ComponentCatalogDialog(parent=parent, node_graph=studio_graph)
     dialog.exec()
 
 
-def insert_component_dialog(
+def open_component_insert_dialog(
     *,
     parent: QtWidgets.QWidget,
     studio_graph: Any,
     insert_scene_pos: tuple[float, float] | None = None,
 ) -> None:
-    dialog = InsertComponentDialog(parent=parent, node_graph=studio_graph, insert_scene_pos=insert_scene_pos)
+    dialog = ComponentInsertDialog(parent=parent, node_graph=studio_graph, insert_scene_pos=insert_scene_pos)
     dialog.exec()
 
 
@@ -315,7 +315,7 @@ def show_project_history_dialog(
     service = ProjectStorageService()
     current_project = service.project(service.current_project_id())
     if current_project is None:
-        current_project = service.load_last_session()
+        current_project = service.load_last_project()
     if current_project is None:
         show_info_message(parent, "No project", "No local project was found.")
         return False
@@ -325,11 +325,11 @@ def show_project_history_dialog(
         show_info_message(parent, "Project History", "No project history found.")
         return False
 
-    dialog = JsonVersionBrowserDialog(
+    dialog = AssetVersionBrowserDialog(
         parent=parent,
         title=f"Project History - {current_project.name}",
         items=[
-            JsonVersionBrowserItem(version_number=int(version.versionNumber), created_at=str(version.createdAt))
+            AssetVersionBrowserItem(version_number=int(version.versionNumber), created_at=str(version.createdAt))
             for version in versions
         ],
         load_payload=lambda version_number: dump_json(
@@ -367,7 +367,7 @@ def show_project_history_dialog(
         return False
 
 
-def insert_graph_from_dialog(
+def insert_graph_json_dialog(
     *,
     parent: QtWidgets.QWidget,
     studio_graph: Any,

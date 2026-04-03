@@ -5,7 +5,7 @@ from enum import Enum
 from msgspec import Struct, field
 
 from f8pysdk import F8VariantKind, F8VariantLibrary, F8VariantRecord, F8VariantRef
-from ..graph_assets.common import now_iso
+from ..common import now_iso
 
 
 class F8VariantSourceKind(Enum):

@@ -7,7 +7,7 @@ from f8pysdk.generated import F8OperatorSchemaVersion, F8OperatorSpec, F8StateAc
 from f8pysdk.schema_helpers import string_schema
 
 from f8pystudio.nodegraph.node_graph import F8StudioGraph
-from f8pystudio.variants.variant_models import F8VariantKind, variant_now_iso
+from f8pystudio.assets.variants.variant_models import F8VariantKind, variant_now_iso
 from f8pysdk import F8VariantRecord
 
 

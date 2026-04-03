@@ -5,6 +5,8 @@ from pathlib import Path
 
 from qtpy import QtCore, QtGui, QtSvg, QtWidgets
 
+from .ui_resources import icons_dir
+
 
 class StudioIcon(Enum):
     FOLDER_OPEN = "folder-open.svg"
@@ -69,7 +71,7 @@ def icon_for(widget: QtWidgets.QWidget, token: StudioIcon) -> QtGui.QIcon:
 
 
 def _icons_dir() -> Path:
-    return Path(__file__).resolve().parent / "assets" / "icons"
+    return icons_dir()
 
 
 def _render_svg_icon(widget: QtWidgets.QWidget, token: StudioIcon, icon_name: str) -> QtGui.QIcon:

@@ -8,9 +8,9 @@ from typing import cast
 from qtpy import QtCore
 from sqlalchemy import and_, func, insert, select, update
 
-from ..session_migration import extract_layout
-from .asset_db import AssetsDatabase, project_heads_table, project_versions_table
-from .common import (
+from ...session_migration import extract_layout
+from ..db import AssetsDatabase, project_heads_table, project_versions_table
+from ..common import (
     JsonObject,
     json_string_list_loads,
     json_object_loads,
@@ -228,7 +228,7 @@ class ProjectStorageService:
             updatedAt=timestamp,
         )
 
-    def save_last_session(self, *, content: JsonObject, default_name: str = "Auto Saved Session") -> F8ProjectRecord:
+    def save_last_project(self, *, content: JsonObject, default_name: str = "Auto Saved Session") -> F8ProjectRecord:
         current_project_id = self.current_project_id()
         project = self.project(current_project_id)
         if project is not None:
@@ -263,7 +263,7 @@ class ProjectStorageService:
         self._set_value(self._AUTOSAVE_PROJECT_ID_KEY, saved.projectId)
         return saved
 
-    def load_last_session(self) -> F8ProjectRecord | None:
+    def load_last_project(self) -> F8ProjectRecord | None:
         current_project = self.project(self.current_project_id())
         if current_project is not None:
             return current_project

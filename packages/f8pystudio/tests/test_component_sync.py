@@ -7,14 +7,14 @@ import threading
 
 from qtpy import QtCore
 
-from f8pystudio.graph_assets.component_catalog import ComponentCatalogService
-from f8pystudio.graph_assets.component_models import (
+from f8pystudio.assets.components.component_catalog import ComponentCatalogService
+from f8pystudio.assets.components.component_models import (
     F8ComponentEntry,
     F8ComponentRecord,
     F8ComponentSourceKind,
     F8ComponentVisibility,
 )
-from f8pystudio.graph_assets.component_sync import ComponentSyncClient
+from f8pystudio.assets.components.component_sync import ComponentSyncClient
 
 
 def _component_record(component_id: str, name: str) -> dict[str, object]:

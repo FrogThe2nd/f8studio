@@ -10,9 +10,9 @@ from qtpy import QtCore, QtWidgets
 
 from f8pysdk.msgspec_codec import dump_json, validate_as
 
-from ..graph_assets.common import new_asset_id
-from ..graph_assets.component_events import subscribe_components_changed
-from ..graph_assets.component_models import (
+from ..common import new_asset_id
+from ..components.component_events import subscribe_components_changed
+from ..components.component_models import (
     F8ComponentEntry,
     F8ComponentLocalVersionSummary,
     component_now_iso,
@@ -21,29 +21,29 @@ from ..graph_assets.component_models import (
     F8ComponentSourceKind,
     F8ComponentVisibility,
 )
-from ..graph_assets.component_repository import (
+from ..components.component_repository import (
     delete_component,
     export_component_to_json,
     import_component_from_json,
     list_component_entries,
     upsert_component,
 )
-from ..graph_assets.component_sync import ComponentSyncClient
-from ..ui_icons import StudioIcon, icon_for
-from ..ui_notifications import show_info, show_warning
-from .graph_asset_dialogs import (
-    GraphAssetMetaDialog,
-    JsonVersionBrowserAction,
-    JsonVersionBrowserDialog,
-    JsonVersionBrowserItem,
+from ..components.component_sync import ComponentSyncClient
+from ...ui_icons import StudioIcon, icon_for
+from ...ui_notifications import show_info, show_warning
+from .project_asset_dialogs import (
+    AssetVersionBrowserAction,
+    AssetVersionBrowserDialog,
+    AssetVersionBrowserItem,
+    ProjectAssetMetaDialog,
 )
-from .json_text_editor import attach_json_enhancements
-from .variant_cloud_account_menu import build_variant_cloud_account_menu, prompt_variant_cloud_login
+from ...widgets.json_text_editor import attach_json_enhancements
+from .asset_cloud_account_menu import build_asset_account_menu, prompt_asset_cloud_sign_in
 
 logger = logging.getLogger(__name__)
 
 
-class ComponentManagerDialog(QtWidgets.QDialog):
+class ComponentCatalogDialog(QtWidgets.QDialog):
     _TAB_MINE = 0
     _TAB_COMMUNITY = 1
     _TAB_INSTALLED = 2
@@ -516,7 +516,7 @@ class ComponentManagerDialog(QtWidgets.QDialog):
         graph = self._graph
         if graph is None:
             return
-        dialog = GraphAssetMetaDialog(
+        dialog = ProjectAssetMetaDialog(
             parent=self,
             title="Save As Component",
             name="Untitled Component",
@@ -544,7 +544,7 @@ class ComponentManagerDialog(QtWidgets.QDialog):
         if selected_entry is None or selected_entry.source != F8ComponentSourceKind.local:
             return
         record = selected_entry.record
-        dialog = GraphAssetMetaDialog(
+        dialog = ProjectAssetMetaDialog(
             parent=self,
             title="Edit Component Metadata",
             name=record.name,
@@ -720,7 +720,7 @@ class ComponentManagerDialog(QtWidgets.QDialog):
         selected_path = str(path or "").strip()
         if not selected_path:
             return
-        dialog = GraphAssetMetaDialog(
+        dialog = ProjectAssetMetaDialog(
             parent=self,
             title="Import Component",
             name="Imported Component",
@@ -763,7 +763,7 @@ class ComponentManagerDialog(QtWidgets.QDialog):
         show_info(self, "Exported", f"Saved:\n{out_path}")
 
     def _on_accounts_clicked(self) -> None:
-        menu = build_variant_cloud_account_menu(parent=self, sync_client=self._sync_client, on_changed=self._on_account_state_changed)
+        menu = build_asset_account_menu(parent=self, sync_client=self._sync_client, on_changed=self._on_account_state_changed)
         menu.exec(self._account_button.mapToGlobal(QtCore.QPoint(0, self._account_button.height())))
 
     def _account_button_text(self) -> str:
@@ -853,7 +853,7 @@ class ComponentManagerDialog(QtWidgets.QDialog):
         return entry.source == F8ComponentSourceKind.remote_public and not self._is_owned_remote_entry(entry)
 
     def _on_login_clicked(self) -> None:
-        if prompt_variant_cloud_login(parent=self, sync_client=self._sync_client):
+        if prompt_asset_cloud_sign_in(parent=self, sync_client=self._sync_client):
             self._on_account_state_changed()
 
     def _on_account_state_changed(self) -> None:
@@ -894,7 +894,7 @@ class ComponentManagerDialog(QtWidgets.QDialog):
                 self._reload()
                 return True
             except Exception:
-                logger.exception("Component manager remembered-session refresh failed")
+                logger.exception("Component catalog remembered account refresh failed")
         self._on_login_clicked()
         return self._sync_client.current_user() is not None and bool(self._sync_client.current_access_token())
 
@@ -979,7 +979,7 @@ class ComponentManagerDialog(QtWidgets.QDialog):
         if not versions:
             show_info(self, "Component History", "No local history found.")
             return
-        dialog = JsonVersionBrowserDialog(
+        dialog = AssetVersionBrowserDialog(
             parent=self,
             title=f"Component History - {entry.record.name}",
             items=[self._local_version_item(version) for version in versions],
@@ -999,7 +999,7 @@ class ComponentManagerDialog(QtWidgets.QDialog):
         if not history.versions:
             show_info(self, "Component History", "No history found.")
             return
-        dialog = JsonVersionBrowserDialog(
+        dialog = AssetVersionBrowserDialog(
             parent=self,
             title=f"Component History - {entry.record.name}",
             items=[self._remote_version_item(version) for version in history.versions],
@@ -1008,8 +1008,8 @@ class ComponentManagerDialog(QtWidgets.QDialog):
                 mode="json",
             ),
             actions=[
-                JsonVersionBrowserAction(action_key="save_local", label="Save As Local Component"),
-                JsonVersionBrowserAction(action_key="fork_remote", label="Fork To My Cloud"),
+                AssetVersionBrowserAction(action_key="save_local", label="Save As Local Component"),
+                AssetVersionBrowserAction(action_key="fork_remote", label="Fork To My Cloud"),
             ],
         )
         if dialog.exec() != QtWidgets.QDialog.Accepted:
@@ -1025,12 +1025,12 @@ class ComponentManagerDialog(QtWidgets.QDialog):
             self._fork_remote_version_to_cloud(entry=entry, version_number=int(selected_version_number))
 
     @staticmethod
-    def _local_version_item(version: F8ComponentLocalVersionSummary) -> JsonVersionBrowserItem:
-        return JsonVersionBrowserItem(version_number=int(version.versionNumber), created_at=str(version.createdAt))
+    def _local_version_item(version: F8ComponentLocalVersionSummary) -> AssetVersionBrowserItem:
+        return AssetVersionBrowserItem(version_number=int(version.versionNumber), created_at=str(version.createdAt))
 
     @staticmethod
-    def _remote_version_item(version: F8ComponentRemoteVersionEntry) -> JsonVersionBrowserItem:
-        return JsonVersionBrowserItem(
+    def _remote_version_item(version: F8ComponentRemoteVersionEntry) -> AssetVersionBrowserItem:
+        return AssetVersionBrowserItem(
             version_number=int(version.versionNumber),
             created_at=str(version.createdAt),
             revision=str(version.revision),
@@ -1049,7 +1049,7 @@ class ComponentManagerDialog(QtWidgets.QDialog):
         except Exception as exc:
             show_warning(self, "Load version failed", str(exc))
             return
-        dialog = GraphAssetMetaDialog(
+        dialog = ProjectAssetMetaDialog(
             parent=self,
             title="Save Remote Version As Local Component",
             name=f"{historical_entry.record.name} v{int(version_number)}",
@@ -1081,7 +1081,7 @@ class ComponentManagerDialog(QtWidgets.QDialog):
         except Exception as exc:
             show_warning(self, "Load version failed", str(exc))
             return
-        dialog = GraphAssetMetaDialog(
+        dialog = ProjectAssetMetaDialog(
             parent=self,
             title="Fork Remote Component Version",
             name=f"{historical_entry.record.name} Copy",

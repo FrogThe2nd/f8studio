@@ -7,8 +7,8 @@ import threading
 
 from qtpy import QtCore
 
-from f8pystudio.variants.variant_catalog import LocalVariantProvider, RemoteCacheProvider, VariantCatalogService
-from f8pystudio.variants.variant_models import (
+from f8pystudio.assets.variants.variant_catalog import LocalVariantProvider, RemoteCacheProvider, VariantCatalogService
+from f8pystudio.assets.variants.variant_models import (
     F8VariantEntry,
     F8VariantKind,
     F8VariantRemoteConflictError,
@@ -17,7 +17,7 @@ from f8pystudio.variants.variant_models import (
     F8VariantVisibility,
     variant_now_iso,
 )
-from f8pystudio.variants.variant_sync import VariantSyncClient
+from f8pystudio.assets.variants.variant_sync import VariantSyncClient
 from f8pysdk import F8VariantRecord
 
 

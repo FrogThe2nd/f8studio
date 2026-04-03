@@ -11,13 +11,13 @@ from qtpy import QtWidgets
 from f8pysdk import F8OperatorSpec, F8ServiceSpec, F8StateAccess, F8VariantRecord
 from f8pysdk.spec_metadata import coerce_spec_payload
 
-from ..graph_assets.common import JsonObject, json_object_from_value
+from ..assets.common import JsonObject, json_object_from_value
 from ..ui_notifications import show_info, show_warning
-from ..variants.variant_compose import _VariantNode as _ComposeVariantNode
-from ..variants.variant_compose import build_variant_record_from_node
-from ..variants.variant_ids import build_variant_node_type
-from ..variants.variant_metadata import variant_ref_from_record, variant_ref_to_json
-from ..variants.variant_repository import (
+from ..assets.variants.variant_compose import _VariantNode as _ComposeVariantNode
+from ..assets.variants.variant_compose import build_variant_record_from_node
+from ..assets.variants.variant_ids import build_variant_node_type
+from ..assets.variants.variant_metadata import variant_ref_from_record, variant_ref_to_json
+from ..assets.variants.variant_repository import (
     is_variant_name_conflict,
     normalize_variant_name,
     upsert_variant,

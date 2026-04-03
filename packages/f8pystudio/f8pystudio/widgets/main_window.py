@@ -17,7 +17,7 @@ from ..ui_notifications import show_info, show_warning
 from ..ui_bus import UiCommand, UiCommandApplier
 from ..ui_icons import StudioIcon, icon_for
 from ..global_hotkeys.controller import ControlPanelGlobalHotkeyController
-from ..variants.variant_sync import VariantSyncClient
+from ..assets.variants.variant_sync import VariantSyncClient
 from .global_hotkey_registry_dialog import GlobalHotkeyRegistryDialog
 from .layers_panel import LayersPanelWidget
 from .node_property_panel import F8StudioSingleNodePropertiesWidget
@@ -27,22 +27,22 @@ from .service_inventory import collect_declared_service_ids, collect_declared_se
 from .service_log_widget import ServiceLogDock
 from .runtime_state_sync import RuntimeStateSyncController
 from .ai_assist_sidebar import AiAssistSidebarWidget
-from .variant_cloud_account_menu import build_variant_cloud_account_menu
-from .session_actions import (
-    auto_load_session as session_auto_load_session,
-    auto_save_session as session_auto_save_session,
-    export_project_json_as_dialog as session_export_project_json_as_dialog,
-    import_project_json_as_dialog as session_import_project_json_as_dialog,
-    insert_component_dialog as session_insert_component_dialog,
-    insert_graph_from_dialog as session_insert_graph_from_dialog,
-    load_last_session as session_load_last_session,
-    load_session_from_dialog as session_load_session_from_dialog,
-    manage_components_dialog as session_manage_components_dialog,
-    publish_session_as_dialog as session_publish_session_as_dialog,
-    show_project_history_dialog as session_show_project_history_dialog,
-    save_component_as_dialog as session_save_component_as_dialog,
-    save_session as session_save_session,
-    save_session_as_dialog as session_save_session_as_dialog,
+from ..assets.ui.asset_cloud_account_menu import build_asset_account_menu
+from .project_asset_actions import (
+    auto_load_project as project_auto_load,
+    auto_save_project as project_auto_save,
+    export_project_json_as_dialog as project_export_json_dialog,
+    import_project_json_as_dialog as project_import_json_dialog,
+    open_component_insert_dialog,
+    insert_graph_json_dialog as graph_insert_json_dialog,
+    load_last_project as project_load_last,
+    open_project_dialog as project_open_dialog,
+    open_component_catalog_dialog as component_catalog_dialog,
+    export_publish_json_dialog as project_export_publish_json_dialog,
+    show_project_history_dialog as project_history_dialog,
+    save_component_as_dialog as component_save_as_dialog,
+    save_project as project_save,
+    save_project_as_dialog as project_save_as_dialog,
 )
 from .main_window_prefs import (
     as_qbytearray as prefs_as_qbytearray,
@@ -84,12 +84,12 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
     )
 
     studio_graph: F8StudioGraph
-    _quickload_session_action: QtGui.QAction
-    _quicksave_session_action: QtGui.QAction
-    _load_session_from_file_action: QtGui.QAction
+    _quickload_project_action: QtGui.QAction
+    _quicksave_project_action: QtGui.QAction
+    _open_project_action: QtGui.QAction
     _import_project_json_action: QtGui.QAction
     _import_graph_action: QtGui.QAction
-    _save_session_as_action: QtGui.QAction
+    _save_project_as_action: QtGui.QAction
     _export_project_json_action: QtGui.QAction
     _project_history_action: QtGui.QAction
     _save_component_action: QtGui.QAction
@@ -104,7 +104,7 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
     _reset_layout_action: QtGui.QAction
     _log_level_menu: QtWidgets.QMenu
     _clear_all_nodes_action: QtGui.QAction
-    _export_session_action: QtGui.QAction
+    _export_published_session_action: QtGui.QAction
     _auto_save_action: QtGui.QAction
     _auto_deploy_action: QtGui.QAction
     _auto_proxy_action: QtGui.QAction
@@ -140,8 +140,8 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         self._auto_deploy_enabled = self._read_saved_auto_deploy_enabled()
         self._auto_proxy_enabled = self._read_saved_auto_proxy_enabled()
         self._performance_overlay_enabled = self._read_saved_performance_overlay_enabled()
-        self._variant_sync_client = VariantSyncClient()
-        self._variant_cloud_account_button: QtWidgets.QToolButton | None = None
+        self._asset_cloud_sync_client = VariantSyncClient()
+        self._asset_cloud_account_button: QtWidgets.QToolButton | None = None
 
         self.studio_graph = F8StudioGraph()
         self.studio_graph.node_factory.clear_registered_nodes()
@@ -212,8 +212,8 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         self.studio_graph.property_changed.connect(self._on_ui_property_changed)  # type: ignore[attr-defined]
         self.studio_graph.nodes_deleted.connect(self._on_graph_nodes_deleted)  # type: ignore[attr-defined]
 
-        QtCore.QTimer.singleShot(0, self._auto_load_session)
-        QtWidgets.QApplication.instance().aboutToQuit.connect(self._auto_save_session)  # type: ignore[attr-defined]
+        QtCore.QTimer.singleShot(0, self._auto_load_project)
+        QtWidgets.QApplication.instance().aboutToQuit.connect(self._auto_save_project)  # type: ignore[attr-defined]
 
     def start_bridge_and_wait_for_startup(self, *, timeout_s: float = STARTUP_GATE_TIMEOUT_S) -> str | None:
         return self._bridge.start_and_wait_for_startup(timeout_s=float(timeout_s))
@@ -328,13 +328,13 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
 
     def _setup_menu(self) -> None:
         menu = self.menuBar().addMenu("Graph")
-        menu.addAction(self._quickload_session_action)
-        menu.addAction(self._quicksave_session_action)
+        menu.addAction(self._quickload_project_action)
+        menu.addAction(self._quicksave_project_action)
         menu.addAction(self._auto_save_action)
 
         menu.addSeparator()
-        menu.addAction(self._load_session_from_file_action)
-        menu.addAction(self._save_session_as_action)
+        menu.addAction(self._open_project_action)
+        menu.addAction(self._save_project_as_action)
         menu.addAction(self._import_project_json_action)
         menu.addAction(self._export_project_json_action)
         menu.addAction(self._project_history_action)
@@ -343,7 +343,7 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         menu.addAction(self._insert_component_action)
         menu.addSeparator()
         menu.addAction(self._import_graph_action)
-        menu.addAction(self._export_session_action)
+        menu.addAction(self._export_published_session_action)
         menu.addAction(self._clear_all_nodes_action)
 
         menu.addSeparator()
@@ -503,23 +503,23 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         return action
 
     def _create_graph_actions(self) -> None:
-        self._quickload_session_action = self._create_action(
+        self._quickload_project_action = self._create_action(
             "Open Recent Project",
-            handler=self._on_quickload_session_action,
+            handler=self._on_quickload_project_action,
             shortcut="Ctrl+O",
             icon=StudioIcon.FOLDER_OPEN,
             tool_tip="Open the most recent local project",
         )
-        self._quicksave_session_action = self._create_action(
+        self._quicksave_project_action = self._create_action(
             "Save Project",
-            handler=self._on_quicksave_session_action,
+            handler=self._on_quicksave_project_action,
             shortcut="Ctrl+S",
             icon=StudioIcon.SAVE,
             tool_tip="Save the current graph into the local project store",
         )
-        self._load_session_from_file_action = self._create_action(
+        self._open_project_action = self._create_action(
             "Open Project…",
-            handler=self._on_load_session_action,
+            handler=self._on_open_project_action,
             shortcut="Ctrl+Shift+O",
             icon=StudioIcon.FOLDER_OPEN,
             tool_tip="Open a project from the local project catalog",
@@ -537,9 +537,9 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
             icon=StudioIcon.PACKAGE_IMPORT,
             tool_tip="Insert a session JSON file into the current graph as a copied snapshot",
         )
-        self._save_session_as_action = self._create_action(
+        self._save_project_as_action = self._create_action(
             "Save Project As…",
-            handler=self._on_save_session_as_action,
+            handler=self._on_save_project_as_action,
             shortcut="Ctrl+Shift+S",
             icon=StudioIcon.SAVE,
             tool_tip="Save the current graph as a new local project",
@@ -607,9 +607,9 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
             checkable=True,
             checked=self._auto_proxy_enabled,
         )
-        self._export_session_action = self._create_action(
+        self._export_published_session_action = self._create_action(
             "Export Publish JSON…",
-            handler=self._on_export_session_action,
+            handler=self._on_export_published_session_action,
             icon=StudioIcon.PACKAGE_EXPORT,
             tool_tip="Export a publish-safe component JSON with redacted sensitive state",
         )
@@ -657,16 +657,16 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         self.addToolBar(QtCore.Qt.TopToolBarArea, tb)
 
         # Graph file management.
-        tb.addAction(self._load_session_from_file_action)
-        tb.addAction(self._quicksave_session_action)
-        tb.addAction(self._save_session_as_action)
+        tb.addAction(self._open_project_action)
+        tb.addAction(self._quicksave_project_action)
+        tb.addAction(self._save_project_as_action)
         tb.addAction(self._project_history_action)
         tb.addAction(self._save_component_action)
         tb.addAction(self._manage_components_action)
         tb.addAction(self._insert_component_action)
         tb.addAction(self._import_graph_action)
         tb.addAction(self._export_project_json_action)
-        tb.addAction(self._export_session_action)
+        tb.addAction(self._export_published_session_action)
         tb.addAction(self._clear_all_nodes_action)
 
         tb.addSeparator()
@@ -683,10 +683,10 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
 
         account_button = QtWidgets.QToolButton(tb)
         account_button.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
-        account_button.clicked.connect(self._on_variant_cloud_account_clicked)  # type: ignore[attr-defined]
+        account_button.clicked.connect(self._on_asset_cloud_account_clicked)  # type: ignore[attr-defined]
         tb.addWidget(account_button)
-        self._variant_cloud_account_button = account_button
-        self._refresh_variant_cloud_account_button()
+        self._asset_cloud_account_button = account_button
+        self._refresh_asset_cloud_account_button()
 
         edge_tb = QtWidgets.QToolBar("Pipe Visibility", self)
         edge_tb.setObjectName("PipeVisibilityToolBar")
@@ -741,11 +741,11 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         token = StudioIcon.EYE if visible else StudioIcon.EYE_SLASH
         action.setIcon(icon_for(self, token))
 
-    def _refresh_variant_cloud_account_button(self) -> None:
-        button = self._variant_cloud_account_button
+    def _refresh_asset_cloud_account_button(self) -> None:
+        button = self._asset_cloud_account_button
         if button is None:
             return
-        user = self._variant_sync_client.current_user()
+        user = self._asset_cloud_sync_client.current_user()
         if user is None:
             button.setText("Cloud")
             button.setIcon(icon_for(button, StudioIcon.USER_OFF))
@@ -753,18 +753,18 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
             return
         button.setText(str(user.username or user.displayName or "Cloud"))
         button.setIcon(icon_for(button, StudioIcon.USER))
-        button.setToolTip(f"Cloud account: {user.displayName} @ {self._variant_sync_client.base_url()}")
+        button.setToolTip(f"Cloud account: {user.displayName} @ {self._asset_cloud_sync_client.base_url()}")
 
     @QtCore.Slot()
-    def _on_variant_cloud_account_clicked(self) -> None:
-        button = self._variant_cloud_account_button
+    def _on_asset_cloud_account_clicked(self) -> None:
+        button = self._asset_cloud_account_button
         if button is None:
             return
-        self._refresh_variant_cloud_account_button()
-        menu = build_variant_cloud_account_menu(
+        self._refresh_asset_cloud_account_button()
+        menu = build_asset_account_menu(
             parent=self,
-            sync_client=self._variant_sync_client,
-            on_changed=self._refresh_variant_cloud_account_button,
+            sync_client=self._asset_cloud_sync_client,
+            on_changed=self._refresh_asset_cloud_account_button,
         )
         menu.exec(button.mapToGlobal(QtCore.QPoint(0, button.height())))
 
@@ -788,27 +788,27 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
 
     def closeEvent(self, event):
         self._save_window_layout()
-        self._auto_save_session()
+        self._auto_save_project()
         self._global_hotkey_controller.close()
         self.stop_bridge()
         super().closeEvent(event)
 
     @QtCore.Slot()
-    def _auto_load_session(self) -> None:
-        session_auto_load_session(studio_graph=self.studio_graph, log_dock=self._log_dock)
+    def _auto_load_project(self) -> None:
+        project_auto_load(studio_graph=self.studio_graph, log_dock=self._log_dock)
         self._mark_session_saved()
         self._mark_auto_deploy_synced()
         self._global_hotkey_controller.refresh_bindings()
 
     @QtCore.Slot()
-    def _auto_save_session(self) -> None:
+    def _auto_save_project(self) -> None:
         # Called from both `closeEvent` and `QApplication.aboutToQuit`; guard to avoid double-save on exit.
         if not self._auto_save_enabled:
             return
         if not self._graph_has_unsaved_changes():
             self._exit_autosaved = True
             return
-        self._exit_autosaved = session_auto_save_session(
+        self._exit_autosaved = project_auto_save(
             studio_graph=self.studio_graph,
             log_dock=self._log_dock,
             already_saved=self._exit_autosaved,
@@ -817,13 +817,13 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
             self._mark_session_saved()
 
     @QtCore.Slot()
-    def _on_quicksave_session_action(self) -> None:
-        session_save_session(parent=self, studio_graph=self.studio_graph, show_info=show_info)
+    def _on_quicksave_project_action(self) -> None:
+        project_save(parent=self, studio_graph=self.studio_graph, show_info=show_info)
         self._mark_session_saved()
 
     @QtCore.Slot()
-    def _on_quickload_session_action(self) -> None:
-        loaded = session_load_last_session(
+    def _on_quickload_project_action(self) -> None:
+        loaded = project_load_last(
             parent=self,
             studio_graph=self.studio_graph,
             session_file=self._session_file,
@@ -835,8 +835,8 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
             self._global_hotkey_controller.refresh_bindings()
 
     @QtCore.Slot()
-    def _on_load_session_action(self) -> None:
-        session_dir, loaded = session_load_session_from_dialog(
+    def _on_open_project_action(self) -> None:
+        session_dir, loaded = project_open_dialog(
             parent=self,
             studio_graph=self.studio_graph,
             log_dock=self._log_dock,
@@ -851,7 +851,7 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
 
     @QtCore.Slot()
     def _on_import_project_json_action(self) -> None:
-        session_dir, loaded = session_import_project_json_as_dialog(
+        session_dir, loaded = project_import_json_dialog(
             parent=self,
             studio_graph=self.studio_graph,
             log_dock=self._log_dock,
@@ -865,8 +865,8 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
             self._global_hotkey_controller.refresh_bindings()
 
     @QtCore.Slot()
-    def _on_save_session_as_action(self) -> None:
-        session_dir, saved = session_save_session_as_dialog(
+    def _on_save_project_as_action(self) -> None:
+        session_dir, saved = project_save_as_dialog(
             parent=self,
             studio_graph=self.studio_graph,
             log_dock=self._log_dock,
@@ -879,7 +879,7 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
 
     @QtCore.Slot()
     def _on_export_project_json_action(self) -> None:
-        session_dir, exported_path = session_export_project_json_as_dialog(
+        session_dir, exported_path = project_export_json_dialog(
             parent=self,
             studio_graph=self.studio_graph,
             log_dock=self._log_dock,
@@ -892,7 +892,7 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
 
     @QtCore.Slot()
     def _on_project_history_action(self) -> None:
-        restored = session_show_project_history_dialog(
+        restored = project_history_dialog(
             parent=self,
             studio_graph=self.studio_graph,
             log_dock=self._log_dock,
@@ -906,7 +906,7 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
 
     @QtCore.Slot()
     def _on_save_component_action(self) -> None:
-        session_save_component_as_dialog(
+        component_save_as_dialog(
             parent=self,
             studio_graph=self.studio_graph,
             log_dock=self._log_dock,
@@ -915,15 +915,15 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
 
     @QtCore.Slot()
     def _on_manage_components_action(self) -> None:
-        session_manage_components_dialog(parent=self, studio_graph=self.studio_graph)
+        component_catalog_dialog(parent=self, studio_graph=self.studio_graph)
 
     @QtCore.Slot()
     def _on_insert_component_action(self) -> None:
-        session_insert_component_dialog(parent=self, studio_graph=self.studio_graph)
+        open_component_insert_dialog(parent=self, studio_graph=self.studio_graph)
 
     @QtCore.Slot()
-    def _on_export_session_action(self) -> None:
-        session_dir, published_path = session_publish_session_as_dialog(
+    def _on_export_published_session_action(self) -> None:
+        session_dir, published_path = project_export_publish_json_dialog(
             parent=self,
             studio_graph=self.studio_graph,
             log_dock=self._log_dock,
@@ -936,7 +936,7 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
 
     @QtCore.Slot()
     def _on_import_graph_action(self) -> None:
-        self._session_dialog_dir = session_insert_graph_from_dialog(
+        self._session_dialog_dir = graph_insert_json_dialog(
             parent=self,
             studio_graph=self.studio_graph,
             log_dock=self._log_dock,
@@ -1299,7 +1299,7 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         if not self._graph_has_unsaved_changes():
             return
         try:
-            self.studio_graph.save_last_session()
+            self.studio_graph.save_last_project()
             self._mark_session_saved()
         except Exception as exc:
             self._log_dock.report_exception("studio", "periodic auto-save failed", exc)

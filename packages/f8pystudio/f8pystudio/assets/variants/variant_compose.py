@@ -10,7 +10,7 @@ import msgspec
 from f8pysdk import F8JsonValue, F8OperatorSpec, F8ServiceSpec, F8VariantRecord
 from f8pysdk.msgspec_codec import dump_json, validate_as
 
-from ..graph_assets.common import JsonObject, json_object_from_value
+from ..common import JsonObject, json_object_from_value
 from .variant_models import F8VariantKind, variant_now_iso
 
 

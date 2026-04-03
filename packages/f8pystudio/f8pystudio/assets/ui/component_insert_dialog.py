@@ -9,19 +9,19 @@ from qtpy import QtCore, QtWidgets
 
 from f8pysdk.msgspec_codec import dump_json
 
-from ..graph_assets.component_events import subscribe_components_changed
-from ..graph_assets.component_models import F8ComponentEntry, F8ComponentSourceKind
-from ..graph_assets.component_repository import list_component_entries
-from ..graph_assets.component_sync import ComponentSyncClient
-from ..ui_icons import StudioIcon, icon_for
-from ..ui_notifications import show_warning
-from .json_text_editor import attach_json_enhancements
-from .variant_cloud_account_menu import build_variant_cloud_account_menu
+from ..components.component_events import subscribe_components_changed
+from ..components.component_models import F8ComponentEntry, F8ComponentSourceKind
+from ..components.component_repository import list_component_entries
+from ..components.component_sync import ComponentSyncClient
+from ...ui_icons import StudioIcon, icon_for
+from ...ui_notifications import show_warning
+from ...widgets.json_text_editor import attach_json_enhancements
+from .asset_cloud_account_menu import build_asset_account_menu
 
 logger = logging.getLogger(__name__)
 
 
-class InsertComponentDialog(QtWidgets.QDialog):
+class ComponentInsertDialog(QtWidgets.QDialog):
     _TAB_INSTALLED = 0
     _TAB_COMMUNITY = 1
 
@@ -391,7 +391,7 @@ class InsertComponentDialog(QtWidgets.QDialog):
         self._reload()
 
     def _on_accounts_clicked(self) -> None:
-        menu = build_variant_cloud_account_menu(parent=self, sync_client=self._sync_client, on_changed=self._on_account_state_changed)
+        menu = build_asset_account_menu(parent=self, sync_client=self._sync_client, on_changed=self._on_account_state_changed)
         menu.exec(self._account_button.mapToGlobal(QtCore.QPoint(0, self._account_button.height())))
 
     def _on_account_state_changed(self) -> None:

@@ -3,7 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any
 
-from f8pystudio.graph_assets.component_models import F8ComponentEntry, F8ComponentRecord, F8ComponentSourceKind
+from f8pystudio.assets.components.component_models import F8ComponentEntry, F8ComponentRecord, F8ComponentSourceKind
 from f8pystudio.nodegraph.graph_insert_flow import GraphInsertRequest
 from f8pystudio.nodegraph.insert_layout_utils import GraphBounds
 from f8pystudio.nodegraph.node_graph import F8StudioGraph

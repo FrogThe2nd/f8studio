@@ -11,9 +11,9 @@ from ..nodegraph.spec_visibility import is_hidden_spec_node_class, typed_spec_te
 from f8pysdk import F8OperatorSpec, F8ServiceSpec
 from f8pysdk.spec_metadata import palette_category_from_spec
 from ..ui_notifications import show_warning
-from ..variants.variant_ids import build_variant_node_type, is_variant_node_type, parse_variant_node_type
-from ..variants.variant_repository import delete_variant, list_variants_for_base, variant_exists
-from ..variants.variant_events import subscribe_variants_changed
+from ..assets.variants.variant_ids import build_variant_node_type, is_variant_node_type, parse_variant_node_type
+from ..assets.variants.variant_repository import delete_variant, list_variants_for_base, variant_exists
+from ..assets.variants.variant_events import subscribe_variants_changed
 from .node_docs_dialog import show_node_docs_dialog
 
 
@@ -146,9 +146,9 @@ class _F8StudioNodesTreeWidget(NodesTreeWidget):
             callback(base_node_type=base_node_type, base_node_name=base_node_name)
             return
         try:
-            from .node_variant_manager_dialog import NodeVariantManagerDialog
+            from ..assets.ui.variant_manager_dialog import VariantManagerDialog
 
-            dlg = NodeVariantManagerDialog(
+            dlg = VariantManagerDialog(
                 parent=self.window(),
                 base_node_type=base_node_type,
                 base_node_name=base_node_name,

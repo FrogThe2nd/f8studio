@@ -9,7 +9,7 @@ from typing import Protocol, cast
 
 from qtpy import QtWidgets
 
-from ..graph_assets.common import JsonObject, json_object_from_value
+from ..assets.common import JsonObject, json_object_from_value
 from ..session_migration import extract_layout as _extract_session_layout
 from ..ui_notifications import show_warning
 from .insert_layout_utils import (

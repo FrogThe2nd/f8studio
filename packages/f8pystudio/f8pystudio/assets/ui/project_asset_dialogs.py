@@ -7,11 +7,11 @@ from typing import Any
 
 from qtpy import QtCore, QtWidgets
 
-from ..graph_assets.project_models import F8ProjectSummary
-from ..ui_notifications import show_warning
+from ..projects.project_models import F8ProjectSummary
+from ...ui_notifications import show_warning
 
 
-class GraphAssetMetaDialog(QtWidgets.QDialog):
+class ProjectAssetMetaDialog(QtWidgets.QDialog):
     def __init__(
         self,
         *,
@@ -159,7 +159,7 @@ class ProjectPickerDialog(QtWidgets.QDialog):
 
 
 @dataclass(frozen=True)
-class JsonVersionBrowserItem:
+class AssetVersionBrowserItem:
     version_number: int
     created_at: str
     revision: str = ""
@@ -167,21 +167,21 @@ class JsonVersionBrowserItem:
 
 
 @dataclass(frozen=True)
-class JsonVersionBrowserAction:
+class AssetVersionBrowserAction:
     action_key: str
     label: str
 
 
-class JsonVersionBrowserDialog(QtWidgets.QDialog):
+class AssetVersionBrowserDialog(QtWidgets.QDialog):
     def __init__(
         self,
         *,
         parent: QtWidgets.QWidget | None,
         title: str,
-        items: list[JsonVersionBrowserItem],
+        items: list[AssetVersionBrowserItem],
         load_payload: Callable[[int], dict[str, Any]],
         primary_action_label: str | None = None,
-        actions: list[JsonVersionBrowserAction] | None = None,
+        actions: list[AssetVersionBrowserAction] | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle(title)
@@ -207,7 +207,7 @@ class JsonVersionBrowserDialog(QtWidgets.QDialog):
         close_button.clicked.connect(self.reject)  # type: ignore[attr-defined]
         resolved_actions = list(actions or [])
         if primary_action_label and not resolved_actions:
-            resolved_actions.append(JsonVersionBrowserAction(action_key="primary", label=primary_action_label))
+            resolved_actions.append(AssetVersionBrowserAction(action_key="primary", label=primary_action_label))
         self._action_buttons: dict[str, QtWidgets.QPushButton] = {}
         for action in resolved_actions:
             action_button = buttons.addButton(action.label, QtWidgets.QDialogButtonBox.AcceptRole)

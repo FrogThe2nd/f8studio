@@ -10,7 +10,7 @@ from qtpy import QtCore
 
 from f8pysdk.msgspec_codec import copy_model, validate_as
 
-from ..graph_assets.common import JsonObject, json_object_from_value, json_object_loads
+from ..common import JsonObject, json_object_from_value, json_object_loads
 from .variant_catalog import VariantCatalogService
 from .variant_models import (
     F8VariantEntry,

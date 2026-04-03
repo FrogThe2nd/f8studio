@@ -26,11 +26,11 @@ include = [
     "f8pystudio/render_nodes/web_assets/**/*.html",
     "f8pystudio/render_nodes/web_assets/**/*.js",
     "f8pystudio/render_nodes/web_assets/**/*.css",
-    "f8pystudio/assets/**/*.svg",
-    "f8pystudio/assets/**/*.png",
-    "f8pystudio/assets/**/*.ico",
-    "f8pystudio/assets/**/*.txt",
-    "f8pystudio/assets/**/*.json",
+    "f8pystudio/resources/**/*.svg",
+    "f8pystudio/resources/**/*.png",
+    "f8pystudio/resources/**/*.ico",
+    "f8pystudio/resources/**/*.txt",
+    "f8pystudio/resources/**/*.json",
 ]
 
 [tool.uv]

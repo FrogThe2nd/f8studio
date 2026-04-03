@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from f8pystudio.graph_assets.component_models import (
+from f8pystudio.assets.components.component_models import (
     F8ComponentEntry,
     F8ComponentRecord,
     F8ComponentSourceKind,
     F8ComponentVisibility,
 )
-from f8pystudio.widgets.insert_component_dialog import (
+from f8pystudio.assets.ui.component_insert_dialog import (
     community_component_entries,
     component_insert_badges,
     installed_component_entries,
@@ -46,7 +46,7 @@ def _entry(
     )
 
 
-def test_insert_component_dialog_entry_helpers_split_installed_and_community() -> None:
+def test_component_insert_dialog_entry_helpers_split_installed_and_community() -> None:
     local_entry = _entry(
         component_id="local-1",
         name="Local Component",
@@ -80,7 +80,7 @@ def test_insert_component_dialog_entry_helpers_split_installed_and_community() -
     assert community_names == ["Fresh Community", "Subscribed Community"]
 
 
-def test_insert_component_dialog_helpers_apply_search_and_badges() -> None:
+def test_component_insert_dialog_helpers_apply_search_and_badges() -> None:
     community_entry = _entry(
         component_id="remote-1",
         name="Searchable Community",
@@ -96,7 +96,7 @@ def test_insert_component_dialog_helpers_apply_search_and_badges() -> None:
     assert badges == ["cloud", "public", "install on insert", "subscribed"]
 
 
-def test_insert_component_dialog_helpers_apply_tab_filters() -> None:
+def test_component_insert_dialog_helpers_apply_tab_filters() -> None:
     local_entry = _entry(
         component_id="local-1",
         name="Local Component",

@@ -21,6 +21,7 @@ from .plugin_loader import load_entrypoint_plugins
 from .pystudio_node_registry import SERVICE_CLASS, register_pystudio_specs
 from .bridge.nats_lifecycle import SINGLETON_GUARD_DIALOG_TITLE
 from .pystudio_service_bridge import STARTUP_GATE_TIMEOUT_S, PyStudioServiceBridge, PyStudioServiceBridgeConfig
+from .ui_resources import studio_logo_path
 
 logger = logging.getLogger(__name__)
 MISSING_SERVICE_NODE_TYPE = "svc.f8.missing.service"
@@ -58,7 +59,7 @@ class PyStudioProgram:
             if candidate.exists():
                 return candidate
 
-        package_icon = Path(__file__).resolve().parent / "assets" / "logo.png"
+        package_icon = studio_logo_path()
         if package_icon.exists():
             return package_icon
 
