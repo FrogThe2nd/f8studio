@@ -9,10 +9,9 @@ from f8pysdk.msgspec_codec import dump_json, validate_as
 from f8pysdk import F8VariantLibrary, F8VariantRecord
 
 from .variant_catalog import (
-    LocalVariantProvider,
-    RemoteCacheProvider,
     VariantCatalogService,
     _records_name_conflict,
+    ensure_unique_variant_name as _catalog_ensure_unique_variant_name,
     local_variants_file_path,
     normalize_variant_name,
     remote_cache_file_path,
@@ -23,10 +22,7 @@ from .variant_models import F8VariantEntry
 
 
 def _service() -> VariantCatalogService:
-    return VariantCatalogService(
-        local_provider=LocalVariantProvider(path=variants_file_path()),
-        remote_provider=RemoteCacheProvider(path=remote_cache_file_path()),
-    )
+    return VariantCatalogService()
 
 
 def load_library() -> F8VariantLibrary:
@@ -45,10 +41,13 @@ def list_variants_for_base(base_node_type: str) -> list[F8VariantRecord]:
     return _service().list_records_for_base(base_node_type)
 
 
+def _local_records() -> list[F8VariantRecord]:
+    return [entry.record for entry in _service()._local_provider.load_entries()]
+
+
 def is_variant_name_conflict(base_node_type: str, name: str, *, exclude_variant_id: str | None = None) -> bool:
-    records = [entry.record for entry in _service()._local_provider.load_entries()]
     return _records_name_conflict(
-        records,
+        _local_records(),
         base_node_type=base_node_type,
         name=name,
         exclude_variant_id=exclude_variant_id,
@@ -62,26 +61,13 @@ def ensure_unique_variant_name(
     exclude_variant_id: str | None = None,
     existing_records: list[F8VariantRecord] | None = None,
 ) -> str:
-    base_name = normalize_variant_name(desired_name) or "Variant"
-    records = list(existing_records) if existing_records is not None else [entry.record for entry in _service()._local_provider.load_entries()]
-    if not _records_name_conflict(
-        records,
-        base_node_type=base_node_type,
-        name=base_name,
+    records = _local_records() if existing_records is None else list(existing_records)
+    return _catalog_ensure_unique_variant_name(
+        base_node_type,
+        desired_name,
         exclude_variant_id=exclude_variant_id,
-    ):
-        return base_name
-    suffix = 2
-    while True:
-        candidate = f"{base_name} ({suffix})"
-        if not _records_name_conflict(
-            records,
-            base_node_type=base_node_type,
-            name=candidate,
-            exclude_variant_id=exclude_variant_id,
-        ):
-            return candidate
-        suffix += 1
+        existing_records=records,
+    )
 
 
 def variant_exists(variant_id: str) -> bool:

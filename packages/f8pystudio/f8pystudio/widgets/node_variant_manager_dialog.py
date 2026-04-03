@@ -16,7 +16,7 @@ from ..ui_notifications import show_info, show_warning
 from ..variants.variant_compose import build_variant_record_from_node
 from ..variants.variant_ids import build_variant_node_type
 from f8pysdk import F8VariantRecord
-from ..variants.variant_models import F8VariantEntry, F8VariantSourceKind, F8VariantVisibility
+from ..variants.variant_models import F8VariantEntry, F8VariantSourceKind, F8VariantVisibility, variant_now_iso
 from ..variants.variant_repository import (
     delete_variant,
     export_to_json,
@@ -720,7 +720,7 @@ class NodeVariantManagerDialog(QtWidgets.QDialog):
         payload["name"] = name
         payload["description"] = description
         payload["tags"] = tags
-        payload["updatedAt"] = F8VariantRecord.now_iso()
+        payload["updatedAt"] = variant_now_iso()
         try:
             upsert_variant(validate_as(F8VariantRecord, payload))
         except ValueError as exc:
@@ -757,7 +757,7 @@ class NodeVariantManagerDialog(QtWidgets.QDialog):
         if selected_entry is None:
             return
         record = selected_entry.record
-        copied = validate_as(F8VariantRecord, {**dump_json(record, mode="json"), "updatedAt": F8VariantRecord.now_iso()})
+        copied = validate_as(F8VariantRecord, {**dump_json(record, mode="json"), "updatedAt": variant_now_iso()})
         try:
             upsert_variant(copied)
         except ValueError as exc:

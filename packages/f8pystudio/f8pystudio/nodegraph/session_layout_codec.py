@@ -812,6 +812,9 @@ class SessionLayoutCodecMixin:
         payload["layout"] = self._redact_publish_session_state_values(copy.deepcopy(layout_data))
         return payload
 
+    def load_session_payload(self, payload: dict) -> None:
+        self._load_session_layout_data(_extract_session_layout(payload), session_label="")
+
     def load_session(self, file_path: str) -> None:
         """
         Load a NodeGraphQt session file.
@@ -823,12 +826,14 @@ class SessionLayoutCodecMixin:
         if not os.path.isfile(file_path):
             raise IOError(f"file does not exist: {file_path}")
 
+        with open(file_path, encoding="utf-8-sig") as data_file:
+            payload = json.load(data_file)
+        self._load_session_layout_data(_extract_session_layout(payload), session_label=file_path)
+
+    def _load_session_layout_data(self, layout_data: dict, *, session_label: str) -> None:
         self._loading_session = True
         try:
             self.clear_session()
-            with open(file_path, encoding="utf-8-sig") as data_file:
-                payload = json.load(data_file)
-            layout_data = _extract_session_layout(payload)
             layer_defs = augment_layer_defs_for_layout_nodes(
                 layout_layer_defs_from_layout(layout_data),
                 layout_data.get("nodes"),
@@ -844,8 +849,8 @@ class SessionLayoutCodecMixin:
             deserialize_layout.pop("f8_layers", None)
             super().deserialize_session(deserialize_layout, clear_session=False, clear_undo_stack=True)
             self.set_session_layer_defs(layer_defs, preserve_active=False)
-            self._model.session = file_path
-            self.session_changed.emit(file_path)
+            self._model.session = session_label
+            self.session_changed.emit(session_label)
         finally:
             self._loading_session = False
         self._rebind_container_children()

@@ -31,10 +31,16 @@ from .variant_cloud_account_menu import build_variant_cloud_account_menu
 from .session_actions import (
     auto_load_session as session_auto_load_session,
     auto_save_session as session_auto_save_session,
+    export_project_json_as_dialog as session_export_project_json_as_dialog,
+    import_project_json_as_dialog as session_import_project_json_as_dialog,
+    insert_component_dialog as session_insert_component_dialog,
     insert_graph_from_dialog as session_insert_graph_from_dialog,
     load_last_session as session_load_last_session,
     load_session_from_dialog as session_load_session_from_dialog,
+    manage_components_dialog as session_manage_components_dialog,
     publish_session_as_dialog as session_publish_session_as_dialog,
+    show_project_history_dialog as session_show_project_history_dialog,
+    save_component_as_dialog as session_save_component_as_dialog,
     save_session as session_save_session,
     save_session_as_dialog as session_save_session_as_dialog,
 )
@@ -81,8 +87,14 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
     _quickload_session_action: QtGui.QAction
     _quicksave_session_action: QtGui.QAction
     _load_session_from_file_action: QtGui.QAction
+    _import_project_json_action: QtGui.QAction
     _import_graph_action: QtGui.QAction
     _save_session_as_action: QtGui.QAction
+    _export_project_json_action: QtGui.QAction
+    _project_history_action: QtGui.QAction
+    _save_component_action: QtGui.QAction
+    _manage_components_action: QtGui.QAction
+    _insert_component_action: QtGui.QAction
     _deploy_action: QtGui.QAction
     _stop_all_services_action: QtGui.QAction
     _exec_lines_action: QtGui.QAction
@@ -322,8 +334,15 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
 
         menu.addSeparator()
         menu.addAction(self._load_session_from_file_action)
-        menu.addAction(self._import_graph_action)
         menu.addAction(self._save_session_as_action)
+        menu.addAction(self._import_project_json_action)
+        menu.addAction(self._export_project_json_action)
+        menu.addAction(self._project_history_action)
+        menu.addAction(self._save_component_action)
+        menu.addAction(self._manage_components_action)
+        menu.addAction(self._insert_component_action)
+        menu.addSeparator()
+        menu.addAction(self._import_graph_action)
         menu.addAction(self._export_session_action)
         menu.addAction(self._clear_all_nodes_action)
 
@@ -485,45 +504,81 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
 
     def _create_graph_actions(self) -> None:
         self._quickload_session_action = self._create_action(
-            "Quick Load",
+            "Open Recent Project",
             handler=self._on_quickload_session_action,
             shortcut="Ctrl+O",
             icon=StudioIcon.FOLDER_OPEN,
-            tool_tip="Quick load the last session",
+            tool_tip="Open the most recent local project",
         )
         self._quicksave_session_action = self._create_action(
-            "Quick Save",
+            "Save Project",
             handler=self._on_quicksave_session_action,
             shortcut="Ctrl+S",
             icon=StudioIcon.SAVE,
-            tool_tip="Quick save the current session",
+            tool_tip="Save the current graph into the local project store",
         )
         self._load_session_from_file_action = self._create_action(
-            "Load Session",
+            "Open Project…",
             handler=self._on_load_session_action,
             shortcut="Ctrl+Shift+O",
             icon=StudioIcon.FOLDER_OPEN,
-            tool_tip="Load session from file",
+            tool_tip="Open a project from the local project catalog",
+        )
+        self._import_project_json_action = self._create_action(
+            "Import Project JSON…",
+            handler=self._on_import_project_json_action,
+            icon=StudioIcon.FOLDER_PLUS,
+            tool_tip="Import a JSON session file into the local project store",
         )
         self._import_graph_action = self._create_action(
-            "Import Graph…",
+            "Insert Graph JSON…",
             handler=self._on_import_graph_action,
             shortcut="Ctrl+Shift+I",
             icon=StudioIcon.PACKAGE_IMPORT,
-            tool_tip="Import session graph as a subgraph",
+            tool_tip="Insert a session JSON file into the current graph as a copied snapshot",
         )
         self._save_session_as_action = self._create_action(
-            "Save Session As…",
+            "Save Project As…",
             handler=self._on_save_session_as_action,
             shortcut="Ctrl+Shift+S",
             icon=StudioIcon.SAVE,
-            tool_tip="Save session to new location",
+            tool_tip="Save the current graph as a new local project",
+        )
+        self._export_project_json_action = self._create_action(
+            "Export Project JSON…",
+            handler=self._on_export_project_json_action,
+            icon=StudioIcon.PACKAGE_EXPORT,
+            tool_tip="Export the current graph as a full session JSON file",
+        )
+        self._project_history_action = self._create_action(
+            "Project History…",
+            handler=self._on_project_history_action,
+            icon=StudioIcon.ARTICLE,
+            tool_tip="Browse local project versions and restore an older snapshot as the latest version",
+        )
+        self._save_component_action = self._create_action(
+            "Save As Component…",
+            handler=self._on_save_component_action,
+            icon=StudioIcon.PACKAGE_EXPORT,
+            tool_tip="Create a publish-safe component from the current graph",
+        )
+        self._manage_components_action = self._create_action(
+            "Components…",
+            handler=self._on_manage_components_action,
+            icon=StudioIcon.PACKAGE_IMPORT,
+            tool_tip="Browse local and remote reusable graph components",
+        )
+        self._insert_component_action = self._create_action(
+            "Insert Component…",
+            handler=self._on_insert_component_action,
+            icon=StudioIcon.PACKAGE_IMPORT,
+            tool_tip="Quickly browse reusable components and insert one into the current graph",
         )
         self._auto_save_action = self._create_action(
             "Auto Save",
             handler=self._on_auto_save_toggled,
             icon=None,
-            tool_tip="Auto save after graph edits (2s debounce)",
+            tool_tip="Auto save project changes after graph edits",
             checkable=True,
             checked=self._auto_save_enabled,
         )
@@ -553,10 +608,10 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
             checked=self._auto_proxy_enabled,
         )
         self._export_session_action = self._create_action(
-            "Export Session",
+            "Export Publish JSON…",
             handler=self._on_export_session_action,
             icon=StudioIcon.PACKAGE_EXPORT,
-            tool_tip="Export a session JSON with redacted personal identifiers",
+            tool_tip="Export a publish-safe component JSON with redacted sensitive state",
         )
         self._clear_all_nodes_action = self._create_action(
             "Clear All Nodes",
@@ -603,8 +658,14 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
 
         # Graph file management.
         tb.addAction(self._load_session_from_file_action)
-        tb.addAction(self._import_graph_action)
+        tb.addAction(self._quicksave_session_action)
         tb.addAction(self._save_session_as_action)
+        tb.addAction(self._project_history_action)
+        tb.addAction(self._save_component_action)
+        tb.addAction(self._manage_components_action)
+        tb.addAction(self._insert_component_action)
+        tb.addAction(self._import_graph_action)
+        tb.addAction(self._export_project_json_action)
         tb.addAction(self._export_session_action)
         tb.addAction(self._clear_all_nodes_action)
 
@@ -789,6 +850,21 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
             self._global_hotkey_controller.refresh_bindings()
 
     @QtCore.Slot()
+    def _on_import_project_json_action(self) -> None:
+        session_dir, loaded = session_import_project_json_as_dialog(
+            parent=self,
+            studio_graph=self.studio_graph,
+            log_dock=self._log_dock,
+            start_dir=str(self._session_dialog_dir or ""),
+            show_warning=show_warning,
+        )
+        self._session_dialog_dir = session_dir
+        if loaded:
+            self._mark_session_saved()
+            self._mark_auto_deploy_synced()
+            self._global_hotkey_controller.refresh_bindings()
+
+    @QtCore.Slot()
     def _on_save_session_as_action(self) -> None:
         session_dir, saved = session_save_session_as_dialog(
             parent=self,
@@ -800,6 +876,50 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         self._session_dialog_dir = session_dir
         if saved:
             self._mark_session_saved()
+
+    @QtCore.Slot()
+    def _on_export_project_json_action(self) -> None:
+        session_dir, exported_path = session_export_project_json_as_dialog(
+            parent=self,
+            studio_graph=self.studio_graph,
+            log_dock=self._log_dock,
+            start_dir=str(self._session_dialog_dir or ""),
+            show_warning=show_warning,
+        )
+        self._session_dialog_dir = session_dir
+        if exported_path:
+            show_info(self, "Project JSON exported", f"Exported project JSON to:\n{exported_path}")
+
+    @QtCore.Slot()
+    def _on_project_history_action(self) -> None:
+        restored = session_show_project_history_dialog(
+            parent=self,
+            studio_graph=self.studio_graph,
+            log_dock=self._log_dock,
+            show_warning=show_warning,
+            show_info_message=show_info,
+        )
+        if restored:
+            self._mark_session_saved()
+            self._mark_auto_deploy_synced()
+            self._global_hotkey_controller.refresh_bindings()
+
+    @QtCore.Slot()
+    def _on_save_component_action(self) -> None:
+        session_save_component_as_dialog(
+            parent=self,
+            studio_graph=self.studio_graph,
+            log_dock=self._log_dock,
+            show_warning=show_warning,
+        )
+
+    @QtCore.Slot()
+    def _on_manage_components_action(self) -> None:
+        session_manage_components_dialog(parent=self, studio_graph=self.studio_graph)
+
+    @QtCore.Slot()
+    def _on_insert_component_action(self) -> None:
+        session_insert_component_dialog(parent=self, studio_graph=self.studio_graph)
 
     @QtCore.Slot()
     def _on_export_session_action(self) -> None:

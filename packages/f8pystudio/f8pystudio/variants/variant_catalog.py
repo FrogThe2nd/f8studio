@@ -1,24 +1,36 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-import json
-import logging
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, cast
 
-from f8pysdk.msgspec_codec import copy_model, dump_json, validate_as
+import msgspec
+from sqlalchemy import delete, func, insert, select
+from sqlalchemy.engine import Connection as SqlAlchemyConnection
+from f8pysdk.msgspec_codec import copy_model
 
-from f8pysdk import F8VariantLibrary, F8VariantRecord
+from f8pysdk import F8JsonValue, F8VariantKind, F8VariantLibrary, F8VariantRecord
 
+from ..graph_assets.asset_db import AssetsDatabase, variant_heads_local_table, variant_remote_cache_table
+from ..graph_assets.common import (
+    JsonObject,
+    json_object_loads,
+    json_string_list_loads,
+    stable_json_dumps,
+)
+from ..graph_assets.remote_cache_common import (
+    RemoteCacheMetadata,
+    remote_cache_metadata_from_fields,
+)
 from .variant_events import emit_variants_changed
 from .variant_models import (
-    F8VariantCatalogSnapshot,
     F8VariantEntry,
     F8VariantSourceKind,
     F8VariantSyncState,
+    F8VariantVisibility,
+    variant_now_iso,
 )
-
-logger = logging.getLogger(__name__)
 
 
 class VariantSourceProvider(Protocol):
@@ -26,83 +38,89 @@ class VariantSourceProvider(Protocol):
 
 
 class LocalVariantProvider:
-    def __init__(self, path: Path | None = None) -> None:
-        self._path = path
-
-    @property
-    def path(self) -> Path:
-        return local_variants_file_path() if self._path is None else self._path
+    def __init__(self, db_path: Path | None = None) -> None:
+        self._db: AssetsDatabase
+        self._db = AssetsDatabase(db_path)
+        self._db.ensure_initialized()
 
     def load_entries(self) -> list[F8VariantEntry]:
-        snapshot = load_catalog_snapshot(self.path, migrate_legacy=True)
-        out: list[F8VariantEntry] = []
-        for entry in snapshot.entries:
-            if entry.source == F8VariantSourceKind.local:
-                out.append(entry)
-        return out
+        statement = (
+            select(
+                variant_heads_local_table.c.variant_id,
+                variant_heads_local_table.c.record_json,
+            )
+            .order_by(func.lower(variant_heads_local_table.c.name), variant_heads_local_table.c.variant_id)
+        )
+        with self._db.connect_sqla() as conn:
+            rows = conn.execute(statement).mappings().all()
+        return [_variant_entry_from_local_row(row) for row in rows]
 
     def save_entries(self, entries: list[F8VariantEntry]) -> None:
-        save_catalog_snapshot(
-            self.path,
-            F8VariantCatalogSnapshot(entries=[entry for entry in entries if entry.source == F8VariantSourceKind.local]),
-        )
+        with self._db.begin_sqla() as conn:
+            _ = conn.execute(delete(variant_heads_local_table))
+            for entry in entries:
+                if entry.source != F8VariantSourceKind.local:
+                    continue
+                _insert_local_variant_entry(conn, entry)
 
 
 class RemoteCacheProvider:
-    def __init__(self, path: Path | None = None) -> None:
-        self._path = path
-
-    @property
-    def path(self) -> Path:
-        return remote_cache_file_path() if self._path is None else self._path
+    def __init__(self, db_path: Path | None = None) -> None:
+        self._db: AssetsDatabase
+        self._db = AssetsDatabase(db_path)
+        self._db.ensure_initialized()
 
     def load_entries(self) -> list[F8VariantEntry]:
-        snapshot = load_catalog_snapshot(self.path)
-        out: list[F8VariantEntry] = []
-        for entry in snapshot.entries:
-            if entry.source in {
-                F8VariantSourceKind.remote_official,
-                F8VariantSourceKind.remote_public,
-                F8VariantSourceKind.remote_private,
-            }:
-                out.append(entry)
-        return out
+        statement = (
+            select(
+                variant_remote_cache_table.c.variant_id,
+                variant_remote_cache_table.c.record_json,
+                variant_remote_cache_table.c.source,
+                variant_remote_cache_table.c.visibility,
+                variant_remote_cache_table.c.owner_user_id,
+                variant_remote_cache_table.c.owner_display_name,
+                variant_remote_cache_table.c.library_slug,
+                variant_remote_cache_table.c.remote_revision,
+                variant_remote_cache_table.c.sync_state,
+                variant_remote_cache_table.c.downloaded_at,
+                variant_remote_cache_table.c.installed,
+                variant_remote_cache_table.c.subscribed,
+            )
+            .order_by(variant_remote_cache_table.c.variant_id)
+        )
+        with self._db.connect_sqla() as conn:
+            rows = conn.execute(statement).mappings().all()
+        return [_variant_entry_from_remote_row(row) for row in rows]
 
     def save_entries(self, entries: list[F8VariantEntry]) -> None:
-        save_catalog_snapshot(
-            self.path,
-            F8VariantCatalogSnapshot(
-                entries=[
-                    entry
-                    for entry in entries
-                    if entry.source
-                    in {
-                        F8VariantSourceKind.remote_official,
-                        F8VariantSourceKind.remote_public,
-                        F8VariantSourceKind.remote_private,
-                    }
-                ]
-            ),
-        )
+        with self._db.begin_sqla() as conn:
+            _ = conn.execute(delete(variant_remote_cache_table))
+            for entry in entries:
+                if entry.source not in {
+                    F8VariantSourceKind.remote_official,
+                    F8VariantSourceKind.remote_public,
+                    F8VariantSourceKind.remote_private,
+                }:
+                    continue
+                _insert_remote_variant_entry(conn, entry)
 
 
 class VariantCatalogService:
     def __init__(
         self,
         *,
+        db_path: Path | None = None,
         local_provider: LocalVariantProvider | None = None,
         remote_provider: RemoteCacheProvider | None = None,
     ) -> None:
-        self._local_provider = LocalVariantProvider() if local_provider is None else local_provider
-        self._remote_provider = RemoteCacheProvider() if remote_provider is None else remote_provider
+        self._local_provider: LocalVariantProvider
+        self._local_provider = LocalVariantProvider(db_path) if local_provider is None else local_provider
+        self._remote_provider: RemoteCacheProvider
+        self._remote_provider = RemoteCacheProvider(db_path) if remote_provider is None else remote_provider
 
     def load_all_entries(self) -> list[F8VariantEntry]:
         merged: dict[str, F8VariantEntry] = {}
-        order = [
-            self._remote_provider.load_entries(),
-            self._local_provider.load_entries(),
-        ]
-        for source_entries in order:
+        for source_entries in [self._remote_provider.load_entries(), self._local_provider.load_entries()]:
             for entry in source_entries:
                 variant_id = str(entry.record.variantId or "").strip()
                 if not variant_id:
@@ -126,11 +144,11 @@ class VariantCatalogService:
         return [entry.record for entry in self.list_entries_for_base(base_node_type, include_uninstalled=include_uninstalled)]
 
     def entry(self, variant_id: str, *, include_uninstalled: bool = True) -> F8VariantEntry | None:
-        variant_id = str(variant_id or "").strip()
-        if not variant_id:
+        normalized_variant_id = str(variant_id or "").strip()
+        if not normalized_variant_id:
             return None
         for entry in self.load_all_entries():
-            if str(entry.record.variantId or "").strip() != variant_id:
+            if str(entry.record.variantId or "").strip() != normalized_variant_id:
                 continue
             if include_uninstalled or is_entry_usable(entry):
                 return entry
@@ -144,31 +162,30 @@ class VariantCatalogService:
         return self.record(variant_id) is not None
 
     def upsert_local_entry(self, entry: F8VariantEntry) -> F8VariantEntry:
-        if entry.source != F8VariantSourceKind.local:
-            entry = copy_model(entry, update={"source": F8VariantSourceKind.local})
+        local_entry = entry if entry.source == F8VariantSourceKind.local else copy_model(entry, update={"source": F8VariantSourceKind.local})
         local_entries = self._local_provider.load_entries()
-        _validate_unique_name(local_entries, entry.record, exclude_variant_id=str(entry.record.variantId))
-        replaced = False
+        _validate_unique_name(local_entries, local_entry.record, exclude_variant_id=str(local_entry.record.variantId))
         out: list[F8VariantEntry] = []
-        target_id = str(entry.record.variantId)
+        replaced = False
+        target_variant_id = str(local_entry.record.variantId)
         for current in local_entries:
-            if str(current.record.variantId) == target_id:
-                out.append(entry)
+            if str(current.record.variantId) == target_variant_id:
+                out.append(local_entry)
                 replaced = True
             else:
                 out.append(current)
         if not replaced:
-            out.append(entry)
+            out.append(local_entry)
         self._local_provider.save_entries(out)
         emit_variants_changed()
-        return entry
+        return local_entry
 
     def delete_local_entry(self, variant_id: str) -> bool:
-        variant_id = str(variant_id or "").strip()
-        if not variant_id:
+        normalized_variant_id = str(variant_id or "").strip()
+        if not normalized_variant_id:
             return False
         local_entries = self._local_provider.load_entries()
-        out = [entry for entry in local_entries if str(entry.record.variantId) != variant_id]
+        out = [entry for entry in local_entries if str(entry.record.variantId) != normalized_variant_id]
         if len(out) == len(local_entries):
             return False
         self._local_provider.save_entries(out)
@@ -179,17 +196,20 @@ class VariantCatalogService:
         self._remote_provider.save_entries(entries)
         emit_variants_changed()
 
+    def load_remote_entries(self) -> list[F8VariantEntry]:
+        return self._remote_provider.load_entries()
+
     def install_remote_entry(self, entry: F8VariantEntry) -> F8VariantEntry:
-        installed_entry = copy_model(entry, update={"installed": True, "downloadedAt": F8VariantRecord.now_iso()})
-        remote_entries = self._remote_provider.load_entries()
+        installed_entry = copy_model(entry, update={"installed": True, "downloadedAt": variant_now_iso()})
+        current = self._remote_provider.load_entries()
         out: list[F8VariantEntry] = []
         found = False
-        for current in remote_entries:
-            if str(current.record.variantId) == str(installed_entry.record.variantId):
+        for current_entry in current:
+            if str(current_entry.record.variantId) == str(installed_entry.record.variantId):
                 out.append(installed_entry)
                 found = True
             else:
-                out.append(current)
+                out.append(current_entry)
         if not found:
             out.append(installed_entry)
         self._remote_provider.save_entries(out)
@@ -197,18 +217,15 @@ class VariantCatalogService:
         return installed_entry
 
     def mark_conflict(self, variant_id: str, *, remote_revision: str | None) -> F8VariantEntry | None:
-        remote_entries = self._remote_provider.load_entries()
+        current = self._remote_provider.load_entries()
         out: list[F8VariantEntry] = []
         target: F8VariantEntry | None = None
-        for current in remote_entries:
-            if str(current.record.variantId) == str(variant_id):
-                target = copy_model(
-                    current,
-                    update={"syncState": F8VariantSyncState.conflict, "remoteRevision": remote_revision},
-                )
+        for entry in current:
+            if str(entry.record.variantId) == str(variant_id):
+                target = copy_model(entry, update={"syncState": F8VariantSyncState.conflict, "remoteRevision": remote_revision})
                 out.append(target)
             else:
-                out.append(current)
+                out.append(entry)
         if target is None:
             return None
         self._remote_provider.save_entries(out)
@@ -222,7 +239,8 @@ class VariantCatalogService:
         current_entries = [] if mode == "replace" else self._local_provider.load_entries()
         current_records = [entry.record for entry in current_entries]
         imported_entries = list(current_entries)
-        for variant in list(library.variants or []):
+        library_variants = [] if isinstance(library.variants, msgspec.UnsetType) else list(library.variants or [])
+        for variant in library_variants:
             variant_id = str(variant.variantId or "").strip()
             imported_entries = [entry for entry in imported_entries if str(entry.record.variantId or "").strip() != variant_id]
             unique_name = ensure_unique_variant_name(
@@ -232,28 +250,25 @@ class VariantCatalogService:
             )
             if unique_name != variant.name:
                 variant = copy_model(variant, update={"name": unique_name})
-            entry = local_entry_from_record(variant)
-            imported_entries.append(entry)
-            current_records = [existing.record for existing in imported_entries]
+            imported_entries.append(local_entry_from_record(variant))
+            current_records = [entry.record for entry in imported_entries]
         self._local_provider.save_entries(imported_entries)
         emit_variants_changed()
         return entries_to_library(imported_entries)
 
 
+# Kept for JSON import/export convenience in the manager. These are no longer
+# the runtime storage locations for variants.
 def catalog_dir() -> Path:
     return Path.home() / ".f8" / "studio"
 
 
 def variants_file_path() -> Path:
-    return local_variants_file_path()
-
-
-def legacy_variants_file_path() -> Path:
     return catalog_dir() / "nodeVariants.json"
 
 
 def local_variants_file_path() -> Path:
-    return catalog_dir() / "nodeVariants.local.json"
+    return variants_file_path()
 
 
 def remote_cache_file_path() -> Path:
@@ -273,13 +288,13 @@ def _records_name_conflict(
 ) -> bool:
     base = str(base_node_type or "").strip()
     target = normalize_variant_name(name)
-    exclude_id = str(exclude_variant_id or "").strip()
+    normalized_exclude_variant_id = str(exclude_variant_id or "").strip()
     if not base or not target:
         return False
     for variant in records:
         if str(variant.baseNodeType or "").strip() != base:
             continue
-        if exclude_id and str(variant.variantId or "").strip() == exclude_id:
+        if normalized_exclude_variant_id and str(variant.variantId or "").strip() == normalized_exclude_variant_id:
             continue
         if normalize_variant_name(variant.name) == target:
             return True
@@ -287,8 +302,7 @@ def _records_name_conflict(
 
 
 def is_variant_name_conflict(base_node_type: str, name: str, *, exclude_variant_id: str | None = None) -> bool:
-    service = VariantCatalogService()
-    local_records = [entry.record for entry in service._local_provider.load_entries()]
+    local_records = _local_variant_records()
     return _records_name_conflict(
         local_records,
         base_node_type=base_node_type,
@@ -305,9 +319,7 @@ def ensure_unique_variant_name(
     existing_records: list[F8VariantRecord] | None = None,
 ) -> str:
     base_name = normalize_variant_name(desired_name) or "Variant"
-    records = list(existing_records) if existing_records is not None else []
-    if not records:
-        records = [entry.record for entry in VariantCatalogService()._local_provider.load_entries()]
+    records = list(existing_records) if existing_records is not None else _local_variant_records()
     if not _records_name_conflict(
         records,
         base_node_type=base_node_type,
@@ -336,53 +348,6 @@ def entries_to_library(entries: list[F8VariantEntry]) -> F8VariantLibrary:
     return F8VariantLibrary(variants=[entry.record for entry in entries if entry.source == F8VariantSourceKind.local])
 
 
-def load_catalog_snapshot(path: Path, *, migrate_legacy: bool = False) -> F8VariantCatalogSnapshot:
-    if migrate_legacy and not path.is_file():
-        migrate_legacy_variants_if_needed(target_path=path)
-    return _read_catalog_snapshot(path)
-
-
-def _read_catalog_snapshot(path: Path) -> F8VariantCatalogSnapshot:
-    if not path.is_file():
-        return F8VariantCatalogSnapshot()
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-        if isinstance(raw, dict) and str(raw.get("schemaVersion") or "").strip() == "f8variantlib/1":
-            library = validate_as(F8VariantLibrary, raw)
-            return F8VariantCatalogSnapshot(entries=[local_entry_from_record(record) for record in list(library.variants or [])])
-        return validate_as(F8VariantCatalogSnapshot, raw)
-    except Exception:
-        logger.exception("Failed to load variant catalog from %s", path)
-        return F8VariantCatalogSnapshot()
-
-
-def save_catalog_snapshot(path: Path, snapshot: F8VariantCatalogSnapshot) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    payload = dump_json(snapshot, mode="json")
-    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
-    tmp.replace(path)
-
-
-def migrate_legacy_variants_if_needed(*, target_path: Path | None = None) -> None:
-    legacy_path = legacy_variants_file_path()
-    destination = local_variants_file_path() if target_path is None else target_path
-    if destination.is_file() or not legacy_path.is_file():
-        return
-    try:
-        raw = json.loads(legacy_path.read_text(encoding="utf-8"))
-        library = validate_as(F8VariantLibrary, raw)
-        snapshot = F8VariantCatalogSnapshot(entries=[local_entry_from_record(record) for record in list(library.variants or [])])
-        save_catalog_snapshot(destination, snapshot)
-        backup_path = legacy_path.with_suffix(legacy_path.suffix + ".bak")
-        if not backup_path.exists():
-            legacy_path.replace(backup_path)
-        else:
-            legacy_path.unlink(missing_ok=True)
-    except Exception:
-        logger.exception("Failed to migrate legacy variants file from %s", legacy_path)
-
-
 def is_entry_usable(entry: F8VariantEntry) -> bool:
     if entry.source in {F8VariantSourceKind.local, F8VariantSourceKind.remote_private}:
         return True
@@ -407,6 +372,165 @@ def _validate_unique_name(entries: list[F8VariantEntry], record: F8VariantRecord
         exclude_variant_id=exclude_variant_id,
     ):
         normalized = normalize_variant_name(record.name)
-        raise ValueError(
-            f'Variant name "{normalized}" already exists for base node type "{record.baseNodeType}".'
+        raise ValueError(f'Variant name "{normalized}" already exists for base node type "{record.baseNodeType}".')
+
+
+def _variant_entry_from_local_row(row: object) -> F8VariantEntry:
+    row_mapping = _row_mapping(row)
+    record_payload = json_object_loads(row_mapping.get("record_json"))
+    return F8VariantEntry(
+        record=_variant_record_from_payload(record_payload),
+        source=F8VariantSourceKind.local,
+        syncState=F8VariantSyncState.local_only,
+        installed=True,
+    )
+
+
+def _variant_entry_from_remote_row(row: object) -> F8VariantEntry:
+    row_mapping = _row_mapping(row)
+    record_payload = json_object_loads(row_mapping.get("record_json"))
+    metadata = RemoteCacheMetadata.from_row(row_mapping)
+    visibility = None if metadata.visibility is None else F8VariantVisibility(metadata.visibility)
+    return F8VariantEntry(
+        record=_variant_record_from_payload(record_payload),
+        source=F8VariantSourceKind(metadata.source),
+        visibility=visibility,
+        ownerUserId=metadata.owner_user_id,
+        ownerDisplayName=metadata.owner_display_name,
+        librarySlug=metadata.library_slug,
+        remoteRevision=metadata.remote_revision,
+        syncState=F8VariantSyncState(metadata.sync_state),
+        downloadedAt=metadata.downloaded_at,
+        installed=metadata.installed,
+        subscribed=metadata.subscribed,
+    )
+
+
+def _insert_local_variant_entry(conn: SqlAlchemyConnection, entry: F8VariantEntry) -> None:
+    record = entry.record
+    operator_class = None if record.operatorClass is None or isinstance(record.operatorClass, msgspec.UnsetType) else str(record.operatorClass)
+    tags = [] if isinstance(record.tags, msgspec.UnsetType) else list(record.tags or [])
+    _ = conn.execute(
+        insert(variant_heads_local_table).values(
+            variant_id=str(record.variantId),
+            name=str(record.name),
+            description=str(record.description),
+            tags_json=stable_json_dumps(tags),
+            kind=str(record.kind.value),
+            base_node_type=str(record.baseNodeType),
+            service_class=str(record.serviceClass),
+            operator_class=operator_class,
+            record_json=stable_json_dumps(_variant_record_payload(record)),
+            created_at=str(record.createdAt),
+            updated_at=str(record.updatedAt),
         )
+    )
+
+
+def _insert_remote_variant_entry(conn: SqlAlchemyConnection, entry: F8VariantEntry) -> None:
+    metadata = remote_cache_metadata_from_fields(
+        source=str(entry.source.value),
+        visibility=None if entry.visibility is None else str(entry.visibility.value),
+        owner_user_id=entry.ownerUserId,
+        owner_display_name=entry.ownerDisplayName,
+        library_slug=entry.librarySlug,
+        remote_revision=entry.remoteRevision,
+        sync_state=str(entry.syncState.value),
+        downloaded_at=entry.downloadedAt,
+        installed=entry.installed,
+        subscribed=entry.subscribed,
+    )
+    _ = conn.execute(
+        insert(variant_remote_cache_table).values(
+            variant_id=str(entry.record.variantId),
+            source=metadata.source,
+            visibility=metadata.visibility,
+            owner_user_id=metadata.owner_user_id,
+            owner_display_name=metadata.owner_display_name,
+            library_slug=metadata.library_slug,
+            remote_revision=metadata.remote_revision,
+            sync_state=metadata.sync_state,
+            downloaded_at=metadata.downloaded_at,
+            installed=1 if metadata.installed else 0,
+            subscribed=1 if metadata.subscribed else 0,
+            record_json=stable_json_dumps(_variant_record_payload(entry.record)),
+            updated_at=variant_now_iso(),
+        )
+    )
+
+
+def _row_mapping(row: object) -> Mapping[object, object]:
+    if not isinstance(row, Mapping):
+        raise TypeError("Expected mapping row for variant entry.")
+    return cast(Mapping[object, object], row)
+
+
+def _variant_record_from_payload(payload: JsonObject) -> F8VariantRecord:
+    operator_class: str | None | msgspec.UnsetType
+    if "operatorClass" in payload:
+        operator_class = _payload_optional_str(payload, "operatorClass")
+    else:
+        operator_class = msgspec.UNSET
+    return F8VariantRecord(
+        variantId=_payload_str(payload, "variantId"),
+        kind=F8VariantKind(_payload_str(payload, "kind")),
+        baseNodeType=_payload_str(payload, "baseNodeType"),
+        serviceClass=_payload_str(payload, "serviceClass"),
+        name=_payload_str(payload, "name"),
+        spec=_payload_json_value_dict(payload, "spec"),
+        createdAt=_payload_str(payload, "createdAt"),
+        updatedAt=_payload_str(payload, "updatedAt"),
+        operatorClass=operator_class,
+        description=_payload_optional_str(payload, "description") or "",
+        tags=_payload_string_list(payload, "tags"),
+    )
+
+
+def _variant_record_payload(record: F8VariantRecord) -> JsonObject:
+    tags = [] if isinstance(record.tags, msgspec.UnsetType) else [str(tag) for tag in list(record.tags or []) if str(tag).strip()]
+    payload: JsonObject = {
+        "variantId": str(record.variantId),
+        "kind": str(record.kind.value),
+        "baseNodeType": str(record.baseNodeType),
+        "serviceClass": str(record.serviceClass),
+        "name": str(record.name),
+        "spec": cast(JsonObject, record.spec),
+        "createdAt": str(record.createdAt),
+        "updatedAt": str(record.updatedAt),
+        "description": str(record.description),
+        "tags": tags,
+    }
+    if isinstance(record.operatorClass, msgspec.UnsetType):
+        return payload
+    payload["operatorClass"] = None if record.operatorClass is None else str(record.operatorClass)
+    return payload
+
+
+def _payload_str(payload: JsonObject, key: str) -> str:
+    return str(payload[key])
+
+
+def _payload_optional_str(payload: JsonObject, key: str) -> str | None:
+    value = payload.get(key)
+    if value is None:
+        return None
+    return str(value)
+
+
+def _payload_string_list(payload: JsonObject, key: str) -> list[str]:
+    value = payload.get(key)
+    if value is None:
+        return []
+    return json_string_list_loads(value)
+
+
+def _payload_json_value_dict(payload: JsonObject, key: str) -> dict[str, F8JsonValue]:
+    value = payload.get(key)
+    if not isinstance(value, dict):
+        raise ValueError(f"Expected JSON object field: {key}")
+    return cast(dict[str, F8JsonValue], value)
+
+
+def _local_variant_records() -> list[F8VariantRecord]:
+    provider = LocalVariantProvider()
+    return [entry.record for entry in provider.load_entries()]

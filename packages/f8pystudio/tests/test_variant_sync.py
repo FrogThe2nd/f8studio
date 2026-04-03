@@ -15,13 +15,14 @@ from f8pystudio.variants.variant_models import (
     F8VariantSourceKind,
     F8VariantSyncState,
     F8VariantVisibility,
+    variant_now_iso,
 )
 from f8pystudio.variants.variant_sync import VariantSyncClient
 from f8pysdk import F8VariantRecord
 
 
 def _make_entry(*, variant_id: str, source: F8VariantSourceKind, installed: bool = True, remote_revision: str | None = None) -> F8VariantEntry:
-    now = F8VariantRecord.now_iso()
+    now = variant_now_iso()
     record = F8VariantRecord(
         variantId=variant_id,
         kind=F8VariantKind.operator,
@@ -175,8 +176,8 @@ class _Server(ThreadingHTTPServer):
             "description": "",
             "tags": [],
             "spec": {"label": "Public One"},
-            "createdAt": F8VariantRecord.now_iso(),
-            "updatedAt": F8VariantRecord.now_iso(),
+            "createdAt": variant_now_iso(),
+            "updatedAt": variant_now_iso(),
         }
         self.public_asset = self.asset_payload_from_variant_record(self.public_record, visibility="public")
         self.subscribed_asset = self.asset_payload_from_variant_record(
@@ -190,8 +191,8 @@ class _Server(ThreadingHTTPServer):
                 "description": "",
                 "tags": [],
                 "spec": {"label": "Subscribed One"},
-                "createdAt": F8VariantRecord.now_iso(),
-                "updatedAt": F8VariantRecord.now_iso(),
+                "createdAt": variant_now_iso(),
+                "updatedAt": variant_now_iso(),
             },
             visibility="public",
             subscribed=True,
@@ -228,9 +229,10 @@ def test_variant_sync_client_refreshes_auth_and_marks_conflicts(tmp_path: Path) 
     thread.start()
     try:
         settings = QtCore.QSettings(str(tmp_path / "variant-sync.ini"), QtCore.QSettings.IniFormat)
+        db_path = tmp_path / "assets.db"
         service = VariantCatalogService(
-            local_provider=LocalVariantProvider(path=tmp_path / "local.json"),
-            remote_provider=RemoteCacheProvider(path=tmp_path / "remote.json"),
+            local_provider=LocalVariantProvider(db_path=db_path),
+            remote_provider=RemoteCacheProvider(db_path=db_path),
         )
         client = VariantSyncClient(settings=settings, catalog_service=service)
         client.set_base_url(f"http://127.0.0.1:{server.server_port}")

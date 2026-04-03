@@ -69,10 +69,12 @@ class F8StudioGraph(
         self.uuid_generator = shortuuid.ShortUUID()
         self._loading_session = False
         self._tab_search_node_type_aliases: dict[str, str] = {}
+        self._tab_search_component_ids: dict[str, str] = {}
         self._variant_menu_node_types: set[str] = set()
         self._identity_menu_node_types: set[str] = set()
         self._duplicate_menu_node_types: set[str] = set()
         self._node_docs_menu_node_types: set[str] = set()
+        self._graph_context_menu_commands_installed = False
 
         self.property_changed.connect(self._on_property_changed)  # type: ignore[attr-defined]
 
@@ -86,6 +88,7 @@ class F8StudioGraph(
         self.nodes_deleted.connect(self.on_layering_nodes_deleted)  # type: ignore[attr-defined]
         self.port_connected.connect(self._on_port_connected)  # type: ignore[attr-defined]
         self.port_disconnected.connect(self._on_port_disconnected)  # type: ignore[attr-defined]
+        self._install_graph_context_menu_commands()
 
     def _on_viewer_node_placement_changed(self, active: bool, label: str) -> None:
         self.node_placement_changed.emit(bool(active), str(label or ""))
@@ -119,6 +122,36 @@ class F8StudioGraph(
         viewer = self._viewer
         if isinstance(viewer, F8StudioNodeViewer):
             viewer.begin_graph_placement(request=request, label=label)
+
+    def show_insert_component_dialog(self, *, scene_pos: tuple[float, float] | None = None) -> None:
+        from ..widgets.session_actions import insert_component_dialog as session_insert_component_dialog
+
+        parent = self._notification_parent()
+        if parent is None:
+            return
+        session_insert_component_dialog(
+            parent=parent,
+            studio_graph=self,
+            insert_scene_pos=scene_pos,
+        )
+
+    def _install_graph_context_menu_commands(self) -> None:
+        if self._graph_context_menu_commands_installed:
+            return
+        graph_menu = self.context_menu()
+        if graph_menu is None:
+            return
+        graph_menu.add_separator()
+        graph_menu.add_command("Insert Component...", func=self._on_insert_component_graph_menu_action)
+        self._graph_context_menu_commands_installed = True
+
+    def _on_insert_component_graph_menu_action(self, _graph: Any) -> None:
+        viewer = self.viewer()
+        if not isinstance(viewer, F8StudioNodeViewer):
+            self.show_insert_component_dialog(scene_pos=None)
+            return
+        scene_pos_qt = viewer.scene_cursor_pos()
+        self.show_insert_component_dialog(scene_pos=(float(scene_pos_qt.x()), float(scene_pos_qt.y())))
 
     def cancel_graph_placement(self) -> None:
         viewer = self._viewer

@@ -89,6 +89,7 @@ websockets = ">=16.0, <17"
 aiortc = ">=1.14.0, <2"
 basedpyright = ">=1.31.0, <2"
 python-xlib = ">=0.33, <1"
+sqlalchemy = ">=2.0.41, <3"
 
 [feature.studio.tasks]
 f8pystudio = "python -m f8pystudio.main"
