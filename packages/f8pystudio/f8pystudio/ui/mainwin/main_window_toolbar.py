@@ -72,20 +72,12 @@ def build_main_window_toolbars(
     for action in deploy_actions:
         run_toolbar.addAction(action)
 
-    _add_expanding_spacer(run_toolbar)
-
-    account_button = QtWidgets.QToolButton(run_toolbar)
-    account_button.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-    account_button.clicked.connect(account_clicked)  # type: ignore[attr-defined]
-    run_toolbar.addWidget(account_button)
-
     edge_toolbar = QtWidgets.QToolBar("Pipe Visibility", parent)
     edge_toolbar.setObjectName("PipeVisibilityToolBar")
     edge_toolbar.setMovable(False)
     edge_toolbar.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
     parent.addToolBar(QtCore.Qt.ToolBarArea.TopToolBarArea, edge_toolbar)
 
-    _add_expanding_spacer(edge_toolbar)
     edge_toolbar.addWidget(QtWidgets.QLabel("Pipe Visibility:", edge_toolbar))
     edge_toolbar.addSeparator()
 
@@ -112,6 +104,12 @@ def build_main_window_toolbars(
     set_edge_visibility_action_icon(parent, state_lines_action, visible=True)
     edge_toolbar.addAction(state_lines_action)
     set_action_text_beside_icon(edge_toolbar, state_lines_action, italic=True)
+
+    _add_expanding_spacer(edge_toolbar)
+    account_button = QtWidgets.QToolButton(edge_toolbar)
+    account_button.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+    account_button.clicked.connect(account_clicked)  # type: ignore[attr-defined]
+    edge_toolbar.addWidget(account_button)
 
     return MainWindowToolbarBundle(
         run_toolbar=run_toolbar,

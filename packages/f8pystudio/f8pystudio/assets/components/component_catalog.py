@@ -181,17 +181,34 @@ class RemoteComponentCacheProvider:
         with self._db.connect_sqla() as conn:
             rows = conn.execute(statement).mappings().all()
         out: list[F8ComponentEntry] = []
+        invalid_found = False
         for row in rows:
             row_mapping = _row_mapping(row)
-            record_payload = json_object_loads(_decompress_content(row_mapping.get("content")))
-            metadata = RemoteCacheMetadata.from_row(row_mapping)
-            out.append(_component_entry_from_remote(record_payload, metadata))
+            try:
+                record_payload = json_object_loads(_decompress_content(row_mapping.get("content")))
+                metadata = RemoteCacheMetadata.from_row(row_mapping)
+                entry = _component_entry_from_remote(record_payload, metadata)
+            except Exception:
+                logger.exception("Ignoring invalid cached remote component entry")
+                invalid_found = True
+                continue
+            if not str(entry.record.componentId or "").strip():
+                logger.warning("Ignoring cached remote component entry with empty componentId")
+                invalid_found = True
+                continue
+            out.append(entry)
+        if invalid_found:
+            logger.info("Cleaning invalid component remote cache rows")
+            self.save_entries(out)
         return out
 
     def save_entries(self, entries: list[F8ComponentEntry]) -> None:
         with self._db.begin_sqla() as conn:
             _ = conn.execute(delete(component_remote_cache_table))
             for entry in entries:
+                component_id = str(entry.record.componentId or "").strip()
+                if not component_id:
+                    continue
                 metadata = remote_cache_metadata_from_fields(
                     source=str(entry.source.value),
                     visibility=None if entry.visibility is None else str(entry.visibility.value),
@@ -206,7 +223,7 @@ class RemoteComponentCacheProvider:
                 )
                 _ = conn.execute(
                     insert(component_remote_cache_table).values(
-                        component_id=str(entry.record.componentId),
+                        component_id=component_id,
                         source=metadata.source,
                         visibility=metadata.visibility,
                         owner_user_id=metadata.owner_user_id,
@@ -240,7 +257,10 @@ class ComponentCatalogService:
         merged: dict[str, F8ComponentEntry] = {}
         for source_entries in [self._remote_provider.load_entries(), self._local_provider.load_entries()]:
             for entry in source_entries:
-                merged[str(entry.record.componentId)] = entry
+                component_id = str(entry.record.componentId or "").strip()
+                if not component_id:
+                    continue
+                merged[component_id] = entry
         return sorted(merged.values(), key=_entry_sort_key)
 
     def entry(self, component_id: str, *, include_uninstalled: bool = True) -> F8ComponentEntry | None:
@@ -273,20 +293,33 @@ class ComponentCatalogService:
         return deleted
 
     def list_local_versions(self, component_id: str) -> list[F8ComponentLocalVersionSummary]:
-        entry = self.entry(component_id)
-        if entry is None:
+        normalized_component_id = str(component_id or "").strip()
+        if not normalized_component_id:
             return []
+        statement = select(
+            component_heads_local_table.c.component_id,
+            component_heads_local_table.c.latest_version_number,
+            component_heads_local_table.c.created_at,
+        ).where(component_heads_local_table.c.component_id == normalized_component_id)
+        with self._db_for_local_provider().connect_sqla() as conn:
+            row = conn.execute(statement).mappings().first()
+        if row is None:
+            return []
+        row_mapping = _row_mapping(row)
         return [
             F8ComponentLocalVersionSummary(
-                componentId=str(entry.record.componentId),
-                versionNumber=int(entry.record.latestVersionNumber or 1),
-                createdAt=str(entry.record.createdAt),
+                componentId=mapping_str(row_mapping, "component_id"),
+                versionNumber=mapping_int(row_mapping, "latest_version_number"),
+                createdAt=mapping_str(row_mapping, "created_at"),
             )
         ]
 
     def local_version_record(self, component_id: str, version_number: int) -> F8ComponentRecord | None:
         entry = self.entry(component_id)
         return None if entry is None else entry.record
+
+    def _db_for_local_provider(self) -> AssetsDatabase:
+        return self._local_provider._db
 
     def replace_remote_entries(self, entries: list[F8ComponentEntry]) -> None:
         self._remote_provider.save_entries(entries)
@@ -339,6 +372,8 @@ def _row_mapping(row: object) -> Mapping[object, object]:
     return cast(Mapping[object, object], row)
 
 
+def _component_record_from_row(row: Mapping[object, object], *, updated_at_key: str = "updated_at") -> F8ComponentRecord:
+    updated_at = mapping_optional_str(row, updated_at_key)
     content_raw = row.get("content")
     return F8ComponentRecord(
         componentId=mapping_str(row, "component_id"),

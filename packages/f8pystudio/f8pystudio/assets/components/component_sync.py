@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import zlib
+import http.cookies
 import json
 import logging
 from typing import Protocol, cast
 from urllib import error, parse, request
-import zlib
 
 from qtpy import QtCore
 
@@ -61,12 +62,24 @@ class ComponentSyncClient:
         return self._value_str("username")
 
     def saved_sessions(self) -> list[F8ComponentRemoteSession]:
-        raw = self._value_list(self._SAVED_SESSIONS_KEY)
+        try:
+            raw = self._value_list(self._SAVED_SESSIONS_KEY)
+        except Exception:
+            logger.exception("Failed to load saved component cloud sessions; clearing incompatible settings.")
+            self._set_value(self._SAVED_SESSIONS_KEY, [])
+            return []
         if not raw:
             return []
         out: list[F8ComponentRemoteSession] = []
+        changed = False
         for item in raw:
-            out.append(_remote_session_from_payload(json_object_from_value(item)))
+            try:
+                out.append(_remote_session_from_payload(json_object_from_value(item)))
+            except Exception:
+                changed = True
+                logger.warning("Dropping incompatible saved component cloud session; please sign in again.")
+        if changed:
+            self._set_value(self._SAVED_SESSIONS_KEY, [_remote_session_payload(session) for session in out])
         return out
 
     def current_account_id(self) -> str:
@@ -76,45 +89,68 @@ class ComponentSyncClient:
         account_id = self.current_account_id()
         if not account_id:
             return None
-        for session in self.saved_sessions():
-            if session.accountId == account_id:
-                return session
+        try:
+            for session in self.saved_sessions():
+                if session.accountId == account_id:
+                    return session
+        except Exception:
+            logger.exception("Failed to resolve current component cloud session; clearing incompatible settings.")
+            self._set_value(self._SAVED_SESSIONS_KEY, [])
+        self._clear_current_auth_state()
         return None
 
     def current_access_token(self) -> str:
+        if self._access_token:
+            return self._access_token
+        session = self.current_session()
+        if session is not None and str(session.sessionCookie).strip():
+            self._access_token = str(session.sessionCookie).strip()
+            return self._access_token
+        stored_cookie = self._value_str("session_cookie")
+        if stored_cookie:
+            self._access_token = stored_cookie
         return self._access_token
 
     def current_user(self) -> F8ComponentRemoteUser | None:
         raw = self._value_json_object("user")
         if not raw:
             return None
-        return _remote_user_from_payload(raw)
+        try:
+            return _remote_user_from_payload(raw)
+        except Exception:
+            logger.exception("Failed to load saved component cloud user; clearing incompatible settings.")
+            self._set_value("user", {})
+            return None
 
     def login(self, *, base_url: str, username: str, password: str, remember: bool) -> F8ComponentRemoteAuth:
         self.set_base_url(base_url)
-        payload = self._post_json(
-            "/v1/auth/login",
+        _, session_cookie = self._request_json_response(
+            "POST",
+            "/api/auth/sign-in/username",
             {"username": str(username or ""), "password": str(password or "")},
             authorized=False,
         )
-        auth = _remote_auth_from_payload(payload)
+        if not session_cookie:
+            raise F8ComponentRemoteAuthError("Component sign-in succeeded but no session cookie was returned.")
+        user = self._fetch_current_user(session_cookie)
+        auth = F8ComponentRemoteAuth(sessionCookie=session_cookie, user=user)
         self._set_auth(auth, base_url=base_url, remember=remember)
         return auth
 
     def refresh_auth(self) -> F8ComponentRemoteAuth:
         session = self.current_session()
-        refresh_token = ""
+        session_cookie = ""
         base_url = self.base_url()
         if session is not None:
-            refresh_token = str(session.refreshToken)
+            session_cookie = str(session.sessionCookie)
             base_url = str(session.baseUrl)
         else:
-            refresh_token = self._value_str("refresh_token")
-        if not refresh_token:
-            raise F8ComponentRemoteAuthError("No refresh token is available.")
+            session_cookie = self._value_str("session_cookie")
+        if not session_cookie:
+            raise F8ComponentRemoteAuthError("No saved cloud session is available.")
         self.set_base_url(base_url)
-        payload = self._post_json("/v1/auth/refresh", {"refreshToken": refresh_token}, authorized=False)
-        auth = _remote_auth_from_payload(payload)
+        user = self._fetch_current_user(session_cookie)
+        auth = F8ComponentRemoteAuth(sessionCookie=self._access_token, user=user)
         self._set_auth(auth, base_url=base_url, remember=True)
         return auth
 
@@ -122,7 +158,7 @@ class ComponentSyncClient:
         session = self.current_session()
         try:
             if self.current_access_token():
-                _ = self._post_json("/v1/auth/logout", {}, authorized=True)
+                _ = self._post_json("/api/auth/sign-out", {}, authorized=True)
         except F8ComponentRemoteRequestError:
             logger.exception("Component remote logout failed")
         self._access_token = ""
@@ -148,8 +184,14 @@ class ComponentSyncClient:
         current = self._catalog_service.load_remote_entries()
         preserved = [entry for entry in current if not _entry_matches_scope(entry, scope=scope, user=self.current_user())]
         existing_scope_entries = [entry for entry in current if _entry_matches_scope(entry, scope=scope, user=self.current_user())]
+        existing_scope_by_id: dict[str, F8ComponentEntry] = {
+            str(entry.record.componentId): entry for entry in existing_scope_entries if str(entry.record.componentId).strip()
+        }
         refreshed: list[F8ComponentEntry] = []
         for entry in page.entries:
+            existing_entry = existing_scope_by_id.get(str(entry.record.componentId))
+            if existing_entry is not None:
+                entry = _merge_component_entries(existing_entry, entry)
             if entry.syncState == F8ComponentSyncState.local_only:
                 entry = copy_remote_entry_as_synced(entry)
             refreshed.append(entry)
@@ -205,6 +247,16 @@ class ComponentSyncClient:
             return self.create_component(entry)
         except F8ComponentRemoteConflictError as exc:
             _ = self._catalog_service.mark_conflict(str(entry.record.componentId), remote_revision=exc.remote_revision)
+            raise
+        except Exception as exc:
+            recovered_entry = self._recover_uploaded_entry(entry)
+            if recovered_entry is not None:
+                logger.warning(
+                    "Component upload raised after remote write; recovered via follow-up fetch component_id=%s error=%s",
+                    str(entry.record.componentId),
+                    str(exc),
+                )
+                return recovered_entry
             raise
 
     def list_component_versions(self, component_id: str) -> F8ComponentRemoteVersionList:
@@ -294,7 +346,25 @@ class ComponentSyncClient:
             _ = self.refresh_auth()
             return self._request_json_once(method, path, payload, authorized=True)
 
+    def _fetch_current_user(self, session_cookie: str) -> F8ComponentRemoteUser:
+        payload, _ = self._request_json_response("GET", "/v1/me", None, authorized=False, session_cookie_override=session_cookie)
+        user = _remote_user_from_payload(payload)
+        self._set_value("user", _remote_user_payload(user))
+        return user
+
     def _request_json_once(self, method: str, path: str, payload: JsonObject | None, *, authorized: bool) -> JsonObject:
+        payload_obj, _ = self._request_json_response(method, path, payload, authorized=authorized)
+        return payload_obj
+
+    def _request_json_response(
+        self,
+        method: str,
+        path: str,
+        payload: JsonObject | None,
+        *,
+        authorized: bool,
+        session_cookie_override: str | None = None,
+    ) -> tuple[JsonObject, str]:
         base_url = self.base_url()
         if not base_url:
             raise F8ComponentRemoteRequestError("Component remote base URL is not configured.")
@@ -315,10 +385,12 @@ class ComponentSyncClient:
                 data = raw_json
 
         if authorized:
-            access_token = self.current_access_token()
-            if not access_token:
+            session_cookie = self.current_access_token()
+            if not session_cookie:
                 raise F8ComponentRemoteAuthError("Not logged in.")
-            headers["Authorization"] = f"Bearer {access_token}"
+            headers["Cookie"] = session_cookie
+        elif session_cookie_override:
+            headers["Cookie"] = str(session_cookie_override)
         req = request.Request(url=url, data=data, headers=headers, method=method)
         try:
             response_context = cast(_HttpResponseContext, request.urlopen(req, timeout=10))
@@ -334,11 +406,21 @@ class ComponentSyncClient:
                 else:
                     raw_body = response_data.decode("utf-8")
 
+                session_cookie = _session_cookie_from_headers(response_like.headers)
+                if session_cookie:
+                    self._access_token = session_cookie
                 if not raw_body:
-                    return {}
-                return json_object_loads(raw_body)
+                    return {}, session_cookie
+                return json_object_loads(raw_body), session_cookie
         except error.HTTPError as exc:
-            body_text = exc.read().decode("utf-8", errors="replace")
+            response_bytes = exc.read()
+            content_encoding = exc.headers.get("Content-Encoding", "").lower()
+            if "gzip" in content_encoding:
+                try:
+                    response_bytes = zlib.decompress(response_bytes, wbits=31)
+                except Exception:
+                    logger.exception("Failed to decompress component cloud error response")
+            body_text = response_bytes.decode("utf-8", errors="replace")
             payload_obj = _try_parse_json_object(body_text)
             message = _error_message(payload_obj) or body_text or str(exc)
             if exc.code == 401:
@@ -359,6 +441,16 @@ class ComponentSyncClient:
     def _post_json(self, path: str, payload: JsonObject, *, authorized: bool) -> JsonObject:
         return self._request_json("POST", path, payload, authorized=authorized)
 
+    def _recover_uploaded_entry(self, entry: F8ComponentEntry) -> F8ComponentEntry | None:
+        component_id = str(entry.record.componentId or "").strip()
+        if not component_id:
+            return None
+        try:
+            return self.install_component(component_id)
+        except Exception:
+            logger.exception("Component upload recovery fetch failed component_id=%s", component_id)
+            return None
+
     def _saved_session_by_id(self, account_id: str) -> F8ComponentRemoteSession | None:
         normalized_account_id = str(account_id or "").strip()
         if not normalized_account_id:
@@ -369,15 +461,15 @@ class ComponentSyncClient:
         return None
 
     def _set_auth(self, auth: F8ComponentRemoteAuth, *, base_url: str, remember: bool) -> None:
-        self._access_token = str(auth.accessToken)
+        self._access_token = str(auth.sessionCookie)
         self._set_value("user", _remote_user_payload(auth.user))
         self._set_value("username", str(auth.user.username or ""))
-        refresh_token = str(auth.refreshToken)
-        self._set_value("refresh_token", refresh_token)
+        session_cookie = str(auth.sessionCookie)
+        self._set_value("session_cookie", session_cookie)
         session = F8ComponentRemoteSession(
             accountId=_account_id_for(base_url=base_url, user=auth.user),
             baseUrl=str(base_url).strip().rstrip("/"),
-            refreshToken=refresh_token,
+            sessionCookie=session_cookie,
             user=auth.user,
             lastUsedAt=QtCore.QDateTime.currentDateTimeUtc().toString(QtCore.Qt.DateFormat.ISODate),
         )
@@ -406,13 +498,7 @@ class ComponentSyncClient:
         replaced = False
         for current_entry in current:
             if str(current_entry.record.componentId) == str(entry.record.componentId):
-                merged_entry = copy_model(
-                    entry,
-                    update={
-                        "installed": bool(current_entry.installed or entry.installed),
-                        "downloadedAt": entry.downloadedAt or current_entry.downloadedAt,
-                    },
-                )
+                merged_entry = _merge_component_entries(current_entry, entry)
                 out.append(merged_entry)
                 replaced = True
             else:
@@ -455,7 +541,7 @@ class ComponentSyncClient:
     def _clear_current_auth_state(self) -> None:
         self._access_token = ""
         self._set_value(self._CURRENT_ACCOUNT_ID_KEY, "")
-        self._set_value("refresh_token", "")
+        self._set_value("session_cookie", "")
         self._set_value("user", {})
         self._set_value("username", "")
 
@@ -531,7 +617,19 @@ def _page_from_asset_payload(payload: JsonObject) -> F8ComponentRemoteListPage:
     if not isinstance(raw_entries, list):
         raise F8ComponentRemoteRequestError("Component remote list response is missing entries.")
     raw_entry_items = cast(list[object], raw_entries)
-    entries = [_entry_from_asset_payload(json_object_from_value(cast(object, item))) for item in raw_entry_items if isinstance(item, dict)]
+    entries: list[F8ComponentEntry] = []
+    for item in raw_entry_items:
+        if not isinstance(item, dict):
+            continue
+        try:
+            entry = _entry_from_asset_payload(json_object_from_value(cast(object, item)))
+        except Exception:
+            logger.exception("Ignoring invalid component entry in list response")
+            continue
+        if not str(entry.record.componentId).strip():
+            logger.warning("Ignoring component list entry with empty componentId")
+            continue
+        entries.append(entry)
     next_cursor = payload.get("nextCursor")
     if next_cursor is not None and not isinstance(next_cursor, str):
         next_cursor = str(next_cursor)
@@ -539,12 +637,10 @@ def _page_from_asset_payload(payload: JsonObject) -> F8ComponentRemoteListPage:
 
 
 def _entry_from_asset_payload(payload: JsonObject) -> F8ComponentEntry:
-    record_payload = payload.get("record")
-    if not isinstance(record_payload, dict):
-        raise F8ComponentRemoteRequestError("Component remote payload is missing record.")
+    record = _component_record_from_asset_payload(payload)
     source = _source_from_asset_payload(payload)
     return F8ComponentEntry(
-        record=validate_as(F8ComponentRecord, json_object_from_value(cast(object, record_payload))),
+        record=record,
         source=source,
         visibility=_visibility_from_payload(payload),
         ownerUserId=_payload_optional_str(payload, "ownerUserId"),
@@ -557,7 +653,7 @@ def _entry_from_asset_payload(payload: JsonObject) -> F8ComponentEntry:
         ),
         syncState=F8ComponentSyncState.synced,
         downloadedAt=_payload_optional_str(payload, "downloadedAt"),
-        installed=_payload_bool(payload, "installed", default=_installed_from_asset_payload(payload)),
+        installed=_payload_bool(payload, "installed", default=_installed_from_asset_payload(payload, record)),
         subscribed=_payload_bool(payload, "subscribed", default=False),
     )
 
@@ -572,7 +668,9 @@ def _source_from_asset_payload(payload: JsonObject) -> F8ComponentSourceKind:
     return F8ComponentSourceKind.remote_private
 
 
-def _installed_from_asset_payload(payload: JsonObject) -> bool:
+def _installed_from_asset_payload(payload: JsonObject, record: F8ComponentRecord) -> bool:
+    if not _component_record_has_full_content(record):
+        return False
     editable = payload.get("editable")
     if isinstance(editable, bool) and editable:
         return True
@@ -580,6 +678,78 @@ def _installed_from_asset_payload(payload: JsonObject) -> bool:
     if isinstance(subscribed, bool):
         return subscribed
     return False
+
+
+def _component_record_from_asset_payload(payload: JsonObject) -> F8ComponentRecord:
+    record_payload = payload.get("record")
+    if isinstance(record_payload, dict):
+        normalized_record_payload = json_object_from_value(cast(object, record_payload))
+        if _payload_has_component_id(normalized_record_payload):
+            return validate_as(F8ComponentRecord, normalized_record_payload)
+    return _summary_component_record_from_payload(payload)
+
+
+def _summary_component_record_from_payload(payload: JsonObject) -> F8ComponentRecord:
+    component_id = _payload_optional_str(payload, "componentId") or _payload_optional_str(payload, "assetId") or ""
+    if not component_id.strip():
+        raise F8ComponentRemoteRequestError("Component remote payload is missing componentId.")
+    return F8ComponentRecord(
+        componentId=component_id,
+        name=_payload_optional_str(payload, "name") or component_id,
+        description=_payload_optional_str(payload, "description") or "",
+        usageNotes="",
+        tags=_payload_string_list(payload, "tags"),
+        schemaVersion=_payload_optional_str(payload, "schemaVersion") or "f8studio-session/1",
+        content={},
+        createdAt=_payload_optional_str(payload, "createdAt") or "",
+        updatedAt=_payload_optional_str(payload, "updatedAt") or "",
+    )
+
+
+def _payload_has_component_id(payload: JsonObject) -> bool:
+    component_id = payload.get("componentId")
+    return isinstance(component_id, str) and bool(component_id.strip())
+
+
+def _component_record_has_full_content(record: F8ComponentRecord) -> bool:
+    content = record.content
+    layout_value = content.get("layout")
+    schema_version_value = content.get("schemaVersion")
+    return isinstance(layout_value, dict) and isinstance(schema_version_value, str) and bool(schema_version_value.strip())
+
+
+def _merge_component_entries(existing_entry: F8ComponentEntry, incoming_entry: F8ComponentEntry) -> F8ComponentEntry:
+    if _component_record_has_full_content(incoming_entry.record):
+        if existing_entry.installed and not incoming_entry.installed:
+            return copy_model(
+                incoming_entry,
+                update={
+                    "installed": True,
+                    "downloadedAt": incoming_entry.downloadedAt or existing_entry.downloadedAt,
+                },
+            )
+        return incoming_entry
+    if not _component_record_has_full_content(existing_entry.record):
+        return incoming_entry
+    merged_record = F8ComponentRecord(
+        componentId=str(incoming_entry.record.componentId),
+        name=str(incoming_entry.record.name),
+        description=str(incoming_entry.record.description),
+        usageNotes=str(existing_entry.record.usageNotes),
+        tags=list(incoming_entry.record.tags),
+        schemaVersion=str(incoming_entry.record.schemaVersion),
+        content=existing_entry.record.content,
+        createdAt=str(incoming_entry.record.createdAt),
+        updatedAt=str(incoming_entry.record.updatedAt),
+    )
+    return copy_model(
+        incoming_entry,
+        update={
+            "record": merged_record,
+            "installed": bool(existing_entry.installed),
+            "downloadedAt": incoming_entry.downloadedAt or existing_entry.downloadedAt,
+        },
+    )
 
 
 def _library_slug_from_payload(payload: JsonObject, source: F8ComponentSourceKind) -> str | None:
@@ -617,25 +787,17 @@ def _remote_user_payload(user: F8ComponentRemoteUser) -> JsonObject:
     }
 
 
-def _remote_auth_from_payload(payload: JsonObject) -> F8ComponentRemoteAuth:
-    user_payload = payload.get("user")
-    if not isinstance(user_payload, dict):
-        raise F8ComponentRemoteRequestError("Component auth response is missing user.")
-    return F8ComponentRemoteAuth(
-        accessToken=_payload_str(payload, "accessToken"),
-        refreshToken=_payload_str(payload, "refreshToken"),
-        user=_remote_user_from_payload(json_object_from_value(cast(object, user_payload))),
-    )
-
-
 def _remote_session_from_payload(payload: JsonObject) -> F8ComponentRemoteSession:
     user_payload = payload.get("user")
     if not isinstance(user_payload, dict):
         raise ValueError("Saved component session is missing user.")
+    session_cookie = _saved_session_cookie_from_payload(payload)
+    if not session_cookie:
+        raise ValueError("Saved component session is missing sessionCookie.")
     return F8ComponentRemoteSession(
         accountId=_payload_str(payload, "accountId"),
         baseUrl=_payload_str(payload, "baseUrl"),
-        refreshToken=_payload_str(payload, "refreshToken"),
+        sessionCookie=session_cookie,
         user=_remote_user_from_payload(json_object_from_value(cast(object, user_payload))),
         lastUsedAt=_payload_str(payload, "lastUsedAt"),
     )
@@ -645,10 +807,47 @@ def _remote_session_payload(session: F8ComponentRemoteSession) -> JsonObject:
     return {
         "accountId": str(session.accountId),
         "baseUrl": str(session.baseUrl),
-        "refreshToken": str(session.refreshToken),
+        "sessionCookie": str(session.sessionCookie),
         "user": _remote_user_payload(session.user),
         "lastUsedAt": str(session.lastUsedAt),
     }
+
+
+def _saved_session_cookie_from_payload(payload: JsonObject) -> str:
+    for key in ("sessionCookie", "session_cookie", "cookie"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _session_cookie_from_headers(headers: object) -> str:
+    values = _header_values(headers, "Set-Cookie")
+    if not values:
+        return ""
+    cookie = http.cookies.SimpleCookie()
+    for value in values:
+        try:
+            cookie.load(value)
+        except http.cookies.CookieError:
+            logger.warning("Ignoring invalid Set-Cookie header from component cloud")
+    parts: list[str] = []
+    for morsel in cookie.values():
+        parts.append(f"{morsel.key}={morsel.value}")
+    return "; ".join(parts)
+
+
+def _header_values(headers: object, name: str) -> list[str]:
+    get_all = getattr(headers, "get_all", None)
+    if callable(get_all):
+        values = get_all(name)
+        if isinstance(values, list):
+            return [str(value) for value in values if str(value).strip()]
+    if hasattr(headers, "get"):
+        value = headers.get(name)
+        if value is not None and str(value).strip():
+            return [str(value)]
+    return []
 
 
 def _remote_version_list_from_payload(payload: JsonObject) -> F8ComponentRemoteVersionList:
@@ -718,6 +917,18 @@ def _payload_bool(payload: JsonObject, key: str, *, default: bool) -> bool:
     if isinstance(value, bool):
         return value
     return default
+
+
+def _payload_string_list(payload: JsonObject, key: str) -> list[str]:
+    value = payload.get(key)
+    if not isinstance(value, list):
+        return []
+    out: list[str] = []
+    for item in cast(list[object], value):
+        text = str(item or "").strip()
+        if text:
+            out.append(text)
+    return out
 
 
 def _payload_int(payload: JsonObject, key: str) -> int:

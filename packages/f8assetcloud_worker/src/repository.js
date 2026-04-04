@@ -314,14 +314,12 @@ export class AssetRepository {
   }
 
   async listComponents({ userId, query, visibility, owner, cursor }) {
-    return this._listTypedAssets({
-      assetType: 'component',
+    return this._listComponentAssets({
       userId,
       query,
       cursor,
       visibility,
       owner,
-      extraFilters: {},
     });
   }
 
@@ -544,6 +542,44 @@ export class AssetRepository {
     }
     return {
       entries: payloads,
+      nextCursor: hasMore ? String(start + PAGE_SIZE) : null,
+    };
+  }
+
+  async _listComponentAssets({ userId, query, cursor, visibility, owner }) {
+    const filters = ['h.deleted_at IS NULL', "h.asset_type = 'component'"];
+    const bindings = [];
+    applyVisibilityOwnerFilters({ filters, bindings, userId, visibility, owner });
+    applyAssetQueryFilters({ filters, bindings, query, assetType: 'component', extraFilters: {} });
+
+    const start = parseCursor(cursor);
+    const sql = `
+      SELECT
+        h.*,
+        COALESCE(u.displayUsername, u.name) AS owner_display_name,
+        s.subscribed_at,
+        s.last_seen_revision,
+        v.created_at AS version_created_at,
+        v.created_by_user_id,
+        v.change_summary,
+        v.version_number,
+        v.revision
+      FROM asset_heads h
+      LEFT JOIN variant_details vd ON vd.asset_id = h.asset_id
+      JOIN asset_versions v
+        ON v.asset_id = h.asset_id AND v.version_number = h.latest_version_number
+      LEFT JOIN user u ON u.id = h.owner_user_id
+      LEFT JOIN asset_subscriptions s ON s.asset_id = h.asset_id AND s.subscriber_user_id = ?
+      WHERE ${filters.join(' AND ')}
+      ORDER BY LOWER(h.name), h.asset_id
+      LIMIT ? OFFSET ?
+    `;
+    const result = await this._db.prepare(sql).bind(userId ? String(userId) : '', ...bindings, PAGE_SIZE + 1, start).all();
+    const rows = Array.isArray(result.results) ? result.results : [];
+    const hasMore = rows.length > PAGE_SIZE;
+    const items = hasMore ? rows.slice(0, PAGE_SIZE) : rows;
+    return {
+      entries: items.map((row) => componentListPayloadFromRow(row, userId)),
       nextCursor: hasMore ? String(start + PAGE_SIZE) : null,
     };
   }
@@ -1069,6 +1105,45 @@ function componentPayloadFromRows({ head, version, subscription, viewerUserId })
         }
       : null,
     record: parseComponentRecord(version.content),
+  };
+}
+
+function componentListPayloadFromRow(row, viewerUserId) {
+  const isOwner = String(row.owner_user_id) === String(viewerUserId || '');
+  const isSubscribed = hasSubscription(row);
+  return {
+    componentId: String(row.asset_id),
+    assetType: 'component',
+    ownerUserId: String(row.owner_user_id),
+    ownerDisplayName: nullableString(row.owner_display_name),
+    visibility: String(row.visibility),
+    revision: String(row.revision),
+    latestRevision: String(row.latest_revision),
+    versionNumber: Number(row.version_number),
+    latestVersionNumber: Number(row.latest_version_number),
+    changeSummary: nullableString(row.change_summary),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at),
+    isOwner,
+    subscribed: isSubscribed,
+    editable: isOwner,
+    subscription: isSubscribed
+      ? {
+          subscribedAt: String(row.subscribed_at),
+          lastSeenRevision: nullableString(row.last_seen_revision),
+        }
+      : null,
+    record: {
+      componentId: String(row.asset_id),
+      name: String(row.name),
+      description: String(row.description),
+      usageNotes: '',
+      tags: normalizeTags(parseJsonArray(row.tags_json)),
+      schemaVersion: stringOrDefault(row.schema_version, COMPONENT_SCHEMA_VERSION),
+      content: {},
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at),
+    },
   };
 }
 

@@ -55,8 +55,7 @@ class F8VariantRemoteUser(Struct, kw_only=True):
 
 
 class F8VariantRemoteAuth(Struct, kw_only=True):
-    accessToken: str
-    refreshToken: str
+    sessionCookie: str
     user: F8VariantRemoteUser
 
 
@@ -82,7 +81,7 @@ class F8VariantRemoteVersionList(Struct, kw_only=True):
 class F8VariantRemoteSession(Struct, kw_only=True):
     accountId: str
     baseUrl: str
-    refreshToken: str
+    sessionCookie: str
     user: F8VariantRemoteUser
     lastUsedAt: str
 

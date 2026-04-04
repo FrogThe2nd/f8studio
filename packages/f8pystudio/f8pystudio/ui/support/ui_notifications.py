@@ -3,6 +3,7 @@ from __future__ import annotations
 import html
 import logging
 import math
+import sys
 from dataclasses import dataclass
 from typing import Callable
 
@@ -18,6 +19,7 @@ _TOAST_MAX_WIDTH = 520
 _TOAST_DURATION_MS = 4200
 _TOAST_FADE_MS = 180
 _TOAST_BREAK_HINTS = ("/", "\\", "_", "-", ".", ":", "=", "?")
+_USE_WINDOWS_SAFE_TOASTS = sys.platform.startswith("win")
 
 
 @dataclass(frozen=True)
@@ -200,14 +202,17 @@ class _StudioToast(QtWidgets.QFrame):
         self.setObjectName("studio-toast")
         self.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose, True)
         self.setAttribute(QtCore.Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
-        self.setAttribute(QtCore.Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(QtCore.Qt.WidgetAttribute.WA_TranslucentBackground, not _USE_WINDOWS_SAFE_TOASTS)
         self.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
-        self.setWindowFlags(
+        window_flags = (
             QtCore.Qt.WindowType.ToolTip
             | QtCore.Qt.WindowType.FramelessWindowHint
             | QtCore.Qt.WindowType.WindowStaysOnTopHint
         )
-        self.setWindowOpacity(0.0)
+        if _USE_WINDOWS_SAFE_TOASTS:
+            window_flags |= QtCore.Qt.WindowType.NoDropShadowWindowHint
+        self.setWindowFlags(window_flags)
+        self.setWindowOpacity(1.0 if _USE_WINDOWS_SAFE_TOASTS else 0.0)
         self.setStyleSheet(
             """
             QLabel#studio-toast-title {
@@ -237,11 +242,12 @@ class _StudioToast(QtWidgets.QFrame):
             }
         )
 
-        shadow = QtWidgets.QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(24)
-        shadow.setOffset(0, 10)
-        shadow.setColor(QtGui.QColor(0, 0, 0, 110))
-        self.setGraphicsEffect(shadow)
+        if not _USE_WINDOWS_SAFE_TOASTS:
+            shadow = QtWidgets.QGraphicsDropShadowEffect(self)
+            shadow.setBlurRadius(24)
+            shadow.setOffset(0, 10)
+            shadow.setColor(QtGui.QColor(0, 0, 0, 110))
+            self.setGraphicsEffect(shadow)
 
         self._level_badge = _ToastLevelBadge(style, self)
         self._level_badge.setObjectName("studio-toast-badge")
@@ -301,7 +307,8 @@ class _StudioToast(QtWidgets.QFrame):
         self._install_anchor_filter()
         self.show()
         self.raise_()
-        self._animate_opacity(start=0.0, end=1.0)
+        if not _USE_WINDOWS_SAFE_TOASTS:
+            self._animate_opacity(start=0.0, end=1.0)
         if self._duration_ms > 0:
             self._start_lifetime_animation()
 
@@ -310,6 +317,9 @@ class _StudioToast(QtWidgets.QFrame):
             return
         self._is_closing = True
         self._stop_lifetime_animation()
+        if _USE_WINDOWS_SAFE_TOASTS:
+            self.close()
+            return
         self._animate_opacity(start=self.windowOpacity(), end=0.0, on_finished=self.close)
 
     def _animate_opacity(

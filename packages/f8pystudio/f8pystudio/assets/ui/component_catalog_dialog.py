@@ -580,6 +580,12 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
         selected_entry = self._selected_entry()
         if selected_entry is None:
             return
+        if selected_entry.source != F8ComponentSourceKind.local and not _component_entry_has_full_content(selected_entry):
+            try:
+                selected_entry = self._sync_client.install_component(str(selected_entry.record.componentId))
+            except Exception as exc:
+                show_warning(self, "Load failed", str(exc))
+                return
         copied = validate_as(
             F8ComponentRecord,
             {
@@ -598,6 +604,12 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
         if not self._ensure_logged_in():
             return
         entry_to_upload = selected_entry
+        if selected_entry.source != F8ComponentSourceKind.local and not _component_entry_has_full_content(selected_entry):
+            try:
+                entry_to_upload = self._sync_client.install_component(str(selected_entry.record.componentId))
+            except Exception as exc:
+                show_warning(self, "Load failed", str(exc))
+                return
         if selected_entry.source == F8ComponentSourceKind.local:
             visibility = self._choose_visibility()
             if visibility is None:
@@ -663,6 +675,12 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
         selected_entry = self._selected_entry()
         if selected_entry is None or not self._is_owned_remote_entry(selected_entry):
             return
+        if not _component_entry_has_full_content(selected_entry):
+            try:
+                selected_entry = self._sync_client.install_component(str(selected_entry.record.componentId))
+            except Exception as exc:
+                show_warning(self, "Load failed", str(exc))
+                return
         next_visibility = F8ComponentVisibility.public
         prompt = "Make this remote component public?"
         if selected_entry.visibility == F8ComponentVisibility.public:
@@ -1138,3 +1156,10 @@ def _is_loopback_url(base_url: str) -> bool:
     parsed = urlparse(str(base_url or "").strip())
     hostname = str(parsed.hostname or "").strip().lower()
     return hostname in {"127.0.0.1", "localhost", "0.0.0.0"}
+
+
+def _component_entry_has_full_content(entry: F8ComponentEntry) -> bool:
+    content = entry.record.content
+    layout_value = content.get("layout")
+    schema_version_value = content.get("schemaVersion")
+    return isinstance(layout_value, dict) and isinstance(schema_version_value, str) and bool(schema_version_value.strip())

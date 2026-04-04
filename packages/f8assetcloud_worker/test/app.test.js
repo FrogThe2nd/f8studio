@@ -566,6 +566,9 @@ test('component asset lifecycle validates session envelope and visibility rules'
   const publicList = await jsonRequest(app, env, '/v1/components?owner=public');
   assert.equal(publicList.status, 200);
   assert.equal(publicList.json.entries.length, 1);
+  assert.equal(publicList.json.entries[0].componentId, 'component-a');
+  assert.deepEqual(publicList.json.entries[0].record.content, {});
+  assert.equal(publicList.json.entries[0].record.name, 'Published Session');
 
   const componentSearch = await jsonRequest(app, env, '/v1/search?assetType=component&owner=public');
   assert.equal(componentSearch.status, 200);

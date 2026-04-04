@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import http.cookies
 import json
 import logging
 import zlib
@@ -58,22 +59,31 @@ class VariantSyncClient:
     def set_base_url(self, base_url: str) -> None:
         self._set_value("base_url", str(base_url or "").strip().rstrip("/"))
 
-    def remembered_refresh_token(self) -> str:
-        return self._value_str("refresh_token")
+    def remembered_session_cookie(self) -> str:
+        return self._value_str("session_cookie")
 
     def remembered_username(self) -> str:
         return self._value_str("username")
 
     def saved_sessions(self) -> list[F8VariantRemoteSession]:
-        raw = self._value_list(self._SAVED_SESSIONS_KEY)
+        try:
+            raw = self._value_list(self._SAVED_SESSIONS_KEY)
+        except Exception:
+            logger.exception("Failed to load saved variant cloud sessions; clearing incompatible settings.")
+            self._set_value(self._SAVED_SESSIONS_KEY, [])
+            return []
         if not raw:
             return []
         out: list[F8VariantRemoteSession] = []
+        changed = False
         for item in raw:
             try:
                 out.append(_remote_session_from_payload(json_object_from_value(item)))
             except Exception:
-                logger.exception("Failed to decode saved variant cloud session")
+                changed = True
+                logger.warning("Dropping incompatible saved variant cloud session; please sign in again.")
+        if changed:
+            self._set_value(self._SAVED_SESSIONS_KEY, [_remote_session_payload(session) for session in out])
         return out
 
     def current_account_id(self) -> str:
@@ -83,12 +93,26 @@ class VariantSyncClient:
         account_id = self.current_account_id()
         if not account_id:
             return None
-        for session in self.saved_sessions():
-            if session.accountId == account_id:
-                return session
+        try:
+            for session in self.saved_sessions():
+                if session.accountId == account_id:
+                    return session
+        except Exception:
+            logger.exception("Failed to resolve current variant cloud session; clearing incompatible settings.")
+            self._set_value(self._SAVED_SESSIONS_KEY, [])
+        self._clear_current_auth_state()
         return None
 
     def current_access_token(self) -> str:
+        if self._access_token:
+            return self._access_token
+        session = self.current_session()
+        if session is not None and str(session.sessionCookie).strip():
+            self._access_token = str(session.sessionCookie).strip()
+            return self._access_token
+        stored_cookie = self._value_str("session_cookie")
+        if stored_cookie:
+            self._access_token = stored_cookie
         return self._access_token
 
     def current_user(self) -> F8VariantRemoteUser | None:
@@ -103,32 +127,32 @@ class VariantSyncClient:
 
     def login(self, *, base_url: str, username: str, password: str, remember: bool) -> F8VariantRemoteAuth:
         self.set_base_url(base_url)
-        payload = self._post_json(
-            "/v1/auth/login",
+        _, session_cookie = self._request_json_response(
+            "POST",
+            "/api/auth/sign-in/username",
             {"username": str(username or ""), "password": str(password or "")},
             authorized=False,
         )
-        auth = _remote_auth_from_payload(payload)
+        if not session_cookie:
+            raise F8VariantRemoteAuthError("Variant sign-in succeeded but no session cookie was returned.")
+        user = self._fetch_current_user(session_cookie)
+        auth = F8VariantRemoteAuth(sessionCookie=session_cookie, user=user)
         self._set_auth(auth, base_url=base_url, remember=remember)
         return auth
 
     def refresh_auth(self) -> F8VariantRemoteAuth:
         session = self.current_session()
         if session is None:
-            refresh_token = self.remembered_refresh_token()
+            session_cookie = self.remembered_session_cookie()
             base_url = self.base_url()
         else:
-            refresh_token = str(session.refreshToken)
+            session_cookie = str(session.sessionCookie)
             base_url = str(session.baseUrl)
-        if not refresh_token:
-            raise F8VariantRemoteAuthError("No refresh token is available.")
+        if not session_cookie:
+            raise F8VariantRemoteAuthError("No saved cloud session is available.")
         self.set_base_url(base_url)
-        payload = self._post_json(
-            "/v1/auth/refresh",
-            {"refreshToken": refresh_token},
-            authorized=False,
-        )
-        auth = _remote_auth_from_payload(payload)
+        user = self._fetch_current_user(session_cookie)
+        auth = F8VariantRemoteAuth(sessionCookie=self._access_token, user=user)
         self._set_auth(auth, base_url=base_url, remember=True)
         return auth
 
@@ -136,7 +160,7 @@ class VariantSyncClient:
         session = self.current_session()
         try:
             if self.current_access_token():
-                _ = self._post_json("/v1/auth/logout", {}, authorized=True)
+                _ = self._post_json("/api/auth/sign-out", {}, authorized=True)
         except F8VariantRemoteRequestError:
             logger.exception("Variant remote logout failed")
         self._access_token = ""
@@ -349,6 +373,22 @@ class VariantSyncClient:
         except F8VariantRemoteConflictError as exc:
             _ = self._catalog_service.mark_conflict(str(entry.record.variantId), remote_revision=exc.remote_revision)
             raise
+        except Exception as exc:
+            recovered_entry = self._recover_uploaded_entry(entry)
+            if recovered_entry is not None:
+                logger.warning(
+                    "Variant upload raised after remote write; recovered via follow-up fetch variant_id=%s error=%s",
+                    str(entry.record.variantId),
+                    str(exc),
+                )
+                return recovered_entry
+            raise
+
+    def _fetch_current_user(self, session_cookie: str) -> F8VariantRemoteUser:
+        payload, _ = self._request_json_response("GET", "/v1/me", None, authorized=False, session_cookie_override=session_cookie)
+        user = _remote_user_from_payload(payload)
+        self._set_value("user", _remote_user_payload(user))
+        return user
 
     def _request_json(self, method: str, path: str, payload: JsonObject | None, *, authorized: bool) -> JsonObject:
         try:
@@ -360,6 +400,18 @@ class VariantSyncClient:
             return self._request_json_once(method, path, payload, authorized=True)
 
     def _request_json_once(self, method: str, path: str, payload: JsonObject | None, *, authorized: bool) -> JsonObject:
+        payload_obj, _ = self._request_json_response(method, path, payload, authorized=authorized)
+        return payload_obj
+
+    def _request_json_response(
+        self,
+        method: str,
+        path: str,
+        payload: JsonObject | None,
+        *,
+        authorized: bool,
+        session_cookie_override: str | None = None,
+    ) -> tuple[JsonObject, str]:
         base_url = self.base_url()
         if not base_url:
             raise F8VariantRemoteRequestError("Variant remote base URL is not configured.")
@@ -381,10 +433,12 @@ class VariantSyncClient:
                 data = raw_data
 
         if authorized:
-            access_token = self.current_access_token()
-            if not access_token:
+            session_cookie = self.current_access_token()
+            if not session_cookie:
                 raise F8VariantRemoteAuthError("Not logged in.")
-            headers["Authorization"] = f"Bearer {access_token}"
+            headers["Cookie"] = session_cookie
+        elif session_cookie_override:
+            headers["Cookie"] = str(session_cookie_override)
 
         req = request.Request(url=url, data=data, headers=headers, method=method)
         try:
@@ -400,9 +454,12 @@ class VariantSyncClient:
 
                 raw_body = raw_bytes.decode("utf-8")
                 logger.debug("Variant cloud %s %s status=%s body=%s", method, url, response_like.status, raw_body[:1000])
+                session_cookie = _session_cookie_from_headers(response_like.headers)
+                if session_cookie:
+                    self._access_token = session_cookie
                 if not raw_body:
-                    return {}
-                return json_object_loads(raw_body)
+                    return {}, session_cookie
+                return json_object_loads(raw_body), session_cookie
         except error.HTTPError as exc:
             content_encoding = exc.headers.get("Content-Encoding")
             body_bytes = exc.read()
@@ -433,6 +490,16 @@ class VariantSyncClient:
 
     def _post_json(self, path: str, payload: JsonObject, *, authorized: bool) -> JsonObject:
         return self._request_json("POST", path, payload, authorized=authorized)
+
+    def _recover_uploaded_entry(self, entry: F8VariantEntry) -> F8VariantEntry | None:
+        variant_id = str(entry.record.variantId or "").strip()
+        if not variant_id:
+            return None
+        try:
+            return self.install_variant(variant_id)
+        except Exception:
+            logger.exception("Variant upload recovery fetch failed variant_id=%s", variant_id)
+            return None
 
     def _update_cached_remote_entry(self, entry: F8VariantEntry) -> F8VariantEntry:
         current = self._catalog_service.load_remote_entries()
@@ -492,15 +559,15 @@ class VariantSyncClient:
             self._settings.endGroup()
 
     def _set_auth(self, auth: F8VariantRemoteAuth, *, base_url: str, remember: bool) -> None:
-        self._access_token = str(auth.accessToken)
+        self._access_token = str(auth.sessionCookie)
         self._set_value("user", _remote_user_payload(auth.user))
         self._set_value("username", str(auth.user.username or ""))
-        refresh_token = str(auth.refreshToken)
-        self._set_value("refresh_token", refresh_token)
+        session_cookie = str(auth.sessionCookie)
+        self._set_value("session_cookie", session_cookie)
         session = F8VariantRemoteSession(
             accountId=_account_id_for(base_url=base_url, user=auth.user),
             baseUrl=str(base_url).strip().rstrip("/"),
-            refreshToken=refresh_token,
+            sessionCookie=session_cookie,
             user=auth.user,
             lastUsedAt=QtCore.QDateTime.currentDateTimeUtc().toString(QtCore.Qt.DateFormat.ISODate),
         )
@@ -535,7 +602,7 @@ class VariantSyncClient:
     def _clear_current_auth_state(self) -> None:
         self._access_token = ""
         self._set_value(self._CURRENT_ACCOUNT_ID_KEY, "")
-        self._set_value("refresh_token", "")
+        self._set_value("session_cookie", "")
         self._set_value("user", {})
         self._set_value("username", "")
 
@@ -722,25 +789,17 @@ def _remote_user_payload(user: F8VariantRemoteUser) -> JsonObject:
     }
 
 
-def _remote_auth_from_payload(payload: JsonObject) -> F8VariantRemoteAuth:
-    user_payload = payload.get("user")
-    if not isinstance(user_payload, dict):
-        raise F8VariantRemoteRequestError("Variant auth response is missing user.")
-    return F8VariantRemoteAuth(
-        accessToken=_payload_str(payload, "accessToken"),
-        refreshToken=_payload_str(payload, "refreshToken"),
-        user=_remote_user_from_payload(json_object_from_value(cast(object, user_payload))),
-    )
-
-
 def _remote_session_from_payload(payload: JsonObject) -> F8VariantRemoteSession:
     user_payload = payload.get("user")
     if not isinstance(user_payload, dict):
         raise ValueError("Saved variant session is missing user.")
+    session_cookie = _saved_session_cookie_from_payload(payload)
+    if not session_cookie:
+        raise ValueError("Saved variant session is missing sessionCookie.")
     return F8VariantRemoteSession(
         accountId=_payload_str(payload, "accountId"),
         baseUrl=_payload_str(payload, "baseUrl"),
-        refreshToken=_payload_str(payload, "refreshToken"),
+        sessionCookie=session_cookie,
         user=_remote_user_from_payload(json_object_from_value(cast(object, user_payload))),
         lastUsedAt=_payload_str(payload, "lastUsedAt"),
     )
@@ -750,10 +809,47 @@ def _remote_session_payload(session: F8VariantRemoteSession) -> JsonObject:
     return {
         "accountId": str(session.accountId),
         "baseUrl": str(session.baseUrl),
-        "refreshToken": str(session.refreshToken),
+        "sessionCookie": str(session.sessionCookie),
         "user": _remote_user_payload(session.user),
         "lastUsedAt": str(session.lastUsedAt),
     }
+
+
+def _saved_session_cookie_from_payload(payload: JsonObject) -> str:
+    for key in ("sessionCookie", "session_cookie", "cookie"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _session_cookie_from_headers(headers: object) -> str:
+    values = _header_values(headers, "Set-Cookie")
+    if not values:
+        return ""
+    cookie = http.cookies.SimpleCookie()
+    for value in values:
+        try:
+            cookie.load(value)
+        except http.cookies.CookieError:
+            logger.warning("Ignoring invalid Set-Cookie header from variant cloud")
+    parts: list[str] = []
+    for morsel in cookie.values():
+        parts.append(f"{morsel.key}={morsel.value}")
+    return "; ".join(parts)
+
+
+def _header_values(headers: object, name: str) -> list[str]:
+    get_all = getattr(headers, "get_all", None)
+    if callable(get_all):
+        values = get_all(name)
+        if isinstance(values, list):
+            return [str(value) for value in values if str(value).strip()]
+    if hasattr(headers, "get"):
+        value = headers.get(name)
+        if value is not None and str(value).strip():
+            return [str(value)]
+    return []
 
 
 def _remote_version_list_from_payload(payload: JsonObject) -> F8VariantRemoteVersionList:

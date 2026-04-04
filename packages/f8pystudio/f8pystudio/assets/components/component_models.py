@@ -65,8 +65,7 @@ class F8ComponentRemoteUser(Struct, kw_only=True):
 
 
 class F8ComponentRemoteAuth(Struct, kw_only=True):
-    accessToken: str
-    refreshToken: str
+    sessionCookie: str
     user: F8ComponentRemoteUser
 
 
@@ -98,7 +97,7 @@ class F8ComponentLocalVersionSummary(Struct, kw_only=True):
 class F8ComponentRemoteSession(Struct, kw_only=True):
     accountId: str
     baseUrl: str
-    refreshToken: str
+    sessionCookie: str
     user: F8ComponentRemoteUser
     lastUsedAt: str
 

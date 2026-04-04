@@ -6,6 +6,7 @@ from pathlib import Path
 import threading
 
 from qtpy import QtCore
+from sqlalchemy import insert, select
 
 from f8pystudio.assets.variants.variant_catalog import LocalVariantProvider, RemoteCacheProvider, VariantCatalogService
 from f8pystudio.assets.variants.variant_models import (
@@ -18,6 +19,7 @@ from f8pystudio.assets.variants.variant_models import (
     variant_now_iso,
 )
 from f8pystudio.assets.variants.variant_sync import VariantSyncClient
+from f8pystudio.assets.db import variant_remote_cache_table
 from f8pysdk import F8VariantRecord
 
 
@@ -61,51 +63,36 @@ class _VariantApiHandler(BaseHTTPRequestHandler):
         assert isinstance(value, dict)
         return value
 
-    def _write_json(self, status: int, payload: dict[str, object]) -> None:
+    def _write_json(self, status: int, payload: dict[str, object], *, set_cookie: str | None = None) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
+        if set_cookie:
+            self.send_header("Set-Cookie", set_cookie)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
 
     def _check_auth(self) -> bool:
-        auth = str(self.headers.get("Authorization") or "")
-        if auth == "Bearer access-2":
+        cookie = str(self.headers.get("Cookie") or "")
+        if "session=active-1" in cookie:
             return True
         self._write_json(401, {"message": "expired"})
         return False
 
     def do_POST(self) -> None:  # noqa: N802
-        if self.path == "/v1/auth/login":
+        if self.path == "/api/auth/sign-in/username":
             self.server.last_login_user_agent = str(self.headers.get("User-Agent") or "")
             self._write_json(
                 200,
-                {
-                    "accessToken": "access-1",
-                    "refreshToken": "refresh-1",
-                    "user": {"userId": "u1", "username": "u", "displayName": "User One"},
-                },
+                {"ok": True},
+                set_cookie="session=active-1; Path=/; HttpOnly",
             )
             return
-        if self.path == "/v1/auth/refresh":
-            payload = self._read_json()
-            if payload.get("refreshToken") != "refresh-1":
-                self._write_json(401, {"message": "bad refresh"})
-                return
-            self._write_json(
-                200,
-                {
-                    "accessToken": "access-2",
-                    "refreshToken": "refresh-1",
-                    "user": {"userId": "u1", "username": "u", "displayName": "User One"},
-                },
-            )
-            return
-        if self.path == "/v1/auth/logout":
+        if self.path == "/api/auth/sign-out":
             if not self._check_auth():
                 return
-            self._write_json(200, {})
+            self._write_json(200, {}, set_cookie="session=; Path=/; Max-Age=0")
             return
         if self.path == "/v1/variants/public-1/subscribe":
             if not self._check_auth():
@@ -128,13 +115,13 @@ class _VariantApiHandler(BaseHTTPRequestHandler):
             self._write_json(200, {"userId": "u1", "username": "u", "displayName": "User One"})
             return
         if self.path.startswith("/v1/variants?"):
-            auth = str(self.headers.get("Authorization") or "")
+            cookie = str(self.headers.get("Cookie") or "")
             if "owner=subscribed" in self.path:
                 if not self._check_auth():
                     return
                 self._write_json(200, {"entries": [self.server.subscribed_asset], "nextCursor": None})
                 return
-            if ("owner=public" not in self.path or bool(auth)) and not self._check_auth():
+            if ("owner=public" not in self.path or bool(cookie)) and not self._check_auth():
                 return
             self._write_json(200, {"entries": [self.server.public_asset], "nextCursor": None})
             return
@@ -223,7 +210,7 @@ class _Server(ThreadingHTTPServer):
         }
 
 
-def test_variant_sync_client_refreshes_auth_and_marks_conflicts(tmp_path: Path) -> None:
+def test_variant_sync_client_uses_cookie_sessions_and_marks_conflicts(tmp_path: Path) -> None:
     server = _Server(("127.0.0.1", 0))
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -246,7 +233,7 @@ def test_variant_sync_client_refreshes_auth_and_marks_conflicts(tmp_path: Path) 
         assert client.current_session() is not None
         page = client.list_variants(scope="community", base_node_type="svc.a.op")
         assert page.entries[0].record.variantId == "public-1"
-        assert client.current_access_token() == "access-2"
+        assert client.current_access_token() == "session=active-1"
 
         subscribed_page = client.list_variants(scope="subscribed", base_node_type="svc.a.op")
         assert subscribed_page.entries[0].record.variantId == "subscribed-1"
@@ -284,3 +271,64 @@ def test_variant_sync_client_refreshes_auth_and_marks_conflicts(tmp_path: Path) 
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
+
+
+def test_variant_sync_client_drops_legacy_saved_sessions_without_crashing(tmp_path: Path) -> None:
+    settings = QtCore.QSettings(str(tmp_path / "variant-sync-legacy.ini"), QtCore.QSettings.IniFormat)
+    settings.beginGroup("variants/remote_sync/v1")
+    settings.setValue(
+        "saved_sessions",
+        [
+            {
+                "accountId": "legacy-account",
+                "baseUrl": "https://assetcloud.feel8.fun",
+                "user": {
+                    "userId": "u1",
+                    "displayName": "Legacy User",
+                    "username": "legacy",
+                },
+                "accessToken": "old-token-only",
+                "lastUsedAt": "2026-04-04T00:00:00+00:00",
+            }
+        ],
+    )
+    settings.setValue("current_account_id", "legacy-account")
+    settings.endGroup()
+    settings.sync()
+
+    service = VariantCatalogService(
+        local_provider=LocalVariantProvider(db_path=tmp_path / "assets.db"),
+        remote_provider=RemoteCacheProvider(db_path=tmp_path / "assets.db"),
+    )
+    client = VariantSyncClient(settings=settings, catalog_service=service)
+
+    assert client.saved_sessions() == []
+    assert client.current_session() is None
+
+
+def test_variant_remote_cache_load_cleans_empty_variant_ids(tmp_path: Path) -> None:
+    provider = RemoteCacheProvider(db_path=tmp_path / "assets.db")
+    with provider._db.begin_sqla() as conn:
+        _ = conn.execute(
+            insert(variant_remote_cache_table).values(
+                variant_id="",
+                source="remote_public",
+                visibility="public",
+                owner_user_id="u1",
+                owner_display_name="User One",
+                library_slug="community",
+                remote_revision="r1",
+                sync_state="synced",
+                downloaded_at=None,
+                installed=0,
+                subscribed=0,
+                content=b"{}",
+                updated_at="2026-04-04T00:00:00+00:00",
+            )
+        )
+
+    assert provider.load_entries() == []
+
+    with provider._db.connect_sqla() as conn:
+        rows = conn.execute(select(variant_remote_cache_table.c.variant_id)).all()
+    assert rows == []

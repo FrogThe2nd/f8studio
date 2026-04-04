@@ -4,6 +4,7 @@ from collections.abc import Iterable
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Protocol, cast
+import logging
 
 import msgspec
 import zlib
@@ -32,6 +33,8 @@ from .variant_models import (
     F8VariantVisibility,
     variant_now_iso,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class VariantSourceProvider(Protocol):
@@ -91,12 +94,31 @@ class RemoteCacheProvider:
         )
         with self._db.connect_sqla() as conn:
             rows = conn.execute(statement).mappings().all()
-        return [_variant_entry_from_remote_row(row) for row in rows]
+        out: list[F8VariantEntry] = []
+        invalid_found = False
+        for row in rows:
+            try:
+                entry = _variant_entry_from_remote_row(row)
+            except Exception:
+                logger.exception("Ignoring invalid cached remote variant entry")
+                invalid_found = True
+                continue
+            if not str(entry.record.variantId or "").strip():
+                logger.warning("Ignoring cached remote variant entry with empty variantId")
+                invalid_found = True
+                continue
+            out.append(entry)
+        if invalid_found:
+            logger.info("Cleaning invalid variant remote cache rows")
+            self.save_entries(out)
+        return out
 
     def save_entries(self, entries: list[F8VariantEntry]) -> None:
         with self._db.begin_sqla() as conn:
             _ = conn.execute(delete(variant_remote_cache_table))
             for entry in entries:
+                if not str(entry.record.variantId or "").strip():
+                    continue
                 if entry.source not in {
                     F8VariantSourceKind.remote_official,
                     F8VariantSourceKind.remote_public,

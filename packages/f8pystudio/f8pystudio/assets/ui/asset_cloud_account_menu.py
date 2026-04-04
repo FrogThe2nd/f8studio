@@ -19,7 +19,7 @@ class AssetCloudUserLike(Protocol):
 class AssetCloudSessionLike(Protocol):
     accountId: str
     baseUrl: str
-    refreshToken: str
+    sessionCookie: str
     user: AssetCloudUserLike
     lastUsedAt: str
 

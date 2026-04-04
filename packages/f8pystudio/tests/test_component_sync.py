@@ -6,6 +6,7 @@ from pathlib import Path
 import threading
 
 from qtpy import QtCore
+from sqlalchemy import insert, select
 
 from f8pystudio.assets.components.component_catalog import ComponentCatalogService
 from f8pystudio.assets.components.component_models import (
@@ -15,6 +16,7 @@ from f8pystudio.assets.components.component_models import (
     F8ComponentVisibility,
 )
 from f8pystudio.assets.components.component_sync import ComponentSyncClient
+from f8pystudio.assets.db import component_remote_cache_table
 
 
 def _component_record(component_id: str, name: str) -> dict[str, object]:
@@ -58,45 +60,30 @@ class _ComponentApiHandler(BaseHTTPRequestHandler):
         assert isinstance(value, dict)
         return value
 
-    def _write_json(self, status: int, payload: dict[str, object]) -> None:
+    def _write_json(self, status: int, payload: dict[str, object], *, set_cookie: str | None = None) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
+        if set_cookie:
+            self.send_header("Set-Cookie", set_cookie)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
 
     def _check_auth(self) -> bool:
-        auth = str(self.headers.get("Authorization") or "")
-        if auth == "Bearer access-2":
+        cookie = str(self.headers.get("Cookie") or "")
+        if "session=active-1" in cookie:
             return True
         self._write_json(401, {"message": "expired"})
         return False
 
     def do_POST(self) -> None:  # noqa: N802
-        if self.path == "/v1/auth/login":
+        if self.path == "/api/auth/sign-in/username":
             self.server.last_login_user_agent = str(self.headers.get("User-Agent") or "")
             self._write_json(
                 200,
-                {
-                    "accessToken": "access-1",
-                    "refreshToken": "refresh-1",
-                    "user": {"userId": "u1", "username": "u", "displayName": "User One"},
-                },
-            )
-            return
-        if self.path == "/v1/auth/refresh":
-            payload = self._read_json()
-            if payload.get("refreshToken") != "refresh-1":
-                self._write_json(401, {"message": "bad refresh"})
-                return
-            self._write_json(
-                200,
-                {
-                    "accessToken": "access-2",
-                    "refreshToken": "refresh-1",
-                    "user": {"userId": "u1", "username": "u", "displayName": "User One"},
-                },
+                {"ok": True},
+                set_cookie="session=active-1; Path=/; HttpOnly",
             )
             return
         if self.path == "/v1/components/public-1/subscribe":
@@ -120,18 +107,23 @@ class _ComponentApiHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         if self.path.startswith("/v1/components?"):
-            auth = str(self.headers.get("Authorization") or "")
+            cookie = str(self.headers.get("Cookie") or "")
             if "owner=me" in self.path:
                 if not self._check_auth():
                     return
-                self._write_json(200, {"entries": [self.server.private_asset], "nextCursor": None})
+                self._write_json(200, {"entries": [self.server.private_asset_summary], "nextCursor": None})
                 return
-            if "owner=public" in self.path and not auth:
-                self._write_json(200, {"entries": [self.server.public_asset], "nextCursor": None})
+            if "owner=public" in self.path and not cookie:
+                self._write_json(200, {"entries": [self.server.public_asset_summary], "nextCursor": None})
                 return
             if not self._check_auth():
                 return
-            self._write_json(200, {"entries": [self.server.public_asset], "nextCursor": None})
+            self._write_json(200, {"entries": [self.server.public_asset_summary], "nextCursor": None})
+            return
+        if self.path == "/v1/me":
+            if not self._check_auth():
+                return
+            self._write_json(200, {"userId": "u1", "username": "u", "displayName": "User One"})
             return
         if self.path == "/v1/components/public-1":
             self._write_json(200, self.server.public_asset)
@@ -176,6 +168,8 @@ class _Server(ThreadingHTTPServer):
         self.private_record = _component_record("private-1", "Private Component")
         self.public_asset = self.asset_payload(self.public_record, visibility="public")
         self.private_asset = self.asset_payload(self.private_record, visibility="private")
+        self.public_asset_summary = self.asset_summary_payload(self.public_record, visibility="public")
+        self.private_asset_summary = self.asset_summary_payload(self.private_record, visibility="private")
         self.last_create_payload: dict[str, object] = {}
 
     @staticmethod
@@ -202,8 +196,46 @@ class _Server(ThreadingHTTPServer):
             "record": record,
         }
 
+    @staticmethod
+    def asset_summary_payload(
+        record: dict[str, object],
+        *,
+        visibility: str,
+        subscribed: bool = False,
+    ) -> dict[str, object]:
+        return {
+            "componentId": str(record["componentId"]),
+            "assetType": "component",
+            "ownerUserId": "u2" if visibility == "public" else "u1",
+            "ownerDisplayName": "Remote User" if visibility == "public" else "User One",
+            "visibility": visibility,
+            "revision": "r-public" if visibility == "public" else "r-private",
+            "latestRevision": "r-public" if visibility == "public" else "r-private",
+            "versionNumber": 1,
+            "latestVersionNumber": 1,
+            "name": str(record["name"]),
+            "description": str(record["description"]),
+            "tags": list(record["tags"]),
+            "schemaVersion": str(record["schemaVersion"]),
+            "createdAt": str(record["createdAt"]),
+            "updatedAt": str(record["updatedAt"]),
+            "editable": visibility != "public",
+            "subscribed": subscribed,
+            "record": {
+                "componentId": str(record["componentId"]),
+                "name": str(record["name"]),
+                "description": str(record["description"]),
+                "usageNotes": "",
+                "tags": list(record["tags"]),
+                "schemaVersion": str(record["schemaVersion"]),
+                "content": {},
+                "createdAt": str(record["createdAt"]),
+                "updatedAt": str(record["updatedAt"]),
+            },
+        }
 
-def test_component_sync_client_supports_anonymous_public_install_and_auth_refresh(tmp_path: Path) -> None:
+
+def test_component_sync_client_supports_anonymous_public_install_and_cookie_sessions(tmp_path: Path) -> None:
     server = _Server(("127.0.0.1", 0))
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -229,11 +261,15 @@ def test_component_sync_client_supports_anonymous_public_install_and_auth_refres
 
         refreshed_page = client.list_components(scope="community")
         assert refreshed_page.entries[0].record.componentId == "public-1"
-        assert client.current_access_token() == "access-2"
+        assert client.current_access_token() == "session=active-1"
+        cached_public = service.entry("public-1", include_uninstalled=True)
+        assert cached_public is not None
+        assert isinstance(cached_public.record.content.get("layout"), dict)
 
         mine_page = client.list_components(scope="mine")
         assert mine_page.entries[0].record.componentId == "private-1"
         assert mine_page.entries[0].source == F8ComponentSourceKind.remote_private
+        assert mine_page.entries[0].installed is False
         remote_versions = client.list_component_versions("public-1")
         assert remote_versions.versions[0].versionNumber == 1
 
@@ -269,3 +305,61 @@ def test_component_sync_client_supports_anonymous_public_install_and_auth_refres
     finally:
         server.shutdown()
         thread.join(timeout=5)
+
+
+def test_component_sync_client_drops_legacy_saved_sessions_without_crashing(tmp_path: Path) -> None:
+    settings = QtCore.QSettings(str(tmp_path / "component-sync-legacy.ini"), QtCore.QSettings.IniFormat)
+    settings.beginGroup("variants/remote_sync/v1")
+    settings.setValue(
+        "saved_sessions",
+        [
+            {
+                "accountId": "legacy-account",
+                "baseUrl": "https://assetcloud.feel8.fun",
+                "user": {
+                    "userId": "u1",
+                    "displayName": "Legacy User",
+                    "username": "legacy",
+                },
+                "accessToken": "old-token-only",
+                "lastUsedAt": "2026-04-04T00:00:00+00:00",
+            }
+        ],
+    )
+    settings.setValue("current_account_id", "legacy-account")
+    settings.endGroup()
+    settings.sync()
+
+    client = ComponentSyncClient(settings=settings, catalog_service=ComponentCatalogService(db_path=tmp_path / "assets.db"))
+
+    assert client.saved_sessions() == []
+    assert client.current_session() is None
+
+
+def test_component_remote_cache_load_cleans_empty_component_ids(tmp_path: Path) -> None:
+    service = ComponentCatalogService(db_path=tmp_path / "assets.db")
+    provider = service._remote_provider
+    with provider._db.begin_sqla() as conn:
+        _ = conn.execute(
+            insert(component_remote_cache_table).values(
+                component_id="",
+                source="remote_public",
+                visibility="public",
+                owner_user_id="u1",
+                owner_display_name="User One",
+                library_slug="community",
+                remote_revision="r1",
+                sync_state="synced",
+                downloaded_at=None,
+                installed=0,
+                subscribed=0,
+                content=b"{}",
+                updated_at="2026-04-04T00:00:00+00:00",
+            )
+        )
+
+    assert provider.load_entries() == []
+
+    with provider._db.connect_sqla() as conn:
+        rows = conn.execute(select(component_remote_cache_table.c.component_id)).all()
+    assert rows == []

@@ -26,6 +26,20 @@ function downloadJson(filename, data) {
   URL.revokeObjectURL(url);
 }
 
+function compareAssetSummaries(left, right) {
+  const leftUpdatedAt = String(left?.updatedAt || '');
+  const rightUpdatedAt = String(right?.updatedAt || '');
+  if (leftUpdatedAt !== rightUpdatedAt) {
+    return rightUpdatedAt.localeCompare(leftUpdatedAt);
+  }
+  const leftName = String(left?.name || left?.assetId || '').toLowerCase();
+  const rightName = String(right?.name || right?.assetId || '').toLowerCase();
+  if (leftName !== rightName) {
+    return leftName.localeCompare(rightName);
+  }
+  return String(left?.assetId || '').localeCompare(String(right?.assetId || ''));
+}
+
 export function ConsoleRootApp() {
   const route = resolveRoute(window.location.pathname);
   if (route === 'verify-email') {
@@ -60,6 +74,7 @@ function ConsoleApp() {
   const [loading, setLoading] = useState(false);
   const [statusText, setStatusText] = useState('Ready');
   const [profileLoadError, setProfileLoadError] = useState('');
+  const [sessionPendingTimedOut, setSessionPendingTimedOut] = useState(false);
   const [googleEnabled, setGoogleEnabled] = useState(false);
   const [linkedAccounts, setLinkedAccounts] = useState([]);
   const [usernameAvailability, setUsernameAvailability] = useState({
@@ -67,11 +82,11 @@ function ConsoleApp() {
     message: 'Choose a username with letters, numbers, or underscores.',
   });
 
-  const [mineAssetType, setMineAssetType] = useState('variant');
+  const [mineAssetType, setMineAssetType] = useState('all');
   const [mineQuery, setMineQuery] = useState('');
   const [mineAssets, setMineAssets] = useState([]);
 
-  const [allAssetType, setAllAssetType] = useState('variant');
+  const [allAssetType, setAllAssetType] = useState('all');
   const [allQuery, setAllQuery] = useState('');
   const [allAssets, setAllAssets] = useState([]);
 
@@ -127,6 +142,19 @@ function ConsoleApp() {
       }
     }
   }, [activePage, isLoggedIn]);
+
+  useEffect(() => {
+    if (!sessionQuery.isPending) {
+      setSessionPendingTimedOut(false);
+      return undefined;
+    }
+    const timeoutId = window.setTimeout(() => {
+      setSessionPendingTimedOut(true);
+    }, 5000);
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [sessionQuery.isPending]);
 
   useEffect(() => {
     if (authMode !== 'register') {
@@ -229,17 +257,37 @@ function ConsoleApp() {
   }
 
   async function loadMineAssets() {
-    const result = await apiRequest(
-      `/v1/search?assetType=${encodeURIComponent(mineAssetType)}&owner=me&q=${encodeURIComponent(mineQuery.trim())}`,
-    );
-    setMineAssets(result.entries || []);
+    const result = await loadAssetSearchResults({
+      assetType: mineAssetType,
+      owner: 'me',
+      query: mineQuery,
+    });
+    setMineAssets(result);
   }
 
   async function loadAllAssets() {
-    const result = await apiRequest(
-      `/v1/search?assetType=${encodeURIComponent(allAssetType)}&owner=public&q=${encodeURIComponent(allQuery.trim())}`,
-    );
-    setAllAssets(result.entries || []);
+    const result = await loadAssetSearchResults({
+      assetType: allAssetType,
+      owner: 'public',
+      query: allQuery,
+    });
+    setAllAssets(result);
+  }
+
+  async function loadAssetSearchResults({ assetType, owner, query }) {
+    const normalizedType = String(assetType || '').trim() || 'all';
+    const normalizedOwner = String(owner || '').trim();
+    const normalizedQuery = String(query || '').trim();
+    const assetTypes = normalizedType === 'all' ? ['variant', 'component'] : [normalizedType];
+    const results = await Promise.all(assetTypes.map(async (type) => {
+      const response = await apiRequest(
+        `/v1/search?assetType=${encodeURIComponent(type)}&owner=${encodeURIComponent(normalizedOwner)}&q=${encodeURIComponent(normalizedQuery)}`,
+      );
+      return Array.isArray(response.entries) ? response.entries : [];
+    }));
+    return results
+      .flat()
+      .sort(compareAssetSummaries);
   }
 
   async function loadUsers() {
@@ -459,6 +507,16 @@ function ConsoleApp() {
     }
   }
 
+  async function onRetrySessionLoad() {
+    setSessionPendingTimedOut(false);
+    setStatusText('Retrying session load...');
+    try {
+      await sessionQuery.refetch();
+    } catch (error) {
+      setStatusText(error instanceof Error ? error.message : String(error));
+    }
+  }
+
   async function onChangePassword(event) {
     event.preventDefault();
     if (!hasCredentialAccount) {
@@ -675,12 +733,36 @@ function ConsoleApp() {
     return 'User Management';
   }, [activePage]);
 
-  if (sessionQuery.isPending || (isLoggedIn && currentUser === null && !profileLoadError)) {
+  if ((sessionQuery.isPending && !sessionPendingTimedOut) || (isLoggedIn && currentUser === null && !profileLoadError)) {
     return (
       <div className="shell login-shell">
         <div className="card panel login-card">
           <h1>Feel8 Management System</h1>
           <p className="status">Loading session...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (sessionQuery.isPending && sessionPendingTimedOut) {
+    return (
+      <div className="shell login-shell">
+        <div className="card panel login-card">
+          <h1>Feel8 Management System</h1>
+          <p className="muted">Session loading is taking longer than expected.</p>
+          <div className="inline-form">
+            <button type="button" onClick={() => void onRetrySessionLoad()} disabled={loading}>Retry Session Load</button>
+            <button
+              type="button"
+              onClick={() => {
+                window.location.reload();
+              }}
+              disabled={loading}
+            >
+              Reload Page
+            </button>
+          </div>
+          <p className="status">{statusText}</p>
         </div>
       </div>
     );
@@ -1020,6 +1102,7 @@ function ConsoleApp() {
                     placeholder="Search my assets"
                   />
                   <select value={mineAssetType} onChange={(event) => setMineAssetType(event.target.value)}>
+                    <option value="all">all</option>
                     <option value="variant">variant</option>
                     <option value="component">component</option>
                   </select>
@@ -1054,6 +1137,7 @@ function ConsoleApp() {
                     placeholder="Search public assets"
                   />
                   <select value={allAssetType} onChange={(event) => setAllAssetType(event.target.value)}>
+                    <option value="all">all</option>
                     <option value="variant">variant</option>
                     <option value="component">component</option>
                   </select>
