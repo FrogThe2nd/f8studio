@@ -558,6 +558,7 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
                 self._stop_all_services_action,
                 self._auto_deploy_action,
             ],
+            layers_view_action=self._layers_dock.toggleViewAction(),
             account_clicked=self._on_asset_cloud_account_clicked,
             exec_toggled=self._on_exec_lines_toggled,
             data_toggled=self._on_data_lines_toggled,
