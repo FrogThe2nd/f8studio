@@ -156,10 +156,14 @@ class VariantManagerDialog(QtWidgets.QDialog):
         self._search_input = QtWidgets.QLineEdit(self)
         self._search_input.setPlaceholderText("Search variants")
         self._search_input.setClearButtonEnabled(True)
+        self._search_input.setMinimumWidth(320)
         self._search_input.textChanged.connect(self._on_search_text_changed)  # type: ignore[attr-defined]
         self._search_input.returnPressed.connect(self._on_search_submitted)  # type: ignore[attr-defined]
         self._search_btn = QtWidgets.QPushButton("Search", self)
         self._search_btn.setIcon(icon_for(self._search_btn, StudioIcon.CLOUD_SEARCH))
+        self._search_btn.setToolTip("Search")
+        self._search_btn.setText("")
+        self._search_btn.setFixedWidth(30)
         self._search_btn.clicked.connect(self._on_search_submitted)  # type: ignore[attr-defined]
         self._filter_combo = QtWidgets.QComboBox(self)
         self._filter_combo.currentIndexChanged.connect(self._on_filter_changed)  # type: ignore[attr-defined]
@@ -174,7 +178,6 @@ class VariantManagerDialog(QtWidgets.QDialog):
         self._toolbar.addWidget(self._search_btn)
         self._toolbar.addWidget(self._filter_combo)
         self._toolbar.addSeparator()
-        self._toolbar.addWidget(self._account_button)
 
         btn_add = QtWidgets.QPushButton("Save From Selected Node", self)
         btn_edit = QtWidgets.QPushButton("Edit Metadata", self)
@@ -189,9 +192,10 @@ class VariantManagerDialog(QtWidgets.QDialog):
         btn_import = QtWidgets.QPushButton("Import...", self)
         btn_export = QtWidgets.QPushButton("Export...", self)
         btn_create = QtWidgets.QPushButton("Create On Canvas", self)
-        btn_close = QtWidgets.QPushButton("Close", self)
 
         btn_refresh.setIcon(icon_for(btn_refresh, StudioIcon.REFRESH))
+        btn_add.setIcon(icon_for(btn_add, StudioIcon.CIRCLE_PLUS))
+        btn_add.setText("")
         btn_upload.setIcon(icon_for(btn_upload, StudioIcon.CLOUD_UP))
         btn_install.setIcon(icon_for(btn_install, StudioIcon.CLOUD_DOWN))
         btn_subscribe.setIcon(icon_for(btn_subscribe, StudioIcon.HEART_ON))
@@ -217,7 +221,6 @@ class VariantManagerDialog(QtWidgets.QDialog):
         btn_import.clicked.connect(self._on_import_clicked)  # type: ignore[attr-defined]
         btn_export.clicked.connect(self._on_export_clicked)  # type: ignore[attr-defined]
         btn_create.clicked.connect(self._on_create_clicked)  # type: ignore[attr-defined]
-        btn_close.clicked.connect(self.accept)  # type: ignore[attr-defined]
 
         self._configure_icon_button(btn_upload, "Upload")
         self._configure_icon_button(btn_install, "Download/Install")
@@ -231,12 +234,14 @@ class VariantManagerDialog(QtWidgets.QDialog):
         self._configure_icon_button(btn_edit, "Edit Metadata")
         self._configure_icon_button(btn_copy_local, "Save As Local Copy")
         self._configure_icon_button(btn_create, "Create On Canvas")
+        self._configure_icon_button(btn_add, "Save From Selected Node")
 
         self._toolbar.addSeparator()
         self._toolbar.addWidget(btn_refresh)
         toolbar_row = QtWidgets.QHBoxLayout()
         toolbar_row.addWidget(self._toolbar)
         toolbar_row.addStretch(1)
+        toolbar_row.addWidget(self._account_button)
 
         btn_row = QtWidgets.QHBoxLayout()
         for button in [
@@ -252,9 +257,9 @@ class VariantManagerDialog(QtWidgets.QDialog):
             btn_create,
             btn_import,
             btn_export,
-            btn_close,
         ]:
             btn_row.addWidget(button)
+        btn_row.addStretch(1)
 
         self._list = QtWidgets.QListWidget(self)
         self._list.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)

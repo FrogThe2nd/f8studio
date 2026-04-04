@@ -25,6 +25,7 @@ class StudioIcon(Enum):
     TOGGLE_ON = "toggle-on.svg"
     TOGGLE_OFF = "toggle-off.svg"
     CODE = "code.svg"
+    CIRCLE_PLUS = "circle-plus.svg"
     SQUARE_PLUS = "square-plus.svg"
     EYE = "eye.svg"
     EYE_SLASH = "eye-slash.svg"

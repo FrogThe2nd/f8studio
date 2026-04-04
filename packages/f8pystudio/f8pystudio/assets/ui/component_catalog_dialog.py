@@ -88,6 +88,7 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
         self._search_input = QtWidgets.QLineEdit(self)
         self._search_input.setPlaceholderText("Search components")
         self._search_input.setClearButtonEnabled(True)
+        self._search_input.setMinimumWidth(320)
         self._search_input.textChanged.connect(self._on_search_text_changed)  # type: ignore[attr-defined]
         self._search_input.returnPressed.connect(self._on_search_submitted)  # type: ignore[attr-defined]
         self._search_btn = QtWidgets.QPushButton(self)
@@ -108,7 +109,6 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
         self._toolbar.addWidget(self._search_btn)
         self._toolbar.addWidget(self._filter_combo)
         self._toolbar.addSeparator()
-        self._toolbar.addWidget(self._account_button)
 
         btn_add = QtWidgets.QPushButton(self)
         btn_edit = QtWidgets.QPushButton(self)
@@ -123,10 +123,9 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
         btn_insert = QtWidgets.QPushButton(self)
         btn_import = QtWidgets.QPushButton(self)
         btn_export = QtWidgets.QPushButton(self)
-        btn_close = QtWidgets.QPushButton(self)
 
         button_specs = [
-            (btn_add, StudioIcon.PACKAGE_EXPORT, "Save As Component"),
+            (btn_add, StudioIcon.CIRCLE_PLUS, "Save As Component"),
             (btn_edit, StudioIcon.EDIT, "Edit Metadata"),
             (btn_delete, StudioIcon.TRASH, "Delete"),
             (btn_copy_local, StudioIcon.SAVE, "Save As Local Copy"),
@@ -139,7 +138,6 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
             (btn_insert, StudioIcon.PACKAGE_IMPORT, "Insert Into Graph"),
             (btn_import, StudioIcon.PACKAGE_IMPORT, "Import JSON"),
             (btn_export, StudioIcon.PACKAGE_EXPORT, "Export JSON"),
-            (btn_close, StudioIcon.X, "Close"),
         ]
         for button, icon_token, tooltip in button_specs:
             button.setIcon(icon_for(button, icon_token))
@@ -160,13 +158,13 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
         btn_insert.clicked.connect(self._on_insert_clicked)  # type: ignore[attr-defined]
         btn_import.clicked.connect(self._on_import_clicked)  # type: ignore[attr-defined]
         btn_export.clicked.connect(self._on_export_clicked)  # type: ignore[attr-defined]
-        btn_close.clicked.connect(self.accept)  # type: ignore[attr-defined]
 
         self._toolbar.addSeparator()
         self._toolbar.addWidget(btn_refresh)
         toolbar_row = QtWidgets.QHBoxLayout()
         toolbar_row.addWidget(self._toolbar)
         toolbar_row.addStretch(1)
+        toolbar_row.addWidget(self._account_button)
 
         btn_row = QtWidgets.QHBoxLayout()
         for button in [
@@ -182,9 +180,9 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
             btn_insert,
             btn_import,
             btn_export,
-            btn_close,
         ]:
             btn_row.addWidget(button)
+        btn_row.addStretch(1)
 
         self._list = QtWidgets.QListWidget(self)
         self._list.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
