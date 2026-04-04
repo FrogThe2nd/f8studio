@@ -15,7 +15,7 @@ binding = "ASSETS"
 
 [vars]
 BOOTSTRAP_ADMIN_USERNAME = "admin"
-BOOTSTRAP_ADMIN_DISPLAY_NAME = "Administrator"
+BOOTSTRAP_ADMIN_DISPLAY_NAME = "Admin"
 BOOTSTRAP_ADMIN_EMAIL = "feel8.fun@gmail.com"
 AUTH_EMAIL_FROM = "Feel8 <no-reply@feel8.fun>"
 EMAIL_VERIFY_TOKEN_TTL_SECONDS = "1800"

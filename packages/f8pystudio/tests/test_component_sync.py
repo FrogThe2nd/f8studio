@@ -142,7 +142,7 @@ class _ComponentApiHandler(BaseHTTPRequestHandler):
                 {
                     "versions": [
                         {
-                            "assetId": "public-1",
+                            "componentId": "public-1",
                             "assetType": "component",
                             "versionNumber": 1,
                             "revision": "r-public",
@@ -186,7 +186,7 @@ class _Server(ThreadingHTTPServer):
         subscribed: bool = False,
     ) -> dict[str, object]:
         return {
-            "assetId": str(record["componentId"]),
+            "componentId": str(record["componentId"]),
             "assetType": "component",
             "ownerUserId": "u2" if visibility == "public" else "u1",
             "ownerDisplayName": "Remote User" if visibility == "public" else "User One",

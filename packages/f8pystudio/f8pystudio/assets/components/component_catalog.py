@@ -183,7 +183,7 @@ class RemoteComponentCacheProvider:
         out: list[F8ComponentEntry] = []
         for row in rows:
             row_mapping = _row_mapping(row)
-            record_payload = json_object_loads(row_mapping.get("record_json"))
+            record_payload = json_object_loads(_decompress_content(row_mapping.get("content")))
             metadata = RemoteCacheMetadata.from_row(row_mapping)
             out.append(_component_entry_from_remote(record_payload, metadata))
         return out

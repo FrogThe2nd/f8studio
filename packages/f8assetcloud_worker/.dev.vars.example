@@ -1,18 +1,18 @@
 # Copy this file to `.dev.vars` for local development only.
 # Never commit real secrets.
 BETTER_AUTH_SECRET="replace-with-a-long-random-secret"
-BOOTSTRAP_ADMIN_USERNAME="admin"
-BOOTSTRAP_ADMIN_DISPLAY_NAME="Administrator"
+
 BOOTSTRAP_ADMIN_PASSWORD="replace-with-a-local-only-password"
-BOOTSTRAP_ADMIN_EMAIL="admin@example.com"
-EMAIL_VERIFY_TOKEN_TTL_SECONDS="1800"
-PASSWORD_RESET_TOKEN_TTL_SECONDS="1800"
-AUTH_BASE_URL="https://assetcloud.feel8.fun"
-AUTH_VERIFY_EMAIL_BASE_URL="https://assetcloud.feel8.fun/console/verify-email"
-AUTH_RESET_PASSWORD_BASE_URL="https://assetcloud.feel8.fun/console/reset-password"
-GOOGLE_CLIENT_ID=""
-GOOGLE_CLIENT_SECRET=""
-AUTH_EMAIL_FROM=""
-RESEND_API_KEY=""
+
+AUTH_BASE_URL="http://localhost:8787/"
+AUTH_VERIFY_EMAIL_BASE_URL="http://localhost:8787/console/verify-email"
+AUTH_RESET_PASSWORD_BASE_URL="http://localhost:8787/console/reset-password"
+
+GOOGLE_CLIENT_ID="replace-with-local-google-client-id"
+GOOGLE_CLIENT_SECRET="replace-with-local-google-client-secret"
+
+RESEND_API_KEY="replace-with-local-resend-api-key"
 EXPOSE_DEBUG_AUTH_LINKS="false"
 CORS_ALLOWED_ORIGINS="http://localhost:5173"
+ENABLE_ASSET_JSON_GZIP="true"
+ENABLE_API_JSON_GZIP="false"

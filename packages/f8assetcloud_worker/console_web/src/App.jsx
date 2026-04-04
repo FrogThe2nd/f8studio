@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { authClient } from './authClient.js';
 
 const CONSOLE_BASE_PATH = '/console';
+const CONSOLE_CALLBACK_PATH = `${CONSOLE_BASE_PATH}/`;
 const VERIFY_EMAIL_PATH = `${CONSOLE_BASE_PATH}/verify-email`;
 const RESET_PASSWORD_PATH = `${CONSOLE_BASE_PATH}/reset-password`;
 const MANAGEMENT_API_BASE_PATH = '/v1/management';
@@ -58,6 +59,7 @@ function ConsoleApp() {
   const [activePage, setActivePage] = useState('profile');
   const [loading, setLoading] = useState(false);
   const [statusText, setStatusText] = useState('Ready');
+  const [profileLoadError, setProfileLoadError] = useState('');
   const [googleEnabled, setGoogleEnabled] = useState(false);
   const [linkedAccounts, setLinkedAccounts] = useState([]);
   const [usernameAvailability, setUsernameAvailability] = useState({
@@ -115,6 +117,7 @@ function ConsoleApp() {
   useEffect(() => {
     if (!isLoggedIn) {
       setCurrentUser(null);
+      setProfileLoadError('');
       setLinkedAccounts([]);
       setUsers([]);
       setMineAssets([]);
@@ -217,6 +220,7 @@ function ConsoleApp() {
   async function loadProfile() {
     const me = await apiRequest('/v1/me');
     setCurrentUser(me);
+    setProfileLoadError('');
   }
 
   async function loadLinkedAccounts() {
@@ -267,7 +271,11 @@ function ConsoleApp() {
       }
       setStatusText('Loaded');
     } catch (error) {
-      setStatusText(error instanceof Error ? error.message : String(error));
+      const message = error instanceof Error ? error.message : String(error);
+      if (activePage === 'profile') {
+        setProfileLoadError(message);
+      }
+      setStatusText(message);
     } finally {
       setLoading(false);
     }
@@ -288,6 +296,7 @@ function ConsoleApp() {
     }
     setLoading(true);
     setStatusText('Signing in...');
+    setProfileLoadError('');
     try {
       await authClient.signIn.username({
         username: username.trim(),
@@ -311,7 +320,7 @@ function ConsoleApp() {
     try {
       await authClient.signIn.social({
         provider: 'google',
-        callbackURL: `${window.location.origin}${CONSOLE_BASE_PATH}/`,
+        callbackURL: CONSOLE_CALLBACK_PATH,
       });
     } catch (error) {
       setStatusText(error instanceof Error ? error.message : String(error));
@@ -327,7 +336,7 @@ function ConsoleApp() {
         method: 'POST',
         body: JSON.stringify({
           provider: 'google',
-          callbackURL: `${window.location.origin}${CONSOLE_BASE_PATH}/`,
+          callbackURL: CONSOLE_CALLBACK_PATH,
           disableRedirect: true,
         }),
       });
@@ -417,6 +426,7 @@ function ConsoleApp() {
       await authClient.signOut();
       await sessionQuery.refetch();
       setCurrentUser(null);
+      setProfileLoadError('');
       setLinkedAccounts([]);
       setUsers([]);
       setMineAssets([]);
@@ -427,6 +437,23 @@ function ConsoleApp() {
       setStatusText('Logged out');
     } catch (error) {
       setStatusText(error instanceof Error ? error.message : String(error));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function onRetryProfileLoad() {
+    setLoading(true);
+    setProfileLoadError('');
+    setStatusText('Retrying profile load...');
+    try {
+      await sessionQuery.refetch();
+      await Promise.all([loadProfile(), loadLinkedAccounts()]);
+      setStatusText('Loaded');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setProfileLoadError(message);
+      setStatusText(message);
     } finally {
       setLoading(false);
     }
@@ -648,12 +675,28 @@ function ConsoleApp() {
     return 'User Management';
   }, [activePage]);
 
-  if (sessionQuery.isPending || (isLoggedIn && currentUser === null)) {
+  if (sessionQuery.isPending || (isLoggedIn && currentUser === null && !profileLoadError)) {
     return (
       <div className="shell login-shell">
         <div className="card panel login-card">
           <h1>Feel8 Management System</h1>
           <p className="status">Loading session...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (isLoggedIn && currentUser === null && profileLoadError) {
+    return (
+      <div className="shell login-shell">
+        <div className="card panel login-card">
+          <h1>Feel8 Management System</h1>
+          <p className="muted">Your session exists, but the profile could not be loaded.</p>
+          <div className="inline-form">
+            <button type="button" onClick={() => void onRetryProfileLoad()} disabled={loading}>Retry Profile Load</button>
+            <button type="button" onClick={() => void onLogout()} disabled={loading}>Sign Out</button>
+          </div>
+          <p className="status">{statusText}</p>
         </div>
       </div>
     );

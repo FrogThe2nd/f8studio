@@ -23,6 +23,7 @@ Core auth tables:
 Asset tables:
 
 - `asset_heads`
+- `variant_details`
 - `asset_versions`
 - `asset_subscriptions`
 
@@ -115,6 +116,8 @@ Recommended:
 - `AUTH_RESET_PASSWORD_BASE_URL`
 - `EMAIL_VERIFY_TOKEN_TTL_SECONDS`
 - `PASSWORD_RESET_TOKEN_TTL_SECONDS`
+- `ENABLE_ASSET_JSON_GZIP`
+- `ENABLE_API_JSON_GZIP`
 
 CORS:
 
@@ -133,6 +136,13 @@ Email delivery via Resend:
 Local debug only:
 
 - `EXPOSE_DEBUG_AUTH_LINKS=true` — prints verification/reset links to console (only effective when email delivery is not configured)
+- `ENABLE_ASSET_JSON_GZIP=true` — targeted default; compresses large asset payload endpoints such as create/get/update/version detail without touching auth or search
+- `ENABLE_API_JSON_GZIP=false` — broad `/v1/*` compression; keep this off unless you intentionally want to gzip nearly every app JSON response
+
+Variable precedence:
+
+- `wrangler.toml` `[vars]` provides checked-in defaults for deploys and local dev.
+- `.dev.vars` overrides those values during `wrangler dev`, so local debugging should usually be adjusted there.
 
 ## Local development
 

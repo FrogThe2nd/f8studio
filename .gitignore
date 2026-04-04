@@ -12,6 +12,8 @@ wheels/
 
 # Ignore dependency folder
 node_modules/
+.dev.vars
+.dev.vars.*
 
 # Ignore temporary files
 *.log

@@ -66,7 +66,7 @@ class F8VariantRemoteListPage(Struct, kw_only=True):
 
 
 class F8VariantRemoteVersionEntry(Struct, kw_only=True):
-    assetId: str
+    variantId: str
     assetType: str
     versionNumber: int
     revision: str

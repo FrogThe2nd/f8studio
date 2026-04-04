@@ -78,10 +78,6 @@ CREATE TABLE asset_heads (
   description TEXT NOT NULL,
   tags_json TEXT NOT NULL,
   schema_version TEXT,
-  variant_kind TEXT,
-  base_node_type TEXT,
-  service_class TEXT,
-  operator_class TEXT,
   deleted_at TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
@@ -92,9 +88,21 @@ CREATE INDEX idx_asset_heads_asset_type ON asset_heads(asset_type);
 CREATE INDEX idx_asset_heads_owner_user_id ON asset_heads(owner_user_id);
 CREATE INDEX idx_asset_heads_visibility ON asset_heads(visibility);
 CREATE INDEX idx_asset_heads_deleted_at ON asset_heads(deleted_at);
-CREATE INDEX idx_asset_heads_base_node_type ON asset_heads(base_node_type);
-CREATE INDEX idx_asset_heads_variant_kind ON asset_heads(variant_kind);
 CREATE INDEX idx_asset_heads_schema_version ON asset_heads(schema_version);
+
+CREATE TABLE variant_details (
+  asset_id TEXT PRIMARY KEY,
+  variant_kind TEXT NOT NULL,
+  base_node_type TEXT NOT NULL,
+  service_class TEXT NOT NULL,
+  operator_class TEXT,
+  FOREIGN KEY (asset_id) REFERENCES asset_heads(asset_id) ON DELETE CASCADE
+);
+
+CREATE INDEX idx_variant_details_base_node_type ON variant_details(base_node_type);
+CREATE INDEX idx_variant_details_variant_kind ON variant_details(variant_kind);
+CREATE INDEX idx_variant_details_service_class ON variant_details(service_class);
+CREATE INDEX idx_variant_details_lookup ON variant_details(base_node_type, variant_kind, service_class);
 
 CREATE TABLE asset_versions (
   asset_id TEXT NOT NULL,

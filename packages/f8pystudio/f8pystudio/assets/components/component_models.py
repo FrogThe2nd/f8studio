@@ -76,7 +76,7 @@ class F8ComponentRemoteListPage(Struct, kw_only=True):
 
 
 class F8ComponentRemoteVersionEntry(Struct, kw_only=True):
-    assetId: str
+    componentId: str
     assetType: str
     versionNumber: int
     revision: str

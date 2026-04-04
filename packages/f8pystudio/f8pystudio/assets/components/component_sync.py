@@ -662,7 +662,7 @@ def _remote_version_list_from_payload(payload: JsonObject) -> F8ComponentRemoteV
         version_payload = json_object_from_value(cast(object, item))
         versions.append(
             F8ComponentRemoteVersionEntry(
-                assetId=_payload_str(version_payload, "assetId"),
+                componentId=_payload_str_fallback(version_payload, primary_key="componentId", fallback_key="assetId"),
                 assetType=_payload_str(version_payload, "assetType"),
                 versionNumber=_payload_int(version_payload, "versionNumber"),
                 revision=_payload_str(version_payload, "revision"),
@@ -697,6 +697,13 @@ def _visibility_from_payload(payload: JsonObject) -> F8ComponentVisibility | Non
 
 def _payload_str(payload: JsonObject, key: str) -> str:
     return str(payload[key])
+
+
+def _payload_str_fallback(payload: JsonObject, *, primary_key: str, fallback_key: str) -> str:
+    primary_value = payload.get(primary_key)
+    if primary_value is not None:
+        return str(primary_value)
+    return _payload_str(payload, fallback_key)
 
 
 def _payload_optional_str(payload: JsonObject, key: str) -> str | None:

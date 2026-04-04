@@ -8,7 +8,7 @@ import { cors } from 'hono/cors';
 
 import { authSchema } from './auth_schema.js';
 import { AssetConflictError, AssetNotFoundError, AssetPermissionError, AssetValidationError, AssetRepository } from './repository.js';
-import { isPlainObject, stringOrDefault, toBoolean } from './utils.js';
+import { decompressGzip, isPlainObject, stringOrDefault, toBoolean } from './utils.js';
 
 const AUTH_BASE_PATH = '/api/auth';
 const CONSOLE_BASE_PATH = '/console';
@@ -465,6 +465,7 @@ async function routeManagementRequest({ managementUser, auth, repo, request, url
 function createAuth(env, request) {
   const requestUrl = new URL(request.url);
   const baseURL = resolveAuthBaseUrl(env, requestUrl);
+  const trustedOrigins = resolveTrustedOrigins(env, requestUrl, baseURL);
   const db = drizzle(env.DB);
   const bootstrapUsername = String(env.BOOTSTRAP_ADMIN_USERNAME || '').trim().toLowerCase();
   const bootstrapDisplayName = String(env.BOOTSTRAP_ADMIN_DISPLAY_NAME || '').trim();
@@ -480,7 +481,7 @@ function createAuth(env, request) {
     secret: getAuthSecret(env),
     baseURL,
     basePath: AUTH_BASE_PATH,
-    trustedOrigins: [new URL(baseURL).origin],
+    trustedOrigins,
     database: drizzleAdapter(db, {
       provider: 'sqlite',
       schema: authSchema,
@@ -758,6 +759,31 @@ function resolveAuthBaseUrl(env, requestUrl) {
   return requestUrl.origin;
 }
 
+function resolveTrustedOrigins(env, requestUrl, baseURL) {
+  const origins = new Set();
+  addOrigin(origins, baseURL);
+  addOrigin(origins, requestUrl.origin);
+  const extra = String(env.CORS_ALLOWED_ORIGINS || '').trim();
+  if (extra) {
+    for (const value of extra.split(',')) {
+      addOrigin(origins, value);
+    }
+  }
+  return [...origins];
+}
+
+function addOrigin(target, value) {
+  const text = String(value || '').trim();
+  if (!text) {
+    return;
+  }
+  try {
+    target.add(new URL(text).origin);
+  } catch (error) {
+    console.warn('Ignoring invalid trusted origin', text);
+  }
+}
+
 function resolveAllowedOrigin(env, origin) {
   const baseUrl = String(env.AUTH_BASE_URL || '').trim();
   if (!baseUrl) {
@@ -851,7 +877,21 @@ function decodeSinglePathValue(pathname, prefix) {
 }
 
 async function readJsonBody(request) {
-  const raw = await request.text();
+  const contentEncoding = String(request.headers.get('Content-Encoding') || '').toLowerCase();
+  let raw = '';
+  if (contentEncoding.includes('gzip')) {
+    const compressedBody = await request.arrayBuffer();
+    if (compressedBody.byteLength === 0) {
+      return {};
+    }
+    try {
+      raw = await decompressGzip(new Uint8Array(compressedBody));
+    } catch (error) {
+      throw new HttpError(400, 'request body gzip decompression failed');
+    }
+  } else {
+    raw = await request.text();
+  }
   if (!raw) {
     return {};
   }
@@ -882,12 +922,17 @@ function handleError(error) {
     return jsonResponse(404, { message: 'asset not found' });
   }
   if (error instanceof AssetConflictError) {
-    return jsonResponse(409, {
+    const payload = {
       message: 'conflict',
-      assetId: error.assetId,
       revision: error.revision,
       remoteRevision: error.revision,
-    });
+    };
+    if (error.assetType === 'variant') {
+      payload.variantId = error.assetId;
+    } else {
+      payload.componentId = error.assetId;
+    }
+    return jsonResponse(409, payload);
   }
   if (error instanceof AssetValidationError) {
     return jsonResponse(400, { message: error.message });

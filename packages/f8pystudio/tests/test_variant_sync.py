@@ -206,7 +206,7 @@ class _Server(ThreadingHTTPServer):
         subscribed: bool = False,
     ) -> dict[str, object]:
         return {
-            "assetId": str(record["variantId"]),
+            "variantId": str(record["variantId"]),
             "assetType": "variant",
             "ownerUserId": "u2" if visibility == "public" else "u1",
             "ownerDisplayName": "Remote User" if visibility == "public" else "User One",
