@@ -584,7 +584,7 @@ def _register_detector(reg: RuntimeNodeRegistry) -> None:
             service_class=DETECTOR_SERVICE_CLASS,
             service_task="detector",
             output_port="detections",
-            allowed_tasks={"yolo_det", "yolo_obb"},
+            allowed_tasks={"yolo_det", "yolo_obb", "yowo_temporal_det"},
         )
 
     reg.register_service(DETECTOR_SERVICE_CLASS, _factory, overwrite=True)

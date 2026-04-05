@@ -6,7 +6,17 @@ from typing import Any, Literal
 
 
 FlowInputOrder = Literal["prev_now", "now_prev"]
-ModelTask = Literal["yolo_det", "yolo_pose", "yolo_obb", "yolo_cls", "optflow_neuflowv2", "tcn_wave"]
+TemporalResizeMode = Literal["direct_resize"]
+TemporalNormalization = Literal["imagenet"]
+ModelTask = Literal[
+    "yolo_det",
+    "yolo_pose",
+    "yolo_obb",
+    "yolo_cls",
+    "optflow_neuflowv2",
+    "tcn_wave",
+    "yowo_temporal_det",
+]
 
 
 @dataclass(frozen=True)
@@ -27,6 +37,11 @@ class ModelSpec:
     top_k: int = 5
     flow_format: str = "flow2_f16"
     flow_input_order: FlowInputOrder = "prev_now"
+    temporal_clip_length: int = 16
+    temporal_sampling_rate: int = 1
+    temporal_max_det: int = 300
+    temporal_resize_mode: TemporalResizeMode = "direct_resize"
+    temporal_normalization: TemporalNormalization = "imagenet"
     onnx_url: str = ""
     onnx_sha256: str = ""
     meta: dict[str, Any] | None = None
@@ -88,6 +103,8 @@ def _parse_task(v: Any) -> ModelTask | None:
         return "optflow_neuflowv2"
     if s in ("tcn_wave", "tcn", "temporal_wave", "temporal_conv", "conv_tcn"):
         return "tcn_wave"
+    if s in ("yowo_temporal_det", "yowov3_temporal", "yowo_temporal", "temporal_det", "temporal_detector"):
+        return "yowo_temporal_det"
     return None
 
 
@@ -98,6 +115,20 @@ def _parse_flow_input_order(v: Any) -> FlowInputOrder:
     if s in ("now_prev", "now->prev", "current_previous", "now_previous"):
         return "now_prev"
     raise ValueError(f"Unsupported optflow inputOrder: {s!r}")
+
+
+def _parse_temporal_resize_mode(v: Any) -> TemporalResizeMode:
+    s = _as_str(v, default="direct_resize").lower()
+    if s in ("direct_resize", "resize", "stretch"):
+        return "direct_resize"
+    raise ValueError(f"Unsupported temporal resizeMode: {s!r}")
+
+
+def _parse_temporal_normalization(v: Any) -> TemporalNormalization:
+    s = _as_str(v, default="imagenet").lower()
+    if s in ("imagenet", "image_net"):
+        return "imagenet"
+    raise ValueError(f"Unsupported temporal normalization: {s!r}")
 
 
 def _normalize_optional_sha256(v: Any) -> str:
@@ -151,6 +182,13 @@ def _normalize_skeleton_protocol(v: Any) -> str:
     return text
 
 
+def _as_positive_int(v: Any, *, default: int, label: str, yaml_path: Path) -> int:
+    out = _as_int(v, default=default)
+    if out <= 0:
+        raise ValueError(f"Invalid {label} in {yaml_path}")
+    return out
+
+
 def load_model_spec(yaml_path: Path) -> ModelSpec:
     """
     Load a model yaml.
@@ -171,6 +209,7 @@ def load_model_spec(yaml_path: Path) -> ModelSpec:
         pose = data.get("pose") if isinstance(data.get("pose"), dict) else {}
         classification = data.get("classification") if isinstance(data.get("classification"), dict) else {}
         optflow = data.get("optflow") if isinstance(data.get("optflow"), dict) else {}
+        temporal = data.get("temporal") if isinstance(data.get("temporal"), dict) else {}
 
         task = _parse_task(model.get("task")) or "yolo_det"
         skeleton_protocol = _normalize_skeleton_protocol(model.get("skeletonProtocol"))
@@ -215,6 +254,26 @@ def load_model_spec(yaml_path: Path) -> ModelSpec:
             default=_as_str(data.get("flow_format"), default="flow2_f16"),
         ).lower()
         flow_input_order: FlowInputOrder = "prev_now"
+        temporal_clip_length = _as_int(
+            temporal.get("clipLength"),
+            default=_as_int(data.get("clip_length"), default=16),
+        )
+        temporal_sampling_rate = _as_int(
+            temporal.get("samplingRate"),
+            default=_as_int(data.get("sampling_rate"), default=1),
+        )
+        temporal_max_det = _as_int(
+            temporal.get("maxDet"),
+            default=_as_int(data.get("max_det"), default=300),
+        )
+        temporal_resize_mode = _parse_temporal_resize_mode(
+            temporal.get("resizeMode") if temporal.get("resizeMode") is not None else data.get("resize_mode")
+        )
+        temporal_normalization = _parse_temporal_normalization(
+            temporal.get("normalization")
+            if temporal.get("normalization") is not None
+            else data.get("normalization")
+        )
 
         if task == "optflow_neuflowv2":
             flow_input_order = _parse_flow_input_order(
@@ -226,6 +285,27 @@ def load_model_spec(yaml_path: Path) -> ModelSpec:
                 raise ValueError(f"Optflow model file must be .onnx in {yaml_path}")
         if task == "tcn_wave" and onnx_path.suffix.lower() != ".onnx":
             raise ValueError(f"TCN wave model file must be .onnx in {yaml_path}")
+        if task == "yowo_temporal_det":
+            if onnx_path.suffix.lower() != ".onnx":
+                raise ValueError(f"Temporal detector model file must be .onnx in {yaml_path}")
+            temporal_clip_length = _as_positive_int(
+                temporal_clip_length,
+                default=16,
+                label="temporal.clipLength",
+                yaml_path=yaml_path,
+            )
+            temporal_sampling_rate = _as_positive_int(
+                temporal_sampling_rate,
+                default=1,
+                label="temporal.samplingRate",
+                yaml_path=yaml_path,
+            )
+            temporal_max_det = _as_positive_int(
+                temporal_max_det,
+                default=300,
+                label="temporal.maxDet",
+                yaml_path=yaml_path,
+            )
 
         meta = data.get("meta") if isinstance(data.get("meta"), dict) else {}
         return ModelSpec(
@@ -247,6 +327,11 @@ def load_model_spec(yaml_path: Path) -> ModelSpec:
             top_k=max(1, int(top_k)),
             flow_format=flow_format,
             flow_input_order=flow_input_order,
+            temporal_clip_length=int(temporal_clip_length),
+            temporal_sampling_rate=int(temporal_sampling_rate),
+            temporal_max_det=int(temporal_max_det),
+            temporal_resize_mode=temporal_resize_mode,
+            temporal_normalization=temporal_normalization,
             meta=dict(meta),
         )
 
@@ -287,6 +372,11 @@ def load_model_spec(yaml_path: Path) -> ModelSpec:
     top_k = _as_int(data.get("top_k"), default=5)
     flow_format = _as_str(data.get("flow_format"), default="flow2_f16").lower()
     flow_input_order: FlowInputOrder = "prev_now"
+    temporal_clip_length = _as_int(data.get("clip_length"), default=16)
+    temporal_sampling_rate = _as_int(data.get("sampling_rate"), default=1)
+    temporal_max_det = _as_int(data.get("max_det"), default=300)
+    temporal_resize_mode = _parse_temporal_resize_mode(data.get("resize_mode"))
+    temporal_normalization = _parse_temporal_normalization(data.get("normalization"))
 
     if task == "optflow_neuflowv2":
         flow_input_order = _parse_flow_input_order(data.get("flow_input_order"))
@@ -296,6 +386,27 @@ def load_model_spec(yaml_path: Path) -> ModelSpec:
             raise ValueError(f"Optflow model file must be .onnx in {yaml_path}")
     if task == "tcn_wave" and onnx_path.suffix.lower() != ".onnx":
         raise ValueError(f"TCN wave model file must be .onnx in {yaml_path}")
+    if task == "yowo_temporal_det":
+        if onnx_path.suffix.lower() != ".onnx":
+            raise ValueError(f"Temporal detector model file must be .onnx in {yaml_path}")
+        temporal_clip_length = _as_positive_int(
+            temporal_clip_length,
+            default=16,
+            label="clip_length",
+            yaml_path=yaml_path,
+        )
+        temporal_sampling_rate = _as_positive_int(
+            temporal_sampling_rate,
+            default=1,
+            label="sampling_rate",
+            yaml_path=yaml_path,
+        )
+        temporal_max_det = _as_positive_int(
+            temporal_max_det,
+            default=300,
+            label="max_det",
+            yaml_path=yaml_path,
+        )
 
     return ModelSpec(
         model_id=model_id,
@@ -316,6 +427,11 @@ def load_model_spec(yaml_path: Path) -> ModelSpec:
         top_k=max(1, int(top_k)),
         flow_format=flow_format,
         flow_input_order=flow_input_order,
+        temporal_clip_length=int(temporal_clip_length),
+        temporal_sampling_rate=int(temporal_sampling_rate),
+        temporal_max_det=int(temporal_max_det),
+        temporal_resize_mode=temporal_resize_mode,
+        temporal_normalization=temporal_normalization,
         meta={},
     )
 

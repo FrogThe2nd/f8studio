@@ -5,7 +5,7 @@ import json
 import time
 import traceback
 from collections import deque
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal
 
@@ -15,7 +15,7 @@ from f8pysdk.shm.video import VideoShmReader
 
 from .constants import CLASSIFICATION_SCHEMA_VERSION, DETECTION_SCHEMA_VERSION
 from .model_config import ModelSpec, ModelTask, build_model_index, build_model_index_with_errors, load_model_spec
-from .onnx_runtime import OnnxClassifierRuntime, OnnxYoloDetectorRuntime
+from .onnx_runtime import OnnxClassifierRuntime, OnnxYoloDetectorRuntime, OnnxYowoTemporalDetectorRuntime
 from .vision_utils import clamp_xyxy
 from .weights_downloader import ensure_onnx_file, onnx_file_matches_sha256
 
@@ -129,6 +129,13 @@ def _resolve_path_from_cwd_or_repo(raw: str) -> Path:
     except Exception:
         pass
     return p1
+
+
+@dataclass(frozen=True)
+class _TemporalBufferedFrame:
+    prepared_frame: Any
+    frame_id: int
+    ts_ms: int
 
 
 class _RollingWindow:
@@ -286,12 +293,15 @@ class OnnxVisionServiceNode(ServiceNode):
 
         self._model: ModelSpec | None = None
         self._det_runtime: OnnxYoloDetectorRuntime | None = None
+        self._temporal_det_runtime: OnnxYowoTemporalDetectorRuntime | None = None
         self._cls_runtime: OnnxClassifierRuntime | None = None
         self._runtime_yaml: Path | None = None
         self._last_error = ""
         self._last_error_signature = ""
         self._last_error_repeats = 0
         self._model_index_warning = ""
+        self._temporal_frame_buffer: deque[_TemporalBufferedFrame] = deque()
+        self._temporal_frame_counter = 0
 
         self._last_infer_frame_id: int | None = None
         self._last_processed_frame_id: int | None = None
@@ -310,6 +320,7 @@ class OnnxVisionServiceNode(ServiceNode):
             t.cancel()
             await asyncio.gather(t, return_exceptions=True)
         self._close_shm()
+        self._reset_temporal_buffer()
 
     async def on_lifecycle(self, active: bool, meta: dict[str, Any]) -> None:
         del meta
@@ -529,9 +540,14 @@ class OnnxVisionServiceNode(ServiceNode):
 
     async def _reset_runtime(self) -> None:
         self._det_runtime = None
+        self._temporal_det_runtime = None
         self._cls_runtime = None
         self._runtime_yaml = None
         self._model = None
+        self._reset_temporal_buffer()
+        self._last_infer_frame_id = None
+        self._last_processed_frame_id = None
+        self._dup_skipped_since_last_processed = 0
         self._last_error_signature = ""
         self._last_error_repeats = 0
         await self.set_state("loadedModel", "")
@@ -546,6 +562,10 @@ class OnnxVisionServiceNode(ServiceNode):
         if want == self._shm_open_name:
             return
         self._close_shm()
+        self._reset_temporal_buffer()
+        self._last_infer_frame_id = None
+        self._last_processed_frame_id = None
+        self._dup_skipped_since_last_processed = 0
 
     def _resolve_shm_name(self) -> str:
         shm = str(self._shm_name or "").strip()
@@ -616,6 +636,56 @@ class OnnxVisionServiceNode(ServiceNode):
         self._shm = None
         self._shm_open_name = ""
 
+    def _reset_temporal_buffer(self, *, maxlen: int | None = None) -> None:
+        next_maxlen = maxlen if maxlen is not None else self._temporal_frame_buffer.maxlen
+        self._temporal_frame_buffer = deque(maxlen=next_maxlen)
+        self._temporal_frame_counter = 0
+
+    def _append_temporal_frame(self, *, prepared_frame: Any, frame_id: int, ts_ms: int) -> None:
+        self._temporal_frame_buffer.append(
+            _TemporalBufferedFrame(
+                prepared_frame=prepared_frame,
+                frame_id=int(frame_id),
+                ts_ms=int(ts_ms),
+            )
+        )
+        self._temporal_frame_counter += 1
+
+    def _temporal_window_ready(self) -> bool:
+        runtime = self._temporal_det_runtime
+        if runtime is None:
+            return False
+        return len(self._temporal_frame_buffer) >= int(runtime.buffer_span)
+
+    def _should_infer_temporal(self) -> bool:
+        if not self._temporal_window_ready():
+            return False
+        if self._last_infer_frame_id is None:
+            return True
+        return (int(self._temporal_frame_counter) % int(self._infer_every_n)) == 0
+
+    def _build_temporal_sequence(self) -> Any:
+        import numpy as np  # type: ignore
+
+        runtime = self._temporal_det_runtime
+        if runtime is None:
+            raise RuntimeError("Temporal detector runtime is not initialized.")
+        if not self._temporal_window_ready():
+            raise RuntimeError("Temporal detector window is not warm.")
+
+        frames = list(self._temporal_frame_buffer)
+        last_index = len(frames) - 1
+        selected: list[Any] = []
+        for offset in reversed(range(int(runtime.clip_length))):
+            index = last_index - offset * int(runtime.sampling_rate)
+            if index < 0:
+                raise RuntimeError(
+                    f"Temporal detector buffer underflow for clipLength={runtime.clip_length} "
+                    f"samplingRate={runtime.sampling_rate}."
+                )
+            selected.append(frames[index].prepared_frame)
+        return np.stack(tuple(selected), axis=0)
+
     def _open_shm(self, shm_name: str) -> bool:
         self._close_shm()
         shm = VideoShmReader(shm_name)
@@ -639,7 +709,7 @@ class OnnxVisionServiceNode(ServiceNode):
         )
 
     async def _ensure_runtime(self) -> bool:
-        if self._det_runtime is not None or self._cls_runtime is not None:
+        if self._det_runtime is not None or self._temporal_det_runtime is not None or self._cls_runtime is not None:
             return True
 
         yaml_path = self._resolve_model_yaml()
@@ -660,6 +730,12 @@ class OnnxVisionServiceNode(ServiceNode):
         if spec.task == "yolo_cls":
             runtime = OnnxClassifierRuntime(spec, ort_provider=self._ort_provider)
             self._cls_runtime = runtime
+            providers = runtime.active_providers
+            warn = runtime.provider_warning
+        elif spec.task == "yowo_temporal_det":
+            runtime = OnnxYowoTemporalDetectorRuntime(spec, ort_provider=self._ort_provider)
+            self._temporal_det_runtime = runtime
+            self._reset_temporal_buffer(maxlen=runtime.buffer_span)
             providers = runtime.active_providers
             warn = runtime.provider_warning
         else:
@@ -810,7 +886,31 @@ class OnnxVisionServiceNode(ServiceNode):
                 frame_bgr = np.ascontiguousarray(bgra[:, :, 0:3])
 
                 t_infer0 = time.perf_counter()
-                if self._det_runtime is not None:
+                if self._temporal_det_runtime is not None:
+                    prepared = self._temporal_det_runtime.prepare_frame(frame_bgr)
+                    self._append_temporal_frame(
+                        prepared_frame=prepared,
+                        frame_id=frame_id_seen,
+                        ts_ms=int(header.ts_ms),
+                    )
+                    if not self._temporal_window_ready():
+                        continue
+                    if not self._should_infer_temporal():
+                        continue
+                    sequence = self._build_temporal_sequence()
+                    detections, _meta = self._temporal_det_runtime.infer_sequence(
+                        sequence,
+                        frame_size_hw=(height, width),
+                    )
+                    payload_out = self._build_detection_payload(
+                        width=width,
+                        height=height,
+                        frame_id=frame_id_seen,
+                        ts_ms=int(header.ts_ms),
+                        detections=detections,
+                    )
+                    await self.emit("detections", payload_out, ts_ms=int(header.ts_ms))
+                elif self._det_runtime is not None:
                     detections, _meta = self._det_runtime.infer(frame_bgr)
                     payload_out = self._build_detection_payload(
                         width=width,
