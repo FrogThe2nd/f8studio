@@ -574,10 +574,11 @@ def move_control_point(
 def make_wave_preview_control(
     *,
     field_tooltip: str,
+    widget_parent: QtWidgets.QWidget | None,
     preview_value_getter: Callable[[], Any],
     property_value_getter: Callable[[str], Any],
 ) -> tuple[WavePreviewControl, Callable[[Any], None]]:
-    control = WavePreviewControl(field_tooltip=field_tooltip)
+    control = WavePreviewControl(field_tooltip=field_tooltip, parent=widget_parent)
 
     def apply_preview(value: Any) -> None:
         control.set_preview_data(
@@ -595,11 +596,16 @@ def make_wave_preview_control(
 def make_wave_pattern_editor_control(
     *,
     field_tooltip: str,
+    widget_parent: QtWidgets.QWidget | None,
     points_value_getter: Callable[[], Any],
     property_value_getter: Callable[[str], Any],
     points_setter: Callable[[Any, bool], None],
 ) -> tuple[WavePatternEditorControl, Callable[[Any], None]]:
-    control = WavePatternEditorControl(points_setter=points_setter, field_tooltip=field_tooltip)
+    control = WavePatternEditorControl(
+        points_setter=points_setter,
+        field_tooltip=field_tooltip,
+        parent=widget_parent,
+    )
 
     def apply_points(value: Any) -> None:
         control.set_editor_data(
@@ -670,9 +676,10 @@ def normalize_heatmap_values(raw_value: Any) -> list[float]:
 def make_wave_heatmap_control(
     *,
     field_tooltip: str,
+    widget_parent: QtWidgets.QWidget | None,
     heatmap_value_getter: Callable[[], Any],
 ) -> tuple[WaveHeatmapControl, Callable[[Any], None]]:
-    control = WaveHeatmapControl(field_tooltip=field_tooltip)
+    control = WaveHeatmapControl(field_tooltip=field_tooltip, parent=widget_parent)
 
     def apply_heatmap(value: Any) -> None:
         control.set_heatmap_data(value)

@@ -28,7 +28,7 @@ class _TimeSeriesPane(QtWidgets.QWidget):
 
         top = QtWidgets.QHBoxLayout()
         top.setContentsMargins(0, 0, 0, 0)
-        self._clear = QtWidgets.QToolButton()
+        self._clear = QtWidgets.QToolButton(self)
         self._clear.setText("CLEAR")
         self._clear.setAutoRaise(True)
         self._clear.setToolTip("Clear accumulated samples.")
@@ -45,7 +45,7 @@ class _TimeSeriesPane(QtWidgets.QWidget):
             QToolButton:pressed { background: rgba(255, 255, 255, 25); }
             """
         )
-        self._update = QtWidgets.QCheckBox("Update")
+        self._update = QtWidgets.QCheckBox("Update", self)
         self._update.setChecked(True)
         self._update.setStyleSheet(
             """
@@ -73,7 +73,7 @@ class _TimeSeriesPane(QtWidgets.QWidget):
         self._update.toggled.connect(self._on_update_toggled)
 
         if pg is None:
-            label = QtWidgets.QLabel("pyqtgraph not installed")
+            label = QtWidgets.QLabel("pyqtgraph not installed", self)
             label.setAlignment(QtCore.Qt.AlignCenter)
             layout.addWidget(label)
             self._plot = None
@@ -81,7 +81,7 @@ class _TimeSeriesPane(QtWidgets.QWidget):
             self._legend = None
             return
 
-        plot = pg.PlotWidget()
+        plot = pg.PlotWidget(self)
         plot.setBackground((16, 16, 16))
         plot.showGrid(x=True, y=True, alpha=0.25)
         # Keep the plot compact: omit axis captions ("Time/Value") which take

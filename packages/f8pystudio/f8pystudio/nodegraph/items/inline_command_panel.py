@@ -180,10 +180,12 @@ def _build_command_row_widget(
     enabled: bool,
     disabled_reason: str,
 ) -> tuple[QtWidgets.QGraphicsProxyWidget, QtWidgets.QWidget, QtWidgets.QAbstractButton]:
+    panel = QtWidgets.QWidget()
     header, button = build_inline_header_button(
         label=command_name,
         tooltip=_command_tooltip(description=description, enabled=enabled, disabled_reason=disabled_reason),
         expandable=False,
+        parent=panel,
     )
     _apply_command_button_state(
         button,
@@ -194,7 +196,6 @@ def _build_command_row_widget(
     )
     button.pressed.connect(lambda _checked=False, _c=command: _on_command_pressed(node_item, _c))
 
-    panel = QtWidgets.QWidget()
     panel_lay = QtWidgets.QVBoxLayout(panel)
     panel_lay.setContentsMargins(0, 0, 0, 0)
     panel_lay.setSpacing(0)

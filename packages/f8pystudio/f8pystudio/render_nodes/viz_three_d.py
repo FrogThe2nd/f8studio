@@ -413,7 +413,7 @@ class _Skeleton3DControlPane(QtWidgets.QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
 
-        self._open_button = QtWidgets.QPushButton("Open Viewer")
+        self._open_button = QtWidgets.QPushButton("Open Viewer", self)
         self._open_button.clicked.connect(on_open_clicked)  # type: ignore[arg-type]
         layout.addWidget(self._open_button)
 

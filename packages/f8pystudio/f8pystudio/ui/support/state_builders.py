@@ -250,6 +250,7 @@ def build_inline_control_binding(
     *,
     spec: StateControlSpec,
     read_only: bool,
+    widget_parent: QtWidgets.QWidget | None = None,
     value_getter: Callable[[], Any],
     value_setter: Callable[[Any, bool], None],
     property_value_getter: Callable[[str], Any],
@@ -271,6 +272,7 @@ def build_inline_control_binding(
     if ui == "wave_preview":
         control, apply_value = make_wave_preview_control(
             field_tooltip=spec.field_tooltip,
+            widget_parent=widget_parent,
             preview_value_getter=value_getter,
             property_value_getter=property_value_getter,
         )
@@ -279,6 +281,7 @@ def build_inline_control_binding(
     if ui == "wave_heatmap":
         control, apply_value = make_wave_heatmap_control(
             field_tooltip=spec.field_tooltip,
+            widget_parent=widget_parent,
             heatmap_value_getter=value_getter,
         )
         return _binding(control, apply_value=apply_value)
@@ -286,6 +289,7 @@ def build_inline_control_binding(
     if ui == "wave_pattern_editor":
         control, apply_value = make_wave_pattern_editor_control(
             field_tooltip=spec.field_tooltip,
+            widget_parent=widget_parent,
             points_value_getter=value_getter,
             property_value_getter=property_value_getter,
             points_setter=lambda value, push_undo: value_setter(value, push_undo=push_undo),
@@ -294,7 +298,7 @@ def build_inline_control_binding(
         return _binding(control, apply_value=apply_value, refresh_options=None)
 
     if ui == "wrapline":
-        widget = F8WrapLineEditor(language=spec.ui_language or "plaintext")
+        widget = F8WrapLineEditor(widget_parent, language=spec.ui_language or "plaintext")
         widget.set_name(spec.name)
         widget.setMinimumWidth(0)
         widget.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred)
@@ -311,7 +315,7 @@ def build_inline_control_binding(
         return _binding(widget, apply_value=widget.set_value)
 
     if ui == "code":
-        widget = F8CodeButtonEditor(title=code_title, language=spec.ui_language or "plaintext")
+        widget = F8CodeButtonEditor(widget_parent, title=code_title, language=spec.ui_language or "plaintext")
         widget.set_name(spec.name)
         widget.set_editor_assist_context(assist_context)
         widget.set_editor_assist_context_provider(assist_context_provider)
@@ -364,7 +368,7 @@ def build_inline_control_binding(
 
     if ui == "button":
         button_data_type: type[int] | type[float] = int if spec.schema_type == "integer" else float
-        widget = F8IncrementButtonEditor(title=spec.label, data_type=button_data_type)
+        widget = F8IncrementButtonEditor(widget_parent, title=spec.label, data_type=button_data_type)
         widget.set_name(spec.name)
         widget.set_button_text(spec.label)
         widget.setStyleSheet(
@@ -405,7 +409,7 @@ def build_inline_control_binding(
         return _binding(widget, apply_value=widget.set_value)
 
     if spec.is_image_b64:
-        widget = F8ImageB64Editor()
+        widget = F8ImageB64Editor(widget_parent)
         widget.valueChanged.connect(lambda value: value_setter(str(value or ""), push_undo=True))  # type: ignore[attr-defined]
 
         def _apply_image_value(value: Any) -> None:
@@ -416,7 +420,7 @@ def build_inline_control_binding(
         return _binding(widget, apply_value=_apply_image_value)
 
     if spec.multiselect_pool_field or ui in {"multiselect", "multi_select", "multi-select"}:
-        widget = F8MultiSelect()
+        widget = F8MultiSelect(widget_parent)
         if spec.field_tooltip:
             widget.set_context_tooltip(spec.field_tooltip)
         items = _resolve_inline_items(spec.multiselect_pool_field, spec.enum_items, pool_resolver)
@@ -440,7 +444,7 @@ def build_inline_control_binding(
         )
 
     if spec.enum_items or spec.select_pool_field or ui in {"select", "dropdown", "dropbox", "combo", "combobox"}:
-        widget = F8OptionCombo()
+        widget = F8OptionCombo(widget_parent)
         if style_applier is not None:
             style_applier(widget)
         items = _resolve_inline_items(spec.select_pool_field, spec.enum_items, pool_resolver)
@@ -468,7 +472,7 @@ def build_inline_control_binding(
         )
 
     if spec.schema_type == "boolean" or ui in {"switch", "toggle"}:
-        widget = F8Switch()
+        widget = F8Switch(widget_parent)
         widget.set_labels("True", "False")
         if spec.field_tooltip:
             widget.setToolTip(spec.field_tooltip)
@@ -483,7 +487,7 @@ def build_inline_control_binding(
         return _binding(widget, apply_value=_apply_switch_value)
 
     if dial_loop is not None:
-        widget = F8Dial(integer=(spec.schema_type == "integer"), minimum=0.0, maximum=1.0)
+        widget = F8Dial(widget_parent, integer=(spec.schema_type == "integer"), minimum=0.0, maximum=1.0)
         widget.set_loop(dial_loop)
         widget.set_range(spec.minimum, spec.maximum)
         if spec.field_tooltip:
@@ -499,7 +503,7 @@ def build_inline_control_binding(
         return _binding(widget, apply_value=widget.set_value)
 
     if spec.schema_type in {"integer", "number"} and ui == "slider":
-        widget = F8ValueBar(integer=(spec.schema_type == "integer"), minimum=0.0, maximum=1.0)
+        widget = F8ValueBar(widget_parent, integer=(spec.schema_type == "integer"), minimum=0.0, maximum=1.0)
         widget.set_range(spec.minimum, spec.maximum)
 
         def _apply_slider_value(value: Any) -> None:
@@ -515,6 +519,7 @@ def build_inline_control_binding(
         return _build_inline_number_binding(
             spec=spec,
             read_only=read_only,
+            widget_parent=widget_parent,
             data_type=int,
             value_getter=value_getter,
             value_setter=value_setter,
@@ -527,6 +532,7 @@ def build_inline_control_binding(
         return _build_inline_number_binding(
             spec=spec,
             read_only=read_only,
+            widget_parent=widget_parent,
             data_type=float,
             value_getter=value_getter,
             value_setter=value_setter,
@@ -535,7 +541,7 @@ def build_inline_control_binding(
             tooltip_filter_installer=tooltip_filter_installer,
         )
 
-    widget = QtWidgets.QLineEdit()
+    widget = QtWidgets.QLineEdit(widget_parent)
     widget.setMinimumWidth(90)
     if style_applier is not None:
         style_applier(widget)
@@ -591,6 +597,7 @@ def _build_inline_number_binding(
     *,
     spec: StateControlSpec,
     read_only: bool,
+    widget_parent: QtWidgets.QWidget | None = None,
     data_type: type[int] | type[float],
     value_getter: Callable[[], Any],
     value_setter: Callable[[Any, bool], None],
@@ -598,7 +605,7 @@ def _build_inline_number_binding(
     text_palette_applier: Callable[[QtWidgets.QWidget], None] | None,
     tooltip_filter_installer: Callable[[QtWidgets.QWidget], None] | None,
 ) -> StateControlBinding:
-    widget = F8NumberLineEditor(data_type=data_type)
+    widget = F8NumberLineEditor(widget_parent, data_type=data_type)
     widget.set_name(spec.name)
     widget.setMinimumWidth(90)
     if spec.minimum is not None:

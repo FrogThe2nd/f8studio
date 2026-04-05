@@ -60,17 +60,17 @@ class _JsonHighlighter(QtGui.QSyntaxHighlighter):
 class _PrintPreviewPane(QtWidgets.QWidget):
     def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
-        self._copy = QtWidgets.QToolButton()
+        self._copy = QtWidgets.QToolButton(self)
         self._copy.setText("Copy")
         self._copy.setToolTip("Copy preview to clipboard")
         self._copy.setAutoRaise(True)
-        self._update = QtWidgets.QCheckBox("Update")
+        self._update = QtWidgets.QCheckBox("Update", self)
         self._update.setToolTip("When unchecked, pause live updates.")
         self._update.setChecked(True)
-        self._wrap = QtWidgets.QCheckBox("Wrap")
+        self._wrap = QtWidgets.QCheckBox("Wrap", self)
         self._wrap.setChecked(True)
 
-        self._text = QtWidgets.QTextEdit()
+        self._text = QtWidgets.QTextEdit(self)
         self._text.setReadOnly(True)
         self._text.setAcceptRichText(False)
         self._text.setFrameShape(QtWidgets.QFrame.NoFrame)

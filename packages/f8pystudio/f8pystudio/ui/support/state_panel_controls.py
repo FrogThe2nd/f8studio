@@ -49,6 +49,9 @@ class StateFieldDescriptor:
 
 
 def _editor_assist_context_for_field(node: Any, prop_name: str, language: str) -> EditorAssistContext | None:
+    ui_control = state_field_ui_control(node, prop_name)
+    if parse_ui_control(ui_control).control_name != "code":
+        return None
     field_name = str(prop_name or "").strip()
     lang = str(language or "").strip().lower()
     if not field_name or not lang:

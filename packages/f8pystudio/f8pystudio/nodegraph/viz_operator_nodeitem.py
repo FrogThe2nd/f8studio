@@ -166,7 +166,12 @@ class F8StudioVizOperatorNodeItem(F8StudioOperatorNodeItem):
 
         return width, height
 
-    def _build_state_inline_control(self, state_field: Any):  # type: ignore[override]
+    def _build_state_inline_control(
+        self,
+        state_field: Any,
+        *,
+        widget_parent=None,
+    ):  # type: ignore[override]
         """
         Override a couple of fields for viz nodes:
         - minVal/maxVal: allow blank (auto) via QLineEdit (stores None/float)
@@ -174,7 +179,7 @@ class F8StudioVizOperatorNodeItem(F8StudioOperatorNodeItem):
         nm = self._state_field_name_if_visible(state_field)
         name = nm or ""
         if name not in {"minVal", "maxVal"}:
-            return super()._build_state_inline_control(state_field)
+            return super()._build_state_inline_control(state_field, widget_parent=widget_parent)
 
         from qtpy import QtCore, QtWidgets
 
@@ -209,7 +214,7 @@ class F8StudioVizOperatorNodeItem(F8StudioOperatorNodeItem):
             except KeyError:
                 return None
 
-        line = QtWidgets.QLineEdit()
+        line = QtWidgets.QLineEdit(widget_parent)
         line.setMinimumWidth(90)
         line.setPlaceholderText("auto")
         _common_style(line)

@@ -29,7 +29,7 @@ class _AudioShmPane(QtWidgets.QWidget):
         top = QtWidgets.QHBoxLayout()
         top.setContentsMargins(0, 0, 0, 0)
 
-        self._update = QtWidgets.QCheckBox("Update")
+        self._update = QtWidgets.QCheckBox("Update", self)
         self._update.setChecked(True)
         self._update.setStyleSheet(
             """
@@ -50,7 +50,7 @@ class _AudioShmPane(QtWidgets.QWidget):
         top.addStretch()
         top.addWidget(self._update)
 
-        self._plot = pg.PlotWidget()
+        self._plot = pg.PlotWidget(self)
         self._plot.setBackground((20, 20, 20))
         self._plot.showGrid(x=True, y=True, alpha=0.25)
         # Compact viz-style: no axis captions or tick labels.

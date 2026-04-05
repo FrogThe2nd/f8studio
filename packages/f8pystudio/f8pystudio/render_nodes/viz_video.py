@@ -154,7 +154,7 @@ class _VideoShmPane(QtWidgets.QWidget):
 
         top = QtWidgets.QHBoxLayout()
         top.setContentsMargins(0, 0, 0, 0)
-        self._update = QtWidgets.QCheckBox("Update")
+        self._update = QtWidgets.QCheckBox("Update", self)
         self._update.setChecked(True)
         self._update.setStyleSheet(
             """
@@ -175,7 +175,7 @@ class _VideoShmPane(QtWidgets.QWidget):
         top.addStretch()
         top.addWidget(self._update)
 
-        self._image = QtWidgets.QLabel()
+        self._image = QtWidgets.QLabel(self)
         self._image.setAlignment(QtCore.Qt.AlignCenter)
         self._image.setMinimumSize(320, 180)
         self._image.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)

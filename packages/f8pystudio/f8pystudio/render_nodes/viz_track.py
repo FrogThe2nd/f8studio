@@ -332,7 +332,7 @@ class _TrackVizPane(QtWidgets.QWidget):
 
         top = QtWidgets.QHBoxLayout()
         top.setContentsMargins(0, 0, 0, 0)
-        self._update = QtWidgets.QCheckBox("Update")
+        self._update = QtWidgets.QCheckBox("Update", self)
         self._update.setChecked(True)
         self._update.setStyleSheet(
             """
@@ -356,7 +356,7 @@ class _TrackVizPane(QtWidgets.QWidget):
         layout.addLayout(top)
 
         if pg is None:
-            label = QtWidgets.QLabel("pyqtgraph not installed")
+            label = QtWidgets.QLabel("pyqtgraph not installed", self)
             label.setAlignment(QtCore.Qt.AlignCenter)
             layout.addWidget(label, 1)
             self._plot = None
@@ -364,7 +364,7 @@ class _TrackVizPane(QtWidgets.QWidget):
             self._pending: dict[str, Any] | None = None
             return
 
-        plot = pg.PlotWidget()
+        plot = pg.PlotWidget(self)
         plot.setBackground((16, 16, 16))
         plot.showGrid(x=False, y=False, alpha=0.2)
         plot.hideAxis("bottom")

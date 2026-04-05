@@ -467,8 +467,13 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
     def _on_port_right_click(self, port: Any, screen_pos: QtCore.QPoint) -> None:
         _on_port_right_click_impl(self, port, screen_pos)
 
-    def _build_state_inline_control(self, state_field: _StateFieldInfo) -> QtWidgets.QWidget:
-        return _build_state_inline_control_impl(self, state_field)
+    def _build_state_inline_control(
+        self,
+        state_field: _StateFieldInfo,
+        *,
+        widget_parent: QtWidgets.QWidget | None = None,
+    ) -> QtWidgets.QWidget:
+        return _build_state_inline_control_impl(self, state_field, widget_parent=widget_parent)
 
     def _ensure_state_inline_controls(self) -> None:
         _ensure_state_inline_controls_impl(self)

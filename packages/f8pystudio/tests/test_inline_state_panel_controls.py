@@ -16,7 +16,12 @@ from f8pystudio.nodegraph.items.state_inline_controls import (
 from f8pystudio.nodegraph.items.node_item_core import StateFieldInfo
 from f8pystudio.nodegraph.items.service_toolbar_host import F8ForceGlobalToolTipFilter
 from f8pystudio.ui.components.controls import F8Dial, F8OptionCombo
-from f8pystudio.ui.components.state_editors import F8CodeButtonEditor, F8DialEditor, F8IncrementButtonEditor
+from f8pystudio.ui.components.state_editors import (
+    F8CodeButtonEditor,
+    F8DialEditor,
+    F8IncrementButtonEditor,
+    F8WrapLineEditor,
+)
 from f8pystudio.ui.support.state_panel_controls import build_state_panel_control
 from f8pystudio.nodegraph.state_schema import schema_numeric_range
 from f8pystudio.ui.components.wave import (
@@ -204,6 +209,21 @@ def _dial_field() -> StateFieldInfo:
     )
 
 
+def _wrapline_field() -> StateFieldInfo:
+    return StateFieldInfo(
+        name="expr",
+        label="Expr",
+        tooltip="Single-line python expression.",
+        show_on_node=True,
+        access="rw",
+        access_str="rw",
+        required=True,
+        ui_control="wrapline[python]",
+        ui_language="python",
+        value_schema=string_schema(default="x"),
+    )
+
+
 class _FakePropertyNode:
     def __init__(self, field: F8StateSpec) -> None:
         self._field = field
@@ -254,7 +274,13 @@ class _EnsureStateNodeItem(QtWidgets.QGraphicsRectItem):
         del schema
         return None, None
 
-    def _build_state_inline_control(self, info: StateFieldInfo) -> QtWidgets.QWidget:
+    def _build_state_inline_control(
+        self,
+        info: StateFieldInfo,
+        *,
+        widget_parent: QtWidgets.QWidget | None = None,
+    ) -> QtWidgets.QWidget:
+        del widget_parent
         return QtWidgets.QLabel(info.label or info.name)
 
     def _toggle_state_inline_section(self, name: str, expanded: bool) -> None:
@@ -474,6 +500,24 @@ def test_build_state_inline_control_dial_noloop_sets_loop_mode() -> None:
     assert control.loop() is False
 
 
+def test_build_state_inline_control_wrapline_python_skips_editor_assist_lookup(monkeypatch) -> None:
+    _ensure_app()
+    node_item = _FakeNodeItem(code_value="")
+    node_item._backend = _FakeBackendNode({"expr": "x + 1"})
+
+    def _unexpected(*args: Any, **kwargs: Any) -> None:
+        raise AssertionError("wrapline control should not request editor assist context")
+
+    monkeypatch.setattr(
+        "f8pystudio.nodegraph.items.state_inline_controls.editor_assist_context_for_field",
+        _unexpected,
+    )
+
+    control = build_state_inline_control(node_item, _wrapline_field())
+
+    assert isinstance(control, F8WrapLineEditor)
+
+
 def test_build_state_panel_control_button_uses_field_label_and_increments() -> None:
     _ensure_app()
     field = F8StateSpec(
@@ -565,6 +609,35 @@ def test_build_state_panel_control_dial_disables_non_numeric_schema() -> None:
     assert dial is not None
     assert not dial.isEnabled()
     assert "integer or number" in str(dial.toolTip() or "")
+
+
+def test_build_state_panel_control_wrapline_python_skips_editor_assist_lookup(monkeypatch) -> None:
+    _ensure_app()
+    field = F8StateSpec(
+        name="expr",
+        label="Expr",
+        valueSchema=string_schema(default="x"),
+        access=F8StateAccess.rw,
+        uiControl="wrapline[python]",
+    )
+    node = _FakePropertyNode(field)
+
+    def _unexpected(*args: Any, **kwargs: Any) -> None:
+        raise AssertionError("wrapline control should not request editor assist context")
+
+    monkeypatch.setattr(
+        "f8pystudio.ui.support.state_panel_controls.editor_assist_context_for_field",
+        _unexpected,
+    )
+
+    widget = build_state_panel_control(
+        node=node,
+        prop_name="expr",
+        widget_type=1,
+        widget_factory=NodePropertyWidgetFactory(),
+    )
+
+    assert isinstance(widget, F8WrapLineEditor)
 
 
 def test_ensure_state_inline_controls_disposes_detached_widget_without_reparent_flash(monkeypatch) -> None:

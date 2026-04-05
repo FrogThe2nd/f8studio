@@ -145,15 +145,16 @@ def build_inline_header_button(
     tooltip: str,
     expandable: bool,
     expanded: bool = False,
+    parent: QtWidgets.QWidget | None = None,
 ) -> tuple[QtWidgets.QWidget, F8ElideToolButton]:
-    header = QtWidgets.QWidget()
+    header = QtWidgets.QWidget(parent)
     header_lay = QtWidgets.QHBoxLayout(header)
     header_lay.setContentsMargins(0, 0, 0, 0)
     header_lay.setSpacing(6)
     header.setAttribute(QtCore.Qt.WA_StyledBackground, True)
     header.setStyleSheet("background: transparent;")
 
-    btn = F8ElideToolButton()
+    btn = F8ElideToolButton(header)
     btn.setCheckable(bool(expandable))
     btn.setChecked(bool(expanded) if expandable else False)
     btn.setAutoRaise(True)
@@ -177,8 +178,11 @@ def _editor_assist_context(
     *,
     node_id: str,
     state_field_name: str,
+    ui_control: str,
     language: str,
 ) -> EditorAssistContext | None:
+    if parse_ui_control(ui_control).control_name != "code":
+        return None
     field_name = str(state_field_name or "").strip()
     lang = str(language or "").strip().lower()
     if not field_name or not lang:
@@ -411,7 +415,12 @@ def toggle_state_inline_section(node_item: Any, name: str, expanded: bool) -> No
         _redraw_and_invalidate()
 
 
-def build_state_inline_control(node_item: Any, state_field: StateFieldInfo) -> QtWidgets.QWidget:
+def build_state_inline_control(
+    node_item: Any,
+    state_field: StateFieldInfo,
+    *,
+    widget_parent: QtWidgets.QWidget | None = None,
+) -> QtWidgets.QWidget:
     name = state_field.name
     ui_raw = state_field.ui_control
     parsed_ui = parse_ui_control(ui_raw)
@@ -563,6 +572,7 @@ def build_state_inline_control(node_item: Any, state_field: StateFieldInfo) -> Q
     binding = build_inline_control_binding(
         spec=spec,
         read_only=read_only,
+        widget_parent=widget_parent,
         value_getter=_get_node_value,
         value_setter=_set_node_value,
         property_value_getter=_get_node_property,
@@ -574,12 +584,14 @@ def build_state_inline_control(node_item: Any, state_field: StateFieldInfo) -> Q
             graph,
             node_id=node_id,
             state_field_name=name,
+            ui_control=ui_raw,
             language=parsed_ui.ui_language or "plaintext",
         ),
         assist_context_provider=lambda: _editor_assist_context(
             graph,
             node_id=node_id,
             state_field_name=name,
+            ui_control=ui_raw,
             language=parsed_ui.ui_language or "plaintext",
         ),
         editor_session_key=studio_session_key(graph, node_id, name) if graph is not None and node_id else None,
@@ -690,13 +702,18 @@ def ensure_state_inline_controls(node_item: Any) -> None:
         if persisted_expanded is not None:
             expanded = bool(persisted_expanded)
         expanded = bool(node_item._state_inline_expanded.get(name, expanded))
-        control = node_item._build_state_inline_control(info)
-
-        # Header: toggle button (state name).
-        header, btn = build_inline_header_button(label=label, tooltip=tip, expandable=True, expanded=expanded)
+        panel = QtWidgets.QWidget()
+        header, btn = build_inline_header_button(
+            label=label,
+            tooltip=tip,
+            expandable=True,
+            expanded=expanded,
+            parent=panel,
+        )
 
         # Body: control widget (collapsed by default).
-        body = QtWidgets.QWidget()
+        body = QtWidgets.QWidget(panel)
+        control = node_item._build_state_inline_control(info, widget_parent=body)
         body_lay = QtWidgets.QVBoxLayout(body)
         body_lay.setContentsMargins(8, 0, 8, 6)
         body_lay.setSpacing(0)
@@ -711,7 +728,6 @@ def ensure_state_inline_controls(node_item: Any) -> None:
             """
         )
 
-        panel = QtWidgets.QWidget()
         panel_lay = QtWidgets.QVBoxLayout(panel)
         panel_lay.setContentsMargins(0, 0, 0, 0)
         panel_lay.setSpacing(0)
