@@ -7,6 +7,11 @@ const CONSOLE_CALLBACK_PATH = `${CONSOLE_BASE_PATH}/`;
 const VERIFY_EMAIL_PATH = `${CONSOLE_BASE_PATH}/verify-email`;
 const RESET_PASSWORD_PATH = `${CONSOLE_BASE_PATH}/reset-password`;
 const MANAGEMENT_API_BASE_PATH = '/v1/management';
+const USER_ROLE_OPTIONS = [
+  { value: 'admin', label: 'Admin' },
+  { value: 'user', label: 'User' },
+  { value: 'readonly', label: 'Read Only' },
+];
 
 async function parseJsonResponse(response) {
   const text = await response.text();
@@ -76,7 +81,11 @@ function ConsoleApp() {
   const [statusText, setStatusText] = useState('Ready');
   const [profileLoadError, setProfileLoadError] = useState('');
   const [sessionPendingTimedOut, setSessionPendingTimedOut] = useState(false);
+  const [profilePendingTimedOut, setProfilePendingTimedOut] = useState(false);
   const [googleEnabled, setGoogleEnabled] = useState(false);
+  const [siteSettings, setSiteSettings] = useState({
+    allowUserRegistration: false,
+  });
   const [linkedAccounts, setLinkedAccounts] = useState([]);
   const [usernameAvailability, setUsernameAvailability] = useState({
     state: 'idle',
@@ -96,12 +105,12 @@ function ConsoleApp() {
   const [editingUserId, setEditingUserId] = useState('');
   const [editUsername, setEditUsername] = useState('');
   const [editDisplayName, setEditDisplayName] = useState('');
-  const [editHasManagementAccess, setEditHasManagementAccess] = useState(false);
+  const [editRole, setEditRole] = useState('user');
   const [newUsername, setNewUsername] = useState('');
   const [newEmail, setNewEmail] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [newDisplayName, setNewDisplayName] = useState('');
-  const [newHasManagementAccess, setNewHasManagementAccess] = useState(false);
+  const [newRole, setNewRole] = useState('user');
 
   const [currentPassword, setCurrentPassword] = useState('');
   const [nextPassword, setNextPassword] = useState('');
@@ -109,19 +118,30 @@ function ConsoleApp() {
   const [currentPasswordVisible, setCurrentPasswordVisible] = useState(false);
   const [nextPasswordVisible, setNextPasswordVisible] = useState(false);
   const [confirmNextPasswordVisible, setConfirmNextPasswordVisible] = useState(false);
+  const profileStillLoadingWithoutData = isLoggedIn && currentUser === null && !profileLoadError;
 
   useEffect(() => {
     let active = true;
     void (async () => {
       try {
-        const response = await fetch('/v1/auth/providers');
-        const data = await parseJsonResponse(response);
+        const [providersResponse, siteSettingsResponse] = await Promise.all([
+          fetch('/v1/auth/providers'),
+          fetch('/v1/site-settings'),
+        ]);
+        const data = await parseJsonResponse(providersResponse);
+        const siteSettingsData = await parseJsonResponse(siteSettingsResponse);
         if (active) {
           setGoogleEnabled(Boolean(data.google));
+          setSiteSettings({
+            allowUserRegistration: Boolean(siteSettingsData.allowUserRegistration),
+          });
         }
       } catch (error) {
         if (active) {
           setGoogleEnabled(false);
+          setSiteSettings({
+            allowUserRegistration: false,
+          });
         }
       }
     })();
@@ -156,6 +176,25 @@ function ConsoleApp() {
       window.clearTimeout(timeoutId);
     };
   }, [sessionQuery.isPending]);
+
+  useEffect(() => {
+    if (!profileStillLoadingWithoutData) {
+      setProfilePendingTimedOut(false);
+      return undefined;
+    }
+    const timeoutId = window.setTimeout(() => {
+      setProfilePendingTimedOut(true);
+    }, 5000);
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [profileStillLoadingWithoutData]);
+
+  useEffect(() => {
+    if (authMode === 'register' && !siteSettings.allowUserRegistration) {
+      setAuthMode('login');
+    }
+  }, [authMode, siteSettings.allowUserRegistration]);
 
   useEffect(() => {
     if (authMode !== 'register') {
@@ -231,30 +270,59 @@ function ConsoleApp() {
   }, [authMode, registerUsername]);
 
   async function apiRequest(path, options = {}) {
+    const { timeoutMs, ...requestOptions } = options;
     const headers = {};
-    if (options.body !== undefined) {
+    if (requestOptions.body !== undefined) {
       headers['Content-Type'] = 'application/json';
     }
-    const response = await fetch(path, {
-      ...options,
-      headers,
-    });
-    const data = await parseJsonResponse(response);
-    if (!response.ok) {
-      throw new Error(data.message || `Request failed (${response.status})`);
+    let timeoutId = null;
+    let timeoutController = null;
+    try {
+      if (typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) && timeoutMs > 0) {
+        timeoutController = new AbortController();
+        timeoutId = window.setTimeout(() => {
+          timeoutController.abort();
+        }, timeoutMs);
+      }
+      const response = await fetch(path, {
+        ...requestOptions,
+        headers,
+        signal: timeoutController ? timeoutController.signal : requestOptions.signal,
+      });
+      const data = await parseJsonResponse(response);
+      if (!response.ok) {
+        throw new Error(data.message || `Request failed (${response.status})`);
+      }
+      return data;
+    } catch (error) {
+      if (timeoutController && timeoutController.signal.aborted) {
+        throw new Error('Request timed out. Please try again.');
+      }
+      throw error;
+    } finally {
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId);
+      }
     }
-    return data;
   }
 
   async function loadProfile() {
-    const me = await apiRequest('/v1/me');
+    const me = await apiRequest('/v1/me', { timeoutMs: 10000 });
     setCurrentUser(me);
     setProfileLoadError('');
+    setProfilePendingTimedOut(false);
   }
 
   async function loadLinkedAccounts() {
-    const accounts = await apiRequest('/api/auth/list-accounts');
+    const accounts = await apiRequest('/api/auth/list-accounts', { timeoutMs: 10000 });
     setLinkedAccounts(Array.isArray(accounts) ? accounts : []);
+  }
+
+  async function loadSiteSettings() {
+    const settings = await apiRequest('/v1/site-settings');
+    setSiteSettings({
+      allowUserRegistration: Boolean(settings.allowUserRegistration),
+    });
   }
 
   async function loadMineAssets() {
@@ -316,7 +384,7 @@ function ConsoleApp() {
         await loadAllAssets();
       }
       if (activePage === 'users') {
-        await loadUsers();
+        await Promise.all([loadUsers(), loadSiteSettings()]);
       }
       setStatusText('Loaded');
     } catch (error) {
@@ -404,6 +472,11 @@ function ConsoleApp() {
 
   async function onRegister(event) {
     event.preventDefault();
+    if (!siteSettings.allowUserRegistration) {
+      setStatusText('New user registration is disabled.');
+      setAuthMode('login');
+      return;
+    }
     if (!registerEmail.trim() || !registerUsername.trim() || !registerPassword) {
       setStatusText('Email, username, and password are required.');
       return;
@@ -476,6 +549,7 @@ function ConsoleApp() {
       await sessionQuery.refetch();
       setCurrentUser(null);
       setProfileLoadError('');
+      setProfilePendingTimedOut(false);
       setLinkedAccounts([]);
       setUsers([]);
       setMineAssets([]);
@@ -493,6 +567,7 @@ function ConsoleApp() {
 
   async function onRetryProfileLoad() {
     setLoading(true);
+    setProfilePendingTimedOut(false);
     setProfileLoadError('');
     setStatusText('Retrying profile load...');
     try {
@@ -642,14 +717,14 @@ function ConsoleApp() {
           email: newEmail.trim(),
           password: newPassword,
           displayName: newDisplayName.trim() || newUsername.trim(),
-          isAdmin: newHasManagementAccess,
+          role: newRole,
         }),
       });
       setNewUsername('');
       setNewEmail('');
       setNewPassword('');
       setNewDisplayName('');
-      setNewHasManagementAccess(false);
+      setNewRole('user');
       await loadUsers();
       setStatusText('User created');
     } catch (error) {
@@ -683,14 +758,14 @@ function ConsoleApp() {
     setEditingUserId(user.userId);
     setEditUsername(user.username);
     setEditDisplayName(user.displayName);
-    setEditHasManagementAccess(Boolean(user.isAdmin));
+    setEditRole(String(user.role || 'user'));
   }
 
   function onCancelEditUser() {
     setEditingUserId('');
     setEditUsername('');
     setEditDisplayName('');
-    setEditHasManagementAccess(false);
+    setEditRole('user');
   }
 
   async function onUpdateUser(event) {
@@ -705,12 +780,36 @@ function ConsoleApp() {
         body: JSON.stringify({
           username: editUsername.trim(),
           displayName: editDisplayName.trim(),
-          isAdmin: editHasManagementAccess,
+          role: editRole,
         }),
       });
       onCancelEditUser();
       await loadUsers();
       setStatusText('User updated');
+    } catch (error) {
+      setStatusText(error instanceof Error ? error.message : String(error));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function onSaveSiteSettings(event) {
+    event.preventDefault();
+    if (!currentUser?.isAdmin) {
+      return;
+    }
+    setLoading(true);
+    try {
+      const updated = await apiRequest(`${MANAGEMENT_API_BASE_PATH}/site-settings`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          allowUserRegistration: Boolean(siteSettings.allowUserRegistration),
+        }),
+      });
+      setSiteSettings({
+        allowUserRegistration: Boolean(updated.allowUserRegistration),
+      });
+      setStatusText('Site settings updated');
     } catch (error) {
       setStatusText(error instanceof Error ? error.message : String(error));
     } finally {
@@ -733,8 +832,11 @@ function ConsoleApp() {
     }
     return 'User Management';
   }, [activePage]);
+  const totalUsers = users.length;
+  const adminUsers = users.filter((user) => String(user.role || '').toLowerCase() === 'admin').length;
+  const readonlyUsers = users.filter((user) => String(user.role || '').toLowerCase() === 'readonly').length;
 
-  if ((sessionStillLoadingWithoutData && !sessionPendingTimedOut) || (isLoggedIn && currentUser === null && !profileLoadError)) {
+  if ((sessionStillLoadingWithoutData && !sessionPendingTimedOut) || (profileStillLoadingWithoutData && !profilePendingTimedOut)) {
     return (
       <div className="shell login-shell">
         <div className="card panel login-card">
@@ -753,6 +855,31 @@ function ConsoleApp() {
           <p className="muted">Session loading is taking longer than expected.</p>
           <div className="inline-form">
             <button type="button" onClick={() => void onRetrySessionLoad()} disabled={loading}>Retry Session Load</button>
+            <button
+              type="button"
+              onClick={() => {
+                window.location.reload();
+              }}
+              disabled={loading}
+            >
+              Reload Page
+            </button>
+          </div>
+          <p className="status">{statusText}</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (profileStillLoadingWithoutData && profilePendingTimedOut) {
+    return (
+      <div className="shell login-shell">
+        <div className="card panel login-card">
+          <h1>Feel8 Management System</h1>
+          <p className="muted">Your session was found, but loading your profile is taking longer than expected.</p>
+          <div className="inline-form">
+            <button type="button" onClick={() => void onRetryProfileLoad()} disabled={loading}>Retry Profile Load</button>
+            <button type="button" onClick={() => void onLogout()} disabled={loading}>Sign Out</button>
             <button
               type="button"
               onClick={() => {
@@ -795,7 +922,10 @@ function ConsoleApp() {
             {authMode === 'register' ? 'Create a new account.' : null}
             {authMode === 'forgot' ? 'Request a password reset link by email.' : null}
           </p>
-          {googleEnabled ? (
+          {!siteSettings.allowUserRegistration ? (
+            <p className="muted social-hint">New account registration is currently disabled.</p>
+          ) : null}
+          {googleEnabled && siteSettings.allowUserRegistration ? (
             <p className="muted social-hint">
               Google sign-in is available for direct login and for linking to an existing account.
             </p>
@@ -803,7 +933,9 @@ function ConsoleApp() {
           <p className="muted field-note">Fields marked * are required.</p>
           <div className="auth-switch">
             <button type="button" className={authMode === 'login' ? 'active' : ''} onClick={() => setAuthMode('login')}>Sign In</button>
-            <button type="button" className={authMode === 'register' ? 'active' : ''} onClick={() => setAuthMode('register')}>Register</button>
+            {siteSettings.allowUserRegistration ? (
+              <button type="button" className={authMode === 'register' ? 'active' : ''} onClick={() => setAuthMode('register')}>Register</button>
+            ) : null}
             <button type="button" className={authMode === 'forgot' ? 'active' : ''} onClick={() => setAuthMode('forgot')}>Forgot Password</button>
           </div>
           <form onSubmit={authMode === 'login' ? onLogin : authMode === 'register' ? onRegister : onForgotPassword} className="form">
@@ -933,7 +1065,7 @@ function ConsoleApp() {
               {authMode === 'forgot' ? 'Send Reset Link' : null}
             </button>
           </form>
-          {googleEnabled && authMode === 'login' ? (
+          {googleEnabled && siteSettings.allowUserRegistration && authMode === 'login' ? (
             <div className="form">
               <button type="button" onClick={() => void onGoogleSignIn()} disabled={loading}>
                 Continue with Google
@@ -1004,7 +1136,7 @@ function ConsoleApp() {
                 <div><strong>Display Name:</strong> {currentUser?.displayName}</div>
               <div><strong>Email:</strong> {currentUser?.email}</div>
               <div><strong>Email Verified:</strong> {currentUser?.emailVerified ? 'Yes' : 'No'}</div>
-              <div><strong>Access Level:</strong> {hasManagementAccess ? 'Management' : 'User'}</div>
+              <div><strong>Role:</strong> {formatUserRole(currentUser?.role)}</div>
             </div>
               <div className="auth-methods">
                 <div className="section-head">
@@ -1167,108 +1299,189 @@ function ConsoleApp() {
           ) : null}
 
           {activePage === 'users' && hasManagementAccess ? (
-            <section className="card panel">
-              <div className="section-head">
-                <h2>User Management</h2>
-                <div className="inline-form">
+            <section className="card panel management-panel">
+              <div className="section-head management-head">
+                <div>
+                  <h2>User Management</h2>
+                  <p className="muted management-subtitle">Manage onboarding, permissions, and account roles from a single workspace.</p>
+                </div>
+                <div className="management-search">
                   <input
                     value={userQuery}
                     onChange={(event) => setUserQuery(event.target.value)}
-                    placeholder="Search users"
+                    placeholder="Search by username or email"
                   />
                   <button type="button" onClick={() => void loadUsers()} disabled={loading}>Search</button>
                 </div>
               </div>
-              <form onSubmit={onCreateUser} className="form">
-                <label>
-                  New Username
-                  <input
-                    autoComplete="username"
-                    value={newUsername}
-                    onChange={(event) => setNewUsername(event.target.value)}
-                  />
-                </label>
-                <label>
-                  Email
-                  <input
-                    autoComplete="email"
-                    type="email"
-                    value={newEmail}
-                    onChange={(event) => setNewEmail(event.target.value)}
-                  />
-                </label>
-                <label>
-                  New Password
-                  <input
-                    autoComplete="new-password"
-                    type="password"
-                    value={newPassword}
-                    onChange={(event) => setNewPassword(event.target.value)}
-                  />
-                </label>
-                <label>
-                  Display Name
-                  <input
-                    value={newDisplayName}
-                    onChange={(event) => setNewDisplayName(event.target.value)}
-                  />
-                </label>
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={newHasManagementAccess}
-                    onChange={(event) => setNewHasManagementAccess(event.target.checked)}
-                  />
-                  {' '}
-                  Grant management access
-                </label>
-                <button type="submit" disabled={loading || !newUsername.trim() || !newEmail.trim() || !newPassword}>Create User</button>
-              </form>
-              {editingUserId ? (
-                <form onSubmit={onUpdateUser} className="form">
-                  <h3>Edit User</h3>
-                  <label>
-                    Username
-                    <input
-                      autoComplete="username"
-                      value={editUsername}
-                      onChange={(event) => setEditUsername(event.target.value)}
-                    />
+
+              <div className="management-stats">
+                <div className="management-stat-card">
+                  <span className="management-stat-label">Visible Users</span>
+                  <strong>{totalUsers}</strong>
+                </div>
+                <div className="management-stat-card">
+                  <span className="management-stat-label">Admins</span>
+                  <strong>{adminUsers}</strong>
+                </div>
+                <div className="management-stat-card">
+                  <span className="management-stat-label">Read Only</span>
+                  <strong>{readonlyUsers}</strong>
+                </div>
+              </div>
+
+              <div className="management-control-grid">
+                <form onSubmit={onSaveSiteSettings} className="form management-card management-settings-card">
+                  <div className="management-card-head">
+                    <div>
+                      <span className="eyebrow">Site Settings</span>
+                      <h3>Registration Access</h3>
+                    </div>
+                  </div>
+                  <label className="toggle-card">
+                    <div>
+                      <span className="toggle-title">Allow new user registration</span>
+                      <span className="toggle-description">Let visitors create their own account without an admin invite.</span>
+                    </div>
+                    <span className="toggle-switch">
+                      <input
+                        type="checkbox"
+                        checked={siteSettings.allowUserRegistration}
+                        onChange={(event) => setSiteSettings((current) => ({
+                          ...current,
+                          allowUserRegistration: event.target.checked,
+                        }))}
+                      />
+                      <span className="toggle-slider" aria-hidden="true" />
+                    </span>
                   </label>
-                  <label>
-                    Display Name
-                    <input
-                      value={editDisplayName}
-                      onChange={(event) => setEditDisplayName(event.target.value)}
-                    />
-                  </label>
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={editHasManagementAccess}
-                      onChange={(event) => setEditHasManagementAccess(event.target.checked)}
-                    />
-                    {' '}
-                    Management access
-                  </label>
-                  <div className="inline-form">
-                    <button type="submit" disabled={loading || !editUsername.trim() || !editDisplayName.trim()}>Save Changes</button>
-                    <button type="button" onClick={onCancelEditUser} disabled={loading}>Cancel</button>
+                  <div className="management-actions">
+                    <button type="submit" disabled={loading}>Save Site Settings</button>
                   </div>
                 </form>
-              ) : null}
-              <SimpleTable
-                columns={['Username', 'Email', 'Display Name', 'Access', 'Assets', 'Created At', 'Actions']}
+
+                <div className="management-form-stack">
+                  <form onSubmit={onCreateUser} className="form management-card">
+                    <div className="management-card-head">
+                      <div>
+                        <span className="eyebrow">Create User</span>
+                        <h3>Invite or Provision an Account</h3>
+                      </div>
+                      <RoleBadge role={newRole} />
+                    </div>
+                    <div className="form-grid form-grid-2">
+                      <label>
+                        New Username
+                        <input
+                          autoComplete="username"
+                          value={newUsername}
+                          onChange={(event) => setNewUsername(event.target.value)}
+                        />
+                      </label>
+                      <label>
+                        Email
+                        <input
+                          autoComplete="email"
+                          type="email"
+                          value={newEmail}
+                          onChange={(event) => setNewEmail(event.target.value)}
+                        />
+                      </label>
+                      <label>
+                        New Password
+                        <input
+                          autoComplete="new-password"
+                          type="password"
+                          value={newPassword}
+                          onChange={(event) => setNewPassword(event.target.value)}
+                        />
+                      </label>
+                      <label>
+                        Display Name
+                        <input
+                          value={newDisplayName}
+                          onChange={(event) => setNewDisplayName(event.target.value)}
+                        />
+                      </label>
+                      <label className="field-span-2">
+                        Role
+                        <select value={newRole} onChange={(event) => setNewRole(event.target.value)}>
+                          {USER_ROLE_OPTIONS.map((option) => (
+                            <option key={option.value} value={option.value}>{option.label}</option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+                    <div className="management-actions">
+                      <button type="submit" disabled={loading || !newUsername.trim() || !newEmail.trim() || !newPassword}>Create User</button>
+                    </div>
+                  </form>
+
+                  {editingUserId ? (
+                    <form onSubmit={onUpdateUser} className="form management-card management-card-accent">
+                      <div className="management-card-head">
+                        <div>
+                          <span className="eyebrow">Edit User</span>
+                          <h3>Update Existing Account</h3>
+                        </div>
+                        <RoleBadge role={editRole} />
+                      </div>
+                      <div className="form-grid form-grid-2">
+                        <label>
+                          Username
+                          <input
+                            autoComplete="username"
+                            value={editUsername}
+                            onChange={(event) => setEditUsername(event.target.value)}
+                          />
+                        </label>
+                        <label>
+                          Display Name
+                          <input
+                            value={editDisplayName}
+                            onChange={(event) => setEditDisplayName(event.target.value)}
+                          />
+                        </label>
+                        <label className="field-span-2">
+                          Role
+                          <select value={editRole} onChange={(event) => setEditRole(event.target.value)}>
+                            {USER_ROLE_OPTIONS.map((option) => (
+                              <option key={option.value} value={option.value}>{option.label}</option>
+                            ))}
+                          </select>
+                        </label>
+                      </div>
+                      <div className="management-actions">
+                        <button type="submit" disabled={loading || !editUsername.trim() || !editDisplayName.trim()}>Save Changes</button>
+                        <button type="button" className="button-secondary" onClick={onCancelEditUser} disabled={loading}>Cancel</button>
+                      </div>
+                    </form>
+                  ) : null}
+                </div>
+              </div>
+
+              <div className="management-table-card">
+                <div className="section-head management-table-head">
+                  <div>
+                    <h3>User Directory</h3>
+                    <p className="muted management-subtitle">Review account roles, activity footprint, and moderation actions.</p>
+                  </div>
+                </div>
+                <SimpleTable
+                columns={['Username', 'Email', 'Display Name', 'Role', 'Assets', 'Created At', 'Actions']}
                 rows={users.map((user) => [
-                  user.username,
-                  user.email || '',
+                  <div className="table-primary-cell" key={`${user.userId}-username`}>
+                    <strong>{user.username}</strong>
+                  </div>,
+                  <span className="muted" key={`${user.userId}-email`}>{user.email || 'No email'}</span>,
                   user.displayName,
-                  user.isAdmin ? 'Yes' : 'No',
-                  String(user.assetCount || 0),
-                  user.createdAt,
-                  <div className="inline-form" key={`${user.userId}-actions`}>
+                  <RoleBadge role={user.role} key={`${user.userId}-role`} />,
+                  <span className="asset-count-pill" key={`${user.userId}-assets`}>{String(user.assetCount || 0)} assets</span>,
+                  <span className="muted" key={`${user.userId}-created`}>{user.createdAt}</span>,
+                  <div className="inline-form table-actions" key={`${user.userId}-actions`}>
                     <button
                       type="button"
+                      className="button-secondary"
                       onClick={() => onBeginEditUser(user)}
                       disabled={loading}
                     >
@@ -1276,6 +1489,7 @@ function ConsoleApp() {
                     </button>
                     <button
                       type="button"
+                      className="button-danger"
                       onClick={() => void onDeleteUser(user.userId, user.username)}
                       disabled={loading}
                     >
@@ -1284,7 +1498,8 @@ function ConsoleApp() {
                   </div>,
                 ])}
                 emptyText="No users"
-              />
+                />
+              </div>
             </section>
           ) : null}
         </main>
@@ -1549,6 +1764,27 @@ function formatAccountProvider(providerId) {
     return 'Unknown';
   }
   return text.slice(0, 1).toUpperCase() + text.slice(1);
+}
+
+function formatUserRole(role) {
+  const normalizedRole = String(role || 'user').trim().toLowerCase();
+  if (normalizedRole === 'admin') {
+    return 'Admin';
+  }
+  if (normalizedRole === 'readonly') {
+    return 'Read Only';
+  }
+  return 'User';
+}
+
+function RoleBadge({ role }) {
+  const normalizedRole = String(role || 'user').trim().toLowerCase();
+  const className = normalizedRole === 'admin'
+    ? 'role-badge role-badge-admin'
+    : normalizedRole === 'readonly'
+      ? 'role-badge role-badge-readonly'
+      : 'role-badge role-badge-user';
+  return <span className={className}>{formatUserRole(role)}</span>;
 }
 
 function PasswordField({

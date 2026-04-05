@@ -13,6 +13,9 @@ import { decompressGzip, isPlainObject, stringOrDefault, toBoolean } from './uti
 const AUTH_BASE_PATH = '/api/auth';
 const CONSOLE_BASE_PATH = '/console';
 const MANAGEMENT_API_BASE_PATH = '/v1/management';
+const USER_ROLE_ADMIN = 'admin';
+const USER_ROLE_USER = 'user';
+const USER_ROLE_READONLY = 'readonly';
 const RESERVED_IDENTITY_NAMES = new Set([
   'admin',
   'administrator',
@@ -29,7 +32,6 @@ const RESERVED_IDENTITY_NAMES = new Set([
   'official',
 ]);
 const bootstrapAdminInitByDb = new WeakMap();
-const authInstanceByDb = new WeakMap();
 
 export function createApp() {
   const app = new Hono();
@@ -43,14 +45,17 @@ export function createApp() {
 
   app.all(`${AUTH_BASE_PATH}/*`, async (c) => {
     validateEnv(c.env);
-    const auth = getOrCreateAuth(c.env, c.req.raw);
+    const auth = await getOrCreateAuth(c.env, c.req.raw);
     await ensureBootstrapAdmin({ env: c.env });
+    if (await shouldBlockPublicRegistration({ db: c.env.DB, request: c.req.raw })) {
+      return jsonResponse(403, { message: 'new user registration is disabled' });
+    }
     return auth.handler(c.req.raw);
   });
 
   app.use('/v1/*', async (c, next) => {
     validateEnv(c.env);
-    const auth = getOrCreateAuth(c.env, c.req.raw);
+    const auth = await getOrCreateAuth(c.env, c.req.raw);
     await ensureBootstrapAdmin({ env: c.env });
     c.set('auth', auth);
     c.set('repo', new AssetRepository(c.env.DB));
@@ -60,6 +65,8 @@ export function createApp() {
   app.get('/v1/auth/providers', (c) => c.json({
     google: hasGoogleProvider(c.env),
   }));
+
+  app.get('/v1/site-settings', async (c) => c.json(await c.get('repo').getSiteSettings()));
 
   app.get('/v1/auth/verify-email', async (c) => {
     const auth = c.get('auth');
@@ -135,7 +142,7 @@ export function createApp() {
 
   app.post('/v1/variants', async (c) => {
     const repo = c.get('repo');
-    const user = await requireAuthenticatedUser({ auth: c.get('auth'), request: c.req.raw });
+    const user = await requireAssetWriteUser({ auth: c.get('auth'), repo, request: c.req.raw });
     const payload = await readJsonBody(c.req.raw);
     return c.json(await repo.createVariant({ payload, user }));
   });
@@ -155,7 +162,7 @@ export function createApp() {
 
   app.post('/v1/components', async (c) => {
     const repo = c.get('repo');
-    const user = await requireAuthenticatedUser({ auth: c.get('auth'), request: c.req.raw });
+    const user = await requireAssetWriteUser({ auth: c.get('auth'), repo, request: c.req.raw });
     const payload = await readJsonBody(c.req.raw);
     return c.json(await repo.createComponent({ payload, user }));
   });
@@ -213,7 +220,7 @@ async function routeAssetRequest({ auth, repo, request, url, assetType }) {
       return jsonResponse(200, result);
     }
     if (request.method === 'PUT') {
-      const user = await requireAuthenticatedUser({ auth, request });
+      const user = await requireAssetWriteUser({ auth, repo, request });
       const payload = await readJsonBody(request);
       const result = assetType === 'variant'
         ? await repo.updateVariant({ variantId: assetId, payload, user })
@@ -221,7 +228,7 @@ async function routeAssetRequest({ auth, repo, request, url, assetType }) {
       return jsonResponse(200, result);
     }
     if (request.method === 'DELETE') {
-      const user = await requireAuthenticatedUser({ auth, request });
+      const user = await requireAssetWriteUser({ auth, repo, request });
       if (assetType === 'variant') {
         await repo.deleteVariant({ variantId: assetId, userId: user.userId });
       } else {
@@ -240,7 +247,7 @@ async function routeAssetRequest({ auth, repo, request, url, assetType }) {
   }
 
   if (parts.length === 2 && parts[1] === 'visibility' && request.method === 'PUT') {
-    const user = await requireAuthenticatedUser({ auth, request });
+    const user = await requireAssetWriteUser({ auth, repo, request });
     const payload = await readJsonBody(request);
     const visibility = requireBodyString(payload.visibility, 'visibility is required');
     const result = assetType === 'variant'
@@ -292,7 +299,7 @@ async function routeAssetRequest({ auth, repo, request, url, assetType }) {
   }
 
   if (parts.length === 2 && parts[1] === 'fork' && request.method === 'POST') {
-    const user = await requireAuthenticatedUser({ auth, request });
+    const user = await requireAssetWriteUser({ auth, repo, request });
     const payload = await readJsonBody(request);
     const result = assetType === 'variant'
       ? await repo.forkVariant({ variantId: assetId, payload, user })
@@ -316,12 +323,13 @@ async function routeManagementRequest({ managementUser, auth, repo, request, url
     const payload = await readJsonBody(request);
     const usernameValue = requireBodyString(payload.username, 'username is required');
     const displayName = bodyStringOrDefault(payload.displayName, usernameValue);
+    const role = normalizeManagedUserRolePayload(payload);
     const created = await auth.api.createUser({
       body: {
         email: requireBodyString(payload.email, 'email is required'),
         password: requireBodyString(payload.password, 'password is required'),
         name: displayName,
-        role: Boolean(payload.isAdmin) ? 'admin' : 'user',
+        role,
         data: {
           username: normalizeUsername(usernameValue),
           displayUsername: displayName,
@@ -331,6 +339,10 @@ async function routeManagementRequest({ managementUser, auth, repo, request, url
     });
     const user = await repo.getUserByIdWithStats(String(created.user.id));
     return jsonResponse(200, user ?? toApiUser(toAppUser(created.user)));
+  }
+
+  if (request.method === 'GET' && url.pathname === `${MANAGEMENT_API_BASE_PATH}/site-settings`) {
+    return jsonResponse(200, await repo.getSiteSettings());
   }
 
   if (request.method === 'GET' && url.pathname.startsWith(`${MANAGEMENT_API_BASE_PATH}/users/`)) {
@@ -381,11 +393,11 @@ async function routeManagementRequest({ managementUser, auth, repo, request, url
         headers: request.headers,
       });
     }
-    if (payload.isAdmin !== undefined) {
+    if (payload.role !== undefined || payload.isAdmin !== undefined || payload.canUpload !== undefined) {
       await auth.api.setRole({
         body: {
           userId: parts.userId,
-          role: Boolean(payload.isAdmin) ? 'admin' : 'user',
+          role: normalizeManagedUserRolePayload(payload),
         },
         headers: request.headers,
       });
@@ -403,6 +415,15 @@ async function routeManagementRequest({ managementUser, auth, repo, request, url
     if (updated === null) {
       return jsonResponse(404, { message: 'user not found' });
     }
+    return jsonResponse(200, updated);
+  }
+
+  if (request.method === 'PUT' && url.pathname === `${MANAGEMENT_API_BASE_PATH}/site-settings`) {
+    const payload = await readJsonBody(request);
+    const updated = await repo.updateSiteSettings({
+      allowUserRegistration: payload.allowUserRegistration,
+      updatedByUserId: managementUser.userId,
+    });
     return jsonResponse(200, updated);
   }
 
@@ -489,7 +510,7 @@ async function routeManagementRequest({ managementUser, auth, repo, request, url
   return jsonResponse(404, { message: 'not found' });
 }
 
-function createAuth(env, request) {
+function createAuth(env, request, siteSettings) {
   const requestUrl = new URL(request.url);
   const baseURL = resolveAuthBaseUrl(env, requestUrl);
   const trustedOrigins = resolveTrustedOrigins(env, requestUrl, baseURL);
@@ -501,6 +522,7 @@ function createAuth(env, request) {
     socialProviders.google = {
       clientId: String(env.GOOGLE_CLIENT_ID || '').trim(),
       clientSecret: String(env.GOOGLE_CLIENT_SECRET || '').trim(),
+      disableImplicitSignUp: !siteSettings.allowUserRegistration,
     };
   }
 
@@ -562,26 +584,16 @@ function createAuth(env, request) {
         displayUsernameValidator: (value) => validateDisplayName(value, bootstrapDisplayName),
       }),
       admin({
-        defaultRole: 'user',
-        adminRoles: ['admin'],
+        defaultRole: USER_ROLE_USER,
+        adminRoles: [USER_ROLE_ADMIN],
       }),
     ],
   });
 }
 
-function getOrCreateAuth(env, request) {
-  const db = env?.DB;
-  if (db && typeof db === 'object') {
-    const cached = authInstanceByDb.get(db);
-    if (cached) {
-      return cached;
-    }
-  }
-  const auth = createAuth(env, request);
-  if (db && typeof db === 'object') {
-    authInstanceByDb.set(db, auth);
-  }
-  return auth;
+async function getOrCreateAuth(env, request) {
+  const siteSettings = await readSiteSettings(env.DB);
+  return createAuth(env, request, siteSettings);
 }
 
 async function ensureBootstrapAdmin({ env }) {
@@ -729,6 +741,22 @@ async function requireManagementUser({ auth, request }) {
   return user;
 }
 
+async function requireAssetWriteUser({ auth, repo, request }) {
+  const user = await requireAuthenticatedUser({ auth, request });
+  const latestUser = await repo.getUserByIdWithStats(user.userId);
+  if (latestUser === null) {
+    throw new HttpError(401, 'authentication required');
+  }
+  if (latestUser.role === USER_ROLE_READONLY) {
+    throw new HttpError(403, 'upload permission required');
+  }
+  return {
+    ...user,
+    role: latestUser.role,
+    canUpload: latestUser.canUpload,
+  };
+}
+
 async function assertUserHasNoAssets(repo, userId) {
   const ownsAssets = await repo.hasAssets(userId);
   if (ownsAssets) {
@@ -744,6 +772,8 @@ function toApiUser(user) {
     email: user.email,
     emailVerified: user.emailVerified,
     isAdmin: user.isAdmin,
+    role: user.role,
+    canUpload: user.canUpload,
   };
 }
 
@@ -757,7 +787,9 @@ function toAppUser(user) {
     displayName,
     email,
     emailVerified: Boolean(user.emailVerified),
-    isAdmin: String(user.role || '') === 'admin',
+    role: normalizeUserRole(user.role),
+    isAdmin: normalizeUserRole(user.role) === USER_ROLE_ADMIN,
+    canUpload: normalizeUserRole(user.role) !== USER_ROLE_READONLY,
   };
 }
 
@@ -1068,6 +1100,67 @@ async function sendResetPasswordMessage({ env, toEmail, username, resetUrl }) {
     text: `Hi ${username}, reset your password: ${resetUrl}`,
     html: `<p>Hi ${escapeHtml(username)},</p><p>Use this link to reset password:</p><p><a href="${escapeHtml(resetUrl)}">${escapeHtml(resetUrl)}</a></p>`,
   });
+}
+
+async function shouldBlockPublicRegistration({ db, request }) {
+  if (!isPublicRegistrationRequest(request)) {
+    return false;
+  }
+  const settings = await readSiteSettings(db);
+  return !settings.allowUserRegistration;
+}
+
+function isPublicRegistrationRequest(request) {
+  const url = new URL(request.url);
+  if (request.method !== 'POST') {
+    return false;
+  }
+  return url.pathname === `${AUTH_BASE_PATH}/sign-up/email`;
+}
+
+async function readSiteSettings(db) {
+  await db.prepare(
+    `INSERT INTO site_settings (id, allow_user_registration, updated_at, updated_by_user_id)
+     VALUES (1, 0, CURRENT_TIMESTAMP, NULL)
+     ON CONFLICT(id) DO NOTHING`,
+  ).run();
+  const row = await db.prepare(
+    `SELECT allow_user_registration
+     FROM site_settings
+     WHERE id = 1`,
+  ).first();
+  return {
+    allowUserRegistration: Number(row?.allow_user_registration ?? 0) !== 0,
+  };
+}
+
+function normalizeUserRole(value) {
+  const role = String(value || '').trim().toLowerCase();
+  if (role === USER_ROLE_ADMIN || role === USER_ROLE_READONLY) {
+    return role;
+  }
+  return USER_ROLE_USER;
+}
+
+function normalizeManagedUserRolePayload(payload) {
+  if (payload.role !== undefined) {
+    return requireUserRole(payload.role);
+  }
+  if (payload.isAdmin === true) {
+    return USER_ROLE_ADMIN;
+  }
+  if (payload.canUpload === false) {
+    return USER_ROLE_READONLY;
+  }
+  return USER_ROLE_USER;
+}
+
+function requireUserRole(value) {
+  const role = String(value || '').trim().toLowerCase();
+  if (role === USER_ROLE_ADMIN || role === USER_ROLE_USER || role === USER_ROLE_READONLY) {
+    return role;
+  }
+  throw new HttpError(400, 'role must be admin, user, or readonly');
 }
 
 async function sendAuthEmail({ env, debugLabel, debugUrl, toEmail, subject, text, html }) {

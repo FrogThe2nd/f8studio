@@ -65,7 +65,9 @@ export class AssetRepository {
         displayName: stringOrDefault(row.displayUsername, stringOrDefault(row.name, String(row.email || ''))),
         email: String(row.email || ''),
         emailVerified: Number(row.emailVerified || 0) !== 0,
-        isAdmin: String(row.role || '') === 'admin',
+        role: normalizeUserRole(row.role),
+        isAdmin: normalizeUserRole(row.role) === 'admin',
+        canUpload: normalizeUserRole(row.role) !== 'readonly',
         assetCount: Number(row.asset_count || 0),
         createdAt: normalizeDbTimestamp(row.createdAt),
         updatedAt: normalizeDbTimestamp(row.updatedAt),
@@ -107,11 +109,47 @@ export class AssetRepository {
       displayName: stringOrDefault(row.displayUsername, stringOrDefault(row.name, String(row.email || ''))),
       email: String(row.email || ''),
       emailVerified: Number(row.emailVerified || 0) !== 0,
-      isAdmin: String(row.role || '') === 'admin',
+      role: normalizeUserRole(row.role),
+      isAdmin: normalizeUserRole(row.role) === 'admin',
+      canUpload: normalizeUserRole(row.role) !== 'readonly',
       assetCount: Number(row.asset_count || 0),
       createdAt: normalizeDbTimestamp(row.createdAt),
       updatedAt: normalizeDbTimestamp(row.updatedAt),
     };
+  }
+
+  async getSiteSettings() {
+    await this._ensureSiteSettingsRow();
+    const row = await this._db.prepare(
+      `SELECT allow_user_registration, updated_at, updated_by_user_id
+       FROM site_settings
+       WHERE id = 1`,
+    ).first();
+    return siteSettingsPayloadFromRow(row);
+  }
+
+  async updateSiteSettings({ allowUserRegistration, updatedByUserId }) {
+    await this._ensureSiteSettingsRow();
+    const current = await this.getSiteSettings();
+    const nextAllowUserRegistration = (
+      allowUserRegistration === undefined
+        ? current.allowUserRegistration
+        : toBoolean(allowUserRegistration)
+    );
+    await this._db.prepare(
+      `UPDATE site_settings
+       SET allow_user_registration = ?,
+           updated_at = ?,
+           updated_by_user_id = ?
+       WHERE id = 1`,
+    )
+      .bind(
+        nextAllowUserRegistration ? 1 : 0,
+        nowIso(),
+        nullableString(updatedByUserId),
+      )
+      .run();
+    return this.getSiteSettings();
   }
 
   async listManagedAssets({ assetType, ownerUserId, query, includeDeleted, cursor }) {
@@ -851,6 +889,16 @@ export class AssetRepository {
       .first();
     return Number(row?.count || 0) > 0;
   }
+
+  async _ensureSiteSettingsRow() {
+    await this._db.prepare(
+      `INSERT INTO site_settings (id, allow_user_registration, updated_at, updated_by_user_id)
+       VALUES (1, 0, ?, NULL)
+       ON CONFLICT(id) DO NOTHING`,
+    )
+      .bind(nowIso())
+      .run();
+  }
 }
 
 function enforceContentSizeLimit(contentJson) {
@@ -1205,6 +1253,22 @@ function searchAssetSummaryFromRow(row, viewerUserId) {
     editable: isOwner,
     schemaVersion: nullableString(row.schema_version),
   };
+}
+
+function siteSettingsPayloadFromRow(row) {
+  return {
+    allowUserRegistration: Number(row?.allow_user_registration ?? 0) !== 0,
+    updatedAt: normalizeDbTimestamp(row?.updated_at),
+    updatedByUserId: nullableString(row?.updated_by_user_id),
+  };
+}
+
+function normalizeUserRole(value) {
+  const role = String(value || '').trim().toLowerCase();
+  if (role === 'admin' || role === 'readonly') {
+    return role;
+  }
+  return 'user';
 }
 
 function genericAssetSummary(row) {

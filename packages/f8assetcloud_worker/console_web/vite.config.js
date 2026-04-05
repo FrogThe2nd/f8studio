@@ -6,6 +6,9 @@ const workerOrigin = 'http://127.0.0.1:8787';
 export default defineConfig({
   plugins: [react()],
   base: '/console/',
+  test: {
+    environment: 'jsdom',
+  },
   server: {
     proxy: {
       '/api/auth': {

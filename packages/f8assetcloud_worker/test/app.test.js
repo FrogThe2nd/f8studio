@@ -22,8 +22,8 @@ const migrationsSql = fs.readdirSync(migrationsDir)
   .map((filename) => fs.readFileSync(path.join(migrationsDir, filename), 'utf8'))
   .join('\n\n');
 
-function createEnv(overrides = {}) {
-  return {
+function createEnv({ allowUserRegistration = true, ...overrides } = {}) {
+  const env = {
     DB: createSqliteD1Database({ migrationsSql }),
     BETTER_AUTH_SECRET: TEST_AUTH_SECRET,
     BOOTSTRAP_ADMIN_USERNAME: 'admin',
@@ -33,6 +33,12 @@ function createEnv(overrides = {}) {
     EXPOSE_DEBUG_AUTH_LINKS: 'true',
     ...overrides,
   };
+  env.DB.prepare(
+    'UPDATE site_settings SET allow_user_registration = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 1',
+  )
+    .bind(allowUserRegistration ? 1 : 0)
+    .run();
+  return env;
 }
 
 async function jsonRequest(app, env, pathname, { method, payload, cookie } = {}) {
@@ -222,6 +228,10 @@ test('auth flows use Better Auth cookie sessions and email actions', async (t) =
   const providers = await jsonRequest(app, env, '/v1/auth/providers');
   assert.equal(providers.status, 200);
   assert.equal(providers.json.google, false);
+
+  const siteSettings = await jsonRequest(app, env, '/v1/site-settings');
+  assert.equal(siteSettings.status, 200);
+  assert.equal(siteSettings.json.allowUserRegistration, true);
 
   const signedUp = await signUpUser(app, env, {
     username: 'alice',
@@ -674,11 +684,12 @@ test('management APIs support Better Auth backed user and asset management', asy
       email: 'ops@example.com',
       password: TEST_PASSWORD,
       displayName: 'Ops',
-      isAdmin: true,
+      role: 'readonly',
     },
   });
   assert.equal(managementCreatesUser.status, 200);
   const opsUserId = String(managementCreatesUser.json.userId);
+  assert.equal(managementCreatesUser.json.role, 'readonly');
 
   const managementUpdatesUser = await jsonRequest(app, env, `${MANAGEMENT_API_BASE_PATH}/users/${opsUserId}`, {
     method: 'PUT',
@@ -686,14 +697,23 @@ test('management APIs support Better Auth backed user and asset management', asy
     payload: {
       username: 'ops_team',
       displayName: 'Ops Team',
-      isAdmin: false,
+      role: 'user',
       password: TEST_PASSWORD_2,
     },
   });
   assert.equal(managementUpdatesUser.status, 200);
   assert.equal(managementUpdatesUser.json.username, 'ops_team');
   assert.equal(managementUpdatesUser.json.displayName, 'Ops Team');
-  assert.equal(managementUpdatesUser.json.isAdmin, false);
+  assert.equal(managementUpdatesUser.json.role, 'user');
+
+  const managementUsersAfterUpdate = await jsonRequest(app, env, `${MANAGEMENT_API_BASE_PATH}/users`, {
+    cookie: managementLogin.cookie,
+  });
+  assert.equal(managementUsersAfterUpdate.status, 200);
+  assert.equal(
+    managementUsersAfterUpdate.json.entries.some((entry) => entry.userId === opsUserId && entry.role === 'user'),
+    true,
+  );
 
   const usernameConflict = await jsonRequest(app, env, `${MANAGEMENT_API_BASE_PATH}/users/${opsUserId}`, {
     method: 'PUT',
@@ -766,6 +786,41 @@ test('management APIs support Better Auth backed user and asset management', asy
   assert.equal(managementRestoresAsset.status, 200);
   assert.equal(managementRestoresAsset.json.deletedAt, null);
 
+  const managementLocksAliceUploads = await jsonRequest(app, env, `${MANAGEMENT_API_BASE_PATH}/users/${alice.userId}`, {
+    method: 'PUT',
+    cookie: managementLogin.cookie,
+    payload: {
+      role: 'readonly',
+    },
+  });
+  assert.equal(managementLocksAliceUploads.status, 200);
+  assert.equal(managementLocksAliceUploads.json.role, 'readonly');
+
+  const aliceBlockedUpload = await jsonRequest(app, env, '/v1/variants', {
+    method: 'POST',
+    cookie: alice.cookie,
+    payload: variantPayload({ variantId: 'alice-blocked-upload', name: 'Alice Blocked Upload', visibility: 'private' }),
+  });
+  assert.equal(aliceBlockedUpload.status, 403);
+  assert.equal(aliceBlockedUpload.json.message, 'upload permission required');
+
+  const managementUnlocksAliceUploads = await jsonRequest(app, env, `${MANAGEMENT_API_BASE_PATH}/users/${alice.userId}`, {
+    method: 'PUT',
+    cookie: managementLogin.cookie,
+    payload: {
+      role: 'user',
+    },
+  });
+  assert.equal(managementUnlocksAliceUploads.status, 200);
+  assert.equal(managementUnlocksAliceUploads.json.role, 'user');
+
+  const aliceAllowedUpload = await jsonRequest(app, env, '/v1/variants', {
+    method: 'POST',
+    cookie: alice.cookie,
+    payload: variantPayload({ variantId: 'alice-allowed-upload', name: 'Alice Allowed Upload', visibility: 'private' }),
+  });
+  assert.equal(aliceAllowedUpload.status, 200);
+
   const deleteAliceBlocked = await jsonRequest(app, env, `${MANAGEMENT_API_BASE_PATH}/users/${alice.userId}`, {
     method: 'DELETE',
     cookie: managementLogin.cookie,
@@ -784,6 +839,53 @@ test('management APIs support Better Auth backed user and asset management', asy
     cookie: managementLogin.cookie,
   });
   assert.equal(deleteOps.status, 200);
+});
+
+test('site settings default to registration disabled and management can enable registration', async (t) => {
+  const env = createEnv({ allowUserRegistration: false });
+  t.after(() => env.DB.close());
+  const app = createApp();
+
+  const initialSettings = await jsonRequest(app, env, '/v1/site-settings');
+  assert.equal(initialSettings.status, 200);
+  assert.equal(initialSettings.json.allowUserRegistration, false);
+
+  const blockedSignUp = await signUpUser(app, env, {
+    username: 'blocked_user',
+    email: 'blocked@example.com',
+    displayName: 'Blocked User',
+  });
+  assert.equal(blockedSignUp.status, 403);
+  assert.equal(blockedSignUp.json.message, 'new user registration is disabled');
+
+  const managementLogin = await signInUser(app, env, {
+    username: 'admin',
+  });
+  assert.equal(managementLogin.status, 200);
+
+  const managementSettings = await jsonRequest(app, env, `${MANAGEMENT_API_BASE_PATH}/site-settings`, {
+    cookie: managementLogin.cookie,
+  });
+  assert.equal(managementSettings.status, 200);
+  assert.equal(managementSettings.json.allowUserRegistration, false);
+
+  const enabledSettings = await jsonRequest(app, env, `${MANAGEMENT_API_BASE_PATH}/site-settings`, {
+    method: 'PUT',
+    cookie: managementLogin.cookie,
+    payload: {
+      allowUserRegistration: true,
+    },
+  });
+  assert.equal(enabledSettings.status, 200);
+  assert.equal(enabledSettings.json.allowUserRegistration, true);
+
+  const allowedSignUp = await signUpUser(app, env, {
+    username: 'allowed_user',
+    email: 'allowed@example.com',
+    displayName: 'Allowed User',
+  });
+  assert.equal(allowedSignUp.status, 200);
+  assert.equal(allowedSignUp.json.user.username, 'allowed_user');
 });
 
 test('console entry page is served as html', async (t) => {
