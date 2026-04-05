@@ -4,7 +4,7 @@ import importlib.metadata
 import logging
 from dataclasses import dataclass
 
-from .plugin_api import StudioPlugin, StudioPluginManifest
+from f8pystudio.plugins.api import StudioPlugin, StudioPluginManifest
 
 logger = logging.getLogger(__name__)
 

@@ -13,7 +13,7 @@ from f8pysdk.shm import AudioShmReader, read_audio_header, SAMPLE_FORMAT_F32LE
 
 from ..nodegraph.operator_basenode import F8StudioOperatorBaseNode
 from ..nodegraph.viz_operator_nodeitem import F8StudioVizOperatorNodeItem
-from ..ui_bus import UiCommand
+from f8pystudio.contracts.ui_commands import UiCommand
 
 _STATE_UI_UPDATE = "uiUpdate"
 _WIDGET_NAME = "__audioshm"

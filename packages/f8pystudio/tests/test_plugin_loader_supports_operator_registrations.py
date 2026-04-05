@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
 
-from f8pystudio.plugin_api import PluginOperatorRegistration, StudioPluginManifest
+from f8pystudio.plugins.api import PluginOperatorRegistration, StudioPluginManifest
 
 
 def test_manifest_can_carry_operator_registration_callable() -> None:

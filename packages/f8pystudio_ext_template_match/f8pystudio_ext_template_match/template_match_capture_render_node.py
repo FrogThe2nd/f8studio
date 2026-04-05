@@ -5,7 +5,7 @@ from typing import Any
 
 from qtpy import QtWidgets
 
-from f8pystudio.command_ui_protocol import CommandUiHandler, CommandUiSource
+from f8pystudio.contracts.command_ui import CommandUiHandler, CommandUiSource
 from f8pystudio.nodegraph.service_basenode import F8StudioServiceBaseNode
 
 from .template_match_capture_dialog import TemplateCaptureFrame, TemplateMatchCaptureDialog

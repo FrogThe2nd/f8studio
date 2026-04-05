@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 import uuid
 
-from f8pystudio.editor_assist.debug_monaco_editor import load_session_editor_target, load_session_editor_targets
+from f8pystudio.app.debug_monaco_editor import load_session_editor_target, load_session_editor_targets
 
 
 def _editable_policy(*collections: str) -> dict[str, object]:

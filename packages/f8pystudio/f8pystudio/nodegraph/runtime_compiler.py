@@ -45,8 +45,8 @@ from f8pysdk.schema_helpers import integer_schema
 from f8pysdk.schema_helpers import any_schema
 from f8pysdk.nats_naming import ensure_token
 
-from ..pystudio_node_registry import SERVICE_CLASS as STUDIO_SERVICE_CLASS
-from ..pystudio_node_registry import STUDIO_SERVICE_ID
+from f8pystudio.studio_specs.registry import SERVICE_CLASS as STUDIO_SERVICE_CLASS
+from f8pystudio.studio_specs.registry import STUDIO_SERVICE_ID
 from ..operators.patch_hub import OPERATOR_CLASS as PATCH_HUB_OPERATOR_CLASS
 
 

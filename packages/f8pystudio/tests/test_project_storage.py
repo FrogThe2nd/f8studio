@@ -36,11 +36,12 @@ def test_assets_database_initializes_component_project_and_variant_tables(tmp_pa
         "project_heads",
         "project_versions",
         "component_heads_local",
-        "component_versions_local",
         "component_remote_cache",
         "variant_heads_local",
         "variant_remote_cache",
     }.issubset(table_names)
+
+    assert "component_versions_local" not in table_names
 
 
 def test_assets_database_migrates_remote_cache_library_slug_columns(tmp_path: Path) -> None:
@@ -93,6 +94,23 @@ def test_assets_database_migrates_remote_cache_library_slug_columns(tmp_path: Pa
 
     assert "library_slug" in component_columns
     assert "library_slug" in variant_columns
+
+
+def test_component_catalog_uses_head_only_local_component_schema(tmp_path: Path) -> None:
+    service = ComponentCatalogService(db_path=tmp_path / "assets.db")
+    local_entry = _component_entry(component_id="local-head-only", source=F8ComponentSourceKind.local, installed=True)
+
+    saved = service.upsert_local_entry(local_entry)
+    versions = service.list_local_versions(saved.record.componentId)
+
+    assert [version.versionNumber for version in versions] == [1]
+    assert service.local_version_record(saved.record.componentId, 1) is not None
+
+    with sqlite3.connect(tmp_path / "assets.db") as conn:
+        table_names = {str(row[0]) for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+
+    assert "component_heads_local" in table_names
+    assert "component_versions_local" not in table_names
 
 
 def _session_payload(node_id: str) -> dict[str, Any]:

@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from enum import Enum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from qtpy import QtWidgets
+if TYPE_CHECKING:
+    from qtpy import QtWidgets
 
 
 class CommandUiSource(str, Enum):

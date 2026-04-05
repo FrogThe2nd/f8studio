@@ -9,7 +9,7 @@ from NodeGraphQt import BaseNode
 from f8pysdk import F8OperatorSpec, F8ServiceSpec
 from f8pysdk.nats_naming import ensure_token
 
-from ..constants import STUDIO_SERVICE_ID
+from f8pystudio.studio_specs.identifiers import STUDIO_SERVICE_ID
 from ..ui.support.ui_notifications import show_warning
 
 logger = logging.getLogger(__name__)

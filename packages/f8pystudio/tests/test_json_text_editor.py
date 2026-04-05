@@ -12,7 +12,7 @@ from f8pystudio.ui.support.json_text_editor import (
     find_bracket_match,
 )
 from f8pystudio.ui.components.state_editors import F8JsonValueEditor
-from f8pystudio.ui.widgets.node_library_widget import _F8StudioNodesTreeWidget
+from f8pystudio.ui.mainwin.node_library_widget import _F8StudioNodesTreeWidget
 from f8pystudio.assets.ui.variant_manager_dialog import VariantManagerDialog
 
 
@@ -95,7 +95,7 @@ def test_node_info_dialog_raw_json_attaches_json_enhancements(monkeypatch) -> No
     fake_node_cls = type("FakeNodeCls", (), {})
     tree._factory = SimpleNamespace(nodes={"svc.test": fake_node_cls})  # type: ignore[attr-defined]
     monkeypatch.setattr(
-        "f8pystudio.ui.widgets.node_library_widget.typed_spec_template_or_none",
+        "f8pystudio.ui.mainwin.node_library_widget.typed_spec_template_or_none",
         lambda _cls: F8ServiceSpec(serviceClass="svc.test", label="Test"),
     )
 

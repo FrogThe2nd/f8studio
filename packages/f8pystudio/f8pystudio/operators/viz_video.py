@@ -20,8 +20,8 @@ from f8pysdk.runtime_node import OperatorNode, RuntimeNode
 from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
 from f8pysdk.shm import video_shm_name
 
-from ..constants import SERVICE_CLASS
-from ..ui_bus import emit_ui_command
+from f8pystudio.studio_specs.identifiers import SERVICE_CLASS
+from f8pystudio.contracts.ui_commands import emit_ui_command
 
 
 OPERATOR_CLASS = "f8.viz.video"

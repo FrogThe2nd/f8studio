@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable, Protocol
 
-from ..service_process_manager import ServiceProcessConfig, ServiceProcessManager
+from f8pystudio.bridge.process_manager import ServiceProcessConfig, ServiceProcessManager
 
 
 @dataclass(frozen=True)

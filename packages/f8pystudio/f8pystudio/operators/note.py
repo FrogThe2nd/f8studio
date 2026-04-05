@@ -14,7 +14,7 @@ from f8pysdk.nats_naming import ensure_token
 from f8pysdk.runtime_node import OperatorNode
 from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
 
-from ..constants import SERVICE_CLASS
+from f8pystudio.studio_specs.identifiers import SERVICE_CLASS
 
 OPERATOR_CLASS = "f8.note"
 RENDERER_CLASS = "note_markdown"

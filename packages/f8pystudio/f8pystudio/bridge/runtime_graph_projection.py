@@ -7,7 +7,7 @@ from f8pysdk.command_state import is_hidden_command_state_field
 from f8pysdk.nats_naming import ensure_token
 
 from ..nodegraph.runtime_compiler import CompiledRuntimeGraphs
-from ..remote_state_watcher import WatchTarget
+from f8pystudio.bridge.remote_state_watcher import WatchTarget
 
 
 def dedupe_fields(fields: list[str]) -> tuple[str, ...]:

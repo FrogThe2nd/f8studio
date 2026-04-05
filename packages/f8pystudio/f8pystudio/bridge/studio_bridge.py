@@ -14,55 +14,56 @@ from f8pysdk import F8RuntimeGraph
 from f8pysdk.nats_naming import ensure_token, new_id
 from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
 from f8pysdk.service_bus.state_write import StateWriteError
-from .bridge.async_runtime import AsyncRuntimeThread
-from .bridge.command_client import CommandRequest, NatsCommandGateway
-from .bridge.json_codec import coerce_json_value
-from .bridge.managed_service_inventory import collect_managed_service_inventory
-from .bridge.nats_lifecycle import (
+from f8pystudio.contracts.ui_commands import UiCommand
+from f8pystudio.diagnostics.error_reporting import ExceptionLogOnce, report_exception
+from f8pystudio.monitoring import MonitorCenter
+from f8pystudio.monitoring.service_rows import ServiceMonitorRow, build_service_monitor_rows, collect_known_service_ids
+from f8pystudio.nodegraph.runtime_compiler import CompiledRuntimeGraphs
+from f8pystudio.studio_specs.registry import SERVICE_CLASS, STUDIO_SERVICE_ID
+
+from .async_runtime import AsyncRuntimeThread
+from .command_client import CommandRequest, NatsCommandGateway
+from .json_codec import coerce_json_value
+from .managed_service_inventory import collect_managed_service_inventory
+from .nats_lifecycle import (
     NatsConnectionManager,
 )
-from .bridge.process_action_scheduler import ServiceProcessActionScheduler
-from .bridge.runtime_graph_projection import (
+from .process_action_scheduler import ServiceProcessActionScheduler
+from .process_lifecycle import (
+    LocalServiceProcessGateway,
+    StartServiceRequest,
+    StopServiceRequest,
+)
+from .process_manager import ServiceProcessManager
+from .remote_command_controller import RemoteCommandControllerMixin
+from .remote_state_sync import RemoteStateGatewayAdapter
+from .remote_state_watcher import RemoteStateWatcher, WatchTarget
+from .rungraph_deployer import (
+    NatsRungraphGateway,
+    RungraphDeployConfig,
+)
+from .rungraph_deploy_flow import RungraphDeployFlow, pick_compiled
+from .runtime_graph_projection import (
     build_local_state_field_index,
     build_remote_watch_targets,
     build_studio_runtime_graph,
 )
-from .bridge.rungraph_deploy_flow import RungraphDeployFlow, pick_compiled
-from .bridge.service_endpoint_client import (
+from .runtime_session_controller import RuntimeSessionControllerMixin
+from .service_endpoint_client import (
     request_service_status,
     request_service_terminate,
     request_set_remote_state,
     request_set_service_active,
 )
-from .bridge.studio_runtime_flow import (
+from .service_lifecycle_controller import ServiceLifecycleControllerMixin
+from .service_status_store import ServiceStatusStore
+from .studio_runtime_flow import (
     apply_remote_state_watches_if_changed,
     install_studio_runtime_graph,
     wait_for_studio_runtime_ready,
 )
-from .bridge.runtime_session_controller import RuntimeSessionControllerMixin
-from .bridge.service_lifecycle_controller import ServiceLifecycleControllerMixin
-from .bridge.deploy_state_controller import DeployStateControllerMixin
-from .bridge.remote_command_controller import RemoteCommandControllerMixin
-from .bridge.service_status_store import ServiceStatusStore
-from .bridge.process_lifecycle import (
-    LocalServiceProcessGateway,
-    StartServiceRequest,
-    StopServiceRequest,
-)
-from .bridge.remote_state_sync import RemoteStateGatewayAdapter
-from .bridge.rungraph_deployer import (
-    NatsRungraphGateway,
-    RungraphDeployConfig,
-)
-from .error_reporting import ExceptionLogOnce, report_exception
-from .nodegraph.runtime_compiler import CompiledRuntimeGraphs
-from .pystudio_service import PyStudioService
-from .service_process_manager import ServiceProcessManager
-from .pystudio_node_registry import SERVICE_CLASS, STUDIO_SERVICE_ID
-from .remote_state_watcher import RemoteStateWatcher, WatchTarget
-from .ui_bus import UiCommand
-from .monitoring import MonitorCenter
-from .monitoring.service_rows import ServiceMonitorRow, build_service_monitor_rows, collect_known_service_ids
+from .studio_service import PyStudioService
+from .deploy_state_controller import DeployStateControllerMixin
 
 logger = logging.getLogger(__name__)
 STARTUP_GATE_TIMEOUT_S = 6.0

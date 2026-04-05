@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from qtpy import QtCore, QtGui, QtWidgets
 
-from ...error_reporting import ExceptionLogOnce, report_exception
+from f8pystudio.diagnostics.error_reporting import ExceptionLogOnce, report_exception
 from ...ui.support.ui_notifications import show_warning
 
 

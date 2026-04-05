@@ -17,7 +17,7 @@ from .runtime_graph_projection import build_local_state_field_index, build_remot
 from .service_endpoint_client import request_set_remote_state
 from .studio_runtime_flow import apply_remote_state_watches_if_changed, install_studio_runtime_graph
 from ..nodegraph.runtime_compiler import CompiledRuntimeGraphs
-from ..pystudio_node_registry import SERVICE_CLASS
+from f8pystudio.studio_specs.registry import SERVICE_CLASS
 
 logger = logging.getLogger(__name__)
 

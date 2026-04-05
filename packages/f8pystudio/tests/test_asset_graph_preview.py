@@ -16,7 +16,7 @@ from f8pystudio.assets.variants.variant_models import F8VariantEntry, F8VariantS
 from f8pystudio.nodegraph.node_graph import F8StudioGraph
 from f8pystudio.nodegraph.operator_basenode import F8StudioOperatorBaseNode
 from f8pystudio.nodegraph.service_basenode import F8StudioServiceBaseNode
-from f8pystudio.session_migration import wrap_layout_for_save
+from f8pystudio.nodegraph.session_schema import wrap_layout_for_save
 
 _PREVIEW_BUILD_WAIT_STEP_MS = 10
 _PREVIEW_BUILD_WAIT_LIMIT_MS = 500

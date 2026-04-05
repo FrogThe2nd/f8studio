@@ -6,8 +6,8 @@ from typing import Any
 from NodeGraphQt import BaseNode
 from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
 
-from f8pystudio.plugin_api import PluginOperatorRegistration, PluginRendererRegistration, StudioPluginManifest
-from f8pystudio.pystudio_program import PyStudioProgram
+from f8pystudio.plugins.api import PluginOperatorRegistration, PluginRendererRegistration, StudioPluginManifest
+from f8pystudio.app.program import PyStudioProgram
 from f8pystudio.render_nodes.registry import RenderNodeRegistry
 
 

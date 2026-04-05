@@ -6,6 +6,7 @@ from qtpy import QtCore, QtGui, QtWidgets
 from ...ai_assist.graph_context import GraphContextSnapshot, build_graph_context_snapshot
 from ...ai_assist.llm_bridge import AiLlmBridge
 from ...ai_assist.store import AiProviderStore
+from ...ui.support.ai_assist_state import QtAiPanelStateStore
 from ...ui.support.ui_icons import StudioIcon, icon_for
 from ...ui.support.webengine_utils import configure_default_webengine_profile
 from ..dialogs.ai_context_inspector import AiContextInspectorDialog
@@ -49,7 +50,7 @@ class AiAssistSidebarWidget(QtWidgets.QWidget):
         
         # 1. Setup AI components
         self._ai_store = AiProviderStore()
-        self._ai_bridge = AiLlmBridge(self._ai_store, self)
+        self._ai_bridge = AiLlmBridge(self._ai_store, state_store=QtAiPanelStateStore(), parent=self)
         
         # 2. UI Components
         from PySide6 import QtWebChannel, QtWebEngineWidgets  # type: ignore[import-not-found]

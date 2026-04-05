@@ -10,8 +10,8 @@ from typing import Any
 
 from qtpy import QtCore
 
-from .lsp_client import LspClientError, PythonLspClient
-from .workspace import EditorAssistContext, EditorWorkspaceSession
+from f8pystudio.editor_assist.lsp_client import LspClientError, PythonLspClient
+from f8pystudio.editor_assist.workspace import EditorAssistContext, EditorWorkspaceSession
 
 logger = logging.getLogger(__name__)
 

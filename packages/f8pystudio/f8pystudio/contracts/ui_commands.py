@@ -4,7 +4,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Callable, Protocol, runtime_checkable
 
-from .error_reporting import ExceptionLogOnce, fingerprint_exception
+from f8pystudio.diagnostics.error_reporting import ExceptionLogOnce, fingerprint_exception
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +41,7 @@ def emit_ui_command(node_id: str, command: str, payload: dict[str, Any], *, ts_m
     try:
         sink(UiCommand(node_id=str(node_id), command=str(command), payload=dict(payload), ts_ms=ts_ms))
     except Exception as exc:
-        fp = fingerprint_exception(context="ui_bus.emit_ui_command", exc=exc)
+        fp = fingerprint_exception(context="contracts.ui_commands.emit_ui_command", exc=exc)
         if _exception_log_once.should_log(fp):
             try:
                 logger.error("UI command sink raised", exc_info=exc)

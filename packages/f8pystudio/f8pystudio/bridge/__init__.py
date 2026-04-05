@@ -16,7 +16,9 @@ from .process_lifecycle import (
     StopServiceRequest,
     StopServiceResult,
 )
+from .process_manager import ServiceProcessConfig, ServiceProcessManager
 from .remote_state_sync import ApplyWatchTargetsRequest, RemoteStateGateway, RemoteStateGatewayAdapter
+from .remote_state_watcher import RemoteStateWatcher, WatchTarget
 from .runtime_session_controller import RuntimeSessionControllerMixin
 from .service_lifecycle_controller import ServiceLifecycleControllerMixin
 from .deploy_state_controller import DeployStateControllerMixin
@@ -41,6 +43,8 @@ from .studio_runtime_flow import (
     install_studio_runtime_graph,
     wait_for_studio_runtime_ready,
 )
+from .studio_bridge import PyStudioServiceBridge, PyStudioServiceBridgeConfig, STARTUP_GATE_TIMEOUT_S
+from .studio_service import PyStudioService, PyStudioServiceConfig
 from .service_endpoint_client import (
     SetStateRequestResult,
     message_data_bytes,
@@ -57,6 +61,10 @@ __all__ = [
     "CommandRequest",
     "CommandResponse",
     "LocalServiceProcessGateway",
+    "PyStudioService",
+    "PyStudioServiceBridge",
+    "PyStudioServiceBridgeConfig",
+    "PyStudioServiceConfig",
     "ManagedServiceInventory",
     "NatsCommandGateway",
     "NatsConnectionManager",
@@ -65,6 +73,7 @@ __all__ = [
     "ApplyWatchTargetsRequest",
     "RemoteStateGateway",
     "RemoteStateGatewayAdapter",
+    "RemoteStateWatcher",
     "RungraphDeployConfig",
     "RungraphDeployFlow",
     "RungraphDeployRequest",
@@ -72,6 +81,8 @@ __all__ = [
     "RungraphGateway",
     "RuntimeSessionControllerMixin",
     "ServiceLifecycleControllerMixin",
+    "ServiceProcessConfig",
+    "ServiceProcessManager",
     "DeployStateControllerMixin",
     "RemoteCommandControllerMixin",
     "ServiceStatusStore",
@@ -80,6 +91,8 @@ __all__ = [
     "StartServiceRequest",
     "StopServiceRequest",
     "StopServiceResult",
+    "STARTUP_GATE_TIMEOUT_S",
+    "WatchTarget",
     "build_local_state_field_index",
     "build_remote_watch_targets",
     "build_studio_runtime_graph",

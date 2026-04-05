@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from msgspec import Struct, field
 
-from ...session_migration import SESSION_SCHEMA_VERSION
+from f8pystudio.nodegraph.session_schema import SESSION_SCHEMA_VERSION
 from ..common import JsonObject, now_iso
 
 

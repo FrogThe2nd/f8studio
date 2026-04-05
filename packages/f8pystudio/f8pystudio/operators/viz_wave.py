@@ -21,9 +21,9 @@ from f8pysdk.nats_naming import ensure_token
 from f8pysdk.runtime_node import RuntimeNode
 from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
 
-from ..constants import SERVICE_CLASS
-from ..color_table import series_colors
-from ..ui_bus import emit_ui_command
+from f8pystudio.studio_specs.identifiers import SERVICE_CLASS
+from f8pystudio.visualization.colors import series_colors
+from f8pystudio.contracts.ui_commands import emit_ui_command
 from ._viz_base import StudioVizRuntimeNodeBase, viz_sampling_state_fields
 
 

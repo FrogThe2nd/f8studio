@@ -9,8 +9,8 @@ from f8pysdk.msgspec_codec import dump_json
 
 from f8pysdk import F8OperatorSpec, F8ServiceSpec, F8StateAccess
 
-from ..constants import SERVICE_CLASS as _CANVAS_SERVICE_CLASS_
-from ..constants import STUDIO_SERVICE_ID
+from f8pystudio.studio_specs.identifiers import SERVICE_CLASS as _CANVAS_SERVICE_CLASS_
+from f8pystudio.studio_specs.identifiers import STUDIO_SERVICE_ID
 from ..ui.support.ui_notifications import show_warning
 from ..assets.variants.variant_ids import parse_variant_node_type
 from .node_base import F8StudioBaseNode

@@ -7,9 +7,9 @@ from qtpy import QtCore, QtWidgets
 from NodeGraphQt.nodes.base_node import NodeBaseWidget
 
 from ..nodegraph.operator_basenode import F8StudioOperatorBaseNode
-from ..color_table import series_colors
+from f8pystudio.visualization.colors import series_colors
 from ..nodegraph.viz_operator_nodeitem import F8StudioVizOperatorNodeItem
-from ..ui_bus import UiCommand
+from f8pystudio.contracts.ui_commands import UiCommand
 
 import pyqtgraph as pg  # type: ignore[import-not-found]
 

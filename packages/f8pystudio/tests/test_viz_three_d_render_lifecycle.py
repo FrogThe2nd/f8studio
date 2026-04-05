@@ -6,7 +6,7 @@ from typing import Any
 from qtpy import QtWidgets
 
 from f8pystudio.render_nodes.viz_three_d import _Skeleton3DViewerWindow, VizThreeDRenderNode
-from f8pystudio.ui_bus import UiCommand
+from f8pystudio.contracts.ui_commands import UiCommand
 
 
 def _ensure_app() -> QtWidgets.QApplication:

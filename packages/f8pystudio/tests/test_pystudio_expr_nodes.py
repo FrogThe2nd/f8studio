@@ -16,10 +16,10 @@ from f8pysdk.service_bus.routing_data import buffer_input  # noqa: E402
 from f8pysdk.service_host import ServiceHost, ServiceHostConfig  # noqa: E402
 from f8pysdk.testing import ServiceBusHarness  # noqa: E402
 
-from f8pystudio.constants import SERVICE_CLASS  # noqa: E402
+from f8pystudio.studio_specs.identifiers import SERVICE_CLASS  # noqa: E402
 from f8pystudio.operators.data_expr import DataExprRuntimeNode  # noqa: E402
 from f8pystudio.operators.state_expr import StateExprRuntimeNode  # noqa: E402
-from f8pystudio.pystudio_node_registry import register_pystudio_specs  # noqa: E402
+from f8pystudio.studio_specs.registry import register_pystudio_specs  # noqa: E402
 
 
 class PyStudioExprNodeTests(unittest.IsolatedAsyncioTestCase):

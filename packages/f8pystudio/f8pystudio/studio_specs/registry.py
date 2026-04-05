@@ -4,8 +4,8 @@ from f8pysdk import F8ServiceSchemaVersion, F8ServiceSpec
 from f8pysdk import F8StateAccess, F8StateSpec, integer_schema
 from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
 
-from .constants import SERVICE_CLASS, STUDIO_SERVICE_ID
-from .operators import register_operator
+from f8pystudio.operators import register_operator
+from f8pystudio.studio_specs.identifiers import SERVICE_CLASS, STUDIO_SERVICE_ID
 
 
 def register_pystudio_specs(registry: RuntimeNodeRegistry | None = None) -> RuntimeNodeRegistry:

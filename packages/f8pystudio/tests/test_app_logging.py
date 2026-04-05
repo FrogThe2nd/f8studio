@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 
-from f8pystudio.app_logging import resolve_env_log_level
+from f8pystudio.diagnostics.logging import resolve_env_log_level
 
 
 def test_resolve_env_log_level_prefers_explicit_name() -> None:

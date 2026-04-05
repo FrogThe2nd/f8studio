@@ -10,7 +10,7 @@ from NodeGraphQt.nodes.base_node import NodeBaseWidget
 
 from ..nodegraph.operator_basenode import F8StudioOperatorBaseNode
 from ..nodegraph.viz_operator_nodeitem import F8StudioVizOperatorNodeItem
-from ..ui_bus import UiCommand
+from f8pystudio.contracts.ui_commands import UiCommand
 from ..ui.support.webengine_utils import (
     configure_default_webengine_profile,
     set_webengine_view_background,

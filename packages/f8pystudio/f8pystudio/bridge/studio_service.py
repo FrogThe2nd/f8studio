@@ -7,10 +7,10 @@ from typing import Any, Callable
 from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
 from f8pysdk.service_runtime import ServiceRuntime, ServiceRuntimeConfig
 
-from .plugin_loader import load_entrypoint_plugins
-from .operators import register_operator
-from .ui_bus import set_ui_command_sink, UiCommand
-from .pystudio_node_registry import SERVICE_CLASS, STUDIO_SERVICE_ID
+from f8pystudio.plugins.loader import load_entrypoint_plugins
+from f8pystudio.contracts.ui_commands import set_ui_command_sink, UiCommand
+from f8pystudio.operators import register_operator
+from f8pystudio.studio_specs.registry import SERVICE_CLASS, STUDIO_SERVICE_ID
 
 logger = logging.getLogger(__name__)
 

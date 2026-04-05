@@ -26,8 +26,8 @@ from f8pysdk.spec_edit_policy import (
 from .edge_rules import EdgeRuleNodeInfo, layout_node_info, validate_layout_connection
 from .layers import augment_layer_defs_for_layout_nodes, layer_defs_to_json, layout_layer_defs_from_layout
 from .viewer import F8StudioNodeViewer
-from ..session_migration import extract_layout as _extract_session_layout
-from ..session_migration import wrap_layout_for_save as _wrap_layout_for_save
+from f8pystudio.nodegraph.session_schema import extract_layout as _extract_session_layout
+from f8pystudio.nodegraph.session_schema import wrap_layout_for_save as _wrap_layout_for_save
 
 MISSING_SERVICE_NODE_TYPE = "svc.f8.missing.service"
 MISSING_OPERATOR_NODE_TYPE = "svc.f8.missing.operator"

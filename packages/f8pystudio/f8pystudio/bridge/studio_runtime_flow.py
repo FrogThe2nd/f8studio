@@ -7,7 +7,7 @@ from typing import Any, Callable
 from f8pysdk import F8RuntimeGraph
 
 from ..nodegraph.runtime_compiler import CompiledRuntimeGraphs
-from ..remote_state_watcher import WatchTarget
+from f8pystudio.bridge.remote_state_watcher import WatchTarget
 from .remote_state_sync import ApplyWatchTargetsRequest, RemoteStateGateway
 
 

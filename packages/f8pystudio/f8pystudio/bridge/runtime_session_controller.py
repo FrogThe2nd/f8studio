@@ -13,9 +13,9 @@ from .nats_lifecycle import (
 )
 from .remote_state_sync import RemoteStateGatewayAdapter
 from .studio_runtime_flow import wait_for_studio_runtime_ready
-from ..pystudio_service import PyStudioService, PyStudioServiceConfig
-from ..remote_state_watcher import RemoteStateWatcher
-from ..ui_bus import UiCommand
+from f8pystudio.bridge.studio_service import PyStudioService, PyStudioServiceConfig
+from f8pystudio.bridge.remote_state_watcher import RemoteStateWatcher
+from f8pystudio.contracts.ui_commands import UiCommand
 
 
 class RuntimeSessionControllerMixin:

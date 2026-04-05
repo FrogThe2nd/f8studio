@@ -21,7 +21,7 @@ from f8pysdk.spec_edit_policy import (
 )
 from f8pysdk.testing import ServiceBusHarness
 
-from f8pystudio.constants import SERVICE_CLASS
+from f8pystudio.studio_specs.identifiers import SERVICE_CLASS
 from f8pystudio.operators.value_stepper import OPERATOR_CLASS, ValueStepperRuntimeNode, register_operator
 
 

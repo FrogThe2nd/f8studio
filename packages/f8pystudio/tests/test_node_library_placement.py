@@ -12,7 +12,7 @@ if ROOT not in sys.path:
 
 from f8pystudio.assets.variants.variant_ids import build_variant_node_type  # noqa: E402
 from f8pystudio.ui.mainwin.main_window import F8StudioMainWin  # noqa: E402
-from f8pystudio.ui.widgets.node_library_widget import F8StudioNodeLibraryWidget  # noqa: E402
+from f8pystudio.ui.mainwin.node_library_widget import F8StudioNodeLibraryWidget  # noqa: E402
 
 
 def _ensure_app() -> QtWidgets.QApplication:
@@ -40,7 +40,7 @@ def test_library_cancels_only_when_pending_variant_missing(monkeypatch) -> None:
     fake_graph = _FakeGraph(build_variant_node_type("variant_a"))
     widget._node_graph = fake_graph
 
-    monkeypatch.setattr("f8pystudio.ui.widgets.node_library_widget.variant_exists", lambda _vid: False)
+    monkeypatch.setattr("f8pystudio.ui.mainwin.node_library_widget.variant_exists", lambda _vid: False)
     widget._cancel_invalid_variant_placement_if_needed()
     assert fake_graph.cancel_node_placement_calls == 1
 
@@ -51,7 +51,7 @@ def test_library_keeps_placement_when_pending_variant_still_exists(monkeypatch) 
     fake_graph = _FakeGraph(build_variant_node_type("variant_a"))
     widget._node_graph = fake_graph
 
-    monkeypatch.setattr("f8pystudio.ui.widgets.node_library_widget.variant_exists", lambda _vid: True)
+    monkeypatch.setattr("f8pystudio.ui.mainwin.node_library_widget.variant_exists", lambda _vid: True)
     widget._cancel_invalid_variant_placement_if_needed()
     assert fake_graph.cancel_node_placement_calls == 0
 
@@ -62,7 +62,7 @@ def test_library_keeps_placement_for_non_variant(monkeypatch) -> None:
     fake_graph = _FakeGraph("svc.f8.engine.operator")
     widget._node_graph = fake_graph
 
-    monkeypatch.setattr("f8pystudio.ui.widgets.node_library_widget.variant_exists", lambda _vid: False)
+    monkeypatch.setattr("f8pystudio.ui.mainwin.node_library_widget.variant_exists", lambda _vid: False)
     widget._cancel_invalid_variant_placement_if_needed()
     assert fake_graph.cancel_node_placement_calls == 0
 

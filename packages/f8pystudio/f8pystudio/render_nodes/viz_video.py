@@ -10,7 +10,7 @@ from f8pysdk.shm import VIDEO_FORMAT_FLOW2_F16, VIDEO_FORMAT_SCALAR1_F32, VideoS
 
 from ..nodegraph.operator_basenode import F8StudioOperatorBaseNode
 from ..nodegraph.viz_operator_nodeitem import F8StudioVizOperatorNodeItem
-from ..ui_bus import UiCommand
+from f8pystudio.contracts.ui_commands import UiCommand
 
 _STATE_UI_UPDATE = "uiUpdate"
 _WIDGET_NAME = "__videoshm"

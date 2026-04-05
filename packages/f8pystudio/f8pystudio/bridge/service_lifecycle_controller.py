@@ -8,10 +8,10 @@ from qtpy import QtCore
 
 from f8pysdk.nats_naming import ensure_token
 
-from ..constants import SERVICE_CLASS
+from f8pystudio.studio_specs.identifiers import SERVICE_CLASS
 from .process_lifecycle import StartServiceRequest, StopServiceRequest
 from .service_endpoint_client import request_service_status, request_service_terminate, request_set_service_active
-from ..service_process_manager import ServiceProcessConfig
+from f8pystudio.bridge.process_manager import ServiceProcessConfig
 
 
 class ServiceLifecycleControllerMixin:

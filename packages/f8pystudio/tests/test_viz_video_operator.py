@@ -6,7 +6,7 @@ from unittest.mock import patch
 from f8pysdk.generated import F8RuntimeNode
 from f8pysdk.shm import video_shm_name
 
-from f8pystudio.constants import SERVICE_CLASS
+from f8pystudio.studio_specs.identifiers import SERVICE_CLASS
 from f8pystudio.operators.viz_video import OPERATOR_CLASS, VizVideoRuntimeNode
 
 

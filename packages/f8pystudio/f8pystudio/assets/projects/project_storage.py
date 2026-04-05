@@ -10,7 +10,7 @@ from qtpy import QtCore
 from sqlalchemy import and_, delete, func, insert, select, update
 from sqlalchemy.engine import Connection as SqlAlchemyConnection
 
-from ...session_migration import extract_layout
+from f8pystudio.nodegraph.session_schema import extract_layout
 from ..db import AssetsDatabase, project_heads_table, project_versions_table
 from ..common import (
     JsonObject,

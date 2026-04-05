@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from f8pystudio.plugin_api import PluginRendererRegistration, StudioPlugin, StudioPluginManifest
+from f8pystudio.plugins.api import PluginRendererRegistration, StudioPlugin, StudioPluginManifest
 
 from .template_match_capture_render_node import TemplateMatchCaptureRenderNode
 

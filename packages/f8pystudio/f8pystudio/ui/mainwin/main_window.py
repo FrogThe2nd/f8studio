@@ -8,15 +8,15 @@ from qtpy import QtCore, QtGui, QtWidgets
 
 from ...assets.projects.project_models import F8ProjectRecord
 from ...assets.projects.project_storage import ProjectStorageService
-from ...nodegraph import F8StudioGraph
 from ...nodegraph.edge_rules import EDGE_KIND_DATA, EDGE_KIND_EXEC, EDGE_KIND_STATE
+from ...nodegraph.node_graph import F8StudioGraph
 from ...nodegraph.session import last_session_path
 from ...nodegraph.runtime_compiler import CompiledRuntimeGraphs, compile_runtime_graphs_from_studio
 from ...nodegraph.viewer import F8StudioNodeViewer
-from ...pystudio_service_bridge import STARTUP_GATE_TIMEOUT_S, PyStudioServiceBridge, PyStudioServiceBridgeConfig
-from ...pystudio_node_registry import SERVICE_CLASS as STUDIO_SERVICE_CLASS
+from f8pystudio.bridge.studio_bridge import STARTUP_GATE_TIMEOUT_S, PyStudioServiceBridge, PyStudioServiceBridgeConfig
+from f8pystudio.studio_specs.registry import SERVICE_CLASS as STUDIO_SERVICE_CLASS
 from ...ui.support.ui_notifications import show_info, show_warning
-from ...ui_bus import UiCommand
+from f8pystudio.contracts.ui_commands import UiCommand
 from ...ui.support.ui_icons import StudioIcon, icon_for
 from ...global_hotkeys.controller import ControlPanelGlobalHotkeyController
 from ...assets.variants.variant_sync import VariantSyncClient
@@ -24,8 +24,8 @@ from ..dialogs.node_docs_dialog import show_node_docs_dialog
 from ..dialogs.global_hotkey_registry_dialog import GlobalHotkeyRegistryDialog
 from ..widgets.layers_panel import LayersPanelWidget
 from ..widgets.node_property_panel import F8StudioSingleNodePropertiesWidget
-from ..widgets.node_library_widget import F8StudioNodeLibraryWidget
-from ..widgets.service_manager_widget import ServiceManagerWidget
+from .node_library_widget import F8StudioNodeLibraryWidget
+from .service_manager_widget import ServiceManagerWidget
 from ..support.service_inventory import collect_declared_service_ids, collect_declared_services
 from ..widgets.service_log_widget import ServiceLogDock
 from ..support.runtime_state_sync import RuntimeStateSyncController

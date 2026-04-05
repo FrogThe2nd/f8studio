@@ -3,8 +3,8 @@ from __future__ import annotations
 from typing import Any
 
 from f8pystudio.bridge.nats_lifecycle import SINGLETON_GUARD_DIALOG_TITLE
-from f8pystudio.pystudio_program import PyStudioProgram
-from f8pystudio.pystudio_service_bridge import STARTUP_GATE_TIMEOUT_S
+from f8pystudio.app.program import PyStudioProgram
+from f8pystudio.bridge.studio_bridge import STARTUP_GATE_TIMEOUT_S
 
 
 class _FakeApp:
@@ -113,16 +113,16 @@ def _patch_program_dependencies(monkeypatch) -> list[tuple[object | None, str, s
         "qtpy.QtWidgets.QMessageBox.warning",
         lambda parent, title, message: warnings.append((parent, str(title), str(message))),
     )
-    monkeypatch.setattr("f8pystudio.pystudio_program.PyStudioServiceBridge", _FakeBridge)
+    monkeypatch.setattr("f8pystudio.app.program.PyStudioServiceBridge", _FakeBridge)
     monkeypatch.setattr("f8pystudio.ui.mainwin.main_window.F8StudioMainWin", _FakeMainWindow)
     monkeypatch.setattr(PyStudioProgram, "_load_plugin_manifests", lambda self: [])
     monkeypatch.setattr(PyStudioProgram, "_apply_plugin_manifests_to_runtime_registry", lambda self, manifests, registry: None)
     monkeypatch.setattr(PyStudioProgram, "_apply_plugin_manifests_to_renderers", lambda self, manifests: None)
     monkeypatch.setattr(PyStudioProgram, "build_node_classes", lambda self: [])
     monkeypatch.setattr(PyStudioProgram, "_studio_icon_path", lambda self: None)
-    monkeypatch.setattr("f8pystudio.pystudio_program.load_discovery_into_catalog", lambda **_kwargs: None)
-    monkeypatch.setattr("f8pystudio.pystudio_program.last_discovery_timing_lines", lambda: ["timing-1"])
-    monkeypatch.setattr("f8pystudio.pystudio_program.last_discovery_error_lines", lambda: ["error-1"])
+    monkeypatch.setattr("f8pystudio.app.program.load_discovery_into_catalog", lambda **_kwargs: None)
+    monkeypatch.setattr("f8pystudio.app.program.last_discovery_timing_lines", lambda: ["timing-1"])
+    monkeypatch.setattr("f8pystudio.app.program.last_discovery_error_lines", lambda: ["error-1"])
     monkeypatch.setattr("f8pystudio.ui.support.qt_font_utils.normalize_application_font", lambda app: None)
     monkeypatch.setattr("f8pystudio.ui.support.webengine_utils.configure_default_webengine_profile", lambda: None)
     return warnings

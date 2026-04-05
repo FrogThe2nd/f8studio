@@ -9,10 +9,10 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from f8pystudio.constants import SERVICE_CLASS as STUDIO_SERVICE_CLASS  # noqa: E402
-from f8pystudio.constants import STUDIO_SERVICE_ID  # noqa: E402
-from f8pystudio.pystudio_service_bridge import ServiceMonitorRow  # noqa: E402
-from f8pystudio.ui.widgets.service_manager_widget import ServiceManagerWidget  # noqa: E402
+from f8pystudio.studio_specs.identifiers import SERVICE_CLASS as STUDIO_SERVICE_CLASS  # noqa: E402
+from f8pystudio.studio_specs.identifiers import STUDIO_SERVICE_ID  # noqa: E402
+from f8pystudio.bridge.studio_bridge import ServiceMonitorRow  # noqa: E402
+from f8pystudio.ui.mainwin.service_manager_widget import ServiceManagerWidget  # noqa: E402
 
 
 class _FakeBridge:

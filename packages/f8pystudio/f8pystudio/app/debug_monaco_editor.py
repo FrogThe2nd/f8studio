@@ -12,13 +12,13 @@ from qtpy import QtCore, QtWidgets
 from f8pysdk import F8OperatorSpec
 from f8pysdk.msgspec_codec import dump_json, validate_as
 
-from ..app_logging import configure_root_logging_from_env
-from ..editor_assist.session import EditorSessionKey
-from ..ui.support.qt_font_utils import normalize_application_font
-from ..ui.support.webengine_utils import configure_default_webengine_profile
-from ..ui.support.monaco_editor_host import open_code_editor_window
-from .protocol import editor_assist_context_for_field
-from .workspace import EditorAssistContext
+from f8pystudio.diagnostics.logging import configure_root_logging_from_env
+from f8pystudio.editor_assist.protocol import editor_assist_context_for_field
+from f8pystudio.editor_assist.session import EditorSessionKey
+from f8pystudio.editor_assist.workspace import EditorAssistContext
+from f8pystudio.ui.support.monaco_editor_host import open_code_editor_window
+from f8pystudio.ui.support.qt_font_utils import normalize_application_font
+from f8pystudio.ui.support.webengine_utils import configure_default_webengine_profile
 
 logger = logging.getLogger(__name__)
 

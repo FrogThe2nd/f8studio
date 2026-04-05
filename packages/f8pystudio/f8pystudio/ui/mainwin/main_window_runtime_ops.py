@@ -3,8 +3,8 @@ from __future__ import annotations
 from typing import Callable, Iterable, Protocol
 
 from ...nodegraph.runtime_compiler import CompiledRuntimeGraphs
-from ...pystudio_node_registry import SERVICE_CLASS as STUDIO_SERVICE_CLASS
-from ...ui_bus import UiCommand, UiCommandApplier
+from f8pystudio.studio_specs.registry import SERVICE_CLASS as STUDIO_SERVICE_CLASS
+from f8pystudio.contracts.ui_commands import UiCommand, UiCommandApplier
 
 
 class MainWindowLogDockLike(Protocol):

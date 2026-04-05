@@ -18,7 +18,7 @@ from f8pysdk.schema_helpers import schema_default
 
 from qtpy import QtCore, QtWidgets
 
-from ....command_ui_protocol import CommandUiHandler, CommandUiSource
+from f8pystudio.contracts.command_ui import CommandUiHandler, CommandUiSource
 from ...components.controls import F8OptionCombo, F8Switch, F8ValueBar
 from ....ui.support.ui_notifications import show_warning
 from ....ui.support.ui_icons import StudioIcon

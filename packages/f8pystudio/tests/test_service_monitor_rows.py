@@ -9,7 +9,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from f8pysdk.time_utils import now_ms  # noqa: E402
-from f8pystudio.pystudio_service_bridge import (  # noqa: E402
+from f8pystudio.bridge.studio_bridge import (  # noqa: E402
     PyStudioServiceBridge,
     PyStudioServiceBridgeConfig,
 )

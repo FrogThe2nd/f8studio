@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import os
 
-from .app_logging import configure_root_logging_from_env
+from f8pystudio.diagnostics.logging import configure_root_logging_from_env
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -18,7 +18,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    from .pystudio_program import PyStudioProgram
+    from f8pystudio.app.program import PyStudioProgram
 
     if args.discovery_live:
         os.environ["F8_DISCOVERY_DISABLE_STATIC_DESCRIBE"] = "1"

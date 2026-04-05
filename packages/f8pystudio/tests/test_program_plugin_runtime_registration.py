@@ -4,8 +4,8 @@ import logging
 
 from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
 
-from f8pystudio.plugin_api import PluginOperatorRegistration, StudioPluginManifest
-from f8pystudio.pystudio_program import PyStudioProgram
+from f8pystudio.plugins.api import PluginOperatorRegistration, StudioPluginManifest
+from f8pystudio.app.program import PyStudioProgram
 
 
 def test_program_plugin_runtime_registration_is_applied() -> None:

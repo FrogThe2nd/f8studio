@@ -16,12 +16,12 @@ from f8pysdk.service_runtime_tools.discovery import (
     load_discovery_into_catalog,
 )
 
-from .plugin_api import StudioPluginManifest
-from .plugin_loader import load_entrypoint_plugins
-from .pystudio_node_registry import SERVICE_CLASS, register_pystudio_specs
-from .bridge.nats_lifecycle import SINGLETON_GUARD_DIALOG_TITLE
-from .pystudio_service_bridge import STARTUP_GATE_TIMEOUT_S, PyStudioServiceBridge, PyStudioServiceBridgeConfig
-from .ui.support.ui_resources import studio_logo_path
+from f8pystudio.plugins.api import StudioPluginManifest
+from f8pystudio.plugins.loader import load_entrypoint_plugins
+from f8pystudio.bridge.nats_lifecycle import SINGLETON_GUARD_DIALOG_TITLE
+from f8pystudio.studio_specs.registry import SERVICE_CLASS, register_pystudio_specs
+from f8pystudio.bridge.studio_bridge import STARTUP_GATE_TIMEOUT_S, PyStudioServiceBridge, PyStudioServiceBridgeConfig
+from f8pystudio.ui.support.ui_resources import studio_logo_path
 
 logger = logging.getLogger(__name__)
 MISSING_SERVICE_NODE_TYPE = "svc.f8.missing.service"
@@ -117,7 +117,7 @@ class PyStudioProgram:
     def _apply_plugin_manifests_to_renderers(manifests: list[StudioPluginManifest]) -> None:
         if not manifests:
             return
-        from .render_nodes import RenderNodeRegistry
+        from f8pystudio.render_nodes import RenderNodeRegistry
 
         render_registry = RenderNodeRegistry.instance()
         for manifest in manifests:
@@ -143,9 +143,9 @@ class PyStudioProgram:
 
     @staticmethod
     def build_node_classes() -> list[type]:
-        from .render_nodes import RenderNodeRegistry
-        from .nodegraph.missing_operator_basenode import F8StudioOperatorMissingNode
-        from .nodegraph.missing_service_basenode import F8StudioServiceMissingNode
+        from f8pystudio.render_nodes import RenderNodeRegistry
+        from f8pystudio.nodegraph.missing_operator_basenode import F8StudioOperatorMissingNode
+        from f8pystudio.nodegraph.missing_service_basenode import F8StudioServiceMissingNode
 
         render_node_reg = RenderNodeRegistry.instance()
         service_catalog = ServiceCatalog.instance()
@@ -198,8 +198,8 @@ class PyStudioProgram:
         # Local import: keep `--describe` fast and avoid importing Qt at module import time.
         from qtpy import QtCore, QtGui, QtWidgets
 
-        from .ui.support.qt_font_utils import normalize_application_font
-        from .ui.mainwin.main_window import F8StudioMainWin
+        from f8pystudio.ui.support.qt_font_utils import normalize_application_font
+        from f8pystudio.ui.mainwin.main_window import F8StudioMainWin
 
         manifests = self._load_plugin_manifests()
         self._apply_plugin_manifests_to_runtime_registry(manifests, registry=RuntimeNodeRegistry.instance())

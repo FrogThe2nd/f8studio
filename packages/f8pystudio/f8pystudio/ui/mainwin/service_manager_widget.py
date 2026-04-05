@@ -5,9 +5,9 @@ from typing import Callable
 
 from qtpy import QtCore, QtGui, QtWidgets
 
-from ...constants import SERVICE_CLASS as STUDIO_SERVICE_CLASS
-from ...constants import STUDIO_SERVICE_ID
-from ...pystudio_service_bridge import PyStudioServiceBridge, ServiceMonitorRow
+from f8pystudio.studio_specs.identifiers import SERVICE_CLASS as STUDIO_SERVICE_CLASS
+from f8pystudio.studio_specs.identifiers import STUDIO_SERVICE_ID
+from f8pystudio.bridge.studio_bridge import PyStudioServiceBridge, ServiceMonitorRow
 from ...ui.support.ui_icons import StudioIcon, icon_for
 
 
