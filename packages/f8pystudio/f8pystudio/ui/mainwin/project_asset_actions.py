@@ -13,6 +13,7 @@ from ...assets.common import JsonObject, new_asset_id
 from ...assets.ui.component_catalog_dialog import ComponentCatalogDialog
 from ...assets.ui.component_insert_dialog import ComponentInsertDialog
 from ...assets.ui.project_asset_dialogs import (
+    AssetVersionBrowserAction,
     AssetVersionBrowserDialog,
     AssetVersionBrowserItem,
     ProjectAssetMetaDialog,
@@ -358,52 +359,94 @@ def show_project_history_dialog(
     if current_project is None:
         show_info_message(parent, "No project", "No local project was found.")
         return False
+    project_id = current_project.projectId
+    while True:
+        current_project = service.project(project_id)
+        if current_project is None:
+            show_info_message(parent, "No project", "No local project was found.")
+            return False
+        versions = service.list_project_versions(current_project.projectId)
+        if not versions:
+            show_info_message(parent, "Project History", "No project history found.")
+            return False
 
-    versions = service.list_project_versions(current_project.projectId)
-    if not versions:
-        show_info_message(parent, "Project History", "No project history found.")
-        return False
+        dialog = AssetVersionBrowserDialog(
+            parent=parent,
+            title=f"Project History - {current_project.name}",
+            items=[
+                AssetVersionBrowserItem(version_number=int(version.versionNumber), created_at=str(version.createdAt))
+                for version in versions
+            ],
+            load_payload=lambda version_number: dump_json(
+                _require_project_version_payload(
+                    service=service,
+                    project_id=current_project.projectId,
+                    version_number=version_number,
+                ),
+                mode="json",
+            ),
+            actions=[
+                AssetVersionBrowserAction(action_key="restore", label="Restore As Latest"),
+                AssetVersionBrowserAction(action_key="delete", label="Delete Version"),
+            ],
+        )
+        if dialog.exec() != QtWidgets.QDialog.Accepted:
+            return False
 
-    dialog = AssetVersionBrowserDialog(
-        parent=parent,
-        title=f"Project History - {current_project.name}",
-        items=[
-            AssetVersionBrowserItem(version_number=int(version.versionNumber), created_at=str(version.createdAt))
-            for version in versions
-        ],
-        load_payload=lambda version_number: dump_json(
-            _require_project_version_payload(service=service, project_id=current_project.projectId, version_number=version_number),
-            mode="json",
-        ),
-        primary_action_label="Restore As Latest",
-    )
-    if dialog.exec() != QtWidgets.QDialog.Accepted:
-        return False
-
-    selected_version_number = dialog.selected_version_number()
-    if selected_version_number is None:
-        return False
-    try:
-        restored = service.restore_project_version(
-            project_id=current_project.projectId,
-            version_number=int(selected_version_number),
-        )
-        studio_graph.load_session_payload(restored.content)
-        log_dock.append(
-            "studio",
-            f"[project] restored version v{selected_version_number} as latest ({restored.projectId})\n",
-        )
-        show_info_message(
-            parent,
-            "Project restored",
-            f"Restored project version v{selected_version_number} as the latest version.",
-        )
-        return True
-    except Exception as exc:
-        log_dock.append("studio", f"[project] restore failed: {exc}\n")
-        log_dock.report_exception("studio", "project restore failed", exc)
-        show_warning(parent, "Restore failed", f"Failed to restore project version.\n\n{exc}")
-        return False
+        selected_version_number = dialog.selected_version_number()
+        if selected_version_number is None:
+            return False
+        selected_action_key = str(dialog.selected_action_key() or "restore")
+        if selected_action_key == "delete":
+            answer = QtWidgets.QMessageBox.question(
+                parent,
+                "Delete project version",
+                f"Delete project history version v{selected_version_number}?\nThis cannot be undone.",
+                QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+                QtWidgets.QMessageBox.No,
+            )
+            if answer != QtWidgets.QMessageBox.Yes:
+                continue
+            try:
+                service.delete_project_version(
+                    project_id=current_project.projectId,
+                    version_number=int(selected_version_number),
+                )
+                log_dock.append(
+                    "studio",
+                    f"[project] deleted version v{selected_version_number} ({current_project.projectId})\n",
+                )
+                show_info_message(
+                    parent,
+                    "Project version deleted",
+                    f"Deleted project version v{selected_version_number}.",
+                )
+            except Exception as exc:
+                log_dock.append("studio", f"[project] delete failed: {exc}\n")
+                log_dock.report_exception("studio", "project delete failed", exc)
+                show_warning(parent, "Delete failed", f"Failed to delete project version.\n\n{exc}")
+            continue
+        try:
+            restored = service.restore_project_version(
+                project_id=current_project.projectId,
+                version_number=int(selected_version_number),
+            )
+            studio_graph.load_session_payload(restored.content)
+            log_dock.append(
+                "studio",
+                f"[project] restored version v{selected_version_number} as latest ({restored.projectId})\n",
+            )
+            show_info_message(
+                parent,
+                "Project restored",
+                f"Restored project version v{selected_version_number} as the latest version.",
+            )
+            return True
+        except Exception as exc:
+            log_dock.append("studio", f"[project] restore failed: {exc}\n")
+            log_dock.report_exception("studio", "project restore failed", exc)
+            show_warning(parent, "Restore failed", f"Failed to restore project version.\n\n{exc}")
+            return False
 
 
 def insert_graph_json_dialog(

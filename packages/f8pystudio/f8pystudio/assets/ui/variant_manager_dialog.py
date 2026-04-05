@@ -881,8 +881,6 @@ class VariantManagerDialog(QtWidgets.QDialog):
         if selected_entry is None:
             return
         try:
-            if not self._ensure_logged_in():
-                return
             installed = self._sync_client.hydrate_variant(str(selected_entry.record.variantId))
         except Exception as exc:
             show_warning(self, "Install failed", str(exc))

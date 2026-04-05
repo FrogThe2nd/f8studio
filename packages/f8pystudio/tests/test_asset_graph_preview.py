@@ -398,3 +398,44 @@ def test_variant_dialog_hydration_failure_updates_raw_and_preview(monkeypatch) -
     assert "boom" in dialog._preview.current_status_text()
 
     dialog.close()
+
+
+def test_variant_dialog_install_allows_anonymous_public_variant(monkeypatch) -> None:
+    _ensure_app()
+    monkeypatch.setattr("f8pystudio.assets.ui.variant_manager_dialog.subscribe_variants_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(VariantManagerDialog, "_reload", lambda self, *_args: None)
+    monkeypatch.setattr("f8pystudio.assets.ui.variant_manager_dialog.show_info", lambda *_args, **_kwargs: None)
+    dialog = VariantManagerDialog(
+        parent=None,
+        base_node_type="svc.preview.variant",
+        base_node_name="Preview Variant",
+        node_graph=None,
+    )
+    entry = F8VariantEntry(
+        record=F8VariantRecord(
+            variantId="variant-public",
+            kind=F8VariantKind.service,
+            baseNodeType="svc.preview.service",
+            serviceClass="svc.preview.service",
+            operatorClass=None,
+            name="Public Variant",
+            description="",
+            tags=[],
+            spec={"label": "Public Variant"},
+            createdAt=variant_now_iso(),
+            updatedAt=variant_now_iso(),
+        ),
+        source=F8VariantSourceKind.remote_public,
+        installed=False,
+    )
+    install_calls: list[str] = []
+
+    dialog._selected_entry = lambda: entry  # type: ignore[method-assign]
+    dialog._ensure_logged_in = lambda: (_ for _ in ()).throw(AssertionError("install should not require login"))  # type: ignore[method-assign]
+    dialog._sync_client.hydrate_variant = lambda variant_id: install_calls.append(str(variant_id)) or entry  # type: ignore[method-assign]
+
+    dialog._on_install_clicked()
+
+    assert install_calls == ["variant-public"]
+
+    dialog.close()
