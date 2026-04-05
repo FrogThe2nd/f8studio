@@ -154,3 +154,28 @@ def test_local_variant_provider_preserves_service_variant_without_operator_class
 
     assert len(loaded) == 1
     assert isinstance(loaded[0].record.operatorClass, msgspec.UnsetType)
+
+
+def test_variant_catalog_service_tracks_local_version_numbers(tmp_path: Path) -> None:
+    service = VariantCatalogService(db_path=tmp_path / "assets.db")
+    first = service.upsert_local_entry(
+        F8VariantEntry(
+            record=_make_record(variant_id="local-1", base_node_type="svc.a.op", name="Local One"),
+            source=F8VariantSourceKind.local,
+            syncState=F8VariantSyncState.local_only,
+        )
+    )
+    second = service.upsert_local_entry(
+        F8VariantEntry(
+            record=_make_record(variant_id="local-1", base_node_type="svc.a.op", name="Local One"),
+            source=F8VariantSourceKind.local,
+            syncState=F8VariantSyncState.local_only,
+        )
+    )
+
+    loaded = service.entry("local-1", include_uninstalled=True)
+
+    assert first.localVersionNumber == 1
+    assert second.localVersionNumber == 2
+    assert loaded is not None
+    assert loaded.localVersionNumber == 2

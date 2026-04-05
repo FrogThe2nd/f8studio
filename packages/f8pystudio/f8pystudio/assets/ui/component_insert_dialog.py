@@ -10,6 +10,7 @@ from qtpy import QtCore, QtWidgets
 from f8pysdk.msgspec_codec import dump_json
 
 from ..components.component_events import subscribe_components_changed
+from ..components.component_catalog import component_entry_is_installed
 from ..components.component_models import F8ComponentEntry, F8ComponentSourceKind
 from ..components.component_repository import list_component_entries
 from ..components.component_sync import ComponentSyncClient
@@ -270,7 +271,7 @@ class ComponentInsertDialog(QtWidgets.QDialog):
             self._insert_btn.setEnabled(False)
             return
         self._raw.setPlainText(json.dumps(dump_json(selected_entry, mode="json"), ensure_ascii=False, indent=2, default=str))
-        can_install = selected_entry.source != F8ComponentSourceKind.local and not bool(selected_entry.installed)
+        can_install = selected_entry.source != F8ComponentSourceKind.local and not component_entry_is_installed(selected_entry)
         self._install_btn.setEnabled(can_install)
         self._insert_btn.setEnabled(True)
 
@@ -409,7 +410,7 @@ class ComponentInsertDialog(QtWidgets.QDialog):
         if selected_entry is None:
             return
         try:
-            self._sync_client.install_component(str(selected_entry.record.componentId))
+            self._sync_client.hydrate_component(str(selected_entry.record.componentId))
         except Exception as exc:
             show_warning(self, "Install failed", str(exc))
             return
@@ -420,9 +421,9 @@ class ComponentInsertDialog(QtWidgets.QDialog):
         if selected_entry is None:
             return
         entry_to_insert = selected_entry
-        if entry_to_insert.source != F8ComponentSourceKind.local and not entry_to_insert.installed:
+        if entry_to_insert.source != F8ComponentSourceKind.local and not component_entry_is_installed(entry_to_insert):
             try:
-                entry_to_insert = self._sync_client.install_component(str(entry_to_insert.record.componentId))
+                entry_to_insert = self._sync_client.hydrate_component(str(entry_to_insert.record.componentId))
             except Exception as exc:
                 show_warning(self, "Install failed", str(exc))
                 return
@@ -504,7 +505,7 @@ def installed_component_entries(
     filtered = [
         entry
         for entry in entries
-        if (entry.source == F8ComponentSourceKind.local or bool(entry.installed))
+        if component_entry_is_installed(entry)
         and component_entry_matches_query(entry, query=query)
     ]
     if filter_value == "mine":
@@ -548,7 +549,7 @@ def component_insert_badges(entry: F8ComponentEntry) -> list[str]:
         badges.append("cloud")
     if entry.visibility is not None:
         badges.append(entry.visibility.value)
-    badges.append("installed" if entry.source == F8ComponentSourceKind.local or entry.installed else "install on insert")
+    badges.append("installed" if component_entry_is_installed(entry) else "install on insert")
     if entry.subscribed:
         badges.append("subscribed")
     return badges

@@ -69,7 +69,13 @@ class LocalComponentProvider:
         for row in rows:
             row_mapping = _row_mapping(row)
             record = _component_record_from_row(row_mapping, updated_at_key="updated_at")
-            out.append(F8ComponentEntry(record=record, source=F8ComponentSourceKind.local))
+            out.append(
+                F8ComponentEntry(
+                    record=record,
+                    source=F8ComponentSourceKind.local,
+                    localVersionNumber=mapping_int(row_mapping, "latest_version_number"),
+                )
+            )
         return out
 
     def save_entry(self, entry: F8ComponentEntry) -> F8ComponentEntry:
@@ -141,6 +147,8 @@ class LocalComponentProvider:
             downloadedAt=entry.downloadedAt,
             installed=entry.installed,
             subscribed=entry.subscribed,
+            localVersionNumber=version_number,
+            remoteVersionNumber=entry.remoteVersionNumber,
         )
 
     def delete_entry(self, component_id: str) -> bool:
@@ -185,9 +193,9 @@ class RemoteComponentCacheProvider:
         for row in rows:
             row_mapping = _row_mapping(row)
             try:
-                record_payload = json_object_loads(_decompress_content(row_mapping.get("content")))
                 metadata = RemoteCacheMetadata.from_row(row_mapping)
-                entry = _component_entry_from_remote(record_payload, metadata)
+                cache_payload = json_object_loads(_decompress_content(row_mapping.get("content")))
+                entry = _component_entry_from_remote_cache_payload(cache_payload, metadata)
             except Exception:
                 logger.exception("Ignoring invalid cached remote component entry")
                 invalid_found = True
@@ -232,9 +240,9 @@ class RemoteComponentCacheProvider:
                         remote_revision=metadata.remote_revision,
                         sync_state=metadata.sync_state,
                         downloaded_at=metadata.downloaded_at,
-                        installed=1 if metadata.installed else 0,
+                        installed=1 if metadata.installed and component_entry_has_cached_content(entry) else 0,
                         subscribed=1 if metadata.subscribed else 0,
-                        content=_compress_content(stable_json_dumps(_component_record_payload(entry.record))),
+                        content=_compress_content(stable_json_dumps(_component_remote_cache_payload(entry))),
                         updated_at=component_now_iso(),
                     )
                 )
@@ -270,7 +278,7 @@ class ComponentCatalogService:
         for entry in self.load_all_entries():
             if str(entry.record.componentId) != normalized_component_id:
                 continue
-            if include_uninstalled or entry.installed or entry.source == F8ComponentSourceKind.local:
+            if include_uninstalled or component_entry_is_installed(entry):
                 return entry
         return None
 
@@ -278,7 +286,7 @@ class ComponentCatalogService:
         entries = self.load_all_entries()
         if include_uninstalled:
             return entries
-        return [entry for entry in entries if entry.installed or entry.source == F8ComponentSourceKind.local]
+        return [entry for entry in entries if component_entry_is_installed(entry)]
 
     def upsert_local_entry(self, entry: F8ComponentEntry) -> F8ComponentEntry:
         local_entry = entry if entry.source == F8ComponentSourceKind.local else copy_model(entry, update={"source": F8ComponentSourceKind.local})
@@ -329,7 +337,13 @@ class ComponentCatalogService:
         return self._remote_provider.load_entries()
 
     def install_remote_entry(self, entry: F8ComponentEntry) -> F8ComponentEntry:
-        installed_entry = copy_model(entry, update={"installed": True, "downloadedAt": component_now_iso()})
+        installed_entry = copy_model(
+            entry,
+            update={
+                "installed": component_entry_has_cached_content(entry),
+                "downloadedAt": component_now_iso(),
+            },
+        )
         current = self._remote_provider.load_entries()
         out: list[F8ComponentEntry] = []
         found = False
@@ -445,7 +459,80 @@ def _component_entry_from_remote(record_payload: JsonObject, metadata: RemoteCac
         downloadedAt=metadata.downloaded_at,
         installed=metadata.installed,
         subscribed=metadata.subscribed,
+        remoteVersionNumber=_payload_optional_int(record_payload, "remoteVersionNumber"),
     )
+
+
+def _component_entry_from_remote_cache_payload(cache_payload: JsonObject, metadata: RemoteCacheMetadata) -> F8ComponentEntry:
+    if "head" not in cache_payload:
+        entry = _component_entry_from_remote(cache_payload, metadata)
+        return copy_model(entry, update={"installed": component_entry_has_cached_content(entry) or bool(metadata.installed)})
+    head_payload = cache_payload.get("head")
+    if not isinstance(head_payload, dict):
+        raise ValueError("Remote component cache is missing head payload.")
+    hydrated_payload = cache_payload.get("hydratedRecord")
+    head_record = _component_record_from_payload(json_object_loads(stable_json_dumps(head_payload)))
+    if isinstance(hydrated_payload, dict):
+        record = _component_record_from_payload(json_object_loads(stable_json_dumps(hydrated_payload)))
+        installed = True
+    else:
+        record = head_record
+        installed = False
+    base_entry = _component_entry_from_remote(_component_record_payload(record), metadata)
+    return copy_model(
+        base_entry,
+        update={
+            "installed": installed,
+            "remoteVersionNumber": _payload_optional_int(cache_payload, "remoteVersionNumber"),
+        },
+    )
+
+
+def _component_remote_cache_payload(entry: F8ComponentEntry) -> JsonObject:
+    return {
+        "head": _component_record_payload(_component_head_record(entry.record)),
+        "hydratedRecord": (
+            _component_record_payload(entry.record)
+            if entry.installed and component_entry_has_cached_content(entry)
+            else None
+        ),
+        "remoteVersionNumber": entry.remoteVersionNumber,
+    }
+
+
+def _component_head_record(record: F8ComponentRecord) -> F8ComponentRecord:
+    return F8ComponentRecord(
+        componentId=str(record.componentId),
+        name=str(record.name),
+        description=str(record.description),
+        usageNotes=str(record.usageNotes),
+        tags=[str(tag) for tag in list(record.tags or []) if str(tag).strip()],
+        schemaVersion=str(record.schemaVersion),
+        content={},
+        createdAt=str(record.createdAt),
+        updatedAt=str(record.updatedAt),
+    )
+
+
+def component_entry_has_cached_content(entry: F8ComponentEntry) -> bool:
+    content = entry.record.content
+    layout_value = content.get("layout")
+    schema_version_value = content.get("schemaVersion")
+    return isinstance(layout_value, dict) and isinstance(schema_version_value, str) and bool(schema_version_value.strip())
+
+
+def component_entry_is_installed(entry: F8ComponentEntry) -> bool:
+    if entry.source == F8ComponentSourceKind.local:
+        return True
+    return bool(entry.installed and component_entry_has_cached_content(entry))
+
+
+def component_entry_can_hydrate(entry: F8ComponentEntry) -> bool:
+    return entry.source in {
+        F8ComponentSourceKind.remote_official,
+        F8ComponentSourceKind.remote_public,
+        F8ComponentSourceKind.remote_private,
+    }
 
 
 def _payload_str(payload: JsonObject, key: str) -> str:
@@ -471,3 +558,10 @@ def _payload_string_list(payload: JsonObject, key: str) -> list[str]:
     if value is None:
         return []
     return json_string_list_loads(value)
+
+
+def _payload_optional_int(payload: JsonObject, key: str) -> int | None:
+    value = payload.get(key)
+    if value is None:
+        return None
+    return int(str(value))

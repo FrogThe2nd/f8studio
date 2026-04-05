@@ -17,6 +17,7 @@ from f8pystudio.assets.components.component_models import (
 )
 from f8pystudio.assets.components.component_sync import ComponentSyncClient
 from f8pystudio.assets.db import component_remote_cache_table
+from f8pystudio.assets.ui.component_catalog_dialog import component_row_state_for_entries
 
 
 def _component_record(component_id: str, name: str) -> dict[str, object]:
@@ -248,6 +249,7 @@ def test_component_sync_client_supports_anonymous_public_install_and_cookie_sess
         anonymous_page = client.list_components(scope="community")
         assert anonymous_page.entries[0].record.componentId == "public-1"
         assert anonymous_page.entries[0].source == F8ComponentSourceKind.remote_public
+        assert anonymous_page.entries[0].remoteVersionNumber == 1
 
         installed = client.install_component("public-1")
         assert installed.installed is True
@@ -265,6 +267,7 @@ def test_component_sync_client_supports_anonymous_public_install_and_cookie_sess
         cached_public = service.entry("public-1", include_uninstalled=True)
         assert cached_public is not None
         assert isinstance(cached_public.record.content.get("layout"), dict)
+        assert cached_public.remoteVersionNumber == 1
 
         mine_page = client.list_components(scope="mine")
         assert mine_page.entries[0].record.componentId == "private-1"
@@ -363,3 +366,82 @@ def test_component_remote_cache_load_cleans_empty_component_ids(tmp_path: Path) 
     with provider._db.connect_sqla() as conn:
         rows = conn.execute(select(component_remote_cache_table.c.component_id)).all()
     assert rows == []
+
+
+def test_component_remote_cache_legacy_full_record_counts_as_installed(tmp_path: Path) -> None:
+    service = ComponentCatalogService(db_path=tmp_path / "assets.db")
+    provider = service._remote_provider
+    legacy_record = _component_record("legacy-1", "Legacy Installed Component")
+    with provider._db.begin_sqla() as conn:
+        _ = conn.execute(
+            insert(component_remote_cache_table).values(
+                component_id="legacy-1",
+                source="remote_public",
+                visibility="public",
+                owner_user_id="u1",
+                owner_display_name="User One",
+                library_slug="community",
+                remote_revision="r1",
+                sync_state="synced",
+                downloaded_at="2026-04-04T00:00:00+00:00",
+                installed=0,
+                subscribed=0,
+                content=json.dumps(legacy_record).encode("utf-8"),
+                updated_at="2026-04-04T00:00:00+00:00",
+            )
+        )
+
+    loaded = service.entry("legacy-1", include_uninstalled=False)
+    assert loaded is not None
+    assert loaded.record.componentId == "legacy-1"
+    assert loaded.record.content["schemaVersion"] == "f8studio-session/1"
+
+
+def test_component_row_state_badges_cover_local_remote_and_both() -> None:
+    local_entry = F8ComponentEntry(
+        record=F8ComponentRecord(componentId="asset-1", name="Local"),
+        source=F8ComponentSourceKind.local,
+        localVersionNumber=3,
+    )
+    remote_entry = F8ComponentEntry(
+        record=F8ComponentRecord(
+            componentId="asset-1",
+            name="Remote",
+            schemaVersion="f8studio-session/1",
+            content={"schemaVersion": "f8studio-session/1", "layout": {"nodes": {}, "connections": []}},
+        ),
+        source=F8ComponentSourceKind.remote_public,
+        visibility=F8ComponentVisibility.public,
+        installed=True,
+        remoteVersionNumber=5,
+    )
+
+    both_state = component_row_state_for_entries(
+        component_id="asset-1",
+        local_entry=local_entry,
+        remote_entry=remote_entry,
+    )
+    remote_state = component_row_state_for_entries(
+        component_id="asset-2",
+        local_entry=None,
+        remote_entry=F8ComponentEntry(
+            record=F8ComponentRecord(componentId="asset-2", name="Remote Only"),
+            source=F8ComponentSourceKind.remote_public,
+            visibility=F8ComponentVisibility.public,
+            installed=False,
+            remoteVersionNumber=2,
+        ),
+    )
+    local_state = component_row_state_for_entries(
+        component_id="asset-3",
+        local_entry=F8ComponentEntry(
+            record=F8ComponentRecord(componentId="asset-3", name="Local Only"),
+            source=F8ComponentSourceKind.local,
+            localVersionNumber=1,
+        ),
+        remote_entry=None,
+    )
+
+    assert both_state.badge_texts() == ["both", "public", "synced", "L3", "R5"]
+    assert remote_state.badge_texts() == ["remote", "public", "R2"]
+    assert local_state.badge_texts() == ["local", "L1"]

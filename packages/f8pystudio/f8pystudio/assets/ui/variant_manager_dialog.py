@@ -28,8 +28,10 @@ from ..variants.variant_repository import (
 )
 from ..variants.variant_events import subscribe_variants_changed
 from ..variants.variant_sync import VariantSyncClient
+from ..variants.variant_catalog import variant_entry_is_installed
 from ...ui.support.json_text_editor import attach_json_enhancements
 from .asset_cloud_account_menu import build_asset_account_menu, prompt_asset_cloud_sign_in
+from .catalog_status import AssetCatalogRowState, build_asset_catalog_row_state
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +114,7 @@ class VariantManagerDialog(QtWidgets.QDialog):
         self._base_node_name = str(base_node_name or "").strip() or self._base_node_type
         self._graph = node_graph
         self._entries: list[F8VariantEntry] = []
+        self._row_states_by_variant_id: dict[str, AssetCatalogRowState] = {}
         self._sync_client = VariantSyncClient()
         self._initial_remote_refresh_done = False
         self._tab_queries: dict[int, str] = {
@@ -315,15 +318,16 @@ class VariantManagerDialog(QtWidgets.QDialog):
             raise
 
     def _matches_filter(self, entry: F8VariantEntry) -> bool:
+        row_state = self._row_state_for_entry(entry)
         current_tab = self._scope_tabs.currentIndex()
         current_filter = self._current_filter_value()
         if current_tab == self._TAB_MINE:
             if not self._is_mine_entry(entry):
                 return False
             if current_filter == "local":
-                return entry.source == F8VariantSourceKind.local
+                return row_state.has_local_head
             if current_filter == "private":
-                return entry.source == F8VariantSourceKind.remote_private
+                return row_state.has_remote_head and row_state.visibility == F8VariantVisibility.private.value
             if current_filter == "shared":
                 return self._is_owned_remote_shared_entry(entry)
             return True
@@ -340,17 +344,18 @@ class VariantManagerDialog(QtWidgets.QDialog):
                 return not bool(entry.subscribed)
             return True
         if current_tab == self._TAB_INSTALLED:
-            if not bool(entry.installed):
+            if not row_state.has_local_presence:
                 return False
             if current_filter == "mine":
-                return self._is_mine_entry(entry)
+                return row_state.has_local_head or self._is_owned_remote_entry(entry)
             if current_filter == "subscribed":
-                return bool(entry.subscribed) and not self._is_owned_remote_entry(entry)
+                return row_state.subscribed and not self._is_owned_remote_entry(entry)
             return True
         return False
 
     def _reload(self, *_args: Any) -> None:
         self._refresh_remote_catalog_if_needed()
+        self._row_states_by_variant_id = self._build_row_states()
         self._entries = self._entries_for_current_tab()
         logger.info(
             "Variant manager reload tab=%s base_node_type=%s count=%d entries=%s",
@@ -397,7 +402,8 @@ class VariantManagerDialog(QtWidgets.QDialog):
         title_row = QtWidgets.QHBoxLayout()
         title_row.setContentsMargins(0, 0, 0, 0)
         title_row.setSpacing(6)
-        if entry.subscribed:
+        row_state = self._row_state_for_entry(entry)
+        if row_state.subscribed:
             icon_label = QtWidgets.QLabel(container)
             icon_label.setPixmap(icon_for(container, StudioIcon.HEART_ON).pixmap(14, 14))
             icon_label.setToolTip("Subscribed")
@@ -408,8 +414,8 @@ class VariantManagerDialog(QtWidgets.QDialog):
         name_label.setFont(name_font)
         name_label.setStyleSheet("color: palette(window-text);")
         title_row.addWidget(name_label, 1)
-        if entry.ownerDisplayName:
-            owner_label = QtWidgets.QLabel(f"by {entry.ownerDisplayName}", container)
+        if row_state.owner_display_name:
+            owner_label = QtWidgets.QLabel(f"by {row_state.owner_display_name}", container)
             owner_label.setStyleSheet("color: palette(window-text);")
             title_row.addWidget(owner_label, 0)
         root.addLayout(title_row)
@@ -445,17 +451,7 @@ class VariantManagerDialog(QtWidgets.QDialog):
         button.setFixedWidth(30)
 
     def _badge_texts_for_entry(self, entry: F8VariantEntry) -> list[str]:
-        badges = [self._source_text(entry)]
-        if entry.visibility is not None:
-            badges.append(entry.visibility.value)
-        badges.append(entry.syncState.value)
-        if entry.subscribed and self._sync_client.current_user() is not None:
-            badges.append("subscribed")
-        if entry.installed:
-            badges.append("installed")
-        else:
-            badges.append("not installed")
-        return badges
+        return self._row_state_for_entry(entry).badge_texts()
 
     def _entries_for_current_tab(self) -> list[F8VariantEntry]:
         current_tab = self._scope_tabs.currentIndex()
@@ -511,6 +507,49 @@ class VariantManagerDialog(QtWidgets.QDialog):
             for entry in list_entries_for_base(self._base_node_type, include_uninstalled=True)
             if self._matches_filter(entry) and self._entry_matches_query(entry, normalized_query)
         ]
+
+    def _build_row_states(self) -> dict[str, AssetCatalogRowState]:
+        service = self._sync_client._catalog_service
+        local_entries = [
+            entry
+            for entry in service._local_provider.load_entries()
+            if str(entry.record.baseNodeType or "").strip() == self._base_node_type
+        ]
+        remote_entries = [
+            entry
+            for entry in service._remote_provider.load_entries()
+            if str(entry.record.baseNodeType or "").strip() == self._base_node_type
+        ]
+        local_by_id = {
+            str(entry.record.variantId): entry
+            for entry in local_entries
+            if str(entry.record.variantId).strip()
+        }
+        remote_by_id = {
+            str(entry.record.variantId): entry
+            for entry in remote_entries
+            if str(entry.record.variantId).strip()
+        }
+        row_states: dict[str, AssetCatalogRowState] = {}
+        for variant_id in sorted(set(local_by_id) | set(remote_by_id)):
+            row_states[variant_id] = variant_row_state_for_entries(
+                variant_id=variant_id,
+                local_entry=local_by_id.get(variant_id),
+                remote_entry=remote_by_id.get(variant_id),
+            )
+        return row_states
+
+    def _row_state_for_entry(self, entry: F8VariantEntry) -> AssetCatalogRowState:
+        variant_id = str(entry.record.variantId or "").strip()
+        if variant_id:
+            row_state = self._row_states_by_variant_id.get(variant_id)
+            if row_state is not None:
+                return row_state
+        return variant_row_state_for_entries(
+            variant_id=variant_id,
+            local_entry=entry if entry.source == F8VariantSourceKind.local else None,
+            remote_entry=entry if entry.source != F8VariantSourceKind.local else None,
+        )
 
     @staticmethod
     def _entry_sort_key(entry: F8VariantEntry) -> tuple[str, str]:
@@ -595,7 +634,25 @@ class VariantManagerDialog(QtWidgets.QDialog):
             self._btn_history.setEnabled(False)
             self._btn_visibility.setEnabled(False)
             return
-        self._raw.setPlainText(json.dumps(dump_json(selected_entry, mode="json"), ensure_ascii=False, indent=2, default=str))
+        if selected_entry.source != F8VariantSourceKind.local and not variant_entry_is_installed(selected_entry):
+            try:
+                selected_entry = self._sync_client.hydrate_variant(str(selected_entry.record.variantId))
+            except Exception as exc:
+                self._raw.setPlainText(
+                    json.dumps(
+                        {
+                            "variantId": str(selected_entry.record.variantId),
+                            "operation": "hydrate_variant",
+                            "error": str(exc),
+                        },
+                        ensure_ascii=False,
+                        indent=2,
+                    )
+                )
+            else:
+                self._raw.setPlainText(json.dumps(dump_json(selected_entry, mode="json"), ensure_ascii=False, indent=2, default=str))
+        else:
+            self._raw.setPlainText(json.dumps(dump_json(selected_entry, mode="json"), ensure_ascii=False, indent=2, default=str))
         is_local = selected_entry.source == F8VariantSourceKind.local
         is_remote = selected_entry.source in {
             F8VariantSourceKind.remote_official,
@@ -606,7 +663,7 @@ class VariantManagerDialog(QtWidgets.QDialog):
         self._btn_delete.setEnabled(is_local)
         self._btn_copy_local.setEnabled(not is_local)
         self._btn_upload.setEnabled(is_local or is_remote)
-        self._btn_install.setEnabled(is_remote and not selected_entry.installed)
+        self._btn_install.setEnabled(is_remote and not variant_entry_is_installed(selected_entry))
         is_community_public = (
             selected_entry.source == F8VariantSourceKind.remote_public
             and not self._is_owned_remote_entry(selected_entry)
@@ -619,7 +676,7 @@ class VariantManagerDialog(QtWidgets.QDialog):
                 StudioIcon.HEART_OFF if selected_entry.subscribed else StudioIcon.HEART_ON,
             )
         )
-        self._btn_create.setEnabled(bool(selected_entry.installed))
+        self._btn_create.setEnabled(bool(variant_entry_is_installed(selected_entry)))
         self._btn_history.setEnabled(self._is_owned_remote_entry(selected_entry))
         self._btn_visibility.setEnabled(self._is_owned_remote_entry(selected_entry))
 
@@ -764,6 +821,12 @@ class VariantManagerDialog(QtWidgets.QDialog):
         selected_entry = self._selected_entry()
         if selected_entry is None:
             return
+        if selected_entry.source != F8VariantSourceKind.local:
+            try:
+                selected_entry = self._sync_client.hydrate_variant(str(selected_entry.record.variantId))
+            except Exception as exc:
+                show_warning(self, "Load failed", str(exc))
+                return
         record = selected_entry.record
         copied = validate_as(F8VariantRecord, {**dump_json(record, mode="json"), "updatedAt": variant_now_iso()})
         try:
@@ -781,6 +844,8 @@ class VariantManagerDialog(QtWidgets.QDialog):
             if not self._ensure_logged_in():
                 return
             entry_to_upload = selected_entry
+            if selected_entry.source != F8VariantSourceKind.local:
+                entry_to_upload = self._sync_client.hydrate_variant(str(selected_entry.record.variantId))
             if selected_entry.source == F8VariantSourceKind.local:
                 visibility = self._choose_visibility()
                 if visibility is None:
@@ -809,7 +874,7 @@ class VariantManagerDialog(QtWidgets.QDialog):
         try:
             if not self._ensure_logged_in():
                 return
-            installed = self._sync_client.install_variant(str(selected_entry.record.variantId))
+            installed = self._sync_client.hydrate_variant(str(selected_entry.record.variantId))
         except Exception as exc:
             show_warning(self, "Install failed", str(exc))
             return
@@ -838,9 +903,12 @@ class VariantManagerDialog(QtWidgets.QDialog):
         selected_entry = self._selected_entry()
         if selected_entry is None:
             return
-        if not selected_entry.installed:
-            show_warning(self, "Variant unavailable", "Install/download this variant before creating it on the canvas.")
-            return
+        if selected_entry.source != F8VariantSourceKind.local and not variant_entry_is_installed(selected_entry):
+            try:
+                selected_entry = self._sync_client.hydrate_variant(str(selected_entry.record.variantId))
+            except Exception as exc:
+                show_warning(self, "Load failed", str(exc))
+                return
         graph = self._graph
         if graph is None:
             return
@@ -961,6 +1029,11 @@ class VariantManagerDialog(QtWidgets.QDialog):
         selected_entry = self._selected_entry()
         if selected_entry is None or not self._is_owned_remote_entry(selected_entry):
             return
+        try:
+            selected_entry = self._sync_client.get_variant(str(selected_entry.record.variantId))
+        except Exception as exc:
+            show_warning(self, "Load failed", str(exc))
+            return
         current_visibility = selected_entry.visibility
         next_visibility = F8VariantVisibility.public
         prompt = "Make this remote variant public?"
@@ -975,20 +1048,12 @@ class VariantManagerDialog(QtWidgets.QDialog):
         )
         if answer != QtWidgets.QMessageBox.Yes:
             return
-        payload = validate_as(
-            F8VariantEntry,
-            {
-                **dump_json(selected_entry, mode="json"),
-                "visibility": next_visibility.value,
-                "source": (
-                    F8VariantSourceKind.remote_public.value
-                    if next_visibility == F8VariantVisibility.public
-                    else F8VariantSourceKind.remote_private.value
-                ),
-            },
-        )
         try:
-            self._sync_client.update_variant(payload)
+            self._sync_client.update_variant_visibility(
+                str(selected_entry.record.variantId),
+                visibility=next_visibility,
+                revision=selected_entry.remoteRevision,
+            )
         except Exception as exc:
             show_warning(self, "Visibility update failed", str(exc))
             return
@@ -1233,6 +1298,43 @@ class VariantManagerDialog(QtWidgets.QDialog):
             show_warning(self, "Export failed", str(exc))
             return
         show_info(self, "Exported", f"Saved:\n{out}")
+
+
+def variant_row_state_for_entries(
+    *,
+    variant_id: str,
+    local_entry: F8VariantEntry | None,
+    remote_entry: F8VariantEntry | None,
+) -> AssetCatalogRowState:
+    cached_remote_content = False
+    if remote_entry is not None:
+        cached_remote_content = variant_entry_is_installed(remote_entry)
+    visibility = None
+    owner_display_name = None
+    subscribed = False
+    remote_sync_state = None
+    remote_version_number = None
+    if remote_entry is not None:
+        visibility = None if remote_entry.visibility is None else remote_entry.visibility.value
+        owner_display_name = remote_entry.ownerDisplayName
+        subscribed = bool(remote_entry.subscribed)
+        remote_sync_state = remote_entry.syncState.value
+        remote_version_number = remote_entry.remoteVersionNumber
+    local_sync_state = None if local_entry is None else local_entry.syncState.value
+    local_version_number = None if local_entry is None else local_entry.localVersionNumber
+    return build_asset_catalog_row_state(
+        asset_id=variant_id,
+        has_local_head=local_entry is not None,
+        has_remote_head=remote_entry is not None,
+        has_cached_remote_content=cached_remote_content,
+        visibility=visibility,
+        owner_display_name=owner_display_name,
+        subscribed=subscribed,
+        local_version_number=local_version_number,
+        remote_version_number=remote_version_number,
+        local_sync_state=local_sync_state,
+        remote_sync_state=remote_sync_state,
+    )
 
 
 def _is_loopback_url(base_url: str) -> bool:

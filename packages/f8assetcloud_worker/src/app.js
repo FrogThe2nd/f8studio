@@ -231,6 +231,24 @@ async function routeAssetRequest({ auth, repo, request, url, assetType }) {
     }
   }
 
+  if (parts.length === 2 && parts[1] === 'content' && request.method === 'GET') {
+    const viewer = await optionalAuthenticatedUser({ auth, request });
+    const result = assetType === 'variant'
+      ? await repo.getVariantContent({ variantId: assetId, userId: viewer === null ? null : viewer.userId })
+      : await repo.getComponentContent({ componentId: assetId, userId: viewer === null ? null : viewer.userId });
+    return jsonResponse(200, result);
+  }
+
+  if (parts.length === 2 && parts[1] === 'visibility' && request.method === 'PUT') {
+    const user = await requireAuthenticatedUser({ auth, request });
+    const payload = await readJsonBody(request);
+    const visibility = requireBodyString(payload.visibility, 'visibility is required');
+    const result = assetType === 'variant'
+      ? await repo.updateVariantVisibility({ variantId: assetId, visibility, revision: payload.revision, userId: user.userId })
+      : await repo.updateComponentVisibility({ componentId: assetId, visibility, revision: payload.revision, userId: user.userId });
+    return jsonResponse(200, result);
+  }
+
   if (parts.length === 2 && parts[1] === 'versions' && request.method === 'GET') {
     const viewer = await optionalAuthenticatedUser({ auth, request });
     const result = assetType === 'variant'
@@ -245,6 +263,15 @@ async function routeAssetRequest({ auth, repo, request, url, assetType }) {
     const result = assetType === 'variant'
       ? await repo.getVariantVersion({ variantId: assetId, versionNumber, userId: viewer === null ? null : viewer.userId })
       : await repo.getComponentVersion({ componentId: assetId, versionNumber, userId: viewer === null ? null : viewer.userId });
+    return jsonResponse(200, result);
+  }
+
+  if (parts.length === 4 && parts[1] === 'versions' && parts[3] === 'content' && request.method === 'GET') {
+    const viewer = await optionalAuthenticatedUser({ auth, request });
+    const versionNumber = parts[2];
+    const result = assetType === 'variant'
+      ? await repo.getVariantVersionContent({ variantId: assetId, versionNumber, userId: viewer === null ? null : viewer.userId })
+      : await repo.getComponentVersionContent({ componentId: assetId, versionNumber, userId: viewer === null ? null : viewer.userId });
     return jsonResponse(200, result);
   }
 

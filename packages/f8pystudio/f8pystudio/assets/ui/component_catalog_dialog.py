@@ -8,7 +8,7 @@ from urllib.parse import urlparse
 
 from qtpy import QtCore, QtWidgets
 
-from f8pysdk.msgspec_codec import dump_json, validate_as
+from f8pysdk.msgspec_codec import copy_model, dump_json, validate_as
 
 from ..common import new_asset_id
 from ..components.component_events import subscribe_components_changed
@@ -29,6 +29,7 @@ from ..components.component_repository import (
     upsert_component,
 )
 from ..components.component_sync import ComponentSyncClient
+from ..components.component_catalog import component_entry_can_hydrate, component_entry_has_cached_content, component_entry_is_installed
 from ...ui.support.ui_icons import StudioIcon, icon_for
 from ...ui.support.ui_notifications import show_info, show_warning
 from .project_asset_dialogs import (
@@ -37,6 +38,7 @@ from .project_asset_dialogs import (
     AssetVersionBrowserItem,
     ProjectAssetMetaDialog,
 )
+from .catalog_status import AssetCatalogRowState, build_asset_catalog_row_state
 from ...ui.support.json_text_editor import attach_json_enhancements
 from .asset_cloud_account_menu import build_asset_account_menu, prompt_asset_cloud_sign_in
 
@@ -52,6 +54,7 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
         super().__init__(parent)
         self._graph = node_graph
         self._entries: list[F8ComponentEntry] = []
+        self._row_states_by_component_id: dict[str, AssetCatalogRowState] = {}
         self._sync_client = ComponentSyncClient()
         self._initial_remote_refresh_done = False
         self._tab_queries: dict[int, str] = {
@@ -237,6 +240,7 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
 
     def _reload(self, *_args: Any) -> None:
         self._refresh_remote_catalog_if_needed()
+        self._row_states_by_component_id = self._build_row_states()
         self._entries = self._entries_for_current_tab()
         logger.info(
             "Component manager reload tab=%s count=%d entries=%s",
@@ -293,23 +297,60 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
             }
             for entry in remote_entries:
                 if self._is_owned_remote_entry(entry) and self._entry_matches_query(entry, normalized_query):
-                    merged[str(entry.record.componentId)] = entry
+                    component_id = str(entry.record.componentId)
+                    existing_entry = merged.get(component_id)
+                    if existing_entry is None:
+                        merged[component_id] = entry
+                    else:
+                        merged[component_id] = self._merge_entries_for_mine_tab(existing_entry, entry)
             return sorted(merged.values(), key=self._entry_sort_key)
         return [
             entry for entry in sorted(list_component_entries(include_uninstalled=True), key=self._entry_sort_key)
             if self._matches_filter(entry) and self._entry_matches_query(entry, normalized_query)
         ]
 
+    @staticmethod
+    def _merge_entries_for_mine_tab(existing_entry: F8ComponentEntry, incoming_entry: F8ComponentEntry) -> F8ComponentEntry:
+        if incoming_entry.source != F8ComponentSourceKind.local:
+            preferred_entry = incoming_entry
+            fallback_entry = existing_entry
+        elif existing_entry.source != F8ComponentSourceKind.local:
+            preferred_entry = existing_entry
+            fallback_entry = incoming_entry
+        else:
+            preferred_entry = incoming_entry
+            fallback_entry = existing_entry
+        if component_entry_has_cached_content(preferred_entry):
+            return preferred_entry
+        if not component_entry_has_cached_content(fallback_entry):
+            return preferred_entry
+        merged_record = copy_model(
+            preferred_entry.record,
+            update={
+                "usageNotes": str(fallback_entry.record.usageNotes),
+                "content": fallback_entry.record.content,
+            },
+        )
+        return copy_model(
+            preferred_entry,
+            update={
+                "record": merged_record,
+                "installed": True,
+                "downloadedAt": preferred_entry.downloadedAt or fallback_entry.downloadedAt,
+            },
+        )
+
     def _matches_filter(self, entry: F8ComponentEntry) -> bool:
+        row_state = self._row_state_for_entry(entry)
         current_tab = self._scope_tabs.currentIndex()
         current_filter = self._current_filter_value()
         if current_tab == self._TAB_MINE:
             if not self._is_mine_entry(entry):
                 return False
             if current_filter == "local":
-                return entry.source == F8ComponentSourceKind.local
+                return row_state.has_local_head
             if current_filter == "private":
-                return entry.source == F8ComponentSourceKind.remote_private
+                return row_state.has_remote_head and row_state.visibility == F8ComponentVisibility.private.value
             if current_filter == "shared":
                 return self._is_owned_remote_shared_entry(entry)
             return True
@@ -321,12 +362,12 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
             if current_filter == "not_subscribed":
                 return not bool(entry.subscribed)
             return True
-        if not (entry.installed or entry.source == F8ComponentSourceKind.local):
+        if not row_state.has_local_presence:
             return False
         if current_filter == "mine":
-            return self._is_mine_entry(entry)
+            return row_state.has_local_head or self._is_owned_remote_entry(entry)
         if current_filter == "subscribed":
-            return bool(entry.subscribed) and not self._is_owned_remote_entry(entry)
+            return row_state.subscribed and not self._is_owned_remote_entry(entry)
         return True
 
     @staticmethod
@@ -342,7 +383,8 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
         title_row = QtWidgets.QHBoxLayout()
         title_row.setContentsMargins(0, 0, 0, 0)
         title_row.setSpacing(6)
-        if entry.subscribed:
+        row_state = self._row_state_for_entry(entry)
+        if row_state.subscribed:
             icon_label = QtWidgets.QLabel(container)
             icon_label.setPixmap(icon_for(container, StudioIcon.HEART_ON).pixmap(14, 14))
             title_row.addWidget(icon_label)
@@ -352,8 +394,8 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
         name_label.setFont(font)
         name_label.setStyleSheet("color: palette(window-text);")
         title_row.addWidget(name_label, 1)
-        if entry.ownerDisplayName:
-            owner_label = QtWidgets.QLabel(f"by {entry.ownerDisplayName}", container)
+        if row_state.owner_display_name:
+            owner_label = QtWidgets.QLabel(f"by {row_state.owner_display_name}", container)
             owner_label.setStyleSheet("color: palette(window-text);")
             title_row.addWidget(owner_label, 0)
         root.addLayout(title_row)
@@ -378,14 +420,42 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
         return container
 
     def _badge_texts_for_entry(self, entry: F8ComponentEntry) -> list[str]:
-        badges = [self._source_text(entry)]
-        if entry.visibility is not None:
-            badges.append(entry.visibility.value)
-        badges.append(entry.syncState.value)
-        if entry.subscribed and self._sync_client.current_user() is not None:
-            badges.append("subscribed")
-        badges.append("installed" if entry.installed or entry.source == F8ComponentSourceKind.local else "not installed")
-        return badges
+        return self._row_state_for_entry(entry).badge_texts()
+
+    def _build_row_states(self) -> dict[str, AssetCatalogRowState]:
+        service = self._sync_client._catalog_service
+        local_entries = service._local_provider.load_entries()
+        remote_entries = service._remote_provider.load_entries()
+        local_by_id = {
+            str(entry.record.componentId): entry
+            for entry in local_entries
+            if str(entry.record.componentId).strip()
+        }
+        remote_by_id = {
+            str(entry.record.componentId): entry
+            for entry in remote_entries
+            if str(entry.record.componentId).strip()
+        }
+        row_states: dict[str, AssetCatalogRowState] = {}
+        for component_id in sorted(set(local_by_id) | set(remote_by_id)):
+            row_states[component_id] = component_row_state_for_entries(
+                component_id=component_id,
+                local_entry=local_by_id.get(component_id),
+                remote_entry=remote_by_id.get(component_id),
+            )
+        return row_states
+
+    def _row_state_for_entry(self, entry: F8ComponentEntry) -> AssetCatalogRowState:
+        component_id = str(entry.record.componentId or "").strip()
+        if component_id:
+            row_state = self._row_states_by_component_id.get(component_id)
+            if row_state is not None:
+                return row_state
+        return component_row_state_for_entries(
+            component_id=component_id,
+            local_entry=entry if entry.source == F8ComponentSourceKind.local else None,
+            remote_entry=entry if entry.source != F8ComponentSourceKind.local else None,
+        )
 
     def _source_text(self, entry: F8ComponentEntry) -> str:
         if entry.source == F8ComponentSourceKind.local:
@@ -454,7 +524,26 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
             self._btn_visibility.setEnabled(False)
             self._btn_insert.setEnabled(False)
             return
-        self._raw.setPlainText(json.dumps(dump_json(selected_entry, mode="json"), ensure_ascii=False, indent=2, default=str))
+        hydration_error = ""
+        if component_entry_can_hydrate(selected_entry) and not component_entry_has_cached_content(selected_entry):
+            try:
+                selected_entry = self._sync_client.hydrate_component(str(selected_entry.record.componentId))
+            except Exception as exc:
+                hydration_error = str(exc)
+        if hydration_error:
+            self._raw.setPlainText(
+                json.dumps(
+                    {
+                        "componentId": str(selected_entry.record.componentId),
+                        "operation": "hydrate_component",
+                        "error": hydration_error,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+        else:
+            self._raw.setPlainText(json.dumps(dump_json(selected_entry, mode="json"), ensure_ascii=False, indent=2, default=str))
         is_local = selected_entry.source == F8ComponentSourceKind.local
         is_remote = selected_entry.source in {
             F8ComponentSourceKind.remote_official,
@@ -465,7 +554,7 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
         self._btn_delete.setEnabled(is_local)
         self._btn_copy_local.setEnabled(not is_local)
         self._btn_upload.setEnabled(is_local or self._is_owned_remote_entry(selected_entry))
-        self._btn_install.setEnabled(is_remote and not selected_entry.installed)
+        self._btn_install.setEnabled(is_remote and not component_entry_is_installed(selected_entry))
         is_community_public = self._is_community_entry(selected_entry)
         self._btn_subscribe.setEnabled(is_community_public)
         self._btn_subscribe.setIcon(
@@ -474,7 +563,7 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
         self._btn_subscribe.setToolTip("Unsubscribe" if selected_entry.subscribed else "Subscribe")
         self._btn_history.setEnabled(is_local or is_remote)
         self._btn_visibility.setEnabled(self._is_owned_remote_entry(selected_entry))
-        self._btn_insert.setEnabled(bool(selected_entry.installed or is_local))
+        self._btn_insert.setEnabled(component_entry_is_installed(selected_entry))
 
     def _refresh_auth_controls(self) -> None:
         logged_in = self._sync_client.current_user() is not None and bool(self._sync_client.current_access_token())
@@ -580,12 +669,9 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
         selected_entry = self._selected_entry()
         if selected_entry is None:
             return
-        if selected_entry.source != F8ComponentSourceKind.local and not _component_entry_has_full_content(selected_entry):
-            try:
-                selected_entry = self._sync_client.install_component(str(selected_entry.record.componentId))
-            except Exception as exc:
-                show_warning(self, "Load failed", str(exc))
-                return
+        selected_entry = self._ensure_component_hydrated(selected_entry, operation_name="Load component")
+        if selected_entry is None:
+            return
         copied = validate_as(
             F8ComponentRecord,
             {
@@ -603,13 +689,9 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
             return
         if not self._ensure_logged_in():
             return
-        entry_to_upload = selected_entry
-        if selected_entry.source != F8ComponentSourceKind.local and not _component_entry_has_full_content(selected_entry):
-            try:
-                entry_to_upload = self._sync_client.install_component(str(selected_entry.record.componentId))
-            except Exception as exc:
-                show_warning(self, "Load failed", str(exc))
-                return
+        entry_to_upload = self._ensure_component_hydrated(selected_entry, operation_name="Load component")
+        if entry_to_upload is None:
+            return
         if selected_entry.source == F8ComponentSourceKind.local:
             visibility = self._choose_visibility()
             if visibility is None:
@@ -637,7 +719,7 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
         if selected_entry is None:
             return
         try:
-            installed = self._sync_client.install_component(str(selected_entry.record.componentId))
+            installed = self._sync_client.hydrate_component(str(selected_entry.record.componentId))
         except Exception as exc:
             show_warning(self, "Install failed", str(exc))
             return
@@ -675,12 +757,9 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
         selected_entry = self._selected_entry()
         if selected_entry is None or not self._is_owned_remote_entry(selected_entry):
             return
-        if not _component_entry_has_full_content(selected_entry):
-            try:
-                selected_entry = self._sync_client.install_component(str(selected_entry.record.componentId))
-            except Exception as exc:
-                show_warning(self, "Load failed", str(exc))
-                return
+        selected_entry = self._ensure_component_hydrated(selected_entry, operation_name="Load component")
+        if selected_entry is None:
+            return
         next_visibility = F8ComponentVisibility.public
         prompt = "Make this remote component public?"
         if selected_entry.visibility == F8ComponentVisibility.public:
@@ -694,20 +773,12 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
         )
         if answer != QtWidgets.QMessageBox.Yes:
             return
-        payload = validate_as(
-            F8ComponentEntry,
-            {
-                **dump_json(selected_entry, mode="json"),
-                "visibility": next_visibility.value,
-                "source": (
-                    F8ComponentSourceKind.remote_public.value
-                    if next_visibility == F8ComponentVisibility.public
-                    else F8ComponentSourceKind.remote_private.value
-                ),
-            },
-        )
         try:
-            self._sync_client.update_component(payload)
+            self._sync_client.update_component_visibility(
+                str(selected_entry.record.componentId),
+                visibility=next_visibility,
+                revision=selected_entry.remoteRevision,
+            )
         except Exception as exc:
             show_warning(self, "Visibility update failed", str(exc))
             return
@@ -717,8 +788,8 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
         selected_entry = self._selected_entry()
         if selected_entry is None:
             return
-        if not selected_entry.installed and selected_entry.source != F8ComponentSourceKind.local:
-            show_warning(self, "Component unavailable", "Install/download this component before inserting it into the graph.")
+        selected_entry = self._ensure_component_hydrated(selected_entry, operation_name="Load component")
+        if selected_entry is None:
             return
         graph = self._graph
         if graph is None:
@@ -1151,15 +1222,59 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
             return F8ComponentVisibility.public
         return F8ComponentVisibility.private
 
+    def _ensure_component_hydrated(
+        self,
+        entry: F8ComponentEntry,
+        *,
+        operation_name: str,
+    ) -> F8ComponentEntry | None:
+        if entry.source == F8ComponentSourceKind.local or component_entry_has_cached_content(entry):
+            return entry
+        try:
+            return self._sync_client.hydrate_component(str(entry.record.componentId))
+        except Exception as exc:
+            show_warning(self, f"{operation_name} failed", str(exc))
+            return None
+
+
+def component_row_state_for_entries(
+    *,
+    component_id: str,
+    local_entry: F8ComponentEntry | None,
+    remote_entry: F8ComponentEntry | None,
+) -> AssetCatalogRowState:
+    cached_remote_content = False
+    if remote_entry is not None:
+        cached_remote_content = component_entry_has_cached_content(remote_entry)
+    visibility = None
+    owner_display_name = None
+    subscribed = False
+    remote_sync_state = None
+    remote_version_number = None
+    if remote_entry is not None:
+        visibility = None if remote_entry.visibility is None else remote_entry.visibility.value
+        owner_display_name = remote_entry.ownerDisplayName
+        subscribed = bool(remote_entry.subscribed)
+        remote_sync_state = remote_entry.syncState.value
+        remote_version_number = remote_entry.remoteVersionNumber
+    local_sync_state = None if local_entry is None else local_entry.syncState.value
+    local_version_number = None if local_entry is None else local_entry.localVersionNumber
+    return build_asset_catalog_row_state(
+        asset_id=component_id,
+        has_local_head=local_entry is not None,
+        has_remote_head=remote_entry is not None,
+        has_cached_remote_content=cached_remote_content,
+        visibility=visibility,
+        owner_display_name=owner_display_name,
+        subscribed=subscribed,
+        local_version_number=local_version_number,
+        remote_version_number=remote_version_number,
+        local_sync_state=local_sync_state,
+        remote_sync_state=remote_sync_state,
+    )
+
 
 def _is_loopback_url(base_url: str) -> bool:
     parsed = urlparse(str(base_url or "").strip())
     hostname = str(parsed.hostname or "").strip().lower()
     return hostname in {"127.0.0.1", "localhost", "0.0.0.0"}
-
-
-def _component_entry_has_full_content(entry: F8ComponentEntry) -> bool:
-    content = entry.record.content
-    layout_value = content.get("layout")
-    schema_version_value = content.get("schemaVersion")
-    return isinstance(layout_value, dict) and isinstance(schema_version_value, str) and bool(schema_version_value.strip())

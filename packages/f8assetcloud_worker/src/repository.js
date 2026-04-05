@@ -256,11 +256,11 @@ export class AssetRepository {
   }
 
   async getVariant({ variantId, userId }) {
-    return this._getAssetPayload({ assetId: variantId, assetType: 'variant', userId, versionNumber: null });
+    return this._getAssetDetailPayload({ assetId: variantId, assetType: 'variant', userId, versionNumber: null });
   }
 
   async listVariants({ userId, kind, baseNodeType, query, visibility, owner, cursor }) {
-    return this._listTypedAssets({
+    return this._listTypedAssetSummaries({
       assetType: 'variant',
       userId,
       query,
@@ -279,7 +279,15 @@ export class AssetRepository {
   }
 
   async getVariantVersion({ variantId, versionNumber, userId }) {
-    return this._getAssetPayload({ assetId: variantId, assetType: 'variant', userId, versionNumber });
+    return this._getAssetDetailPayload({ assetId: variantId, assetType: 'variant', userId, versionNumber });
+  }
+
+  async getVariantContent({ variantId, userId }) {
+    return this._getAssetContentPayload({ assetId: variantId, assetType: 'variant', userId, versionNumber: null });
+  }
+
+  async getVariantVersionContent({ variantId, versionNumber, userId }) {
+    return this._getAssetContentPayload({ assetId: variantId, assetType: 'variant', userId, versionNumber });
   }
 
   async subscribeVariant({ variantId, userId }) {
@@ -292,6 +300,10 @@ export class AssetRepository {
 
   async forkVariant({ variantId, payload, user }) {
     return this._forkAsset({ assetId: variantId, assetType: 'variant', payload, user });
+  }
+
+  async updateVariantVisibility({ variantId, visibility, revision, userId }) {
+    return this._updateAssetVisibility({ assetId: variantId, assetType: 'variant', visibility, revision, userId });
   }
 
   async createComponent({ payload, user }) {
@@ -310,16 +322,18 @@ export class AssetRepository {
   }
 
   async getComponent({ componentId, userId }) {
-    return this._getAssetPayload({ assetId: componentId, assetType: 'component', userId, versionNumber: null });
+    return this._getAssetDetailPayload({ assetId: componentId, assetType: 'component', userId, versionNumber: null });
   }
 
   async listComponents({ userId, query, visibility, owner, cursor }) {
-    return this._listComponentAssets({
+    return this._listTypedAssetSummaries({
+      assetType: 'component',
       userId,
       query,
       cursor,
       visibility,
       owner,
+      extraFilters: {},
     });
   }
 
@@ -328,7 +342,15 @@ export class AssetRepository {
   }
 
   async getComponentVersion({ componentId, versionNumber, userId }) {
-    return this._getAssetPayload({ assetId: componentId, assetType: 'component', userId, versionNumber });
+    return this._getAssetDetailPayload({ assetId: componentId, assetType: 'component', userId, versionNumber });
+  }
+
+  async getComponentContent({ componentId, userId }) {
+    return this._getAssetContentPayload({ assetId: componentId, assetType: 'component', userId, versionNumber: null });
+  }
+
+  async getComponentVersionContent({ componentId, versionNumber, userId }) {
+    return this._getAssetContentPayload({ assetId: componentId, assetType: 'component', userId, versionNumber });
   }
 
   async subscribeComponent({ componentId, userId }) {
@@ -341,6 +363,10 @@ export class AssetRepository {
 
   async forkComponent({ componentId, payload, user }) {
     return this._forkAsset({ assetId: componentId, assetType: 'component', payload, user });
+  }
+
+  async updateComponentVisibility({ componentId, visibility, revision, userId }) {
+    return this._updateAssetVisibility({ assetId: componentId, assetType: 'component', visibility, revision, userId });
   }
 
   async searchAssets({ assetType, userId, query, visibility, owner, cursor }) {
@@ -397,7 +423,7 @@ export class AssetRepository {
       createdByUserId: userId,
       changeSummary: normalized.changeSummary,
     });
-    return this._getAssetPayload({ assetId: normalized.assetId, assetType: normalized.assetType, userId, versionNumber: null });
+    return this._getAssetDetailPayload({ assetId: normalized.assetId, assetType: normalized.assetType, userId, versionNumber: null });
   }
 
   async _updateAsset({ existing, normalized, userId }) {
@@ -460,7 +486,7 @@ export class AssetRepository {
     )
       .bind(nextRevision, normalized.assetId, userId)
       .run();
-    return this._getAssetPayload({ assetId: normalized.assetId, assetType: normalized.assetType, userId, versionNumber: null });
+    return this._getAssetDetailPayload({ assetId: normalized.assetId, assetType: normalized.assetType, userId, versionNumber: null });
   }
 
   async _deleteOwnedAsset({ assetId, assetType, userId }) {
@@ -472,7 +498,7 @@ export class AssetRepository {
       .run();
   }
 
-  async _getAssetPayload({ assetId, assetType, userId, versionNumber }) {
+  async _getAssetContext({ assetId, assetType, userId, versionNumber }) {
     const head = await this.getAssetById(assetId);
     if (head === null || String(head.asset_type) !== assetType) {
       throw new AssetNotFoundError(`Asset ${assetId} not found`);
@@ -487,10 +513,20 @@ export class AssetRepository {
       throw new AssetNotFoundError(`Asset version ${assetId}:${targetVersionNumber} not found`);
     }
     const subscription = userId ? await this._findSubscriptionRow(assetId, userId) : null;
-    return typedAssetPayloadFromRows({ head, version, subscription, viewerUserId: userId });
+    return { head, version, subscription };
   }
 
-  async _listTypedAssets({ assetType, userId, query, cursor, visibility, owner, extraFilters }) {
+  async _getAssetDetailPayload({ assetId, assetType, userId, versionNumber }) {
+    const { head, version, subscription } = await this._getAssetContext({ assetId, assetType, userId, versionNumber });
+    return typedAssetDetailPayloadFromRows({ head, version, subscription, viewerUserId: userId });
+  }
+
+  async _getAssetContentPayload({ assetId, assetType, userId, versionNumber }) {
+    const { head, version } = await this._getAssetContext({ assetId, assetType, userId, versionNumber });
+    return typedAssetContentPayloadFromRows({ head, version });
+  }
+
+  async _listTypedAssetSummaries({ assetType, userId, query, cursor, visibility, owner, extraFilters }) {
     const filters = ['h.deleted_at IS NULL', 'h.asset_type = ?'];
     const bindings = [assetType];
     applyVisibilityOwnerFilters({ filters, bindings, userId, visibility, owner });
@@ -507,59 +543,6 @@ export class AssetRepository {
         COALESCE(u.displayUsername, u.name) AS owner_display_name,
         s.subscribed_at,
         s.last_seen_revision,
-        v.content AS version_content,
-        v.created_at AS version_created_at,
-        v.created_by_user_id,
-        v.change_summary,
-        v.version_number,
-        v.revision
-      FROM asset_heads h
-      LEFT JOIN variant_details vd ON vd.asset_id = h.asset_id
-      JOIN asset_versions v
-        ON v.asset_id = h.asset_id AND v.version_number = h.latest_version_number
-      LEFT JOIN user u ON u.id = h.owner_user_id
-      LEFT JOIN asset_subscriptions s ON s.asset_id = h.asset_id AND s.subscriber_user_id = ?
-      WHERE ${filters.join(' AND ')}
-      ORDER BY LOWER(h.name), h.asset_id
-      LIMIT ? OFFSET ?
-    `;
-    const result = await this._db.prepare(sql).bind(userId ? String(userId) : '', ...bindings, PAGE_SIZE + 1, start).all();
-    const rows = Array.isArray(result.results) ? result.results : [];
-    const hasMore = rows.length > PAGE_SIZE;
-    const items = hasMore ? rows.slice(0, PAGE_SIZE) : rows;
-    const payloads = [];
-    for (const row of items) {
-      const version = await this._inflateVersionRow({
-        asset_id: row.asset_id,
-        version_number: row.version_number,
-        revision: row.revision,
-        content: row.version_content,
-        created_at: row.version_created_at,
-        created_by_user_id: row.created_by_user_id,
-        change_summary: row.change_summary,
-      });
-      payloads.push(typedAssetPayloadFromRows({ head: row, version, subscription: row, viewerUserId: userId }));
-    }
-    return {
-      entries: payloads,
-      nextCursor: hasMore ? String(start + PAGE_SIZE) : null,
-    };
-  }
-
-  async _listComponentAssets({ userId, query, cursor, visibility, owner }) {
-    const filters = ['h.deleted_at IS NULL', "h.asset_type = 'component'"];
-    const bindings = [];
-    applyVisibilityOwnerFilters({ filters, bindings, userId, visibility, owner });
-    applyAssetQueryFilters({ filters, bindings, query, assetType: 'component', extraFilters: {} });
-
-    const start = parseCursor(cursor);
-    const sql = `
-      SELECT
-        h.*,
-        COALESCE(u.displayUsername, u.name) AS owner_display_name,
-        s.subscribed_at,
-        s.last_seen_revision,
-        v.created_at AS version_created_at,
         v.created_by_user_id,
         v.change_summary,
         v.version_number,
@@ -579,7 +562,7 @@ export class AssetRepository {
     const hasMore = rows.length > PAGE_SIZE;
     const items = hasMore ? rows.slice(0, PAGE_SIZE) : rows;
     return {
-      entries: items.map((row) => componentListPayloadFromRow(row, userId)),
+      entries: items.map((row) => typedAssetSummaryPayloadFromRow(row, userId)),
       nextCursor: hasMore ? String(start + PAGE_SIZE) : null,
     };
   }
@@ -669,7 +652,7 @@ export class AssetRepository {
     )
       .bind(String(assetId), String(userId), now, String(head.latest_revision))
       .run();
-    return this._getAssetPayload({ assetId, assetType, userId, versionNumber: null });
+    return this._getAssetDetailPayload({ assetId, assetType, userId, versionNumber: null });
   }
 
   async _unsubscribeAsset({ assetId, assetType, userId }) {
@@ -685,11 +668,11 @@ export class AssetRepository {
     )
       .bind(String(assetId), String(userId))
       .run();
-    return this._getAssetPayload({ assetId, assetType, userId, versionNumber: null });
+    return this._getAssetDetailPayload({ assetId, assetType, userId, versionNumber: null });
   }
 
   async _forkAsset({ assetId, assetType, payload, user }) {
-    const source = await this._getAssetPayload({ assetId, assetType, userId: user.userId, versionNumber: null });
+    const source = await this._getAssetContentPayload({ assetId, assetType, userId: user.userId, versionNumber: null });
     const forkPayload = isPlainObject(payload) ? payload : {};
     if (assetType === 'variant') {
       const sourceRecord = source.record;
@@ -720,6 +703,27 @@ export class AssetRepository {
       },
       user,
     });
+  }
+
+  async _updateAssetVisibility({ assetId, assetType, visibility, revision, userId }) {
+    const existing = await this._requireOwnedAsset({ assetId, assetType, userId });
+    const expectedRevision = String(revision || '').trim();
+    if (expectedRevision && expectedRevision !== String(existing.latest_revision || '')) {
+      throw new AssetConflictError({
+        assetId: String(existing.asset_id),
+        assetType,
+        revision: String(existing.latest_revision),
+      });
+    }
+    await this._db.prepare(
+      `UPDATE asset_heads
+       SET visibility = ?,
+           updated_at = ?
+       WHERE asset_id = ?`,
+    )
+      .bind(normalizeVisibility(visibility), nowIso(), String(assetId))
+      .run();
+    return this._getAssetDetailPayload({ assetId, assetType, userId, versionNumber: null });
   }
 
   async _requireOwnedAsset({ assetId, assetType, userId }) {
@@ -1043,77 +1047,89 @@ function normalizeComponentRecord(record, { expectedComponentId }) {
   };
 }
 
-function typedAssetPayloadFromRows({ head, version, subscription, viewerUserId }) {
-  if (String(head.asset_type) === 'variant') {
-    return variantPayloadFromRows({ head, version, subscription, viewerUserId });
+function typedAssetSummaryPayloadFromRow(row, viewerUserId) {
+  if (String(row.asset_type) === 'variant') {
+    return variantSummaryPayloadFromRow(row, viewerUserId);
   }
-  return componentPayloadFromRows({ head, version, subscription, viewerUserId });
+  return componentSummaryPayloadFromRow(row, viewerUserId);
 }
 
-function variantPayloadFromRows({ head, version, subscription, viewerUserId }) {
-  const isOwner = String(head.owner_user_id) === String(viewerUserId || '');
-  const isSubscribed = hasSubscription(subscription);
+function typedAssetDetailPayloadFromRows({ head, version, subscription, viewerUserId }) {
+  if (String(head.asset_type) === 'variant') {
+    return variantDetailPayloadFromRows({ head, version, subscription, viewerUserId });
+  }
+  return componentDetailPayloadFromRows({ head, version, subscription, viewerUserId });
+}
+
+function typedAssetContentPayloadFromRows({ head, version }) {
+  if (String(head.asset_type) === 'variant') {
+    return variantContentPayloadFromRows({ head, version });
+  }
+  return componentContentPayloadFromRows({ head, version });
+}
+
+function variantSummaryPayloadFromRow(row, viewerUserId) {
+  return {
+    ...genericTypedAssetPayload(row, viewerUserId),
+    variantId: String(row.asset_id),
+    variantKind: stringOrDefault(row.variant_kind, ''),
+    baseNodeType: stringOrDefault(row.base_node_type, ''),
+    serviceClass: stringOrDefault(row.service_class, ''),
+    operatorClass: nullableString(row.operator_class),
+    hasContent: true,
+  };
+}
+
+function variantDetailPayloadFromRows({ head, version, subscription, viewerUserId }) {
+  return {
+    ...variantSummaryPayloadFromRow({ ...head, ...version, ...(subscription || {}) }, viewerUserId),
+    versionCreatedAt: String(version.created_at),
+    createdByUserId: String(version.created_by_user_id),
+  };
+}
+
+function variantContentPayloadFromRows({ head, version }) {
   return {
     variantId: String(head.asset_id),
     assetType: 'variant',
-    ownerUserId: String(head.owner_user_id),
-    ownerDisplayName: nullableString(head.owner_display_name),
-    visibility: String(head.visibility),
-    revision: String(version.revision),
-    latestRevision: String(head.latest_revision),
     versionNumber: Number(version.version_number),
-    latestVersionNumber: Number(head.latest_version_number),
-    changeSummary: nullableString(version.change_summary),
-    createdAt: String(head.created_at),
-    updatedAt: String(head.updated_at),
-    isOwner,
-    subscribed: isSubscribed,
-    editable: isOwner,
-    subscription: isSubscribed
-      ? {
-          subscribedAt: String(subscription.subscribed_at),
-          lastSeenRevision: nullableString(subscription.last_seen_revision),
-        }
-      : null,
+    revision: String(version.revision),
     record: parseVariantRecord(version.content),
   };
 }
 
-function componentPayloadFromRows({ head, version, subscription, viewerUserId }) {
-  const isOwner = String(head.owner_user_id) === String(viewerUserId || '');
-  const isSubscribed = hasSubscription(subscription);
+function componentSummaryPayloadFromRow(row, viewerUserId) {
+  return {
+    ...genericTypedAssetPayload(row, viewerUserId),
+    componentId: String(row.asset_id),
+    schemaVersion: stringOrDefault(row.schema_version, COMPONENT_SCHEMA_VERSION),
+    hasContent: true,
+  };
+}
+
+function componentDetailPayloadFromRows({ head, version, subscription, viewerUserId }) {
+  return {
+    ...componentSummaryPayloadFromRow({ ...head, ...version, ...(subscription || {}) }, viewerUserId),
+    versionCreatedAt: String(version.created_at),
+    createdByUserId: String(version.created_by_user_id),
+  };
+}
+
+function componentContentPayloadFromRows({ head, version }) {
   return {
     componentId: String(head.asset_id),
     assetType: 'component',
-    ownerUserId: String(head.owner_user_id),
-    ownerDisplayName: nullableString(head.owner_display_name),
-    visibility: String(head.visibility),
-    revision: String(version.revision),
-    latestRevision: String(head.latest_revision),
     versionNumber: Number(version.version_number),
-    latestVersionNumber: Number(head.latest_version_number),
-    changeSummary: nullableString(version.change_summary),
-    createdAt: String(head.created_at),
-    updatedAt: String(head.updated_at),
-    isOwner,
-    subscribed: isSubscribed,
-    editable: isOwner,
-    subscription: isSubscribed
-      ? {
-          subscribedAt: String(subscription.subscribed_at),
-          lastSeenRevision: nullableString(subscription.last_seen_revision),
-        }
-      : null,
+    revision: String(version.revision),
     record: parseComponentRecord(version.content),
   };
 }
 
-function componentListPayloadFromRow(row, viewerUserId) {
+function genericTypedAssetPayload(row, viewerUserId) {
   const isOwner = String(row.owner_user_id) === String(viewerUserId || '');
   const isSubscribed = hasSubscription(row);
   return {
-    componentId: String(row.asset_id),
-    assetType: 'component',
+    assetType: String(row.asset_type),
     ownerUserId: String(row.owner_user_id),
     ownerDisplayName: nullableString(row.owner_display_name),
     visibility: String(row.visibility),
@@ -1122,6 +1138,9 @@ function componentListPayloadFromRow(row, viewerUserId) {
     versionNumber: Number(row.version_number),
     latestVersionNumber: Number(row.latest_version_number),
     changeSummary: nullableString(row.change_summary),
+    name: String(row.name),
+    description: String(row.description),
+    tags: normalizeTags(parseJsonArray(row.tags_json)),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
     isOwner,
@@ -1133,17 +1152,6 @@ function componentListPayloadFromRow(row, viewerUserId) {
           lastSeenRevision: nullableString(row.last_seen_revision),
         }
       : null,
-    record: {
-      componentId: String(row.asset_id),
-      name: String(row.name),
-      description: String(row.description),
-      usageNotes: '',
-      tags: normalizeTags(parseJsonArray(row.tags_json)),
-      schemaVersion: stringOrDefault(row.schema_version, COMPONENT_SCHEMA_VERSION),
-      content: {},
-      createdAt: String(row.created_at),
-      updatedAt: String(row.updated_at),
-    },
   };
 }
 

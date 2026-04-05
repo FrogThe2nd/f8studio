@@ -464,7 +464,10 @@ test('variant asset lifecycle works with Better Auth cookie sessions', async (t)
   const oldVersion = await jsonRequest(app, env, '/v1/variants/alice-variant/versions/1', { cookie: alice.cookie });
   assert.equal(oldVersion.status, 200);
   assert.equal(oldVersion.json.variantId, 'alice-variant');
-  assert.equal(oldVersion.json.record.name, 'Alice Private');
+  assert.equal(oldVersion.json.hasContent, true);
+  const oldVersionContent = await jsonRequest(app, env, '/v1/variants/alice-variant/versions/1/content', { cookie: alice.cookie });
+  assert.equal(oldVersionContent.status, 200);
+  assert.equal(oldVersionContent.json.record.name, 'Alice Private');
 
   const conflict = await jsonRequest(app, env, '/v1/variants/alice-variant', {
     method: 'PUT',
@@ -555,7 +558,7 @@ test('component asset lifecycle validates session envelope and visibility rules'
   });
   assert.equal(created.status, 200);
   assert.equal(created.json.componentId, 'component-a');
-  assert.equal(created.json.record.schemaVersion, 'f8studio-session/1');
+  assert.equal(created.json.schemaVersion, 'f8studio-session/1');
   const componentVariantDetails = await env.DB.prepare(
     'SELECT asset_id FROM variant_details WHERE asset_id = ?',
   )
@@ -567,8 +570,8 @@ test('component asset lifecycle validates session envelope and visibility rules'
   assert.equal(publicList.status, 200);
   assert.equal(publicList.json.entries.length, 1);
   assert.equal(publicList.json.entries[0].componentId, 'component-a');
-  assert.deepEqual(publicList.json.entries[0].record.content, {});
-  assert.equal(publicList.json.entries[0].record.name, 'Published Session');
+  assert.equal(publicList.json.entries[0].name, 'Published Session');
+  assert.equal(publicList.json.entries[0].hasContent, true);
 
   const componentSearch = await jsonRequest(app, env, '/v1/search?assetType=component&owner=public');
   assert.equal(componentSearch.status, 200);
@@ -605,7 +608,10 @@ test('component asset lifecycle validates session envelope and visibility rules'
   const oldVersion = await jsonRequest(app, env, '/v1/components/component-a/versions/1', { cookie: bob.cookie });
   assert.equal(oldVersion.status, 200);
   assert.equal(oldVersion.json.componentId, 'component-a');
-  assert.equal(oldVersion.json.record.name, 'Published Session');
+  assert.equal(oldVersion.json.hasContent, true);
+  const oldVersionContent = await jsonRequest(app, env, '/v1/components/component-a/versions/1/content', { cookie: bob.cookie });
+  assert.equal(oldVersionContent.status, 200);
+  assert.equal(oldVersionContent.json.record.name, 'Published Session');
 
   const forbidden = await jsonRequest(app, env, '/v1/components/component-a', {
     method: 'PUT',
@@ -856,7 +862,7 @@ test('worker gzips large asset payload responses by default and leaves auth/sear
   assert.equal(searchResponse.status, 200);
   assert.equal(searchResponse.headers.get('Content-Encoding'), null);
 
-  const detailRequest = new Request('http://worker.test/v1/components/component-gzip', {
+  const detailRequest = new Request('http://worker.test/v1/components/component-gzip/content', {
     headers: {
       'Accept-Encoding': 'gzip',
       cookie: alice.cookie,

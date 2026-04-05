@@ -3,6 +3,7 @@ from __future__ import annotations
 import http.cookies
 import json
 import logging
+import socket
 import zlib
 from typing import Protocol, cast
 from urllib import error, parse, request
@@ -13,7 +14,7 @@ from qtpy import QtCore
 from f8pysdk.msgspec_codec import copy_model, validate_as
 
 from ..common import JsonObject, json_object_from_value, json_object_loads
-from .variant_catalog import VariantCatalogService
+from .variant_catalog import VariantCatalogService, variant_entry_is_installed
 from .variant_models import (
     F8VariantEntry,
     F8VariantRemoteAuth,
@@ -218,14 +219,46 @@ class VariantSyncClient:
         return page
 
     def get_variant(self, variant_id: str) -> F8VariantEntry:
-        payload = self._request_json("GET", f"/v1/variants/{parse.quote(str(variant_id))}", None, authorized=True)
-        return _entry_from_asset_payload(payload)
+        payload = self._request_json(
+            "GET",
+            f"/v1/variants/{parse.quote(str(variant_id))}",
+            None,
+            authorized=bool(self.current_access_token()),
+        )
+        return self._update_cached_remote_entry(_entry_from_asset_payload(payload))
+
+    def get_variant_content(self, variant_id: str) -> F8VariantRecord:
+        try:
+            payload = self._request_json(
+                "GET",
+                f"/v1/variants/{parse.quote(str(variant_id))}/content",
+                None,
+                authorized=bool(self.current_access_token()),
+            )
+        except F8VariantRemoteRequestError as exc:
+            if exc.status_code != 404:
+                raise
+            payload = self._request_json(
+                "GET",
+                f"/v1/variants/{parse.quote(str(variant_id))}",
+                None,
+                authorized=bool(self.current_access_token()),
+            )
+        record_payload = payload.get("record")
+        if not isinstance(record_payload, dict):
+            raise F8VariantRemoteRequestError(f"Variant content payload is missing record for {variant_id}.")
+        return validate_as(F8VariantRecord, json_object_from_value(cast(object, record_payload)))
+
+    def hydrate_variant(self, variant_id: str) -> F8VariantEntry:
+        detail_entry = self.get_variant(variant_id)
+        record = self.get_variant_content(variant_id)
+        hydrated_entry = copy_model(detail_entry, update={"record": record, "installed": True})
+        return self._catalog_service.install_remote_entry(hydrated_entry)
 
     def create_variant(self, entry: F8VariantEntry) -> F8VariantEntry:
         payload = self._request_json("POST", "/v1/variants", _asset_write_payload(entry), authorized=True)
-        result = _entry_from_asset_payload(payload)
-        _ = self._catalog_service.install_remote_entry(result)
-        return result
+        result = copy_model(_entry_from_asset_payload(payload), update={"record": entry.record, "installed": True})
+        return self._catalog_service.install_remote_entry(result)
 
     def update_variant(self, entry: F8VariantEntry) -> F8VariantEntry:
         variant_id = str(entry.record.variantId)
@@ -235,17 +268,32 @@ class VariantSyncClient:
             _asset_write_payload(entry),
             authorized=True,
         )
-        result = _entry_from_asset_payload(payload)
-        _ = self._catalog_service.install_remote_entry(result)
-        return result
+        result = copy_model(_entry_from_asset_payload(payload), update={"record": entry.record, "installed": True})
+        return self._catalog_service.install_remote_entry(result)
 
     def delete_variant(self, variant_id: str) -> None:
         _ = self._request_json("DELETE", f"/v1/variants/{parse.quote(str(variant_id))}", None, authorized=True)
 
     def install_variant(self, variant_id: str) -> F8VariantEntry:
-        payload = self._request_json("GET", f"/v1/variants/{parse.quote(str(variant_id))}", None, authorized=True)
-        entry = _entry_from_asset_payload(payload)
-        return self._catalog_service.install_remote_entry(entry)
+        return self.hydrate_variant(variant_id)
+
+    def update_variant_visibility(
+        self,
+        variant_id: str,
+        *,
+        visibility: F8VariantVisibility,
+        revision: str | None,
+    ) -> F8VariantEntry:
+        payload = self._request_json(
+            "PUT",
+            f"/v1/variants/{parse.quote(str(variant_id))}/visibility",
+            {
+                "visibility": visibility.value,
+                "revision": revision,
+            },
+            authorized=True,
+        )
+        return self._update_cached_remote_entry(_entry_from_asset_payload(payload))
 
     def subscribe_variant(self, variant_id: str) -> F8VariantEntry:
         payload = self._request_json(
@@ -268,6 +316,33 @@ class VariantSyncClient:
     def list_variant_versions(self, variant_id: str) -> F8VariantRemoteVersionList:
         payload = self._request_json("GET", f"/v1/variants/{parse.quote(str(variant_id))}/versions", None, authorized=True)
         return _remote_version_list_from_payload(payload)
+
+    def get_variant_version(self, variant_id: str, version_number: int) -> F8VariantEntry:
+        detail_payload = self._request_json(
+            "GET",
+            f"/v1/variants/{parse.quote(str(variant_id))}/versions/{int(version_number)}",
+            None,
+            authorized=bool(self.current_access_token()),
+        )
+        try:
+            content_payload = self._request_json(
+                "GET",
+                f"/v1/variants/{parse.quote(str(variant_id))}/versions/{int(version_number)}/content",
+                None,
+                authorized=bool(self.current_access_token()),
+            )
+        except F8VariantRemoteRequestError as exc:
+            if exc.status_code != 404:
+                raise
+            content_payload = detail_payload
+        detail_entry = _entry_from_asset_payload(detail_payload)
+        record_payload = content_payload.get("record")
+        if not isinstance(record_payload, dict):
+            raise F8VariantRemoteRequestError(
+                f"Variant version content payload is missing record for {variant_id} v{int(version_number)}."
+            )
+        record = validate_as(F8VariantRecord, json_object_from_value(cast(object, record_payload)))
+        return copy_model(detail_entry, update={"record": record, "installed": True})
 
     def switch_account(self, account_id: str) -> F8VariantRemoteAuth:
         session = self._saved_session_by_id(account_id)
@@ -339,8 +414,14 @@ class VariantSyncClient:
             for entry in current
             if _entry_matches_scope(entry, scope=scope, user=self.current_user())
         ]
+        existing_scope_by_id: dict[str, F8VariantEntry] = {
+            str(entry.record.variantId): entry for entry in existing_scope_entries if str(entry.record.variantId).strip()
+        }
         refreshed: list[F8VariantEntry] = []
         for entry in page.entries:
+            existing_entry = existing_scope_by_id.get(str(entry.record.variantId))
+            if existing_entry is not None:
+                entry = _merge_variant_entries(existing_entry, entry)
             if entry.syncState == F8VariantSyncState.local_only:
                 entry = copy_remote_entry_as_synced(entry)
             refreshed.append(entry)
@@ -441,8 +522,9 @@ class VariantSyncClient:
             headers["Cookie"] = str(session_cookie_override)
 
         req = request.Request(url=url, data=data, headers=headers, method=method)
+        timeout_seconds = _request_timeout_seconds(method=method, path=path)
         try:
-            response_context = cast(_HttpResponseContext, request.urlopen(req, timeout=10))
+            response_context = cast(_HttpResponseContext, request.urlopen(req, timeout=timeout_seconds))
             with response_context as response_like:
                 content_encoding = response_like.headers.get("Content-Encoding")
                 raw_bytes = response_like.read()
@@ -459,7 +541,13 @@ class VariantSyncClient:
                     self._access_token = session_cookie
                 if not raw_body:
                     return {}, session_cookie
-                return json_object_loads(raw_body), session_cookie
+                try:
+                    return json_object_loads(raw_body), session_cookie
+                except (ValueError, json.JSONDecodeError) as exc:
+                    raise F8VariantRemoteRequestError(
+                        f"{method} {path} returned non-JSON response",
+                        status_code=response_like.status,
+                    ) from exc
         except error.HTTPError as exc:
             content_encoding = exc.headers.get("Content-Encoding")
             body_bytes = exc.read()
@@ -471,7 +559,7 @@ class VariantSyncClient:
             body_text = body_bytes.decode("utf-8", errors="replace")
             logger.warning("Variant cloud %s %s failed status=%s body=%s", method, url, exc.code, body_text[:1200])
             payload_obj = _try_parse_json_object(body_text)
-            message = _error_message(payload_obj) or body_text or str(exc)
+            message = _error_message(payload_obj) or body_text or f"{method} {path} failed with HTTP {exc.code}"
             if exc.code == 401:
                 raise F8VariantRemoteAuthError(message) from exc
             if exc.code == 409:
@@ -483,10 +571,14 @@ class VariantSyncClient:
                     variant_id=_conflict_variant_id(payload_obj, path),
                     remote_revision=remote_revision,
                 ) from exc
-            raise F8VariantRemoteRequestError(message or f"HTTP {exc.code}", status_code=exc.code) from exc
+            raise F8VariantRemoteRequestError(message or f"{method} {path} failed with HTTP {exc.code}", status_code=exc.code) from exc
+        except (TimeoutError, socket.timeout) as exc:
+            raise F8VariantRemoteRequestError(
+                f"{method} {path} timed out after {timeout_seconds}s",
+            ) from exc
         except error.URLError as exc:
             logger.warning("Variant cloud %s %s url_error=%s", method, url, str(exc.reason or exc))
-            raise F8VariantRemoteRequestError(str(exc.reason or exc)) from exc
+            raise F8VariantRemoteRequestError(f"{method} {path} failed: {str(exc.reason or exc)}") from exc
 
     def _post_json(self, path: str, payload: JsonObject, *, authorized: bool) -> JsonObject:
         return self._request_json("POST", path, payload, authorized=authorized)
@@ -503,30 +595,21 @@ class VariantSyncClient:
 
     def _update_cached_remote_entry(self, entry: F8VariantEntry) -> F8VariantEntry:
         current = self._catalog_service.load_remote_entries()
-        existing_by_id: dict[str, F8VariantEntry] = {
-            str(current_entry.record.variantId): current_entry for current_entry in current
-        }
-        existing = existing_by_id.get(str(entry.record.variantId))
-        if existing is not None:
-            entry = copy_model(
-                entry,
-                update={
-                    "installed": bool(existing.installed or entry.installed),
-                    "downloadedAt": entry.downloadedAt or existing.downloadedAt,
-                },
-            )
         out: list[F8VariantEntry] = []
         replaced = False
+        updated_entry = entry
         for current_entry in current:
             if str(current_entry.record.variantId) == str(entry.record.variantId):
-                out.append(entry)
+                merged_entry = _merge_variant_entries(current_entry, entry)
+                out.append(merged_entry)
+                updated_entry = merged_entry
                 replaced = True
             else:
                 out.append(current_entry)
         if not replaced:
             out.append(entry)
         self._catalog_service.replace_remote_entries(out)
-        return entry
+        return updated_entry
 
     def _value_object(self, key: str, default: object) -> object:
         self._settings.beginGroup(self._SETTINGS_GROUP)
@@ -702,12 +785,14 @@ def _page_from_asset_payload(payload: JsonObject) -> F8VariantRemoteListPage:
 
 def _entry_from_asset_payload(payload: JsonObject) -> F8VariantEntry:
     record_payload = payload.get("record")
-    if not isinstance(record_payload, dict):
-        raise F8VariantRemoteRequestError("Variant remote payload is missing record.")
+    if isinstance(record_payload, dict):
+        record = validate_as(F8VariantRecord, json_object_from_value(cast(object, record_payload)))
+    else:
+        record = _summary_variant_record_from_payload(payload)
     source = _source_from_asset_payload(payload)
     visibility = _visibility_from_payload(payload)
     return F8VariantEntry(
-        record=validate_as(F8VariantRecord, json_object_from_value(cast(object, record_payload))),
+        record=record,
         source=source,
         visibility=visibility,
         ownerUserId=_payload_optional_str(payload, "ownerUserId"),
@@ -722,6 +807,10 @@ def _entry_from_asset_payload(payload: JsonObject) -> F8VariantEntry:
         downloadedAt=_payload_optional_str(payload, "downloadedAt"),
         installed=_payload_bool(payload, "installed", default=_installed_from_asset_payload(payload)),
         subscribed=_payload_bool(payload, "subscribed", default=False),
+        remoteVersionNumber=(
+            _payload_optional_int(payload, "latestVersionNumber")
+            or _payload_optional_int(payload, "versionNumber")
+        ),
     )
 
 
@@ -736,13 +825,27 @@ def _source_from_asset_payload(payload: JsonObject) -> F8VariantSourceKind:
 
 
 def _installed_from_asset_payload(payload: JsonObject) -> bool:
-    editable = payload.get("editable")
-    if isinstance(editable, bool) and editable:
-        return True
-    subscribed = payload.get("subscribed")
-    if isinstance(subscribed, bool):
-        return subscribed
+    del payload
     return False
+
+
+def _summary_variant_record_from_payload(payload: JsonObject) -> F8VariantRecord:
+    variant_id = _payload_optional_str(payload, "variantId") or _payload_optional_str(payload, "assetId") or ""
+    if not variant_id.strip():
+        raise F8VariantRemoteRequestError("Variant remote payload is missing variantId.")
+    return F8VariantRecord(
+        variantId=variant_id,
+        kind=F8VariantKind(_payload_optional_str(payload, "variantKind") or "operator"),
+        baseNodeType=_payload_optional_str(payload, "baseNodeType") or "",
+        serviceClass=_payload_optional_str(payload, "serviceClass") or "",
+        operatorClass=_payload_optional_str(payload, "operatorClass"),
+        name=_payload_optional_str(payload, "name") or variant_id,
+        spec={},
+        createdAt=_payload_optional_str(payload, "createdAt") or "",
+        updatedAt=_payload_optional_str(payload, "updatedAt") or "",
+        description=_payload_optional_str(payload, "description") or "",
+        tags=_payload_string_list(payload, "tags"),
+    )
 
 
 def _library_slug_from_payload(payload: JsonObject, source: F8VariantSourceKind) -> str | None:
@@ -775,6 +878,35 @@ def _entry_matches_scope(entry: F8VariantEntry, *, scope: str, user: F8VariantRe
 
 def copy_remote_entry_as_synced(entry: F8VariantEntry) -> F8VariantEntry:
     return copy_model(entry, update={"syncState": F8VariantSyncState.synced})
+
+
+def _request_timeout_seconds(*, method: str, path: str) -> int:
+    normalized_method = str(method or "").upper()
+    normalized_path = str(path or "")
+    if normalized_method == "GET" and normalized_path.endswith("/content"):
+        return 45
+    if normalized_method == "GET" and "/versions/" in normalized_path:
+        return 30
+    return 10
+
+
+def _merge_variant_entries(existing_entry: F8VariantEntry, incoming_entry: F8VariantEntry) -> F8VariantEntry:
+    if incoming_entry.installed:
+        if existing_entry.installed and not incoming_entry.downloadedAt:
+            return copy_model(incoming_entry, update={"downloadedAt": existing_entry.downloadedAt})
+        return incoming_entry
+    if not existing_entry.installed:
+        return incoming_entry
+    if str(existing_entry.remoteRevision or "") != str(incoming_entry.remoteRevision or ""):
+        return incoming_entry
+    return copy_model(
+        incoming_entry,
+        update={
+            "record": existing_entry.record,
+            "installed": bool(variant_entry_is_installed(existing_entry)),
+            "downloadedAt": incoming_entry.downloadedAt or existing_entry.downloadedAt,
+        },
+    )
 
 
 def _remote_user_from_payload(payload: JsonObject) -> F8VariantRemoteUser:
@@ -928,6 +1060,13 @@ def _payload_bool(payload: JsonObject, key: str, *, default: bool) -> bool:
     if isinstance(value, bool):
         return value
     return default
+
+
+def _payload_optional_int(payload: JsonObject, key: str) -> int | None:
+    value = payload.get(key)
+    if value is None:
+        return None
+    return int(str(value))
 
 
 def _payload_int(payload: JsonObject, key: str) -> int:

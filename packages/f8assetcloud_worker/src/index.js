@@ -86,26 +86,13 @@ function isAssetJsonCompressionEnabled(env) {
 }
 
 function isLargeAssetPayloadRoute(request, pathname) {
-  const match = /^\/v1\/(variants|components)(?:\/([^/]+)(?:\/([^/]+)(?:\/([^/]+))?)?)?$/.exec(pathname);
-  if (!match) {
+  if (!/^\/v1\/(variants|components)\//.test(pathname)) {
     return false;
   }
-
-  const secondSegment = String(match[3] || '');
-  const thirdSegment = String(match[4] || '');
-  if (!match[2]) {
-    return request.method === 'POST';
+  if (request.method !== 'GET') {
+    return false;
   }
-  if (!secondSegment) {
-    return request.method === 'GET' || request.method === 'PUT';
-  }
-  if (secondSegment === 'fork') {
-    return request.method === 'POST';
-  }
-  if (secondSegment === 'versions' && thirdSegment) {
-    return request.method === 'GET';
-  }
-  return false;
+  return /\/content$/.test(pathname);
 }
 
 function appendVaryValue(currentValue, nextValue) {

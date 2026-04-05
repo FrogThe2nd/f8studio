@@ -41,6 +41,8 @@ class F8VariantEntry(Struct, kw_only=True):
     downloadedAt: str | None = None
     installed: bool = True
     subscribed: bool = False
+    localVersionNumber: int | None = None
+    remoteVersionNumber: int | None = None
 
 
 class F8VariantCatalogSnapshot(Struct, kw_only=True):

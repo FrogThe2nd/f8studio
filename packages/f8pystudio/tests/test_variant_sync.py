@@ -7,6 +7,7 @@ import threading
 
 from qtpy import QtCore
 from sqlalchemy import insert, select
+from f8pysdk.msgspec_codec import copy_model
 
 from f8pystudio.assets.variants.variant_catalog import LocalVariantProvider, RemoteCacheProvider, VariantCatalogService
 from f8pystudio.assets.variants.variant_models import (
@@ -20,6 +21,7 @@ from f8pystudio.assets.variants.variant_models import (
 )
 from f8pystudio.assets.variants.variant_sync import VariantSyncClient
 from f8pystudio.assets.db import variant_remote_cache_table
+from f8pystudio.assets.ui.variant_manager_dialog import variant_row_state_for_entries
 from f8pysdk import F8VariantRecord
 
 
@@ -225,6 +227,7 @@ def test_variant_sync_client_uses_cookie_sessions_and_marks_conflicts(tmp_path: 
         client.set_base_url(f"http://127.0.0.1:{server.server_port}")
         anonymous_page = client.list_variants(scope="community", base_node_type="svc.a.op")
         assert anonymous_page.entries[0].record.variantId == "public-1"
+        assert anonymous_page.entries[0].remoteVersionNumber == 1
         auth = client.login(base_url=f"http://127.0.0.1:{server.server_port}", username="u", password="p", remember=True)
 
         assert auth.user.displayName == "User One"
@@ -247,6 +250,7 @@ def test_variant_sync_client_uses_cookie_sessions_and_marks_conflicts(tmp_path: 
         installed = client.install_variant("public-1")
         assert installed.installed is True
         assert service.variant_exists("public-1") is True
+        assert installed.remoteVersionNumber == 1
 
         local_entry = _make_entry(variant_id="local-1", source=F8VariantSourceKind.local)
         uploaded = client.upload_entry(local_entry)
@@ -332,3 +336,44 @@ def test_variant_remote_cache_load_cleans_empty_variant_ids(tmp_path: Path) -> N
     with provider._db.connect_sqla() as conn:
         rows = conn.execute(select(variant_remote_cache_table.c.variant_id)).all()
     assert rows == []
+
+
+def test_variant_row_state_badges_cover_remote_both_and_conflict() -> None:
+    local_entry = _make_entry(variant_id="asset-1", source=F8VariantSourceKind.local)
+    local_entry = copy_model(local_entry, update={"localVersionNumber": 4})
+    remote_entry = _make_entry(variant_id="asset-1", source=F8VariantSourceKind.remote_public, installed=True, remote_revision="r1")
+    remote_entry = copy_model(
+        remote_entry,
+        update={"visibility": F8VariantVisibility.public, "remoteVersionNumber": 6},
+    )
+    both_state = variant_row_state_for_entries(
+        variant_id="asset-1",
+        local_entry=local_entry,
+        remote_entry=remote_entry,
+    )
+    conflict_remote = _make_entry(variant_id="asset-2", source=F8VariantSourceKind.remote_public, installed=True, remote_revision="r1")
+    conflict_remote = copy_model(
+        conflict_remote,
+        update={
+            "visibility": F8VariantVisibility.public,
+            "syncState": F8VariantSyncState.conflict,
+            "remoteVersionNumber": 3,
+        },
+    )
+    conflict_state = variant_row_state_for_entries(
+        variant_id="asset-2",
+        local_entry=None,
+        remote_entry=conflict_remote,
+    )
+    remote_state = variant_row_state_for_entries(
+        variant_id="asset-3",
+        local_entry=None,
+        remote_entry=copy_model(
+            _make_entry(variant_id="asset-3", source=F8VariantSourceKind.remote_public, installed=False, remote_revision="r1"),
+            update={"visibility": F8VariantVisibility.public, "remoteVersionNumber": 2},
+        ),
+    )
+
+    assert both_state.badge_texts() == ["both", "public", "synced", "L4", "R6"]
+    assert conflict_state.badge_texts() == ["both", "public", "conflict", "R3"]
+    assert remote_state.badge_texts() == ["remote", "public", "R2"]

@@ -55,6 +55,7 @@ function ConsoleApp() {
   const sessionQuery = authClient.useSession();
   const session = sessionQuery.data;
   const isLoggedIn = Boolean(session?.user);
+  const sessionStillLoadingWithoutData = sessionQuery.isPending && !isLoggedIn;
   const registerUsernameAbortRef = useRef(null);
 
   const [authMode, setAuthMode] = useState('login');
@@ -598,8 +599,8 @@ function ConsoleApp() {
   async function onDownloadAsset(asset) {
     try {
       const endpoint = asset.assetType === 'variant'
-        ? `/v1/variants/${encodeURIComponent(asset.assetId)}`
-        : `/v1/components/${encodeURIComponent(asset.assetId)}`;
+        ? `/v1/variants/${encodeURIComponent(asset.assetId)}/content`
+        : `/v1/components/${encodeURIComponent(asset.assetId)}/content`;
       const detail = await apiRequest(endpoint);
       downloadJson(`${asset.assetType}-${asset.assetId}.json`, detail);
       setStatusText(`Downloaded ${asset.assetId}`);
@@ -733,7 +734,7 @@ function ConsoleApp() {
     return 'User Management';
   }, [activePage]);
 
-  if ((sessionQuery.isPending && !sessionPendingTimedOut) || (isLoggedIn && currentUser === null && !profileLoadError)) {
+  if ((sessionStillLoadingWithoutData && !sessionPendingTimedOut) || (isLoggedIn && currentUser === null && !profileLoadError)) {
     return (
       <div className="shell login-shell">
         <div className="card panel login-card">
@@ -744,7 +745,7 @@ function ConsoleApp() {
     );
   }
 
-  if (sessionQuery.isPending && sessionPendingTimedOut) {
+  if (sessionStillLoadingWithoutData && sessionPendingTimedOut) {
     return (
       <div className="shell login-shell">
         <div className="card panel login-card">

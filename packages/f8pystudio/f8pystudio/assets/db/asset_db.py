@@ -80,6 +80,7 @@ variant_heads_local_table = Table(
     Column("base_node_type", Text, nullable=False),
     Column("service_class", Text, nullable=False),
     Column("operator_class", Text, nullable=True),
+    Column("latest_version_number", Integer, nullable=False, default=1),
     Column("content", LargeBinary, nullable=False),
     Column("created_at", Text, nullable=False),
     Column("updated_at", Text, nullable=False),
@@ -179,6 +180,13 @@ class AssetsDatabase:
         inspector = inspect(engine)
         self._ensure_nullable_text_column(engine, inspector=inspector, table_name="component_remote_cache", column_name="library_slug")
         self._ensure_nullable_text_column(engine, inspector=inspector, table_name="variant_remote_cache", column_name="library_slug")
+        self._ensure_integer_column_with_default(
+            engine,
+            inspector=inspector,
+            table_name="variant_heads_local",
+            column_name="latest_version_number",
+            default_value=1,
+        )
 
     def _ensure_nullable_text_column(self, engine: Engine, *, inspector: Inspector, table_name: str, column_name: str) -> None:
         if table_name not in set(inspector.get_table_names()):
@@ -187,6 +195,26 @@ class AssetsDatabase:
             return
         with engine.begin() as connection:
             connection.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {column_name} TEXT"))
+
+    def _ensure_integer_column_with_default(
+        self,
+        engine: Engine,
+        *,
+        inspector: Inspector,
+        table_name: str,
+        column_name: str,
+        default_value: int,
+    ) -> None:
+        if table_name not in set(inspector.get_table_names()):
+            return
+        if column_name in {str(column["name"]) for column in inspector.get_columns(table_name)}:
+            return
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    f"ALTER TABLE {table_name} ADD COLUMN {column_name} INTEGER NOT NULL DEFAULT {int(default_value)}"
+                )
+            )
 
 
 __all__ = [
