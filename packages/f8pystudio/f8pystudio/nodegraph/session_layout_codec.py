@@ -7,7 +7,8 @@ import logging
 import os
 from typing import Any
 
-from qtpy import QtCore
+from qtpy import QtCore, QtWidgets
+from NodeGraphQt.base.commands import PortConnectedCmd
 from NodeGraphQt.errors import NodeCreationError
 
 from f8pysdk import F8OperatorSpec, F8ServiceSpec
@@ -35,6 +36,91 @@ logger = logging.getLogger(__name__)
 
 
 class SessionLayoutCodecMixin:
+    def _deserialize_session_fast(self, layout_data: dict) -> None:
+        def _convert_last_list_to_set(data_obj: dict[str, Any]) -> None:
+            for key, value in data_obj.items():
+                if isinstance(value, dict):
+                    _convert_last_list_to_set(value)
+                elif isinstance(value, list):
+                    data_obj[key] = set(value)
+
+        for attr_name, attr_value in layout_data.get("graph", {}).items():
+            if attr_name == "layout_direction":
+                self.set_layout_direction(attr_value)
+            elif attr_name == "acyclic":
+                self.set_acyclic(attr_value)
+            elif attr_name == "pipe_collision":
+                self.set_pipe_collision(attr_value)
+            elif attr_name == "pipe_slicing":
+                self.set_pipe_slicing(attr_value)
+            elif attr_name == "pipe_style":
+                self.set_pipe_style(attr_value)
+            elif attr_name == "accept_connection_types":
+                parsed_value = json.loads(attr_value)
+                _convert_last_list_to_set(parsed_value)
+                self.model.accept_connection_types = parsed_value
+            elif attr_name == "reject_connection_types":
+                parsed_value = json.loads(attr_value)
+                _convert_last_list_to_set(parsed_value)
+                self.model.reject_connection_types = parsed_value
+
+        nodes_by_id: dict[str, Any] = {}
+        for node_id, node_data in layout_data.get("nodes", {}).items():
+            identifier = node_data["type_"]
+            node = self._node_factory.create_node_instance(identifier)
+            if node is None:
+                continue
+            node.NODE_NAME = node_data.get("name", node.NODE_NAME)
+            for prop in node.model.properties.keys():
+                if prop in node_data:
+                    node.model.set_property(prop, node_data[prop])
+            custom_data = node_data.get("custom", {})
+            if isinstance(custom_data, dict):
+                for prop, value in custom_data.items():
+                    node.model.set_property(prop, value)
+                    widgets = getattr(node.view, "widgets", None)
+                    if isinstance(widgets, dict) and prop in widgets:
+                        widgets[prop].set_value(value)
+            nodes_by_id[node_id] = node
+            self.add_node(
+                node,
+                node_data.get("pos"),
+                selected=False,
+                push_undo=False,
+                inherite_graph_style=True,
+            )
+            if node_data.get("port_deletion_allowed", None):
+                node.set_ports(
+                    {
+                        "input_ports": node_data["input_ports"],
+                        "output_ports": node_data["output_ports"],
+                    }
+                )
+
+        for connection in layout_data.get("connections", []):
+            in_node_id, input_name = connection.get("in", ("", ""))
+            in_node = nodes_by_id.get(in_node_id) or self.get_node_by_id(in_node_id)
+            if in_node is None:
+                continue
+            in_port = in_node.inputs().get(input_name)
+
+            out_node_id, output_name = connection.get("out", ("", ""))
+            out_node = nodes_by_id.get(out_node_id) or self.get_node_by_id(out_node_id)
+            if out_node is None:
+                continue
+            out_port = out_node.outputs().get(output_name)
+
+            if in_port is None or out_port is None:
+                continue
+
+            allow_connection = (not in_port.model.connected_ports) or in_port.model.multi_connection
+            if allow_connection:
+                PortConnectedCmd(in_port, out_port, emit_signal=False).redo()
+            in_node.on_input_connected(in_port, out_port)
+
+        self.clear_selection()
+        self._undo_stack.clear()
+
     @staticmethod
     def _json_default_redacted_value(value_schema: Any) -> Any:
         try:
@@ -831,6 +917,15 @@ class SessionLayoutCodecMixin:
         self._load_session_layout_data(_extract_session_layout(payload), session_label=file_path)
 
     def _load_session_layout_data(self, layout_data: dict, *, session_label: str) -> None:
+        graph_widget = getattr(self, "widget", None)
+        viewer = self.viewer()
+        widgets_to_freeze: list[QtWidgets.QWidget] = []
+        if isinstance(graph_widget, QtWidgets.QWidget):
+            widgets_to_freeze.append(graph_widget)
+        if isinstance(viewer, QtWidgets.QWidget) and viewer is not graph_widget:
+            widgets_to_freeze.append(viewer)
+        for widget in widgets_to_freeze:
+            widget.setUpdatesEnabled(False)
         self._loading_session = True
         try:
             self.clear_session()
@@ -847,17 +942,19 @@ class SessionLayoutCodecMixin:
             layout_data = self._strip_invalid_connections(layout_data)
             deserialize_layout = dict(layout_data)
             deserialize_layout.pop("f8_layers", None)
-            super().deserialize_session(deserialize_layout, clear_session=False, clear_undo_stack=True)
+            self._deserialize_session_fast(deserialize_layout)
             self.set_session_layer_defs(layer_defs, preserve_active=False)
             self._model.session = session_label
             self.session_changed.emit(session_label)
         finally:
             self._loading_session = False
+            for widget in reversed(widgets_to_freeze):
+                widget.setUpdatesEnabled(True)
+                widget.update()
         self._rebind_container_children()
         # Session load restores connections after nodes are created/drawn, which can
         # leave inline state widgets with stale editability until the user forces a refresh.
         # Do a post-load pass to apply the "state-edge => readonly" rule.
         QtCore.QTimer.singleShot(0, self._refresh_all_inline_state_read_only)
-        viewer = self.viewer()
         if isinstance(viewer, F8StudioNodeViewer):
             QtCore.QTimer.singleShot(0, lambda: viewer.refresh_auto_proxy_mode(force=True))

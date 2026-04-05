@@ -37,16 +37,8 @@ class RuntimeSessionControllerMixin:
         return svc.bus
 
     async def _run_startup_preflight_async(self) -> str | None:
-        nats_url = str(self._nats_connection_manager.nats_url).strip() or "nats://127.0.0.1:4222"
-        owned_pid = await ensure_nats_server_owned_pid(
-            nats_url,
-            emit_log=self._emit_log_line,
-            report_exception=self._report_exception,
-        )
-        if owned_pid is not None:
-            self._owned_nats_server_pid = int(owned_pid)
-
-        # Singleton guard (best-effort): if any existing studio ServiceBus micro responds, do not start.
+        # Keep preflight fast: probe any existing studio instance first, and only
+        # bootstrap local infrastructure once the UI is already allowed to continue.
         self._nc = await self._nats_connection_manager.connect(context="connect nats for singleton guard failed")
         guard = await self._nats_connection_manager.singleton_guard(
             self._nc,
@@ -60,6 +52,14 @@ class RuntimeSessionControllerMixin:
 
     async def _start_after_preflight_async(self) -> str | None:
         nats_url = str(self._nats_connection_manager.nats_url).strip() or "nats://127.0.0.1:4222"
+        if self._owned_nats_server_pid is None:
+            owned_pid = await ensure_nats_server_owned_pid(
+                nats_url,
+                emit_log=self._emit_log_line,
+                report_exception=self._report_exception,
+            )
+            if owned_pid is not None:
+                self._owned_nats_server_pid = int(owned_pid)
 
         try:
             cfg = PyStudioServiceConfig(nats_url=nats_url, studio_service_id=self.studio_service_id)

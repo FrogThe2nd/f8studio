@@ -12,7 +12,12 @@ from f8pysdk import F8OperatorSpec, F8ServiceSpec
 from f8pysdk.spec_metadata import palette_category_from_spec
 from ...ui.support.ui_notifications import show_warning
 from ...assets.variants.variant_ids import build_variant_node_type, is_variant_node_type, parse_variant_node_type
-from ...assets.variants.variant_repository import delete_variant, list_variants_for_base, variant_exists
+from ...assets.variants.variant_repository import (
+    delete_variant,
+    list_variants_for_base,
+    list_variants_grouped_by_base,
+    variant_exists,
+)
 from ...assets.variants.variant_events import subscribe_variants_changed
 from ..dialogs.node_docs_dialog import show_node_docs_dialog
 
@@ -25,6 +30,7 @@ class _F8StudioNodesTreeWidget(NodesTreeWidget):
     _ROLE_IS_VARIANT = int(QtCore.Qt.UserRole + 5)
     _ROLE_VARIANT_NAME = int(QtCore.Qt.UserRole + 6)
     _ROLE_CATEGORY_ID = int(QtCore.Qt.UserRole + 7)
+    _TREE_BUILD_BATCH_SIZE = 48
 
     def __init__(self, parent: QtWidgets.QWidget | None = None, node_graph: Any | None = None) -> None:
         self._search_text = ""
@@ -32,6 +38,11 @@ class _F8StudioNodesTreeWidget(NodesTreeWidget):
         self._on_open_variant_manager: Any | None = None
         self._node_graph = node_graph
         self._variant_manager_dialogs: list[QtWidgets.QDialog] = []
+        self._tree_build_activated = False
+        self._tree_build_generation = 0
+        self._tree_build_rows: list[tuple[str, str, str, str, list[Any]]] = []
+        self._tree_build_index = 0
+        self._tree_build_pending_refresh = False
         super().__init__(parent=parent, node_graph=node_graph)
         self.setColumnCount(1)
         self.setHeaderHidden(True)
@@ -52,6 +63,12 @@ class _F8StudioNodesTreeWidget(NodesTreeWidget):
         )
         self.customContextMenuRequested.connect(self._on_context_menu_requested)  # type: ignore[attr-defined]
         self.itemClicked.connect(self._on_item_clicked)  # type: ignore[attr-defined]
+
+    def activate_tree_build(self) -> None:
+        if self._tree_build_activated:
+            return
+        self._tree_build_activated = True
+        self.update()
 
     def set_search_text(self, text: str) -> None:
         value = str(text or "").strip().lower()
@@ -261,14 +278,31 @@ class _F8StudioNodesTreeWidget(NodesTreeWidget):
                     expanded_base_nodes.add(base_node_id)
         return expanded_categories, expanded_base_nodes
 
-    def _build_tree(self) -> None:
+    def _show_status_message(self, message: str) -> None:
+        self.clear()
+        item = _BaseNodeTreeItem(self, [str(message or "")], type=TYPE_CATEGORY)
+        item.setFlags(QtCore.Qt.ItemIsEnabled)
+        item.setFirstColumnSpanned(True)
+        item.setSizeHint(0, QtCore.QSize(100, 22))
+        self.addTopLevelItem(item)
+
+    def _start_tree_build(self) -> None:
+        self._tree_build_generation += 1
+        generation = self._tree_build_generation
         expanded_categories, expanded_base_nodes = self._capture_expanded_state()
         self.clear()
         if self._factory is None:
             return
 
         show_variant_children = self._search_variants_enabled
-        node_types_by_category: dict[str, list[tuple[str, str, list[Any]]]] = defaultdict(list)
+        variants_by_base: dict[str, list[Any]] = {}
+        if show_variant_children:
+            variants_by_base = {
+                base_node_type: list(records)
+                for base_node_type, records in list_variants_grouped_by_base(include_uninstalled=False).items()
+            }
+
+        node_types_by_category: dict[str, list[tuple[str, str, str, list[Any]]]] = defaultdict(list)
         for node_name, node_ids in self._factory.names.items():
             for node_id_any in list(node_ids or []):
                 node_id = str(node_id_any)
@@ -280,20 +314,24 @@ class _F8StudioNodesTreeWidget(NodesTreeWidget):
                 base_match = self._matches_search(node_cls=node_cls, node_name=str(node_name), node_id=node_id)
                 matched_variants: list[Any] = []
                 if show_variant_children:
-                    variants = list_variants_for_base(node_id)
+                    all_variants = variants_by_base.get(node_id, [])
                     if not self._search_text:
-                        matched_variants.extend(variants)
+                        matched_variants = list(all_variants)
                     else:
-                        for v in variants:
-                            if self._variant_matches_search(v):
-                                matched_variants.append(v)
+                        for variant in all_variants:
+                            if self._variant_matches_search(variant):
+                                matched_variants.append(variant)
                 if not base_match and not matched_variants:
                     continue
                 category = "uncategorized"
+                spec_description = ""
                 spec = typed_spec_template_or_none(node_cls)
                 if spec is not None:
                     category = palette_category_from_spec(spec)
-                node_types_by_category[category].append((node_id, str(node_name), matched_variants))
+                    spec_description = self._spec_description(spec)
+                node_types_by_category[category].append(
+                    (node_id, str(node_name), spec_description, matched_variants)
+                )
 
         self._category_items = {}
         for category in sorted(node_types_by_category.keys()):
@@ -310,42 +348,72 @@ class _F8StudioNodesTreeWidget(NodesTreeWidget):
                 cat_item.setExpanded(True)
             self._category_items[category] = cat_item
 
+        self._tree_build_rows = []
         for category, nodes_list in node_types_by_category.items():
+            for node_id, node_name, spec_description, matched_variants in nodes_list:
+                self._tree_build_rows.append((category, node_id, node_name, spec_description, matched_variants))
+        self._tree_build_index = 0
+        self._tree_build_pending_refresh = False
+        self._append_tree_build_batch(generation=generation, expanded_base_nodes=expanded_base_nodes)
+
+    def _append_tree_build_batch(self, *, generation: int, expanded_base_nodes: set[str]) -> None:
+        if generation != self._tree_build_generation:
+            return
+        if self._factory is None:
+            return
+        end_index = min(self._tree_build_index + self._TREE_BUILD_BATCH_SIZE, len(self._tree_build_rows))
+        while self._tree_build_index < end_index:
+            category, node_id, node_name, spec_description, matched_variants = self._tree_build_rows[self._tree_build_index]
+            self._tree_build_index += 1
             category_item = self._category_items.get(category)
             if category_item is None:
                 continue
-            for node_id, node_name, matched_variants in nodes_list:
-                item = _BaseNodeTreeItem(category_item, [node_name], type=TYPE_NODE)
-                item.setToolTip(0, node_id)
-                item.setSizeHint(0, QtCore.QSize(100, 22))
-                item.setData(0, self._ROLE_NODE_ID, node_id)
-                item.setData(0, self._ROLE_BASE_NODE_ID, node_id)
-                item.setData(0, self._ROLE_NODE_NAME, node_name)
-                item.setData(0, self._ROLE_IS_VARIANT, False)
-                item.setExpanded(node_id in expanded_base_nodes)
-                category_item.addChild(item)
+            item = _BaseNodeTreeItem(category_item, [node_name], type=TYPE_NODE)
+            item.setToolTip(0, node_id)
+            item.setSizeHint(0, QtCore.QSize(100, 22))
+            item.setData(0, self._ROLE_NODE_ID, node_id)
+            item.setData(0, self._ROLE_BASE_NODE_ID, node_id)
+            item.setData(0, self._ROLE_NODE_NAME, node_name)
+            item.setData(0, self._ROLE_IS_VARIANT, False)
+            item.setExpanded(node_id in expanded_base_nodes)
+            category_item.addChild(item)
 
-                node_cls = self._factory.nodes.get(node_id)
-                if node_cls is not None:
-                    spec = typed_spec_template_or_none(node_cls)
-                    if spec is not None:
-                        desc = self._spec_description(spec)
-                        if desc:
-                            item.setToolTip(0, f"{node_id}\n\n{desc}")
+            if spec_description:
+                item.setToolTip(0, f"{node_id}\n\n{spec_description}")
 
-                for variant in matched_variants:
-                    variant_node_type = build_variant_node_type(str(variant.variantId))
-                    variant_text = f"|{variant.name}|"
-                    variant_item = _BaseNodeTreeItem(item, [variant_text], type=TYPE_NODE)
-                    variant_item.setToolTip(0, variant_node_type)
-                    variant_item.setSizeHint(0, QtCore.QSize(100, 22))
-                    variant_item.setData(0, self._ROLE_NODE_ID, variant_node_type)
-                    variant_item.setData(0, self._ROLE_BASE_NODE_ID, node_id)
-                    variant_item.setData(0, self._ROLE_NODE_NAME, node_name)
-                    variant_item.setData(0, self._ROLE_VARIANT_ID, str(variant.variantId))
-                    variant_item.setData(0, self._ROLE_IS_VARIANT, True)
-                    variant_item.setData(0, self._ROLE_VARIANT_NAME, str(variant.name or ""))
-                    item.addChild(variant_item)
+            for variant in matched_variants:
+                variant_node_type = build_variant_node_type(str(variant.variantId))
+                variant_text = f"|{variant.name}|"
+                variant_item = _BaseNodeTreeItem(item, [variant_text], type=TYPE_NODE)
+                variant_item.setToolTip(0, variant_node_type)
+                variant_item.setSizeHint(0, QtCore.QSize(100, 22))
+                variant_item.setData(0, self._ROLE_NODE_ID, variant_node_type)
+                variant_item.setData(0, self._ROLE_BASE_NODE_ID, node_id)
+                variant_item.setData(0, self._ROLE_NODE_NAME, node_name)
+                variant_item.setData(0, self._ROLE_VARIANT_ID, str(variant.variantId))
+                variant_item.setData(0, self._ROLE_IS_VARIANT, True)
+                variant_item.setData(0, self._ROLE_VARIANT_NAME, str(variant.name or ""))
+                item.addChild(variant_item)
+
+        if self._tree_build_index < len(self._tree_build_rows):
+            QtCore.QTimer.singleShot(
+                0,
+                lambda: self._append_tree_build_batch(
+                    generation=generation,
+                    expanded_base_nodes=expanded_base_nodes,
+                ),
+            )
+            return
+        if self._tree_build_pending_refresh:
+            self._start_tree_build()
+
+    def _build_tree(self) -> None:
+        if not self._tree_build_activated:
+            self._tree_build_pending_refresh = True
+            self._show_status_message("Open the node library to load nodes.")
+            return
+        self._show_status_message("Loading nodes...")
+        QtCore.QTimer.singleShot(0, self._start_tree_build)
 
 
 class F8StudioNodeLibraryWidget(QtWidgets.QWidget):
@@ -450,6 +518,10 @@ class F8StudioNodeLibraryWidget(QtWidgets.QWidget):
 
     def update(self) -> None:
         self._tree.update()
+
+    def showEvent(self, event: QtGui.QShowEvent) -> None:
+        super().showEvent(event)
+        self._tree.activate_tree_build()
 
     def _settings(self) -> QtCore.QSettings:
         return QtCore.QSettings(self._SETTINGS_ORGANIZATION, self._SETTINGS_APPLICATION)

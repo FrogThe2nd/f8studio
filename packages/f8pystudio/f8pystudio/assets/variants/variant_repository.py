@@ -12,6 +12,7 @@ from .variant_catalog import (
     VariantCatalogService,
     _records_name_conflict,
     ensure_unique_variant_name as _catalog_ensure_unique_variant_name,
+    is_entry_usable,
     local_variants_file_path,
     normalize_variant_name,
     remote_cache_file_path,
@@ -39,6 +40,22 @@ def list_entries_for_base(base_node_type: str, *, include_uninstalled: bool = Fa
 
 def list_variants_for_base(base_node_type: str) -> list[F8VariantRecord]:
     return _service().list_records_for_base(base_node_type)
+
+
+def list_variants_grouped_by_base(*, include_uninstalled: bool = False) -> dict[str, list[F8VariantRecord]]:
+    grouped_records: dict[str, list[F8VariantRecord]] = {}
+    for entry in _service().load_all_entries():
+        if not include_uninstalled and not is_entry_usable(entry):
+            continue
+        base_node_type = str(entry.record.baseNodeType or "").strip()
+        if not base_node_type:
+            continue
+        existing_records = grouped_records.get(base_node_type)
+        if existing_records is None:
+            grouped_records[base_node_type] = [entry.record]
+        else:
+            existing_records.append(entry.record)
+    return grouped_records
 
 
 def _local_records() -> list[F8VariantRecord]:
@@ -130,6 +147,7 @@ __all__ = [
     "save_library",
     "list_entries_for_base",
     "list_variants_for_base",
+    "list_variants_grouped_by_base",
     "normalize_variant_name",
     "is_variant_name_conflict",
     "ensure_unique_variant_name",

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import logging
+import threading
 from typing import Callable, Iterable, TypeAlias
 
 from qtpy import QtCore, QtGui, QtWidgets
 
+from ...assets.projects.project_models import F8ProjectRecord
+from ...assets.projects.project_storage import ProjectStorageService
 from ...nodegraph import F8StudioGraph
 from ...nodegraph.edge_rules import EDGE_KIND_DATA, EDGE_KIND_EXEC, EDGE_KIND_STATE
 from ...nodegraph.session import last_session_path
@@ -12,7 +15,6 @@ from ...nodegraph.runtime_compiler import CompiledRuntimeGraphs, compile_runtime
 from ...nodegraph.viewer import F8StudioNodeViewer
 from ...pystudio_service_bridge import STARTUP_GATE_TIMEOUT_S, PyStudioServiceBridge, PyStudioServiceBridgeConfig
 from ...pystudio_node_registry import SERVICE_CLASS as STUDIO_SERVICE_CLASS
-from ...bridge.deploy_fingerprint import build_compiled_deploy_fingerprint
 from ...ui.support.ui_notifications import show_info, show_warning
 from ...ui_bus import UiCommand
 from ...ui.support.ui_icons import StudioIcon, icon_for
@@ -63,6 +65,36 @@ logger = logging.getLogger(__name__)
 ActionHandler: TypeAlias = Callable[[], None] | Callable[[bool], None]
 
 
+class _ProjectAutoLoadWorker(QtCore.QObject):
+    loaded = QtCore.Signal(object)  # F8ProjectRecord | None
+    failed = QtCore.Signal(str, object)  # context, exc
+
+    def __init__(self) -> None:
+        super().__init__(None)
+        self._thread: threading.Thread | None = None
+        self._started = False
+
+    def start(self) -> None:
+        if self._started:
+            return
+        self._started = True
+        worker_thread = threading.Thread(
+            target=self._run,
+            name="f8pystudio-project-auto-load",
+            daemon=True,
+        )
+        self._thread = worker_thread
+        worker_thread.start()
+
+    def _run(self) -> None:
+        try:
+            project = ProjectStorageService().load_last_project()
+        except Exception as exc:
+            self.failed.emit("session auto-load failed", exc)
+            return
+        self.loaded.emit(project)
+
+
 class F8StudioMainWin(QtWidgets.QMainWindow):
     _WINDOW_LAYOUT_SETTINGS_ORGANIZATION = "Feel8"
     _WINDOW_LAYOUT_SETTINGS_APPLICATION = "F8PyStudio"
@@ -80,6 +112,7 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
     _PERFORMANCE_OVERLAY_ENABLED_SETTINGS_KEY = "performance_overlay_enabled"
     _PERIODIC_AUTO_SAVE_INTERVAL_MS = 15000
     _AUTO_DEPLOY_DEBOUNCE_MS = 2000
+    _DEFERRED_STARTUP_DELAY_MS = 150
     _LOG_LEVEL_CHOICES: tuple[tuple[str, int], ...] = (
         ("DEBUG", logging.DEBUG),
         ("INFO", logging.INFO),
@@ -145,8 +178,14 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         self._auto_deploy_enabled = self._read_saved_auto_deploy_enabled()
         self._auto_proxy_enabled = self._read_saved_auto_proxy_enabled()
         self._performance_overlay_enabled = self._read_saved_performance_overlay_enabled()
-        self._asset_cloud_sync_client = VariantSyncClient()
+        self._asset_cloud_sync_client: VariantSyncClient | None = None
         self._asset_cloud_account_button: QtWidgets.QToolButton | None = None
+        self._node_library_widget: F8StudioNodeLibraryWidget | None = None
+        self._ai_assist_sidebar: AiAssistSidebarWidget | None = None
+        self._deferred_startup_scheduled = False
+        self._deferred_startup_completed = False
+        self._closing = False
+        self._auto_load_worker: _ProjectAutoLoadWorker | None = None
 
         self.studio_graph = F8StudioGraph()
         self.studio_graph.node_factory.clear_registered_nodes()
@@ -168,6 +207,10 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         self._auto_deploy_timer.setSingleShot(True)
         self._auto_deploy_timer.setInterval(self._AUTO_DEPLOY_DEBOUNCE_MS)
         self._auto_deploy_timer.timeout.connect(self._on_auto_deploy_timeout)  # type: ignore[attr-defined]
+        self._deferred_auto_deploy_fingerprint_timer = QtCore.QTimer(self)
+        self._deferred_auto_deploy_fingerprint_timer.setSingleShot(True)
+        self._deferred_auto_deploy_fingerprint_timer.setInterval(0)
+        self._deferred_auto_deploy_fingerprint_timer.timeout.connect(self._on_deferred_auto_deploy_fingerprint_timeout)  # type: ignore[attr-defined]
         self._studio_runtime_sync_timer = QtCore.QTimer(self)
         self._studio_runtime_sync_timer.setSingleShot(True)
         self._studio_runtime_sync_timer.setInterval(120)
@@ -219,8 +262,13 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         self.studio_graph.set_node_docs_dialog_opener(self._open_node_docs_dialog_for_graph)
         self.studio_graph.set_component_insert_dialog_opener(self._open_component_insert_dialog_for_graph)
 
-        QtCore.QTimer.singleShot(0, self._auto_load_project)
         QtWidgets.QApplication.instance().aboutToQuit.connect(self._auto_save_project)  # type: ignore[attr-defined]
+
+    def schedule_deferred_startup(self) -> None:
+        if self._deferred_startup_completed or self._deferred_startup_scheduled:
+            return
+        self._deferred_startup_scheduled = True
+        QtCore.QTimer.singleShot(self._DEFERRED_STARTUP_DELAY_MS, self._run_deferred_startup)
 
     def start_bridge_and_wait_for_startup(self, *, timeout_s: float = STARTUP_GATE_TIMEOUT_S) -> str | None:
         return self._bridge.start_and_wait_for_startup(timeout_s=float(timeout_s))
@@ -269,22 +317,104 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         prop_editor = F8StudioSingleNodePropertiesWidget(node_graph=self.studio_graph)
         self._prop_editor = prop_editor
         self._log_dock = ServiceLogDock(self)
-        node_library = F8StudioNodeLibraryWidget(node_graph=self.studio_graph)
         self._layers_panel = LayersPanelWidget(studio_graph=self.studio_graph, parent=self)
-        self._ai_assist_sidebar = AiAssistSidebarWidget(studio_graph=self.studio_graph, parent=self)
         dock_bundle = build_main_window_docks(
             self,
             properties_widget=prop_editor,
             log_dock=self._log_dock,
-            node_library_widget=node_library,
+            node_library_widget=self._build_deferred_dock_placeholder(
+                title="Node Library",
+                body="Loading the node catalog after the window is ready.",
+            ),
             layers_widget=self._layers_panel,
-            ai_assist_widget=self._ai_assist_sidebar,
+            ai_assist_widget=self._build_deferred_dock_placeholder(
+                title="AI Assist",
+                body="AI Assist will initialize when you open this dock.",
+            ),
         )
         self._properties_dock = dock_bundle.properties_dock
         self._node_library_dock = dock_bundle.node_library_dock
         self._layers_dock = dock_bundle.layers_dock
         self._ai_assist_dock = dock_bundle.ai_assist_dock
         self._dock_widgets = dock_bundle.all_docks
+        self._node_library_dock.visibilityChanged.connect(self._on_node_library_dock_visibility_changed)  # type: ignore[attr-defined]
+        self._ai_assist_dock.visibilityChanged.connect(self._on_ai_assist_dock_visibility_changed)  # type: ignore[attr-defined]
+
+    def _build_deferred_dock_placeholder(self, *, title: str, body: str) -> QtWidgets.QWidget:
+        container = QtWidgets.QWidget(self)
+        layout = QtWidgets.QVBoxLayout(container)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(6)
+
+        title_label = QtWidgets.QLabel(str(title), container)
+        title_font = QtGui.QFont(title_label.font())
+        title_font.setBold(True)
+        title_label.setFont(title_font)
+
+        body_label = QtWidgets.QLabel(str(body), container)
+        body_label.setWordWrap(True)
+        body_label.setStyleSheet("color: #808080;")
+
+        layout.addWidget(title_label)
+        layout.addWidget(body_label)
+        layout.addStretch(1)
+        return container
+
+    def _replace_dock_widget(self, dock: QtWidgets.QDockWidget, widget: QtWidgets.QWidget) -> None:
+        previous_widget = dock.widget()
+        dock.setWidget(widget)
+        if previous_widget is not None and previous_widget is not widget:
+            previous_widget.deleteLater()
+
+    def _ensure_node_library_widget(self) -> None:
+        if self._node_library_widget is not None:
+            return
+        widget = F8StudioNodeLibraryWidget(node_graph=self.studio_graph)
+        self._node_library_widget = widget
+        self._replace_dock_widget(self._node_library_dock, widget)
+
+    def _ensure_ai_assist_sidebar(self) -> None:
+        if self._ai_assist_sidebar is not None:
+            return
+        sidebar = AiAssistSidebarWidget(studio_graph=self.studio_graph, parent=self)
+        self._ai_assist_sidebar = sidebar
+        self._replace_dock_widget(self._ai_assist_dock, sidebar)
+
+    def _require_asset_cloud_sync_client(self) -> VariantSyncClient:
+        sync_client = self._asset_cloud_sync_client
+        if sync_client is None:
+            sync_client = VariantSyncClient()
+            self._asset_cloud_sync_client = sync_client
+        return sync_client
+
+    @QtCore.Slot()
+    def _run_deferred_startup(self) -> None:
+        self._deferred_startup_scheduled = False
+        if self._deferred_startup_completed:
+            return
+        self._deferred_startup_completed = True
+        self._auto_load_project()
+        self._refresh_asset_cloud_account_button(load_client=False)
+        if self._node_library_dock.isVisible():
+            QtCore.QTimer.singleShot(0, self._ensure_node_library_widget)
+        if self._ai_assist_dock.isVisible():
+            QtCore.QTimer.singleShot(0, self._ensure_ai_assist_sidebar)
+
+    @QtCore.Slot(bool)
+    def _on_node_library_dock_visibility_changed(self, visible: bool) -> None:
+        if not bool(visible):
+            return
+        if not self._deferred_startup_completed:
+            return
+        QtCore.QTimer.singleShot(0, self._ensure_node_library_widget)
+
+    @QtCore.Slot(bool)
+    def _on_ai_assist_dock_visibility_changed(self, visible: bool) -> None:
+        if not bool(visible):
+            return
+        if not self._deferred_startup_completed:
+            return
+        QtCore.QTimer.singleShot(0, self._ensure_ai_assist_sidebar)
 
     def _setup_service_manager_dock(self) -> None:
         manager = ServiceManagerWidget(
@@ -568,7 +698,7 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         self._exec_lines_action = toolbar_bundle.exec_lines_action
         self._data_lines_action = toolbar_bundle.data_lines_action
         self._state_lines_action = toolbar_bundle.state_lines_action
-        self._refresh_asset_cloud_account_button()
+        self._refresh_asset_cloud_account_button(load_client=False)
 
     def _set_action_text_beside_icon(
         self, toolbar: QtWidgets.QToolBar, action: QtGui.QAction, italic: bool = False
@@ -578,11 +708,22 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
     def _set_edge_visibility_action_icon(self, action: QtGui.QAction, visible: bool) -> None:
         set_toolbar_edge_visibility_action_icon(self, action, visible=visible)
 
-    def _refresh_asset_cloud_account_button(self) -> None:
+    def _refresh_asset_cloud_account_button(self, *, load_client: bool) -> None:
         button = self._asset_cloud_account_button
         if button is None:
             return
-        user = self._asset_cloud_sync_client.current_user()
+        sync_client = self._asset_cloud_sync_client
+        if sync_client is None:
+            if not load_client:
+                refresh_main_window_account_button(
+                    button,
+                    username=None,
+                    display_name=None,
+                    signed_in=False,
+                )
+                return
+            sync_client = self._require_asset_cloud_sync_client()
+        user = sync_client.current_user()
         refresh_main_window_account_button(
             button,
             username=None if user is None else str(user.username or ""),
@@ -595,11 +736,12 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         button = self._asset_cloud_account_button
         if button is None:
             return
-        self._refresh_asset_cloud_account_button()
+        sync_client = self._require_asset_cloud_sync_client()
+        self._refresh_asset_cloud_account_button(load_client=False)
         menu = build_asset_account_menu(
             parent=self,
-            sync_client=self._asset_cloud_sync_client,
-            on_changed=self._refresh_asset_cloud_account_button,
+            sync_client=sync_client,
+            on_changed=lambda: self._refresh_asset_cloud_account_button(load_client=False),
         )
         menu.exec(button.mapToGlobal(QtCore.QPoint(0, button.height())))
 
@@ -622,6 +764,7 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         self._set_edge_visibility_action_icon(self._state_lines_action, visible)
 
     def closeEvent(self, event):
+        self._closing = True
         self._save_window_layout()
         self._auto_save_project()
         self._global_hotkey_controller.close()
@@ -630,10 +773,63 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
 
     @QtCore.Slot()
     def _auto_load_project(self) -> None:
-        project_ops.auto_load_project(studio_graph=self.studio_graph, log_dock=self._log_dock)
+        if self._auto_load_worker is not None:
+            return
+        worker = _ProjectAutoLoadWorker()
+        worker.loaded.connect(self._on_auto_load_project_loaded)  # type: ignore[attr-defined]
+        worker.failed.connect(self._on_auto_load_project_failed)  # type: ignore[attr-defined]
+        self._auto_load_worker = worker
+        worker.start()
+
+    def _finalize_auto_load_project(self) -> None:
         self._mark_session_saved()
-        self._mark_auto_deploy_synced()
+        self._mark_auto_deploy_observed()
+        self._last_auto_deploy_fingerprint = ""
+        self._schedule_deferred_auto_deploy_fingerprint_refresh()
         self._global_hotkey_controller.refresh_bindings()
+
+    def _schedule_deferred_auto_deploy_fingerprint_refresh(self) -> None:
+        self._deferred_auto_deploy_fingerprint_timer.start()
+
+    @QtCore.Slot(object)
+    def _on_auto_load_project_loaded(self, project: object) -> None:
+        self._auto_load_worker = None
+        if self._closing:
+            return
+        if project is not None and not isinstance(project, F8ProjectRecord):
+            logger.error("Unexpected auto-load project type: %s", type(project).__name__)
+            self._finalize_auto_load_project()
+            return
+        loaded_project = project
+        if isinstance(loaded_project, F8ProjectRecord):
+            try:
+                self.studio_graph.load_session_payload(loaded_project.content)
+                logger.info("Loaded project from %s", loaded_project.projectId)
+            except Exception as exc:
+                self._log_dock.report_exception("studio", "session auto-load failed", exc)
+                logger.error("Auto-load session failed", exc_info=exc)
+        self._finalize_auto_load_project()
+
+    @QtCore.Slot(str, object)
+    def _on_auto_load_project_failed(self, context: str, exc: object) -> None:
+        self._auto_load_worker = None
+        if self._closing:
+            return
+        if isinstance(exc, Exception):
+            self._log_dock.report_exception("studio", str(context or "").strip() or "session auto-load failed", exc)
+            logger.error("%s", str(context or "").strip() or "session auto-load failed", exc_info=exc)
+        else:
+            self._log_dock.append(
+                "studio",
+                f"[project][auto-load] {str(context or '').strip() or 'session auto-load failed'}\n",
+            )
+        self._finalize_auto_load_project()
+
+    @QtCore.Slot()
+    def _on_deferred_auto_deploy_fingerprint_timeout(self) -> None:
+        if self._closing:
+            return
+        self._refresh_auto_deploy_fingerprint()
 
     @QtCore.Slot()
     def _auto_save_project(self) -> None:

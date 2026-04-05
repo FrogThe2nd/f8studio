@@ -51,6 +51,7 @@ class _FakeMainWindow:
         self.bridge_stopped = False
         self.window_icon: object | None = None
         self.discovery_logs: list[tuple[list[str], list[str]]] = []
+        self.deferred_startup_scheduled = False
         _FakeMainWindow.last_instance = self
 
     def setWindowIcon(self, icon: object) -> None:
@@ -63,6 +64,9 @@ class _FakeMainWindow:
 
     def show(self) -> None:
         self.shown = True
+
+    def schedule_deferred_startup(self) -> None:
+        self.deferred_startup_scheduled = True
 
     def close(self) -> None:
         self.closed = True
@@ -161,6 +165,7 @@ def test_program_shows_main_window_after_bridge_startup_passes(monkeypatch, tmp_
     assert _FakeMainWindow.last_instance is not None
     assert _FakeMainWindow.last_instance.bridge is _FakeBridge.last_instance
     assert _FakeMainWindow.last_instance.bridge_stopped is False
+    assert _FakeMainWindow.last_instance.deferred_startup_scheduled is True
     assert _FakeMainWindow.last_instance.shown is True
     assert _FakeMainWindow.last_instance.closed is False
     assert _FakeMainWindow.last_instance.discovery_logs == [(["timing-1"], ["error-1"])]

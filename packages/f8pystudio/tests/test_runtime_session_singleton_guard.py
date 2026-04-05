@@ -60,5 +60,5 @@ def test_runtime_session_returns_block_message_when_singleton_detected(monkeypat
 
     assert controller._svc is None
     assert controller._nc is None
-    assert ensured_urls == ["nats://127.0.0.1:4222"]
+    assert ensured_urls == []
     assert result == SINGLETON_GUARD_DIALOG_MESSAGE
