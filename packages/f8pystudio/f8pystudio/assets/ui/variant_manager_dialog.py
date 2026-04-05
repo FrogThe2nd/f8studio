@@ -31,6 +31,7 @@ from ..variants.variant_sync import VariantSyncClient
 from ..variants.variant_catalog import variant_entry_is_installed
 from ...ui.support.json_text_editor import attach_json_enhancements
 from .asset_cloud_account_menu import build_asset_account_menu, prompt_asset_cloud_sign_in
+from .asset_graph_preview import AssetGraphPreviewPane
 from .catalog_status import AssetCatalogRowState, build_asset_catalog_row_state
 
 logger = logging.getLogger(__name__)
@@ -269,14 +270,18 @@ class VariantManagerDialog(QtWidgets.QDialog):
         self._list.itemSelectionChanged.connect(self._on_selection_changed)  # type: ignore[attr-defined]
         self._list.itemDoubleClicked.connect(self._on_item_double_clicked)  # type: ignore[attr-defined]
         self._list.verticalScrollBar().valueChanged.connect(self._on_list_scrolled)  # type: ignore[attr-defined]
+        self._preview = AssetGraphPreviewPane(parent=self, host_graph=node_graph)
         self._raw = QtWidgets.QPlainTextEdit(self)
         self._raw.setReadOnly(True)
         self._raw.setLineWrapMode(QtWidgets.QPlainTextEdit.NoWrap)
         attach_json_enhancements(self._raw, read_only=True)
+        self._detail_tabs = QtWidgets.QTabWidget(self)
+        self._detail_tabs.addTab(self._preview, "Preview")
+        self._detail_tabs.addTab(self._raw, "Raw")
 
         split = QtWidgets.QSplitter(QtCore.Qt.Horizontal, self)
         split.addWidget(self._list)
-        split.addWidget(self._raw)
+        split.addWidget(self._detail_tabs)
         split.setStretchFactor(0, 4)
         split.setStretchFactor(1, 6)
 
@@ -623,6 +628,7 @@ class VariantManagerDialog(QtWidgets.QDialog):
         selected_entry = self._selected_entry()
         if selected_entry is None:
             self._raw.setPlainText("")
+            self._preview.clear_preview("Select a variant to preview.")
             self._btn_edit.setEnabled(False)
             self._btn_delete.setEnabled(False)
             self._btn_copy_local.setEnabled(False)
@@ -649,10 +655,13 @@ class VariantManagerDialog(QtWidgets.QDialog):
                         indent=2,
                     )
                 )
+                self._preview.clear_preview(f"Failed to preview variant.\n{exc}")
             else:
                 self._raw.setPlainText(json.dumps(dump_json(selected_entry, mode="json"), ensure_ascii=False, indent=2, default=str))
+                self._preview.show_variant_record(selected_entry.record)
         else:
             self._raw.setPlainText(json.dumps(dump_json(selected_entry, mode="json"), ensure_ascii=False, indent=2, default=str))
+            self._preview.show_variant_record(selected_entry.record)
         is_local = selected_entry.source == F8VariantSourceKind.local
         is_remote = selected_entry.source in {
             F8VariantSourceKind.remote_official,
