@@ -247,7 +247,7 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
         self._refresh_remote_catalog_if_needed()
         self._row_states_by_component_id = self._build_row_states()
         self._entries = self._entries_for_current_tab()
-        logger.info(
+        logger.debug(
             "Component manager reload tab=%s count=%d entries=%s",
             self._scope_tabs.tabText(self._scope_tabs.currentIndex()),
             len(self._entries),

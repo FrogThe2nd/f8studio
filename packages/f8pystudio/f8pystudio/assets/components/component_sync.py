@@ -556,7 +556,7 @@ class ComponentSyncClient:
         self._upsert_saved_session(session)
         self._set_value(self._CURRENT_ACCOUNT_ID_KEY, session.accountId)
         if not remember:
-            logger.info("Component cloud login now persists account sessions for account switching support.")
+            logger.debug("Component cloud login now persists account sessions for account switching support.")
 
     def _upsert_saved_session(self, session: F8ComponentRemoteSession) -> None:
         out: list[F8ComponentRemoteSession] = []

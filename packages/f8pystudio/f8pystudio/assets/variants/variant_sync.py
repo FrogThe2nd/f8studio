@@ -196,7 +196,7 @@ class VariantSyncClient:
         encoded = parse.urlencode({key: value for key, value in params.items() if value})
         suffix = f"?{encoded}" if encoded else ""
         authorized = normalized_scope != "community" or bool(self.current_access_token())
-        logger.info(
+        logger.debug(
             "Variant cloud list request scope=%s base_node_type=%s kind=%s query=%s cursor=%s authorized=%s url=%s/v1/variants%s",
             normalized_scope,
             str(base_node_type or "").strip(),
@@ -209,7 +209,7 @@ class VariantSyncClient:
         )
         payload = self._request_json("GET", f"/v1/variants{suffix}", None, authorized=authorized)
         page = _page_from_asset_payload(payload)
-        logger.info(
+        logger.debug(
             "Variant cloud list response scope=%s count=%d next_cursor=%s variant_ids=%s",
             normalized_scope,
             len(page.entries),
@@ -396,7 +396,7 @@ class VariantSyncClient:
             cursor=cursor,
         )
         current = self._catalog_service.load_remote_entries()
-        logger.info(
+        logger.debug(
             "Variant cloud refresh scope=%s cursor=%s append=%s current_remote_cache=%d fetched=%d",
             scope,
             cursor,
@@ -435,7 +435,7 @@ class VariantSyncClient:
         else:
             combined_scope_entries = refreshed
         self._catalog_service.replace_remote_entries(preserved + combined_scope_entries)
-        logger.info(
+        logger.debug(
             "Variant cloud refresh applied scope=%s preserved=%d refreshed=%d scope_total=%d new_remote_cache=%d next_cursor=%s",
             scope,
             len(preserved),
@@ -657,7 +657,7 @@ class VariantSyncClient:
         self._upsert_saved_session(session)
         self._set_value(self._CURRENT_ACCOUNT_ID_KEY, session.accountId)
         if not remember:
-            logger.info("Variant cloud login now persists account sessions for account switching support.")
+            logger.debug("Variant cloud login now persists account sessions for account switching support.")
 
     def _upsert_saved_session(self, session: F8VariantRemoteSession) -> None:
         out: list[F8VariantRemoteSession] = []

@@ -113,7 +113,7 @@ class PythonEditorAssistBridge(QtCore.QObject):
         return workspace, client, line_offset
 
     def _log_context_ready(self, *, prefix: str) -> None:
-        logger.info(
+        logger.debug(
             "python lsp bridge %s: uri=%s lineOffset=%d completionTimeout=%.1fs completionResolveTimeout=%.1fs hoverTimeout=%.1fs signatureTimeout=%.1fs supportFiles=%s dynamicInputs=%s dynamicStates=%s",
             str(prefix or "ready"),
             self._workspace.document_uri,

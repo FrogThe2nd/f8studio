@@ -206,7 +206,7 @@ class RemoteComponentCacheProvider:
                 continue
             out.append(entry)
         if invalid_found:
-            logger.info("Cleaning invalid component remote cache rows")
+            logger.debug("Cleaning invalid component remote cache rows")
             self.save_entries(out)
         return out
 

@@ -366,7 +366,7 @@ class AiLlmBridge(QtCore.QObject):
     @QtCore.Slot()
     def reset_chat_history(self) -> None:
         """Called when user clicks the reset button in UI."""
-        logger.info("AI chat history reset requested by user")
+        logger.debug("AI chat history reset requested by user")
         # In current design, history is held by JS, so this is mainly a signal
         # for backend to clear any ephemeral cached context if it had any.
         self.clear_chat_context_snapshot()

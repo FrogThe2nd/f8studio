@@ -213,7 +213,7 @@ class AiHttpClient(QtCore.QObject):
             return
         reply = self._requests.get(rid)
         if reply is not None:
-            logger.info("AI HTTP: aborting request id=%s", rid)
+            logger.debug("AI HTTP: aborting request id=%s", rid)
             reply.abort()
             # on_done / on_result will be called via finished signal with OperationCanceledError
 
@@ -359,7 +359,7 @@ class AiHttpClient(QtCore.QObject):
                 err = reply.errorString()
                 # Handle user cancellation
                 if reply.error() == QtNetwork.QNetworkReply.NetworkError.OperationCanceledError:
-                    logger.info("AI HTTP request canceled by user")
+                    logger.debug("AI HTTP request canceled by user")
                     on_result("", "Canceled")
                     return
                 
@@ -409,7 +409,7 @@ class AiHttpClient(QtCore.QObject):
                 err = reply.errorString()
                 # OperationCanceledError happens when we call .abort()
                 if reply.error() == QtNetwork.QNetworkReply.NetworkError.OperationCanceledError:
-                    logger.info("AI stream request canceled by user")
+                    logger.debug("AI stream request canceled by user")
                     state.finish("Canceled")
                     return
 

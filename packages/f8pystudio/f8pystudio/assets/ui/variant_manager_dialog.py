@@ -362,7 +362,7 @@ class VariantManagerDialog(QtWidgets.QDialog):
         self._refresh_remote_catalog_if_needed()
         self._row_states_by_variant_id = self._build_row_states()
         self._entries = self._entries_for_current_tab()
-        logger.info(
+        logger.debug(
             "Variant manager reload tab=%s base_node_type=%s count=%d entries=%s",
             self._scope_tabs.tabText(self._scope_tabs.currentIndex()),
             self._base_node_type,
@@ -472,7 +472,7 @@ class VariantManagerDialog(QtWidgets.QDialog):
             for entry in service._remote_provider.load_entries()
             if str(entry.record.baseNodeType or "").strip() == self._base_node_type
         ]
-        logger.info(
+        logger.debug(
             "Variant manager source snapshot tab=%s base_node_type=%s local=%d remote=%d remote_entries=%s",
             self._scope_tabs.tabText(current_tab),
             self._base_node_type,
@@ -1208,7 +1208,7 @@ class VariantManagerDialog(QtWidgets.QDialog):
         self._remote_next_cursor_by_scope[remote_scope] = page.nextCursor
         self._remote_loaded_query_by_scope[remote_scope] = current_query
         self._remote_loaded_base_by_scope[remote_scope] = current_base
-        logger.info(
+        logger.debug(
             "Variant manager remote scope refreshed scope=%s reset=%s query=%s cursor=%s fetched=%d next_cursor=%s",
             remote_scope,
             reset,

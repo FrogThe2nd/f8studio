@@ -173,7 +173,10 @@ class AssetGraphPreviewPane(QtWidgets.QWidget):
             if node is not None:
                 return node
         except NodeCreationError:
-            logger.info("Preview variant node creation fell back to direct base node application variant_id=%s", str(record.variantId))
+            logger.debug(
+                "Preview variant node creation fell back to direct base node application variant_id=%s",
+                str(record.variantId),
+            )
 
         base_node_type = str(record.baseNodeType or "").strip()
         if not base_node_type:

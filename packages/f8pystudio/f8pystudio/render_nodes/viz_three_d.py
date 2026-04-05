@@ -279,7 +279,7 @@ class _Skeleton3DViewerWindow(QtWidgets.QDialog):
             return
         self._view = None
         self._page_ready = False
-        logger.info("Skeleton3D viewer releasing web view: reason=%s", reason)
+        logger.debug("Skeleton3D viewer releasing web view: reason=%s", reason)
 
         page = None
         try:

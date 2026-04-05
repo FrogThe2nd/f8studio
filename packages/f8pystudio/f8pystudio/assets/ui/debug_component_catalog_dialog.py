@@ -29,7 +29,7 @@ class _StubGraph:
         }
 
     def prepare_insert_graph_from_component(self, content: Any, *, component_name: str) -> _StubGraphPlacementRequest:
-        logger.info(
+        logger.debug(
             "Stub graph prepare_insert_graph_from_component called component_name=%s content_type=%s",
             component_name,
             type(content).__name__,
@@ -37,7 +37,7 @@ class _StubGraph:
         return _StubGraphPlacementRequest(node_count=0)
 
     def begin_graph_placement(self, request: _StubGraphPlacementRequest, *, label: str) -> None:
-        logger.info(
+        logger.debug(
             "Stub graph begin_graph_placement called node_count=%d label=%s",
             int(request.node_count),
             label,

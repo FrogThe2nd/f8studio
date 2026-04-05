@@ -571,7 +571,7 @@ class LovenseMockServerRuntimeNode(OperatorNode, ClosableNode, EntrypointNode):
         s = str(payload or "")
         if len(s) > _RAW_LOG_MAX_CHARS:
             s = f"{s[:_RAW_LOG_MAX_CHARS]}...(truncated {len(s) - _RAW_LOG_MAX_CHARS})"
-        logger.info("[%s:lovense_mock_server] %s(raw) %s", self.node_id, str(direction), s)
+        logger.debug("[%s:lovense_mock_server] %s(raw) %s", self.node_id, str(direction), s)
 
     async def _safe_set_state(self, field: str, value: Any) -> None:
         try:

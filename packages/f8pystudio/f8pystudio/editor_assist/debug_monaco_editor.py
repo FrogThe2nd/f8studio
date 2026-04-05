@@ -150,7 +150,7 @@ def main(argv: list[str] | None = None) -> int:
 
     targets = load_session_editor_targets(Path(str(args.session or _DEFAULT_SESSION_PATH)))
     for target in targets:
-        logger.info(
+        logger.debug(
             "Loaded debug session target: session=%s node=%s serviceClass=%s operatorClass=%s",
             target.session_path,
             target.node_id,
@@ -177,7 +177,7 @@ def main(argv: list[str] | None = None) -> int:
 
         def _on_code_saved(code: str, current_state: _DebugSessionState = state) -> None:
             current_state.code = str(code or "")
-            logger.info(
+            logger.debug(
                 "Debug editor saved code length=%d node=%s field=%s",
                 len(current_state.code),
                 current_state.target.node_id,

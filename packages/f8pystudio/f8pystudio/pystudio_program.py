@@ -86,7 +86,7 @@ class PyStudioProgram:
     def _load_plugin_manifests() -> list[StudioPluginManifest]:
         manifests = load_entrypoint_plugins()
         for manifest in manifests:
-            logger.info(
+            logger.debug(
                 "Loaded plugin manifest: id=%s name=%s version=%s",
                 manifest.plugin_id,
                 manifest.plugin_name,

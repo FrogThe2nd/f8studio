@@ -110,7 +110,7 @@ class RemoteCacheProvider:
                 continue
             out.append(entry)
         if invalid_found:
-            logger.info("Cleaning invalid variant remote cache rows")
+            logger.debug("Cleaning invalid variant remote cache rows")
             self.save_entries(out)
         return out
 

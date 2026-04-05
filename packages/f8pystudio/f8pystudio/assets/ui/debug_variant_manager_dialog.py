@@ -27,7 +27,7 @@ class _StubGraph:
         return list(self._selected_nodes)
 
     def begin_node_placement(self, node_type: str, placement_label: str) -> None:
-        logger.info(
+        logger.debug(
             "Stub graph begin_node_placement called node_type=%s label=%s",
             node_type,
             placement_label,
