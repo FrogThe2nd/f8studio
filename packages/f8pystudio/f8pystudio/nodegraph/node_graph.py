@@ -70,6 +70,7 @@ class F8StudioGraph(
         self.uuid_length = kwargs.get("uuid_length", 4)
         self.uuid_generator = shortuuid.ShortUUID()
         self._loading_session = False
+        self._skip_post_load_viewer_refresh = False
         self._tab_search_node_type_aliases: dict[str, str] = {}
         self._tab_search_component_ids: dict[str, str] = {}
         self._variant_menu_node_types: set[str] = set()

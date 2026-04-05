@@ -18,12 +18,23 @@ from f8pystudio.nodegraph.operator_basenode import F8StudioOperatorBaseNode
 from f8pystudio.nodegraph.service_basenode import F8StudioServiceBaseNode
 from f8pystudio.session_migration import wrap_layout_for_save
 
+_PREVIEW_BUILD_WAIT_STEP_MS = 10
+_PREVIEW_BUILD_WAIT_LIMIT_MS = 500
+
 
 def _ensure_app() -> QtWidgets.QApplication:
     app = QtWidgets.QApplication.instance()
     if app is not None:
         return app
     return QtWidgets.QApplication([])
+
+
+def _wait_for_preview_completion(pane: AssetGraphPreviewPane) -> None:
+    elapsed_ms = 0
+    while pane._pending_request_kind is not None and elapsed_ms < _PREVIEW_BUILD_WAIT_LIMIT_MS:  # type: ignore[attr-defined]
+        QtTest.QTest.qWait(_PREVIEW_BUILD_WAIT_STEP_MS)
+        elapsed_ms += _PREVIEW_BUILD_WAIT_STEP_MS
+    QtWidgets.QApplication.processEvents()
 
 
 def _make_service_node_class() -> type[F8StudioServiceBaseNode]:
@@ -116,6 +127,7 @@ def test_asset_graph_preview_renders_component_payload() -> None:
     pane = AssetGraphPreviewPane(parent=None, host_graph=host_graph)
 
     pane.show_component_payload(_component_payload_for_node(service_node_cls))
+    _wait_for_preview_completion(pane)
 
     assert len(list(pane.preview_graph.all_nodes() or [])) == 2
     viewer = pane.preview_graph.viewer()
@@ -155,6 +167,7 @@ def test_asset_graph_preview_renders_operator_variant_without_container() -> Non
     pane.preview_graph._variant_record = lambda variant_id: variant_record if variant_id == "variant-preview" else None  # type: ignore[method-assign]
 
     pane.show_variant_record(variant_record)
+    _wait_for_preview_completion(pane)
 
     nodes = list(pane.preview_graph.all_nodes() or [])
     assert len(nodes) == 1
@@ -171,6 +184,7 @@ def test_asset_graph_preview_clears_graph_and_shows_error_for_invalid_component_
     pane = AssetGraphPreviewPane(parent=None, host_graph=host_graph)
 
     pane.show_component_payload({"schemaVersion": "bad-schema"})
+    _wait_for_preview_completion(pane)
 
     assert len(list(pane.preview_graph.all_nodes() or [])) == 0
     assert "Failed to preview component." in pane.current_status_text()
@@ -187,7 +201,7 @@ def test_preview_viewer_ignores_left_click_selection_and_disables_edit_shortcuts
     pane.resize(800, 600)
     pane.show()
     pane.show_component_payload(_component_payload_for_node(service_node_cls))
-    QtWidgets.QApplication.processEvents()
+    _wait_for_preview_completion(pane)
 
     viewer = cast(QtWidgets.QGraphicsView, pane.preview_graph.viewer())
     internal_viewer = cast(object, viewer)
@@ -202,6 +216,111 @@ def test_preview_viewer_ignores_left_click_selection_and_disables_edit_shortcuts
     QtWidgets.QApplication.processEvents()
 
     assert pane.preview_graph.selected_nodes() == []
+
+    pane.close()
+    host_graph.widget.close()
+
+
+def test_component_preview_shows_loading_placeholder_before_graph_build(monkeypatch) -> None:
+    _ensure_app()
+    service_node_cls = _make_service_node_class()
+    host_graph = _build_host_graph(service_node_cls)
+    pane = AssetGraphPreviewPane(parent=None, host_graph=host_graph)
+    seen_loading: list[str] = []
+
+    def _fake_load_session_payload(_payload: object) -> None:
+        seen_loading.append(pane.current_status_text())
+
+    monkeypatch.setattr(pane.preview_graph, "load_session_payload", _fake_load_session_payload)
+
+    pane.show_component_payload(_component_payload_for_node(service_node_cls))
+
+    assert "Building preview" in pane.current_status_text()
+    _wait_for_preview_completion(pane)
+
+    assert seen_loading == ["Building preview..."]
+
+    pane.close()
+    host_graph.widget.close()
+
+
+def test_preview_sync_registered_nodes_reuses_cached_factory_registration(monkeypatch) -> None:
+    _ensure_app()
+    service_node_cls = _make_service_node_class()
+    host_graph = _build_host_graph(service_node_cls)
+    pane = AssetGraphPreviewPane(parent=None, host_graph=host_graph)
+    preview_factory = pane.preview_graph.node_factory
+    clear_calls = 0
+    register_calls: list[object] = []
+    original_clear = preview_factory.clear_registered_nodes
+    original_register = preview_factory.register_node
+
+    def _counting_clear() -> None:
+        nonlocal clear_calls
+        clear_calls += 1
+        original_clear()
+
+    def _counting_register(node_cls: object, alias: str | None = None) -> None:
+        register_calls.append(node_cls)
+        original_register(node_cls, alias=alias)
+
+    monkeypatch.setattr(preview_factory, "clear_registered_nodes", _counting_clear)
+    monkeypatch.setattr(preview_factory, "register_node", _counting_register)
+
+    assert pane._sync_registered_nodes() is True
+    assert pane._sync_registered_nodes() is True
+
+    assert clear_calls == 1
+    assert register_calls == [service_node_cls]
+
+    pane.close()
+    host_graph.widget.close()
+
+
+def test_preview_fit_updates_viewer_scene_range_for_new_payload() -> None:
+    _ensure_app()
+    service_node_cls = _make_service_node_class()
+    host_graph = _build_host_graph(service_node_cls)
+    pane = AssetGraphPreviewPane(parent=None, host_graph=host_graph)
+    first_payload = _component_payload_for_node(service_node_cls)
+    second_payload = _component_payload_for_node(service_node_cls)
+    second_layout = cast(dict[str, object], second_payload["layout"])
+    second_nodes = cast(dict[str, object], second_layout["nodes"])
+    node_b = cast(dict[str, object], second_nodes["node_b"])
+    node_b["pos"] = [900.0, 320.0]
+
+    pane.show_component_payload(first_payload)
+    _wait_for_preview_completion(pane)
+    viewer = cast(object, pane.preview_graph.viewer())
+    first_scene_rect = tuple(float(v) for v in viewer.scene_rect())  # type: ignore[attr-defined]
+
+    pane.show_component_payload(second_payload)
+    _wait_for_preview_completion(pane)
+    second_scene_rect = tuple(float(v) for v in viewer.scene_rect())  # type: ignore[attr-defined]
+
+    assert second_scene_rect != first_scene_rect
+    assert second_scene_rect[2] > first_scene_rect[2]
+    assert second_scene_rect[3] > first_scene_rect[3]
+
+    pane.close()
+    host_graph.widget.close()
+
+
+def test_stale_preview_fit_retry_callbacks_do_not_refocus_new_request(monkeypatch) -> None:
+    _ensure_app()
+    service_node_cls = _make_service_node_class()
+    host_graph = _build_host_graph(service_node_cls)
+    pane = AssetGraphPreviewPane(parent=None, host_graph=host_graph)
+    focus_calls: list[str] = []
+
+    monkeypatch.setattr(pane, "_focus_loaded_nodes", lambda: focus_calls.append("focus"))
+
+    request_id = pane._next_request_id()
+    pane._schedule_focus_loaded_nodes(request_id=request_id)
+    pane._next_request_id()
+    QtTest.QTest.qWait(220)
+
+    assert focus_calls == ["focus"]
 
     pane.close()
     host_graph.widget.close()
@@ -230,7 +349,7 @@ def test_component_catalog_selection_updates_preview_and_raw(monkeypatch) -> Non
     dialog._list.addItem(item)
 
     dialog._list.setCurrentRow(0)
-    QtWidgets.QApplication.processEvents()
+    _wait_for_preview_completion(dialog._preview)
 
     assert "component-preview" in dialog._raw.toPlainText()
     assert len(list(dialog._preview.preview_graph.all_nodes() or [])) == 2
@@ -273,7 +392,7 @@ def test_variant_dialog_hydration_failure_updates_raw_and_preview(monkeypatch) -
     dialog._sync_client.hydrate_variant = lambda _variant_id: (_ for _ in ()).throw(ValueError("boom"))  # type: ignore[method-assign]
 
     dialog._list.setCurrentRow(0)
-    QtWidgets.QApplication.processEvents()
+    _wait_for_preview_completion(dialog._preview)
 
     assert "hydrate_variant" in dialog._raw.toPlainText()
     assert "boom" in dialog._preview.current_status_text()

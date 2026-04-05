@@ -955,6 +955,7 @@ class SessionLayoutCodecMixin:
         # Session load restores connections after nodes are created/drawn, which can
         # leave inline state widgets with stale editability until the user forces a refresh.
         # Do a post-load pass to apply the "state-edge => readonly" rule.
-        QtCore.QTimer.singleShot(0, self._refresh_all_inline_state_read_only)
-        if isinstance(viewer, F8StudioNodeViewer):
-            QtCore.QTimer.singleShot(0, lambda: viewer.refresh_auto_proxy_mode(force=True))
+        if not bool(getattr(self, "_skip_post_load_viewer_refresh", False)):
+            QtCore.QTimer.singleShot(0, self._refresh_all_inline_state_read_only)
+            if isinstance(viewer, F8StudioNodeViewer):
+                QtCore.QTimer.singleShot(0, lambda: viewer.refresh_auto_proxy_mode(force=True))

@@ -159,6 +159,14 @@ class F8StudioNodeViewer(NodeViewer):
             scene.update()
         self.viewport().update()
 
+    def set_view_range_rect(self, rect: QtCore.QRectF) -> None:
+        if rect.isNull() or not rect.isValid():
+            return
+        self._scene_range = QtCore.QRectF(rect)
+        self._update_scene()
+        if self._auto_proxy_enabled:
+            self.refresh_auto_proxy_mode(force=False)
+
     def performance_overlay_snapshot(self) -> dict[str, float]:
         scene = self.scene()
         visible_proxy_widget_count = 0.0
