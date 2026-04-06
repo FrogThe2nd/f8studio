@@ -45,7 +45,7 @@ from ..lifecycle import (
     stop as _stop_impl,
 )
 from ..state_read import StateRead
-from .config import DataDeliveryMode, ServiceBusConfig, _debug_state_enabled
+from .config import CrossPublishPolicy, DataDeliveryMode, ServiceBusConfig, _debug_state_enabled
 from ..monitor_collector import MonitorCollector, MonitorCollectorConfig
 from ..command_runtime import (
     CommandBinding,
@@ -66,9 +66,20 @@ _K = TypeVar("_K")
 _V = TypeVar("_V")
 
 
+def _coerce_cross_publish_policy(value: Any) -> CrossPublishPolicy | None:
+    text = str(value or "").strip().lower()
+    if text in ("routed", "all", "none"):
+        return text
+    return None
+
+
 def _coerce_data_delivery_mode(value: Any) -> DataDeliveryMode | None:
     text = str(value or "").strip().lower()
-    if text in ("pull", "push", "both"):
+    if text == "pull":
+        return "buffered"
+    if text == "push":
+        return "callback"
+    if text in ("buffered", "callback", "both"):
         return text
     return None
 
@@ -119,23 +130,30 @@ class ServiceBus:
     - Rungraph updates are applied via micro endpoints.
     - Builds intra/cross routing tables for data edges.
     - Provides a shared state KV API for nodes.
-    - Data edges are pull-based: consumers pull buffered inputs and may trigger
-      intra-service computation via `compute_output(...)`.
+    - Local data delivery is configured explicitly as buffered, callback, or both.
+    - Pull-based consumers may trigger intra-service computation via `compute_output(...)`.
     """
 
     def __init__(self, config: ServiceBusConfig, *, transport: NatsTransport | None = None) -> None:
         self.service_id = ensure_token(config.service_id, label="service_id")
         self._service_name = str(config.service_name or "") or self.service_id
         self._service_class = str(config.service_class or "")
-        self._publish_all_data = bool(config.publish_all_data)
         self._debug_state = _debug_state_enabled()
         self._active = True
         self._ready = False
+        cross_publish_policy = _coerce_cross_publish_policy(config.cross_publish_policy)
+        if config.publish_all_data is not None:
+            cross_publish_policy = "all" if bool(config.publish_all_data) else "routed"
+        if cross_publish_policy is None:
+            if self._debug_state or log.isEnabledFor(logging.WARNING):
+                log.warning("Invalid cross_publish_policy=%r; defaulting to 'routed'", config.cross_publish_policy)
+            cross_publish_policy = "routed"
+        self._cross_publish_policy = cross_publish_policy
         mode = _coerce_data_delivery_mode(config.data_delivery)
         if mode is None:
             if self._debug_state or log.isEnabledFor(logging.WARNING):
-                log.warning("Invalid data_delivery=%r; defaulting to 'push'", config.data_delivery)
-            mode = "push"
+                log.warning("Invalid data_delivery=%r; defaulting to 'callback'", config.data_delivery)
+            mode = "callback"
         self._data_delivery = mode
         self._state_sync_concurrency = max(1, int(config.state_sync_concurrency))
         self._state_cache_max_entries = max(0, int(config.state_cache_max_entries))
@@ -164,7 +182,7 @@ class ServiceBus:
         self._micro_endpoints: _ServiceBusMicroEndpoints | None = None
 
         # Routing tables (data only).
-        self._intra_data_out: dict[tuple[str, str], tuple[tuple[str, str], ...]] = {}
+        self._intra_data_out: dict[tuple[str, str], tuple[tuple[str, str, F8Edge], ...]] = {}
         self._intra_data_in: dict[tuple[str, str], tuple[tuple[str, str, F8Edge], ...]] = {}
         self._cross_in_by_subject: dict[str, tuple[tuple[str, str, F8Edge], ...]] = {}
         self._cross_out_subjects: dict[tuple[str, str], str] = {}
@@ -218,11 +236,21 @@ class ServiceBus:
             self._monitor_record_wait = self._record_wait_metrics_enabled
             self._monitor_record_input = self._record_input_metrics_enabled
             self._monitor_record_drop = self._record_drop_metrics_enabled
+            self._monitor_record_local_only_emit = self._record_local_only_emit_metrics_enabled
+            self._monitor_record_routed_cross_emit = self._record_routed_cross_emit_metrics_enabled
+            self._monitor_record_suppressed_cross_publish = self._record_suppressed_cross_publish_metrics_enabled
+            self._monitor_record_callback_delivery = self._record_callback_delivery_metrics_enabled
+            self._monitor_record_buffer_pull_delivery = self._record_buffer_pull_delivery_metrics_enabled
         else:
             self._monitor_record_emit = self._noop_record_emit
             self._monitor_record_wait = self._noop_record_wait
             self._monitor_record_input = self._noop_record_input
             self._monitor_record_drop = self._noop_record_drop
+            self._monitor_record_local_only_emit = self._noop_record_local_only_emit
+            self._monitor_record_routed_cross_emit = self._noop_record_routed_cross_emit
+            self._monitor_record_suppressed_cross_publish = self._noop_record_suppressed_cross_publish
+            self._monitor_record_callback_delivery = self._noop_record_callback_delivery
+            self._monitor_record_buffer_pull_delivery = self._noop_record_buffer_pull_delivery
 
         # Push-mode on_data micro-batching.
         self._on_data_push_queue: deque[tuple[str, str, Any, int]] = deque()
@@ -249,6 +277,26 @@ class ServiceBus:
     def _noop_record_drop(dropped_count: int) -> None:
         del dropped_count
 
+    @staticmethod
+    def _noop_record_local_only_emit() -> None:
+        return
+
+    @staticmethod
+    def _noop_record_routed_cross_emit() -> None:
+        return
+
+    @staticmethod
+    def _noop_record_suppressed_cross_publish() -> None:
+        return
+
+    @staticmethod
+    def _noop_record_callback_delivery() -> None:
+        return
+
+    @staticmethod
+    def _noop_record_buffer_pull_delivery() -> None:
+        return
+
     def _record_emit_metrics_enabled(self, node_id: str, port: str, ts: int) -> None:
         now_ts = int(now_ms())
         self._monitor_collector.record_processed(port=str(port), emit_ts_ms=int(ts), now_ts_ms=now_ts)
@@ -263,6 +311,43 @@ class ServiceBus:
 
     def _record_drop_metrics_enabled(self, dropped_count: int) -> None:
         self._monitor_collector.record_dropped(dropped_count=int(dropped_count))
+
+    def _record_local_only_emit_metrics_enabled(self) -> None:
+        self._monitor_collector.record_local_only_emit()
+
+    def _record_routed_cross_emit_metrics_enabled(self) -> None:
+        self._monitor_collector.record_routed_cross_emit()
+
+    def _record_suppressed_cross_publish_metrics_enabled(self) -> None:
+        self._monitor_collector.record_suppressed_cross_publish()
+
+    def _record_callback_delivery_metrics_enabled(self) -> None:
+        self._monitor_collector.record_callback_delivery()
+
+    def _record_buffer_pull_delivery_metrics_enabled(self) -> None:
+        self._monitor_collector.record_buffer_pull_delivery()
+
+    @property
+    def cross_publish_policy(self) -> CrossPublishPolicy:
+        return self._cross_publish_policy
+
+    @property
+    def publish_all_data(self) -> bool:
+        return self._cross_publish_policy == "all"
+
+    @property
+    def data_delivery(self) -> DataDeliveryMode:
+        return self._data_delivery
+
+    def set_cross_publish_policy(self, value: Any, *, source: str = "service") -> None:
+        policy = _coerce_cross_publish_policy(value)
+        if policy is None:
+            return
+        if policy == self._cross_publish_policy:
+            return
+        self._cross_publish_policy = policy
+        if self._debug_state:
+            print(f"state_debug[{self.service_id}] cross_publish_policy={policy} source={source}")
 
     def set_data_delivery(self, value: Any, *, source: str = "service") -> None:
         """

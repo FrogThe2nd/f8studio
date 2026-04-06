@@ -76,8 +76,8 @@ class PyStudioService:
             service_id=str(self._cfg.studio_service_id),
             service_class=SERVICE_CLASS,
             nats_url=str(self._cfg.nats_url),
-            publish_all_data=False,
-            data_delivery="push",
+            cross_publish_policy="routed",
+            data_delivery="callback",
         )
         self.runtime = ServiceRuntime(cfg, registry=self._registry)
 

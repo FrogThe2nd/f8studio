@@ -65,6 +65,74 @@ def precreate_input_buffers_for_cross_in(
             )
 
 
+def _buffers_data_locally(bus: "ServiceBus") -> bool:
+    return bus._data_delivery in ("buffered", "both")
+
+
+def _callbacks_data_locally(bus: "ServiceBus") -> bool:
+    return bus._data_delivery in ("callback", "both")
+
+
+def _enqueue_on_data_callback(bus: "ServiceBus", *, to_node: str, to_port: str, value: Any, ts_ms: int) -> None:
+    bus._monitor_record_callback_delivery()
+    bus._on_data_push_queue.append((to_node, to_port, value, int(ts_ms)))
+    task = bus._on_data_flush_task
+    if task is None or task.done():
+        try:
+            loop = asyncio.get_running_loop()
+            bus._on_data_flush_task = loop.create_task(
+                _flush_on_data_push_queue(bus),
+                name=f"service_bus:on_data_flush:{bus.service_id}",
+            )
+        except Exception as exc:
+            log_error_once(
+                bus,
+                key=f"push_on_data_schedule_failed:{to_node}:{to_port}",
+                message=f"failed to schedule on_data for {to_node}.{to_port}",
+                exc=exc,
+            )
+
+
+def _deliver_local_input(
+    bus: "ServiceBus",
+    *,
+    to_node: str,
+    to_port: str,
+    value: Any,
+    ts_ms: int,
+    edge: F8Edge | None,
+    ctx_id: str | int | None,
+    force_buffer: bool = False,
+) -> None:
+    if force_buffer or _buffers_data_locally(bus):
+        buffer_input(
+            bus,
+            to_node=to_node,
+            to_port=to_port,
+            value=value,
+            ts_ms=int(ts_ms),
+            edge=edge,
+            ctx_id=ctx_id,
+        )
+    elif _callbacks_data_locally(bus):
+        bus._monitor_record_input(str(to_node), str(to_port), int(ts_ms))
+    if _callbacks_data_locally(bus):
+        _enqueue_on_data_callback(bus, to_node=to_node, to_port=to_port, value=value, ts_ms=int(ts_ms))
+
+
+def _cross_publish_decision(bus: "ServiceBus", *, node_id: str, port: str) -> tuple[str, str]:
+    if bus._cross_publish_policy == "none":
+        if (node_id, port) in bus._cross_out_subjects:
+            return "", "suppressed"
+        return "", "local_only"
+    if bus._cross_publish_policy == "all":
+        return data_subject(bus.service_id, from_node_id=node_id, port_id=port), "publish"
+    subject = bus._cross_out_subjects.get((node_id, port)) or ""
+    if subject:
+        return subject, "publish"
+    return "", "local_only"
+
+
 async def emit_data(bus: "ServiceBus", node_id: str, port: str, value: Any, *, ts_ms: int | None = None) -> None:
     if not bus._active:
         return
@@ -72,18 +140,20 @@ async def emit_data(bus: "ServiceBus", node_id: str, port: str, value: Any, *, t
     bus._monitor_record_emit(str(node_id), str(port), int(ts))
 
     # Intra edges.
-    for to_node, to_port in bus._intra_data_out.get((node_id, port), ()):
-        push_input(bus, to_node, to_port, value, ts_ms=ts)
+    for to_node, to_port, edge in bus._intra_data_out.get((node_id, port), ()):
+        push_input(bus, to_node, to_port, value, ts_ms=ts, edge=edge)
 
     # Cross edges (fan-out) - publish once per (node, out_port).
-    if bus._publish_all_data:
-        subject = data_subject(bus.service_id, from_node_id=node_id, port_id=port)
-    else:
-        subject = bus._cross_out_subjects.get((node_id, port)) or ""
+    subject, decision = _cross_publish_decision(bus, node_id=str(node_id), port=str(port))
     if not subject:
+        if decision == "suppressed":
+            bus._monitor_record_suppressed_cross_publish()
+        else:
+            bus._monitor_record_local_only_emit()
         return
     payload = encode_obj({"value": value, "ts": ts})
     await bus._transport.publish(subject, payload)
+    bus._monitor_record_routed_cross_emit()
 
 
 async def pull_data(bus: "ServiceBus", node_id: str, port: str, *, ctx_id: str | int | None = None) -> Any:
@@ -122,6 +192,7 @@ async def pull_data(bus: "ServiceBus", node_id: str, port: str, *, ctx_id: str |
         buf.last_pulled_value = v
         buf.last_pulled_ts = int(ts) if ts is not None else _now_ms
         buf.last_pulled_ctx_id = ctx_id
+        bus._monitor_record_buffer_pull_delivery()
         return v
 
     # latest
@@ -136,6 +207,7 @@ async def pull_data(bus: "ServiceBus", node_id: str, port: str, *, ctx_id: str |
         buf.last_pulled_value = v
         buf.last_pulled_ts = _now_ms
         buf.last_pulled_ctx_id = ctx_id
+        bus._monitor_record_buffer_pull_delivery()
     return v
 
 
@@ -189,42 +261,39 @@ async def compute_and_buffer_for_input(
                 continue
             if v is None:
                 continue
-            # Fast local path: if source has no cross-service out subject, buffer intra targets directly.
-            if not bus._publish_all_data and (from_node, from_port) not in bus._cross_out_subjects:
-                ts_now = int(now_ms())
-                for to_node, to_port in bus._intra_data_out.get((from_node, from_port), ()):
-                    buffer_input(
-                        bus,
-                        to_node,
-                        to_port,
-                        v,
-                        ts_ms=ts_now,
-                        edge=None,
-                        ctx_id=ctx_id,
-                    )
-                continue
-            # Treat pull-triggered computation as producing a real output sample:
-            # route it through `emit_data` so intra edges get buffered and any
-            # cross-service subscribers can also receive the computed value.
-            try:
-                await emit_data(bus, from_node, from_port, v, ts_ms=now_ms())
-            except Exception as exc:
-                log_error_once(
+            # Pull-triggered local computation should satisfy local consumers only.
+            # Do not implicitly cross-publish network samples from a local pull.
+            ts_now = int(now_ms())
+            _subject, decision = _cross_publish_decision(bus, node_id=str(from_node), port=str(from_port))
+            if decision in ("publish", "suppressed"):
+                bus._monitor_record_suppressed_cross_publish()
+            delivered = False
+            for to_node, to_port, to_edge in bus._intra_data_out.get((from_node, from_port), ()):
+                _deliver_local_input(
                     bus,
-                    key=f"emit_data_failed:{from_node}:{from_port}",
-                    message=f"emit_data failed for {from_node}.{from_port}; using local fallback buffer",
-                    exc=exc,
-                )
-                # Fallback: still satisfy the local pull.
-                buffer_input(
-                    bus,
-                    node_id,
-                    port,
-                    v,
-                    ts_ms=now_ms(),
-                    edge=edge,
+                    to_node=to_node,
+                    to_port=to_port,
+                    value=v,
+                    ts_ms=ts_now,
+                    edge=to_edge,
                     ctx_id=ctx_id,
+                    force_buffer=(str(to_node) == str(node_id) and str(to_port) == str(port)),
                 )
+                delivered = True
+            if delivered:
+                continue
+            # Fallback: still satisfy the directly-requested local pull even if no
+            # rebuilt intra route is present for the computed output.
+            _deliver_local_input(
+                bus,
+                to_node=node_id,
+                to_port=port,
+                value=v,
+                ts_ms=ts_now,
+                edge=edge,
+                ctx_id=ctx_id,
+                force_buffer=True,
+            )
     finally:
         stack.discard(key)
 
@@ -276,9 +345,7 @@ def is_stale(edge: F8Edge | None, ts_ms: int) -> bool:
 
 
 def push_input(bus: "ServiceBus", to_node: str, to_port: str, value: Any, *, ts_ms: int, edge: F8Edge | None = None) -> None:
-    # Data inputs are buffered. We intentionally do not invoke `node.on_data`:
-    # the system can be configured for pull-based or push-based data delivery.
-    buffer_input(
+    _deliver_local_input(
         bus,
         to_node=to_node,
         to_port=to_port,
@@ -287,23 +354,6 @@ def push_input(bus: "ServiceBus", to_node: str, to_port: str, value: Any, *, ts_
         edge=edge,
         ctx_id=None,
     )
-    if bus._data_delivery in ("push", "both"):
-        bus._on_data_push_queue.append((to_node, to_port, value, int(ts_ms)))
-        task = bus._on_data_flush_task
-        if task is None or task.done():
-            try:
-                loop = asyncio.get_running_loop()
-                bus._on_data_flush_task = loop.create_task(
-                    _flush_on_data_push_queue(bus),
-                    name=f"service_bus:on_data_flush:{bus.service_id}",
-                )
-            except Exception as exc:
-                log_error_once(
-                    bus,
-                    key=f"push_on_data_schedule_failed:{to_node}:{to_port}",
-                    message=f"failed to schedule on_data for {to_node}.{to_port}",
-                    exc=exc,
-                )
 
 
 def buffer_input(

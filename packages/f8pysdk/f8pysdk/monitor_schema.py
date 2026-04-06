@@ -45,6 +45,11 @@ def monitor_snapshot_value_schema() -> F8DataTypeSchema:
             "observed": integer_schema(default=0, minimum=0),
             "processed": integer_schema(default=0, minimum=0),
             "dropped": integer_schema(default=0, minimum=0),
+            "localOnlyEmits": integer_schema(default=0, minimum=0),
+            "routedCrossEmits": integer_schema(default=0, minimum=0),
+            "suppressedCrossPublishes": integer_schema(default=0, minimum=0),
+            "callbackDeliveries": integer_schema(default=0, minimum=0),
+            "bufferPullDeliveries": integer_schema(default=0, minimum=0),
         }
     )
     timing = complex_object_schema(

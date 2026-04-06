@@ -48,6 +48,14 @@ Command contract:
 - Hidden command state fields remain supported as the graph-compatibility command adapter.
 - Use `output_policy=CommandOutputPolicy.hidden_state` when a caller explicitly wants hidden output state writeback.
 
+Data contract:
+- `cross_publish_policy` controls network fan-out explicitly: `routed`, `all`, or `none`.
+- `data_delivery` controls local consumer shape explicitly: `callback`, `buffered`, or explicit compatibility mode `both`.
+- Default runtime behavior is `cross_publish_policy="routed"` and `data_delivery="callback"`.
+- Pull-triggered local compute satisfies local consumers only; it no longer emits hidden cross-service traffic.
+- Monitor snapshots now expose routing counters in `frame`, including local-only emits, routed cross emits, suppressed cross publishes, callback deliveries, and buffered pull deliveries.
+- Legacy aliases remain accepted for migration: `publish_all_data=True|False`, `data_delivery="push"|"pull"|"both"`.
+
 ### Headless Runner
 
 Run a saved Studio session JSON without launching UI:

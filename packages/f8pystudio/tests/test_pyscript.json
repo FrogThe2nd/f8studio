@@ -226,6 +226,31 @@
                         "type": "integer",
                         "default": 0,
                         "minimum": 0.0
+                      },
+                      "localOnlyEmits": {
+                        "type": "integer",
+                        "default": 0,
+                        "minimum": 0.0
+                      },
+                      "routedCrossEmits": {
+                        "type": "integer",
+                        "default": 0,
+                        "minimum": 0.0
+                      },
+                      "suppressedCrossPublishes": {
+                        "type": "integer",
+                        "default": 0,
+                        "minimum": 0.0
+                      },
+                      "callbackDeliveries": {
+                        "type": "integer",
+                        "default": 0,
+                        "minimum": 0.0
+                      },
+                      "bufferPullDeliveries": {
+                        "type": "integer",
+                        "default": 0,
+                        "minimum": 0.0
                       }
                     }
                   },

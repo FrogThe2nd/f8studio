@@ -89,13 +89,16 @@ Current compatibility note:
 
 ### Data Emit/Pull Chain
 
-1. `emit_data(...)` pushes intra-service buffers first
-2. depending on config, it may also publish to a cross-service NATS subject
-3. buffered inputs can be consumed by:
-   - `pull_data(...)`
-   - `on_data(...)` callback scheduling in push mode
-4. in `data_delivery="both"`, the same sample can currently be observed through both mechanisms
-5. pull-based computation may call `compute_output(...)` upstream and then route the result back through `emit_data(...)`
+1. `emit_data(...)` delivers local samples to intra-service targets first
+2. local delivery mode is explicit:
+   - `callback`: `on_data(...)` only
+   - `buffered`: `pull_data(...)` only
+   - `both`: explicit dual local delivery for compatibility
+3. cross-service publication is controlled separately by `cross_publish_policy`:
+   - `routed`: publish only when the rungraph has a cross-service outgoing edge
+   - `all`: publish every emitted output subject
+   - `none`: never publish cross-service data
+4. pull-based local computation may call `compute_output(...)` upstream, but it now satisfies local targets only and does not implicitly cross-publish
 
 ### Rungraph Apply Chain
 

@@ -7,7 +7,8 @@ from typing import Literal, TypeAlias
 from nats.js.api import StorageType  # type: ignore[import-not-found]
 
 
-DataDeliveryMode: TypeAlias = Literal["pull", "push", "both"]
+CrossPublishPolicy: TypeAlias = Literal["routed", "all", "none"]
+DataDeliveryMode: TypeAlias = Literal["buffered", "callback", "both"]
 
 
 def _debug_state_enabled() -> bool:
@@ -20,13 +21,19 @@ class ServiceBusConfig:
     service_name: str | None = None
     service_class: str | None = None
     nats_url: str = "nats://127.0.0.1:4222"
-    publish_all_data: bool = True
+    cross_publish_policy: CrossPublishPolicy = "routed"
+    # Compatibility alias for pre-Slice-C callers.
+    # - True  -> "all"
+    # - False -> "routed"
+    publish_all_data: bool | None = None
     kv_storage: StorageType = StorageType.MEMORY
     delete_bucket_on_start: bool = False
     delete_bucket_on_stop: bool = False
-    # Default to push-based delivery so nodes that implement `on_data(...)` work out of the box.
-    # Pull-based graphs (e.g. pyengine) can override this explicitly.
-    data_delivery: DataDeliveryMode = "push"
+    # Canonical local delivery semantics:
+    # - "callback": invoke `on_data(...)` only
+    # - "buffered": satisfy `pull_data(...)` only
+    # - "both": explicit dual local delivery for compatibility/migration only
+    data_delivery: DataDeliveryMode = "callback"
     state_sync_concurrency: int = 8
     state_cache_max_entries: int = 8192
     data_input_max_buffers: int = 4096

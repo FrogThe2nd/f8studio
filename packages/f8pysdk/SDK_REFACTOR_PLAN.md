@@ -126,16 +126,17 @@ This plan is intentionally incremental. Each phase should leave the SDK usable a
 ### Checklist
 
 - [ ] Replace `publish_all_data: bool` with a more explicit policy:
+- [x] Replace `publish_all_data: bool` with a more explicit policy:
   - `routed`
   - `all`
   - `none`
-- [ ] Change the default cross-publish policy from current eager over-publish behavior to routed-only publish.
-- [ ] Replace `DataDeliveryMode = "pull" | "push" | "both"` with clearer semantics, for example:
+- [x] Change the default cross-publish policy from current eager over-publish behavior to routed-only publish.
+- [x] Replace `DataDeliveryMode = "pull" | "push" | "both"` with clearer semantics, for example:
   - `buffered`
   - `callback`
-- [ ] Decide whether dual delivery should remain available; if yes, make it explicit and rare rather than default-facing.
-- [ ] Ensure pull-triggered local compute does not automatically become cross-service network output unless explicitly requested.
-- [ ] Add metrics counters for:
+- [x] Decide whether dual delivery should remain available; if yes, make it explicit and rare rather than default-facing.
+- [x] Ensure pull-triggered local compute does not automatically become cross-service network output unless explicitly requested.
+- [x] Add metrics counters for:
   - local-only emit
   - routed cross emit
   - suppressed cross publish
@@ -319,6 +320,22 @@ This milestone does not redesign the SDK yet, but it makes the system much safer
     - undeclared commands without param metadata now require object-shaped args on request/reply surfaces
     - request/reply command paths are reply-first; hidden output writeback is now explicit opt-in on the local SDK façade only
     - hidden output writeback failures now log once and do not fail the command invocation itself
+
+- 2026-04-06
+  - owner: Codex + repository maintainer
+  - scope: Slice C data delivery and cross-publish simplification
+  - completed:
+    - introduced explicit `cross_publish_policy = "routed" | "all" | "none"` and made `routed` the default
+    - changed canonical local data delivery names to `callback | buffered | both`
+    - kept `publish_all_data` and `data_delivery="push"|"pull"` as compatibility aliases
+    - separated local delivery from cross-service publish decisions in the routing layer
+    - stopped pull-triggered local compute from implicitly cross-publishing network samples
+    - extended monitor snapshots with routing counters for local-only emits, routed cross emits, suppressed cross publishes, callback deliveries, and buffered pull deliveries
+    - added regression coverage for routed-default suppression, callback-only local delivery, compatibility alias mapping, and local-only pull compute
+  - compatibility notes:
+    - `publish_all_data=True` now maps to `cross_publish_policy="all"`; `False` maps to `routed`
+    - `data_delivery="push"` maps to `callback`; `data_delivery="pull"` maps to `buffered`
+    - `data_delivery="both"` remains available as explicit compatibility mode, but it is no longer the default-facing recommendation
 
 - When we start a phase, create a short changelog section here with:
   - date

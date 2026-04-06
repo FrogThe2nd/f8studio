@@ -279,7 +279,7 @@ async def bench_exec_trigger_nowait(*, iterations: int, warmup: int) -> BenchRes
 async def bench_push_on_data_batched(*, ticks: int, burst: int, warmup_ticks: int) -> BenchResult:
     harness = ServiceBusHarness()
     bus = harness.create_bus("svcA")
-    bus.set_data_delivery("push", source="bench")
+    bus.set_data_delivery("callback", source="bench")
     sink = _CountSinkDataNode("dst")
     bus.register_node(sink)
 

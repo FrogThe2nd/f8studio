@@ -210,6 +210,11 @@ class MonitorCollector:
         self._observed = 0
         self._processed = 0
         self._dropped = 0
+        self._local_only_emits = 0
+        self._routed_cross_emits = 0
+        self._suppressed_cross_publishes = 0
+        self._callback_deliveries = 0
+        self._buffer_pull_deliveries = 0
         self._last_error_code = ""
         self._last_error_message = ""
         self._last_error_ts_ms: int | None = None
@@ -298,6 +303,36 @@ class MonitorCollector:
         with self._lock:
             self._dropped += int(dropped_count)
 
+    def record_local_only_emit(self) -> None:
+        if not self._enabled:
+            return
+        with self._lock:
+            self._local_only_emits += 1
+
+    def record_routed_cross_emit(self) -> None:
+        if not self._enabled:
+            return
+        with self._lock:
+            self._routed_cross_emits += 1
+
+    def record_suppressed_cross_publish(self) -> None:
+        if not self._enabled:
+            return
+        with self._lock:
+            self._suppressed_cross_publishes += 1
+
+    def record_callback_delivery(self) -> None:
+        if not self._enabled:
+            return
+        with self._lock:
+            self._callback_deliveries += 1
+
+    def record_buffer_pull_delivery(self) -> None:
+        if not self._enabled:
+            return
+        with self._lock:
+            self._buffer_pull_deliveries += 1
+
     def record_error(self, *, code: str, message: str, ts_ms: int | None = None) -> None:
         if not self._enabled:
             return
@@ -360,6 +395,11 @@ class MonitorCollector:
                 observed=int(self._observed),
                 processed=int(self._processed),
                 dropped=int(self._dropped),
+                localOnlyEmits=int(self._local_only_emits),
+                routedCrossEmits=int(self._routed_cross_emits),
+                suppressedCrossPublishes=int(self._suppressed_cross_publishes),
+                callbackDeliveries=int(self._callback_deliveries),
+                bufferPullDeliveries=int(self._buffer_pull_deliveries),
             )
             error = F8MonitorError(
                 countWindow=int(len(self._error_events)),

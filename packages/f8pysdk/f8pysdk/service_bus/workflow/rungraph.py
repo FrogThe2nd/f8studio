@@ -487,7 +487,7 @@ async def rebuild_routes(bus: "ServiceBus") -> None:
     bus._intra_state_out.clear()
 
     # Intra (in-process) routing: local service -> local service.
-    intra: dict[tuple[str, str], list[tuple[str, str]]] = {}
+    intra: dict[tuple[str, str], list[tuple[str, str, F8Edge]]] = {}
     intra_in: dict[tuple[str, str], list[tuple[str, str, F8Edge]]] = {}
     for edge in graph.edges:
         if edge.kind != F8EdgeKindEnum.data:
@@ -496,7 +496,9 @@ async def rebuild_routes(bus: "ServiceBus") -> None:
             continue
         if not edge.fromOperatorId or not edge.toOperatorId:
             continue
-        intra.setdefault((str(edge.fromOperatorId), str(edge.fromPort)), []).append((str(edge.toOperatorId), str(edge.toPort)))
+        intra.setdefault((str(edge.fromOperatorId), str(edge.fromPort)), []).append(
+            (str(edge.toOperatorId), str(edge.toPort), edge)
+        )
         intra_in.setdefault((str(edge.toOperatorId), str(edge.toPort)), []).append((str(edge.fromOperatorId), str(edge.fromPort), edge))
     bus._intra_data_out = {k: tuple(v) for k, v in intra.items()}
     bus._intra_data_in = {k: tuple(v) for k, v in intra_in.items()}
