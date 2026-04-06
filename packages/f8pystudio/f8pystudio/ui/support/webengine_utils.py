@@ -3,12 +3,12 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from qtpy import QtCore, QtGui
+from qtpy import QtCore, QtGui, QtWidgets
 
 logger = logging.getLogger(__name__)
 _WEBENGINE_PROFILE_CONFIGURED = False
 _WEBENGINE_VIEW_PREWARMED = False
-_WEBENGINE_PREWARM_VIEW: object | None = None
+_WEBENGINE_PREWARM_VIEW: QtWidgets.QWidget | None = None
 
 
 def configure_default_webengine_profile() -> None:
@@ -67,6 +67,27 @@ def prewarm_webengine_view() -> bool:
         logger.exception("failed to prewarm QtWebEngine view")
         _WEBENGINE_PREWARM_VIEW = None
         return False
+
+
+def take_prewarmed_webengine_view(*, parent: QtWidgets.QWidget | None = None) -> QtWidgets.QWidget | None:
+    global _WEBENGINE_PREWARM_VIEW
+    view = _WEBENGINE_PREWARM_VIEW
+    if view is None:
+        return None
+
+    _WEBENGINE_PREWARM_VIEW = None
+    try:
+        if parent is not None:
+            view.setParent(parent)
+        view.setAttribute(QtCore.Qt.WidgetAttribute.WA_DontShowOnScreen, False)
+    except (AttributeError, RuntimeError, TypeError):
+        logger.exception("failed to attach prewarmed QtWebEngine view")
+        try:
+            view.deleteLater()
+        except (AttributeError, RuntimeError, TypeError):
+            pass
+        return None
+    return view
 
 
 def set_webengine_view_background(view: object, color: str) -> None:

@@ -8,7 +8,7 @@ from ...ai_assist.llm_bridge import AiLlmBridge
 from ...ai_assist.store import AiProviderStore
 from ...ui.support.ai_assist_state import QtAiPanelStateStore
 from ...ui.support.ui_icons import StudioIcon, icon_for
-from ...ui.support.webengine_utils import configure_default_webengine_profile
+from ...ui.support.webengine_utils import configure_default_webengine_profile, take_prewarmed_webengine_view
 from ..dialogs.ai_context_inspector import AiContextInspectorDialog
 from ..support.ai_context_controls import (
     configure_icon_tool_button,
@@ -56,7 +56,11 @@ class AiAssistSidebarWidget(QtWidgets.QWidget):
         from PySide6 import QtWebChannel, QtWebEngineWidgets  # type: ignore[import-not-found]
 
         configure_default_webengine_profile()
-        self._view = QtWebEngineWidgets.QWebEngineView(self)
+        prewarmed_view = take_prewarmed_webengine_view(parent=self)
+        if prewarmed_view is None:
+            self._view = QtWebEngineWidgets.QWebEngineView(self)
+        else:
+            self._view = prewarmed_view
         self._view.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.NoContextMenu)
         
         self._web_channel = QtWebChannel.QWebChannel(self._view.page())
@@ -172,6 +176,7 @@ class AiAssistSidebarWidget(QtWidgets.QWidget):
         layout.setSpacing(0)
         layout.addWidget(self._toolbar_container, 0)
         layout.addWidget(self._view, 1)
+        self._view.show()
         
         # Load HTML
         self._view.setHtml(build_ai_assist_html())

@@ -12,6 +12,7 @@ from qtpy import QtCore, QtWidgets
 from f8pysdk import F8OperatorSpec
 
 from f8pystudio.ui.mainwin.ai_assist_sidebar import AiAssistSidebarWidget
+from f8pystudio.ui.support import webengine_utils
 
 
 def _ensure_app() -> QtWidgets.QApplication:
@@ -31,10 +32,13 @@ class _FakeWebPage(QtCore.QObject):
 
 
 class _FakeWebEngineView(QtWidgets.QWidget):
+    created: list["_FakeWebEngineView"] = []
+
     def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
         self._page = _FakeWebPage(self)
         self.html = ""
+        self.created.append(self)
 
     def page(self) -> _FakeWebPage:
         return self._page
@@ -118,6 +122,12 @@ def _make_sidebar(monkeypatch) -> tuple[AiAssistSidebarWidget, _FakeGraph]:
     return widget, graph
 
 
+def _reset_webengine_prewarm_state() -> None:
+    webengine_utils._WEBENGINE_PROFILE_CONFIGURED = False
+    webengine_utils._WEBENGINE_VIEW_PREWARMED = False
+    webengine_utils._WEBENGINE_PREWARM_VIEW = None
+
+
 def _make_node(node_id: str, name: str) -> _FakeSnapshotNode:
     return _FakeSnapshotNode(
         id=node_id,
@@ -166,3 +176,40 @@ def test_sidebar_supports_multi_select_subgraph_context_and_reset_clears_pin(mon
 
     assert "Pin: none" == widget._pinned_node_label.text()
     assert not widget._clear_context_btn.isEnabled()
+
+
+def test_take_prewarmed_webengine_view_returns_cached_instance(monkeypatch) -> None:
+    _ensure_app()
+    _install_fake_pyside6(monkeypatch)
+    _FakeWebEngineView.created = []
+    _reset_webengine_prewarm_state()
+    monkeypatch.setattr("f8pystudio.ui.support.webengine_utils.configure_default_webengine_profile", lambda: None)
+
+    assert webengine_utils.prewarm_webengine_view() is True
+    assert len(_FakeWebEngineView.created) == 1
+    prewarmed_view = _FakeWebEngineView.created[0]
+    parent = QtWidgets.QWidget()
+
+    taken_view = webengine_utils.take_prewarmed_webengine_view(parent=parent)
+
+    assert taken_view is prewarmed_view
+    assert taken_view.parent() is parent
+    assert webengine_utils._WEBENGINE_PREWARM_VIEW is None
+
+
+def test_sidebar_reuses_prewarmed_webengine_view(monkeypatch) -> None:
+    _ensure_app()
+    _install_fake_pyside6(monkeypatch)
+    _FakeWebEngineView.created = []
+    _reset_webengine_prewarm_state()
+    monkeypatch.setattr("f8pystudio.ui.support.webengine_utils.configure_default_webengine_profile", lambda: None)
+
+    assert webengine_utils.prewarm_webengine_view() is True
+    prewarmed_view = webengine_utils._WEBENGINE_PREWARM_VIEW
+    assert prewarmed_view is not None
+
+    widget, _graph = _make_sidebar(monkeypatch)
+
+    assert widget._view is prewarmed_view
+    assert len(_FakeWebEngineView.created) == 1
+    assert widget._view.parent() is widget
