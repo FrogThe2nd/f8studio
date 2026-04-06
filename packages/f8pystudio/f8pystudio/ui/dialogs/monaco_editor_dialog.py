@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any
 
 from qtpy import QtCore, QtGui, QtWidgets
 
 from ...editor_assist.session import EditorSessionController
-from ...ui.support.webengine_utils import configure_default_webengine_profile
+from ...ui.support.web_asset_utils import render_prism_asset_html, resolve_monaco_base_url as resolve_web_monaco_base_url
+from ...ui.support.webengine_utils import (
+    configure_default_webengine_profile,
+    configure_webengine_local_content_access,
+    set_webengine_html,
+)
 from .ai_context_inspector import AiContextInspectorDialog
 from ..support.ai_context_controls import set_tool_button_point_size, usage_pie_icon
 from ..support.monaco_editor_host import _ask_save_before_close, open_code_editor_dialog, open_code_editor_window
@@ -18,10 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 def _resolve_monaco_base_url() -> str:
-    value = str(os.environ.get("F8_MONACO_BASE_URL") or "").strip().rstrip("/")
-    if value:
-        return value
-    return "https://cdn.jsdelivr.net/npm/monaco-editor/min"
+    return resolve_web_monaco_base_url()
 
 
 class _EditorUiBridge(QtCore.QObject):
@@ -67,6 +68,7 @@ class F8MonacoEditorWidget(QtWidgets.QWidget):
 
         configure_default_webengine_profile()
         self._view = QtWebEngineWidgets.QWebEngineView(self)
+        configure_webengine_local_content_access(self._view)
         self._view.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.NoContextMenu)
         self._ui_bridge = _EditorUiBridge(self)
 
@@ -213,15 +215,23 @@ class F8MonacoEditorWidget(QtWidgets.QWidget):
         return str(result["value"] or "")
 
     def _load_page(self) -> None:
+        monaco_base_url = _resolve_monaco_base_url()
         html = build_monaco_editor_html(
             MonacoEditorPageConfig(
                 code=self._controller.code(),
                 language=self._controller.language(),
-                monaco_base_url=_resolve_monaco_base_url(),
+                monaco_base_url=monaco_base_url,
                 python_assist_enabled=self._controller.assist_bridge() is not None,
+                prism_asset_html=render_prism_asset_html(
+                    languages=("python", "javascript", "bash", "json"),
+                ),
             )
         )
-        self._view.setHtml(html)
+        set_webengine_html(
+            self._view,
+            html,
+            base_url=f"{monaco_base_url.rstrip('/')}/",
+        )
 
     @QtCore.Slot()
     def _on_save_clicked(self) -> None:

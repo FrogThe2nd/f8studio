@@ -25,10 +25,13 @@ class MonacoEditorPageConfig:
     monaco_base_url: str
     python_assist_enabled: bool = False
     theme: str = "vs-dark"
+    prism_asset_html: str = ""
 
 
 def build_monaco_editor_html(config: MonacoEditorPageConfig) -> str:
-    base = str(config.monaco_base_url or "").strip().rstrip("/")
+    prism_asset_html_block = str(config.prism_asset_html or "").strip()
+    if prism_asset_html_block:
+        prism_asset_html_block += "\n"
     initial = {
         "code": str(config.code or ""),
         "language": str(config.language or "plaintext").strip() or "plaintext",
@@ -103,17 +106,11 @@ def build_monaco_editor_html(config: MonacoEditorPageConfig) -> str:
       .f8-accept:hover {{ background: #235a39; border-color: #2ea043; color: #4aff8a; }}
       .f8-reject:hover {{ background: #5a2323; border-color: #f85149; color: #ff8a8a; }}
     </style>
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-twilight.min.css" rel="stylesheet" />
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-javascript.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-json.min.js"></script>
-    <script>
+    {prism_asset_html_block}    <script>
       window.__F8_INITIAL__ = {initial_json};
     </script>
     <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
-    <script src="{base}/vs/loader.js"></script>
+    <script src="vs/loader.js"></script>
     <script>
       window._f8_editor = null;
       window._f8_editorUi = null;
@@ -164,7 +161,7 @@ def build_monaco_editor_html(config: MonacoEditorPageConfig) -> str:
         }}
       }};
 
-      require.config({{ paths: {{ 'vs': '{base}/vs' }} }});
+      require.config({{ paths: {{ 'vs': 'vs' }} }});
       require(['vs/editor/editor.main'], function() {{
         const init = window.__F8_INITIAL__ || {{ code: '', language: 'plaintext', theme: 'vs-dark' }};
         window._f8_editor = monaco.editor.create(document.getElementById('container'), {{

@@ -4,15 +4,12 @@ Standalone AI Assist page builder for the Studio Sidebar.
 
 from __future__ import annotations
 
-import json
-import logging
-import os
-
-logger = logging.getLogger(__name__)
-
-def build_ai_assist_html() -> str:
+def build_ai_assist_html(*, prism_asset_html: str = "") -> str:
     """Builds a standalone HTML page for the AI assist sidebar."""
-    
+    prism_asset_html_block = str(prism_asset_html or "").strip()
+    if prism_asset_html_block:
+        prism_asset_html_block += "\n"
+
     html = f"""
 <!doctype html>
 <html>
@@ -228,10 +225,7 @@ def build_ai_assist_html() -> str:
         cursor: pointer; font-weight: bold;
       }}
     </style>
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-twilight.min.css" rel="stylesheet" />
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js"></script>
-    <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+    {prism_asset_html_block}    <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
     <script>
       window._f8_aiAssist = null;
       window._f8_chatMessages = [];

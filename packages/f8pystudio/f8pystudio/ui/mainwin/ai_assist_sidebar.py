@@ -7,8 +7,14 @@ from ...ai_assist.graph_context import GraphContextSnapshot, build_graph_context
 from ...ai_assist.llm_bridge import AiLlmBridge
 from ...ai_assist.store import AiProviderStore
 from ...ui.support.ai_assist_state import QtAiPanelStateStore
+from ...ui.support.web_asset_utils import render_prism_asset_html, resolve_web_asset_page_base_url
 from ...ui.support.ui_icons import StudioIcon, icon_for
-from ...ui.support.webengine_utils import configure_default_webengine_profile, take_prewarmed_webengine_view
+from ...ui.support.webengine_utils import (
+    configure_default_webengine_profile,
+    configure_webengine_local_content_access,
+    set_webengine_html,
+    take_prewarmed_webengine_view,
+)
 from ..dialogs.ai_context_inspector import AiContextInspectorDialog
 from ..support.ai_context_controls import (
     configure_icon_tool_button,
@@ -61,6 +67,7 @@ class AiAssistSidebarWidget(QtWidgets.QWidget):
             self._view = QtWebEngineWidgets.QWebEngineView(self)
         else:
             self._view = prewarmed_view
+        configure_webengine_local_content_access(self._view)
         self._view.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.NoContextMenu)
         
         self._web_channel = QtWebChannel.QWebChannel(self._view.page())
@@ -179,7 +186,13 @@ class AiAssistSidebarWidget(QtWidgets.QWidget):
         self._view.show()
         
         # Load HTML
-        self._view.setHtml(build_ai_assist_html())
+        set_webengine_html(
+            self._view,
+            build_ai_assist_html(
+                prism_asset_html=render_prism_asset_html(languages=("python",)),
+            ),
+            base_url=resolve_web_asset_page_base_url(),
+        )
         
         # Timer to reposition buttons/panels since they are overlays
         self._reposition_timer = QtCore.QTimer(self)

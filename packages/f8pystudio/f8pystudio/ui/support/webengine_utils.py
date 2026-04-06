@@ -39,6 +39,42 @@ def configure_default_webengine_profile() -> None:
     _WEBENGINE_PROFILE_CONFIGURED = True
 
 
+def configure_webengine_local_content_access(view: object) -> None:
+    try:
+        from PySide6 import QtWebEngineCore  # type: ignore[import-not-found]
+    except ImportError:
+        logger.debug("QtWebEngineCore is unavailable; skipped local content access configuration")
+        return
+
+    settings = None
+    try:
+        settings = view.settings()
+    except (AttributeError, RuntimeError, TypeError):
+        settings = None
+    if settings is None:
+        return
+
+    try:
+        settings.setAttribute(
+            QtWebEngineCore.QWebEngineSettings.WebAttribute.LocalContentCanAccessFileUrls,
+            True,
+        )
+        settings.setAttribute(
+            QtWebEngineCore.QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls,
+            True,
+        )
+    except (AttributeError, RuntimeError, TypeError):
+        logger.exception("failed to configure local content access for WebEngine view")
+
+
+def set_webengine_html(view: object, html: str, *, base_url: str | None = None) -> None:
+    normalized_base_url = str(base_url or "").strip()
+    if normalized_base_url:
+        view.setHtml(str(html), QtCore.QUrl(normalized_base_url))
+        return
+    view.setHtml(str(html))
+
+
 def prewarm_webengine_view() -> bool:
     global _WEBENGINE_VIEW_PREWARMED, _WEBENGINE_PREWARM_VIEW
     if _WEBENGINE_VIEW_PREWARMED:

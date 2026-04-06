@@ -38,13 +38,15 @@ class _FakeWebEngineView(QtWidgets.QWidget):
         super().__init__(parent)
         self._page = _FakeWebPage(self)
         self.html = ""
+        self.base_url = None
         self.created.append(self)
 
     def page(self) -> _FakeWebPage:
         return self._page
 
-    def setHtml(self, html: str) -> None:
+    def setHtml(self, html: str, base_url=None) -> None:
         self.html = html
+        self.base_url = base_url
 
 
 class _FakeWebChannel(QtCore.QObject):
@@ -213,3 +215,4 @@ def test_sidebar_reuses_prewarmed_webengine_view(monkeypatch) -> None:
     assert widget._view is prewarmed_view
     assert len(_FakeWebEngineView.created) == 1
     assert widget._view.parent() is widget
+    assert widget._view.base_url is not None
