@@ -199,6 +199,7 @@ class PyStudioProgram:
         from qtpy import QtCore, QtGui, QtWidgets
 
         from f8pystudio.ui.support.qt_font_utils import normalize_application_font
+        from f8pystudio.ui.support.webengine_utils import prewarm_webengine_view
         from f8pystudio.ui.mainwin.main_window import F8StudioMainWin
 
         manifests = self._load_plugin_manifests()
@@ -248,6 +249,8 @@ class PyStudioProgram:
             mainwin.close()
             return 0
 
+        prewarm_webengine_view()
+        mainwin.prepare_before_show()
         mainwin.show()
         self._notify_launcher_ready()
         mainwin.schedule_deferred_startup()

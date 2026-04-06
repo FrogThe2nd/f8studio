@@ -7,6 +7,8 @@ from qtpy import QtCore, QtGui
 
 logger = logging.getLogger(__name__)
 _WEBENGINE_PROFILE_CONFIGURED = False
+_WEBENGINE_VIEW_PREWARMED = False
+_WEBENGINE_PREWARM_VIEW: object | None = None
 
 
 def configure_default_webengine_profile() -> None:
@@ -35,6 +37,36 @@ def configure_default_webengine_profile() -> None:
     profile.setPersistentStoragePath(str(storage_dir))
     profile.setPersistentCookiesPolicy(QtWebEngineCore.QWebEngineProfile.ForcePersistentCookies)
     _WEBENGINE_PROFILE_CONFIGURED = True
+
+
+def prewarm_webengine_view() -> bool:
+    global _WEBENGINE_VIEW_PREWARMED, _WEBENGINE_PREWARM_VIEW
+    if _WEBENGINE_VIEW_PREWARMED:
+        return True
+
+    configure_default_webengine_profile()
+    try:
+        from PySide6 import QtWebEngineWidgets  # type: ignore[import-not-found]
+    except ImportError:
+        logger.exception("failed to import QtWebEngineWidgets for prewarm")
+        return False
+
+    try:
+        view = QtWebEngineWidgets.QWebEngineView()
+        view.setAttribute(QtCore.Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+        view.resize(1, 1)
+        view.hide()
+        view.setHtml("<html><body></body></html>")
+        app = QtCore.QCoreApplication.instance()
+        if app is not None:
+            app.processEvents()
+        _WEBENGINE_PREWARM_VIEW = view
+        _WEBENGINE_VIEW_PREWARMED = True
+        return True
+    except Exception:
+        logger.exception("failed to prewarm QtWebEngine view")
+        _WEBENGINE_PREWARM_VIEW = None
+        return False
 
 
 def set_webengine_view_background(view: object, color: str) -> None:

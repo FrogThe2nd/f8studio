@@ -52,6 +52,7 @@ class _FakeMainWindow:
         self.window_icon: object | None = None
         self.discovery_logs: list[tuple[list[str], list[str]]] = []
         self.deferred_startup_scheduled = False
+        self.prepare_before_show_called = False
         _FakeMainWindow.last_instance = self
 
     def setWindowIcon(self, icon: object) -> None:
@@ -64,6 +65,9 @@ class _FakeMainWindow:
 
     def show(self) -> None:
         self.shown = True
+
+    def prepare_before_show(self) -> None:
+        self.prepare_before_show_called = True
 
     def schedule_deferred_startup(self) -> None:
         self.deferred_startup_scheduled = True
@@ -130,6 +134,11 @@ def _patch_program_dependencies(monkeypatch) -> list[tuple[object | None, str, s
 
 def test_program_blocks_before_show_when_bridge_startup_is_blocked(monkeypatch, tmp_path) -> None:
     warnings = _patch_program_dependencies(monkeypatch)
+    prewarm_calls: list[str] = []
+    monkeypatch.setattr(
+        "f8pystudio.ui.support.webengine_utils.prewarm_webengine_view",
+        lambda: prewarm_calls.append("prewarm"),
+    )
     _FakeApp.last_instance = None
     _FakeMainWindow.last_instance = None
     _FakeBridge.preflight_message = "Another F8PyStudio instance is already running."
@@ -147,10 +156,16 @@ def test_program_blocks_before_show_when_bridge_startup_is_blocked(monkeypatch, 
     assert dismiss_file.read_text(encoding="utf-8") == "dismiss\n"
     assert _FakeApp.last_instance is not None
     assert _FakeApp.last_instance.process_events_called is False
+    assert prewarm_calls == []
 
 
 def test_program_shows_main_window_after_bridge_startup_passes(monkeypatch, tmp_path) -> None:
     warnings = _patch_program_dependencies(monkeypatch)
+    prewarm_calls: list[str] = []
+    monkeypatch.setattr(
+        "f8pystudio.ui.support.webengine_utils.prewarm_webengine_view",
+        lambda: prewarm_calls.append("prewarm"),
+    )
     _FakeApp.last_instance = None
     _FakeMainWindow.last_instance = None
     _FakeBridge.preflight_message = None
@@ -166,6 +181,7 @@ def test_program_shows_main_window_after_bridge_startup_passes(monkeypatch, tmp_
     assert _FakeMainWindow.last_instance.bridge is _FakeBridge.last_instance
     assert _FakeMainWindow.last_instance.bridge_stopped is False
     assert _FakeMainWindow.last_instance.deferred_startup_scheduled is True
+    assert _FakeMainWindow.last_instance.prepare_before_show_called is True
     assert _FakeMainWindow.last_instance.shown is True
     assert _FakeMainWindow.last_instance.closed is False
     assert _FakeMainWindow.last_instance.discovery_logs == [(["timing-1"], ["error-1"])]
@@ -174,3 +190,4 @@ def test_program_shows_main_window_after_bridge_startup_passes(monkeypatch, tmp_
     assert ready_file.read_text(encoding="utf-8") == "ready\n"
     assert _FakeApp.last_instance is not None
     assert _FakeApp.last_instance.process_events_called is True
+    assert prewarm_calls == ["prewarm"]

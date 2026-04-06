@@ -28,8 +28,15 @@ class _FakeConnection:
 
 def test_connect_failure_reports_context() -> None:
     reported: list[str] = []
+    reconnect_flags: list[bool] = []
 
-    async def _connect(_nats_url: str, _error_cb: Callable[[Exception], Any], _timeout_s: float) -> Any:
+    async def _connect(
+        _nats_url: str,
+        _error_cb: Callable[[Exception], Any],
+        _timeout_s: float,
+        allow_reconnect: bool,
+    ) -> Any:
+        reconnect_flags.append(bool(allow_reconnect))
         raise RuntimeError("connect-failed")
 
     manager = NatsConnectionManager(
@@ -43,15 +50,23 @@ def test_connect_failure_reports_context() -> None:
 
     assert nc is None
     assert reported == ["ensure nats connection failed:RuntimeError"]
+    assert reconnect_flags == [True]
 
 
 def test_connect_error_callback_throttles_logs() -> None:
     logs: list[str] = []
     callbacks: list[Callable[[Exception], Any]] = []
+    reconnect_flags: list[bool] = []
     fake_connection = _FakeConnection()
 
-    async def _connect(_nats_url: str, error_cb: Callable[[Exception], Any], _timeout_s: float) -> Any:
+    async def _connect(
+        _nats_url: str,
+        error_cb: Callable[[Exception], Any],
+        _timeout_s: float,
+        allow_reconnect: bool,
+    ) -> Any:
         callbacks.append(error_cb)
+        reconnect_flags.append(bool(allow_reconnect))
         return fake_connection
 
     manager = NatsConnectionManager(
@@ -68,8 +83,41 @@ def test_connect_error_callback_throttles_logs() -> None:
 
     asyncio.run(callbacks[0](RuntimeError("first")))
     asyncio.run(callbacks[0](RuntimeError("second")))
+    assert reconnect_flags == [True]
     assert len(logs) == 1
     assert "NATS not reachable" in logs[0]
+    assert "(will retry)" in logs[0]
+
+
+def test_connect_error_callback_without_reconnect_omits_retry_suffix() -> None:
+    logs: list[str] = []
+    callbacks: list[Callable[[Exception], Any]] = []
+    reconnect_flags: list[bool] = []
+    fake_connection = _FakeConnection()
+
+    async def _connect(
+        _nats_url: str,
+        error_cb: Callable[[Exception], Any],
+        _timeout_s: float,
+        allow_reconnect: bool,
+    ) -> Any:
+        callbacks.append(error_cb)
+        reconnect_flags.append(bool(allow_reconnect))
+        return fake_connection
+
+    manager = NatsConnectionManager(
+        nats_url="nats://127.0.0.1:4222",
+        emit_log=lambda line: logs.append(str(line)),
+        report_exception=lambda _context, _exc: None,
+        _connect_func=_connect,
+    )
+
+    nc = asyncio.run(manager.connect(context="connect nats for singleton guard failed", allow_reconnect=False))
+    assert nc is fake_connection
+    assert reconnect_flags == [False]
+
+    asyncio.run(callbacks[0](RuntimeError("offline")))
+    assert logs == ["NATS not reachable at 'nats://127.0.0.1:4222': RuntimeError: offline"]
 
 
 def test_singleton_guard_blocks_start_when_ping_responds() -> None:

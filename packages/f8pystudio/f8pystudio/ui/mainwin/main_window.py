@@ -273,6 +273,13 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
     def start_bridge_and_wait_for_startup(self, *, timeout_s: float = STARTUP_GATE_TIMEOUT_S) -> str | None:
         return self._bridge.start_and_wait_for_startup(timeout_s=float(timeout_s))
 
+    def prepare_before_show(self) -> None:
+        try:
+            self._ensure_ai_assist_sidebar()
+        except Exception as exc:
+            self._log_dock.report_exception("studio", "prepare AI Assist before show failed", exc)
+            logger.error("prepare AI Assist before show failed", exc_info=exc)
+
     def stop_bridge(self) -> None:
         if self._bridge_stopped:
             return

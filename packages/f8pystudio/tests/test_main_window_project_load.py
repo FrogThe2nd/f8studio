@@ -96,6 +96,31 @@ class _FakeMain:
         self.refresh_auto_deploy_fingerprint_calls += 1
 
 
+class _FakePrepareBeforeShowMain:
+    def __init__(self) -> None:
+        self.ensure_ai_assist_calls = 0
+        self.reported_exceptions: list[tuple[str, str]] = []
+
+    def _ensure_ai_assist_sidebar(self) -> None:
+        self.ensure_ai_assist_calls += 1
+
+
+class _FakePrepareBeforeShowFailureMain(_FakePrepareBeforeShowMain):
+    def _ensure_ai_assist_sidebar(self) -> None:
+        raise RuntimeError("boom")
+
+    class _LogDock:
+        def __init__(self, owner: "_FakePrepareBeforeShowFailureMain") -> None:
+            self._owner = owner
+
+        def report_exception(self, channel: str, context: str, exc: Exception) -> None:
+            self._owner.reported_exceptions.append((str(channel), f"{context}:{exc}"))
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._log_dock = self._LogDock(self)
+
+
 def test_auto_load_project_starts_background_worker_once(monkeypatch) -> None:
     _FakeWorker.created = []
     monkeypatch.setattr("f8pystudio.ui.mainwin.main_window._ProjectAutoLoadWorker", _FakeWorker)
@@ -151,3 +176,19 @@ def test_deferred_auto_deploy_fingerprint_refresh_runs_only_when_open() -> None:
     fake_main._closing = True
     F8StudioMainWin._on_deferred_auto_deploy_fingerprint_timeout(fake_main)
     assert fake_main.refresh_auto_deploy_fingerprint_calls == 1
+
+
+def test_prepare_before_show_initializes_ai_assist() -> None:
+    fake_main = _FakePrepareBeforeShowMain()
+
+    F8StudioMainWin.prepare_before_show(fake_main)
+
+    assert fake_main.ensure_ai_assist_calls == 1
+
+
+def test_prepare_before_show_reports_failures() -> None:
+    fake_main = _FakePrepareBeforeShowFailureMain()
+
+    F8StudioMainWin.prepare_before_show(fake_main)
+
+    assert fake_main.reported_exceptions == [("studio", "prepare AI Assist before show failed:boom")]
