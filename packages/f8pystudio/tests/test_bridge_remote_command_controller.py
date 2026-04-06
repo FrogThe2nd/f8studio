@@ -113,6 +113,25 @@ def test_request_remote_command_submit_failure_returns_error() -> None:
     assert callback_calls == [(None, "submit failed")]
 
 
+def test_request_remote_command_preserves_falsy_args() -> None:
+    bridge = _Harness(gateway=_CommandGateway(response=_CommandResponse(ok=True, result={"ok": 1})))
+    callback_calls: list[tuple[dict[str, Any] | None, str | None]] = []
+
+    bridge.request_remote_command(
+        service_id="svc_zero",
+        call="ping",
+        args=0,
+        cb=lambda result, err: callback_calls.append((result, err)),
+    )
+
+    assert len(bridge._submitted) == 1
+    asyncio.run(bridge._submitted[0])
+
+    assert len(bridge._command_gateway.calls) == 1
+    assert bridge._command_gateway.calls[0].args == 0
+    assert callback_calls == [({"ok": 1}, None)]
+
+
 def test_invoke_remote_command_logs_rejection() -> None:
     bridge = _Harness(gateway=_CommandGateway(response=_CommandResponse(ok=False, result={}, error_message="denied")))
 

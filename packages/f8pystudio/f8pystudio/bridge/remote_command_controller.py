@@ -23,13 +23,16 @@ class RemoteCommandControllerMixin:
         self,
         service_id: str,
         call: str,
-        args: dict[str, Any] | None,
+        args: Any,
         cb: Callable[[dict[str, Any] | None, str | None], None],
         *,
         timeout_s: float = 2.0,
     ) -> None:
         """
         Invoke a user-defined command on a remote service and return the parsed `result`.
+
+        Declared commands may use scalar/list/object args; transport normalization
+        happens service-side from the command spec.
 
         Callback is always delivered on the Qt main thread as:
         - cb(result_dict, None) on success (result may be any JSON object; non-dict becomes {"value": ...})
@@ -54,7 +57,7 @@ class RemoteCommandControllerMixin:
                     CommandRequest(
                         service_id=service_id,
                         call=call,
-                        args=args or {},
+                        args=args,
                         timeout_s=float(timeout_s),
                         source="ui",
                         actor="studio",
@@ -71,12 +74,13 @@ class RemoteCommandControllerMixin:
         if not submitted:
             self._emit_remote_command_response_safe(str(req_id), None, "submit failed")
 
-    def invoke_remote_command(self, service_id: str, call: str, args: dict[str, Any] | None = None) -> None:
+    def invoke_remote_command(self, service_id: str, call: str, args: Any = None) -> None:
         """
         Invoke a user-defined command on a remote service via the reserved cmd channel.
 
         Request is sent to `cmd_channel_subject(service_id)` with a JSON envelope
         (reqId/call/args/meta). This matches the service control plane `cmd` endpoint.
+        Declared commands may use scalar/list/object args.
         """
         try:
             service_id = ensure_token(str(service_id), label="service_id")
@@ -92,7 +96,7 @@ class RemoteCommandControllerMixin:
                     CommandRequest(
                         service_id=service_id,
                         call=call,
-                        args=args or {},
+                        args=args,
                         timeout_s=1.5,
                         source="ui",
                         actor="studio",
@@ -105,4 +109,3 @@ class RemoteCommandControllerMixin:
                 self._emit_log_line(f"command {call} failed serviceId={service_id}: {type(exc).__name__}: {exc}")
 
         self._submit_async(_do(), context=f"submit invoke_remote_command failed serviceId={service_id}")
-

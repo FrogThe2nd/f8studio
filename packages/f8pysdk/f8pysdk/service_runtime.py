@@ -111,7 +111,8 @@ class ServiceRuntime:
         registry: RuntimeNodeRegistry | None = None,
     ) -> None:
         self._config = config
-        self._registry = registry or RuntimeNodeRegistry.instance()
+        self._registry = registry if registry is not None else RuntimeNodeRegistry()
+        self._closed = False
 
         for module in config.registry_modules:
             self._registry.load_modules([str(module)])
@@ -120,8 +121,11 @@ class ServiceRuntime:
         self.host = ServiceHost(self.bus, config=config.host, registry=self._registry)
 
     async def start(self) -> None:
+        if self._closed:
+            raise RuntimeError("ServiceRuntime is not restartable after stop(); create a new instance")
         await self.host.start()
         await self.bus.start()
 
     async def stop(self) -> None:
         await self.bus.stop()
+        self._closed = True

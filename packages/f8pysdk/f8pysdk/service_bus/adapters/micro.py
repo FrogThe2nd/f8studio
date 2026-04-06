@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import Any, TYPE_CHECKING
 
 import msgspec
 from nats.micro import ServiceConfig, add_service  # type: ignore[import-not-found]
 from nats.micro.service import EndpointConfig  # type: ignore[import-not-found]
 
-from ...capabilities import CommandableNode
 from ...generated import (
     Code,
     F8ActivateRequest,
@@ -15,7 +15,6 @@ from ...generated import (
     F8ActiveReplyResult,
     F8CommandError,
     F8CommandInvokeReply,
-    F8CommandInvokeRequest,
     F8DeactivateRequest,
     F8SetActiveRequest,
     F8SetRungraphReply,
@@ -32,15 +31,29 @@ from ...generated import (
     F8TerminateRequest,
 )
 from ...nats_naming import cmd_channel_subject, ensure_token, new_id, svc_endpoint_subject, svc_micro_name
-from ..codec import decode_as, encode_obj
+from ..codec import decode_as, decode_obj, encode_obj
+from ..command_runtime import (
+    CommandExecutionErrorKind,
+    CommandInvocation,
+    CommandInvokeOptions,
+    CommandOutputPolicy,
+    execute_command,
+)
 from ..state_write import StateWriteError, StateWriteSource
-from ..command_runtime import write_command_output
 
 if TYPE_CHECKING:
     from ..api.bus import ServiceBus
 
 
 log = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _DecodedCommandRequest:
+    req_id: str
+    call: str
+    args: Any
+    meta: dict[str, Any]
 
 
 class _ServiceBusMicroEndpoints:
@@ -104,6 +117,24 @@ class _ServiceBusMicroEndpoints:
         for key, value in dict(meta).items():
             out[str(key)] = value
         return out
+
+    def _decode_command_request(self, raw: bytes) -> _DecodedCommandRequest:
+        payload = decode_obj(raw)
+        req_id = self._req_id(str(payload.get("reqId") or ""))
+        call = str(payload.get("call") or "").strip()
+        raw_meta = payload.get("meta")
+        if raw_meta is None:
+            meta = {}
+        elif isinstance(raw_meta, dict):
+            meta = self._meta_dict(raw_meta)
+        else:
+            raise ValueError("msgpack decode failed: field meta must be an object")
+        return _DecodedCommandRequest(
+            req_id=req_id,
+            call=call,
+            args=payload.get("args"),
+            meta=meta,
+        )
 
     async def _set_active_req(
         self,
@@ -236,7 +267,7 @@ class _ServiceBusMicroEndpoints:
 
     async def _cmd(self, req: Any) -> None:
         try:
-            payload = decode_as(req.data, F8CommandInvokeRequest)
+            payload = self._decode_command_request(req.data)
         except ValueError as exc:
             await req.respond(
                 encode_obj(
@@ -249,8 +280,8 @@ class _ServiceBusMicroEndpoints:
                 )
             )
             return
-        req_id = self._req_id(payload.reqId)
-        call = str(payload.call or "").strip()
+        req_id = payload.req_id
+        call = payload.call
         if not call:
             await req.respond(
                 encode_obj(
@@ -263,51 +294,38 @@ class _ServiceBusMicroEndpoints:
                 )
             )
             return
-        service_node = self._bus.get_node(self._bus.service_id)
-        if service_node is None or not isinstance(service_node, CommandableNode):
-            await req.respond(
-                encode_obj(
-                    F8CommandInvokeReply(
-                        reqId=req_id,
-                        ok=False,
-                        result=None,
-                        error=self._error(code="UNKNOWN_CALL", message=f"unknown call: {call}"),
-                    )
-                )
-            )
-            return
-        meta_dict = self._meta_dict(payload.meta)
-        args_obj: dict[str, Any]
-        if isinstance(payload.args, dict):
-            args_obj = dict(payload.args)
-        else:
-            args_obj = {}
-        try:
-            out = await service_node.on_command(call, args_obj, meta=meta_dict)  # type: ignore[misc]
-        except Exception as exc:
-            await req.respond(
-                encode_obj(
-                    F8CommandInvokeReply(
-                        reqId=req_id,
-                        ok=False,
-                        result=None,
-                        error=self._error(code="INTERNAL", message=str(exc)),
-                    )
-                )
-            )
-            return
-        try:
-            await write_command_output(
-                self._bus,
+        result = await execute_command(
+            self._bus,
+            invocation=CommandInvocation(
                 node_id=self._bus.service_id,
                 call=call,
-                result=out,
-                ts_ms=None,
-                meta=meta_dict,
+                args=payload.args,
+            ),
+            options=CommandInvokeOptions(
+                call_meta=payload.meta,
+                output_policy=CommandOutputPolicy.none,
+                output_ts_ms=None,
+                output_meta={},
+            ),
+        )
+        if not result.ok:
+            error_code = "INTERNAL"
+            if result.error_kind == CommandExecutionErrorKind.missing_target:
+                error_code = "UNKNOWN_CALL"
+            elif result.error_kind == CommandExecutionErrorKind.invalid_args:
+                error_code = "INVALID_ARGS"
+            await req.respond(
+                encode_obj(
+                    F8CommandInvokeReply(
+                        reqId=req_id,
+                        ok=False,
+                        result=None,
+                        error=self._error(code=error_code, message=str(result.error_message or "")),
+                    )
+                )
             )
-        except Exception as exc:
-            log.exception("command output writeback failed service_id=%s call=%s", self._bus.service_id, call, exc_info=exc)
-        await req.respond(encode_obj(F8CommandInvokeReply(reqId=req_id, ok=True, result=out, error=None)))
+            return
+        await req.respond(encode_obj(F8CommandInvokeReply(reqId=req_id, ok=True, result=result.value, error=None)))
 
     async def _set_state(self, req: Any) -> None:
         try:

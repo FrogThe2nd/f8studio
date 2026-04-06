@@ -45,7 +45,7 @@ class ServiceHost:
     ) -> None:
         self._bus = bus
         self._config = config
-        self._registry = registry or RuntimeNodeRegistry.instance()
+        self._registry = registry if registry is not None else RuntimeNodeRegistry()
 
         self._service_node: RuntimeNode | None = None
         self._operator_nodes: dict[str, OperatorNode] = {}

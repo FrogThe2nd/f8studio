@@ -47,7 +47,14 @@ from ..lifecycle import (
 from ..state_read import StateRead
 from .config import DataDeliveryMode, ServiceBusConfig, _debug_state_enabled
 from ..monitor_collector import MonitorCollector, MonitorCollectorConfig
-from ..command_runtime import CommandBinding
+from ..command_runtime import (
+    CommandBinding,
+    CommandExecutionResult,
+    CommandGateway,
+    CommandInvocation,
+    CommandInvokeOptions,
+    CommandOutputPolicy,
+)
 
 if TYPE_CHECKING:
     from ..micro import _ServiceBusMicroEndpoints
@@ -182,6 +189,7 @@ class ServiceBus:
         self._command_output_bindings: dict[tuple[str, str], CommandBinding] = {}
         self._command_hidden_fields: set[tuple[str, str]] = set()
         self._command_dispatch_states: dict[tuple[str, str], Any] = {}
+        self._command_gateway = CommandGateway(self)
         self._data_route_subs: dict[str, Any] = {}
         self._custom_subs: list[Any] = []
 
@@ -219,6 +227,8 @@ class ServiceBus:
         # Push-mode on_data micro-batching.
         self._on_data_push_queue: deque[tuple[str, str, Any, int]] = deque()
         self._on_data_flush_task: asyncio.Task[None] | None = None
+        self._started = False
+        self._closed = False
 
     async def wait_terminate(self) -> None:
         await self._terminate_event.wait()
@@ -306,9 +316,7 @@ class ServiceBus:
         self._nodes[node_id] = node
         node.attach(self)
         if self._graph is not None:
-            from ..command_runtime import command_state_bindings_ready
-
-            command_state_bindings_ready(self)
+            self._command_gateway.refresh_bindings()
 
     def unregister_node(self, node_id: str) -> None:
         node_id = ensure_token(node_id, label="node_id")
@@ -330,10 +338,19 @@ class ServiceBus:
         return self._nodes.get(node_id)
 
     async def start(self) -> None:
+        if self._closed:
+            raise RuntimeError("ServiceBus is not restartable after stop(); create a new instance")
+        if self._started:
+            return
         await _start_impl(self)
+        self._started = True
 
     async def stop(self) -> None:
+        if self._closed:
+            return
         await _stop_impl(self)
+        self._started = False
+        self._closed = True
 
     # ---- raw subscription ---------------------------------------------
     async def subscribe_subject(
@@ -386,6 +403,40 @@ class ServiceBus:
             origin=StateWriteOrigin.runtime,
             source=StateWriteSource.runtime,
             ts_ms=ts_ms,
+        )
+
+    async def invoke_command(
+        self,
+        node_id: str,
+        call: str,
+        args: Any = None,
+        *,
+        meta: dict[str, Any] | None = None,
+        output_policy: CommandOutputPolicy = CommandOutputPolicy.none,
+        output_ts_ms: int | None = None,
+        output_meta: dict[str, Any] | None = None,
+    ) -> CommandExecutionResult:
+        """
+        Invoke a local registered commandable node through the canonical SDK command path.
+
+        - Declared commands accept scalar/list/dict inputs and normalize them by parameter definition.
+        - Undeclared commands require object-shaped args because there is no schema for positional mapping.
+        - Defaults to reply-first behavior without hidden output state writeback.
+        - `output_policy` controls whether hidden command output state is also written back.
+        - The return value is structured so callers can inspect failures without parsing logs.
+        """
+        node_id_s = ensure_token(node_id, label="node_id")
+        call_s = str(call or "").strip()
+        if not call_s:
+            raise ValueError("call is empty")
+        return await self._command_gateway.invoke(
+            invocation=CommandInvocation(node_id=node_id_s, call=call_s, args=args),
+            options=CommandInvokeOptions(
+                call_meta=dict(meta or {}),
+                output_policy=output_policy,
+                output_ts_ms=output_ts_ms,
+                output_meta=dict(output_meta or {}),
+            ),
         )
 
     async def get_state(self, node_id: str, field: str) -> StateRead:

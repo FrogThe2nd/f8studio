@@ -2,7 +2,14 @@ from __future__ import annotations
 
 from qtpy import QtTest, QtWidgets
 
-from f8pystudio.ui.support.ui_notifications import _ACTIVE_TOASTS, _INFO_STYLE, _StudioToast, _TOAST_SPACING, _rich_text_message
+from f8pystudio.ui.support.ui_notifications import (
+    _ACTIVE_TOASTS,
+    _INFO_STYLE,
+    _StudioToast,
+    _TOAST_SPACING,
+    _rich_text_message,
+    _use_safe_toast_window_mode,
+)
 
 
 def _ensure_app() -> QtWidgets.QApplication:
@@ -20,6 +27,25 @@ def test_rich_text_message_preserves_newlines_and_wrap_hints() -> None:
     assert "/<wbr/>tmp/<wbr/>" in html_message
     assert "_<wbr/>" in html_message
     assert ".<wbr/>json" in html_message
+
+
+def test_toast_uses_safe_window_mode_under_pytest() -> None:
+    _ensure_app()
+
+    toast = _StudioToast(
+        anchor=None,
+        title="Session saved",
+        message="Saved to:\n/tmp/test-session.json",
+        style=_INFO_STYLE,
+        duration_ms=0,
+    )
+
+    assert _use_safe_toast_window_mode() is True
+    assert toast._safe_window_mode is True
+    assert toast.graphicsEffect() is None
+
+    toast.close()
+    QtWidgets.QApplication.processEvents()
 
 
 def test_studio_toast_expands_for_multiline_path_message() -> None:

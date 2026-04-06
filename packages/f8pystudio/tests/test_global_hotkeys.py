@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ctypes
 import queue
 import threading
 from types import SimpleNamespace
@@ -189,14 +188,15 @@ class _FakeWin32Apis:
         self._messages: queue.Queue[tuple[int, int, int, int]] = queue.Queue()
         self._thread_id = 0
         self._register_error = 0
+        self._last_error = 0
 
     def RegisterHotKey(self, hwnd: Any, hotkey_id: int, modifiers: int, vk: int) -> int:
         _ = hwnd
         self.register_calls.append((int(hotkey_id), int(modifiers), int(vk)))
         if self._register_error:
-            if hasattr(ctypes, "set_last_error"):
-                ctypes.set_last_error(int(self._register_error))
+            self._last_error = int(self._register_error)
             return 0
+        self._last_error = 0
         return 1
 
     def UnregisterHotKey(self, hwnd: Any, hotkey_id: int) -> int:
@@ -226,6 +226,12 @@ class _FakeWin32Apis:
     def GetCurrentThreadId(self) -> int:
         return int(threading.get_ident())
 
+    def SetLastError(self, value: int) -> None:
+        self._last_error = int(value)
+
+    def GetLastError(self) -> int:
+        return int(self._last_error)
+
     def emit_hotkey(self, hotkey_id: int) -> None:
         self._messages.put((WM_HOTKEY, int(hotkey_id), 0, 1))
 
@@ -238,6 +244,8 @@ def _fake_win32_api_bundle(fake: _FakeWin32Apis) -> _Win32Apis:
         GetMessageW=fake.GetMessageW,
         PostThreadMessageW=fake.PostThreadMessageW,
         GetCurrentThreadId=fake.GetCurrentThreadId,
+        SetLastError=fake.SetLastError,
+        GetLastError=fake.GetLastError,
     )
 
 

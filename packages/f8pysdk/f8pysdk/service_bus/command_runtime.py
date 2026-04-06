@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import enum
 import logging
 from dataclasses import dataclass, field
 from typing import Any, TYPE_CHECKING
@@ -32,6 +33,43 @@ class CommandBinding:
     param_names: tuple[str, ...]
 
 
+class CommandExecutionErrorKind(enum.Enum):
+    missing_target = "missing_target"
+    invalid_args = "invalid_args"
+    handler_failed = "handler_failed"
+
+
+class CommandOutputPolicy(enum.Enum):
+    hidden_state = "hidden_state"
+    none = "none"
+
+
+@dataclass(frozen=True)
+class CommandInvocation:
+    node_id: str
+    call: str
+    args: Any = None
+
+
+@dataclass(frozen=True)
+class CommandInvokeOptions:
+    call_meta: dict[str, Any] = field(default_factory=dict)
+    output_policy: CommandOutputPolicy = CommandOutputPolicy.none
+    output_ts_ms: int | None = None
+    output_meta: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class CommandExecutionResult:
+    value: Any = None
+    error_kind: CommandExecutionErrorKind | None = None
+    error_message: str | None = None
+
+    @property
+    def ok(self) -> bool:
+        return self.error_kind is None
+
+
 @dataclass
 class _CommandDispatchState:
     running: bool = False
@@ -40,6 +78,12 @@ class _CommandDispatchState:
     latest_ts_ms: int | None = None
     latest_meta: dict[str, Any] = field(default_factory=dict)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+
+
+@dataclass(frozen=True)
+class _NormalizedCommandArgs:
+    args: dict[str, Any]
+    error_message: str | None = None
 
 
 def _command_specs_for_node(node: Any) -> list[F8Command]:
@@ -84,14 +128,9 @@ def build_command_bindings(bus: "ServiceBus") -> tuple[
     return input_bindings, output_bindings, hidden_fields
 
 
-def command_state_bindings_ready(bus: "ServiceBus") -> None:
-    input_bindings, output_bindings, hidden_fields = build_command_bindings(bus)
-    bus._command_input_bindings = input_bindings
-    bus._command_output_bindings = output_bindings
-    bus._command_hidden_fields = hidden_fields
-
-
 def map_command_args(value: Any, param_names: tuple[str, ...]) -> dict[str, Any]:
+    if value is None:
+        return {}
     if not param_names:
         return {}
     if isinstance(value, dict):
@@ -110,6 +149,254 @@ def map_command_args(value: Any, param_names: tuple[str, ...]) -> dict[str, Any]
     return {param_names[0]: value}
 
 
+class CommandGateway:
+    def __init__(self, bus: "ServiceBus") -> None:
+        self._bus = bus
+
+    def refresh_bindings(self) -> None:
+        input_bindings, output_bindings, hidden_fields = build_command_bindings(self._bus)
+        self._bus._command_input_bindings = input_bindings
+        self._bus._command_output_bindings = output_bindings
+        self._bus._command_hidden_fields = hidden_fields
+
+    def input_binding(self, *, node_id: str, field: str) -> CommandBinding | None:
+        return self._bus._command_input_bindings.get((str(node_id), str(field)))
+
+    def output_binding(self, *, node_id: str, call: str) -> CommandBinding | None:
+        binding = self._bus._command_output_bindings.get((str(node_id), str(call)))
+        if binding is not None:
+            return binding
+        return self._binding_from_node_spec(node_id=str(node_id), call=str(call))
+
+    def is_hidden_field(self, *, node_id: str, field: str) -> bool:
+        return (str(node_id), str(field)) in self._bus._command_hidden_fields
+
+    async def write_output(
+        self,
+        *,
+        node_id: str,
+        call: str,
+        result: Any,
+        ts_ms: int | None,
+        meta: dict[str, Any] | None,
+    ) -> None:
+        from .domain.state_pipeline import publish_state
+
+        binding = self.output_binding(node_id=str(node_id), call=str(call))
+        if binding is None:
+            return
+        payload_meta = dict(meta or {})
+        payload_meta.setdefault("command", str(call))
+        await publish_state(
+            self._bus,
+            binding.node_id,
+            binding.output_field,
+            result,
+            origin=StateWriteOrigin.runtime,
+            source=StateWriteSource.cmd,
+            ts_ms=ts_ms,
+            meta=payload_meta,
+        )
+
+    async def invoke(
+        self,
+        *,
+        invocation: CommandInvocation,
+        options: CommandInvokeOptions | None = None,
+    ) -> CommandExecutionResult:
+        invoke_options = options if options is not None else CommandInvokeOptions()
+        node_id = str(invocation.node_id)
+        call = str(invocation.call or "").strip()
+        service_node = self._bus.get_node(node_id)
+        if service_node is None or not isinstance(service_node, CommandableNode):
+            log_error_once(
+                self._bus,
+                key=f"command_execute_missing_target:{node_id}:{call}",
+                message=f"command target missing or not commandable: {node_id}.{call}",
+            )
+            return CommandExecutionResult(
+                error_kind=CommandExecutionErrorKind.missing_target,
+                error_message=f"unknown call: {call}",
+            )
+
+        normalized = self._normalize_args(node_id=node_id, call=call, value=invocation.args)
+        if normalized.error_message is not None:
+            return CommandExecutionResult(
+                error_kind=CommandExecutionErrorKind.invalid_args,
+                error_message=normalized.error_message,
+            )
+
+        try:
+            result = await service_node.on_command(call, normalized.args, meta=dict(invoke_options.call_meta))  # type: ignore[misc]
+        except Exception as exc:
+            log_error_once(
+                self._bus,
+                key=f"command_execute_failed:{node_id}:{call}:{type(exc).__name__}:{exc}",
+                message=f"command dispatch failed for {node_id}.{call}",
+                exc=exc,
+            )
+            return CommandExecutionResult(
+                error_kind=CommandExecutionErrorKind.handler_failed,
+                error_message=str(exc),
+            )
+
+        if invoke_options.output_policy == CommandOutputPolicy.hidden_state:
+            try:
+                await self.write_output(
+                    node_id=node_id,
+                    call=call,
+                    result=result,
+                    ts_ms=invoke_options.output_ts_ms,
+                    meta=dict(invoke_options.output_meta),
+                )
+            except Exception as exc:
+                log_error_once(
+                    self._bus,
+                    key=f"command_output_writeback_failed:{node_id}:{call}:{type(exc).__name__}:{exc}",
+                    message=f"command output writeback failed for {node_id}.{call}",
+                    exc=exc,
+                )
+
+        return CommandExecutionResult(value=result)
+
+    async def dispatch_hidden_input(
+        self,
+        *,
+        node_id: str,
+        field: str,
+        value: Any,
+        ts_ms: int,
+        meta: dict[str, Any],
+    ) -> None:
+        binding = self.input_binding(node_id=str(node_id), field=str(field))
+        if binding is None:
+            return
+        dispatch_state = self._bus._command_dispatch_states.setdefault(
+            (binding.node_id, binding.command_name),
+            _CommandDispatchState(),
+        )
+
+        async with dispatch_state.lock:
+            dispatch_state.latest_value = value
+            dispatch_state.latest_ts_ms = int(ts_ms)
+            dispatch_state.latest_meta = dict(meta)
+            if dispatch_state.running:
+                dispatch_state.pending = True
+                return
+            dispatch_state.running = True
+
+        try:
+            while True:
+                async with dispatch_state.lock:
+                    dispatch_state.pending = False
+                    latest_value = dispatch_state.latest_value
+                    latest_ts_ms = dispatch_state.latest_ts_ms
+                    latest_meta = dict(dispatch_state.latest_meta)
+                await self._dispatch_hidden_once(
+                    binding=binding,
+                    value=latest_value,
+                    ts_ms=latest_ts_ms,
+                    meta=latest_meta,
+                )
+                async with dispatch_state.lock:
+                    if not dispatch_state.pending:
+                        dispatch_state.running = False
+                        return
+        except Exception:
+            async with dispatch_state.lock:
+                dispatch_state.running = False
+            raise
+
+    async def _dispatch_hidden_once(
+        self,
+        *,
+        binding: CommandBinding,
+        value: Any,
+        ts_ms: int | None,
+        meta: dict[str, Any],
+    ) -> None:
+        result = await self.invoke(
+            invocation=CommandInvocation(
+                node_id=binding.node_id,
+                call=binding.command_name,
+                args=value,
+            ),
+            options=CommandInvokeOptions(
+                call_meta=_hidden_state_command_meta(binding=binding, meta=meta),
+                output_policy=CommandOutputPolicy.hidden_state,
+                output_ts_ms=ts_ms,
+                output_meta=_hidden_state_output_meta(binding=binding),
+            ),
+        )
+        if not result.ok:
+            return
+
+    def _normalize_args(self, *, node_id: str, call: str, value: Any) -> _NormalizedCommandArgs:
+        binding = self.output_binding(node_id=node_id, call=call)
+        if binding is not None:
+            return _NormalizedCommandArgs(args=map_command_args(value, binding.param_names))
+
+        if value is None:
+            return _NormalizedCommandArgs(args={})
+        if isinstance(value, dict):
+            return _NormalizedCommandArgs(args={str(key): item for key, item in value.items()})
+        return _NormalizedCommandArgs(
+            args={},
+            error_message="command args must be an object when the command has no declared params",
+        )
+
+    def _binding_from_node_spec(self, *, node_id: str, call: str) -> CommandBinding | None:
+        node = self._bus.get_node(str(node_id))
+        if node is None:
+            return None
+        for command in _command_specs_for_node(node):
+            command_name = str(command.name or "").strip()
+            if command_name != str(call or "").strip():
+                continue
+            command_key = command_key_for_name(command_name)
+            return CommandBinding(
+                node_id=str(node_id),
+                command_name=command_name,
+                command_key=command_key,
+                input_field=command_input_state_field(command_name),
+                output_field=command_output_state_field(command_name),
+                param_names=tuple(
+                    str(param.name or "").strip()
+                    for param in list(command.params or [])
+                    if str(param.name or "").strip()
+                ),
+            )
+        return None
+
+
+def _hidden_state_command_meta(*, binding: CommandBinding, meta: dict[str, Any]) -> dict[str, Any]:
+    call_meta = dict(meta)
+    call_meta.setdefault("source", StateWriteSource.state_edge_intra.value)
+    call_meta.setdefault("commandInputField", binding.input_field)
+    return call_meta
+
+
+def _hidden_state_output_meta(*, binding: CommandBinding) -> dict[str, Any]:
+    return {
+        "command": binding.command_name,
+        "commandInputField": binding.input_field,
+        "source": StateWriteSource.cmd.value,
+    }
+
+
+def _gateway_for_bus(bus: "ServiceBus") -> CommandGateway:
+    gateway = getattr(bus, "_command_gateway", None)
+    if isinstance(gateway, CommandGateway):
+        return gateway
+    gateway = CommandGateway(bus)
+    bus._command_gateway = gateway
+    return gateway
+
+
+def command_state_bindings_ready(bus: "ServiceBus") -> None:
+    _gateway_for_bus(bus).refresh_bindings()
+
+
 async def write_command_output(
     bus: "ServiceBus",
     *,
@@ -119,23 +406,22 @@ async def write_command_output(
     ts_ms: int | None,
     meta: dict[str, Any] | None,
 ) -> None:
-    from .domain.state_pipeline import publish_state
-
-    binding = bus._command_output_bindings.get((str(node_id), str(call)))
-    if binding is None:
-        return
-    payload_meta = dict(meta or {})
-    payload_meta.setdefault("command", str(call))
-    await publish_state(
-        bus,
-        binding.node_id,
-        binding.output_field,
-        result,
-        origin=StateWriteOrigin.runtime,
-        source=StateWriteSource.cmd,
+    await _gateway_for_bus(bus).write_output(
+        node_id=node_id,
+        call=call,
+        result=result,
         ts_ms=ts_ms,
-        meta=payload_meta,
+        meta=meta,
     )
+
+
+async def execute_command(
+    bus: "ServiceBus",
+    *,
+    invocation: CommandInvocation,
+    options: CommandInvokeOptions | None = None,
+) -> CommandExecutionResult:
+    return await _gateway_for_bus(bus).invoke(invocation=invocation, options=options)
 
 
 async def dispatch_command_input(
@@ -147,88 +433,10 @@ async def dispatch_command_input(
     ts_ms: int,
     meta: dict[str, Any],
 ) -> None:
-    binding = bus._command_input_bindings.get((str(node_id), str(field)))
-    if binding is None:
-        return
-    dispatch_state = bus._command_dispatch_states.setdefault(
-        (binding.node_id, binding.command_name),
-        _CommandDispatchState(),
-    )
-
-    async with dispatch_state.lock:
-        dispatch_state.latest_value = value
-        dispatch_state.latest_ts_ms = int(ts_ms)
-        dispatch_state.latest_meta = dict(meta)
-        if dispatch_state.running:
-            dispatch_state.pending = True
-            return
-        dispatch_state.running = True
-
-    try:
-        while True:
-            async with dispatch_state.lock:
-                dispatch_state.pending = False
-                latest_value = dispatch_state.latest_value
-                latest_ts_ms = dispatch_state.latest_ts_ms
-                latest_meta = dict(dispatch_state.latest_meta)
-            await _dispatch_command_once(
-                bus,
-                binding=binding,
-                value=latest_value,
-                ts_ms=latest_ts_ms,
-                meta=latest_meta,
-            )
-            async with dispatch_state.lock:
-                if not dispatch_state.pending:
-                    dispatch_state.running = False
-                    return
-    except Exception:
-        async with dispatch_state.lock:
-            dispatch_state.running = False
-        raise
-
-
-async def _dispatch_command_once(
-    bus: "ServiceBus",
-    *,
-    binding: CommandBinding,
-    value: Any,
-    ts_ms: int | None,
-    meta: dict[str, Any],
-) -> None:
-    service_node = bus.get_node(binding.node_id)
-    if service_node is None or not isinstance(service_node, CommandableNode):
-        log_error_once(
-            bus,
-            key=f"command_dispatch_missing_node:{binding.node_id}:{binding.command_name}",
-            message=f"command dispatch target missing or not commandable: {binding.node_id}.{binding.command_name}",
-        )
-        return
-
-    args = map_command_args(value, binding.param_names)
-    call_meta = dict(meta)
-    call_meta.setdefault("source", StateWriteSource.state_edge_intra.value)
-    call_meta.setdefault("commandInputField", binding.input_field)
-    try:
-        result = await service_node.on_command(binding.command_name, args, meta=call_meta)  # type: ignore[misc]
-    except Exception as exc:
-        log_error_once(
-            bus,
-            key=f"command_dispatch_failed:{binding.node_id}:{binding.command_name}:{type(exc).__name__}:{exc}",
-            message=f"command dispatch failed for {binding.node_id}.{binding.command_name}",
-            exc=exc,
-        )
-        return
-
-    await write_command_output(
-        bus,
-        node_id=binding.node_id,
-        call=binding.command_name,
-        result=result,
+    await _gateway_for_bus(bus).dispatch_hidden_input(
+        node_id=node_id,
+        field=field,
+        value=value,
         ts_ms=ts_ms,
-        meta={
-            "command": binding.command_name,
-            "commandInputField": binding.input_field,
-            "source": StateWriteSource.cmd.value,
-        },
+        meta=meta,
     )

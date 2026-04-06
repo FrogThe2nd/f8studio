@@ -7,6 +7,10 @@ Python runtime SDK for running an F8 service process.
 - `ServiceHost` (`f8pysdk/service_host.py`): rungraph-driven runtime node materialization/registration.
 - `ServiceRuntime` (`f8pysdk/service_runtime.py`): runtime facade that wires `ServiceBus` + `ServiceHost`.
 
+Lifecycle contract:
+- `ServiceBus` and `ServiceRuntime` are single-run objects.
+- After `stop()`, create a new instance instead of calling `start()` again.
+
 ### Recommended “fill-in-the-blanks” entrypoint
 Use `ServiceCliTemplate` (`f8pysdk/service_cli.py`) to keep each service process consistent:
 - standard CLI: `--describe`, `--service-id`, `--nats-url` (with `F8_SERVICE_ID`, `F8_NATS_URL` env fallbacks)
@@ -31,6 +35,18 @@ class MyService(ServiceCliTemplate):
         # registry.register(...)
         pass
 ```
+
+Registry contract:
+- `ServiceCliTemplate.build_registry()` returns a fresh `RuntimeNodeRegistry` by default.
+- Use `ServiceCliTemplate.build_shared_registry()` only when process-global sharing is intentional.
+- Pass an explicit registry into `ServiceRuntime(...)` or `ServiceHost(...)` when multiple components must share registration state.
+
+Command contract:
+- `ServiceBus.invoke_command(node_id, call, args, ...)` is the explicit local command API.
+- `ServiceBus.invoke_command(...)` is reply-first by default and does not write hidden output state unless asked.
+- Declared commands normalize scalar/list/dict args from their `F8Command.params` definition.
+- Hidden command state fields remain supported as the graph-compatibility command adapter.
+- Use `output_policy=CommandOutputPolicy.hidden_state` when a caller explicitly wants hidden output state writeback.
 
 ### Headless Runner
 

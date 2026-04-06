@@ -3,6 +3,7 @@ from __future__ import annotations
 import html
 import logging
 import math
+import os
 import sys
 from dataclasses import dataclass
 from typing import Callable
@@ -19,7 +20,6 @@ _TOAST_MAX_WIDTH = 520
 _TOAST_DURATION_MS = 4200
 _TOAST_FADE_MS = 180
 _TOAST_BREAK_HINTS = ("/", "\\", "_", "-", ".", ":", "=", "?")
-_USE_WINDOWS_SAFE_TOASTS = sys.platform.startswith("win")
 
 
 @dataclass(frozen=True)
@@ -70,6 +70,18 @@ _ERROR_STYLE = _ToastStyle(
 )
 
 _ACTIVE_TOASTS: list["_StudioToast"] = []
+
+
+def _use_safe_toast_window_mode() -> bool:
+    if sys.platform.startswith("win"):
+        return True
+    if "PYTEST_CURRENT_TEST" in os.environ:
+        return True
+    app = QtWidgets.QApplication.instance()
+    if app is None:
+        return False
+    platform_name = str(app.platformName() or "").strip().lower()
+    return platform_name in {"offscreen", "minimal"}
 
 
 def _resolve_parent(parent: QtWidgets.QWidget | None) -> QtWidgets.QWidget | None:
@@ -193,6 +205,7 @@ class _StudioToast(QtWidgets.QFrame):
         self._anchor = anchor.window() if anchor is not None else None
         self._style = style
         self._duration_ms = max(0, duration_ms)
+        self._safe_window_mode = _use_safe_toast_window_mode()
         self._fade_animation: QtCore.QPropertyAnimation | None = None
         self._lifetime_animation: QtCore.QVariantAnimation | None = None
         self._is_closing = False
@@ -202,17 +215,17 @@ class _StudioToast(QtWidgets.QFrame):
         self.setObjectName("studio-toast")
         self.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose, True)
         self.setAttribute(QtCore.Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
-        self.setAttribute(QtCore.Qt.WidgetAttribute.WA_TranslucentBackground, not _USE_WINDOWS_SAFE_TOASTS)
+        self.setAttribute(QtCore.Qt.WidgetAttribute.WA_TranslucentBackground, not self._safe_window_mode)
         self.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
         window_flags = (
             QtCore.Qt.WindowType.ToolTip
             | QtCore.Qt.WindowType.FramelessWindowHint
             | QtCore.Qt.WindowType.WindowStaysOnTopHint
         )
-        if _USE_WINDOWS_SAFE_TOASTS:
+        if self._safe_window_mode:
             window_flags |= QtCore.Qt.WindowType.NoDropShadowWindowHint
         self.setWindowFlags(window_flags)
-        self.setWindowOpacity(1.0 if _USE_WINDOWS_SAFE_TOASTS else 0.0)
+        self.setWindowOpacity(1.0 if self._safe_window_mode else 0.0)
         self.setStyleSheet(
             """
             QLabel#studio-toast-title {
@@ -242,7 +255,7 @@ class _StudioToast(QtWidgets.QFrame):
             }
         )
 
-        if not _USE_WINDOWS_SAFE_TOASTS:
+        if not self._safe_window_mode:
             shadow = QtWidgets.QGraphicsDropShadowEffect(self)
             shadow.setBlurRadius(24)
             shadow.setOffset(0, 10)
@@ -307,7 +320,7 @@ class _StudioToast(QtWidgets.QFrame):
         self._install_anchor_filter()
         self.show()
         self.raise_()
-        if not _USE_WINDOWS_SAFE_TOASTS:
+        if not self._safe_window_mode:
             self._animate_opacity(start=0.0, end=1.0)
         if self._duration_ms > 0:
             self._start_lifetime_animation()
@@ -317,7 +330,7 @@ class _StudioToast(QtWidgets.QFrame):
             return
         self._is_closing = True
         self._stop_lifetime_animation()
-        if _USE_WINDOWS_SAFE_TOASTS:
+        if self._safe_window_mode:
             self.close()
             return
         self._animate_opacity(start=self.windowOpacity(), end=0.0, on_finished=self.close)
@@ -359,6 +372,13 @@ class _StudioToast(QtWidgets.QFrame):
         if self._lifetime_animation.state() == QtCore.QAbstractAnimation.State.Running:
             self._lifetime_animation.stop()
         self._lifetime_animation = None
+
+    def _stop_fade_animation(self) -> None:
+        if self._fade_animation is None:
+            return
+        if self._fade_animation.state() == QtCore.QAbstractAnimation.State.Running:
+            self._fade_animation.stop()
+        self._fade_animation = None
 
     def _handle_progress_changed(self, value: object) -> None:
         try:
@@ -449,6 +469,7 @@ class _StudioToast(QtWidgets.QFrame):
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
         self._stop_lifetime_animation()
+        self._stop_fade_animation()
         self._remove_anchor_filter()
         if self in _ACTIVE_TOASTS:
             _ACTIVE_TOASTS.remove(self)

@@ -54,6 +54,20 @@ class _Win32Apis:
     GetMessageW: Any
     PostThreadMessageW: Any
     GetCurrentThreadId: Any
+    SetLastError: Callable[[int], None]
+    GetLastError: Callable[[], int]
+
+
+def _set_ctypes_last_error(value: int) -> None:
+    if platform.system() != "Windows":
+        return
+    ctypes.set_last_error(int(value))
+
+
+def _get_ctypes_last_error() -> int:
+    if platform.system() != "Windows":
+        return 0
+    return int(ctypes.get_last_error())
 
 
 def _build_win32_apis() -> _Win32Apis:
@@ -84,6 +98,8 @@ def _build_win32_apis() -> _Win32Apis:
         GetMessageW=get_message,
         PostThreadMessageW=post_thread_message,
         GetCurrentThreadId=get_current_thread_id,
+        SetLastError=_set_ctypes_last_error,
+        GetLastError=_get_ctypes_last_error,
     )
 
 
@@ -150,7 +166,7 @@ class _Win32HotkeyThread:
         if thread_id > 0:
             posted = int(self._apis.PostThreadMessageW(thread_id, WM_F8_HOTKEY_CONTROL, 0, 0))
             if not posted:
-                error_code = int(ctypes.get_last_error())
+                error_code = int(self._apis.GetLastError())
                 raise GlobalHotkeyRegistrationError(f"PostThreadMessageW failed error={error_code}")
         if not command.done_event.wait(timeout=2.0):
             raise GlobalHotkeyRegistrationError("Windows global hotkey worker thread did not respond.")
@@ -211,13 +227,13 @@ class _Win32HotkeyThread:
         hotkey_id = self._allocate_hotkey_id(binding.binding_id)
         modifiers = win32_modifiers_for_hotkey(binding.hotkey_spec)
         vk = win32_vk_for_hotkey(binding.hotkey_spec)
-        ctypes.set_last_error(0)
+        self._apis.SetLastError(0)
         registered = int(self._apis.RegisterHotKey(None, hotkey_id, modifiers, vk))
         if registered:
             return
         self._binding_to_id.pop(binding.binding_id, None)
         self._id_to_binding.pop(hotkey_id, None)
-        error_code = int(ctypes.get_last_error())
+        error_code = int(self._apis.GetLastError())
         raise GlobalHotkeyRegistrationError(
             f"RegisterHotKey failed binding={binding.binding_id!r} hotkey={binding.hotkey_spec.display_text!r} "
             f"error={error_code}"

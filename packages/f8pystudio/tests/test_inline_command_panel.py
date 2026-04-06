@@ -4,7 +4,7 @@ from typing import Any
 
 from qtpy import QtCore, QtWidgets
 
-from f8pysdk import F8Command, F8OperatorSpec
+from f8pysdk import F8Command, F8OperatorSpec, F8ServiceSpec
 from f8pysdk.command_state import command_input_state_field
 
 from f8pystudio.nodegraph.items.inline_command_panel import (
@@ -191,6 +191,7 @@ def test_invoke_command_skips_when_service_not_running() -> None:
     invoke_command(node_item, _FakeCommand("Run", "Run command", True, []))
 
     assert node_item._bridge_obj.calls == []
+    assert node_item._bridge_obj.state_writes == []
 
 
 def test_ensure_inline_command_rows_creates_header_only_command_rows() -> None:
@@ -334,4 +335,21 @@ def test_invoke_command_uses_hidden_input_state_for_operator_commands() -> None:
     assert node_item._bridge_obj.calls == []
     assert node_item._bridge_obj.state_writes == [
         ("svcA", "opA", command_input_state_field("Run"), {})
+    ]
+
+
+def test_invoke_command_uses_hidden_input_state_for_service_commands() -> None:
+    service_spec = F8ServiceSpec(
+        serviceClass="f8.test.service",
+        label="Service",
+        commands=[F8Command(name="Run", description="Run command", showOnNode=True, params=[])],
+    )
+    backend = type("Backend", (), {"spec": service_spec})()
+    node_item = _InvokeNodeItem(service_running=True, backend_node=backend, node_id="svcA")
+
+    invoke_command(node_item, _FakeCommand("Run", "Run command", True, []))
+
+    assert node_item._bridge_obj.calls == []
+    assert node_item._bridge_obj.state_writes == [
+        ("svcA", "svcA", command_input_state_field("Run"), {})
     ]

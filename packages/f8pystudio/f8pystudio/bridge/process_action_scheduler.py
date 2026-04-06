@@ -82,9 +82,20 @@ class ServiceProcessActionScheduler:
             except RuntimeError as exc:
                 self._report_exception(f"stop proc-action timer failed serviceId={sid}", exc)
             try:
+                timer.timeout.disconnect()
+            except TypeError:
+                pass
+            except RuntimeError as exc:
+                self._report_exception(f"disconnect proc-action timer failed serviceId={sid}", exc)
+            try:
+                timer.setParent(None)
+            except RuntimeError as exc:
+                self._report_exception(f"detach proc-action timer failed serviceId={sid}", exc)
+            try:
                 timer.deleteLater()
             except RuntimeError as exc:
                 self._report_exception(f"delete proc-action timer failed serviceId={sid}", exc)
+            self._flush_deferred_delete(timer=timer, service_id=sid)
 
     def cancel_all(self) -> None:
         for service_id in list(self._actions.keys()):
@@ -102,6 +113,21 @@ class ServiceProcessActionScheduler:
         timer.timeout.connect(lambda _sid=sid: self._poll(_sid))
         self._timers[sid] = timer
         return timer
+
+    def _flush_deferred_delete(self, *, timer: QtCore.QTimer, service_id: str) -> None:
+        app = QtCore.QCoreApplication.instance()
+        if app is None:
+            return
+        try:
+            if timer.thread() is not app.thread():
+                return
+        except RuntimeError as exc:
+            self._report_exception(f"inspect proc-action timer thread failed serviceId={service_id}", exc)
+            return
+        try:
+            QtCore.QCoreApplication.sendPostedEvents(timer, int(QtCore.QEvent.Type.DeferredDelete))
+        except RuntimeError as exc:
+            self._report_exception(f"flush proc-action timer delete failed serviceId={service_id}", exc)
 
     def _poll(self, service_id: str) -> None:
         sid = str(service_id)
@@ -135,4 +161,3 @@ class ServiceProcessActionScheduler:
         self._emit_service_process_state(sid, still_running)
         if not still_running and action.action == "restart":
             self._start_service(sid, action.service_class)
-

@@ -754,6 +754,7 @@ class _F8SpecCommandEditor(QtWidgets.QWidget):
         sid = self._service_id()
         if bridge is None or not sid:
             return
+        node_id = str(getattr(self._node, "id", "") or "").strip() or str(sid)
         args = {}
         params = list(cmd.params or [])
         if params:
@@ -761,15 +762,14 @@ class _F8SpecCommandEditor(QtWidgets.QWidget):
             if args is None:
                 return
         try:
-            if isinstance(spec, F8OperatorSpec):
-                bridge.set_remote_state(
-                    sid,
-                    str(self._node.id or "").strip(),
-                    command_input_state_field(str(cmd.name or "")),
-                    args or {},
-                )
-            else:
-                bridge.invoke_remote_command(sid, str(cmd.name or ""), args or {})
+            # Match nodegraph command behavior: UI-triggered commands flow through
+            # hidden command input state so command output ports remain graph-visible.
+            bridge.set_remote_state(
+                sid,
+                node_id,
+                command_input_state_field(str(cmd.name or "")),
+                args or {},
+            )
         except Exception as e:
             show_warning(self, "Command failed", str(e))
 

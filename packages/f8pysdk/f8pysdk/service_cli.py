@@ -78,6 +78,16 @@ class ServiceCliTemplate(ABC):
 
     # ---- registry/app construction ------------------------------------
     def build_registry(self) -> RuntimeNodeRegistry:
+        return RuntimeNodeRegistry()
+
+    @staticmethod
+    def build_shared_registry() -> RuntimeNodeRegistry:
+        """
+        Explicit opt-in for process-global registry sharing.
+
+        Use this only when shared registration state is required across multiple
+        callers in the same process.
+        """
         return RuntimeNodeRegistry.instance()
 
     @abstractmethod

@@ -6,7 +6,6 @@ from typing import Any
 
 from qtpy import QtCore, QtWidgets
 
-from f8pysdk import F8OperatorSpec
 from f8pysdk.command_state import command_input_state_field
 from f8pysdk.schema_helpers import schema_default, schema_type
 
@@ -345,7 +344,7 @@ def _on_command_pressed(node_item: Any, command: Any) -> None:
 
 def invoke_command(node_item: Any, cmd: Any) -> None:
     """
-    Invoke a command declared on the service spec.
+    Invoke a command declared on the node spec via hidden command input state.
 
     - no params: fire immediately
     - has params: show dialog to collect args
@@ -360,10 +359,6 @@ def invoke_command(node_item: Any, cmd: Any) -> None:
         node = node_item._backend_node()
     except Exception:
         node = None
-    try:
-        node_spec = node.spec if node is not None else None
-    except Exception:
-        node_spec = None
     bridge = node_item._bridge()
     if bridge is None:
         return
@@ -399,47 +394,39 @@ def invoke_command(node_item: Any, cmd: Any) -> None:
     except Exception:
         params = []
 
+    # Route UI-triggered commands through hidden command input state so command
+    # output ports and downstream graph fanout keep the same semantics for both
+    # services and operators.
+    node_id = str(getattr(node_item, "id", "") or "").strip() or str(sid)
     if not params:
-        if isinstance(node_spec, F8OperatorSpec):
-            try:
-                bridge.set_remote_state(  # type: ignore[attr-defined]
-                    sid,
-                    str(node_item.id or "").strip(),
-                    command_input_state_field(call),
-                    {},
-                )
-            except Exception:
-                logger.exception(
-                    "set_remote_state failed serviceId=%s nodeId=%s call=%s",
-                    sid,
-                    _node_item_id(node_item),
-                    call,
-                )
-            return
         try:
-            bridge.invoke_remote_command(sid, call, {})
+            bridge.set_remote_state(  # type: ignore[attr-defined]
+                sid,
+                node_id,
+                command_input_state_field(call),
+                {},
+            )
         except Exception:
-            logger.exception("invoke_remote_command failed serviceId=%s call=%s", sid, call)
+            logger.exception(
+                "set_remote_state failed serviceId=%s nodeId=%s call=%s",
+                sid,
+                node_id,
+                call,
+            )
         return
 
     args = prompt_command_args(node_item, cmd)
     if args is None:
         return
-    if isinstance(node_spec, F8OperatorSpec):
-        try:
-            bridge.set_remote_state(  # type: ignore[attr-defined]
-                sid,
-                str(node_item.id or "").strip(),
-                command_input_state_field(call),
-                args,
-            )
-        except Exception:
-            logger.exception("set_remote_state failed serviceId=%s nodeId=%s call=%s", sid, _node_item_id(node_item), call)
-        return
     try:
-        bridge.invoke_remote_command(sid, call, args)
+        bridge.set_remote_state(  # type: ignore[attr-defined]
+            sid,
+            node_id,
+            command_input_state_field(call),
+            args,
+        )
     except Exception:
-        logger.exception("invoke_remote_command failed serviceId=%s call=%s", sid, call)
+        logger.exception("set_remote_state failed serviceId=%s nodeId=%s call=%s", sid, node_id, call)
 
 
 def prompt_command_args(node_item: Any, cmd: Any) -> dict[str, Any] | None:
