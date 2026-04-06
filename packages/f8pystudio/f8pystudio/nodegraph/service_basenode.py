@@ -46,11 +46,7 @@ from .items.service_toolbar_host import (
     position_service_toolbar as _position_service_toolbar_impl,
     refresh_service_identity_bindings as _refresh_service_identity_bindings_impl,
 )
-from .items.embedded_resize_contract import (
-    ResizableEmbeddedWidget,
-    clamp_content_size,
-    content_rect_with_minimum,
-)
+from .items.embedded_resize_contract import ResizableEmbeddedWidget
 from .items.inline_command_panel import (
     ensure_inline_command_rows as _ensure_inline_command_rows_impl,
     refresh_inline_command_rows as _refresh_inline_command_rows_impl,
@@ -87,6 +83,12 @@ from .items.service_node_port_schema_actions import (
     schema_numeric_range as _schema_numeric_range_impl,
     state_port_tooltip as _state_port_tooltip_impl,
 )
+from .items.service_node_interaction import refresh_pipe_visual_state as _refresh_pipe_visual_state_impl
+from .items.service_node_layout import (
+    apply_widget_resize_policy as _apply_widget_resize_policy_impl,
+    content_rect_for_widgets as _content_rect_for_widgets_impl,
+)
+from .items.service_node_painting import tooltip_disable as _tooltip_disable_impl
 from .items.service_node_graph_hooks import (
     backend_node as _backend_node_impl,
     bridge as _bridge_impl,
@@ -692,11 +694,7 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         Args:
             state (bool): node disable state.
         """
-        tooltip = "<b>{}</b>".format(self.name)
-        if state:
-            tooltip += ' <font color="red"><b>(DISABLED)</b></font>'
-        tooltip += "<br/>{}<br/>".format(self.type_)
-        self.setToolTip(tooltip)
+        _tooltip_disable_impl(self, state)
 
     def _set_base_size(self, add_w=0.0, add_h=0.0):
         """
@@ -789,35 +787,7 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         """
         Force connected pipes to repaint after disabled state changes.
         """
-        ports = self.inputs + self.outputs
-        seen_pipe_ids: set[int] = set()
-        for port in ports:
-            try:
-                connected_pipes = list(port.connected_pipes)
-            except (AttributeError, RuntimeError, TypeError, ValueError, KeyError, ImportError, OSError):
-                continue
-            for pipe in connected_pipes:
-                pipe_key = id(pipe)
-                if pipe_key in seen_pipe_ids:
-                    continue
-                seen_pipe_ids.add(pipe_key)
-                try:
-                    pipe.update()
-                except (AttributeError, RuntimeError, TypeError, ValueError, KeyError, ImportError, OSError):
-                    continue
-
-        scene = self.scene()
-        if scene is not None:
-            try:
-                scene.update()
-            except (AttributeError, RuntimeError, TypeError, ValueError, KeyError, ImportError, OSError):
-                pass
-        viewer = self._viewer_safe()
-        if viewer is not None:
-            try:
-                viewer.viewport().update()
-            except (AttributeError, RuntimeError, TypeError, ValueError, KeyError, ImportError, OSError):
-                pass
+        _refresh_pipe_visual_state_impl(self)
 
     def _invalidate_layout_metrics(self) -> None:
         self._layout_metrics_ready = False
@@ -1595,14 +1565,7 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         """
         Compute available node-inner content rect for embedded widgets.
         """
-        rect = self.boundingRect()
-        return content_rect_with_minimum(
-            x=rect.left() + 4.0,
-            y=top_y,
-            width=rect.width() - 8.0,
-            height=rect.bottom() - top_y - 4.0,
-            minimum=(10, 10),
-        )
+        return _content_rect_for_widgets_impl(self, top_y=top_y)
 
     def _apply_widget_resize_policy(
         self,
@@ -1616,35 +1579,7 @@ class F8StudioServiceNodeItem(AbstractNodeItem):
         Returns:
             bool: True when resize was applied via `ResizableEmbeddedWidget`.
         """
-        if not isinstance(widget_proxy, ResizableEmbeddedWidget):
-            return False
-
-        try:
-            min_size = widget_proxy.minimum_content_size()
-        except (AttributeError, RuntimeError, TypeError, ValueError):
-            return False
-        target_w, target_h = clamp_content_size(
-            width=float(content_rect[2]),
-            height=float(content_rect[3]),
-            minimum=min_size,
-        )
-        try:
-            widget_proxy.apply_content_rect(target_w, target_h)
-        except (AttributeError, RuntimeError, TypeError, ValueError):
-            return False
-
-        try:
-            widget_proxy.prepareGeometryChange()
-        except (AttributeError, RuntimeError, TypeError):
-            pass
-        try:
-            qwidget = widget_proxy.widget()
-            if qwidget is None:
-                return True
-            qwidget.adjustSize()
-        except (AttributeError, RuntimeError, TypeError):
-            return True
-        return True
+        return _apply_widget_resize_policy_impl(widget_proxy, content_rect=content_rect)
 
     def _align_widgets_horizontal(self, v_offset):
         rect = self.boundingRect()

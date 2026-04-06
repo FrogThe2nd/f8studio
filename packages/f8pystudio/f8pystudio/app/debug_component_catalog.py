@@ -7,8 +7,8 @@ from typing import Any
 
 from qtpy import QtWidgets
 
+from f8pystudio.assets.ui.component_catalog_dialog import ComponentCatalogDialog
 from f8pystudio.diagnostics.logging import configure_root_logging_from_env
-from .component_catalog_dialog import ComponentCatalogDialog
 
 logger = logging.getLogger(__name__)
 

@@ -6,8 +6,8 @@ from dataclasses import dataclass
 
 from qtpy import QtWidgets
 
+from f8pystudio.assets.ui.variant_manager_dialog import VariantManagerDialog
 from f8pystudio.diagnostics.logging import configure_root_logging_from_env
-from .variant_manager_dialog import VariantManagerDialog
 
 logger = logging.getLogger(__name__)
 

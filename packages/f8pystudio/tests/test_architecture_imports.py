@@ -91,6 +91,16 @@ def test_nodegraph_init_has_no_dynamic_getattr_export() -> None:
     assert "__getattr__" not in source
 
 
+def test_service_basenode_imports_extracted_node_helpers() -> None:
+    imports = _import_targets(PACKAGE_ROOT / "nodegraph" / "service_basenode.py")
+    required_targets = {
+        "f8pystudio.nodegraph.items.service_node_interaction",
+        "f8pystudio.nodegraph.items.service_node_layout",
+        "f8pystudio.nodegraph.items.service_node_painting",
+    }
+    assert required_targets <= imports
+
+
 def test_lightweight_core_packages_avoid_runtime_qt_imports() -> None:
     forbidden_prefixes = ("qtpy", "PySide6", "PyQt6", "PyQt5")
     for root in LIGHTWEIGHT_CORE_ROOTS:
@@ -126,6 +136,27 @@ def test_low_level_ui_layers_do_not_reach_into_assets_ui_or_studio_bridge() -> N
                     target != forbidden and not target.startswith(forbidden + ".")
                     for target in imports
                 ), str(path)
+
+
+def test_debug_launchers_live_under_app_package() -> None:
+    debug_files = [path for path in _python_files(PACKAGE_ROOT) if path.name.startswith("debug_")]
+    app_root = PACKAGE_ROOT / "app"
+    assert debug_files, "Expected at least one app debug launcher"
+    assert all(path.parent == app_root for path in debug_files), [str(path) for path in debug_files]
+
+
+def test_unused_runtime_export_module_is_removed() -> None:
+    assert not (PACKAGE_ROOT / "nodegraph" / "runtime_export.py").exists()
+
+
+def test_app_debug_launchers_import() -> None:
+    module_names = [
+        "f8pystudio.app.debug_component_catalog",
+        "f8pystudio.app.debug_monaco_editor",
+        "f8pystudio.app.debug_variant_manager",
+    ]
+    for module_name in module_names:
+        assert importlib.import_module(module_name) is not None
 
 
 def test_new_public_module_surfaces_import() -> None:
