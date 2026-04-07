@@ -364,15 +364,7 @@ class MonitorCollector:
         self._gpu_sampler.close()
 
     def _queue_depth(self) -> int:
-        depth = 0
-        for buf in list(self._bus._data_inputs.values()):
-            try:
-                depth += int(len(buf.queue))
-            except (AttributeError, RuntimeError, TypeError):
-                continue
-        if depth < 0:
-            return 0
-        return int(depth)
+        return self._bus.data_router.queue_depth()
 
     def _build_snapshot(self, *, ts_ms: int) -> F8MonitorSnapshot:
         process_percent = self._process_sampler.sample_process_percent()

@@ -78,31 +78,7 @@ async def stop(bus: "ServiceBus") -> None:
     await announce_ready(bus, False, reason="stop")
 
     await _stop_micro_endpoints(bus)
-
-    for sub in list(bus._custom_subs):
-        await sub.unsubscribe()
-    bus._custom_subs.clear()
-
-    for sub in list(bus._data_route_subs.values()):
-        await sub.unsubscribe()
-    bus._data_route_subs.clear()
-
-    bus._cross_in_by_subject.clear()
-    bus._intra_data_out.clear()
-    bus._intra_data_in.clear()
-    bus._cross_out_subjects.clear()
-    bus._data_inputs.clear()
-    bus._on_data_push_queue.clear()
-    flush_task = bus._on_data_flush_task
-    bus._on_data_flush_task = None
-    if flush_task is not None:
-        flush_task.cancel()
-        try:
-            await flush_task
-        except asyncio.CancelledError:
-            pass
-        except Exception as exc:
-            log.error("on_data flush task stop failed", exc_info=exc)
+    await bus.data_router.stop()
 
     bus._cross_state_in_by_key.clear()
     for (sid, key), watch in list(bus._remote_state_watches.items()):

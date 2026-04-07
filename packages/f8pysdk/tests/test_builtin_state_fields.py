@@ -16,7 +16,7 @@ from f8pysdk.builtin_state_fields import (  # noqa: E402
 )
 from f8pysdk.generated import F8DataPortSpec, F8StateAccess, F8StateSpec  # noqa: E402
 from f8pysdk.nats_naming import kv_key_node_state  # noqa: E402
-from f8pysdk.service_bus.codec import decode_obj  # noqa: E402
+from f8pysdk.codec import decode_obj  # noqa: E402
 from f8pysdk.schema_helpers import boolean_schema, string_schema  # noqa: E402
 from f8pysdk.testing import ServiceBusHarness  # noqa: E402
 

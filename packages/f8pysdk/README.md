@@ -56,6 +56,11 @@ Data contract:
 - Monitor snapshots now expose routing counters in `frame`, including local-only emits, routed cross emits, suppressed cross publishes, callback deliveries, and buffered pull deliveries.
 - Legacy aliases remain accepted for migration: `publish_all_data=True|False`, `data_delivery="push"|"pull"|"both"`.
 
+Stable helper modules:
+- `f8pysdk.codec`: msgpack request/reply helpers (`encode_obj`, `decode_obj`, `decode_as`)
+- `f8pysdk.state`: canonical state result/error/context types
+- `f8pysdk.testing`: in-memory harness plus buffered input helpers for tests
+
 ### Headless Runner
 
 Run a saved Studio session JSON without launching UI:

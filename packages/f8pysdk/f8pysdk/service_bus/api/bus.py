@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections import OrderedDict, deque
 from collections.abc import Awaitable, Callable
-from typing import Any, Generic, Protocol, TYPE_CHECKING, TypeVar
+from typing import Any, Protocol, TYPE_CHECKING
 
 from ...capabilities import (
     BusAttachableNode,
@@ -28,13 +27,6 @@ from ..codec import decode_obj
 from ..state_publish import (
     publish_state as _publish_state_impl,
 )
-from ..routing_data import _InputBuffer
-from ..routing_data import (
-    emit_data as _emit_data_impl,
-    pull_data as _pull_data_impl,
-    subscribe_subject as _subscribe_subject_impl,
-    unsubscribe_subject as _unsubscribe_subject_impl,
-)
 from ..rungraph_apply import (
     set_rungraph as _set_rungraph_impl,
 )
@@ -55,15 +47,14 @@ from ..command_runtime import (
     CommandInvokeOptions,
     CommandOutputPolicy,
 )
+from ..routing.data_router import DataRouter
+from ..runtime_collections import CappedOrderedDict
 
 if TYPE_CHECKING:
     from ..micro import _ServiceBusMicroEndpoints
 
 
 log = logging.getLogger(__name__)
-
-_K = TypeVar("_K")
-_V = TypeVar("_V")
 
 
 def _coerce_cross_publish_policy(value: Any) -> CrossPublishPolicy | None:
@@ -82,38 +73,6 @@ def _coerce_data_delivery_mode(value: Any) -> DataDeliveryMode | None:
     if text in ("buffered", "callback", "both"):
         return text
     return None
-
-
-class _CappedOrderedDict(OrderedDict[_K, _V], Generic[_K, _V]):
-    """
-    Ordered mapping with max-entry cap.
-
-    - `get` and `__getitem__` refresh recency.
-    - `__setitem__` enforces max size.
-    """
-
-    def __init__(self, *, max_entries: int) -> None:
-        super().__init__()
-        self._max_entries = max(0, int(max_entries))
-
-    def __getitem__(self, key: _K) -> _V:
-        value = super().__getitem__(key)
-        super().move_to_end(key)
-        return value
-
-    def get(self, key: _K, default: _V | None = None) -> _V | None:
-        if key in self:
-            return self[key]
-        return default
-
-    def __setitem__(self, key: _K, value: _V) -> None:
-        exists = key in self
-        super().__setitem__(key, value)
-        if exists:
-            super().move_to_end(key)
-        if self._max_entries > 0:
-            while len(self) > self._max_entries:
-                self.popitem(last=False)
 
 
 class _ServiceBusNode(StatefulNode, BusAttachableNode, Protocol):
@@ -148,13 +107,11 @@ class ServiceBus:
             if self._debug_state or log.isEnabledFor(logging.WARNING):
                 log.warning("Invalid cross_publish_policy=%r; defaulting to 'routed'", config.cross_publish_policy)
             cross_publish_policy = "routed"
-        self._cross_publish_policy = cross_publish_policy
         mode = _coerce_data_delivery_mode(config.data_delivery)
         if mode is None:
             if self._debug_state or log.isEnabledFor(logging.WARNING):
                 log.warning("Invalid data_delivery=%r; defaulting to 'callback'", config.data_delivery)
             mode = "callback"
-        self._data_delivery = mode
         self._state_sync_concurrency = max(1, int(config.state_sync_concurrency))
         self._state_cache_max_entries = max(0, int(config.state_cache_max_entries))
         self._data_input_max_buffers = max(0, int(config.data_input_max_buffers))
@@ -181,13 +138,12 @@ class ServiceBus:
         self._ready_key = kv_key_ready()
         self._micro_endpoints: _ServiceBusMicroEndpoints | None = None
 
-        # Routing tables (data only).
-        self._intra_data_out: dict[tuple[str, str], tuple[tuple[str, str, F8Edge], ...]] = {}
-        self._intra_data_in: dict[tuple[str, str], tuple[tuple[str, str, F8Edge], ...]] = {}
-        self._cross_in_by_subject: dict[str, tuple[tuple[str, str, F8Edge], ...]] = {}
-        self._cross_out_subjects: dict[tuple[str, str], str] = {}
-        self._data_inputs: _CappedOrderedDict[tuple[str, str], _InputBuffer] = _CappedOrderedDict(
-            max_entries=self._data_input_max_buffers
+        self._data_router = DataRouter(
+            self,
+            cross_publish_policy=cross_publish_policy,
+            data_delivery=mode,
+            input_max_buffers=self._data_input_max_buffers,
+            default_queue_size=self._data_input_default_queue_size,
         )
 
         # Intra-service state fanout (state edges within the same service).
@@ -199,7 +155,7 @@ class ServiceBus:
         self._cross_state_targets: set[tuple[str, str]] = set()
         self._cross_state_last_ts: dict[tuple[str, str], int] = {}
 
-        self._state_cache: _CappedOrderedDict[tuple[str, str], tuple[Any, int]] = _CappedOrderedDict(
+        self._state_cache: CappedOrderedDict[tuple[str, str], tuple[Any, int]] = CappedOrderedDict(
             max_entries=self._state_cache_max_entries
         )
         self._state_access_by_node_field: dict[tuple[str, str], F8StateAccess] = {}
@@ -208,8 +164,6 @@ class ServiceBus:
         self._command_hidden_fields: set[tuple[str, str]] = set()
         self._command_dispatch_states: dict[tuple[str, str], Any] = {}
         self._command_gateway = CommandGateway(self)
-        self._data_route_subs: dict[str, Any] = {}
-        self._custom_subs: list[Any] = []
 
         self._rungraph_hooks: list[RungraphHook] = []
         self._service_hooks: list[ServiceHook] = []
@@ -252,9 +206,6 @@ class ServiceBus:
             self._monitor_record_callback_delivery = self._noop_record_callback_delivery
             self._monitor_record_buffer_pull_delivery = self._noop_record_buffer_pull_delivery
 
-        # Push-mode on_data micro-batching.
-        self._on_data_push_queue: deque[tuple[str, str, Any, int]] = deque()
-        self._on_data_flush_task: asyncio.Task[None] | None = None
         self._started = False
         self._closed = False
 
@@ -329,23 +280,27 @@ class ServiceBus:
 
     @property
     def cross_publish_policy(self) -> CrossPublishPolicy:
-        return self._cross_publish_policy
+        return self._data_router.cross_publish_policy
 
     @property
     def publish_all_data(self) -> bool:
-        return self._cross_publish_policy == "all"
+        return self.cross_publish_policy == "all"
 
     @property
     def data_delivery(self) -> DataDeliveryMode:
-        return self._data_delivery
+        return self._data_router.data_delivery
+
+    @property
+    def data_router(self) -> DataRouter:
+        return self._data_router
 
     def set_cross_publish_policy(self, value: Any, *, source: str = "service") -> None:
         policy = _coerce_cross_publish_policy(value)
         if policy is None:
             return
-        if policy == self._cross_publish_policy:
+        if policy == self.cross_publish_policy:
             return
-        self._cross_publish_policy = policy
+        self._data_router.set_cross_publish_policy(policy)
         if self._debug_state:
             print(f"state_debug[{self.service_id}] cross_publish_policy={policy} source={source}")
 
@@ -356,9 +311,9 @@ class ServiceBus:
         mode = _coerce_data_delivery_mode(value)
         if mode is None:
             return
-        if mode == self._data_delivery:
+        if mode == self.data_delivery:
             return
-        self._data_delivery = mode
+        self._data_router.set_data_delivery(mode)
         if self._debug_state:
             print(f"state_debug[{self.service_id}] data_delivery={mode} source={source}")
 
@@ -406,8 +361,7 @@ class ServiceBus:
     def unregister_node(self, node_id: str) -> None:
         node_id = ensure_token(node_id, label="node_id")
         node = self._nodes.pop(node_id, None)
-        for key in [k for k in self._data_inputs.keys() if k[0] == node_id]:
-            self._data_inputs.pop(key, None)
+        self._data_router.remove_node_inputs(node_id)
         if node is not None and isinstance(node, ClosableNode):
             try:
                 loop = asyncio.get_running_loop()
@@ -445,10 +399,10 @@ class ServiceBus:
         queue: str | None = None,
         cb: Callable[[str, bytes], Awaitable[None]] | None = None,
     ) -> Any:
-        return await _subscribe_subject_impl(self, subject, queue=queue, cb=cb)
+        return await self._data_router.subscribe_subject(subject, queue=queue, cb=cb)
 
     async def unsubscribe_subject(self, handle: Any) -> None:
-        await _unsubscribe_subject_impl(self, handle)
+        await self._data_router.unsubscribe_subject(handle)
 
     # ---- KV state -------------------------------------------------------
 
@@ -595,9 +549,9 @@ class ServiceBus:
     async def emit_data(self, node_id: str, port: str, value: Any, *, ts_ms: int | None = None) -> None:
         node_id_s = ensure_token(node_id, label="node_id")
         port_s = ensure_token(port, label="port_id")
-        await _emit_data_impl(self, node_id_s, port_s, value, ts_ms=ts_ms)
+        await self._data_router.emit_data(node_id_s, port_s, value, ts_ms=ts_ms)
 
     async def pull_data(self, node_id: str, port: str, *, ctx_id: str | int | None = None) -> Any:
         node_id_s = ensure_token(node_id, label="node_id")
         port_s = ensure_token(port, label="port_id")
-        return await _pull_data_impl(self, node_id_s, port_s, ctx_id=ctx_id)
+        return await self._data_router.pull_data(node_id_s, port_s, ctx_id=ctx_id)

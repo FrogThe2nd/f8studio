@@ -13,8 +13,7 @@ if ROOT not in sys.path:
 from f8pysdk.generated import F8Edge, F8EdgeKindEnum, F8EdgeStrategyEnum, F8RuntimeGraph, F8RuntimeNode  # noqa: E402
 from f8pysdk.nats_naming import data_subject  # noqa: E402
 from f8pysdk.service_bus.bus import ServiceBus, ServiceBusConfig  # noqa: E402
-from f8pysdk.service_bus.routing_data import push_input  # noqa: E402
-from f8pysdk.testing import InMemoryCluster, InMemoryTransport  # noqa: E402
+from f8pysdk.testing import InMemoryCluster, InMemoryTransport, push_input  # noqa: E402
 
 
 class _RecordingTransport(InMemoryTransport):
@@ -188,7 +187,7 @@ class SliceCDataFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(pulled, 42)
         self.assertEqual(source.compute_calls, [("out", "ctx-1")])
         self.assertEqual(transport.published_subjects, [])
-        self.assertEqual(bus._data_inputs[("local_dst", "in")].last_seen_value, 42)
+        self.assertEqual(bus.data_router.input_buffers[("local_dst", "in")].last_seen_value, 42)
 
     async def test_publish_all_data_compat_true_maps_to_all_policy(self) -> None:
         cluster = InMemoryCluster()

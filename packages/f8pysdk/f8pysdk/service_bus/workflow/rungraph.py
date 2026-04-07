@@ -25,7 +25,6 @@ from .cross_state import (
 )
 from ..error_utils import log_error_once
 from ..domain.state_pipeline import publish_state
-from ..routing.data_flow import precreate_input_buffers_for_cross_in, sync_subscriptions
 from ..codec import encode_obj
 from ..command_runtime import command_state_bindings_ready
 
@@ -483,7 +482,7 @@ async def rebuild_routes(bus: "ServiceBus") -> None:
     if graph is None:
         return
 
-    bus._data_inputs.clear()
+    data_router = bus.data_router
     bus._intra_state_out.clear()
 
     # Intra (in-process) routing: local service -> local service.
@@ -500,8 +499,8 @@ async def rebuild_routes(bus: "ServiceBus") -> None:
             (str(edge.toOperatorId), str(edge.toPort), edge)
         )
         intra_in.setdefault((str(edge.toOperatorId), str(edge.toPort)), []).append((str(edge.fromOperatorId), str(edge.fromPort), edge))
-    bus._intra_data_out = {k: tuple(v) for k, v in intra.items()}
-    bus._intra_data_in = {k: tuple(v) for k, v in intra_in.items()}
+    intra_data_out = {k: tuple(v) for k, v in intra.items()}
+    intra_data_in = {k: tuple(v) for k, v in intra_in.items()}
 
     # Intra-service state fanout: local state edges.
     intra_state_out: dict[tuple[str, str], list[tuple[str, str, F8Edge]]] = {}
@@ -539,11 +538,11 @@ async def rebuild_routes(bus: "ServiceBus") -> None:
             from_node = str(edge.fromOperatorId)
             cross_out[(from_node, str(edge.fromPort))] = subject
 
-    bus._cross_in_by_subject = {k: tuple(v) for k, v in cross_in.items()}
-    bus._cross_out_subjects = cross_out
-
-    precreate_input_buffers_for_cross_in(bus, cross_in)
-
-    await sync_subscriptions(bus, set(cross_in.keys()))
+    await data_router.replace_routes(
+        intra_data_out=intra_data_out,
+        intra_data_in=intra_data_in,
+        cross_in_by_subject={k: tuple(v) for k, v in cross_in.items()},
+        cross_out_subjects=cross_out,
+    )
     update_cross_state_bindings(bus, graph)
     await stop_unused_cross_state_watches(bus)

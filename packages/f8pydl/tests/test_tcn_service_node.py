@@ -15,7 +15,7 @@ for p in (PKG_PYDL, PKG_SDK):
 
 from f8pydl.tcnwave_service_node import OnnxTcnWaveServiceNode  # noqa: E402
 from f8pysdk.runtime_node import RuntimeNode  # noqa: E402
-from f8pysdk.service_bus.state_read import StateRead  # noqa: E402
+from f8pysdk.state import StateRead  # noqa: E402
 
 
 @dataclass(frozen=True)

@@ -5,14 +5,13 @@ import os
 import sys
 import unittest
 import asyncio
-from dataclasses import dataclass
 from typing import Any
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from f8pysdk.service_bus.codec import decode_obj  # noqa: E402
+from f8pysdk.codec import decode_obj  # noqa: E402
 from f8pysdk.service_bus.monitor_collector import MonitorCollector, MonitorCollectorConfig  # noqa: E402
 from f8pysdk.time_utils import now_ms  # noqa: E402
 
@@ -25,9 +24,12 @@ class _FakeTransport:
         self.published.append((str(subject), bytes(payload)))
 
 
-@dataclass
-class _FakeInputBuffer:
-    queue: list[int]
+class _FakeDataRouter:
+    def __init__(self) -> None:
+        self._depth = 3
+
+    def queue_depth(self) -> int:
+        return self._depth
 
 
 class _FakeBus:
@@ -37,7 +39,7 @@ class _FakeBus:
         self._active = True
         self._ready = False
         self._transport = _FakeTransport()
-        self._data_inputs = {("n1", "p1"): _FakeInputBuffer(queue=[1, 2, 3])}
+        self.data_router = _FakeDataRouter()
 
 
 class MonitorCollectorTests(unittest.IsolatedAsyncioTestCase):

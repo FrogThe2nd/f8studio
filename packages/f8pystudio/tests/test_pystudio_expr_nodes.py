@@ -12,7 +12,7 @@ from f8pysdk import F8DataPortSpec, any_schema  # noqa: E402
 from f8pysdk.generated import F8RuntimeGraph, F8RuntimeNode, F8StateAccess, F8StateSpec  # noqa: E402
 from f8pysdk.runtime_node_registry import RuntimeNodeRegistry  # noqa: E402
 from f8pysdk.schema_helpers import number_schema  # noqa: E402
-from f8pysdk.service_bus.routing_data import buffer_input  # noqa: E402
+from f8pysdk.testing import buffer_input  # noqa: E402
 from f8pysdk.service_host import ServiceHost, ServiceHostConfig  # noqa: E402
 from f8pysdk.testing import ServiceBusHarness  # noqa: E402
 

@@ -13,7 +13,7 @@ from f8pysdk.nats_naming import (
 )
 from f8pysdk.nats_transport import NatsTransport, NatsTransportConfig
 from f8pysdk.time_utils import now_ms
-from f8pysdk.service_bus.codec import decode_obj
+from f8pysdk.codec import decode_obj
 
 logger = logging.getLogger(__name__)
 

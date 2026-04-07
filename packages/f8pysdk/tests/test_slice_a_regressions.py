@@ -15,9 +15,8 @@ from f8pysdk.nats_naming import data_subject  # noqa: E402
 from f8pysdk.runtime_node import OperatorNode, ServiceNode  # noqa: E402
 from f8pysdk.runtime_node_registry import RuntimeNodeRegistry  # noqa: E402
 from f8pysdk.service_bus.bus import ServiceBus, ServiceBusConfig  # noqa: E402
-from f8pysdk.service_bus.routing_data import push_input  # noqa: E402
 from f8pysdk.service_runtime import ServiceRuntime, ServiceRuntimeConfig  # noqa: E402
-from f8pysdk.testing import InMemoryCluster, InMemoryTransport, ServiceBusHarness  # noqa: E402
+from f8pysdk.testing import InMemoryCluster, InMemoryTransport, ServiceBusHarness, push_input  # noqa: E402
 
 
 class _RecordingTransport(InMemoryTransport):

@@ -23,13 +23,25 @@ def _coerce_data_delivery(value: Any) -> str | None:
 
 class PyEngineServiceNode(ServiceNode):
     def __init__(self, *, node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any] | None = None) -> None:
+        state = {"dataDelivery": "pull"}
+        state.update(dict(initial_state or {}))
         super().__init__(
             node_id=ensure_token(node_id, label="node_id"),
             data_in_ports=[],
             data_out_ports=[],
             state_fields=[s.name for s in list(node.stateFields or [])],
         )
-        self._initial_state = dict(initial_state or {})
+        self._initial_state = state
+
+    def attach(self, bus: Any) -> None:
+        super().attach(bus)
+        mode = _coerce_data_delivery(self._initial_state.get("dataDelivery"))
+        if mode is None:
+            return
+        try:
+            cast(_DataDeliveryBus, bus).set_data_delivery(mode, source="initial_state")
+        except Exception:
+            logger.exception("set_data_delivery failed during attach node=%s mode=%s", self.node_id, mode)
 
     async def validate_state(self, field: str, value: Any, *, ts_ms: int, meta: dict[str, Any]) -> Any:
         del ts_ms, meta

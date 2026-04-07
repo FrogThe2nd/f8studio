@@ -25,8 +25,8 @@ from f8pysdk.generated import (  # noqa: E402
     F8StateSpec,
 )
 from f8pysdk.schema_helpers import any_schema, string_schema  # noqa: E402
-from f8pysdk.service_bus.codec import decode_obj as decode_msgpack_obj  # noqa: E402
-from f8pysdk.service_bus.codec import encode_obj as encode_msgpack_obj  # noqa: E402
+from f8pysdk.codec import decode_obj as decode_msgpack_obj  # noqa: E402
+from f8pysdk.codec import encode_obj as encode_msgpack_obj  # noqa: E402
 
 
 def _quantile(values: list[float], q: float) -> float:

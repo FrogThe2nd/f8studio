@@ -8,7 +8,7 @@ from qtpy import QtCore
 
 from f8pysdk import F8RuntimeGraph
 from f8pysdk.nats_naming import ensure_token
-from f8pysdk.service_bus.state_write import StateWriteError
+from f8pysdk.state import StateWriteError
 
 from .json_codec import coerce_json_value
 from .managed_service_inventory import collect_managed_service_inventory
@@ -225,4 +225,3 @@ class DeployStateControllerMixin:
             _do(),
             context=f"submit set_remote_state failed serviceId={service_id} nodeId={node_id} field={field}",
         )
-

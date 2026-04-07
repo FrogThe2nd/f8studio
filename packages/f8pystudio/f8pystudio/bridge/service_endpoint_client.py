@@ -20,7 +20,7 @@ from f8pysdk.generated import (
     F8TerminateRequest,
 )
 from f8pysdk.nats_naming import ensure_token, new_id, svc_endpoint_subject
-from f8pysdk.service_bus.codec import decode_as, encode_obj
+from f8pysdk.codec import decode_as, encode_obj
 
 from .nats_request import NatsRequester
 

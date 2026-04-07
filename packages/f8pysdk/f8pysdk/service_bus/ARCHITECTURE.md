@@ -2,13 +2,14 @@
 
 ## Status
 
-This document describes the current `f8pysdk.service_bus` runtime shape after Slice A and Slice B hardening.
+This document describes the current `f8pysdk.service_bus` runtime shape after Slice A through Slice D.
 
-The implementation is still compatibility-heavy:
+The implementation is still compatibility-heavy, but the data side is now split more explicitly:
 
 - `ServiceBus` is the public façade.
-- most runtime state still lives on `ServiceBus`
-- submodules cooperate through `bus._...` fields
+- command dispatch lives behind `CommandGateway`
+- data routing/buffering/subscriptions live behind `DataRouter`
+- state and cross-state lifecycle still retain more direct `bus._...` coupling
 - several top-level modules are compatibility re-export layers
 
 The long-term plan is tracked in `packages/f8pysdk/SDK_REFACTOR_PLAN.md`.
@@ -20,6 +21,16 @@ The long-term plan is tracked in `packages/f8pysdk/SDK_REFACTOR_PLAN.md`.
 - `routing/`: data buffering, pull/push delivery, NATS data subscriptions
 - `workflow/`: rungraph apply, lifecycle transitions, cross-state synchronization
 - `adapters/`: transport-specific endpoint integration
+
+Slice D notes:
+
+- `routing/data_router.py` is now the canonical owner for:
+  - data route tables
+  - input buffers
+  - routed and custom subscriptions
+  - push-callback micro-batching
+- `routing_data.py` remains as a thin compatibility layer.
+- `ServiceBus` delegates data emit/pull/subscribe behavior to `DataRouter` instead of storing that mutable state directly.
 
 ## Current Contracts
 
@@ -89,26 +100,28 @@ Current compatibility note:
 
 ### Data Emit/Pull Chain
 
-1. `emit_data(...)` delivers local samples to intra-service targets first
-2. local delivery mode is explicit:
+1. `emit_data(...)` delegates to `DataRouter.emit_data(...)`
+2. local samples are delivered to intra-service targets first
+3. local delivery mode is explicit:
    - `callback`: `on_data(...)` only
    - `buffered`: `pull_data(...)` only
    - `both`: explicit dual local delivery for compatibility
-3. cross-service publication is controlled separately by `cross_publish_policy`:
+4. cross-service publication is controlled separately by `cross_publish_policy`:
    - `routed`: publish only when the rungraph has a cross-service outgoing edge
    - `all`: publish every emitted output subject
    - `none`: never publish cross-service data
-4. pull-based local computation may call `compute_output(...)` upstream, but it now satisfies local targets only and does not implicitly cross-publish
+5. pull-based local computation may call `compute_output(...)` upstream, but it now satisfies local targets only and does not implicitly cross-publish
 
 ### Rungraph Apply Chain
 
 1. `set_rungraph(...)` timestamps and validates the graph
 2. routing tables and state-access maps are rebuilt
-3. rungraph `stateValues` are materialized into KV
-4. builtin identity state is seeded
-5. rungraph hooks execute
-6. cross-state watches sync remote values
-7. intra-service initial state-edge propagation runs
+3. `DataRouter.replace_routes(...)` swaps the live data-side route state
+4. rungraph `stateValues` are materialized into KV
+5. builtin identity state is seeded
+6. rungraph hooks execute
+7. cross-state watches sync remote values
+8. intra-service initial state-edge propagation runs
 
 ## Compatibility Surface
 
@@ -123,3 +136,9 @@ These modules currently exist mostly as compatibility shims:
 - `state_publish.py`
 
 New code should prefer the documented façade types and avoid depending on compatibility modules unless migration constraints require it.
+
+Stable top-level modules introduced during Slice D:
+
+- `f8pysdk.codec`
+- `f8pysdk.state`
+- `f8pysdk.testing`

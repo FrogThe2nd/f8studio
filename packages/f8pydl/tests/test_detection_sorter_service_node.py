@@ -8,7 +8,7 @@ from typing import Any
 
 import numpy as np
 
-from f8pysdk.service_bus.state_read import StateRead
+from f8pysdk.state import StateRead
 from f8pysdk.shm.video import VIDEO_FORMAT_BGRA32, VIDEO_FORMAT_FLOW2_F16, VIDEO_FORMAT_SCALAR1_F32, VideoShmHeader, VideoShmWriter
 
 from f8pydl.detection_sorter_service_node import (

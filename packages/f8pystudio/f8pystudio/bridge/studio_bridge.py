@@ -13,7 +13,7 @@ from qtpy import QtCore
 from f8pysdk import F8RuntimeGraph
 from f8pysdk.nats_naming import ensure_token, new_id
 from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
-from f8pysdk.service_bus.state_write import StateWriteError
+from f8pysdk.state import StateWriteError
 from f8pystudio.contracts.ui_commands import UiCommand
 from f8pystudio.diagnostics.error_reporting import ExceptionLogOnce, report_exception
 from f8pystudio.monitoring import MonitorCenter
@@ -375,7 +375,6 @@ class PyStudioServiceBridge(RuntimeSessionControllerMixin, ServiceLifecycleContr
                 self._process_gateway.stop(StopServiceRequest(service_id=sid))
             except Exception as exc:
                 self._report_exception(f"stop service process failed serviceId={sid}", exc)
-
 
 
 

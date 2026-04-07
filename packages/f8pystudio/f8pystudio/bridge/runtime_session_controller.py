@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from f8pysdk.msgspec_codec import dump_json
-from f8pysdk.service_bus.codec import decode_obj
+from f8pysdk.codec import decode_obj
 from typing import Any
 
 from f8pysdk.runtime_node_registry import RuntimeNodeRegistry

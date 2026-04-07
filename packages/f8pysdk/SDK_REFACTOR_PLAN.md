@@ -195,11 +195,11 @@ This plan is intentionally incremental. Each phase should leave the SDK usable a
 
 - [ ] Extract state cache/persist/read logic from `ServiceBus`.
 - [ ] Extract state edge fanout and cross-state watch logic from `ServiceBus`.
-- [ ] Extract data buffer/subscription/push callback logic from `ServiceBus`.
+- [x] Extract data buffer/subscription/push callback logic from `ServiceBus`.
 - [ ] Extract command binding and dispatch state from `ServiceBus`.
-- [ ] Reduce direct `bus._...` access across modules.
+- [x] Reduce direct `bus._...` access across modules.
 - [ ] Replace implicit shared mutable access with explicit constructor injection.
-- [ ] Keep `ServiceBus` as a thin façade for compatibility.
+- [x] Keep `ServiceBus` as a thin façade for compatibility.
 
 ### Acceptance
 
@@ -336,6 +336,22 @@ This milestone does not redesign the SDK yet, but it makes the system much safer
     - `publish_all_data=True` now maps to `cross_publish_policy="all"`; `False` maps to `routed`
     - `data_delivery="push"` maps to `callback`; `data_delivery="pull"` maps to `buffered`
     - `data_delivery="both"` remains available as explicit compatibility mode, but it is no longer the default-facing recommendation
+
+- 2026-04-07
+  - owner: Codex + repository maintainer
+  - scope: Slice D initial internal extraction and API cleanup
+  - completed:
+    - extracted data-side mutable routing state into `service_bus.routing.data_router.DataRouter`
+    - moved data route tables, input buffers, routed subscriptions, custom subscriptions, and push-callback queue ownership behind `DataRouter`
+    - changed `ServiceBus`, rungraph apply, lifecycle stop, and monitor queue sampling to delegate to `DataRouter`
+    - introduced stable top-level modules `f8pysdk.codec` and `f8pysdk.state`
+    - expanded `f8pysdk.testing` with buffered-input helpers so repo tests no longer import deep `service_bus.routing_data`
+    - migrated sibling packages off deep `f8pysdk.service_bus.codec`, `state_*`, and `routing_data` imports
+    - hardened `pyengine` service-node attach behavior so its pull-first delivery default is applied explicitly at runtime
+  - compatibility notes:
+    - `f8pysdk.service_bus.routing_data` remains available as a thin compatibility layer
+    - `ServiceBus` still exposes the same public emit/pull/subscribe API, but the data runtime now lives behind `DataRouter`
+    - repo-internal callers should prefer `f8pysdk.codec`, `f8pysdk.state`, and `f8pysdk.testing` over deep `service_bus.*` imports
 
 - When we start a phase, create a short changelog section here with:
   - date

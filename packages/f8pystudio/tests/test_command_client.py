@@ -4,7 +4,7 @@ import asyncio
 from types import SimpleNamespace
 from typing import Any
 
-from f8pysdk.service_bus.codec import decode_obj, encode_obj
+from f8pysdk.codec import decode_obj, encode_obj
 
 from f8pystudio.bridge.command_client import CommandRequest, NatsCommandGateway
 

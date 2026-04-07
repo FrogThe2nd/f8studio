@@ -15,7 +15,7 @@ from f8pysdk import F8DataPortSpec, F8RuntimeGraph, F8RuntimeNode, F8StateAccess
 from f8pysdk.generated import F8Edge, F8EdgeKindEnum, F8EdgeStrategyEnum  # noqa: E402
 from f8pysdk.runtime_node_registry import RuntimeNodeRegistry  # noqa: E402
 from f8pysdk.service_host import ServiceHost, ServiceHostConfig  # noqa: E402
-from f8pysdk.service_bus.routing_data import buffer_input  # noqa: E402
+from f8pysdk.testing import buffer_input  # noqa: E402
 from f8pysdk.testing import ServiceBusHarness  # noqa: E402
 
 from f8pyengine.constants import SERVICE_CLASS  # noqa: E402
