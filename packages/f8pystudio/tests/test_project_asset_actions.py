@@ -64,6 +64,40 @@ class _FakeLogDock:
         self.exceptions.append((str(channel), str(context), str(exc)))
 
 
+class _FakeProjectAssetMetaDialog:
+    init_kwargs: dict[str, object] | None = None
+
+    def __init__(
+        self,
+        *,
+        parent: QtWidgets.QWidget | None,
+        title: str,
+        name: str,
+        description: str,
+        tags: list[str],
+        name_validator: object | None = None,
+    ) -> None:
+        del parent, name_validator
+        type(self).init_kwargs = {
+            "title": str(title),
+            "name": str(name),
+            "description": str(description),
+            "tags": list(tags),
+        }
+
+    def exec(self) -> int:
+        return QtWidgets.QDialog.Accepted
+
+    def values(self) -> tuple[str, str, list[str]]:
+        init_kwargs = type(self).init_kwargs
+        assert init_kwargs is not None
+        return (
+            str(init_kwargs["name"]),
+            str(init_kwargs["description"]),
+            list(init_kwargs["tags"]),
+        )
+
+
 @dataclass
 class _DialogPlan:
     result: int
@@ -148,3 +182,54 @@ def test_show_project_history_dialog_deletes_selected_version_and_refreshes(monk
     assert warning_messages == []
     assert ("Project version deleted", "Deleted project version v1.") in info_messages
     assert any("deleted version v1" in line for _channel, line in log_dock.lines)
+
+
+def test_save_component_as_dialog_seeds_metadata_from_current_project(monkeypatch, tmp_path: Path) -> None:
+    _ensure_app()
+    settings = QtCore.QSettings(str(tmp_path / "component-seed.ini"), QtCore.QSettings.IniFormat)
+    service = ProjectStorageService(db_path=tmp_path / "assets.db", settings=settings)
+    project = service.save_project(
+        content=_session_payload("seeded"),
+        name="Seed Project",
+        description="Seed description",
+        tags=["alpha", "beta"],
+        set_current=True,
+    )
+    graph = _FakeGraph()
+    log_dock = _FakeLogDock()
+    parent = QtWidgets.QWidget()
+    saved_records: list[object] = []
+    info_messages: list[tuple[str, str]] = []
+    _FakeProjectAssetMetaDialog.init_kwargs = None
+
+    monkeypatch.setattr(project_asset_actions, "ProjectStorageService", lambda: service)
+    monkeypatch.setattr(project_asset_actions, "ProjectAssetMetaDialog", _FakeProjectAssetMetaDialog)
+    monkeypatch.setattr(project_asset_actions, "upsert_component", lambda record: saved_records.append(record))
+    monkeypatch.setattr(
+        project_asset_actions,
+        "show_info",
+        lambda _parent, title, message: info_messages.append((str(title), str(message))),
+    )
+
+    saved = project_asset_actions.save_component_as_dialog(
+        parent=parent,
+        studio_graph=graph,
+        log_dock=log_dock,
+        show_warning=lambda *_args: None,
+    )
+
+    assert project.projectId == service.current_project_id()
+    assert saved is True
+    assert _FakeProjectAssetMetaDialog.init_kwargs == {
+        "title": "Save As Component",
+        "name": "Seed Project",
+        "description": "Seed description",
+        "tags": ["alpha", "beta"],
+    }
+    assert len(saved_records) == 1
+    saved_record = saved_records[0]
+    assert saved_record.name == "Seed Project"
+    assert saved_record.description == "Seed description"
+    assert saved_record.tags == ["alpha", "beta"]
+    assert saved_record.content == _session_payload("unused")
+    assert info_messages == [("Component saved", "Saved component:\nSeed Project")]

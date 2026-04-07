@@ -21,6 +21,7 @@ from ...assets.ui.project_asset_dialogs import (
 )
 from ...assets.components.component_models import F8ComponentRecord
 from ...assets.components.component_repository import upsert_component
+from ...assets.projects.project_models import F8ProjectRecord
 from ...assets.projects.project_storage import ProjectStorageService
 from ...nodegraph.graph_insert_flow import GraphInsertRequest
 from ..support.ui_notifications import show_info
@@ -46,6 +47,23 @@ class ProjectAssetGraphLike(Protocol):
     def prepare_insert_graph_from_file(self, path: str) -> GraphInsertRequest: ...
 
     def begin_graph_placement(self, request: GraphInsertRequest, *, label: str = "") -> None: ...
+
+
+def _current_project_record(service: ProjectStorageService) -> F8ProjectRecord | None:
+    current_project = service.project(service.current_project_id())
+    if current_project is not None:
+        return current_project
+    return service.load_last_project()
+
+
+def _component_seed_from_current_project() -> tuple[str, str, list[str]]:
+    current_project = _current_project_record(ProjectStorageService())
+    if current_project is None:
+        return "Untitled Component", "", []
+    component_name = str(current_project.name or "").strip() or "Untitled Component"
+    component_description = str(current_project.description or "")
+    component_tags = [str(tag).strip() for tag in list(current_project.tags or []) if str(tag).strip()]
+    return component_name, component_description, component_tags
 
 
 def auto_load_project(*, studio_graph: ProjectAssetGraphLike, log_dock: ProjectAssetLogDockLike) -> None:
@@ -294,12 +312,13 @@ def save_component_as_dialog(
     log_dock: ProjectAssetLogDockLike,
     show_warning: MessageDialogFn,
 ) -> bool:
+    seed_name, seed_description, seed_tags = _component_seed_from_current_project()
     dialog = ProjectAssetMetaDialog(
         parent=parent,
         title="Save As Component",
-        name="Untitled Component",
-        description="",
-        tags=[],
+        name=seed_name,
+        description=seed_description,
+        tags=seed_tags,
     )
     if dialog.exec() != QtWidgets.QDialog.Accepted:
         return False
@@ -348,9 +367,7 @@ def show_project_history_dialog(
     show_info_message: MessageDialogFn,
 ) -> bool:
     service = ProjectStorageService()
-    current_project = service.project(service.current_project_id())
-    if current_project is None:
-        current_project = service.load_last_project()
+    current_project = _current_project_record(service)
     if current_project is None:
         show_info_message(parent, "No project", "No local project was found.")
         return False
