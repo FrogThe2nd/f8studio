@@ -4,7 +4,7 @@ from f8pysdk.msgspec_codec import dump_json
 from f8pysdk.codec import decode_obj
 from typing import Any
 
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
+from f8pysdk.registry import RuntimeNodeRegistry
 
 from .nats_lifecycle import (
     SINGLETON_GUARD_DIALOG_MESSAGE,

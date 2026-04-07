@@ -4,8 +4,8 @@ from dataclasses import dataclass
 import logging
 from typing import Any, Callable
 
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
-from f8pysdk.service_runtime import ServiceRuntime, ServiceRuntimeConfig
+from f8pysdk.registry import RuntimeNodeRegistry
+from f8pysdk.app import ServiceRuntime, ServiceRuntimeConfig
 
 from f8pystudio.plugins.loader import load_entrypoint_plugins
 from f8pystudio.contracts.ui_commands import set_ui_command_sink, UiCommand

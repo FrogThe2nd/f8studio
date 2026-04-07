@@ -10,7 +10,7 @@ from .generated import F8RuntimeGraph, F8RuntimeNode
 from .json_unwrap import unwrap_json_value
 from .runtime_node import OperatorNode, RuntimeNode
 from .runtime_node_registry import RuntimeNodeRegistry
-from .service_bus.bus import ServiceBus
+from .service_bus import ServiceBus
 
 
 log = logging.getLogger(__name__)

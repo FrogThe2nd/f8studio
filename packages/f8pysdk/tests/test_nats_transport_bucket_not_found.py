@@ -5,7 +5,7 @@ from typing import Any
 
 from nats.js.errors import NotFoundError as JsNotFoundError
 
-from f8pysdk.nats_transport import NatsTransport, NatsTransportConfig
+from f8pysdk.transport import NatsTransport, NatsTransportConfig
 
 
 class _FakeJs:

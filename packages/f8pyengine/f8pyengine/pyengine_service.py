@@ -3,14 +3,13 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from f8pysdk.app import ServiceCliTemplate, ServiceRuntime
 from f8pysdk.executors.exec_flow import ExecFlowExecutor
 from f8pysdk.executors.exec_flow import validate_exec_topology_or_raise
 from f8pysdk.generated import F8RuntimeGraph
 from f8pysdk.capabilities import ExecutableNode, ServiceHookBase
 from f8pysdk.nats_naming import ensure_token
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
-from f8pysdk.service_runtime import ServiceRuntime
-from f8pysdk.service_cli import ServiceCliTemplate
+from f8pysdk.registry import RuntimeNodeRegistry
 
 from .constants import SERVICE_CLASS
 from .pyengine_node_registry import register_pyengine_specs

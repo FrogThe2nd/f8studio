@@ -20,7 +20,7 @@ from f8pyaudiofeat.constants import CORE_SCHEMA_VERSION, RHYTHM_SCHEMA_VERSION  
 from f8pyaudiofeat.core_service_node import AudioCoreFeatureServiceNode  # noqa: E402
 from f8pyaudiofeat.feature_math import librosa_available  # noqa: E402
 from f8pyaudiofeat.rhythm_service_node import AudioRhythmFeatureServiceNode  # noqa: E402
-from f8pysdk.runtime_node import RuntimeNode  # noqa: E402
+from f8pysdk.nodes import RuntimeNode  # noqa: E402
 from f8pysdk.state import StateRead  # noqa: E402
 from f8pysdk.shm.audio import AudioShmWriter  # noqa: E402
 

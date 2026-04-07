@@ -16,8 +16,8 @@ from f8pysdk import (
     string_schema,
 )
 from f8pysdk.nats_naming import ensure_token
-from f8pysdk.runtime_node import OperatorNode, RuntimeNode
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
+from f8pysdk.nodes import OperatorNode, RuntimeNode
+from f8pysdk.registry import RuntimeNodeRegistry
 from f8pysdk.shm import video_shm_name
 
 from f8pystudio.studio_specs.identifiers import SERVICE_CLASS

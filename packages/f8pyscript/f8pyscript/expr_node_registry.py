@@ -15,8 +15,8 @@ from f8pysdk import (
     editable_collection_edit_policy,
     string_schema,
 )
-from f8pysdk.runtime_node import RuntimeNode
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
+from f8pysdk.nodes import RuntimeNode
+from f8pysdk.registry import RuntimeNodeRegistry
 
 from .constants import EXPR_SERVICE_CLASS
 from .expr_service_node import DEFAULT_CODE, PythonExprServiceNode

@@ -10,7 +10,7 @@ from typing import Any, Literal
 import numpy as np
 
 from f8pysdk.nats_naming import ensure_token
-from f8pysdk.runtime_node import ServiceNode
+from f8pysdk.nodes import ServiceNode
 from f8pysdk.shm.video import VIDEO_FORMAT_FLOW2_F16, VIDEO_FORMAT_SCALAR1_F32, VideoShmHeader, VideoShmReader
 
 SortDirection = Literal["asc", "desc"]

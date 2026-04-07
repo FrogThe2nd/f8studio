@@ -4,8 +4,8 @@ from typing import Any
 
 from f8pysdk import F8ServiceSchemaVersion, F8ServiceSpec, F8StateAccess, F8StateSpec, boolean_schema, string_schema
 from f8pysdk.generated import F8RuntimeNode
-from f8pysdk.runtime_node import RuntimeNode
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
+from f8pysdk.nodes import RuntimeNode
+from f8pysdk.registry import RuntimeNodeRegistry
 
 from .constants import SERVICE_CLASS
 from .proclauncher_service_node import ProcLauncherServiceNode

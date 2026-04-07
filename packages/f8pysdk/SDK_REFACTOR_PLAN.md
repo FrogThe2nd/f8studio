@@ -222,7 +222,7 @@ This plan is intentionally incremental. Each phase should leave the SDK usable a
 
 ### Checklist
 
-- [ ] Define stable public modules, for example:
+- [x] Define stable public modules, for example:
   - `f8pysdk.app`
   - `f8pysdk.registry`
   - `f8pysdk.nodes`
@@ -370,6 +370,19 @@ This milestone does not redesign the SDK yet, but it makes the system much safer
   - compatibility notes:
     - public `ServiceBus.emit_data(...)` / `pull_data(...)` signatures remain unchanged
     - pull-triggered local recompute is still local-only, but that behavior is now represented by typed router options instead of open-coded branching
+
+- 2026-04-07
+  - owner: Codex + repository maintainer
+  - scope: Slice 6 public API cleanup bootstrap
+  - completed:
+    - introduced stable top-level modules `f8pysdk.app`, `f8pysdk.command`, `f8pysdk.data`, `f8pysdk.nodes`, `f8pysdk.registry`, and `f8pysdk.transport`
+    - migrated SDK-internal callers away from `service_bus.codec`, `service_bus.bus`, and direct `nats_transport` imports where stable wrappers now exist
+    - migrated representative SDK tests to the public import surfaces and added explicit coverage for the new top-level modules
+    - moved stable test helpers off `service_bus.routing_data` so benchmarks/tests can stay on `f8pysdk.testing`
+    - migrated repo-wide callers off `runtime_node`, `runtime_node_registry`, `service_cli`, `service_runtime`, `service_host`, and `nats_transport` import paths onto the stable public modules
+  - compatibility notes:
+    - `f8pysdk.service_bus` remains the public bus entrypoint for `ServiceBus` and `ServiceBusConfig`
+    - deep `service_bus.*` modules still exist for compatibility, but new code should prefer the stable top-level modules or `f8pysdk.service_bus`
 
 - When we start a phase, create a short changelog section here with:
   - date

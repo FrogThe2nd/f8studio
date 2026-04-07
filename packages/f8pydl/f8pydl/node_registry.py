@@ -16,8 +16,8 @@ from f8pysdk import (
     number_schema,
     string_schema,
 )
-from f8pysdk.runtime_node import RuntimeNode
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
+from f8pysdk.nodes import RuntimeNode
+from f8pysdk.registry import RuntimeNodeRegistry
 
 from .constants import CLASSIFIER_SERVICE_CLASS, DETECTOR_SERVICE_CLASS, DETECTION_SORTER_SERVICE_CLASS, HUMAN_DETECTOR_SERVICE_CLASS
 from .constants import OPTFLOW_SERVICE_CLASS, TCNWAVE_SERVICE_CLASS

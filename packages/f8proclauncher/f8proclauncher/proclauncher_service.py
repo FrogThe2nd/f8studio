@@ -3,9 +3,9 @@ from __future__ import annotations
 import logging
 
 from f8pysdk.capabilities import ClosableNode
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
-from f8pysdk.service_cli import ServiceCliTemplate
-from f8pysdk.service_runtime import ServiceRuntime
+from f8pysdk.registry import RuntimeNodeRegistry
+from f8pysdk.app import ServiceCliTemplate
+from f8pysdk.app import ServiceRuntime
 
 from .constants import SERVICE_CLASS
 from .proclauncher_node_registry import register_proclauncher_specs

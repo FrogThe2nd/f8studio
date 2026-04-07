@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from f8pysdk.nats_naming import ensure_token
-from f8pysdk.runtime_node import ServiceNode
+from f8pysdk.nodes import ServiceNode
 from f8pysdk.shm.video import VideoShmReader
 
 from .model_config import ModelSpec, ModelTask, build_model_index, build_model_index_with_errors, load_model_spec

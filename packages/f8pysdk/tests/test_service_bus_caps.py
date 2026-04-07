@@ -6,8 +6,8 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from f8pysdk.service_bus.bus import ServiceBus, ServiceBusConfig  # noqa: E402
-from f8pysdk.runtime_node import RuntimeNode  # noqa: E402
+from f8pysdk.nodes import RuntimeNode  # noqa: E402
+from f8pysdk.service_bus import ServiceBus, ServiceBusConfig  # noqa: E402
 from f8pysdk.testing import buffer_input  # noqa: E402
 
 

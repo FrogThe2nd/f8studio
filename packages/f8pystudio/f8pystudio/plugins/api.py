@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from collections.abc import Callable
 from typing import Any, Protocol, runtime_checkable
 
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
+from f8pysdk.registry import RuntimeNodeRegistry
 
 
 @dataclass(frozen=True)

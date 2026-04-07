@@ -156,3 +156,12 @@ Stable top-level modules introduced during Slice D:
 - `f8pysdk.codec`
 - `f8pysdk.state`
 - `f8pysdk.testing`
+
+Stable top-level modules introduced during public API cleanup:
+
+- `f8pysdk.app`
+- `f8pysdk.command`
+- `f8pysdk.data`
+- `f8pysdk.nodes`
+- `f8pysdk.registry`
+- `f8pysdk.transport`

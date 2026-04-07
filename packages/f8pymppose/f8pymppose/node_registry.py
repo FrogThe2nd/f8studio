@@ -16,8 +16,8 @@ from f8pysdk import (
     string_schema,
     any_schema,
 )
-from f8pysdk.runtime_node import RuntimeNode
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
+from f8pysdk.nodes import RuntimeNode
+from f8pysdk.registry import RuntimeNodeRegistry
 
 from .config import (
     DEFAULT_INFER_EVERY_N,

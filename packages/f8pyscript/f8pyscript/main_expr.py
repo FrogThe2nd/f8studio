@@ -4,12 +4,11 @@ import logging
 import os
 from typing import Any
 
+from f8pysdk.app import ServiceCliTemplate, ServiceRuntime, ServiceRuntimeConfig
 from f8pysdk.capabilities import RungraphHook
 from f8pysdk.generated import F8RuntimeGraph
 from f8pysdk.json_unwrap import unwrap_json_value
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
-from f8pysdk.service_cli import ServiceCliTemplate
-from f8pysdk.service_runtime import ServiceRuntime, ServiceRuntimeConfig
+from f8pysdk.registry import RuntimeNodeRegistry
 
 from .constants import EXPR_SERVICE_CLASS
 from .expr_node_registry import register_expr_specs

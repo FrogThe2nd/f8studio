@@ -26,8 +26,8 @@ from f8pysdk import (
 from f8pysdk.capabilities import EntrypointNode, NodeBus
 from f8pysdk.executors.exec_flow import EntrypointContext
 from f8pysdk.nats_naming import ensure_token
-from f8pysdk.runtime_node import OperatorNode
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
+from f8pysdk.nodes import OperatorNode
+from f8pysdk.registry import RuntimeNodeRegistry
 from f8pysdk.time_utils import now_ms
 
 from ..constants import SERVICE_CLASS

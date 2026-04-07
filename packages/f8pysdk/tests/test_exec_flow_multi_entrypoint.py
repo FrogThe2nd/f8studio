@@ -17,7 +17,7 @@ from f8pysdk.generated import (  # noqa: E402
     F8RuntimeGraph,
     F8RuntimeNode,
 )
-from f8pysdk.runtime_node import OperatorNode  # noqa: E402
+from f8pysdk.nodes import OperatorNode  # noqa: E402
 from f8pysdk.testing import ServiceBusHarness  # noqa: E402
 
 

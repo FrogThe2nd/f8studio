@@ -168,7 +168,7 @@ class ServiceProcessManager:
         if cfg.purge_kv_bucket_on_start:
             try:
                 from f8pysdk.nats_naming import kv_bucket_for_service
-                from f8pysdk.nats_transport import reset_kv_bucket_sync
+                from f8pysdk.transport import reset_kv_bucket_sync
 
                 reset_kv_bucket_sync(url=nats_url, kv_bucket=kv_bucket_for_service(service_id), timeout_s=2.5)
                 if on_output is not None:

@@ -12,7 +12,7 @@ from qtpy import QtCore
 
 from f8pysdk import F8RuntimeGraph
 from f8pysdk.nats_naming import ensure_token, new_id
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
+from f8pysdk.registry import RuntimeNodeRegistry
 from f8pysdk.state import StateWriteError
 from f8pystudio.contracts.ui_commands import UiCommand
 from f8pystudio.diagnostics.error_reporting import ExceptionLogOnce, report_exception

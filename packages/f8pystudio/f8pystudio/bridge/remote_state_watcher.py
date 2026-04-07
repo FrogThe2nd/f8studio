@@ -11,7 +11,7 @@ from f8pysdk.nats_naming import (
     kv_key_node_state,
     parse_kv_key_node_state,
 )
-from f8pysdk.nats_transport import NatsTransport, NatsTransportConfig
+from f8pysdk.transport import NatsTransport, NatsTransportConfig
 from f8pysdk.time_utils import now_ms
 from f8pysdk.codec import decode_obj
 

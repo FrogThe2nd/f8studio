@@ -11,8 +11,8 @@ from f8pysdk.generated import (
     F8StateAccess,
     F8StateSpec,
 )
-from f8pysdk.runtime_node import RuntimeNode
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
+from f8pysdk.nodes import RuntimeNode
+from f8pysdk.registry import RuntimeNodeRegistry
 from f8pysdk.schema_helpers import integer_schema, number_schema
 from f8pysdk.spec_edit_policy import (
     can_add as policy_can_add,

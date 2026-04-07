@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from f8pysdk import F8ServiceSchemaVersion, F8ServiceSpec
 from f8pysdk import F8StateAccess, F8StateSpec, integer_schema
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
+from f8pysdk.registry import RuntimeNodeRegistry
 
 from f8pystudio.operators import register_operator
 from f8pystudio.studio_specs.identifiers import SERVICE_CLASS, STUDIO_SERVICE_ID

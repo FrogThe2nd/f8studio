@@ -10,8 +10,8 @@ from f8pysdk import (
     string_schema,
 )
 from f8pysdk.generated import F8RuntimeNode
-from f8pysdk.runtime_node import RuntimeNode
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
+from f8pysdk.nodes import RuntimeNode
+from f8pysdk.registry import RuntimeNodeRegistry
 
 from .constants import SERVICE_CLASS
 from .operators.serial_out import register_operator as register_serial_out_operator

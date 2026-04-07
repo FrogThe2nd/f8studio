@@ -12,10 +12,10 @@ if ROOT not in sys.path:
 
 from f8pysdk.generated import F8RuntimeNode  # noqa: E402
 from f8pysdk.nats_naming import data_subject  # noqa: E402
-from f8pysdk.runtime_node import OperatorNode, ServiceNode  # noqa: E402
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry  # noqa: E402
-from f8pysdk.service_bus.bus import ServiceBus, ServiceBusConfig  # noqa: E402
-from f8pysdk.service_runtime import ServiceRuntime, ServiceRuntimeConfig  # noqa: E402
+from f8pysdk.nodes import OperatorNode, ServiceNode  # noqa: E402
+from f8pysdk.registry import RuntimeNodeRegistry  # noqa: E402
+from f8pysdk.service_bus import ServiceBus, ServiceBusConfig  # noqa: E402
+from f8pysdk.app import ServiceRuntime, ServiceRuntimeConfig  # noqa: E402
 from f8pysdk.testing import InMemoryCluster, InMemoryTransport, ServiceBusHarness, push_input  # noqa: E402
 
 

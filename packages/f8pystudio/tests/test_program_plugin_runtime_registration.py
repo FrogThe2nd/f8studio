@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
+from f8pysdk.registry import RuntimeNodeRegistry
 
 from f8pystudio.plugins.api import PluginOperatorRegistration, StudioPluginManifest
 from f8pystudio.app.program import PyStudioProgram

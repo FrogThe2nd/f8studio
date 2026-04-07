@@ -21,8 +21,8 @@ from f8pysdk import (
     string_schema,
 )
 from f8pysdk.nats_naming import ensure_token
-from f8pysdk.runtime_node import RuntimeNode
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
+from f8pysdk.nodes import RuntimeNode
+from f8pysdk.registry import RuntimeNodeRegistry
 
 from f8pystudio.studio_specs.identifiers import SERVICE_CLASS
 from f8pystudio.contracts.ui_commands import emit_ui_command

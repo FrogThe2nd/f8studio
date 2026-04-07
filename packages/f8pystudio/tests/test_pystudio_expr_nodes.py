@@ -10,10 +10,10 @@ if ROOT not in sys.path:
 
 from f8pysdk import F8DataPortSpec, any_schema  # noqa: E402
 from f8pysdk.generated import F8RuntimeGraph, F8RuntimeNode, F8StateAccess, F8StateSpec  # noqa: E402
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry  # noqa: E402
+from f8pysdk.registry import RuntimeNodeRegistry  # noqa: E402
 from f8pysdk.schema_helpers import number_schema  # noqa: E402
 from f8pysdk.testing import buffer_input  # noqa: E402
-from f8pysdk.service_host import ServiceHost, ServiceHostConfig  # noqa: E402
+from f8pysdk.app import ServiceHost, ServiceHostConfig  # noqa: E402
 from f8pysdk.testing import ServiceBusHarness  # noqa: E402
 
 from f8pystudio.studio_specs.identifiers import SERVICE_CLASS  # noqa: E402

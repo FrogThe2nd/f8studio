@@ -3,9 +3,19 @@ from __future__ import annotations
 """
 Service bus package.
 
-Convenience re-exports (historical API):
+Stable public bus imports:
 - `from f8pysdk.service_bus import ServiceBus, ServiceBusConfig, CrossPublishPolicy, DataDeliveryMode`
 - `from f8pysdk.service_bus import StateRead, StateWriteOrigin, ...`
+
+Adjacent stable public modules:
+- `f8pysdk.app`
+- `f8pysdk.command`
+- `f8pysdk.data`
+- `f8pysdk.nodes`
+- `f8pysdk.registry`
+- `f8pysdk.state`
+- `f8pysdk.transport`
+- `f8pysdk.testing`
 """
 
 from .bus import (

@@ -4,10 +4,10 @@ import asyncio
 import logging
 from typing import Any
 
+from .codec import decode_obj
 from .nats_naming import kv_key_ready
-from .nats_transport import NatsTransport
+from .transport import NatsTransport
 from .time_utils import now_ms
-from .service_bus.codec import decode_obj
 
 
 log = logging.getLogger(__name__)

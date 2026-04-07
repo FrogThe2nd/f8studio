@@ -17,8 +17,8 @@ if SDK_ROOT not in sys.path:
 from f8pysdk import F8StateAccess, F8StateSpec, any_schema  # noqa: E402
 from f8pysdk.generated import F8RuntimeGraph, F8RuntimeNode  # noqa: E402
 from f8pysdk.msgspec_codec import dump_json  # noqa: E402
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry  # noqa: E402
-from f8pysdk.service_host import ServiceHost, ServiceHostConfig  # noqa: E402
+from f8pysdk.registry import RuntimeNodeRegistry  # noqa: E402
+from f8pysdk.app import ServiceHost, ServiceHostConfig  # noqa: E402
 from f8pysdk.shm.video import VideoShmWriter  # noqa: E402
 from f8pysdk.testing import ServiceBusHarness  # noqa: E402
 

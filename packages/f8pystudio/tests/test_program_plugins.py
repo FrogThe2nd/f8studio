@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from NodeGraphQt import BaseNode
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
+from f8pysdk.registry import RuntimeNodeRegistry
 
 from f8pystudio.plugins.api import PluginOperatorRegistration, PluginRendererRegistration, StudioPluginManifest
 from f8pystudio.app.program import PyStudioProgram

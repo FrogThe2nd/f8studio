@@ -242,7 +242,7 @@ class PosePayloadTests(unittest.TestCase):
         self.assertAlmostEqual(float(bones[10]["pos"][1]), 0.2, places=6)
         self.assertAlmostEqual(float(bones[10]["pos"][2]), 0.3, places=6)
 
-    def test_build_skeleton_payload_camera_source_ignores_world_keypoints(self) -> None:
+    def test_build_skeleton_payload_camera_source_uses_camera_relative_depth(self) -> None:
         keypoints = [
             {"x": float(i + 1), "y": float(i + 2), "z": 0.1 * float(i + 1), "score": 0.95}
             for i in range(33)
@@ -262,7 +262,7 @@ class PosePayloadTests(unittest.TestCase):
         self.assertEqual(bones[10]["name"], "mouth_right")
         self.assertAlmostEqual(float(bones[10]["pos"][0]), 11.0, places=6)
         self.assertAlmostEqual(float(bones[10]["pos"][1]), -12.0, places=6)
-        self.assertAlmostEqual(float(bones[10]["pos"][2]), 110.0, places=5)
+        self.assertAlmostEqual(float(bones[10]["pos"][2]), 1.1, places=5)
 
     def test_build_skeleton_payload_camera_source_uses_image_depth_without_world_keypoints(self) -> None:
         keypoints = [
@@ -301,7 +301,7 @@ class PosePayloadTests(unittest.TestCase):
         self.assertEqual(DEFAULT_SKELETON_SOURCE, "camera")
         self.assertAlmostEqual(float(bones[10]["pos"][0]), 11.0, places=6)
         self.assertAlmostEqual(float(bones[10]["pos"][1]), -12.0, places=6)
-        self.assertAlmostEqual(float(bones[10]["pos"][2]), 110.0, places=5)
+        self.assertAlmostEqual(float(bones[10]["pos"][2]), 1.1, places=5)
 
     def test_node_registry_defaults_share_config_constants(self) -> None:
         defaults = {field.name: field.valueSchema.default for field in _state_fields()}

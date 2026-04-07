@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from f8pysdk import F8StateAccess, F8StateSpec, integer_schema, string_schema
-from f8pysdk.runtime_node import OperatorNode
+from f8pysdk.nodes import OperatorNode
 
 
 UPSTREAM_SAMPLING_MODE_PASSIVE = "passive"

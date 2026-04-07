@@ -7,7 +7,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from f8pysdk.generated import F8OperatorSpec, F8ServiceSpec, F8StateAccess, F8StateSpec  # noqa: E402
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry  # noqa: E402
+from f8pysdk.registry import RuntimeNodeRegistry  # noqa: E402
 from f8pysdk.schema_helpers import boolean_schema, string_schema  # noqa: E402
 
 

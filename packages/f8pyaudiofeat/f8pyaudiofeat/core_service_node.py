@@ -10,7 +10,7 @@ from typing import Any
 import numpy as np
 
 from f8pysdk.nats_naming import ensure_token
-from f8pysdk.runtime_node import ServiceNode
+from f8pysdk.nodes import ServiceNode
 from f8pysdk.shm.audio import (
     AUDIO_SHM_MAGIC,
     AUDIO_SHM_VERSION,

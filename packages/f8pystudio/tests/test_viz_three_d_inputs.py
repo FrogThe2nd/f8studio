@@ -13,7 +13,7 @@ for p in (PKG_STUDIO, PKG_SDK):
 
 from f8pysdk import F8DataPortSpec, any_schema  # noqa: E402
 from f8pysdk.generated import F8RuntimeNode  # noqa: E402
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry  # noqa: E402
+from f8pysdk.registry import RuntimeNodeRegistry  # noqa: E402
 
 from f8pystudio.studio_specs.identifiers import SERVICE_CLASS  # noqa: E402
 from f8pystudio.operators.viz_three_d import OPERATOR_CLASS, VizThreeDRuntimeNode, register_operator  # noqa: E402

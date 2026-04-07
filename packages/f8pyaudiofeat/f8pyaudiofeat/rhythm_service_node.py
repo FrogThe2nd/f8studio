@@ -8,7 +8,7 @@ from typing import Any
 import numpy as np
 
 from f8pysdk.nats_naming import ensure_token
-from f8pysdk.runtime_node import ServiceNode
+from f8pysdk.nodes import ServiceNode
 
 from .constants import CORE_SCHEMA_VERSION, RHYTHM_SCHEMA_VERSION
 from .feature_math import compute_pulse_clarity, compute_tempo_bpm, librosa_available, select_recent_onset

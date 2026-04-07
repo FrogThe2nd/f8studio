@@ -3,9 +3,19 @@
 Python runtime SDK for running an F8 service process.
 
 ### Core building blocks
-- `ServiceBus` (`f8pysdk/service_bus.py`): public runtime facade over transport, routing, state, commands, and lifecycle.
+- `ServiceBus` (`f8pysdk.service_bus`): public runtime facade over transport, routing, state, commands, and lifecycle.
 - `ServiceHost` (`f8pysdk/service_host.py`): rungraph-driven runtime node materialization/registration.
 - `ServiceRuntime` (`f8pysdk/service_runtime.py`): runtime facade that wires `ServiceBus` + `ServiceHost`.
+
+Stable public modules:
+- `f8pysdk.app`: service program/runtime/host entrypoints
+- `f8pysdk.nodes`: `RuntimeNode`, `ServiceNode`, `OperatorNode`
+- `f8pysdk.registry`: `RuntimeNodeRegistry` and registry errors
+- `f8pysdk.command`: command result/output policy types
+- `f8pysdk.data`: data delivery and cross-publish policy types
+- `f8pysdk.state`: canonical state read/write types
+- `f8pysdk.transport`: NATS transport façade
+- `f8pysdk.testing`: in-memory harness plus emit/pull/buffer test helpers
 
 Internal runtime split:
 - `DataRouter`: data routing, buffering, subscriptions, callback batching
@@ -28,8 +38,8 @@ Use `ServiceCliTemplate` (`f8pysdk/service_cli.py`) to keep each service process
 Minimal example:
 
 ```py
-from f8pysdk.service_cli import ServiceCliTemplate
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
+from f8pysdk.app import ServiceCliTemplate
+from f8pysdk.registry import RuntimeNodeRegistry
 
 class MyService(ServiceCliTemplate):
     @property
@@ -67,7 +77,12 @@ Data contract:
 Stable helper modules:
 - `f8pysdk.codec`: msgpack request/reply helpers (`encode_obj`, `decode_obj`, `decode_as`)
 - `f8pysdk.state`: canonical state result/error/context types
-- `f8pysdk.testing`: in-memory harness plus buffered input helpers for tests
+- `f8pysdk.command`: command output/result enums and result envelopes
+- `f8pysdk.data`: data delivery and cross-publish policy types
+- `f8pysdk.nodes`: runtime node base classes
+- `f8pysdk.registry`: runtime registry and registry errors
+- `f8pysdk.transport`: NATS transport façade and KV reset helpers
+- `f8pysdk.testing`: in-memory harness plus emit/pull/buffer helpers for tests
 
 ### Headless Runner
 

@@ -19,8 +19,8 @@ from f8pysdk import (
 )
 from f8pysdk.builtin_state_fields import OPERATOR_ID_FIELD_NAME, SVC_ID_FIELD_NAME
 from f8pysdk.nats_naming import ensure_token
-from f8pysdk.runtime_node import OperatorNode
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
+from f8pysdk.nodes import OperatorNode
+from f8pysdk.registry import RuntimeNodeRegistry
 
 from ..constants import SERVICE_CLASS
 from ..recording import FORMAT_VERSION, RecordingHeader, RecordingReader, RecordingWriter

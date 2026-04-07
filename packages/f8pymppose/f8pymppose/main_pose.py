@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from f8pysdk.runtime_node_registry import RuntimeNodeRegistry
-from f8pysdk.service_cli import ServiceCliTemplate
+from f8pysdk.registry import RuntimeNodeRegistry
+from f8pysdk.app import ServiceCliTemplate
 
 from .constants import POSE_SERVICE_CLASS
 from .node_registry import register_specs
