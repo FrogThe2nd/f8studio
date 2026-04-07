@@ -13,12 +13,14 @@ from f8pysdk.spec_metadata import coerce_spec_payload
 
 from ..assets.common import JsonObject, json_object_from_value
 from ..ui.support.ui_notifications import show_info, show_warning
+from ..assets.ui.project_asset_dialogs import AssetOverwriteChoice, AssetOverwriteMetaDialog
 from ..assets.variants.variant_compose import _VariantNode as _ComposeVariantNode
 from ..assets.variants.variant_compose import build_variant_record_from_node
 from ..assets.variants.variant_ids import build_variant_node_type
 from ..assets.variants.variant_metadata import variant_ref_from_record, variant_ref_to_json
 from ..assets.variants.variant_repository import (
-    is_variant_name_conflict,
+    local_variant_entry_by_name,
+    list_entries_for_base,
     normalize_variant_name,
     upsert_variant,
     variant_record,
@@ -129,53 +131,22 @@ class GraphVariantActionsMixin:
         default_name: str,
         default_description: str,
         default_tags: list[str],
-        name_validator: Callable[[str], str | None] | None = None,
-    ) -> tuple[str, str, list[str]] | None:
-        dialog = QtWidgets.QDialog(None)
-        dialog.setWindowTitle("Save Node As Variant")
-        dialog.resize(520, 220)
-
-        name_edit = QtWidgets.QLineEdit(default_name, dialog)
-        desc_edit = QtWidgets.QLineEdit(default_description, dialog)
-        tags_edit = QtWidgets.QLineEdit(", ".join(default_tags), dialog)
-
-        form = QtWidgets.QFormLayout()
-        form.addRow("Name", name_edit)
-        form.addRow("Description", desc_edit)
-        form.addRow("Tags (comma-separated)", tags_edit)
-
-        buttons = QtWidgets.QDialogButtonBox(
-            QtWidgets.QDialogButtonBox.StandardButton.Ok | QtWidgets.QDialogButtonBox.StandardButton.Cancel,
-            parent=dialog,
+        overwrite_choices: list[AssetOverwriteChoice],
+        name_validator: Callable[[str, str | None], str | None] | None = None,
+    ) -> tuple[str, str, list[str], str | None] | None:
+        dialog = AssetOverwriteMetaDialog(
+            parent=None,
+            title="Save Node As Variant",
+            name=default_name,
+            description=default_description,
+            tags=default_tags,
+            overwrite_choices=overwrite_choices,
+            overwrite_label="Overwrite Existing Variant",
+            name_validator=name_validator,
         )
-        def _on_accept() -> None:
-            candidate = str(name_edit.text() or "").strip()
-            if not candidate:
-                show_warning(dialog, "Invalid name", "Variant name cannot be empty.")
-                return
-            validator = name_validator
-            if validator is not None:
-                message = validator(candidate)
-                if message:
-                    show_warning(dialog, "Invalid name", message)
-                    return
-            dialog.accept()
-
-        _ = buttons.accepted.connect(_on_accept)  # pyright: ignore[reportUnknownMemberType]
-        _ = buttons.rejected.connect(dialog.reject)  # pyright: ignore[reportUnknownMemberType]
-
-        layout = QtWidgets.QVBoxLayout(dialog)
-        layout.addLayout(form)
-        layout.addWidget(buttons)
-
         if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:  # pyright: ignore[reportUnknownMemberType]
             return None
-        name = str(name_edit.text() or "").strip()
-        if not name:
-            return None
-        description = str(desc_edit.text() or "").strip()
-        tags = [part.strip() for part in str(tags_edit.text() or "").split(",")]
-        return name, description, [tag for tag in tags if tag]
+        return dialog.values()
 
     def _save_node_as_variant(self, node: BaseNode | None) -> None:
         host = cast(_GraphVariantHost, cast(object, self))
@@ -189,42 +160,63 @@ class GraphVariantActionsMixin:
         default_desc = str(spec.description or "").strip()
         default_tags = self._variant_tags(spec)
         node_type = str(variant_node.type_ or "").strip()
+        overwrite_choices = [
+            AssetOverwriteChoice(
+                asset_id=str(entry.record.variantId),
+                label=str(entry.record.name),
+                description=str(entry.record.description),
+                tags=[str(tag) for tag in list(entry.record.tags or []) if str(tag).strip()],
+            )
+            for entry in list_entries_for_base(node_type, include_uninstalled=True)
+            if str(entry.source.value) == "local"
+        ]
 
-        def _validate_variant_name(candidate: str) -> str | None:
+        def _validate_variant_name(candidate: str, overwrite_variant_id: str | None) -> str | None:
             normalized_name = normalize_variant_name(candidate)
-            if is_variant_name_conflict(node_type, normalized_name):
-                return f"Variant name '{normalized_name}' already exists. Please rename."
+            existing_local_entry = local_variant_entry_by_name(node_type, normalized_name)
+            if overwrite_variant_id:
+                if existing_local_entry is not None and str(existing_local_entry.record.variantId) != str(overwrite_variant_id):
+                    return f"Variant name '{normalized_name}' already exists. Please choose the existing variant to overwrite."
+                return None
+            if existing_local_entry is not None:
+                return f"Variant name '{normalized_name}' already exists. Please choose the existing variant to overwrite."
             return None
 
         values = self._prompt_variant_metadata(
             default_name=default_name,
             default_description=default_desc,
             default_tags=default_tags,
+            overwrite_choices=overwrite_choices,
             name_validator=_validate_variant_name,
         )
         if values is None:
             return
-        name, description, tags = values
+        name, description, tags, overwrite_variant_id = values
         normalized_name = normalize_variant_name(name)
-        if is_variant_name_conflict(node_type, normalized_name):
-            show_warning(
-                host._notification_parent(),
-                "Invalid name",
-                f"Variant name '{normalized_name}' already exists. Please rename.",
+        existing_local_entry = (
+            None
+            if overwrite_variant_id is None
+            else next(
+                (entry for entry in list_entries_for_base(node_type, include_uninstalled=True) if str(entry.record.variantId) == str(overwrite_variant_id)),
+                None,
             )
-            return
+        )
+        if existing_local_entry is None:
+            existing_local_entry = local_variant_entry_by_name(node_type, normalized_name)
         record = build_variant_record_from_node(
             node=cast(_ComposeVariantNode, cast(object, variant_node)),
             name=name,
             description=description,
             tags=tags,
+            variant_id=(None if existing_local_entry is None else str(existing_local_entry.record.variantId)),
         )
         try:
-            _ = upsert_variant(record)
+            saved_record = upsert_variant(record)
         except ValueError as exc:
             show_warning(host._notification_parent(), "Invalid name", str(exc))
             return
-        show_info(host._notification_parent(), "Variant Saved", f"Saved variant:\n{name}")
+        title = "Variant Updated" if existing_local_entry is not None else "Variant Saved"
+        show_info(host._notification_parent(), title, f"Saved variant:\n{saved_record.name}")
 
     def _on_save_variant_menu_action(self, graph: object, node: BaseNode | None) -> None:
         _ = graph

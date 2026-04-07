@@ -99,16 +99,34 @@ def variant_entry(variant_id: str, *, include_uninstalled: bool = True) -> F8Var
     return _service().entry(variant_id, include_uninstalled=include_uninstalled)
 
 
+def local_variant_entry_by_name(base_node_type: str, name: str) -> F8VariantEntry | None:
+    normalized_base_node_type = str(base_node_type or "").strip()
+    normalized_name = normalize_variant_name(name)
+    if not normalized_base_node_type or not normalized_name:
+        return None
+    for entry in _service()._local_provider.load_entries():
+        if str(entry.record.baseNodeType or "").strip() != normalized_base_node_type:
+            continue
+        if normalize_variant_name(entry.record.name) != normalized_name:
+            continue
+        return entry
+    return None
+
+
+def upsert_variant_entry(entry: F8VariantEntry) -> F8VariantEntry:
+    return _service().upsert_local_entry(entry)
+
+
 def upsert_variant(record: F8VariantRecord) -> F8VariantRecord:
     from .variant_models import F8VariantSourceKind
 
-    _service().upsert_local_entry(
+    saved = _service().upsert_local_entry(
         F8VariantEntry(
             record=record,
             source=F8VariantSourceKind.local,
         )
     )
-    return record
+    return saved.record
 
 
 def delete_variant(variant_id: str) -> bool:
@@ -154,6 +172,8 @@ __all__ = [
     "variant_exists",
     "variant_record",
     "variant_entry",
+    "local_variant_entry_by_name",
+    "upsert_variant_entry",
     "upsert_variant",
     "delete_variant",
     "import_from_json",

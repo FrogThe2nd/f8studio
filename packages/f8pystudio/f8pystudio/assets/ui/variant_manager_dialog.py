@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from f8pysdk.msgspec_codec import dump_json, validate_as
+from f8pysdk.msgspec_codec import copy_model, dump_json, validate_as
 import json
 from collections.abc import Callable
 import logging
@@ -16,15 +16,17 @@ from ...ui.support.ui_notifications import show_info, show_warning
 from ..variants.variant_compose import build_variant_record_from_node
 from ..variants.variant_ids import build_variant_node_type
 from f8pysdk import F8VariantRecord
-from ..variants.variant_models import F8VariantEntry, F8VariantSourceKind, F8VariantVisibility, variant_now_iso
+from ..variants.variant_models import F8VariantEntry, F8VariantSourceKind, F8VariantSyncState, F8VariantVisibility, variant_now_iso
 from ..variants.variant_repository import (
     delete_variant,
     export_to_json,
     import_from_json,
     is_variant_name_conflict,
+    local_variant_entry_by_name,
     list_entries_for_base,
     normalize_variant_name,
     upsert_variant,
+    upsert_variant_entry,
 )
 from ..variants.variant_events import subscribe_variants_changed
 from ..variants.variant_sync import VariantSyncClient
@@ -33,68 +35,12 @@ from ...ui.support.json_text_editor import attach_json_enhancements
 from .asset_cloud_account_menu import build_asset_account_menu, prompt_asset_cloud_sign_in
 from .asset_graph_preview import AssetGraphPreviewPane
 from .catalog_status import AssetCatalogRowState, build_asset_catalog_row_state
+from .project_asset_dialogs import AssetOverwriteChoice, AssetOverwriteMetaDialog
 
 logger = logging.getLogger(__name__)
 
 # Compatibility alias used by older tests/callers that patched the dialog module directly.
 list_variants_for_base = list_entries_for_base
-
-
-class _VariantMetaDialog(QtWidgets.QDialog):
-    def __init__(
-        self,
-        *,
-        parent: QtWidgets.QWidget | None,
-        title: str,
-        name: str,
-        description: str,
-        tags: list[str],
-        name_validator: Callable[[str], str | None] | None = None,
-    ) -> None:
-        super().__init__(parent)
-        self.setWindowTitle(title)
-        self.resize(520, 220)
-        self._name_validator = name_validator
-        self._name = QtWidgets.QLineEdit(name, self)
-        self._description = QtWidgets.QLineEdit(description, self)
-        self._tags = QtWidgets.QLineEdit(", ".join(tags), self)
-
-        form = QtWidgets.QFormLayout()
-        form.addRow("Name", self._name)
-        form.addRow("Description", self._description)
-        form.addRow("Tags (comma-separated)", self._tags)
-
-        buttons = QtWidgets.QDialogButtonBox(
-            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel,
-            parent=self,
-        )
-        buttons.accepted.connect(self._on_accept_clicked)  # type: ignore[attr-defined]
-        buttons.rejected.connect(self.reject)  # type: ignore[attr-defined]
-
-        layout = QtWidgets.QVBoxLayout(self)
-        layout.addLayout(form)
-        layout.addWidget(buttons)
-
-    def _on_accept_clicked(self) -> None:
-        name = str(self._name.text() or "").strip()
-        if not name:
-            show_warning(self, "Invalid name", "Variant name cannot be empty.")
-            return
-        validator = self._name_validator
-        if validator is not None:
-            message = validator(name)
-            if message:
-                show_warning(self, "Invalid name", message)
-                return
-        self.accept()
-
-    def values(self) -> tuple[str, str, list[str]]:
-        tags = [s.strip() for s in str(self._tags.text() or "").split(",")]
-        return (
-            str(self._name.text() or "").strip(),
-            str(self._description.text() or "").strip(),
-            [t for t in tags if t],
-        )
 
 
 class VariantManagerDialog(QtWidgets.QDialog):
@@ -185,7 +131,8 @@ class VariantManagerDialog(QtWidgets.QDialog):
 
         btn_add = QtWidgets.QPushButton("Save From Selected Node", self)
         btn_edit = QtWidgets.QPushButton("Edit Metadata", self)
-        btn_delete = QtWidgets.QPushButton("Delete", self)
+        btn_delete_local = QtWidgets.QPushButton("Delete Local", self)
+        btn_delete_remote = QtWidgets.QPushButton("Delete Remote", self)
         btn_copy_local = QtWidgets.QPushButton("Save As Local Copy", self)
         btn_upload = QtWidgets.QPushButton("Upload", self)
         btn_install = QtWidgets.QPushButton("Download/Install", self)
@@ -207,14 +154,16 @@ class VariantManagerDialog(QtWidgets.QDialog):
         btn_visibility.setIcon(icon_for(btn_visibility, StudioIcon.EYE_STAR))
         btn_import.setIcon(icon_for(btn_import, StudioIcon.PACKAGE_IMPORT))
         btn_export.setIcon(icon_for(btn_export, StudioIcon.PACKAGE_EXPORT))
-        btn_delete.setIcon(icon_for(btn_delete, StudioIcon.TRASH))
+        btn_delete_local.setIcon(icon_for(btn_delete_local, StudioIcon.TRASH))
+        btn_delete_remote.setIcon(icon_for(btn_delete_remote, StudioIcon.TRASH))
         btn_edit.setIcon(icon_for(btn_edit, StudioIcon.EDIT))
         btn_copy_local.setIcon(icon_for(btn_copy_local, StudioIcon.SAVE))
         btn_create.setIcon(icon_for(btn_create, StudioIcon.SQUARE_PLUS))
 
         btn_add.clicked.connect(self._on_add_clicked)  # type: ignore[attr-defined]
         btn_edit.clicked.connect(self._on_edit_clicked)  # type: ignore[attr-defined]
-        btn_delete.clicked.connect(self._on_delete_clicked)  # type: ignore[attr-defined]
+        btn_delete_local.clicked.connect(self._on_delete_local_clicked)  # type: ignore[attr-defined]
+        btn_delete_remote.clicked.connect(self._on_delete_remote_clicked)  # type: ignore[attr-defined]
         btn_copy_local.clicked.connect(self._on_copy_local_clicked)  # type: ignore[attr-defined]
         btn_upload.clicked.connect(self._on_upload_clicked)  # type: ignore[attr-defined]
         btn_install.clicked.connect(self._on_install_clicked)  # type: ignore[attr-defined]
@@ -234,7 +183,8 @@ class VariantManagerDialog(QtWidgets.QDialog):
         self._configure_icon_button(btn_visibility, "Visibility")
         self._configure_icon_button(btn_import, "Import")
         self._configure_icon_button(btn_export, "Export")
-        self._configure_icon_button(btn_delete, "Delete")
+        self._configure_icon_button(btn_delete_local, "Delete Local")
+        self._configure_icon_button(btn_delete_remote, "Delete Remote")
         self._configure_icon_button(btn_edit, "Edit Metadata")
         self._configure_icon_button(btn_copy_local, "Save As Local Copy")
         self._configure_icon_button(btn_create, "Create On Canvas")
@@ -251,7 +201,8 @@ class VariantManagerDialog(QtWidgets.QDialog):
         for button in [
             btn_add,
             btn_edit,
-            btn_delete,
+            btn_delete_local,
+            btn_delete_remote,
             btn_copy_local,
             btn_upload,
             btn_install,
@@ -291,7 +242,8 @@ class VariantManagerDialog(QtWidgets.QDialog):
         layout.addWidget(split, 1)
 
         self._btn_edit = btn_edit
-        self._btn_delete = btn_delete
+        self._btn_delete_local = btn_delete_local
+        self._btn_delete_remote = btn_delete_remote
         self._btn_copy_local = btn_copy_local
         self._btn_upload = btn_upload
         self._btn_install = btn_install
@@ -620,6 +572,27 @@ class VariantManagerDialog(QtWidgets.QDialog):
                 return entry
         return None
 
+    def _selected_variant_id(self) -> str:
+        entry = self._selected_entry()
+        if entry is None:
+            return ""
+        return str(entry.record.variantId or "").strip()
+
+    def _selected_local_entry(self) -> F8VariantEntry | None:
+        variant_id = self._selected_variant_id()
+        if not variant_id:
+            return None
+        for entry in self._sync_client._catalog_service._local_provider.load_entries():
+            if str(entry.record.variantId or "").strip() == variant_id:
+                return entry
+        return None
+
+    def _selected_remote_entry(self) -> F8VariantEntry | None:
+        variant_id = self._selected_variant_id()
+        if not variant_id:
+            return None
+        return self._sync_client._catalog_service.remote_entry(variant_id)
+
     def _selected_variant(self) -> F8VariantRecord | None:
         entry = self._selected_entry()
         return None if entry is None else entry.record
@@ -630,7 +603,8 @@ class VariantManagerDialog(QtWidgets.QDialog):
             self._raw.setPlainText("")
             self._preview.clear_preview("Select a variant to preview.")
             self._btn_edit.setEnabled(False)
-            self._btn_delete.setEnabled(False)
+            self._btn_delete_local.setEnabled(False)
+            self._btn_delete_remote.setEnabled(False)
             self._btn_copy_local.setEnabled(False)
             self._btn_upload.setEnabled(False)
             self._btn_install.setEnabled(False)
@@ -662,16 +636,14 @@ class VariantManagerDialog(QtWidgets.QDialog):
         else:
             self._raw.setPlainText(json.dumps(dump_json(selected_entry, mode="json"), ensure_ascii=False, indent=2, default=str))
             self._preview.show_variant_record(selected_entry.record)
-        is_local = selected_entry.source == F8VariantSourceKind.local
-        is_remote = selected_entry.source in {
-            F8VariantSourceKind.remote_official,
-            F8VariantSourceKind.remote_public,
-            F8VariantSourceKind.remote_private,
-        }
-        self._btn_edit.setEnabled(is_local)
-        self._btn_delete.setEnabled(is_local)
-        self._btn_copy_local.setEnabled(not is_local)
-        self._btn_upload.setEnabled(is_local or is_remote)
+        local_entry = self._selected_local_entry()
+        remote_entry = self._selected_remote_entry()
+        is_remote = remote_entry is not None
+        self._btn_edit.setEnabled(local_entry is not None)
+        self._btn_delete_local.setEnabled(local_entry is not None)
+        self._btn_delete_remote.setEnabled(remote_entry is not None and self._is_owned_remote_entry(remote_entry))
+        self._btn_copy_local.setEnabled(local_entry is None and is_remote)
+        self._btn_upload.setEnabled(local_entry is not None or is_remote)
         self._btn_install.setEnabled(is_remote and not variant_entry_is_installed(selected_entry))
         is_community_public = (
             selected_entry.source == F8VariantSourceKind.remote_public
@@ -757,54 +729,104 @@ class VariantManagerDialog(QtWidgets.QDialog):
             node_display_name = str(node.name() or "").strip()
         except (AttributeError, RuntimeError, TypeError):
             node_display_name = ""
-        dlg = _VariantMetaDialog(
+        dlg = AssetOverwriteMetaDialog(
             parent=self,
             title="Save Variant",
             name=str(node_display_name or node.NODE_NAME or spec.label or self._base_node_name),
             description=str(spec.description or ""),
             tags=[str(t) for t in list(spec.tags or [])],
-            name_validator=self._validate_new_variant_name,
+            overwrite_choices=self._overwrite_choices_for_base(),
+            overwrite_label="Overwrite Existing Variant",
+            name_validator=self._validate_save_variant_name,
         )
         if dlg.exec() != QtWidgets.QDialog.Accepted:
             return
-        name, description, tags = dlg.values()
-        record = build_variant_record_from_node(node=node, name=name, description=description, tags=tags)
+        name, description, tags, overwrite_variant_id = dlg.values()
+        existing_local_entry = self._resolve_overwrite_target(name=name, overwrite_variant_id=overwrite_variant_id)
+        record = build_variant_record_from_node(
+            node=node,
+            name=name,
+            description=description,
+            tags=tags,
+            variant_id=(None if existing_local_entry is None else str(existing_local_entry.record.variantId)),
+        )
         try:
-            upsert_variant(record)
+            saved_record = upsert_variant(record)
         except ValueError as exc:
             show_warning(self, "Invalid name", str(exc))
             return
+        action_text = "Updated" if existing_local_entry is not None else "Saved"
+        show_info(self, action_text, f"{action_text} variant:\n{saved_record.name}")
 
     def _on_edit_clicked(self) -> None:
-        selected = self._selected_variant()
-        if selected is None:
+        selected_entry = self._selected_local_entry()
+        if selected_entry is None:
             return
-        dlg = _VariantMetaDialog(
+        selected = selected_entry.record
+        dlg = AssetOverwriteMetaDialog(
             parent=self,
             title="Edit Variant Metadata",
             name=selected.name,
             description=selected.description,
             tags=list(selected.tags or []),
-            name_validator=lambda candidate: self._validate_edit_variant_name(candidate, selected.variantId),
+            overwrite_choices=self._overwrite_choices_for_base(exclude_variant_id=str(selected.variantId)),
+            overwrite_label="Load Metadata From",
+            name_validator=lambda candidate, _selected_id: self._validate_edit_variant_name(candidate, selected.variantId),
         )
         if dlg.exec() != QtWidgets.QDialog.Accepted:
             return
-        name, description, tags = dlg.values()
+        name, description, tags, _overwrite_variant_id = dlg.values()
         payload = dump_json(selected, mode="json")
         payload["name"] = name
         payload["description"] = description
         payload["tags"] = tags
         payload["updatedAt"] = variant_now_iso()
         try:
-            upsert_variant(validate_as(F8VariantRecord, payload))
+            _ = upsert_variant_entry(
+                copy_model(
+                    selected_entry,
+                    update={
+                        "record": validate_as(F8VariantRecord, payload),
+                        "remoteVersionNumber": selected_entry.remoteVersionNumber,
+                    },
+                )
+            )
         except ValueError as exc:
             show_warning(self, "Invalid name", str(exc))
             return
 
-    def _validate_new_variant_name(self, candidate: str) -> str | None:
+    def _overwrite_choices_for_base(self, *, exclude_variant_id: str | None = None) -> list[AssetOverwriteChoice]:
+        excluded = str(exclude_variant_id or "").strip()
+        choices: list[AssetOverwriteChoice] = []
+        for entry in self._sync_client._catalog_service._local_provider.load_entries():
+            if str(entry.record.baseNodeType or "").strip() != self._base_node_type:
+                continue
+            if excluded and str(entry.record.variantId or "").strip() == excluded:
+                continue
+            choices.append(
+                AssetOverwriteChoice(
+                    asset_id=str(entry.record.variantId),
+                    label=str(entry.record.name),
+                    description=str(entry.record.description),
+                    tags=[str(tag) for tag in list(entry.record.tags or []) if str(tag).strip()],
+                )
+            )
+        choices.sort(key=lambda choice: choice.label.lower())
+        return choices
+
+    def _resolve_overwrite_target(self, *, name: str, overwrite_variant_id: str | None) -> F8VariantEntry | None:
+        normalized_name = normalize_variant_name(name)
+        overwrite_entry = None if overwrite_variant_id is None else self._sync_client._catalog_service.entry(str(overwrite_variant_id), include_uninstalled=True)
+        if overwrite_entry is not None and overwrite_entry.source == F8VariantSourceKind.local:
+            return overwrite_entry
+        return local_variant_entry_by_name(self._base_node_type, normalized_name)
+
+    def _validate_save_variant_name(self, candidate: str, overwrite_variant_id: str | None) -> str | None:
         normalized_name = normalize_variant_name(candidate)
-        if is_variant_name_conflict(self._base_node_type, normalized_name):
-            return f"Variant name '{normalized_name}' already exists. Please rename."
+        target_entry = self._resolve_overwrite_target(name=normalized_name, overwrite_variant_id=overwrite_variant_id)
+        exclude_variant_id = None if target_entry is None else str(target_entry.record.variantId)
+        if is_variant_name_conflict(self._base_node_type, normalized_name, exclude_variant_id=exclude_variant_id):
+            return f"Variant name '{normalized_name}' already exists. Please choose the existing variant to overwrite."
         return None
 
     def _validate_edit_variant_name(self, candidate: str, variant_id: str) -> str | None:
@@ -817,45 +839,81 @@ class VariantManagerDialog(QtWidgets.QDialog):
             return f"Variant name '{normalized_name}' already exists. Please rename."
         return None
 
-    def _on_delete_clicked(self) -> None:
-        selected = self._selected_variant()
-        if selected is None:
-            return
-        reply = QtWidgets.QMessageBox.question(self, "Delete variant", f"Delete variant '{selected.name}'?")
-        if reply != QtWidgets.QMessageBox.Yes:
-            return
-        delete_variant(selected.variantId)
-
-    def _on_copy_local_clicked(self) -> None:
-        selected_entry = self._selected_entry()
+    def _on_delete_local_clicked(self) -> None:
+        selected_entry = self._selected_local_entry()
         if selected_entry is None:
             return
-        if selected_entry.source != F8VariantSourceKind.local:
-            try:
-                selected_entry = self._sync_client.hydrate_variant(str(selected_entry.record.variantId))
-            except Exception as exc:
-                show_warning(self, "Load failed", str(exc))
-                return
-        record = selected_entry.record
-        copied = validate_as(F8VariantRecord, {**dump_json(record, mode="json"), "updatedAt": variant_now_iso()})
+        reply = QtWidgets.QMessageBox.question(self, "Delete local variant", f"Delete local variant '{selected_entry.record.name}'?")
+        if reply != QtWidgets.QMessageBox.Yes:
+            return
+        _ = delete_variant(selected_entry.record.variantId)
+        if self._selected_remote_entry() is not None:
+            _ = self._sync_client._catalog_service.uninstall_remote_entry(str(selected_entry.record.variantId))
+
+    def _on_delete_remote_clicked(self) -> None:
+        selected_entry = self._selected_remote_entry()
+        if selected_entry is None or not self._is_owned_remote_entry(selected_entry):
+            return
+        reply = QtWidgets.QMessageBox.question(self, "Delete remote variant", f"Delete remote variant '{selected_entry.record.name}'?")
+        if reply != QtWidgets.QMessageBox.Yes:
+            return
         try:
-            upsert_variant(copied)
+            self._sync_client.delete_variant(str(selected_entry.record.variantId))
+        except Exception as exc:
+            show_warning(self, "Delete remote failed", str(exc))
+            return
+
+    def _on_copy_local_clicked(self) -> None:
+        selected_entry = self._selected_remote_entry()
+        if selected_entry is None:
+            return
+        try:
+            selected_entry = self._sync_client.hydrate_variant(str(selected_entry.record.variantId))
+        except Exception as exc:
+            show_warning(self, "Load failed", str(exc))
+            return
+        record = selected_entry.record
+        copied_entry = copy_model(
+            selected_entry,
+            update={
+                "source": F8VariantSourceKind.local,
+                "record": validate_as(F8VariantRecord, {**dump_json(record, mode="json"), "updatedAt": variant_now_iso()}),
+                "localVersionNumber": selected_entry.remoteVersionNumber,
+                "syncState": F8VariantSyncState.local_only,
+            },
+        )
+        try:
+            saved_entry = upsert_variant_entry(copied_entry)
         except ValueError as exc:
             show_warning(self, "Save local copy failed", str(exc))
             return
-        show_info(self, "Saved", f"Saved local copy:\n{record.name}")
+        show_info(self, "Saved", f"Saved local copy:\n{saved_entry.record.name}")
 
     def _on_upload_clicked(self) -> None:
-        selected_entry = self._selected_entry()
+        local_entry = self._selected_local_entry()
+        remote_entry = self._selected_remote_entry()
+        selected_entry = local_entry if local_entry is not None else remote_entry
         if selected_entry is None:
             return
         try:
             if not self._ensure_logged_in():
                 return
             entry_to_upload = selected_entry
-            if selected_entry.source != F8VariantSourceKind.local:
+            if local_entry is None and remote_entry is not None:
                 entry_to_upload = self._sync_client.hydrate_variant(str(selected_entry.record.variantId))
-            if selected_entry.source == F8VariantSourceKind.local:
+            if local_entry is not None and remote_entry is not None:
+                entry_to_upload = copy_model(
+                    local_entry,
+                    update={
+                        "source": remote_entry.source,
+                        "visibility": remote_entry.visibility,
+                        "remoteRevision": remote_entry.remoteRevision,
+                        "remoteVersionNumber": remote_entry.remoteVersionNumber,
+                        "installed": True,
+                        "hasCachedContent": True,
+                    },
+                )
+            if local_entry is not None and remote_entry is None:
                 visibility = self._choose_visibility()
                 if visibility is None:
                     return
@@ -863,7 +921,7 @@ class VariantManagerDialog(QtWidgets.QDialog):
                 entry_to_upload = validate_as(
                     F8VariantEntry,
                     {
-                        **dump_json(selected_entry, mode="json"),
+                        **dump_json(local_entry, mode="json"),
                         "source": source.value,
                         "visibility": visibility.value,
                         "installed": True,
@@ -1329,6 +1387,20 @@ def variant_row_state_for_entries(
         remote_version_number = remote_entry.remoteVersionNumber
     local_sync_state = None if local_entry is None else local_entry.syncState.value
     local_version_number = None if local_entry is None else local_entry.localVersionNumber
+    if local_entry is not None and remote_entry is not None:
+        if local_entry.syncState == F8VariantSyncState.conflict or remote_entry.syncState == F8VariantSyncState.conflict:
+            local_sync_state = F8VariantSyncState.conflict.value
+            remote_sync_state = F8VariantSyncState.conflict.value
+        elif local_version_number is not None and remote_version_number is not None:
+            if int(local_version_number) > int(remote_version_number):
+                local_sync_state = F8VariantSyncState.modified_local.value
+                remote_sync_state = F8VariantSyncState.synced.value
+            elif int(local_version_number) < int(remote_version_number):
+                local_sync_state = F8VariantSyncState.stale_remote.value
+                remote_sync_state = F8VariantSyncState.synced.value
+            else:
+                local_sync_state = F8VariantSyncState.synced.value
+                remote_sync_state = F8VariantSyncState.synced.value
     return build_asset_catalog_row_state(
         asset_id=variant_id,
         has_local_head=local_entry is not None,

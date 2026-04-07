@@ -67,6 +67,120 @@ class ProjectAssetMetaDialog(QtWidgets.QDialog):
         )
 
 
+@dataclass(frozen=True)
+class AssetOverwriteChoice:
+    asset_id: str
+    label: str
+    description: str
+    tags: list[str]
+
+
+class AssetOverwriteMetaDialog(QtWidgets.QDialog):
+    def __init__(
+        self,
+        *,
+        parent: QtWidgets.QWidget | None,
+        title: str,
+        name: str,
+        description: str,
+        tags: list[str],
+        overwrite_choices: list[AssetOverwriteChoice] | None = None,
+        overwrite_label: str = "Overwrite Existing",
+        selected_asset_id: str | None = None,
+        name_validator: Callable[[str, str | None], str | None] | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.resize(560, 260)
+        self._name_validator = name_validator
+        self._default_name = str(name or "").strip()
+        self._default_description = str(description or "").strip()
+        self._default_tags = [str(tag).strip() for tag in list(tags or []) if str(tag).strip()]
+        self._choices_by_id: dict[str, AssetOverwriteChoice] = {
+            str(choice.asset_id): choice for choice in list(overwrite_choices or []) if str(choice.asset_id).strip()
+        }
+
+        self._overwrite_combo = QtWidgets.QComboBox(self)
+        self._overwrite_combo.addItem("Create New", "")
+        for choice in self._choices_by_id.values():
+            self._overwrite_combo.addItem(str(choice.label), str(choice.asset_id))
+        self._overwrite_combo.currentIndexChanged.connect(self._on_overwrite_changed)  # type: ignore[attr-defined]
+
+        self._name = QtWidgets.QLineEdit(self._default_name, self)
+        self._description = QtWidgets.QLineEdit(self._default_description, self)
+        self._tags = QtWidgets.QLineEdit(", ".join(self._default_tags), self)
+
+        form = QtWidgets.QFormLayout()
+        form.addRow(overwrite_label, self._overwrite_combo)
+        form.addRow("Name", self._name)
+        form.addRow("Description", self._description)
+        form.addRow("Tags (comma-separated)", self._tags)
+
+        buttons = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel,
+            parent=self,
+        )
+        buttons.accepted.connect(self._on_accept_clicked)  # type: ignore[attr-defined]
+        buttons.rejected.connect(self.reject)  # type: ignore[attr-defined]
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.addLayout(form)
+        layout.addWidget(buttons)
+
+        if selected_asset_id:
+            selected_index = self._overwrite_combo.findData(str(selected_asset_id))
+            if selected_index >= 0:
+                self._overwrite_combo.setCurrentIndex(selected_index)
+            else:
+                self._reset_to_defaults()
+        else:
+            self._reset_to_defaults()
+
+    def selected_asset_id(self) -> str | None:
+        data = self._overwrite_combo.currentData()
+        selected_asset_id = str(data or "").strip()
+        return None if not selected_asset_id else selected_asset_id
+
+    def values(self) -> tuple[str, str, list[str], str | None]:
+        tags = [part.strip() for part in str(self._tags.text() or "").split(",")]
+        return (
+            str(self._name.text() or "").strip(),
+            str(self._description.text() or "").strip(),
+            [tag for tag in tags if tag],
+            self.selected_asset_id(),
+        )
+
+    def _on_overwrite_changed(self) -> None:
+        selected_asset_id = self.selected_asset_id()
+        if selected_asset_id is None:
+            self._reset_to_defaults()
+            return
+        choice = self._choices_by_id.get(selected_asset_id)
+        if choice is None:
+            self._reset_to_defaults()
+            return
+        self._name.setText(str(choice.label))
+        self._description.setText(str(choice.description))
+        self._tags.setText(", ".join([str(tag) for tag in list(choice.tags or []) if str(tag).strip()]))
+
+    def _reset_to_defaults(self) -> None:
+        self._name.setText(self._default_name)
+        self._description.setText(self._default_description)
+        self._tags.setText(", ".join(self._default_tags))
+
+    def _on_accept_clicked(self) -> None:
+        name = str(self._name.text() or "").strip()
+        if not name:
+            show_warning(self, "Invalid name", "Name cannot be empty.")
+            return
+        if self._name_validator is not None:
+            message = self._name_validator(name, self.selected_asset_id())
+            if message:
+                show_warning(self, "Invalid name", message)
+                return
+        self.accept()
+
+
 class ProjectPickerDialog(QtWidgets.QDialog):
     def __init__(
         self,

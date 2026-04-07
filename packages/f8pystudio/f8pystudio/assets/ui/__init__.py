@@ -5,6 +5,8 @@ from .asset_cloud_account_menu import (
     prompt_asset_cloud_sign_in,
 )
 from .project_asset_dialogs import (
+    AssetOverwriteChoice,
+    AssetOverwriteMetaDialog,
     ProjectAssetMetaDialog,
     AssetVersionBrowserAction,
     AssetVersionBrowserDialog,
@@ -17,6 +19,8 @@ from .variant_manager_dialog import VariantManagerDialog
 __all__ = [
     "AssetCloudSignInDialog",
     "ComponentCatalogDialog",
+    "AssetOverwriteChoice",
+    "AssetOverwriteMetaDialog",
     "ProjectAssetMetaDialog",
     "AssetVersionBrowserAction",
     "AssetVersionBrowserDialog",

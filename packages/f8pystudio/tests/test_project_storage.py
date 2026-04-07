@@ -38,6 +38,7 @@ def test_assets_database_initializes_component_project_and_variant_tables(tmp_pa
         "component_heads_local",
         "component_remote_cache",
         "variant_heads_local",
+        "variant_versions_local",
         "variant_remote_cache",
     }.issubset(table_names)
 

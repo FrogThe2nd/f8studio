@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import msgspec
+from f8pysdk.msgspec_codec import copy_model
 
 from f8pystudio.assets.variants.variant_catalog import LocalVariantProvider, RemoteCacheProvider, VariantCatalogService
 from f8pystudio.assets.variants.variant_models import (
@@ -156,7 +157,7 @@ def test_local_variant_provider_preserves_service_variant_without_operator_class
     assert isinstance(loaded[0].record.operatorClass, msgspec.UnsetType)
 
 
-def test_variant_catalog_service_tracks_local_version_numbers(tmp_path: Path) -> None:
+def test_variant_catalog_service_keeps_local_version_for_metadata_only_edits(tmp_path: Path) -> None:
     service = VariantCatalogService(db_path=tmp_path / "assets.db")
     first = service.upsert_local_entry(
         F8VariantEntry(
@@ -167,7 +168,14 @@ def test_variant_catalog_service_tracks_local_version_numbers(tmp_path: Path) ->
     )
     second = service.upsert_local_entry(
         F8VariantEntry(
-            record=_make_record(variant_id="local-1", base_node_type="svc.a.op", name="Local One"),
+            record=copy_model(
+                _make_record(variant_id="local-1", base_node_type="svc.a.op", name="Local One Renamed"),
+                update={
+                    "description": "metadata only",
+                    "tags": ["updated"],
+                    "spec": {"label": "Local One"},
+                },
+            ),
             source=F8VariantSourceKind.local,
             syncState=F8VariantSyncState.local_only,
         )
@@ -176,6 +184,59 @@ def test_variant_catalog_service_tracks_local_version_numbers(tmp_path: Path) ->
     loaded = service.entry("local-1", include_uninstalled=True)
 
     assert first.localVersionNumber == 1
-    assert second.localVersionNumber == 2
+    assert second.localVersionNumber == 1
     assert loaded is not None
-    assert loaded.localVersionNumber == 2
+    assert loaded.localVersionNumber == 1
+    assert loaded.record.name == "Local One Renamed"
+    assert loaded.record.description == "metadata only"
+    assert loaded.record.tags == ["updated"]
+
+
+def test_variant_catalog_service_tracks_local_versions_for_content_changes(tmp_path: Path) -> None:
+    service = VariantCatalogService(db_path=tmp_path / "assets.db")
+    first = service.upsert_local_entry(
+        F8VariantEntry(
+            record=_make_record(variant_id="local-1", base_node_type="svc.a.op", name="Local One"),
+            source=F8VariantSourceKind.local,
+            syncState=F8VariantSyncState.local_only,
+        )
+    )
+    second = service.upsert_local_entry(
+        F8VariantEntry(
+            record=copy_model(
+                _make_record(variant_id="local-1", base_node_type="svc.a.op", name="Local One"),
+                update={"spec": {"label": "Local One v2"}},
+            ),
+            source=F8VariantSourceKind.local,
+            syncState=F8VariantSyncState.local_only,
+        )
+    )
+
+    versions = service.list_local_versions("local-1")
+    version_one = service.local_version_record("local-1", 1)
+    version_two = service.local_version_record("local-1", 2)
+
+    assert first.localVersionNumber == 1
+    assert second.localVersionNumber == 2
+    assert [version.versionNumber for version in versions] == [1, 2]
+    assert version_one is not None
+    assert version_one.spec == {"label": "Local One"}
+    assert version_two is not None
+    assert version_two.spec == {"label": "Local One v2"}
+
+
+def test_variant_catalog_service_can_seed_local_version_from_remote_version(tmp_path: Path) -> None:
+    service = VariantCatalogService(db_path=tmp_path / "assets.db")
+    saved = service.upsert_local_entry(
+        F8VariantEntry(
+            record=_make_record(variant_id="remote-seeded", base_node_type="svc.a.op", name="Remote Seeded"),
+            source=F8VariantSourceKind.local,
+            syncState=F8VariantSyncState.local_only,
+            remoteVersionNumber=5,
+        )
+    )
+
+    versions = service.list_local_versions("remote-seeded")
+
+    assert saved.localVersionNumber == 5
+    assert [version.versionNumber for version in versions] == [5]

@@ -520,6 +520,93 @@ def test_variant_refresh_scope_page_preserves_cached_content_for_matching_revisi
     assert refreshed_entry.remoteVersionNumber == 2
 
 
+def test_variant_upload_replays_missing_local_history_versions(tmp_path: Path, monkeypatch) -> None:
+    settings = QtCore.QSettings(str(tmp_path / "variant-sync-history.ini"), QtCore.QSettings.IniFormat)
+    db_path = tmp_path / "assets.db"
+    service = VariantCatalogService(
+        local_provider=LocalVariantProvider(db_path=db_path),
+        remote_provider=RemoteCacheProvider(db_path=db_path),
+    )
+    client = VariantSyncClient(settings=settings, catalog_service=service)
+
+    first = service.upsert_local_entry(
+        F8VariantEntry(
+            record=F8VariantRecord(
+                variantId="history-1",
+                kind=F8VariantKind.operator,
+                baseNodeType="svc.a.op",
+                serviceClass="svc.test",
+                operatorClass="op.test",
+                name="History Variant",
+                description="",
+                tags=[],
+                spec={"label": "v1"},
+                createdAt=variant_now_iso(),
+                updatedAt=variant_now_iso(),
+            ),
+            source=F8VariantSourceKind.local,
+        )
+    )
+    second = service.upsert_local_entry(copy_model(first, update={"record": copy_model(first.record, update={"spec": {"label": "v2"}})}))
+    third = service.upsert_local_entry(copy_model(second, update={"record": copy_model(second.record, update={"spec": {"label": "v3"}})}))
+
+    remote_entry = copy_model(
+        _make_entry(
+            variant_id="history-1",
+            source=F8VariantSourceKind.remote_private,
+            installed=True,
+            remote_revision="r1",
+        ),
+        update={
+            "visibility": F8VariantVisibility.private,
+            "remoteVersionNumber": 1,
+            "ownerUserId": "u1",
+            "ownerDisplayName": "User One",
+        },
+    )
+    service.replace_remote_entries([remote_entry])
+
+    request_payloads: list[dict[str, object]] = []
+
+    def _request_json(method: str, path: str, payload: dict[str, object] | None, *, authorized: bool) -> dict[str, object]:
+        assert authorized is True
+        assert method == "PUT"
+        assert path == "/v1/variants/history-1"
+        assert payload is not None
+        request_payloads.append(payload)
+        next_version = len(request_payloads) + 1
+        record_payload = payload["record"]
+        assert isinstance(record_payload, dict)
+        return {
+            "record": record_payload,
+            "variantId": "history-1",
+            "assetType": "variant",
+            "ownerUserId": "u1",
+            "ownerDisplayName": "User One",
+            "visibility": "private",
+            "revision": f"r{next_version}",
+            "latestRevision": f"r{next_version}",
+            "latestVersionNumber": next_version,
+            "createdAt": str(record_payload["createdAt"]),
+            "updatedAt": str(record_payload["updatedAt"]),
+            "installed": True,
+            "hasCachedContent": True,
+            "subscribed": False,
+        }
+
+    monkeypatch.setattr(client, "_request_json", _request_json)
+
+    uploaded = client.upload_entry(third)
+
+    assert [payload["changeSummary"] for payload in request_payloads] == [
+        "Sync local variant history v2",
+        "Sync local variant history v3",
+    ]
+    assert [payload["record"]["spec"]["label"] for payload in request_payloads] == ["v2", "v3"]
+    assert uploaded.remoteVersionNumber == 3
+    assert uploaded.remoteRevision == "r3"
+
+
 def test_variant_remote_cache_load_cleans_empty_variant_ids(tmp_path: Path) -> None:
     provider = RemoteCacheProvider(db_path=tmp_path / "assets.db")
     with provider._db.begin_sqla() as conn:
@@ -636,7 +723,25 @@ def test_variant_row_state_badges_cover_remote_both_and_conflict() -> None:
             update={"visibility": F8VariantVisibility.public, "remoteVersionNumber": 2},
         ),
     )
+    synced_state = variant_row_state_for_entries(
+        variant_id="asset-4",
+        local_entry=copy_model(_make_entry(variant_id="asset-4", source=F8VariantSourceKind.local), update={"localVersionNumber": 6}),
+        remote_entry=copy_model(
+            _make_entry(variant_id="asset-4", source=F8VariantSourceKind.remote_public, installed=True, remote_revision="r1"),
+            update={"visibility": F8VariantVisibility.public, "remoteVersionNumber": 6},
+        ),
+    )
+    local_changes_state = variant_row_state_for_entries(
+        variant_id="asset-5",
+        local_entry=copy_model(_make_entry(variant_id="asset-5", source=F8VariantSourceKind.local), update={"localVersionNumber": 7}),
+        remote_entry=copy_model(
+            _make_entry(variant_id="asset-5", source=F8VariantSourceKind.remote_public, installed=True, remote_revision="r1"),
+            update={"visibility": F8VariantVisibility.public, "remoteVersionNumber": 6},
+        ),
+    )
 
-    assert both_state.badge_texts() == ["both", "public", "synced", "L4", "R6"]
+    assert both_state.badge_texts() == ["both", "public", "remote newer", "L4", "R6"]
     assert conflict_state.badge_texts() == ["both", "public", "conflict", "R3"]
     assert remote_state.badge_texts() == ["remote", "public", "R2"]
+    assert synced_state.badge_texts() == ["both", "public", "synced", "L6", "R6"]
+    assert local_changes_state.badge_texts() == ["both", "public", "local changes", "L7", "R6"]

@@ -92,6 +92,15 @@ variant_heads_local_table = Table(
     Column("updated_at", Text, nullable=False),
 )
 
+variant_versions_local_table = Table(
+    "variant_versions_local",
+    _METADATA,
+    Column("variant_id", Text, ForeignKey("variant_heads_local.variant_id"), primary_key=True),
+    Column("version_number", Integer, primary_key=True),
+    Column("record_json", LargeBinary, nullable=False),
+    Column("created_at", Text, nullable=False),
+)
+
 variant_remote_cache_table = Table(
     "variant_remote_cache",
     _METADATA,
@@ -241,5 +250,6 @@ __all__ = [
     "component_heads_local_table",
     "component_remote_cache_table",
     "variant_heads_local_table",
+    "variant_versions_local_table",
     "variant_remote_cache_table",
 ]

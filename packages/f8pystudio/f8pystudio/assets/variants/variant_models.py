@@ -51,6 +51,12 @@ class F8VariantCatalogSnapshot(Struct, kw_only=True):
     entries: list[F8VariantEntry] = field(default_factory=list)
 
 
+class F8VariantLocalVersionSummary(Struct, kw_only=True):
+    variantId: str
+    versionNumber: int
+    createdAt: str
+
+
 class F8VariantRemoteUser(Struct, kw_only=True):
     userId: str
     displayName: str
@@ -119,6 +125,7 @@ __all__ = [
     "F8VariantSyncState",
     "F8VariantEntry",
     "F8VariantCatalogSnapshot",
+    "F8VariantLocalVersionSummary",
     "F8VariantRemoteUser",
     "F8VariantRemoteAuth",
     "F8VariantRemoteListPage",
