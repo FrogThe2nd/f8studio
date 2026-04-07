@@ -1622,7 +1622,37 @@ components:
           type: integer
           minimum: 0
           default: 0
-      required: [observed, processed, dropped]
+        localOnlyEmits:
+          type: integer
+          minimum: 0
+          default: 0
+        routedCrossEmits:
+          type: integer
+          minimum: 0
+          default: 0
+        suppressedCrossPublishes:
+          type: integer
+          minimum: 0
+          default: 0
+        callbackDeliveries:
+          type: integer
+          minimum: 0
+          default: 0
+        bufferPullDeliveries:
+          type: integer
+          minimum: 0
+          default: 0
+      required:
+        [
+          observed,
+          processed,
+          dropped,
+          localOnlyEmits,
+          routedCrossEmits,
+          suppressedCrossPublishes,
+          callbackDeliveries,
+          bufferPullDeliveries,
+        ]
       additionalProperties: false
 
     F8MonitorTiming:

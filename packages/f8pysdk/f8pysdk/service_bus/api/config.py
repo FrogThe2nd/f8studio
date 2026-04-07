@@ -2,13 +2,9 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Literal, TypeAlias
 
 from nats.js.api import StorageType  # type: ignore[import-not-found]
-
-
-CrossPublishPolicy: TypeAlias = Literal["routed", "all", "none"]
-DataDeliveryMode: TypeAlias = Literal["buffered", "callback", "both"]
+from ...data import CrossPublishPolicy, DataDeliveryMode
 
 
 def _debug_state_enabled() -> bool:

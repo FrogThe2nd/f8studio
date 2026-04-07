@@ -1,66 +1,17 @@
 from __future__ import annotations
 
-from typing import Any, TypeVar
+"""
+Compatibility re-export for the legacy `service_bus.codec` module.
 
-import msgspec
+Public callers should prefer `f8pysdk.codec`.
+"""
 
-from ..msgspec_codec import dump_json
+from .compat import warn_compat_import
+from ..codec import decode_as, decode_obj, encode_obj
 
-T = TypeVar("T")
+warn_compat_import(
+    module_path="f8pysdk.service_bus.codec",
+    replacement="f8pysdk.codec",
+)
 
-
-def _msgpack_enc_hook(obj: Any) -> Any:
-    if isinstance(obj, msgspec.UnsetType):
-        return None
-    normalized = dump_json(obj, mode="json")
-    if normalized is obj:
-        raise TypeError(f"unsupported msgpack object: {type(obj).__name__}")
-    return normalized
-
-
-_MSGPACK_ENCODER = msgspec.msgpack.Encoder(enc_hook=_msgpack_enc_hook)
-_MSGPACK_DICT_DECODER = msgspec.msgpack.Decoder(type=dict[str, Any])
-
-
-def encode_obj(obj: Any) -> bytes:
-    """
-    Encode payload into MsgPack bytes.
-
-    Raises:
-        ValueError: if encoding fails.
-    """
-    try:
-        return _MSGPACK_ENCODER.encode(obj)
-    except (TypeError, ValueError, msgspec.EncodeError) as exc:
-        raise ValueError(f"msgpack encode failed: {exc}") from exc
-
-
-def decode_obj(raw: bytes) -> dict[str, Any]:
-    """
-    Decode MsgPack bytes into a dictionary payload.
-
-    Raises:
-        ValueError: if bytes cannot be decoded to a dictionary.
-    """
-    if not raw:
-        return {}
-    try:
-        decoded = _MSGPACK_DICT_DECODER.decode(raw)
-    except (TypeError, ValueError, msgspec.DecodeError, msgspec.ValidationError) as exc:
-        raise ValueError(f"msgpack decode failed: {exc}") from exc
-    return decoded
-
-
-def decode_as(raw: bytes, model_type: type[T]) -> T:
-    """
-    Decode MsgPack bytes into a typed msgspec model.
-
-    Raises:
-        ValueError: if bytes cannot be decoded to the expected type.
-    """
-    if not raw:
-        raise ValueError("msgpack decode failed: empty payload")
-    try:
-        return msgspec.msgpack.decode(raw, type=model_type)
-    except (TypeError, ValueError, msgspec.DecodeError, msgspec.ValidationError) as exc:
-        raise ValueError(f"msgpack decode failed: {exc}") from exc
+__all__ = ["decode_as", "decode_obj", "encode_obj"]

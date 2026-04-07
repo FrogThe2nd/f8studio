@@ -13,7 +13,7 @@ if ROOT not in sys.path:
 from f8pysdk.generated import F8Edge, F8EdgeKindEnum, F8EdgeStrategyEnum, F8RuntimeGraph, F8RuntimeNode  # noqa: E402
 from f8pysdk.nats_naming import data_subject  # noqa: E402
 from f8pysdk.service_bus import ServiceBus, ServiceBusConfig  # noqa: E402
-from f8pysdk.service_bus.routing.data_emit import DataEmitOptions  # noqa: E402
+from f8pysdk.service_bus.internal.data import DataEmitOptions  # noqa: E402
 from f8pysdk.testing import InMemoryCluster, InMemoryTransport, push_input  # noqa: E402
 
 
@@ -82,7 +82,7 @@ def _runtime_node(*, node_id: str, service_id: str, data_in: list[str] | None = 
         nodeId=node_id,
         serviceId=service_id,
         serviceClass=service_id,
-        operatorClass=f"slice_c.{node_id}",
+        operatorClass=f"data_flow.{node_id}",
         dataInPorts=list(data_in or []),
         dataOutPorts=list(data_out or []),
     )
@@ -116,7 +116,7 @@ async def _sleep_ticks(ticks: int) -> None:
         await asyncio.sleep(0)
 
 
-class SliceCDataFlowTests(unittest.IsolatedAsyncioTestCase):
+class DataFlowRoutingTests(unittest.IsolatedAsyncioTestCase):
     async def test_default_cross_publish_policy_is_routed(self) -> None:
         cluster = InMemoryCluster()
         transport = _RecordingTransport(cluster=cluster, kv_bucket="kv.svc")
@@ -153,7 +153,7 @@ class SliceCDataFlowTests(unittest.IsolatedAsyncioTestCase):
         bus.register_node(source)
 
         graph = F8RuntimeGraph(
-            graphId="g-slice-c",
+            graphId="g-data-flow-routing",
             revision="r1",
             nodes=[
                 _runtime_node(node_id="src", service_id="svcA", data_out=["out"]),

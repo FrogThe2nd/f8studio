@@ -1,37 +1,17 @@
 from __future__ import annotations
 
-import logging
-from typing import TYPE_CHECKING
+"""
+Compatibility re-export for the legacy `service_bus.error_utils` module.
 
-if TYPE_CHECKING:
-    from .bus import ServiceBus
+Repo-internal callers should prefer `f8pysdk.service_bus.internal.logging`.
+"""
 
+from .compat import warn_compat_import
+from .internal.logging import log_error_once
 
-log = logging.getLogger(__name__)
+warn_compat_import(
+    module_path="f8pysdk.service_bus.error_utils",
+    replacement="f8pysdk.service_bus.internal.logging",
+)
 
-
-def log_error_once(
-    bus: "ServiceBus",
-    *,
-    key: str,
-    message: str,
-    exc: BaseException | None = None,
-) -> None:
-    """
-    Log an error once per bus instance to prevent high-frequency log spam.
-    """
-    if key in bus._error_once:
-        return
-    bus._error_once.add(key)
-    if bus._monitor_collector.enabled:
-        error_message = str(message)
-        if exc is not None:
-            error_message = f"{message}: {type(exc).__name__}: {exc}"
-        bus._monitor_collector.record_error(
-            code="SERVICE_BUS_ERROR",
-            message=error_message,
-        )
-    if exc is None:
-        log.error("service_bus[%s] %s", bus.service_id, message)
-        return
-    log.error("service_bus[%s] %s", bus.service_id, message, exc_info=exc)
+__all__ = ["log_error_once"]

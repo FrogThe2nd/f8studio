@@ -1,12 +1,26 @@
 from __future__ import annotations
 
+"""
+Compatibility shim for the legacy `service_bus.lifecycle` module.
+
+Public callers should prefer `ServiceBus.start()`, `ServiceBus.stop()`, and
+`ServiceBus.set_active(...)`. Repo-internal callers should prefer
+`f8pysdk.service_bus.workflow.lifecycle`.
+"""
+
 from typing import Any, TYPE_CHECKING
 
-from .state_write import StateWriteSource
+from .compat import warn_compat_import
+from .state.write import StateWriteSource
 from .workflow import lifecycle as _impl
 
 if TYPE_CHECKING:
     from .api.bus import ServiceBus
+
+warn_compat_import(
+    module_path="f8pysdk.service_bus.lifecycle",
+    replacement="ServiceBus methods or f8pysdk.service_bus.workflow.lifecycle",
+)
 
 _ensure_micro_endpoints_started_impl = _impl._ensure_micro_endpoints_started
 _stop_micro_endpoints_impl = _impl._stop_micro_endpoints

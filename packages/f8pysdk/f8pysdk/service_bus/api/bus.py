@@ -16,22 +16,22 @@ from ...generated import F8RuntimeGraph
 from ...nats_naming import ensure_token, kv_key_ready, kv_bucket_for_service, kv_key_rungraph
 from ...nats_transport import NatsTransport, NatsTransportConfig
 from ...time_utils import now_ms
-from ..state_publish import (
+from ..state.pipeline import (
     publish_state as _publish_state_impl,
 )
-from ..rungraph_apply import (
+from ..workflow.rungraph import (
     set_rungraph as _set_rungraph_impl,
 )
-from ..state_write import StateWriteOrigin, StateWriteSource
-from ..lifecycle import (
+from ..state.write import StateWriteOrigin, StateWriteSource
+from ..workflow.lifecycle import (
     set_active as _set_active_impl,
     start as _start_impl,
     stop as _stop_impl,
 )
-from ..state_read import StateRead
+from ..state.read import StateRead
 from .config import CrossPublishPolicy, DataDeliveryMode, ServiceBusConfig, _debug_state_enabled
 from ..monitor_collector import MonitorCollector, MonitorCollectorConfig
-from ..command_runtime import (
+from ..internal.command import (
     CommandBinding,
     CommandExecutionResult,
     CommandGateway,
@@ -39,12 +39,12 @@ from ..command_runtime import (
     CommandInvokeOptions,
     CommandOutputPolicy,
 )
-from ..routing.data_router import DataRouter
-from ..state_router import StateRouter
-from ..state_store import StateStore
+from ..data.router import DataRouter
+from ..state.router import StateRouter
+from ..state.store import StateStore
 
 if TYPE_CHECKING:
-    from ..micro import _ServiceBusMicroEndpoints
+    from ..internal.micro import ServiceBusMicroEndpoints
 
 
 log = logging.getLogger(__name__)
@@ -129,7 +129,7 @@ class ServiceBus:
 
         self._rungraph_key = kv_key_rungraph()
         self._ready_key = kv_key_ready()
-        self._micro_endpoints: _ServiceBusMicroEndpoints | None = None
+        self._micro_endpoints: ServiceBusMicroEndpoints | None = None
 
         self._data_router = DataRouter(
             self,

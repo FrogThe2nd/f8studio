@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+"""
+Runtime monitor snapshot collection.
+
+`MonitorCollector` is implemented under `service_bus` because it samples bus
+runtime state, but the stable SDK-facing import is `f8pysdk.monitoring`.
+"""
+
 from f8pysdk.msgspec_codec import dump_json, validate_as
 import asyncio
 import os
@@ -9,7 +16,7 @@ from collections import deque
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from .codec import encode_obj
+from ..codec import encode_obj
 from ..generated import (
     F8MonitorCpu,
     F8MonitorError,

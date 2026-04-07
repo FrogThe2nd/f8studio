@@ -8,7 +8,7 @@ from typing import Any
 from ..generated import F8EdgeDirection, F8EdgeKindEnum, F8RuntimeGraph
 from ..capabilities import BusAttachableNode, ComputableNode, EntrypointNode, ExecutableNode
 from ..nats_naming import ensure_token
-from ..service_bus.bus import ServiceBus
+from ..service_bus import ServiceBus
 from ..time_utils import now_ms
 
 logger = logging.getLogger(__name__)

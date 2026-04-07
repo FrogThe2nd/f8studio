@@ -18,28 +18,39 @@ The long-term plan is tracked in `packages/f8pysdk/SDK_REFACTOR_PLAN.md`.
 ## Layered Modules
 
 - `api/`: public façade and config
-- `domain/`: state validation, normalization, persistence, local delivery
-- `routing/`: data buffering, pull/push delivery, NATS data subscriptions
+- `data/`: data routing, buffering, local delivery, and cross-service data fanout
+- `state/`: state cache, routing, validation, persistence, and state-side helper ownership
+- `domain/`: legacy compatibility namespace for pre-owner split state pipeline imports
 - `workflow/`: rungraph apply, lifecycle transitions, cross-state synchronization
+- `internal/`: non-public typed command/data/runtime infrastructure helpers
 - `adapters/`: transport-specific endpoint integration
 
 Slice D notes:
 
-- `routing/data_router.py` is now the canonical owner for:
+- `data/router.py` is now the canonical owner for:
   - data route tables
   - input buffers
   - routed and custom subscriptions
   - push-callback micro-batching
-- `state_store.py` is now the canonical owner for:
+- `data/emit.py` now owns typed per-sample data propagation controls.
+- `data/flow.py` is the functional adapter layer over `DataRouter`.
+- `state/store.py` is now the canonical owner for:
   - local state cache
   - per-node state access map
   - KV-backed state read path
-- `state_router.py` is now the canonical owner for:
+- `state/router.py` is now the canonical owner for:
   - intra-service state-edge fanout tables
   - cross-service state bindings
   - remote state watch handles
   - cross-state target tracking and remote timestamp ordering
-- `routing_data.py` remains as a thin compatibility layer.
+- `state/read.py` now owns the canonical state read result model.
+- `state/write.py` now owns canonical state write enums, context, error, and publish-option types.
+- `state/pipeline.py` now owns state validation, normalization, persistence, and local state delivery.
+- `state/helpers.py` now owns state-side metadata and inbound timestamp coercion helpers.
+- `workflow/metadata.py` now owns rungraph/lifecycle metadata builders.
+- `internal/cache.py` and `internal/logging.py` now own shared runtime infrastructure helpers.
+- `routing/` and `routing_data.py` now remain only as thin compatibility layers for the older data-side paths.
+- `domain/state_pipeline.py` now remains only as a thin compatibility layer for the older state-side path.
 - `ServiceBus` delegates data emit/pull/subscribe behavior to `DataRouter` instead of storing that mutable state directly.
 - `workflow/cross_state.py` is now a thin compatibility wrapper over `StateRouter`.
 
@@ -62,7 +73,7 @@ Slice D notes:
 ### State Write Chain
 
 1. caller invokes `publish_state_external(...)` or `publish_state_runtime(...)`
-2. `domain/state_pipeline.publish_state(...)` validates access and value
+2. `state/pipeline.publish_state(...)` validates access and value
 3. state is persisted to KV
 4. local delivery runs immediately for same-process writes
    runtime propagation controls are carried by typed `StatePublishOptions`, not magic `meta` flags
@@ -142,14 +153,28 @@ Current compatibility note:
 These modules currently exist mostly as compatibility shims:
 
 - `bus.py`
+- `codec.py`
+- `command_runtime.py`
 - `cross_state.py`
+- `domain.state_pipeline`
+- `error_utils.py`
 - `lifecycle.py`
+- `metadata.py`
 - `micro.py`
+- `payload.py`
+- `routing.data_emit`
+- `routing.data_flow`
+- `routing.data_router`
 - `routing_data.py`
 - `rungraph_apply.py`
+- `runtime_collections.py`
 - `state_publish.py`
+- `state_router.py`
+- `state_store.py`
 
 New code should prefer the documented façade types and avoid depending on compatibility modules unless migration constraints require it.
+These shim modules now emit compatibility deprecation warnings when imported
+through their deep legacy paths.
 
 Stable top-level modules introduced during Slice D:
 
@@ -162,6 +187,22 @@ Stable top-level modules introduced during public API cleanup:
 - `f8pysdk.app`
 - `f8pysdk.command`
 - `f8pysdk.data`
+- `f8pysdk.monitoring`
 - `f8pysdk.nodes`
 - `f8pysdk.registry`
 - `f8pysdk.transport`
+
+Explicit internal boundary introduced during public API cleanup:
+
+- `f8pysdk.service_bus.internal.*` for repo-internal tests and compatibility
+  shims that still need typed access to non-public runtime helpers without
+  depending on ad hoc deep module paths
+- `f8pysdk.service_bus.data.*` for data-runtime owner modules; the old
+  `routing/*` namespace is now data-side compatibility only
+- `f8pysdk.service_bus.state.*` for state-runtime owner modules that should not
+  sit at the public `service_bus` root
+- root modules `state_read.py` and `state_write.py` now act only as thin public
+  facades over the state owner package
+- compatibility shells now point at explicit owner modules such as
+  `data.router`, `data.flow`, `internal.micro`, `internal.state`,
+  `state.pipeline`, `state.router`, and `state.store`

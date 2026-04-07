@@ -29,8 +29,8 @@ from f8pysdk.nats_naming import kv_key_node_state  # noqa: E402
 from f8pysdk.nodes import RuntimeNode  # noqa: E402
 from f8pysdk.schema_helpers import string_schema  # noqa: E402
 from f8pysdk.service_bus import ServiceBus, ServiceBusConfig  # noqa: E402
-from f8pysdk.service_bus.adapters.micro import _ServiceBusMicroEndpoints  # noqa: E402
-from f8pysdk.service_bus.state_publish import StatePublishOptions, publish_state, validate_state_update  # noqa: E402
+from f8pysdk.service_bus.internal.micro import ServiceBusMicroEndpoints  # noqa: E402
+from f8pysdk.service_bus.internal.state import StatePublishOptions, publish_state, validate_state_update  # noqa: E402
 from f8pysdk.state import StateWriteContext, StateWriteError, StateWriteOrigin  # noqa: E402
 from f8pysdk.codec import decode_as, decode_obj, encode_obj  # noqa: E402
 from f8pysdk.testing import InMemoryCluster, InMemoryTransport, ServiceBusHarness  # noqa: E402
@@ -748,7 +748,7 @@ class StateWriteTests(unittest.IsolatedAsyncioTestCase):
         )
         await bus.set_rungraph(graph)
 
-        endpoint = _ServiceBusMicroEndpoints(bus)
+        endpoint = ServiceBusMicroEndpoints(bus)
         req = _FakeReq(
             F8CommandInvokeRequest(
                 reqId="r1",
@@ -878,7 +878,7 @@ class StateWriteTests(unittest.IsolatedAsyncioTestCase):
         hidden_output = await bus.get_state("svc", command_output_state_field("run"))
         self.assertFalse(hidden_output.found)
 
-        endpoint = _ServiceBusMicroEndpoints(bus)
+        endpoint = ServiceBusMicroEndpoints(bus)
         req = _FakeReq(F8CommandInvokeRequest(reqId="r1", call="run", args={"a": 7}, meta={"source": "ui"}))
         await endpoint._cmd(req)
 
@@ -912,7 +912,7 @@ class StateWriteTests(unittest.IsolatedAsyncioTestCase):
         hidden_output = await bus.get_state("svc", command_output_state_field("run"))
         self.assertFalse(hidden_output.found)
 
-        endpoint = _ServiceBusMicroEndpoints(bus)
+        endpoint = ServiceBusMicroEndpoints(bus)
         req = _FakeReq(F8CommandInvokeRequest(reqId="r1", call="run", args={"a": 7}, meta={"source": "ui"}))
         await endpoint._cmd(req)
 
@@ -943,9 +943,9 @@ class StateWriteTests(unittest.IsolatedAsyncioTestCase):
         )
         await bus.set_rungraph(graph)
 
-        endpoint = _ServiceBusMicroEndpoints(bus)
+        endpoint = ServiceBusMicroEndpoints(bus)
         with patch(
-            "f8pysdk.service_bus.command_runtime.CommandGateway.write_output",
+            "f8pysdk.service_bus.internal.command.CommandGateway.write_output",
             new=AsyncMock(side_effect=RuntimeError("writeback failed")),
         ):
             await bus.publish_state_external("svc", command_input_state_field("nop"), {}, ts_ms=10)
@@ -985,7 +985,7 @@ class StateWriteTests(unittest.IsolatedAsyncioTestCase):
 
         await bus.publish_state_external("svc", command_input_state_field("run"), 7, ts_ms=10)
 
-        endpoint = _ServiceBusMicroEndpoints(bus)
+        endpoint = ServiceBusMicroEndpoints(bus)
         req = _FakeReq(
             {
                 "reqId": "r1",
@@ -1028,7 +1028,7 @@ class StateWriteTests(unittest.IsolatedAsyncioTestCase):
 
         await bus.publish_state_external("svc", command_input_state_field("run"), [7, 8], ts_ms=10)
 
-        endpoint = _ServiceBusMicroEndpoints(bus)
+        endpoint = ServiceBusMicroEndpoints(bus)
         req = _FakeReq(
             {
                 "reqId": "r1",
@@ -1070,7 +1070,7 @@ class StateWriteTests(unittest.IsolatedAsyncioTestCase):
         await bus.set_rungraph(graph)
 
         req = _FakeReq({"reqId": "r1", "call": "dynamic", "args": [7], "meta": {"source": "ui"}})
-        endpoint = _ServiceBusMicroEndpoints(bus)
+        endpoint = ServiceBusMicroEndpoints(bus)
         await endpoint._cmd(req)
         reply = decode_as(req.response or b"", F8CommandInvokeReply)
 

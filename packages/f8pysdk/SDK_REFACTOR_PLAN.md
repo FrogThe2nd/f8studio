@@ -348,7 +348,7 @@ This milestone does not redesign the SDK yet, but it makes the system much safer
   - owner: Codex + repository maintainer
   - scope: Slice D initial internal extraction and API cleanup
   - completed:
-    - extracted data-side mutable routing state into `service_bus.routing.data_router.DataRouter`
+    - extracted data-side mutable routing state into the data-side runtime owner `DataRouter`
     - moved data route tables, input buffers, routed subscriptions, custom subscriptions, and push-callback queue ownership behind `DataRouter`
     - changed `ServiceBus`, rungraph apply, lifecycle stop, and monitor queue sampling to delegate to `DataRouter`
     - introduced stable top-level modules `f8pysdk.codec` and `f8pysdk.state`
@@ -380,9 +380,61 @@ This milestone does not redesign the SDK yet, but it makes the system much safer
     - migrated representative SDK tests to the public import surfaces and added explicit coverage for the new top-level modules
     - moved stable test helpers off `service_bus.routing_data` so benchmarks/tests can stay on `f8pysdk.testing`
     - migrated repo-wide callers off `runtime_node`, `runtime_node_registry`, `service_cli`, `service_runtime`, `service_host`, and `nats_transport` import paths onto the stable public modules
+    - promoted monitor snapshot collection to stable top-level module `f8pysdk.monitoring`
+    - moved non-public test/runtime helpers behind explicit `f8pysdk.service_bus.internal` boundaries owned by the ServiceBus subsystem instead of a top-level pseudo-internal package
   - compatibility notes:
     - `f8pysdk.service_bus` remains the public bus entrypoint for `ServiceBus` and `ServiceBusConfig`
     - deep `service_bus.*` modules still exist for compatibility, but new code should prefer the stable top-level modules or `f8pysdk.service_bus`
+    - repo-internal callers that still need non-public helpers should import from `f8pysdk.service_bus.internal` rather than ad hoc deep module paths
+
+- 2026-04-07
+  - owner: Codex + repository maintainer
+  - scope: Slice D owner-path cleanup for remaining deep runtime helpers
+  - completed:
+    - moved `StateStore` and `StateRouter` ownership under `service_bus.state.store` and `service_bus.state.router`
+    - moved state-side metadata and inbound timestamp helpers into `service_bus.state.helpers`
+    - moved shared deduped logging and capped-cache helpers into `service_bus.internal.logging` and `service_bus.internal.cache`
+    - moved lifecycle/rungraph metadata builders into `service_bus.workflow.metadata`
+    - converted legacy `metadata`, `payload`, `runtime_collections`, `error_utils`, `state_store`, and `state_router` modules into explicit compatibility shims with deprecation warnings
+  - compatibility notes:
+    - repo-internal callers should prefer concrete owner modules such as `f8pysdk.service_bus.state.*`, `f8pysdk.service_bus.workflow.metadata`, and `f8pysdk.service_bus.internal.*`
+    - deep `service_bus.*` helper modules remain importable for migration only and now warn on import
+
+- 2026-04-07
+  - owner: Codex + repository maintainer
+  - scope: Slice D owner-path cleanup for data-side package symmetry
+  - completed:
+    - promoted `service_bus.data.*` as the canonical owner package for data-side runtime internals
+    - moved the real implementations to `service_bus.data.emit`, `service_bus.data.flow`, and `service_bus.data.router`
+    - converted `service_bus.routing.data_emit`, `service_bus.routing.data_flow`, and `service_bus.routing.data_router` into explicit compatibility shims
+    - repointed `routing_data.py` compatibility guidance at `service_bus.data.flow`
+  - compatibility notes:
+    - repo-internal callers should prefer `f8pysdk.service_bus.data.*` and `f8pysdk.service_bus.state.*` as the symmetric owner packages for runtime data and state concerns
+    - `service_bus.routing/*` remains available only as a legacy data-side namespace during migration
+
+- 2026-04-07
+  - owner: Codex + repository maintainer
+  - scope: Slice D owner-path cleanup for state pipeline symmetry
+  - completed:
+    - moved the real state publish pipeline implementation to `service_bus.state.pipeline`
+    - repointed `ServiceBus`, workflow, command, and internal state helpers to the new owner path
+    - converted `service_bus.domain.state_pipeline` into an explicit compatibility shim
+    - reduced `service_bus.domain` to a legacy compatibility namespace instead of an active owner layer
+  - compatibility notes:
+    - repo-internal callers should prefer `f8pysdk.service_bus.state.pipeline` for state validation/persistence/local-delivery logic
+    - `service_bus.domain.state_pipeline` remains importable only for migration and now warns on import
+
+- 2026-04-07
+  - owner: Codex + repository maintainer
+  - scope: Slice D state protocol-type owner cleanup
+  - completed:
+    - promoted `service_bus.state.read` and `service_bus.state.write` as the canonical owner modules for state read/write protocol types
+    - repointed state-side runtime code to the new owner modules instead of importing the root-level `state_read.py` / `state_write.py` modules directly
+    - reduced `service_bus.state_read` and `service_bus.state_write` to thin public facades over the state owner package
+    - repointed top-level `f8pysdk.state` and `service_bus` public exports at the state owner modules
+  - compatibility notes:
+    - public imports via `f8pysdk.state` and `f8pysdk.service_bus` remain unchanged
+    - deep root modules `service_bus.state_read` and `service_bus.state_write` still work, but they now exist only as façade entrypoints rather than owner modules
 
 - When we start a phase, create a short changelog section here with:
   - date

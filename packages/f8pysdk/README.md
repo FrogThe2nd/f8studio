@@ -13,15 +13,29 @@ Stable public modules:
 - `f8pysdk.registry`: `RuntimeNodeRegistry` and registry errors
 - `f8pysdk.command`: command result/output policy types
 - `f8pysdk.data`: data delivery and cross-publish policy types
+- `f8pysdk.monitoring`: monitor snapshot collection/config types
 - `f8pysdk.state`: canonical state read/write types
 - `f8pysdk.transport`: NATS transport façade
 - `f8pysdk.testing`: in-memory harness plus emit/pull/buffer test helpers
+
+Explicit internal-only modules:
+- `f8pysdk.service_bus.internal.*`: repo-internal compatibility/test helpers owned by the ServiceBus runtime and not part of the public SDK API
+  this replaces the earlier top-level pseudo-internal boundary so ownership stays with the runtime subsystem that defines these helpers
+
+Deprecated deep compatibility paths:
+- `f8pysdk.service_bus.bus`, `codec`, `command_runtime`, `cross_state`, `domain.state_pipeline`, `error_utils`, `lifecycle`, `metadata`, `micro`, `payload`, `routing.data_emit`, `routing.data_flow`, `routing.data_router`, `routing_data`, `rungraph_apply`, `runtime_collections`, `state_publish`, `state_router`, and `state_store` now emit compatibility deprecation warnings on import
 
 Internal runtime split:
 - `DataRouter`: data routing, buffering, subscriptions, callback batching
 - `StateStore`: state cache, access maps, KV-backed reads
 - `StateRouter`: intra-state routing and cross-state watch lifecycle
 - `CommandGateway`: canonical command execution path
+- `service_bus.data.*`: owner package for data runtime internals
+- `service_bus.state.*`: owner package for state runtime internals
+- `service_bus.state.read` / `service_bus.state.write`: owner modules for canonical state protocol types
+- `service_bus.state.pipeline`: state validation, persistence, and local-delivery owner
+- `service_bus.workflow.metadata`: workflow-owned metadata builders
+- `service_bus.internal.cache` / `service_bus.internal.logging`: shared runtime infrastructure helpers
 
 Lifecycle contract:
 - `ServiceBus` and `ServiceRuntime` are single-run objects.
@@ -79,6 +93,7 @@ Stable helper modules:
 - `f8pysdk.state`: canonical state result/error/context types
 - `f8pysdk.command`: command output/result enums and result envelopes
 - `f8pysdk.data`: data delivery and cross-publish policy types
+- `f8pysdk.monitoring`: monitor collector façade
 - `f8pysdk.nodes`: runtime node base classes
 - `f8pysdk.registry`: runtime registry and registry errors
 - `f8pysdk.transport`: NATS transport façade and KV reset helpers

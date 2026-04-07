@@ -53,7 +53,7 @@ class _DataReceiverNode:
         self.data_calls.append((str(port), value, ts_ms))
 
 
-class SliceARegressionTests(unittest.IsolatedAsyncioTestCase):
+class RuntimeRegressionTests(unittest.IsolatedAsyncioTestCase):
     async def test_service_runtime_defaults_to_fresh_registry_instances(self) -> None:
         cfg = ServiceRuntimeConfig.from_values(service_id="svc", service_class="svc.test")
 
@@ -119,7 +119,7 @@ class SliceARegressionTests(unittest.IsolatedAsyncioTestCase):
     async def test_service_bus_is_not_restartable_after_stop(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
-        with patch("f8pysdk.service_bus.lifecycle._ensure_micro_endpoints_started") as ensure_micro:
+        with patch("f8pysdk.service_bus.workflow.lifecycle._ensure_micro_endpoints_started") as ensure_micro:
             async def _noop(_bus: object) -> None:
                 return None
 

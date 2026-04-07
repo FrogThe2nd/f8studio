@@ -2,16 +2,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
 from ...capabilities import LifecycleNode
 from ...time_utils import now_ms
-from ..adapters.micro import _ServiceBusMicroEndpoints
-from ..domain.state_pipeline import publish_state
-from ..metadata import build_lifecycle_event_meta, build_lifecycle_state_meta
-from ..state_write import StateWriteOrigin
-from ..state_write import StateWriteSource
-from ..codec import encode_obj
+from ..state.pipeline import publish_state
+from ..internal.micro import ServiceBusMicroEndpoints
+from ..state.write import StateWriteOrigin
+from ..state.write import StateWriteSource
+from ...codec import encode_obj
+from .metadata import build_lifecycle_event_meta, build_lifecycle_state_meta
 
 if TYPE_CHECKING:
     from ..api.bus import ServiceBus
@@ -23,7 +23,7 @@ log = logging.getLogger(__name__)
 async def _ensure_micro_endpoints_started(bus: "ServiceBus") -> None:
     if bus._micro_endpoints is not None:
         return
-    endpoints = _ServiceBusMicroEndpoints(bus)
+    endpoints = ServiceBusMicroEndpoints(bus)
     bus._micro_endpoints = endpoints
     await endpoints.start()
 

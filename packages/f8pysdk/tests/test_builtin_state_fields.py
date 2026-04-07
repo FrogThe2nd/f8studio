@@ -147,7 +147,7 @@ class LifecycleBootstrapTests(unittest.IsolatedAsyncioTestCase):
     async def test_start_seeds_active_state(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
-        with patch("f8pysdk.service_bus.lifecycle._ensure_micro_endpoints_started") as ensure_micro:
+        with patch("f8pysdk.service_bus.workflow.lifecycle._ensure_micro_endpoints_started") as ensure_micro:
             async def _noop(_bus: object) -> None:
                 return None
             ensure_micro.side_effect = _noop
@@ -160,7 +160,7 @@ class LifecycleBootstrapTests(unittest.IsolatedAsyncioTestCase):
     async def test_seeded_active_state_origin_runtime(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
-        with patch("f8pysdk.service_bus.lifecycle._ensure_micro_endpoints_started") as ensure_micro:
+        with patch("f8pysdk.service_bus.workflow.lifecycle._ensure_micro_endpoints_started") as ensure_micro:
             async def _noop(_bus: object) -> None:
                 return None
             ensure_micro.side_effect = _noop

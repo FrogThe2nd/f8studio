@@ -1,5 +1,13 @@
 from __future__ import annotations
 
+"""
+NATS micro adapter for the service bus control plane.
+
+This module is an internal runtime adapter. Repo-internal imports that still
+need direct access should use `f8pysdk.service_bus.internal.micro` instead of
+reaching through `service_bus.adapters`.
+"""
+
 import logging
 from dataclasses import dataclass
 from typing import Any, TYPE_CHECKING
@@ -31,15 +39,15 @@ from ...generated import (
     F8TerminateRequest,
 )
 from ...nats_naming import cmd_channel_subject, ensure_token, new_id, svc_endpoint_subject, svc_micro_name
-from ..codec import decode_as, decode_obj, encode_obj
-from ..command_runtime import (
+from ...codec import decode_as, decode_obj, encode_obj
+from ..internal.command import (
     CommandExecutionErrorKind,
     CommandInvocation,
     CommandInvokeOptions,
     CommandOutputPolicy,
     execute_command,
 )
-from ..state_write import StateWriteError, StateWriteSource
+from ..state.write import StateWriteError, StateWriteSource
 
 if TYPE_CHECKING:
     from ..api.bus import ServiceBus

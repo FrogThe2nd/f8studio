@@ -12,7 +12,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from f8pysdk.codec import decode_obj  # noqa: E402
-from f8pysdk.service_bus.monitor_collector import MonitorCollector, MonitorCollectorConfig  # noqa: E402
+from f8pysdk.monitoring import MonitorCollector, MonitorCollectorConfig  # noqa: E402
 from f8pysdk.time_utils import now_ms  # noqa: E402
 
 

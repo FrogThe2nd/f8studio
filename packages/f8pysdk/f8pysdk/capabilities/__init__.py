@@ -4,8 +4,8 @@ from typing import Any, Protocol, runtime_checkable, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ..generated import F8RuntimeGraph
-    from ..service_bus.bus import ServiceBus
-    from ..service_bus.state_read import StateRead
+    from ..service_bus import ServiceBus
+    from ..state import StateRead
 
 
 @runtime_checkable

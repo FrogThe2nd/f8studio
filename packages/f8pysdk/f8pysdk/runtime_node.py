@@ -12,7 +12,7 @@ from .capabilities import (
     NodeBus,
     StatefulNode,
 )
-from .service_bus.state_read import StateRead
+from .state import StateRead
 
 
 @dataclass
