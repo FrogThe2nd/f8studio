@@ -7,6 +7,7 @@ const CONSOLE_CALLBACK_PATH = `${CONSOLE_BASE_PATH}/`;
 const VERIFY_EMAIL_PATH = `${CONSOLE_BASE_PATH}/verify-email`;
 const RESET_PASSWORD_PATH = `${CONSOLE_BASE_PATH}/reset-password`;
 const MANAGEMENT_API_BASE_PATH = '/v1/management';
+const PURGE_ALL_ASSETS_CONFIRMATION_TEXT = 'DELETE ALL ASSETS';
 const ASSET_TYPE_OPTIONS = ['component', 'variant'];
 const USER_ROLE_OPTIONS = [
   { value: 'admin', label: 'Admin' },
@@ -968,6 +969,46 @@ function ConsoleApp() {
     }
   }
 
+  async function onPurgeAllAssets() {
+    if (!currentUser?.isAdmin) {
+      return;
+    }
+    const confirmed = window.confirm(
+      'This will permanently delete every asset, every revision, and every subscription. This cannot be undone. Continue?',
+    );
+    if (!confirmed) {
+      return;
+    }
+    const confirmationText = window.prompt(
+      `Type ${PURGE_ALL_ASSETS_CONFIRMATION_TEXT} to permanently delete all assets.`,
+      '',
+    );
+    if (confirmationText === null) {
+      setStatusText('Asset purge cancelled');
+      return;
+    }
+    if (confirmationText !== PURGE_ALL_ASSETS_CONFIRMATION_TEXT) {
+      setStatusText('Asset purge cancelled: confirmation text did not match');
+      return;
+    }
+    setLoading(true);
+    setStatusText('Purging all assets...');
+    try {
+      const result = await apiRequest(`${MANAGEMENT_API_BASE_PATH}/assets/purge-all`, {
+        method: 'POST',
+        body: JSON.stringify({ confirmationText }),
+      });
+      await Promise.all([loadUsers(), loadMineAssets(), loadAllAssets()]);
+      setStatusText(
+        `Purged ${result.deletedAssets || 0} assets, ${result.deletedAssetVersions || 0} versions, and ${result.deletedAssetSubscriptions || 0} subscriptions`,
+      );
+    } catch (error) {
+      setStatusText(error instanceof Error ? error.message : String(error));
+    } finally {
+      setLoading(false);
+    }
+  }
+
   const hasManagementAccess = Boolean(currentUser?.isAdmin);
   const hasCredentialAccount = linkedAccounts.some((account) => account.providerId === 'credential');
   const hasGoogleAccount = linkedAccounts.some((account) => account.providerId === 'google');
@@ -1502,34 +1543,54 @@ function ConsoleApp() {
               </div>
 
               <div className="management-control-grid">
-                <form onSubmit={onSaveSiteSettings} className="form management-card management-settings-card">
-                  <div className="management-card-head">
-                    <div>
-                      <span className="eyebrow">Site Settings</span>
-                      <h3>Registration Access</h3>
+                <div className="management-form-stack">
+                  <form onSubmit={onSaveSiteSettings} className="form management-card management-settings-card">
+                    <div className="management-card-head">
+                      <div>
+                        <span className="eyebrow">Site Settings</span>
+                        <h3>Registration Access</h3>
+                      </div>
                     </div>
-                  </div>
-                  <label className="toggle-card">
-                    <div>
-                      <span className="toggle-title">Allow new user registration</span>
-                      <span className="toggle-description">Let visitors create their own account without an admin invite.</span>
+                    <label className="toggle-card">
+                      <div>
+                        <span className="toggle-title">Allow new user registration</span>
+                        <span className="toggle-description">Let visitors create their own account without an admin invite.</span>
+                      </div>
+                      <span className="toggle-switch">
+                        <input
+                          type="checkbox"
+                          checked={siteSettings.allowUserRegistration}
+                          onChange={(event) => setSiteSettings((current) => ({
+                            ...current,
+                            allowUserRegistration: event.target.checked,
+                          }))}
+                        />
+                        <span className="toggle-slider" aria-hidden="true" />
+                      </span>
+                    </label>
+                    <div className="management-actions">
+                      <button type="submit" disabled={loading}>Save Site Settings</button>
                     </div>
-                    <span className="toggle-switch">
-                      <input
-                        type="checkbox"
-                        checked={siteSettings.allowUserRegistration}
-                        onChange={(event) => setSiteSettings((current) => ({
-                          ...current,
-                          allowUserRegistration: event.target.checked,
-                        }))}
-                      />
-                      <span className="toggle-slider" aria-hidden="true" />
-                    </span>
-                  </label>
-                  <div className="management-actions">
-                    <button type="submit" disabled={loading}>Save Site Settings</button>
-                  </div>
-                </form>
+                  </form>
+
+                  <section className="management-card management-card-danger">
+                    <div className="management-card-head">
+                      <div>
+                        <span className="eyebrow">Danger Zone</span>
+                        <h3>Purge All Assets</h3>
+                      </div>
+                    </div>
+                    <p className="muted management-danger-copy">
+                      Permanently delete every component, variant, revision history, and subscription in the asset cloud.
+                      This is a hard delete and cannot be restored.
+                    </p>
+                    <div className="management-actions">
+                      <button type="button" className="button-danger" onClick={() => void onPurgeAllAssets()} disabled={loading}>
+                        Purge All Assets
+                      </button>
+                    </div>
+                  </section>
+                </div>
 
                 <div className="management-form-stack">
                   <form onSubmit={onCreateUser} className="form management-card">

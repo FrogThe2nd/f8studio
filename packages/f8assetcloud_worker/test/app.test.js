@@ -512,6 +512,7 @@ test('openapi endpoints expose the audited worker contract', async (t) => {
   assert.ok(openapi.json.paths['/v1/management/users']);
   assert.ok(openapi.json.paths['/v1/management/users/{userId}']);
   assert.ok(openapi.json.paths['/v1/management/site-settings']);
+  assert.ok(openapi.json.paths['/v1/management/assets/purge-all']);
   assert.ok(openapi.json.paths['/v1/management/components']);
   assert.ok(openapi.json.paths['/v1/management/components/{componentId}']);
   assert.ok(openapi.json.paths['/v1/management/variants']);
@@ -1389,6 +1390,108 @@ test('site settings default to registration disabled and management can enable r
   });
   assert.equal(allowedSignUp.status, 200);
   assert.equal(allowedSignUp.json.user.username, 'allowed_user');
+});
+
+test('management can permanently purge all assets', async (t) => {
+  const env = createEnv();
+  t.after(() => env.DB.close());
+  const app = createApp();
+
+  const managementLogin = await signInUser(app, env, {
+    username: 'admin',
+  });
+  assert.equal(managementLogin.status, 200);
+
+  const alice = await createVerifiedSession(app, env, {
+    username: 'alice',
+    email: 'alice@example.com',
+    displayName: 'Alice',
+  });
+
+  const createdVariant = await jsonRequest(app, env, '/v1/variants', {
+    method: 'POST',
+    cookie: alice.cookie,
+    payload: variantPayload({ variantId: 'alice-variant', name: 'Alice Variant', visibility: 'public' }),
+  });
+  assert.equal(createdVariant.status, 200);
+
+  const createdComponent = await jsonRequest(app, env, '/v1/components', {
+    method: 'POST',
+    cookie: alice.cookie,
+    payload: componentPayload({ componentId: 'alice-component', name: 'Alice Component', visibility: 'public' }),
+  });
+  assert.equal(createdComponent.status, 200);
+
+  const variantUpdate = await jsonRequest(app, env, '/v1/variants/alice-variant', {
+    method: 'PUT',
+    cookie: alice.cookie,
+    payload: {
+      ...variantPayload({ variantId: 'alice-variant', name: 'Alice Variant v2', visibility: 'public' }),
+      revision: 'r1',
+    },
+  });
+  assert.equal(variantUpdate.status, 200);
+
+  const subscribeComponent = await jsonRequest(app, env, '/v1/components/alice-component/subscribe', {
+    method: 'POST',
+    cookie: managementLogin.cookie,
+  });
+  assert.equal(subscribeComponent.status, 200);
+
+  const subscribeVariant = await jsonRequest(app, env, '/v1/variants/alice-variant/subscribe', {
+    method: 'POST',
+    cookie: managementLogin.cookie,
+  });
+  assert.equal(subscribeVariant.status, 200);
+
+  const rejectedPurge = await jsonRequest(app, env, `${MANAGEMENT_API_BASE_PATH}/assets/purge-all`, {
+    method: 'POST',
+    cookie: managementLogin.cookie,
+    payload: {
+      confirmationText: 'nope',
+    },
+  });
+  assert.equal(rejectedPurge.status, 400);
+
+  const purge = await jsonRequest(app, env, `${MANAGEMENT_API_BASE_PATH}/assets/purge-all`, {
+    method: 'POST',
+    cookie: managementLogin.cookie,
+    payload: {
+      confirmationText: 'DELETE ALL ASSETS',
+    },
+  });
+  assert.equal(purge.status, 200);
+  assert.equal(purge.json.deletedAssets, 2);
+  assert.equal(purge.json.deletedAssetVersions, 3);
+  assert.equal(purge.json.deletedAssetSubscriptions, 2);
+  assert.equal(purge.json.deletedVariantDetails, 1);
+
+  const managedVariants = await jsonRequest(app, env, `${MANAGEMENT_API_BASE_PATH}/variants?includeDeleted=true`, {
+    cookie: managementLogin.cookie,
+  });
+  assert.equal(managedVariants.status, 200);
+  assert.deepEqual(managedVariants.json.entries, []);
+
+  const managedComponents = await jsonRequest(app, env, `${MANAGEMENT_API_BASE_PATH}/components?includeDeleted=true`, {
+    cookie: managementLogin.cookie,
+  });
+  assert.equal(managedComponents.status, 200);
+  assert.deepEqual(managedComponents.json.entries, []);
+
+  const publicVariants = await jsonRequest(app, env, '/v1/variants?owner=public');
+  assert.equal(publicVariants.status, 200);
+  assert.deepEqual(publicVariants.json.entries, []);
+
+  const publicComponents = await jsonRequest(app, env, '/v1/components?owner=public');
+  assert.equal(publicComponents.status, 200);
+  assert.deepEqual(publicComponents.json.entries, []);
+
+  const userDirectory = await jsonRequest(app, env, `${MANAGEMENT_API_BASE_PATH}/users`, {
+    cookie: managementLogin.cookie,
+  });
+  assert.equal(userDirectory.status, 200);
+  const aliceEntry = userDirectory.json.entries.find((entry) => entry.username === 'alice');
+  assert.equal(aliceEntry.assetCount, 0);
 });
 
 test('console entry page is served as html', async (t) => {

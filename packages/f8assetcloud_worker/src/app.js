@@ -15,6 +15,7 @@ import { decompressGzip, isPlainObject, stringOrDefault, toBoolean } from './uti
 const AUTH_BASE_PATH = '/api/auth';
 const CONSOLE_BASE_PATH = '/console';
 const MANAGEMENT_API_BASE_PATH = '/v1/management';
+const PURGE_ALL_ASSETS_CONFIRMATION_TEXT = 'DELETE ALL ASSETS';
 const USER_ROLE_ADMIN = 'admin';
 const USER_ROLE_USER = 'user';
 const USER_ROLE_READONLY = 'readonly';
@@ -467,6 +468,15 @@ async function routeManagementRequest({ env, managementUser, auth, repo, request
     });
     invalidateAuthCache(env?.DB);
     return jsonResponse(200, updated);
+  }
+
+  if (request.method === 'POST' && url.pathname === `${MANAGEMENT_API_BASE_PATH}/assets/purge-all`) {
+    const payload = await readJsonBody(request);
+    const confirmationText = requireBodyString(payload.confirmationText, 'confirmationText is required');
+    if (confirmationText !== PURGE_ALL_ASSETS_CONFIRMATION_TEXT) {
+      throw new HttpError(400, `confirmationText must equal ${PURGE_ALL_ASSETS_CONFIRMATION_TEXT}`);
+    }
+    return jsonResponse(200, await repo.adminPurgeAllAssets());
   }
 
   if (request.method === 'DELETE' && url.pathname.startsWith(`${MANAGEMENT_API_BASE_PATH}/users/`)) {

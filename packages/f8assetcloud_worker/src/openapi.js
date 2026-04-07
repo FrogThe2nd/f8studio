@@ -32,6 +32,17 @@ const siteSettingsUpdateRequestSchema = z.object({
   allowUserRegistration: z.boolean(),
 });
 
+const managementPurgeAllAssetsRequestSchema = z.object({
+  confirmationText: z.string(),
+});
+
+const managementPurgeAllAssetsResponseSchema = z.object({
+  deletedAssetSubscriptions: z.number().int(),
+  deletedAssetVersions: z.number().int(),
+  deletedVariantDetails: z.number().int(),
+  deletedAssets: z.number().int(),
+});
+
 const apiUserResponseSchema = z.object({
   userId: z.string(),
   username: z.string(),
@@ -900,6 +911,20 @@ export function registerOpenApiRoutes(app, handlers) {
     },
     responses: withCommonErrorResponses({
       200: jsonSuccessResponse(siteSettingsResponseSchema, 'Updated site settings'),
+    }),
+  }, handlers.routeManagementRequest);
+
+  registerRoute(openapi, 'post', '/v1/management/assets/purge-all', {
+    tags: ['management'],
+    summary: 'Permanently delete every asset and revision',
+    request: {
+      body: jsonRequestBody(
+        managementPurgeAllAssetsRequestSchema,
+        'Destructive confirmation payload required to permanently delete all assets',
+      ),
+    },
+    responses: withCommonErrorResponses({
+      200: jsonSuccessResponse(managementPurgeAllAssetsResponseSchema, 'Asset purge summary'),
     }),
   }, handlers.routeManagementRequest);
 

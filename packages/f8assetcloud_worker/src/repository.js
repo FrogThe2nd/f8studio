@@ -153,6 +153,31 @@ export class AssetRepository {
     return this.getSiteSettings();
   }
 
+  async adminPurgeAllAssets() {
+    const deletedSubscriptionsResult = await this._db.prepare(
+      'DELETE FROM asset_subscriptions',
+    ).run();
+    const deletedVersionsResult = await this._db.prepare(
+      'DELETE FROM asset_versions',
+    ).run();
+    let deletedVariantDetails = 0;
+    if (await this._hasVariantDetailsTable()) {
+      const deletedVariantDetailsResult = await this._db.prepare(
+        'DELETE FROM variant_details',
+      ).run();
+      deletedVariantDetails = Number(deletedVariantDetailsResult.meta?.changes || 0);
+    }
+    const deletedHeadsResult = await this._db.prepare(
+      'DELETE FROM asset_heads',
+    ).run();
+    return {
+      deletedAssetSubscriptions: Number(deletedSubscriptionsResult.meta?.changes || 0),
+      deletedAssetVersions: Number(deletedVersionsResult.meta?.changes || 0),
+      deletedVariantDetails,
+      deletedAssets: Number(deletedHeadsResult.meta?.changes || 0),
+    };
+  }
+
   async listManagedAssets({ assetType, ownerUserId, query, includeDeleted, cursor, kind = '', baseNodeType = '' }) {
     const filters = ['1 = 1'];
     const bindings = [];
