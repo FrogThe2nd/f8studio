@@ -55,6 +55,7 @@ class PyExprServiceNodeTests(unittest.IsolatedAsyncioTestCase):
         reg = RuntimeNodeRegistry.instance()
         register_expr_specs(reg)
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=EXPR_SERVICE_CLASS), registry=reg)
+        bus.set_data_delivery("both", source="test")
 
     def test_program_defaults_data_delivery_to_both(self) -> None:
         program = PythonExprServiceProgram()
@@ -293,6 +294,7 @@ class PyExprServiceNodeTests(unittest.IsolatedAsyncioTestCase):
         bus_src = harness.create_bus("srcSvc")
         bus_dst = harness.create_bus("dstSvc")
         self._register_runtime(bus_dst)
+        bus_src.set_cross_publish_policy("all", source="test")
 
         graph_dst = F8RuntimeGraph(
             graphId="g_cross",
@@ -331,8 +333,12 @@ class PyExprServiceNodeTests(unittest.IsolatedAsyncioTestCase):
         assert isinstance(node, PythonExprServiceNode)
         await node.on_state("code", "inputs['in'] + 100", ts_ms=1)
         await bus_src.emit_data("srcNode", "out", 23, ts_ms=123)
-        await asyncio.sleep(0.05)
-        out = await bus_dst.pull_data("tap", "in", ctx_id="ctx-cross")
+        out = None
+        for _ in range(10):
+            out = await bus_dst.pull_data("tap", "in", ctx_id="ctx-cross")
+            if out is not None:
+                break
+            await asyncio.sleep(0.02)
         self.assertEqual(out, 123)
 
 

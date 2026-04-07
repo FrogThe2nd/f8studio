@@ -30,7 +30,7 @@ def _state_field(name: str) -> F8StateSpec:
 async def bench_publish_state(iterations: int) -> tuple[float, float]:
     harness = ServiceBusHarness()
     bus = harness.create_bus("svcA")
-    bus._state_access_by_node_field[("opA", "out")] = F8StateAccess.rw
+    bus.state_store.access_by_node_field[("opA", "out")] = F8StateAccess.rw
 
     t0 = perf_counter()
     for i in range(iterations):

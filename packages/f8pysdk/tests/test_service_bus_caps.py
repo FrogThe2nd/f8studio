@@ -14,16 +14,17 @@ from f8pysdk.testing import buffer_input  # noqa: E402
 class ServiceBusCapTests(unittest.TestCase):
     def test_state_cache_lru_cap(self) -> None:
         bus = ServiceBus(ServiceBusConfig(service_id="svc", state_cache_max_entries=2))
+        cache = bus.state_store.cache
 
-        bus._state_cache[("n", "a")] = ("va", 1)
-        bus._state_cache[("n", "b")] = ("vb", 2)
-        _ = bus._state_cache.get(("n", "a"))
-        bus._state_cache[("n", "c")] = ("vc", 3)
+        cache[("n", "a")] = ("va", 1)
+        cache[("n", "b")] = ("vb", 2)
+        _ = cache.get(("n", "a"))
+        cache[("n", "c")] = ("vc", 3)
 
-        self.assertEqual(len(bus._state_cache), 2)
-        self.assertIn(("n", "a"), bus._state_cache)
-        self.assertIn(("n", "c"), bus._state_cache)
-        self.assertNotIn(("n", "b"), bus._state_cache)
+        self.assertEqual(len(cache), 2)
+        self.assertIn(("n", "a"), cache)
+        self.assertIn(("n", "c"), cache)
+        self.assertNotIn(("n", "b"), cache)
 
     def test_data_input_buffer_lru_cap(self) -> None:
         bus = ServiceBus(ServiceBusConfig(service_id="svc", data_input_max_buffers=2))
@@ -52,7 +53,7 @@ class ServiceBusCapTests(unittest.TestCase):
     def test_get_state_cached_hit_and_miss(self) -> None:
         bus = ServiceBus(ServiceBusConfig(service_id="svc"))
         self.assertEqual(bus.get_state_cached("n1", "a", 123), 123)
-        bus._state_cache[("n1", "a")] = ("valueA", 10)
+        bus.state_store.cache[("n1", "a")] = ("valueA", 10)
         self.assertEqual(bus.get_state_cached("n1", "a", None), "valueA")
 
     def test_runtime_node_get_state_cached(self) -> None:
@@ -60,7 +61,7 @@ class ServiceBusCapTests(unittest.TestCase):
         self.assertEqual(node.get_state_cached("k", "d"), "d")
 
         bus = ServiceBus(ServiceBusConfig(service_id="svc"))
-        bus._state_cache[("n1", "k")] = ("vk", 11)
+        bus.state_store.cache[("n1", "k")] = ("vk", 11)
         node.attach(bus)
         self.assertEqual(node.get_state_cached("k", "d"), "vk")
 

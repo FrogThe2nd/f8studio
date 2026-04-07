@@ -6,5 +6,6 @@ from .domain.state_pipeline import (
     publish_state,
     validate_state_update,
 )
+from .state_write import StatePublishOptions
 
-__all__ = ["coerce_state_value", "origin_allows_access", "publish_state", "validate_state_update"]
+__all__ = ["StatePublishOptions", "coerce_state_value", "origin_allows_access", "publish_state", "validate_state_update"]

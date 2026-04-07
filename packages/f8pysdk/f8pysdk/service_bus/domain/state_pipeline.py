@@ -11,7 +11,7 @@ from ...generated import F8StateAccess
 from ...json_unwrap import unwrap_json_value
 from ...nats_naming import ensure_token, kv_key_node_state
 from ..error_utils import log_error_once
-from ..state_write import StateWriteContext, StateWriteError, StateWriteOrigin, StateWriteSource
+from ..state_write import StatePublishOptions, StateWriteContext, StateWriteError, StateWriteOrigin, StateWriteSource
 from ...time_utils import now_ms
 from ..codec import encode_obj
 from ..command_runtime import dispatch_command_input
@@ -101,13 +101,13 @@ async def _route_intra_state_edges(
     field: str,
     value: Any,
     ts_ms: int,
-    meta_dict: dict[str, Any],
+    options: StatePublishOptions,
 ) -> None:
-    if bool(meta_dict.get("_noStateFanout")):
+    if not options.fanout_intra_state_edges:
         return
     node_id_s = str(node_id)
     field_s = str(field)
-    targets = bus._intra_state_out.get((node_id_s, field_s)) or []
+    targets = bus.state_router.intra_targets(node_id=node_id_s, field=field_s)
     if not targets:
         return
     for to_node, to_field, _edge in list(targets):
@@ -115,7 +115,7 @@ async def _route_intra_state_edges(
         to_field_s = str(to_field)
         if to_node_s == node_id_s and to_field_s == field_s:
             continue
-        access = bus._state_access_by_node_field.get((to_node_s, to_field_s))
+        access = bus.state_store.access_for(node_id=to_node_s, field=to_field_s)
         if access not in (F8StateAccess.rw, F8StateAccess.wo):
             continue
         try:
@@ -154,6 +154,7 @@ async def _deliver_state_local(
     value: Any,
     ts_ms: int,
     meta_dict: dict[str, Any],
+    options: StatePublishOptions,
 ) -> None:
     node_id_s = str(node_id)
     field_s = str(field)
@@ -175,7 +176,7 @@ async def _deliver_state_local(
             field=field_s,
             value=value,
             ts_ms=int(ts_ms),
-            meta_dict=dict(meta_dict),
+            options=options,
         )
         return
     node = bus._nodes.get(node_id_s)
@@ -196,8 +197,20 @@ async def _deliver_state_local(
         field=field_s,
         value=value,
         ts_ms=int(ts_ms),
-        meta_dict=dict(meta_dict),
+        options=options,
     )
+
+
+def _resolve_publish_options(
+    *, meta: dict[str, Any] | None, options: StatePublishOptions | None
+) -> tuple[StatePublishOptions, dict[str, Any]]:
+    meta_dict = dict(meta or {})
+    legacy_no_fanout = bool(meta_dict.pop("_noStateFanout", False))
+    if options is not None:
+        return options, meta_dict
+    if legacy_no_fanout:
+        return StatePublishOptions(fanout_intra_state_edges=False), meta_dict
+    return StatePublishOptions(), meta_dict
 
 
 async def validate_state_update(
@@ -221,7 +234,7 @@ async def validate_state_update(
     field_s = str(field)
     node = bus._nodes.get(node_id_s)
 
-    access = bus._state_access_by_node_field.get((node_id_s, field_s))
+    access = bus.state_store.access_for(node_id=node_id_s, field=field_s)
     # If we have an applied graph, unknown fields are rejected.
     if bus._graph is not None and access is None:
         raise StateWriteError(
@@ -275,11 +288,19 @@ async def publish_state(
     source: StateWriteSource | str | None = None,
     meta: dict[str, Any] | None = None,
     deliver_local: bool = True,
+    options: StatePublishOptions | None = None,
 ) -> None:
+    """
+    Persist and locally apply a state update.
+
+    `meta` is payload/validation metadata only. Runtime propagation controls
+    should be expressed via `StatePublishOptions`.
+    """
     node_id = ensure_token(node_id, label="node_id")
     field = str(field)
     ts = int(ts_ms or now_ms())
     ctx = StateWriteContext(origin=origin, source=source)
+    publish_options, payload_meta = _resolve_publish_options(meta=meta, options=options)
     update = _StateUpdate(
         node_id=node_id,
         field=field,
@@ -288,7 +309,7 @@ async def publish_state(
         origin=ctx.origin,
         source=ctx.resolved_source,
         actor=bus.service_id,
-        meta=dict(meta or {}),
+        meta=payload_meta,
     )
     payload = _build_state_payload(update)
     update.value = await validate_state_update(
@@ -308,7 +329,7 @@ async def publish_state(
     #
     # This is important for intra-service state edges: a graph may contain
     # cycles, and without dedupe a value can loop until hop-limit cutoff.
-    existing = bus._state_cache.get((node_id, field))
+    existing = bus.state_store.cache_entry(node_id=node_id, field=field)
     if existing is not None:
         try:
             if existing[0] == update.value:
@@ -326,12 +347,20 @@ async def publish_state(
             % (bus.service_id, node_id, field, str(payload.get("ts")), ctx.origin.value, update.source)
         )
     await bus._transport.kv_put(key, encode_obj(payload))
-    bus._state_cache[(node_id, field)] = (update.value, int(payload["ts"]))
+    bus.state_store.cache_value(node_id=node_id, field=field, value=update.value, ts_ms=int(payload["ts"]))
     if deliver_local:
         # Local writes (actor == self.service_id) do not round-trip through the KV watcher.
         # Apply to listeners and the node callback immediately.
         try:
-            await _deliver_state_local(bus, node_id, field, update.value, int(payload["ts"]), dict(payload))
+            await _deliver_state_local(
+                bus,
+                node_id,
+                field,
+                update.value,
+                int(payload["ts"]),
+                dict(payload),
+                publish_options,
+            )
         except Exception as exc:
             log.error(
                 "state persisted but local delivery failed service_id=%s node_id=%s field=%s",

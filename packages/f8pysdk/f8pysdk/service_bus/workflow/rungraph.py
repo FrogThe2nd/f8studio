@@ -11,7 +11,7 @@ import msgspec
 from ...generated import F8Edge, F8EdgeKindEnum, F8RuntimeGraph, F8RuntimeGraphMeta, F8StateAccess
 from ...json_unwrap import unwrap_json_value
 from ...nats_naming import data_subject
-from ..state_write import StateWriteOrigin, StateWriteSource
+from ..state_write import StatePublishOptions, StateWriteOrigin, StateWriteSource
 from ...time_utils import now_ms
 from ...rungraph_validation import (
     validate_state_edge_targets_writable_or_raise,
@@ -114,10 +114,8 @@ async def apply_rungraph(bus: "ServiceBus", graph: F8RuntimeGraph) -> bool:
                 state_access_by_node_field[(node_id, name)] = access
 
     bus._graph = graph
-    # Reset cross-state ordering on graph changes.
-    bus._cross_state_last_ts.clear()
-    # Cache local node state access for enforcement and filtering.
-    bus._state_access_by_node_field = state_access_by_node_field
+    bus.state_router.reset_remote_state_ordering()
+    bus.state_store.set_access_map(state_access_by_node_field)
     command_state_bindings_ready(bus)
     if bus._debug_state:
         node_count = len(list(graph.nodes or []))
@@ -167,10 +165,10 @@ async def apply_rungraph_state_values(bus: "ServiceBus", graph: F8RuntimeGraph) 
 
     async def _seed_one(node_id: str, field: str, value: Any) -> None:
         async with sem:
-            access = bus._state_access_by_node_field.get((node_id, field))
+            access = bus.state_store.access_for(node_id=node_id, field=field)
             if access not in (F8StateAccess.rw, F8StateAccess.wo):
                 return
-            if (node_id, field) in bus._cross_state_targets:
+            if bus.state_router.is_cross_state_target(node_id=node_id, field=field):
                 return
             unwrapped = unwrap_json_value(value)
 
@@ -209,7 +207,8 @@ async def apply_rungraph_state_values(bus: "ServiceBus", graph: F8RuntimeGraph) 
                     origin=StateWriteOrigin.rungraph,
                     source=StateWriteSource.rungraph,
                     ts_ms=(int(rungraph_ts) if rungraph_ts > 0 else None),
-                    meta={"via": "rungraph", "rungraphReconcile": True, "_noStateFanout": True},
+                    meta={"via": "rungraph", "rungraphReconcile": True},
+                    options=StatePublishOptions(fanout_intra_state_edges=False),
                 )
             except Exception as exc:
                 log_error_once(
@@ -270,7 +269,7 @@ async def initial_sync_intra_state_edges(bus: "ServiceBus", graph: F8RuntimeGrap
         to_key = (str(edge.toOperatorId), str(edge.toPort))
 
         # Skip unknown/unwritable targets.
-        access = bus._state_access_by_node_field.get(to_key)
+        access = bus.state_store.access_for(node_id=to_key[0], field=to_key[1])
         if access not in (F8StateAccess.rw, F8StateAccess.wo):
             continue
 
@@ -380,7 +379,7 @@ async def initial_sync_intra_state_edges(bus: "ServiceBus", graph: F8RuntimeGrap
 
                 # Continue propagation using the post-validation cached value if available.
                 try:
-                    cached = bus._state_cache.get(to_key)
+                    cached = bus.state_store.cache_entry(node_id=to_key[0], field=to_key[1])
                     next_val = cached[0] if cached is not None else from_val
                 except (TypeError, ValueError):
                     next_val = from_val
@@ -399,7 +398,7 @@ async def seed_builtin_identity_state(bus: "ServiceBus", graph: F8RuntimeGraph) 
         if not node_id:
             continue
         try:
-            if bus._state_access_by_node_field.get((node_id, "svcId")) is not None:
+            if bus.state_store.access_for(node_id=node_id, field="svcId") is not None:
                 await publish_state(
                     bus,
                     node_id,
@@ -408,12 +407,12 @@ async def seed_builtin_identity_state(bus: "ServiceBus", graph: F8RuntimeGraph) 
                     origin=StateWriteOrigin.system,
                     source=StateWriteSource.system,
                     ts_ms=ts,
-                    meta={"builtin": True, "_noStateFanout": True},
+                    meta={"builtin": True},
                     deliver_local=False,
                 )
             operator_class = n.operatorClass
             is_service_node = operator_class is None or isinstance(operator_class, msgspec.UnsetType)
-            if not is_service_node and bus._state_access_by_node_field.get((node_id, "operatorId")) is not None:
+            if not is_service_node and bus.state_store.access_for(node_id=node_id, field="operatorId") is not None:
                 await publish_state(
                     bus,
                     node_id,
@@ -422,7 +421,7 @@ async def seed_builtin_identity_state(bus: "ServiceBus", graph: F8RuntimeGraph) 
                     origin=StateWriteOrigin.system,
                     source=StateWriteSource.system,
                     ts_ms=ts,
-                    meta={"builtin": True, "_noStateFanout": True},
+                    meta={"builtin": True},
                     deliver_local=False,
                 )
         except Exception as exc:
@@ -483,7 +482,8 @@ async def rebuild_routes(bus: "ServiceBus") -> None:
         return
 
     data_router = bus.data_router
-    bus._intra_state_out.clear()
+    state_router = bus.state_router
+    state_router.clear_intra_state_routes()
 
     # Intra (in-process) routing: local service -> local service.
     intra: dict[tuple[str, str], list[tuple[str, str, F8Edge]]] = {}
@@ -512,7 +512,7 @@ async def rebuild_routes(bus: "ServiceBus") -> None:
         if not edge.fromOperatorId or not edge.toOperatorId:
             continue
         intra_state_out.setdefault((str(edge.fromOperatorId), str(edge.fromPort)), []).append((str(edge.toOperatorId), str(edge.toPort), edge))
-    bus._intra_state_out = {k: tuple(v) for k, v in intra_state_out.items()}
+    state_router.replace_intra_state_routes({k: tuple(v) for k, v in intra_state_out.items()})
 
     # Cross routing.
     cross_in: dict[str, list[tuple[str, str, F8Edge]]] = {}

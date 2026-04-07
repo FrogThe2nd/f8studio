@@ -74,7 +74,7 @@ This plan is intentionally incremental. Each phase should leave the SDK usable a
 
 ### Checklist
 
-- [ ] Introduce a typed internal `StatePublishOptions` dataclass to replace magic propagation control keys like `_noStateFanout`.
+- [x] Introduce a typed internal `StatePublishOptions` dataclass to replace magic propagation control keys like `_noStateFanout`.
 - [x] Introduce a typed internal `CommandInvokeOptions` dataclass for command source/result policy metadata.
 - [ ] Introduce a typed internal `DataEmitOptions` or `CrossPublishPolicy` abstraction.
 - [ ] Move compatibility-only flags and hidden metadata shaping behind helper constructors instead of open-coded dict assembly.
@@ -193,8 +193,8 @@ This plan is intentionally incremental. Each phase should leave the SDK usable a
 
 ### Checklist
 
-- [ ] Extract state cache/persist/read logic from `ServiceBus`.
-- [ ] Extract state edge fanout and cross-state watch logic from `ServiceBus`.
+- [x] Extract state cache/persist/read logic from `ServiceBus`.
+- [x] Extract state edge fanout and cross-state watch logic from `ServiceBus`.
 - [x] Extract data buffer/subscription/push callback logic from `ServiceBus`.
 - [ ] Extract command binding and dispatch state from `ServiceBus`.
 - [x] Reduce direct `bus._...` access across modules.
@@ -205,6 +205,13 @@ This plan is intentionally incremental. Each phase should leave the SDK usable a
 
 - Most internal modules no longer reach through `bus._private_field`.
 - `ServiceBus` becomes orchestration, not the storage location for all runtime state.
+
+### Slice D status
+
+- `DataRouter` is the canonical owner for data route tables, buffers, and data subscriptions.
+- `StateStore` is the canonical owner for state cache, access maps, and KV-backed reads.
+- `StateRouter` is the canonical owner for intra-state routes, cross-state bindings, remote watches, and ordering guards.
+- `ServiceBus` now acts as the compatibility façade over those focused components.
 
 ## Phase 6: Public API Cleanup and Compatibility Pass
 

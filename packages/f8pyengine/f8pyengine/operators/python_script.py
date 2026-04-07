@@ -716,18 +716,9 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
     def _build_states_view(self, state_keys: tuple[str, ...]) -> PyEngineStatesView:
         resolved_keys = [str(key) for key in state_keys if str(key)]
         if not resolved_keys:
-            bus = self._bus
-            state_access_map = getattr(bus, "_state_access_by_node_field", {}) if bus is not None else {}
-            for raw_key, raw_access in dict(state_access_map).items():
-                if not isinstance(raw_key, tuple) or len(raw_key) != 2:
-                    continue
-                node_id, field = raw_key
-                if str(node_id) != self.node_id:
-                    continue
-                access = str(getattr(raw_access, "value", raw_access) or "").strip().lower()
-                if access not in ("rw", "ro", "wo"):
-                    continue
-                resolved_keys.append(str(field))
+            resolved_keys = [str(key) for key in self.state_fields if str(key)]
+        if not resolved_keys:
+            resolved_keys = [str(key) for key in self._readable_state_names if str(key)]
         unique_keys = tuple(sorted({key for key in resolved_keys if key}))
         snapshot: dict[str, Any] = {}
         for key in unique_keys:

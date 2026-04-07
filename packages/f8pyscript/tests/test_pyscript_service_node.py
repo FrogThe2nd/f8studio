@@ -366,7 +366,7 @@ class PyScriptServiceNodeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(out_result, dict)
         self.assertEqual((out_result or {}).get("values"), [41, 42, 42, None, True])
 
-    async def test_states_view_fallback_access_map_exposes_wo(self) -> None:
+    async def test_states_view_fallback_declared_state_names_exposes_wo(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
         reg = RuntimeNodeRegistry.instance()

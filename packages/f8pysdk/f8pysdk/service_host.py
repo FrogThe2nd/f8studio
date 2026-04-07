@@ -98,6 +98,13 @@ class ServiceHost:
                 continue
             want_operator_nodes.append(n)
 
+        if service_snapshot is not None and self._service_node is not None:
+            # Keep the long-lived service node metadata aligned with the latest rungraph
+            # snapshot so runtime helpers observe the same declared fields as Studio.
+            self._service_node.data_in_ports = [str(p.name) for p in (service_snapshot.dataInPorts or [])]
+            self._service_node.data_out_ports = [str(p.name) for p in (service_snapshot.dataOutPorts or [])]
+            self._service_node.state_fields = [str(s.name) for s in (service_snapshot.stateFields or [])]
+
         want_ids = {str(n.nodeId) for n in want_operator_nodes}
 
         for node_id in list(self._operator_nodes.keys()):

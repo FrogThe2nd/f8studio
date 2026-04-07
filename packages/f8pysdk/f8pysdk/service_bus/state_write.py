@@ -61,6 +61,19 @@ class StateWriteContext:
         return str(s or self.origin.value)
 
 
+@dataclass(frozen=True)
+class StatePublishOptions:
+    """
+    Explicit controls for state publish side-effects.
+
+    These options are internal runtime controls. Metadata passed via `meta`
+    should describe the write for diagnostics/validation/persistence, not steer
+    propagation behavior.
+    """
+
+    fanout_intra_state_edges: bool = True
+
+
 class StateWriteError(ValueError):
     """
     Structured error for rejecting state writes.

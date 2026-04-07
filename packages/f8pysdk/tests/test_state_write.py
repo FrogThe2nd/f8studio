@@ -34,7 +34,7 @@ from f8pysdk.service_bus.bus import (  # noqa: E402
     ServiceBusConfig,
 )
 from f8pysdk.service_bus.adapters.micro import _ServiceBusMicroEndpoints  # noqa: E402
-from f8pysdk.service_bus.state_publish import validate_state_update  # noqa: E402
+from f8pysdk.service_bus.state_publish import StatePublishOptions, publish_state, validate_state_update  # noqa: E402
 from f8pysdk.state import StateWriteContext, StateWriteError, StateWriteOrigin  # noqa: E402
 from f8pysdk.codec import decode_as, decode_obj, encode_obj  # noqa: E402
 from f8pysdk.testing import InMemoryCluster, InMemoryTransport, ServiceBusHarness  # noqa: E402
@@ -162,7 +162,7 @@ class StateWriteTests(unittest.IsolatedAsyncioTestCase):
         bus = ServiceBus(ServiceBusConfig(service_id="svc"))
         bus._graph = object()
         bus.register_node(_DummyNode("svc"))
-        bus._state_access_by_node_field[("svc", "status")] = F8StateAccess.ro
+        bus.state_store.access_by_node_field[("svc", "status")] = F8StateAccess.ro
         ctx = StateWriteContext(origin=StateWriteOrigin.external, source="endpoint")
         with self.assertRaises(StateWriteError) as cm:
             await validate_state_update(
@@ -180,7 +180,7 @@ class StateWriteTests(unittest.IsolatedAsyncioTestCase):
         bus = ServiceBus(ServiceBusConfig(service_id="svc"))
         bus._graph = object()
         bus.register_node(_DummyNode("svc"))
-        bus._state_access_by_node_field[("svc", "status")] = F8StateAccess.ro
+        bus.state_store.access_by_node_field[("svc", "status")] = F8StateAccess.ro
         ctx = StateWriteContext(origin=StateWriteOrigin.runtime, source="runtime")
         out = await validate_state_update(
             bus,
@@ -213,7 +213,7 @@ class StateWriteTests(unittest.IsolatedAsyncioTestCase):
         cluster = InMemoryCluster()
         transport = InMemoryTransport(cluster=cluster, kv_bucket="kv.svc")
         bus = ServiceBus(ServiceBusConfig(service_id="svc"), transport=transport)
-        bus._state_access_by_node_field[("svc", "status")] = F8StateAccess.ro
+        bus.state_store.access_by_node_field[("svc", "status")] = F8StateAccess.ro
         await bus.publish_state_runtime("svc", "status", 7, ts_ms=42)
         key = kv_key_node_state(node_id="svc", field="status")
         raw = await transport.kv_get(key)
@@ -221,11 +221,90 @@ class StateWriteTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload.get("source"), "runtime")
         self.assertEqual(payload.get("origin"), "runtime")
 
+    async def test_publish_state_options_disable_intra_state_fanout(self) -> None:
+        harness = ServiceBusHarness()
+        bus = harness.create_bus("svcA")
+        bus.register_node(RuntimeNode(node_id="opA"))
+        sink = _RecordingNode("opB")
+        bus.register_node(sink)
+
+        graph = F8RuntimeGraph(
+            graphId="g_options",
+            revision="r1",
+            nodes=[
+                F8RuntimeNode(
+                    nodeId="opA",
+                    serviceId="svcA",
+                    serviceClass="svcA",
+                    operatorClass="OpA",
+                    stateFields=[F8StateSpec(name="out", valueSchema=string_schema(), access=F8StateAccess.rw)],
+                ),
+                F8RuntimeNode(
+                    nodeId="opB",
+                    serviceId="svcA",
+                    serviceClass="svcA",
+                    operatorClass="OpB",
+                    stateFields=[F8StateSpec(name="input", valueSchema=string_schema(), access=F8StateAccess.rw)],
+                ),
+            ],
+            edges=[
+                F8Edge(
+                    edgeId="e_options",
+                    fromServiceId="svcA",
+                    fromOperatorId="opA",
+                    fromPort="out",
+                    toServiceId="svcA",
+                    toOperatorId="opB",
+                    toPort="input",
+                    kind=F8EdgeKindEnum.state,
+                    strategy=F8EdgeStrategyEnum.latest,
+                )
+            ],
+        )
+        await bus.set_rungraph(graph)
+
+        await publish_state(
+            bus,
+            "opA",
+            "out",
+            "v1",
+            origin=StateWriteOrigin.runtime,
+            source="test",
+            options=StatePublishOptions(fanout_intra_state_edges=False),
+        )
+
+        self.assertEqual((await bus.get_state("opA", "out")).value, "v1")
+        self.assertFalse((await bus.get_state("opB", "input")).found)
+        self.assertEqual(sink.state_calls, [])
+
+    async def test_legacy_no_state_fanout_meta_uses_compat_bridge_only(self) -> None:
+        cluster = InMemoryCluster()
+        transport = InMemoryTransport(cluster=cluster, kv_bucket="kv.svc")
+        bus = ServiceBus(ServiceBusConfig(service_id="svc"), transport=transport)
+        bus.register_node(_RecordingNode("svc"))
+        bus.state_store.access_by_node_field[("svc", "status")] = F8StateAccess.rw
+
+        await publish_state(
+            bus,
+            "svc",
+            "status",
+            7,
+            origin=StateWriteOrigin.runtime,
+            source="test",
+            meta={"tag": "x", "_noStateFanout": True},
+        )
+
+        key = kv_key_node_state(node_id="svc", field="status")
+        raw = await transport.kv_get(key)
+        payload = decode_obj(raw) if raw else {}
+        self.assertEqual(payload.get("tag"), "x")
+        self.assertNotIn("_noStateFanout", payload)
+
     async def test_publish_state_persists_even_if_local_callback_fails(self) -> None:
         cluster = InMemoryCluster()
         transport = InMemoryTransport(cluster=cluster, kv_bucket="kv.svc")
         bus = ServiceBus(ServiceBusConfig(service_id="svc"), transport=transport)
-        bus._state_access_by_node_field[("svc", "status")] = F8StateAccess.rw
+        bus.state_store.access_by_node_field[("svc", "status")] = F8StateAccess.rw
         bus.register_node(_OnStateFailNode("svc"))
 
         await bus.publish_state_runtime("svc", "status", 7, ts_ms=42)

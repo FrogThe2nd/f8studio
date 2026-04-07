@@ -375,7 +375,7 @@ class PythonScriptStateTests(unittest.IsolatedAsyncioTestCase):
         out = await node.compute_output("out", ctx_id="ctx-11")
         self.assertEqual(out, [7, 8, 8, None, True])
 
-    async def test_states_view_fallback_access_map_exposes_wo(self) -> None:
+    async def test_states_view_fallback_declared_state_names_exposes_wo(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
         reg = RuntimeNodeRegistry.instance()

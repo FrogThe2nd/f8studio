@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 from ...capabilities import LifecycleNode
 from ...time_utils import now_ms
@@ -79,32 +79,9 @@ async def stop(bus: "ServiceBus") -> None:
 
     await _stop_micro_endpoints(bus)
     await bus.data_router.stop()
-
-    bus._cross_state_in_by_key.clear()
-    for (sid, key), watch in list(bus._remote_state_watches.items()):
-        watcher: Any = None
-        task: asyncio.Task[Any] | None = None
-        try:
-            watcher, task = watch
-        except (TypeError, ValueError) as exc:
-            log.error("invalid cross-state watch handle sid=%s key=%s", sid, key, exc_info=exc)
-            continue
-        if task is not None:
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
-            except Exception as exc:
-                log.error("cross-state watch task stop failed sid=%s key=%s", sid, key, exc_info=exc)
-        if watcher is not None:
-            try:
-                await watcher.stop()
-            except Exception as exc:
-                log.error("cross-state watcher stop failed sid=%s key=%s", sid, key, exc_info=exc)
-    bus._remote_state_watches.clear()
-
-    bus._state_cache.clear()
+    await bus.state_router.stop()
+    bus.state_store.clear_cache()
+    bus.state_store.clear_access_map()
 
     if bus._monitor_collector.enabled:
         await bus._monitor_collector.stop()

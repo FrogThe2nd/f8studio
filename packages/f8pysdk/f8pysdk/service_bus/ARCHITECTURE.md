@@ -4,12 +4,13 @@
 
 This document describes the current `f8pysdk.service_bus` runtime shape after Slice A through Slice D.
 
-The implementation is still compatibility-heavy, but the data side is now split more explicitly:
+The implementation is still compatibility-heavy, but the runtime is now split more explicitly:
 
 - `ServiceBus` is the public façade.
 - command dispatch lives behind `CommandGateway`
 - data routing/buffering/subscriptions live behind `DataRouter`
-- state and cross-state lifecycle still retain more direct `bus._...` coupling
+- state cache/access/read semantics live behind `StateStore`
+- intra-service state routing and cross-state watch lifecycle live behind `StateRouter`
 - several top-level modules are compatibility re-export layers
 
 The long-term plan is tracked in `packages/f8pysdk/SDK_REFACTOR_PLAN.md`.
@@ -29,8 +30,18 @@ Slice D notes:
   - input buffers
   - routed and custom subscriptions
   - push-callback micro-batching
+- `state_store.py` is now the canonical owner for:
+  - local state cache
+  - per-node state access map
+  - KV-backed state read path
+- `state_router.py` is now the canonical owner for:
+  - intra-service state-edge fanout tables
+  - cross-service state bindings
+  - remote state watch handles
+  - cross-state target tracking and remote timestamp ordering
 - `routing_data.py` remains as a thin compatibility layer.
 - `ServiceBus` delegates data emit/pull/subscribe behavior to `DataRouter` instead of storing that mutable state directly.
+- `workflow/cross_state.py` is now a thin compatibility wrapper over `StateRouter`.
 
 ## Current Contracts
 
@@ -54,6 +65,7 @@ Slice D notes:
 2. `domain/state_pipeline.publish_state(...)` validates access and value
 3. state is persisted to KV
 4. local delivery runs immediately for same-process writes
+   runtime propagation controls are carried by typed `StatePublishOptions`, not magic `meta` flags
 5. local delivery triggers:
    - hidden command dispatch for hidden command input fields
    - `node.on_state(...)` for normal state fields
@@ -117,11 +129,12 @@ Current compatibility note:
 1. `set_rungraph(...)` timestamps and validates the graph
 2. routing tables and state-access maps are rebuilt
 3. `DataRouter.replace_routes(...)` swaps the live data-side route state
-4. rungraph `stateValues` are materialized into KV
-5. builtin identity state is seeded
-6. rungraph hooks execute
-7. cross-state watches sync remote values
-8. intra-service initial state-edge propagation runs
+4. `StateRouter.replace_intra_state_routes(...)` swaps the live state-side route state
+5. rungraph `stateValues` are materialized into KV
+6. builtin identity state is seeded
+7. rungraph hooks execute
+8. cross-state watches sync remote values through `StateRouter`
+9. intra-service initial state-edge propagation runs
 
 ## Compatibility Surface
 

@@ -3,9 +3,15 @@
 Python runtime SDK for running an F8 service process.
 
 ### Core building blocks
-- `ServiceBus` (`f8pysdk/service_bus.py`): NATS + JetStream KV transport, routing tables, state cache, rungraph watch.
+- `ServiceBus` (`f8pysdk/service_bus.py`): public runtime facade over transport, routing, state, commands, and lifecycle.
 - `ServiceHost` (`f8pysdk/service_host.py`): rungraph-driven runtime node materialization/registration.
 - `ServiceRuntime` (`f8pysdk/service_runtime.py`): runtime facade that wires `ServiceBus` + `ServiceHost`.
+
+Internal runtime split:
+- `DataRouter`: data routing, buffering, subscriptions, callback batching
+- `StateStore`: state cache, access maps, KV-backed reads
+- `StateRouter`: intra-state routing and cross-state watch lifecycle
+- `CommandGateway`: canonical command execution path
 
 Lifecycle contract:
 - `ServiceBus` and `ServiceRuntime` are single-run objects.

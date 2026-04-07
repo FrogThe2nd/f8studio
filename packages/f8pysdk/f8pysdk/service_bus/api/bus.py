@@ -12,18 +12,10 @@ from ...capabilities import (
     ServiceHook,
     StatefulNode,
 )
-from ...generated import F8Edge, F8RuntimeGraph, F8StateAccess
-from ...nats_naming import (
-    ensure_token,
-    kv_key_ready,
-    kv_bucket_for_service,
-    kv_key_node_state,
-    kv_key_rungraph,
-)
+from ...generated import F8RuntimeGraph
+from ...nats_naming import ensure_token, kv_key_ready, kv_bucket_for_service, kv_key_rungraph
 from ...nats_transport import NatsTransport, NatsTransportConfig
 from ...time_utils import now_ms
-from ..payload import coerce_inbound_ts_ms, extract_ts_field
-from ..codec import decode_obj
 from ..state_publish import (
     publish_state as _publish_state_impl,
 )
@@ -48,7 +40,8 @@ from ..command_runtime import (
     CommandOutputPolicy,
 )
 from ..routing.data_router import DataRouter
-from ..runtime_collections import CappedOrderedDict
+from ..state_router import StateRouter
+from ..state_store import StateStore
 
 if TYPE_CHECKING:
     from ..micro import _ServiceBusMicroEndpoints
@@ -145,20 +138,8 @@ class ServiceBus:
             input_max_buffers=self._data_input_max_buffers,
             default_queue_size=self._data_input_default_queue_size,
         )
-
-        # Intra-service state fanout (state edges within the same service).
-        self._intra_state_out: dict[tuple[str, str], tuple[tuple[str, str, F8Edge], ...]] = {}
-
-        # Cross-state binding (remote KV -> local node.on_state + local KV mirror).
-        self._cross_state_in_by_key: dict[tuple[str, str], list[tuple[str, str, F8Edge]]] = {}
-        self._remote_state_watches: dict[tuple[str, str], Any] = {}
-        self._cross_state_targets: set[tuple[str, str]] = set()
-        self._cross_state_last_ts: dict[tuple[str, str], int] = {}
-
-        self._state_cache: CappedOrderedDict[tuple[str, str], tuple[Any, int]] = CappedOrderedDict(
-            max_entries=self._state_cache_max_entries
-        )
-        self._state_access_by_node_field: dict[tuple[str, str], F8StateAccess] = {}
+        self._state_store = StateStore(self, cache_max_entries=self._state_cache_max_entries)
+        self._state_router = StateRouter(self, store=self._state_store)
         self._command_input_bindings: dict[tuple[str, str], CommandBinding] = {}
         self._command_output_bindings: dict[tuple[str, str], CommandBinding] = {}
         self._command_hidden_fields: set[tuple[str, str]] = set()
@@ -293,6 +274,14 @@ class ServiceBus:
     @property
     def data_router(self) -> DataRouter:
         return self._data_router
+
+    @property
+    def state_store(self) -> StateStore:
+        return self._state_store
+
+    @property
+    def state_router(self) -> StateRouter:
+        return self._state_router
 
     def set_cross_publish_policy(self, value: Any, *, source: str = "service") -> None:
         policy = _coerce_cross_publish_policy(value)
@@ -479,51 +468,13 @@ class ServiceBus:
         )
 
     async def get_state(self, node_id: str, field: str) -> StateRead:
-        node_id = ensure_token(node_id, label="node_id")
-        field = str(field)
-
-        cached = self._state_cache.get((node_id, field))
-        if cached is not None:
-            return StateRead(found=True, value=cached[0], ts_ms=cached[1])
-
-        key = kv_key_node_state(node_id=node_id, field=field)
-        raw = await self._transport.kv_get(key)
-        if not raw:
-            if self._debug_state:
-                print("state_debug[%s] get_state miss node=%s field=%s" % (self.service_id, node_id, field))
-            return StateRead(found=False, value=None, ts_ms=None)
-
-        try:
-            payload = decode_obj(raw)
-        except ValueError:
-            # Preserve old `get_state_with_ts` behavior: treat unparseable values
-            # as "found" and return raw bytes.
-            self._state_cache[(node_id, field)] = (raw, 0)
-            return StateRead(found=True, value=raw, ts_ms=0)
-
-        if isinstance(payload, dict) and "value" in payload:
-            v = payload.get("value")
-            ts = coerce_inbound_ts_ms(extract_ts_field(payload), default=0)
-            self._state_cache[(node_id, field)] = (v, ts)
-            if self._debug_state:
-                print(
-                    "state_debug[%s] get_state kv node=%s field=%s ts=%s" % (self.service_id, node_id, field, str(ts))
-                )
-            return StateRead(found=True, value=v, ts_ms=ts)
-
-        self._state_cache[(node_id, field)] = (payload, 0)
-        return StateRead(found=True, value=payload, ts_ms=0)
+        return await self._state_store.read_state(node_id, field)
 
     def get_state_cached(self, node_id: str, field: str, default: Any = None) -> Any:
         """
         Synchronous cached state snapshot read without KV/network IO.
         """
-        node_id_s = ensure_token(node_id, label="node_id")
-        field_s = str(field)
-        cached = self._state_cache.get((node_id_s, field_s))
-        if cached is None:
-            return default
-        return cached[0]
+        return self._state_store.get_cached_value(node_id, field, default)
 
     # ---- rungraph -------------------------------------------------------
     async def set_rungraph(self, graph: F8RuntimeGraph) -> None:
