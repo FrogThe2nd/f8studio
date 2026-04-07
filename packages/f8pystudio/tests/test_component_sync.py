@@ -1,16 +1,21 @@
 from __future__ import annotations
 
 import json
+import logging
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import threading
+import zlib
 
+import pytest
 from qtpy import QtCore
 from sqlalchemy import insert, select
 
+from f8pystudio.assets.common import decode_http_response_text
 from f8pystudio.assets.components.component_catalog import ComponentCatalogService
 from f8pystudio.assets.components.component_models import (
     F8ComponentEntry,
+    F8ComponentRemoteRequestError,
     F8ComponentRecord,
     F8ComponentSourceKind,
     F8ComponentVisibility,
@@ -25,7 +30,6 @@ def _component_record(component_id: str, name: str) -> dict[str, object]:
         "componentId": component_id,
         "name": name,
         "description": "",
-        "usageNotes": "",
         "tags": [],
         "schemaVersion": "f8studio-session/1",
         "content": {
@@ -63,8 +67,21 @@ class _ComponentApiHandler(BaseHTTPRequestHandler):
 
     def _write_json(self, status: int, payload: dict[str, object], *, set_cookie: str | None = None) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self._write_bytes(status, body, set_cookie=set_cookie)
+
+    def _write_bytes(
+        self,
+        status: int,
+        body: bytes,
+        *,
+        set_cookie: str | None = None,
+        content_type: str = "application/json",
+        content_encoding: str | None = None,
+    ) -> None:
         self.send_response(status)
-        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Type", content_type)
+        if content_encoding:
+            self.send_header("Content-Encoding", content_encoding)
         if set_cookie:
             self.send_header("Set-Cookie", set_cookie)
         self.send_header("Content-Length", str(len(body)))
@@ -86,6 +103,15 @@ class _ComponentApiHandler(BaseHTTPRequestHandler):
                 {"ok": True},
                 set_cookie="session=active-1; Path=/; HttpOnly",
             )
+            return
+        if self.path == "/api/auth/sign-out":
+            self.server.last_signout_origin = str(self.headers.get("Origin") or "")
+            if not self.server.last_signout_origin:
+                self._write_json(403, {"message": "Missing or null Origin"})
+                return
+            if not self._check_auth():
+                return
+            self._write_json(200, {}, set_cookie="session=; Path=/; Max-Age=0")
             return
         if self.path == "/v1/components/public-1/subscribe":
             if not self._check_auth():
@@ -129,6 +155,17 @@ class _ComponentApiHandler(BaseHTTPRequestHandler):
         if self.path == "/v1/components/public-1":
             self._write_json(200, self.server.public_asset)
             return
+        if self.path == "/v1/components/public-1/content":
+            payload = {
+                "componentId": "public-1",
+                "assetType": "component",
+                "versionNumber": 1,
+                "revision": "r-public",
+                "record": self.server.public_record,
+            }
+            compressed_once = zlib.compress(json.dumps(payload, ensure_ascii=False).encode("utf-8"), level=6, wbits=31)
+            self._write_bytes(200, compressed_once, content_encoding="gzip")
+            return
         if self.path == "/v1/components/public-1/versions":
             self._write_json(
                 200,
@@ -150,6 +187,18 @@ class _ComponentApiHandler(BaseHTTPRequestHandler):
         if self.path == "/v1/components/public-1/versions/1":
             self._write_json(200, self.server.public_asset)
             return
+        if self.path == "/v1/components/public-1/versions/1/content":
+            self._write_json(
+                200,
+                {
+                    "componentId": "public-1",
+                    "assetType": "component",
+                    "versionNumber": 1,
+                    "revision": "r-public",
+                    "record": self.server.public_record,
+                },
+            )
+            return
         self._write_json(404, {"message": "missing"})
 
     def do_DELETE(self) -> None:  # noqa: N802
@@ -165,6 +214,7 @@ class _Server(ThreadingHTTPServer):
     def __init__(self, server_address: tuple[str, int]):
         super().__init__(server_address, _ComponentApiHandler)
         self.last_login_user_agent = ""
+        self.last_signout_origin = ""
         self.public_record = _component_record("public-1", "Public Component")
         self.private_record = _component_record("private-1", "Private Component")
         self.public_asset = self.asset_payload(self.public_record, visibility="public")
@@ -226,7 +276,6 @@ class _Server(ThreadingHTTPServer):
                 "componentId": str(record["componentId"]),
                 "name": str(record["name"]),
                 "description": str(record["description"]),
-                "usageNotes": "",
                 "tags": list(record["tags"]),
                 "schemaVersion": str(record["schemaVersion"]),
                 "content": {},
@@ -287,7 +336,6 @@ def test_component_sync_client_supports_anonymous_public_install_and_cookie_sess
                 componentId="forked-1",
                 name="Forked Component",
                 description=historical_entry.record.description,
-                usageNotes=historical_entry.record.usageNotes,
                 tags=list(historical_entry.record.tags),
                 content=historical_entry.record.content,
             ),
@@ -305,6 +353,11 @@ def test_component_sync_client_supports_anonymous_public_install_and_cookie_sess
         assert server.last_create_payload["changeSummary"] == "Forked from public-1 v1"
         assert isinstance(server.last_create_payload["record"], dict)
         assert server.last_create_payload["record"]["name"] == "Forked Component"
+        client.logout()
+        assert client.current_access_token() == ""
+        assert client.current_session() is None
+        assert client.saved_sessions() == []
+        assert server.last_signout_origin == f"http://127.0.0.1:{server.server_port}"
     finally:
         server.shutdown()
         thread.join(timeout=5)
@@ -339,6 +392,65 @@ def test_component_sync_client_drops_legacy_saved_sessions_without_crashing(tmp_
     assert client.current_session() is None
 
 
+def test_decode_http_response_text_only_decodes_one_gzip_layer() -> None:
+    payload = json.dumps({"message": "ok"}, ensure_ascii=False).encode("utf-8")
+    compressed_once = zlib.compress(payload, level=6, wbits=31)
+    compressed_twice = zlib.compress(compressed_once, level=6, wbits=31)
+
+    assert decode_http_response_text(compressed_once, content_encoding="gzip") == payload.decode("utf-8")
+    decoded = decode_http_response_text(compressed_twice, content_encoding="gzip")
+    assert decoded != payload.decode("utf-8")
+
+
+def test_component_sync_client_does_not_fallback_from_content_endpoint(tmp_path: Path, monkeypatch) -> None:
+    settings = QtCore.QSettings(str(tmp_path / "component-sync-no-fallback.ini"), QtCore.QSettings.IniFormat)
+    service = ComponentCatalogService(db_path=tmp_path / "assets.db")
+    client = ComponentSyncClient(settings=settings, catalog_service=service)
+    calls: list[str] = []
+
+    def _request_json(method: str, path: str, payload: dict[str, object] | None, *, authorized: bool) -> dict[str, object]:
+        del method, payload, authorized
+        calls.append(path)
+        raise F8ComponentRemoteRequestError("missing", status_code=404)
+
+    monkeypatch.setattr(client, "_request_json", _request_json)
+
+    with pytest.raises(F8ComponentRemoteRequestError):
+        client.get_component_content("public-1")
+
+    assert calls == ["/v1/components/public-1/content"]
+
+
+def test_component_logout_clears_local_session_when_remote_signout_fails(tmp_path: Path, monkeypatch, caplog) -> None:
+    server = _Server(("127.0.0.1", 0))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        settings = QtCore.QSettings(str(tmp_path / "component-sync-logout.ini"), QtCore.QSettings.IniFormat)
+        service = ComponentCatalogService(db_path=tmp_path / "assets.db")
+        client = ComponentSyncClient(settings=settings, catalog_service=service)
+        base_url = f"http://127.0.0.1:{server.server_port}"
+        _ = client.login(base_url=base_url, username="u", password="p", remember=True)
+
+        def _raise_signout_timeout(_path: str, _payload: dict[str, object], *, authorized: bool) -> dict[str, object]:
+            assert authorized is True
+            raise F8ComponentRemoteRequestError("POST /api/auth/sign-out timed out after 10s")
+
+        monkeypatch.setattr(client, "_post_json", _raise_signout_timeout)
+
+        with caplog.at_level(logging.WARNING):
+            client.logout()
+
+        assert client.current_access_token() == ""
+        assert client.current_session() is None
+        assert client.saved_sessions() == []
+        assert "Component remote sign-out failed; cleared local session anyway" in caplog.text
+        assert "Traceback" not in caplog.text
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+
+
 def test_component_remote_cache_load_cleans_empty_component_ids(tmp_path: Path) -> None:
     service = ComponentCatalogService(db_path=tmp_path / "assets.db")
     provider = service._remote_provider
@@ -346,6 +458,13 @@ def test_component_remote_cache_load_cleans_empty_component_ids(tmp_path: Path) 
         _ = conn.execute(
             insert(component_remote_cache_table).values(
                 component_id="",
+                name="Broken Row",
+                description="",
+                tags_json="[]",
+                schema_version="f8studio-session/1",
+                remote_version_number=1,
+                created_at="2026-04-04T00:00:00+00:00",
+                updated_at="2026-04-04T00:00:00+00:00",
                 source="remote_public",
                 visibility="public",
                 owner_user_id="u1",
@@ -355,9 +474,9 @@ def test_component_remote_cache_load_cleans_empty_component_ids(tmp_path: Path) 
                 sync_state="synced",
                 downloaded_at=None,
                 installed=0,
+                has_cached_content=0,
                 subscribed=0,
-                content=b"{}",
-                updated_at="2026-04-04T00:00:00+00:00",
+                content=zlib.compress(b"{}", level=6, wbits=31),
             )
         )
 
@@ -368,14 +487,21 @@ def test_component_remote_cache_load_cleans_empty_component_ids(tmp_path: Path) 
     assert rows == []
 
 
-def test_component_remote_cache_legacy_full_record_counts_as_installed(tmp_path: Path) -> None:
+def test_component_remote_cache_row_with_content_loads_as_installed(tmp_path: Path) -> None:
     service = ComponentCatalogService(db_path=tmp_path / "assets.db")
     provider = service._remote_provider
-    legacy_record = _component_record("legacy-1", "Legacy Installed Component")
+    canonical_record = _component_record("remote-1", "Remote Installed Component")
     with provider._db.begin_sqla() as conn:
         _ = conn.execute(
             insert(component_remote_cache_table).values(
-                component_id="legacy-1",
+                component_id="remote-1",
+                name=str(canonical_record["name"]),
+                description=str(canonical_record["description"]),
+                tags_json=json.dumps(canonical_record["tags"]),
+                schema_version=str(canonical_record["schemaVersion"]),
+                remote_version_number=1,
+                created_at=str(canonical_record["createdAt"]),
+                updated_at=str(canonical_record["updatedAt"]),
                 source="remote_public",
                 visibility="public",
                 owner_user_id="u1",
@@ -384,16 +510,19 @@ def test_component_remote_cache_legacy_full_record_counts_as_installed(tmp_path:
                 remote_revision="r1",
                 sync_state="synced",
                 downloaded_at="2026-04-04T00:00:00+00:00",
-                installed=0,
+                installed=1,
+                has_cached_content=1,
                 subscribed=0,
-                content=json.dumps(legacy_record).encode("utf-8"),
-                updated_at="2026-04-04T00:00:00+00:00",
+                content=zlib.compress(json.dumps(canonical_record["content"]).encode("utf-8"), level=6, wbits=31),
             )
         )
 
-    loaded = service.entry("legacy-1", include_uninstalled=False)
+    loaded = service.entry("remote-1", include_uninstalled=False)
     assert loaded is not None
-    assert loaded.record.componentId == "legacy-1"
+    assert loaded.record.componentId == "remote-1"
+    assert loaded.installed is True
+    assert loaded.hasCachedContent is True
+    assert loaded.remoteVersionNumber == 1
     assert loaded.record.content["schemaVersion"] == "f8studio-session/1"
 
 

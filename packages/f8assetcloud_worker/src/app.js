@@ -2,11 +2,13 @@ import { betterAuth, generateId } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { hashPassword } from 'better-auth/crypto';
 import { admin, username } from 'better-auth/plugins';
+import { ApiException } from 'chanfana';
 import { drizzle } from 'drizzle-orm/d1';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 
 import { authSchema } from './auth_schema.js';
+import { registerOpenApiRoutes } from './openapi.js';
 import { AssetConflictError, AssetNotFoundError, AssetPermissionError, AssetValidationError, AssetRepository } from './repository.js';
 import { decompressGzip, isPlainObject, stringOrDefault, toBoolean } from './utils.js';
 
@@ -16,6 +18,7 @@ const MANAGEMENT_API_BASE_PATH = '/v1/management';
 const USER_ROLE_ADMIN = 'admin';
 const USER_ROLE_USER = 'user';
 const USER_ROLE_READONLY = 'readonly';
+const BOOTSTRAP_ADMIN_STATE_ROW_ID = 1;
 const RESERVED_IDENTITY_NAMES = new Set([
   'admin',
   'administrator',
@@ -31,7 +34,9 @@ const RESERVED_IDENTITY_NAMES = new Set([
   'moderator',
   'official',
 ]);
-const bootstrapAdminInitByDb = new WeakMap();
+const textEncoder = new TextEncoder();
+let bootstrapAdminInitByDb = new WeakMap();
+let authCacheByDb = new WeakMap();
 
 export function createApp() {
   const app = new Hono();
@@ -62,11 +67,82 @@ export function createApp() {
     await next();
   });
 
-  app.get('/v1/auth/providers', (c) => c.json({
-    google: hasGoogleProvider(c.env),
-  }));
-
-  app.get('/v1/site-settings', async (c) => c.json(await c.get('repo').getSiteSettings()));
+  registerOpenApiRoutes(app, {
+    getAuthProviders: async (c) => ({
+      google: hasGoogleProvider(c.env),
+    }),
+    getSiteSettings: async (c) => c.get('repo').getSiteSettings(),
+    getMe: async (c) => {
+      const user = await requireAuthenticatedUser({ auth: c.get('auth'), request: c.req.raw });
+      return toApiUser(user);
+    },
+    listComponents: async (c) => {
+      const viewer = await optionalAuthenticatedUser({ auth: c.get('auth'), request: c.req.raw });
+      return c.get('repo').listComponents({
+        userId: viewer === null ? null : viewer.userId,
+        query: c.req.query('q') || '',
+        visibility: c.req.query('visibility') || '',
+        owner: c.req.query('owner') || '',
+        cursor: c.req.query('cursor') || '',
+      });
+    },
+    getComponentContent: async (c) => {
+      const viewer = await optionalAuthenticatedUser({ auth: c.get('auth'), request: c.req.raw });
+      return c.get('repo').getComponentContent({
+        componentId: c.req.param('componentId'),
+        userId: viewer === null ? null : viewer.userId,
+      });
+    },
+    listVariants: async (c) => {
+      const viewer = await optionalAuthenticatedUser({ auth: c.get('auth'), request: c.req.raw });
+      return c.get('repo').listVariants({
+        userId: viewer === null ? null : viewer.userId,
+        kind: c.req.query('kind') || '',
+        baseNodeType: c.req.query('baseNodeType') || '',
+        query: c.req.query('q') || '',
+        visibility: c.req.query('visibility') || '',
+        owner: c.req.query('owner') || '',
+        cursor: c.req.query('cursor') || '',
+      });
+    },
+    createVariant: async (c) => {
+      const repo = c.get('repo');
+      const user = await requireAssetWriteUser({ auth: c.get('auth'), repo, request: c.req.raw });
+      const payload = await readJsonBody(c.req.raw);
+      return repo.createVariant({ payload, user });
+    },
+    createComponent: async (c) => {
+      const repo = c.get('repo');
+      const user = await requireAssetWriteUser({ auth: c.get('auth'), repo, request: c.req.raw });
+      const payload = await readJsonBody(c.req.raw);
+      return repo.createComponent({ payload, user });
+    },
+    routeVariantAssetRequest: async (c) => routeAssetRequest({
+      auth: c.get('auth'),
+      repo: c.get('repo'),
+      request: c.req.raw,
+      url: new URL(c.req.raw.url),
+      assetType: 'variant',
+    }),
+    routeComponentAssetRequest: async (c) => routeAssetRequest({
+      auth: c.get('auth'),
+      repo: c.get('repo'),
+      request: c.req.raw,
+      url: new URL(c.req.raw.url),
+      assetType: 'component',
+    }),
+    routeManagementRequest: async (c) => {
+      const managementUser = await requireManagementUser({ auth: c.get('auth'), request: c.req.raw });
+      return routeManagementRequest({
+        env: c.env,
+        managementUser,
+        auth: c.get('auth'),
+        repo: c.get('repo'),
+        request: c.req.raw,
+        url: new URL(c.req.raw.url),
+      });
+    },
+  });
 
   app.get('/v1/auth/verify-email', async (c) => {
     const auth = c.get('auth');
@@ -91,11 +167,6 @@ export function createApp() {
     return c.json({ reset: true });
   });
 
-  app.get('/v1/me', async (c) => {
-    const user = await requireAuthenticatedUser({ auth: c.get('auth'), request: c.req.raw });
-    return c.json(toApiUser(user));
-  });
-
   app.post('/v1/me/password', async (c) => {
     const auth = c.get('auth');
     const payload = await readJsonBody(c.req.raw);
@@ -109,20 +180,6 @@ export function createApp() {
       headers: c.req.raw.headers,
     });
     return c.json({});
-  });
-
-  app.get('/v1/search', async (c) => {
-    const repo = c.get('repo');
-    const viewer = await optionalAuthenticatedUser({ auth: c.get('auth'), request: c.req.raw });
-    const result = await repo.searchAssets({
-      assetType: c.req.query('assetType') || '',
-      userId: viewer === null ? null : viewer.userId,
-      query: c.req.query('q') || '',
-      visibility: c.req.query('visibility') || '',
-      owner: c.req.query('owner') || '',
-      cursor: c.req.query('cursor') || '',
-    });
-    return c.json(result);
   });
 
   app.get('/v1/variants', async (c) => {
@@ -145,19 +202,6 @@ export function createApp() {
     const user = await requireAssetWriteUser({ auth: c.get('auth'), repo, request: c.req.raw });
     const payload = await readJsonBody(c.req.raw);
     return c.json(await repo.createVariant({ payload, user }));
-  });
-
-  app.get('/v1/components', async (c) => {
-    const repo = c.get('repo');
-    const viewer = await optionalAuthenticatedUser({ auth: c.get('auth'), request: c.req.raw });
-    const result = await repo.listComponents({
-      userId: viewer === null ? null : viewer.userId,
-      query: c.req.query('q') || '',
-      visibility: c.req.query('visibility') || '',
-      owner: c.req.query('owner') || '',
-      cursor: c.req.query('cursor') || '',
-    });
-    return c.json(result);
   });
 
   app.post('/v1/components', async (c) => {
@@ -186,6 +230,7 @@ export function createApp() {
   app.all(`${MANAGEMENT_API_BASE_PATH}/*`, async (c) => {
     const managementUser = await requireManagementUser({ auth: c.get('auth'), request: c.req.raw });
     return routeManagementRequest({
+      env: c.env,
       managementUser,
       auth: c.get('auth'),
       repo: c.get('repo'),
@@ -200,6 +245,11 @@ export function createApp() {
   app.onError((error) => handleError(error));
 
   return app;
+}
+
+export function resetWorkerCachesForTesting() {
+  bootstrapAdminInitByDb = new WeakMap();
+  authCacheByDb = new WeakMap();
 }
 
 async function routeAssetRequest({ auth, repo, request, url, assetType }) {
@@ -310,7 +360,7 @@ async function routeAssetRequest({ auth, repo, request, url, assetType }) {
   return jsonResponse(404, { message: 'not found' });
 }
 
-async function routeManagementRequest({ managementUser, auth, repo, request, url }) {
+async function routeManagementRequest({ env, managementUser, auth, repo, request, url }) {
   if (request.method === 'GET' && url.pathname === `${MANAGEMENT_API_BASE_PATH}/users`) {
     const users = await repo.listUsers({
       query: url.searchParams.get('q') || '',
@@ -357,15 +407,6 @@ async function routeManagementRequest({ managementUser, auth, repo, request, url
         return jsonResponse(404, { message: 'user not found' });
       }
       return jsonResponse(200, user);
-    }
-    if (parts.suffix.length === 1 && parts.suffix[0] === 'assets') {
-      const result = await repo.listAssetsByOwnerForManagement({
-        ownerUserId: userId,
-        assetType: url.searchParams.get('assetType') || '',
-        includeDeleted: url.searchParams.get('includeDeleted') || '',
-        cursor: url.searchParams.get('cursor') || '',
-      });
-      return jsonResponse(200, result);
     }
   }
 
@@ -424,6 +465,7 @@ async function routeManagementRequest({ managementUser, auth, repo, request, url
       allowUserRegistration: payload.allowUserRegistration,
       updatedByUserId: managementUser.userId,
     });
+    invalidateAuthCache(env?.DB);
     return jsonResponse(200, updated);
   }
 
@@ -443,9 +485,9 @@ async function routeManagementRequest({ managementUser, auth, repo, request, url
     return jsonResponse(200, {});
   }
 
-  if (request.method === 'GET' && url.pathname === `${MANAGEMENT_API_BASE_PATH}/assets`) {
+  if (request.method === 'GET' && url.pathname === `${MANAGEMENT_API_BASE_PATH}/components`) {
     const result = await repo.listManagedAssets({
-      assetType: url.searchParams.get('assetType') || '',
+      assetType: 'component',
       ownerUserId: url.searchParams.get('ownerUserId') || '',
       query: url.searchParams.get('q') || '',
       includeDeleted: url.searchParams.get('includeDeleted') || '',
@@ -454,14 +496,28 @@ async function routeManagementRequest({ managementUser, auth, repo, request, url
     return jsonResponse(200, result);
   }
 
-  if (request.method === 'GET' && url.pathname.startsWith(`${MANAGEMENT_API_BASE_PATH}/assets/`)) {
-    const assetId = decodeSinglePathValue(url.pathname, `${MANAGEMENT_API_BASE_PATH}/assets/`);
-    if (!assetId) {
+  if (request.method === 'GET' && url.pathname === `${MANAGEMENT_API_BASE_PATH}/variants`) {
+    const result = await repo.listManagedAssets({
+      assetType: 'variant',
+      ownerUserId: url.searchParams.get('ownerUserId') || '',
+      query: url.searchParams.get('q') || '',
+      includeDeleted: url.searchParams.get('includeDeleted') || '',
+      cursor: url.searchParams.get('cursor') || '',
+      kind: url.searchParams.get('kind') || '',
+      baseNodeType: url.searchParams.get('baseNodeType') || '',
+    });
+    return jsonResponse(200, result);
+  }
+
+  if (request.method === 'GET' && url.pathname.startsWith(`${MANAGEMENT_API_BASE_PATH}/components/`)) {
+    const componentId = decodeSinglePathValue(url.pathname, `${MANAGEMENT_API_BASE_PATH}/components/`);
+    if (!componentId) {
       return jsonResponse(404, { message: 'not found' });
     }
     const asset = await repo.getManagedAsset({
-      assetId,
+      assetId: componentId,
       includeDeleted: url.searchParams.get('includeDeleted') || '',
+      assetTypeHint: 'component',
     });
     if (asset === null) {
       return jsonResponse(404, { message: 'asset not found' });
@@ -469,38 +525,100 @@ async function routeManagementRequest({ managementUser, auth, repo, request, url
     return jsonResponse(200, asset);
   }
 
-  if (request.method === 'PUT' && url.pathname.startsWith(`${MANAGEMENT_API_BASE_PATH}/assets/`)) {
-    const assetId = decodeSinglePathValue(url.pathname, `${MANAGEMENT_API_BASE_PATH}/assets/`);
-    if (!assetId) {
+  if (request.method === 'GET' && url.pathname.startsWith(`${MANAGEMENT_API_BASE_PATH}/variants/`)) {
+    const variantId = decodeSinglePathValue(url.pathname, `${MANAGEMENT_API_BASE_PATH}/variants/`);
+    if (!variantId) {
+      return jsonResponse(404, { message: 'not found' });
+    }
+    const asset = await repo.getManagedAsset({
+      assetId: variantId,
+      includeDeleted: url.searchParams.get('includeDeleted') || '',
+      assetTypeHint: 'variant',
+    });
+    if (asset === null) {
+      return jsonResponse(404, { message: 'asset not found' });
+    }
+    return jsonResponse(200, asset);
+  }
+
+  if (request.method === 'PUT' && url.pathname.startsWith(`${MANAGEMENT_API_BASE_PATH}/components/`)) {
+    const componentId = decodeSinglePathValue(url.pathname, `${MANAGEMENT_API_BASE_PATH}/components/`);
+    if (!componentId) {
       return jsonResponse(404, { message: 'not found' });
     }
     const payload = await readJsonBody(request);
     if (payload.restore === true) {
-      const restored = await repo.adminRestoreAsset({ assetId });
+      const restored = await repo.adminRestoreAsset({ assetId: componentId, assetTypeHint: 'component' });
       if (!restored) {
         return jsonResponse(404, { message: 'asset not found' });
       }
     }
     if (payload.visibility !== undefined) {
-      const updated = await repo.adminUpdateAssetVisibility({ assetId, visibility: payload.visibility });
+      const updated = await repo.adminUpdateAssetVisibility({
+        assetId: componentId,
+        visibility: payload.visibility,
+        assetTypeHint: 'component',
+      });
       if (updated === null) {
         return jsonResponse(404, { message: 'asset not found' });
       }
       return jsonResponse(200, updated);
     }
-    const current = await repo.getManagedAsset({ assetId, includeDeleted: true });
+    const current = await repo.getManagedAsset({ assetId: componentId, includeDeleted: true, assetTypeHint: 'component' });
     if (current === null) {
       return jsonResponse(404, { message: 'asset not found' });
     }
     return jsonResponse(200, current);
   }
 
-  if (request.method === 'DELETE' && url.pathname.startsWith(`${MANAGEMENT_API_BASE_PATH}/assets/`)) {
-    const assetId = decodeSinglePathValue(url.pathname, `${MANAGEMENT_API_BASE_PATH}/assets/`);
-    if (!assetId) {
+  if (request.method === 'PUT' && url.pathname.startsWith(`${MANAGEMENT_API_BASE_PATH}/variants/`)) {
+    const variantId = decodeSinglePathValue(url.pathname, `${MANAGEMENT_API_BASE_PATH}/variants/`);
+    if (!variantId) {
       return jsonResponse(404, { message: 'not found' });
     }
-    const deleted = await repo.adminDeleteAsset({ assetId });
+    const payload = await readJsonBody(request);
+    if (payload.restore === true) {
+      const restored = await repo.adminRestoreAsset({ assetId: variantId, assetTypeHint: 'variant' });
+      if (!restored) {
+        return jsonResponse(404, { message: 'asset not found' });
+      }
+    }
+    if (payload.visibility !== undefined) {
+      const updated = await repo.adminUpdateAssetVisibility({
+        assetId: variantId,
+        visibility: payload.visibility,
+        assetTypeHint: 'variant',
+      });
+      if (updated === null) {
+        return jsonResponse(404, { message: 'asset not found' });
+      }
+      return jsonResponse(200, updated);
+    }
+    const current = await repo.getManagedAsset({ assetId: variantId, includeDeleted: true, assetTypeHint: 'variant' });
+    if (current === null) {
+      return jsonResponse(404, { message: 'asset not found' });
+    }
+    return jsonResponse(200, current);
+  }
+
+  if (request.method === 'DELETE' && url.pathname.startsWith(`${MANAGEMENT_API_BASE_PATH}/components/`)) {
+    const componentId = decodeSinglePathValue(url.pathname, `${MANAGEMENT_API_BASE_PATH}/components/`);
+    if (!componentId) {
+      return jsonResponse(404, { message: 'not found' });
+    }
+    const deleted = await repo.adminDeleteAsset({ assetId: componentId, assetTypeHint: 'component' });
+    if (!deleted) {
+      return jsonResponse(404, { message: 'asset not found' });
+    }
+    return jsonResponse(200, {});
+  }
+
+  if (request.method === 'DELETE' && url.pathname.startsWith(`${MANAGEMENT_API_BASE_PATH}/variants/`)) {
+    const variantId = decodeSinglePathValue(url.pathname, `${MANAGEMENT_API_BASE_PATH}/variants/`);
+    if (!variantId) {
+      return jsonResponse(404, { message: 'not found' });
+    }
+    const deleted = await repo.adminDeleteAsset({ assetId: variantId, assetTypeHint: 'variant' });
     if (!deleted) {
       return jsonResponse(404, { message: 'asset not found' });
     }
@@ -510,10 +628,7 @@ async function routeManagementRequest({ managementUser, auth, repo, request, url
   return jsonResponse(404, { message: 'not found' });
 }
 
-function createAuth(env, request, siteSettings) {
-  const requestUrl = new URL(request.url);
-  const baseURL = resolveAuthBaseUrl(env, requestUrl);
-  const trustedOrigins = resolveTrustedOrigins(env, requestUrl, baseURL);
+function createAuth(env, { siteSettings, baseURL, trustedOrigins }) {
   const db = drizzle(env.DB);
   const bootstrapUsername = String(env.BOOTSTRAP_ADMIN_USERNAME || '').trim().toLowerCase();
   const bootstrapDisplayName = String(env.BOOTSTRAP_ADMIN_DISPLAY_NAME || '').trim();
@@ -547,7 +662,7 @@ function createAuth(env, request, siteSettings) {
         const appUser = toAppUser(user);
         const resetUrl = resolveAuthActionUrl({
           preferredUrl: url,
-          fallbackUrl: buildResetPasswordUrl({ env, request, token }),
+          fallbackUrl: buildResetPasswordUrl({ env, baseURL, token }),
         });
         await sendResetPasswordMessage({
           env,
@@ -566,7 +681,7 @@ function createAuth(env, request, siteSettings) {
         const appUser = toAppUser(user);
         const verificationUrl = resolveAuthActionUrl({
           preferredUrl: url,
-          fallbackUrl: buildVerifyEmailUrl({ env, request, token }),
+          fallbackUrl: buildVerifyEmailUrl({ env, baseURL, token }),
         });
         await sendVerifyEmailMessage({
           env,
@@ -593,7 +708,26 @@ function createAuth(env, request, siteSettings) {
 
 async function getOrCreateAuth(env, request) {
   const siteSettings = await readSiteSettings(env.DB);
-  return createAuth(env, request, siteSettings);
+  const requestUrl = new URL(request.url);
+  const baseURL = resolveAuthBaseUrl(env, requestUrl);
+  const trustedOrigins = resolveTrustedOrigins(env, requestUrl, baseURL);
+  const cacheKey = buildAuthCacheKey({
+    allowUserRegistration: siteSettings.allowUserRegistration,
+    baseURL,
+    trustedOrigins,
+  });
+  const dbCache = getOrCreateDbCache(authCacheByDb, env.DB);
+  const cached = dbCache.get(cacheKey);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const auth = createAuth(env, {
+    siteSettings,
+    baseURL,
+    trustedOrigins,
+  });
+  dbCache.set(cacheKey, auth);
+  return auth;
 }
 
 async function ensureBootstrapAdmin({ env }) {
@@ -639,15 +773,31 @@ function readBootstrapAdminConfig(env) {
 }
 
 async function ensureBootstrapAdminOnce(env, config) {
+  const configFingerprint = await computeBootstrapAdminFingerprint(env, config);
+  const syncedState = await readBootstrapAdminState(env.DB);
+  if (syncedState !== null && syncedState.configFingerprint === configFingerprint) {
+    const syncedAdmin = await readBootstrapAdminCredentialAccount(env.DB, syncedState.userId);
+    if (bootstrapAdminMatchesConfig(syncedAdmin, config)) {
+      return;
+    }
+  }
+
   const existing = await env.DB.prepare(
-    'SELECT id FROM user WHERE email = ? OR username = ? LIMIT 1',
+    `SELECT
+       u.id,
+       a.id AS credential_account_id
+     FROM user u
+     LEFT JOIN account a
+       ON a.userId = u.id AND a.providerId = 'credential'
+     WHERE u.email = ? OR u.username = ?
+     LIMIT 1`,
   )
     .bind(config.email, config.usernameValue)
     .first();
-  const passwordHash = await hashPassword(config.password);
   const timestamp = Date.now();
 
   if (existing === null) {
+    const passwordHash = await hashPassword(config.password);
     const userId = generateId();
     await env.DB.prepare(
       `INSERT INTO user
@@ -663,6 +813,10 @@ async function ensureBootstrapAdminOnce(env, config) {
     )
       .bind(generateId(), userId, userId, passwordHash, timestamp, timestamp)
       .run();
+    await upsertBootstrapAdminState(env.DB, {
+      configFingerprint,
+      userId,
+    });
     return;
   }
 
@@ -681,16 +835,8 @@ async function ensureBootstrapAdminOnce(env, config) {
     .bind(config.email, config.usernameValue, config.displayName, config.displayName, timestamp, userId)
     .run();
 
-  const credentialAccount = await env.DB.prepare(
-    `SELECT id
-     FROM account
-     WHERE userId = ? AND providerId = 'credential'
-     LIMIT 1`,
-  )
-    .bind(userId)
-    .first();
-
-  if (credentialAccount === null) {
+  if (existing.credential_account_id === null || existing.credential_account_id === undefined) {
+    const passwordHash = await hashPassword(config.password);
     await env.DB.prepare(
       `INSERT INTO account
          ("id", "accountId", "providerId", "userId", "accessToken", "refreshToken", "idToken", "accessTokenExpiresAt", "refreshTokenExpiresAt", "scope", "password", "createdAt", "updatedAt")
@@ -698,18 +844,30 @@ async function ensureBootstrapAdminOnce(env, config) {
     )
       .bind(generateId(), userId, userId, passwordHash, timestamp, timestamp)
       .run();
+    await upsertBootstrapAdminState(env.DB, {
+      configFingerprint,
+      userId,
+    });
     return;
   }
 
-  await env.DB.prepare(
-    `UPDATE account
-     SET accountId = ?,
-         password = ?,
-         updatedAt = ?
-     WHERE id = ?`,
-  )
-    .bind(userId, passwordHash, timestamp, String(credentialAccount.id))
-    .run();
+  if (syncedState === null || syncedState.configFingerprint !== configFingerprint) {
+    const passwordHash = await hashPassword(config.password);
+    await env.DB.prepare(
+      `UPDATE account
+       SET accountId = ?,
+           password = ?,
+           updatedAt = ?
+       WHERE id = ?`,
+    )
+      .bind(userId, passwordHash, timestamp, String(existing.credential_account_id))
+      .run();
+  }
+
+  await upsertBootstrapAdminState(env.DB, {
+    configFingerprint,
+    userId,
+  });
 }
 
 async function requireAuthenticatedUser({ auth, request }) {
@@ -808,6 +966,30 @@ function getAuthSecret(env) {
 
 function hasGoogleProvider(env) {
   return Boolean(String(env.GOOGLE_CLIENT_ID || '').trim() && String(env.GOOGLE_CLIENT_SECRET || '').trim());
+}
+
+function getOrCreateDbCache(cacheByDb, db) {
+  let cache = cacheByDb.get(db);
+  if (cache !== undefined) {
+    return cache;
+  }
+  cache = new Map();
+  cacheByDb.set(db, cache);
+  return cache;
+}
+
+function buildAuthCacheKey({ allowUserRegistration, baseURL, trustedOrigins }) {
+  return JSON.stringify({
+    allowUserRegistration: Boolean(allowUserRegistration),
+    baseURL: String(baseURL || '').trim(),
+    trustedOrigins: [...trustedOrigins].sort(),
+  });
+}
+
+function invalidateAuthCache(db) {
+  if (db && typeof db === 'object') {
+    authCacheByDb.delete(db);
+  }
 }
 
 function resolveAuthBaseUrl(env, requestUrl) {
@@ -970,6 +1152,14 @@ function handleError(error) {
   if (error instanceof HttpError) {
     return jsonResponse(error.status, { message: error.message, ...error.payload });
   }
+  if (error instanceof ApiException) {
+    const errors = error.buildResponse();
+    const primaryMessage = errors.length > 0 ? String(errors[0].message || '') : String(error.message || '');
+    return jsonResponse(error.status, {
+      message: primaryMessage || 'request failed',
+      errors,
+    });
+  }
   const apiError = toAuthApiErrorPayload(error);
   if (apiError !== null) {
     return jsonResponse(apiError.status, apiError.payload);
@@ -1052,20 +1242,20 @@ function frontendFallbackResponse() {
   });
 }
 
-function buildVerifyEmailUrl({ env, request, token }) {
+function buildVerifyEmailUrl({ env, baseURL, token }) {
   const configuredBaseUrl = String(env.AUTH_VERIFY_EMAIL_BASE_URL || '').trim();
   const base = configuredBaseUrl
     ? new URL(configuredBaseUrl)
-    : new URL(`${CONSOLE_BASE_PATH}/verify-email`, request.url);
+    : new URL(`${CONSOLE_BASE_PATH}/verify-email`, baseURL);
   base.searchParams.set('token', token);
   return base.toString();
 }
 
-function buildResetPasswordUrl({ env, request, token }) {
+function buildResetPasswordUrl({ env, baseURL, token }) {
   const configuredBaseUrl = String(env.AUTH_RESET_PASSWORD_BASE_URL || '').trim();
   const base = configuredBaseUrl
     ? new URL(configuredBaseUrl)
-    : new URL(`${CONSOLE_BASE_PATH}/reset-password`, request.url);
+    : new URL(`${CONSOLE_BASE_PATH}/reset-password`, baseURL);
   base.searchParams.set('token', token);
   return base.toString();
 }
@@ -1119,19 +1309,117 @@ function isPublicRegistrationRequest(request) {
 }
 
 async function readSiteSettings(db) {
-  await db.prepare(
-    `INSERT INTO site_settings (id, allow_user_registration, updated_at, updated_by_user_id)
-     VALUES (1, 0, CURRENT_TIMESTAMP, NULL)
-     ON CONFLICT(id) DO NOTHING`,
-  ).run();
   const row = await db.prepare(
     `SELECT allow_user_registration
      FROM site_settings
      WHERE id = 1`,
   ).first();
+  if (row === null) {
+    await db.prepare(
+      `INSERT INTO site_settings (id, allow_user_registration, updated_at, updated_by_user_id)
+       VALUES (1, 0, CURRENT_TIMESTAMP, NULL)
+       ON CONFLICT(id) DO NOTHING`,
+    ).run();
+    return {
+      allowUserRegistration: false,
+    };
+  }
   return {
     allowUserRegistration: Number(row?.allow_user_registration ?? 0) !== 0,
   };
+}
+
+async function computeBootstrapAdminFingerprint(env, config) {
+  const payload = JSON.stringify({
+    authSecret: getAuthSecret(env),
+    email: config.email,
+    password: config.password,
+    displayName: config.displayName,
+    usernameValue: config.usernameValue,
+  });
+  const digest = await crypto.subtle.digest('SHA-256', textEncoder.encode(payload));
+  return bytesToHex(new Uint8Array(digest));
+}
+
+async function readBootstrapAdminState(db) {
+  const row = await db.prepare(
+    `SELECT config_fingerprint, user_id
+     FROM bootstrap_admin_state
+     WHERE id = ?`,
+  )
+    .bind(BOOTSTRAP_ADMIN_STATE_ROW_ID)
+    .first();
+  if (row === null) {
+    return null;
+  }
+  const configFingerprint = String(row.config_fingerprint || '').trim();
+  const userId = String(row.user_id || '').trim();
+  if (!configFingerprint || !userId) {
+    return null;
+  }
+  return {
+    configFingerprint,
+    userId,
+  };
+}
+
+async function readBootstrapAdminCredentialAccount(db, userId) {
+  return db.prepare(
+    `SELECT
+       u.id,
+       u.email,
+       u.username,
+       u.displayUsername,
+       u.name,
+       u.role,
+       u.emailVerified,
+       a.id AS credential_account_id
+     FROM user u
+     LEFT JOIN account a
+       ON a.userId = u.id AND a.providerId = 'credential'
+     WHERE u.id = ?
+     LIMIT 1`,
+  )
+    .bind(String(userId))
+    .first();
+}
+
+function bootstrapAdminMatchesConfig(row, config) {
+  if (row === null) {
+    return false;
+  }
+  if (row.credential_account_id === null || row.credential_account_id === undefined) {
+    return false;
+  }
+  return (
+    String(row.email || '').trim().toLowerCase() === config.email
+    && String(row.username || '').trim().toLowerCase() === config.usernameValue
+    && String(row.displayUsername || '').trim() === config.displayName
+    && String(row.name || '').trim() === config.displayName
+    && String(row.role || '').trim() === USER_ROLE_ADMIN
+    && Number(row.emailVerified || 0) !== 0
+  );
+}
+
+async function upsertBootstrapAdminState(db, { configFingerprint, userId }) {
+  await db.prepare(
+    `INSERT INTO bootstrap_admin_state (id, config_fingerprint, user_id, synced_at)
+     VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+     ON CONFLICT(id) DO UPDATE SET
+       config_fingerprint = excluded.config_fingerprint,
+       user_id = excluded.user_id,
+       synced_at = CURRENT_TIMESTAMP`,
+  )
+    .bind(BOOTSTRAP_ADMIN_STATE_ROW_ID, String(configFingerprint), String(userId))
+    .run();
+}
+
+function bytesToHex(bytes) {
+  let out = '';
+  for (const value of bytes) {
+    out += value.toString(16).padStart(2, '0');
+  }
+  return out;
 }
 
 function normalizeUserRole(value) {

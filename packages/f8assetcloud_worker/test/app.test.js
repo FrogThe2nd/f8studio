@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { gunzipSync, gzipSync } from 'node:zlib';
 
-import { createApp } from '../src/app.js';
+import { createApp, resetWorkerCachesForTesting } from '../src/app.js';
 import worker from '../src/index.js';
 import { createSqliteD1Database } from '../test_support/sqlite_d1_adapter.js';
 
@@ -41,13 +41,16 @@ function createEnv({ allowUserRegistration = true, ...overrides } = {}) {
   return env;
 }
 
-async function jsonRequest(app, env, pathname, { method, payload, cookie } = {}) {
+async function jsonRequest(app, env, pathname, { method, payload, cookie, origin } = {}) {
   const headers = {};
   if (payload !== undefined) {
     headers['Content-Type'] = 'application/json';
   }
   if (cookie) {
     headers.cookie = cookie;
+  }
+  if (origin) {
+    headers.origin = origin;
   }
   const request = new Request(`http://worker.test${pathname}`, {
     method: method || 'GET',
@@ -222,7 +225,10 @@ function componentPayload({ componentId, name, visibility = 'private', revision 
 
 test('auth flows use Better Auth cookie sessions and email actions', async (t) => {
   const env = createEnv();
-  t.after(() => env.DB.close());
+  t.after(() => {
+    resetWorkerCachesForTesting();
+    env.DB.close();
+  });
   const app = createApp();
 
   const providers = await jsonRequest(app, env, '/v1/auth/providers');
@@ -359,6 +365,115 @@ test('auth flows use Better Auth cookie sessions and email actions', async (t) =
   assert.equal(reservedDisplayName.json.code, 'INVALID_DISPLAY_USERNAME');
 });
 
+test('bootstrap admin sync avoids rotating credentials after a cold-cache login', async (t) => {
+  const env = createEnv({ allowUserRegistration: false });
+  t.after(() => {
+    resetWorkerCachesForTesting();
+    env.DB.close();
+  });
+
+  const firstApp = createApp();
+  const firstLogin = await signInUser(firstApp, env, {
+    username: 'admin',
+  });
+  assert.equal(firstLogin.status, 200);
+  assert.ok(firstLogin.cookie);
+
+  const firstAccount = await env.DB.prepare(
+    `SELECT
+       a.id,
+       a.password,
+       a.updatedAt AS updated_at
+     FROM account a
+     JOIN user u ON u.id = a.userId
+     WHERE u.username = ? AND a.providerId = 'credential'
+     LIMIT 1`,
+  )
+    .bind('admin')
+    .first();
+  assert.notEqual(firstAccount, null);
+
+  const bootstrapState = await env.DB.prepare(
+    `SELECT config_fingerprint, user_id
+     FROM bootstrap_admin_state
+     WHERE id = 1`,
+  ).first();
+  assert.notEqual(bootstrapState, null);
+
+  resetWorkerCachesForTesting();
+
+  const secondApp = createApp();
+  const secondLogin = await signInUser(secondApp, env, {
+    username: 'admin',
+  });
+  assert.equal(secondLogin.status, 200);
+  assert.ok(secondLogin.cookie);
+
+  const secondAccount = await env.DB.prepare(
+    `SELECT
+       a.id,
+       a.password,
+       a.updatedAt AS updated_at
+     FROM account a
+     JOIN user u ON u.id = a.userId
+     WHERE u.username = ? AND a.providerId = 'credential'
+     LIMIT 1`,
+  )
+    .bind('admin')
+    .first();
+  assert.notEqual(secondAccount, null);
+  assert.equal(secondAccount.id, firstAccount.id);
+  assert.equal(secondAccount.password, firstAccount.password);
+  assert.equal(secondAccount.updated_at, firstAccount.updated_at);
+});
+
+test('sign-out requires Origin header and deletes the current session when provided', async (t) => {
+  const env = createEnv({ allowUserRegistration: false });
+  t.after(() => {
+    resetWorkerCachesForTesting();
+    env.DB.close();
+  });
+  const app = createApp();
+
+  const signedIn = await signInUser(app, env, {
+    username: 'admin',
+  });
+  assert.equal(signedIn.status, 200);
+  assert.ok(signedIn.cookie);
+
+  const beforeSignOut = await env.DB.prepare(
+    'SELECT COUNT(*) AS count FROM session',
+  ).first();
+  assert.equal(Number(beforeSignOut?.count ?? 0), 1);
+
+  const missingOrigin = await jsonRequest(app, env, '/api/auth/sign-out', {
+    method: 'POST',
+    payload: {},
+    cookie: signedIn.cookie,
+  });
+  assert.equal(missingOrigin.status, 403);
+  assert.equal(missingOrigin.json.code, 'MISSING_OR_NULL_ORIGIN');
+
+  const afterRejectedSignOut = await env.DB.prepare(
+    'SELECT COUNT(*) AS count FROM session',
+  ).first();
+  assert.equal(Number(afterRejectedSignOut?.count ?? 0), 1);
+
+  const acceptedSignOut = await jsonRequest(app, env, '/api/auth/sign-out', {
+    method: 'POST',
+    payload: {},
+    cookie: signedIn.cookie,
+    origin: 'http://worker.test',
+  });
+  assert.equal(acceptedSignOut.status, 200);
+  assert.equal(acceptedSignOut.json.success, true);
+
+  const afterAcceptedSignOut = await env.DB.prepare(
+    'SELECT COUNT(*) AS count FROM session',
+  ).first();
+  assert.equal(Number(afterAcceptedSignOut?.count ?? 0), 0);
+});
+
 test('providers endpoint reflects Google auth configuration', async (t) => {
   const env = createEnv({
     GOOGLE_CLIENT_ID: 'google-client-id',
@@ -370,6 +485,102 @@ test('providers endpoint reflects Google auth configuration', async (t) => {
   const providers = await jsonRequest(app, env, '/v1/auth/providers');
   assert.equal(providers.status, 200);
   assert.equal(providers.json.google, true);
+});
+
+test('openapi endpoints expose the audited worker contract', async (t) => {
+  const env = createEnv();
+  t.after(() => env.DB.close());
+  const app = createApp();
+
+  const openapi = await jsonRequest(app, env, '/openapi.json');
+  assert.equal(openapi.status, 200);
+  assert.equal(openapi.json.info.title, 'Feel8 Asset Cloud API');
+  assert.ok(openapi.json.paths['/v1/auth/providers']);
+  assert.ok(openapi.json.paths['/v1/site-settings']);
+  assert.ok(openapi.json.paths['/v1/me']);
+  assert.equal(openapi.json.paths['/v1/search'], undefined);
+  assert.ok(openapi.json.paths['/v1/components']);
+  assert.ok(openapi.json.paths['/v1/components/{componentId}']);
+  assert.ok(openapi.json.paths['/v1/components/{componentId}/content']);
+  assert.ok(openapi.json.paths['/v1/components/{componentId}/versions']);
+  assert.ok(openapi.json.paths['/v1/components/{componentId}/subscribe']);
+  assert.ok(openapi.json.paths['/v1/variants']);
+  assert.ok(openapi.json.paths['/v1/variants/{variantId}']);
+  assert.ok(openapi.json.paths['/v1/variants/{variantId}/content']);
+  assert.ok(openapi.json.paths['/v1/variants/{variantId}/versions']);
+  assert.ok(openapi.json.paths['/v1/variants/{variantId}/subscribe']);
+  assert.ok(openapi.json.paths['/v1/management/users']);
+  assert.ok(openapi.json.paths['/v1/management/users/{userId}']);
+  assert.ok(openapi.json.paths['/v1/management/site-settings']);
+  assert.ok(openapi.json.paths['/v1/management/components']);
+  assert.ok(openapi.json.paths['/v1/management/components/{componentId}']);
+  assert.ok(openapi.json.paths['/v1/management/variants']);
+  assert.ok(openapi.json.paths['/v1/management/variants/{variantId}']);
+  assert.equal(openapi.json.paths['/v1/management/users/{userId}/assets'], undefined);
+  assert.equal(openapi.json.paths['/v1/management/assets'], undefined);
+  assert.equal(openapi.json.paths['/v1/management/assets/{assetId}'], undefined);
+
+  const docsRequest = new Request('http://worker.test/docs');
+  const docsResponse = await app.fetch(docsRequest, env, {});
+  const docsHtml = await docsResponse.text();
+  assert.equal(docsResponse.status, 200);
+  assert.match(docsHtml, /openapi\.json/);
+});
+
+test('hot asset list queries use composite indexes without temp sorting', async (t) => {
+  const env = createEnv();
+  t.after(() => env.DB.close());
+
+  const componentPlan = await env.DB.prepare(
+    `EXPLAIN QUERY PLAN
+     SELECT
+       h.*,
+       COALESCE(u.displayUsername, u.name) AS owner_display_name,
+       s.subscribed_at,
+       s.last_seen_revision,
+       v.created_by_user_id,
+       v.change_summary,
+       v.version_number,
+       v.revision
+     FROM asset_heads h
+     JOIN asset_versions v
+       ON v.asset_id = h.asset_id AND v.version_number = h.latest_version_number
+     LEFT JOIN user u ON u.id = h.owner_user_id
+     LEFT JOIN asset_subscriptions s
+       ON s.asset_id = h.asset_id AND s.subscriber_user_id = ?
+     WHERE h.deleted_at IS NULL AND h.asset_type = ? AND h.visibility = 'public'
+     ORDER BY LOWER(h.name), h.asset_id
+     LIMIT ? OFFSET ?`,
+  )
+    .bind('', 'component', 101, 0)
+    .all();
+  const componentPlanDetails = (componentPlan.results || []).map((row) => String(row.detail || ''));
+  assert.ok(componentPlanDetails.some((detail) => detail.includes('idx_asset_heads_type_visibility_name')));
+  assert.equal(componentPlanDetails.some((detail) => detail.includes('USE TEMP B-TREE FOR ORDER BY')), false);
+
+  const managementPlan = await env.DB.prepare(
+    `EXPLAIN QUERY PLAN
+     SELECT
+       h.*,
+       COALESCE(u.displayUsername, u.name) AS owner_display_name,
+       v.created_at AS version_created_at,
+       v.created_by_user_id,
+       v.change_summary,
+       v.version_number,
+       v.revision
+     FROM asset_heads h
+     JOIN asset_versions v
+       ON v.asset_id = h.asset_id AND v.version_number = h.latest_version_number
+     LEFT JOIN user u ON u.id = h.owner_user_id
+     WHERE h.deleted_at IS NULL
+     ORDER BY h.updated_at DESC, h.asset_id
+     LIMIT ? OFFSET ?`,
+  )
+    .bind(101, 0)
+    .all();
+  const managementPlanDetails = (managementPlan.results || []).map((row) => String(row.detail || ''));
+  assert.ok(managementPlanDetails.some((detail) => detail.includes('idx_asset_heads_deleted_updated')));
+  assert.equal(managementPlanDetails.some((detail) => detail.includes('USE TEMP B-TREE FOR ORDER BY')), false);
 });
 
 test('variant asset lifecycle works with Better Auth cookie sessions', async (t) => {
@@ -403,6 +614,17 @@ test('variant asset lifecycle works with Better Auth cookie sessions', async (t)
     Array.isArray(assetHeadColumns.results) && assetHeadColumns.results.some((column) => String(column.name) === 'content'),
     false,
   );
+  const storedVariantVersion = await env.DB.prepare(
+    `SELECT content
+     FROM asset_versions
+     WHERE asset_id = ? AND version_number = 1`,
+  )
+    .bind('alice-variant')
+    .first();
+  const storedVariantSpec = JSON.parse(gunzipSync(Buffer.from(storedVariantVersion.content)).toString('utf-8'));
+  assert.equal(storedVariantSpec.label, 'Alice Private');
+  assert.equal(storedVariantSpec.record, undefined);
+  assert.equal(storedVariantSpec.name, undefined);
   const variantDetails = await env.DB.prepare(
     'SELECT variant_kind, base_node_type, service_class, operator_class FROM variant_details WHERE asset_id = ?',
   )
@@ -413,9 +635,9 @@ test('variant asset lifecycle works with Better Auth cookie sessions', async (t)
   assert.equal(String(variantDetails?.service_class || ''), 'svc.test');
   assert.equal(String(variantDetails?.operator_class || ''), 'op.test');
 
-  const publicSearchBefore = await jsonRequest(app, env, '/v1/search?assetType=variant&owner=public');
-  assert.equal(publicSearchBefore.status, 200);
-  assert.equal(publicSearchBefore.json.entries.length, 0);
+  const publicListBefore = await jsonRequest(app, env, '/v1/variants?owner=public');
+  assert.equal(publicListBefore.status, 200);
+  assert.equal(publicListBefore.json.entries.length, 0);
 
   const privateByBob = await jsonRequest(app, env, '/v1/variants/alice-variant', { cookie: bob.cookie });
   assert.equal(privateByBob.status, 403);
@@ -434,9 +656,9 @@ test('variant asset lifecycle works with Better Auth cookie sessions', async (t)
   assert.equal(updated.json.revision, 'r2');
   assert.equal(updated.json.visibility, 'public');
 
-  const publicSearchAfter = await jsonRequest(app, env, '/v1/search?assetType=variant&owner=public&q=alice');
-  assert.equal(publicSearchAfter.status, 200);
-  assert.equal(publicSearchAfter.json.entries.length, 1);
+  const publicListAfter = await jsonRequest(app, env, '/v1/variants?owner=public&q=alice');
+  assert.equal(publicListAfter.status, 200);
+  assert.equal(publicListAfter.json.entries.length, 1);
 
   const subscribed = await jsonRequest(app, env, '/v1/variants/alice-variant/subscribe', {
     method: 'POST',
@@ -446,12 +668,12 @@ test('variant asset lifecycle works with Better Auth cookie sessions', async (t)
   assert.equal(subscribed.json.subscribed, true);
   assert.equal(subscribed.json.editable, false);
 
-  const subscribedSearch = await jsonRequest(app, env, '/v1/search?assetType=variant&owner=subscribed', {
+  const subscribedList = await jsonRequest(app, env, '/v1/variants?owner=subscribed', {
     cookie: bob.cookie,
   });
-  assert.equal(subscribedSearch.status, 200);
-  assert.equal(subscribedSearch.json.entries.length, 1);
-  assert.equal(subscribedSearch.json.entries[0].assetId, 'alice-variant');
+  assert.equal(subscribedList.status, 200);
+  assert.equal(subscribedList.json.entries.length, 1);
+  assert.equal(subscribedList.json.entries[0].variantId, 'alice-variant');
 
   const forbiddenEdit = await jsonRequest(app, env, '/v1/variants/alice-variant', {
     method: 'PUT',
@@ -477,7 +699,8 @@ test('variant asset lifecycle works with Better Auth cookie sessions', async (t)
   assert.equal(oldVersion.json.hasContent, true);
   const oldVersionContent = await jsonRequest(app, env, '/v1/variants/alice-variant/versions/1/content', { cookie: alice.cookie });
   assert.equal(oldVersionContent.status, 200);
-  assert.equal(oldVersionContent.json.record.name, 'Alice Private');
+  assert.equal(oldVersionContent.json.record.name, 'Alice Public');
+  assert.equal(oldVersionContent.json.record.spec.label, 'Alice Private');
 
   const conflict = await jsonRequest(app, env, '/v1/variants/alice-variant', {
     method: 'PUT',
@@ -524,7 +747,7 @@ test('variant asset lifecycle works with Better Auth cookie sessions', async (t)
   });
   assert.equal(removed.status, 200);
 
-  const publicAfterDelete = await jsonRequest(app, env, '/v1/search?assetType=variant&owner=public');
+  const publicAfterDelete = await jsonRequest(app, env, '/v1/variants?owner=public');
   assert.equal(publicAfterDelete.status, 200);
   assert.equal(publicAfterDelete.json.entries.length, 0);
 });
@@ -583,11 +806,11 @@ test('component asset lifecycle validates session envelope and visibility rules'
   assert.equal(publicList.json.entries[0].name, 'Published Session');
   assert.equal(publicList.json.entries[0].hasContent, true);
 
-  const componentSearch = await jsonRequest(app, env, '/v1/search?assetType=component&owner=public');
-  assert.equal(componentSearch.status, 200);
-  assert.equal(componentSearch.json.entries[0].assetId, 'component-a');
-  assert.equal(componentSearch.json.entries[0].schemaVersion, 'f8studio-session/1');
-  assert.equal(Object.hasOwn(componentSearch.json.entries[0], 'variantKind'), false);
+  const componentListSearch = await jsonRequest(app, env, '/v1/components?owner=public');
+  assert.equal(componentListSearch.status, 200);
+  assert.equal(componentListSearch.json.entries[0].componentId, 'component-a');
+  assert.equal(componentListSearch.json.entries[0].schemaVersion, 'f8studio-session/1');
+  assert.equal(Object.hasOwn(componentListSearch.json.entries[0], 'variantKind'), false);
 
   const subscribed = await jsonRequest(app, env, '/v1/components/component-a/subscribe', {
     method: 'POST',
@@ -621,7 +844,7 @@ test('component asset lifecycle validates session envelope and visibility rules'
   assert.equal(oldVersion.json.hasContent, true);
   const oldVersionContent = await jsonRequest(app, env, '/v1/components/component-a/versions/1/content', { cookie: bob.cookie });
   assert.equal(oldVersionContent.status, 200);
-  assert.equal(oldVersionContent.json.record.name, 'Published Session');
+  assert.equal(oldVersionContent.json.record.name, 'Published Session v2');
 
   const forbidden = await jsonRequest(app, env, '/v1/components/component-a', {
     method: 'PUT',
@@ -643,6 +866,152 @@ test('component asset lifecycle validates session envelope and visibility rules'
   assert.equal(forked.status, 200);
   assert.equal(forked.json.componentId, 'component-b');
   assert.equal(forked.json.visibility, 'private');
+});
+
+test('component list and search do not depend on variant details table', async (t) => {
+  const env = createEnv();
+  t.after(() => env.DB.close());
+  const app = createApp();
+
+  const alice = await createVerifiedSession(app, env, {
+    username: 'alice',
+    email: 'alice@example.com',
+    displayName: 'Alice',
+  });
+
+  const created = await jsonRequest(app, env, '/v1/components', {
+    method: 'POST',
+    cookie: alice.cookie,
+    payload: componentPayload({ componentId: 'component-no-vd', name: 'Standalone Component', visibility: 'public' }),
+  });
+  assert.equal(created.status, 200);
+
+  const admin = await signInUser(app, env, {
+    username: 'admin',
+  });
+  assert.equal(admin.status, 200);
+
+  await env.DB.prepare('DROP TABLE variant_details').run();
+
+  const listed = await jsonRequest(app, env, '/v1/components?visibility=public&owner=public');
+  assert.equal(listed.status, 200);
+  assert.equal(listed.json.entries.length, 1);
+  assert.equal(listed.json.entries[0].componentId, 'component-no-vd');
+
+  const detail = await jsonRequest(app, env, '/v1/components/component-no-vd');
+  assert.equal(detail.status, 200);
+  assert.equal(detail.json.componentId, 'component-no-vd');
+
+  const content = await jsonRequest(app, env, '/v1/components/component-no-vd/content');
+  assert.equal(content.status, 200);
+  assert.equal(content.json.componentId, 'component-no-vd');
+  assert.equal(content.json.record.name, 'Standalone Component');
+
+  const searched = await jsonRequest(app, env, '/v1/components?visibility=public&owner=public&q=standalone');
+  assert.equal(searched.status, 200);
+  assert.equal(searched.json.entries.length, 1);
+  assert.equal(searched.json.entries[0].componentId, 'component-no-vd');
+
+  const managedList = await jsonRequest(app, env, `${MANAGEMENT_API_BASE_PATH}/components`, {
+    cookie: admin.cookie,
+  });
+  assert.equal(managedList.status, 200);
+  assert.equal(managedList.json.entries.length, 1);
+  assert.equal(managedList.json.entries[0].assetId, 'component-no-vd');
+
+  const managedDetail = await jsonRequest(app, env, `${MANAGEMENT_API_BASE_PATH}/components/component-no-vd`, {
+    cookie: admin.cookie,
+  });
+  assert.equal(managedDetail.status, 200);
+  assert.equal(managedDetail.json.assetId, 'component-no-vd');
+});
+
+test('component content endpoint reads canonical stored session payload and rejects full record blobs', async (t) => {
+  const env = createEnv();
+  t.after(() => env.DB.close());
+  const app = createApp();
+
+  const alice = await createVerifiedSession(app, env, {
+    username: 'alice',
+    email: 'alice@example.com',
+    displayName: 'Alice',
+  });
+
+  const created = await jsonRequest(app, env, '/v1/components', {
+    method: 'POST',
+    cookie: alice.cookie,
+    payload: componentPayload({ componentId: 'component-canonical', name: 'Canonical Component', visibility: 'public' }),
+  });
+  assert.equal(created.status, 200);
+
+  const storedVersion = await env.DB.prepare(
+    `SELECT content
+     FROM asset_versions
+     WHERE asset_id = ? AND version_number = 1`,
+  )
+    .bind('component-canonical')
+    .first();
+  const storedContent = JSON.parse(gunzipSync(Buffer.from(storedVersion.content)).toString('utf-8'));
+  assert.equal(storedContent.schemaVersion, 'f8studio-session/1');
+  assert.ok(storedContent.layout);
+  assert.equal(storedContent.record, undefined);
+  assert.equal(storedContent.name, undefined);
+
+  const canonicalSessionPayload = JSON.stringify({
+    schemaVersion: 'f8studio-session/1',
+    layout: {
+      nodes: {
+        canonicalNode: {
+          id: 'canonicalNode',
+          name: 'Canonical Node',
+          pos: [0, 0],
+        },
+      },
+      connections: [],
+    },
+  });
+  await env.DB.prepare(
+    `UPDATE asset_versions
+     SET content = ?
+     WHERE asset_id = ? AND version_number = 1`,
+  )
+    .bind(gzipSync(Buffer.from(canonicalSessionPayload)), 'component-canonical')
+    .run();
+
+  const contentResponse = await jsonRequest(app, env, '/v1/components/component-canonical/content');
+  assert.equal(contentResponse.status, 200);
+  assert.equal(contentResponse.json.record.componentId, 'component-canonical');
+  assert.equal(contentResponse.json.record.name, 'Canonical Component');
+  assert.equal(contentResponse.json.record.description, 'published session');
+  assert.equal(contentResponse.json.record.content.layout.nodes.canonicalNode.name, 'Canonical Node');
+
+  const directRecordBlob = JSON.stringify({
+    componentId: 'component-canonical',
+    name: 'Direct Record Blob',
+    description: 'should be rejected',
+    tags: ['invalid'],
+    schemaVersion: 'f8studio-session/1',
+    content: {
+      schemaVersion: 'f8studio-session/1',
+      layout: {
+        nodes: {},
+        connections: [],
+      },
+    },
+    createdAt: '2026-04-01T00:00:00.000Z',
+    updatedAt: '2026-04-02T00:00:00.000Z',
+  });
+  await env.DB.prepare(
+    `UPDATE asset_versions
+     SET content = ?
+     WHERE asset_id = ? AND version_number = 1`,
+  )
+    .bind(gzipSync(Buffer.from(directRecordBlob)), 'component-canonical')
+    .run();
+
+  const directRecordContent = await jsonRequest(app, env, '/v1/components/component-canonical/content');
+  assert.equal(directRecordContent.status, 400);
+  assert.equal(directRecordContent.json.message, 'component version payload layout must be a JSON object');
 });
 
 test('management APIs support Better Auth backed user and asset management', async (t) => {
@@ -724,21 +1093,21 @@ test('management APIs support Better Auth backed user and asset management', asy
   });
   assert.equal(usernameConflict.status, 409);
 
-  const managementViewsAliceAssets = await jsonRequest(app, env, `${MANAGEMENT_API_BASE_PATH}/users/${alice.userId}/assets`, {
+  const managementViewsAliceAssets = await jsonRequest(app, env, `${MANAGEMENT_API_BASE_PATH}/variants?ownerUserId=${encodeURIComponent(alice.userId)}`, {
     cookie: managementLogin.cookie,
   });
   assert.equal(managementViewsAliceAssets.status, 200);
   assert.equal(managementViewsAliceAssets.json.entries.length, 1);
   assert.equal(managementViewsAliceAssets.json.entries[0].assetId, 'alice-private-asset');
 
-  const managementListsAssets = await jsonRequest(app, env, `${MANAGEMENT_API_BASE_PATH}/assets?assetType=variant`, {
+  const managementListsAssets = await jsonRequest(app, env, `${MANAGEMENT_API_BASE_PATH}/variants`, {
     cookie: managementLogin.cookie,
   });
   assert.equal(managementListsAssets.status, 200);
   assert.equal(managementListsAssets.json.entries.length >= 1, true);
   assert.equal(managementListsAssets.json.entries[0].variantKind, 'operator');
 
-  const managementVariantDetail = await jsonRequest(app, env, `${MANAGEMENT_API_BASE_PATH}/assets/alice-private-asset`, {
+  const managementVariantDetail = await jsonRequest(app, env, `${MANAGEMENT_API_BASE_PATH}/variants/alice-private-asset`, {
     cookie: managementLogin.cookie,
   });
   assert.equal(managementVariantDetail.status, 200);
@@ -746,7 +1115,7 @@ test('management APIs support Better Auth backed user and asset management', asy
   assert.equal(managementVariantDetail.json.variantKind, 'operator');
   assert.equal(managementVariantDetail.json.baseNodeType, 'svc.base.op');
 
-  const managementChangesVisibility = await jsonRequest(app, env, `${MANAGEMENT_API_BASE_PATH}/assets/alice-private-asset`, {
+  const managementChangesVisibility = await jsonRequest(app, env, `${MANAGEMENT_API_BASE_PATH}/variants/alice-private-asset`, {
     method: 'PUT',
     cookie: managementLogin.cookie,
     payload: { visibility: 'public' },
@@ -754,13 +1123,13 @@ test('management APIs support Better Auth backed user and asset management', asy
   assert.equal(managementChangesVisibility.status, 200);
   assert.equal(managementChangesVisibility.json.visibility, 'public');
 
-  const managementDeletesAsset = await jsonRequest(app, env, `${MANAGEMENT_API_BASE_PATH}/assets/alice-private-asset`, {
+  const managementDeletesAsset = await jsonRequest(app, env, `${MANAGEMENT_API_BASE_PATH}/variants/alice-private-asset`, {
     method: 'DELETE',
     cookie: managementLogin.cookie,
   });
   assert.equal(managementDeletesAsset.status, 200);
 
-  const hiddenFromDefaultManagementList = await jsonRequest(app, env, `${MANAGEMENT_API_BASE_PATH}/assets?assetType=variant`, {
+  const hiddenFromDefaultManagementList = await jsonRequest(app, env, `${MANAGEMENT_API_BASE_PATH}/variants`, {
     cookie: managementLogin.cookie,
   });
   assert.equal(hiddenFromDefaultManagementList.status, 200);
@@ -769,7 +1138,7 @@ test('management APIs support Better Auth backed user and asset management', asy
     false,
   );
 
-  const includeDeleted = await jsonRequest(app, env, `${MANAGEMENT_API_BASE_PATH}/assets?assetType=variant&includeDeleted=true`, {
+  const includeDeleted = await jsonRequest(app, env, `${MANAGEMENT_API_BASE_PATH}/variants?includeDeleted=true`, {
     cookie: managementLogin.cookie,
   });
   assert.equal(includeDeleted.status, 200);
@@ -778,7 +1147,7 @@ test('management APIs support Better Auth backed user and asset management', asy
     true,
   );
 
-  const managementRestoresAsset = await jsonRequest(app, env, `${MANAGEMENT_API_BASE_PATH}/assets/alice-private-asset`, {
+  const managementRestoresAsset = await jsonRequest(app, env, `${MANAGEMENT_API_BASE_PATH}/variants/alice-private-asset`, {
     method: 'PUT',
     cookie: managementLogin.cookie,
     payload: { restore: true },
@@ -923,21 +1292,21 @@ test('auth helper pages are served as html', async (t) => {
   assert.match(resetHtml, /Feel8 Asset Cloud/);
 });
 
-test('worker leaves search responses uncompressed by default', async (t) => {
+test('worker leaves typed list responses uncompressed by default', async (t) => {
   const env = createEnv();
   t.after(() => env.DB.close());
 
-  const searchRequest = new Request('http://worker.test/v1/search?assetType=component&owner=public', {
+  const listRequest = new Request('http://worker.test/v1/components?owner=public', {
     headers: {
       'Accept-Encoding': 'gzip',
     },
   });
-  const searchResponse = await worker.fetch(searchRequest, env, {});
-  assert.equal(searchResponse.status, 200);
-  assert.equal(searchResponse.headers.get('Content-Encoding'), null);
+  const listResponse = await worker.fetch(listRequest, env, {});
+  assert.equal(listResponse.status, 200);
+  assert.equal(listResponse.headers.get('Content-Encoding'), null);
 });
 
-test('worker gzips large asset payload responses by default and leaves auth/search uncompressed', async (t) => {
+test('worker gzips large asset payload responses by default and leaves auth/list uncompressed', async (t) => {
   const env = createEnv();
   t.after(() => env.DB.close());
   const app = createApp();
@@ -955,14 +1324,14 @@ test('worker gzips large asset payload responses by default and leaves auth/sear
   });
   assert.equal(created.status, 200);
 
-  const searchRequest = new Request('http://worker.test/v1/search?assetType=component&owner=public', {
+  const listRequest = new Request('http://worker.test/v1/components?owner=public', {
     headers: {
       'Accept-Encoding': 'gzip',
     },
   });
-  const searchResponse = await worker.fetch(searchRequest, env, {});
-  assert.equal(searchResponse.status, 200);
-  assert.equal(searchResponse.headers.get('Content-Encoding'), null);
+  const listResponse = await worker.fetch(listRequest, env, {});
+  assert.equal(listResponse.status, 200);
+  assert.equal(listResponse.headers.get('Content-Encoding'), null);
 
   const detailRequest = new Request('http://worker.test/v1/components/component-gzip/content', {
     headers: {
@@ -973,6 +1342,7 @@ test('worker gzips large asset payload responses by default and leaves auth/sear
   const detailResponse = await worker.fetch(detailRequest, env, {});
   assert.equal(detailResponse.status, 200);
   assert.equal(detailResponse.headers.get('Content-Encoding'), 'gzip');
+  assert.match(detailResponse.headers.get('Cache-Control') || '', /(?:^|,\s*)no-transform(?:,|$)/);
   assert.match(detailResponse.headers.get('Content-Type') || '', /application\/json/);
   const compressedBody = Buffer.from(await detailResponse.arrayBuffer());
   const detailPayload = JSON.parse(gunzipSync(compressedBody).toString('utf-8'));
@@ -1019,24 +1389,64 @@ test('worker can accept gzip-compressed asset JSON request bodies', async (t) =>
   assert.equal(createJson.componentId, 'component-gzip-upload');
 });
 
+test('worker rejects mismatched gzip request body headers', async (t) => {
+  const env = createEnv();
+  t.after(() => env.DB.close());
+
+  const alice = await createVerifiedSession(createApp(), env, {
+    username: 'alice',
+    email: 'alice@example.com',
+    displayName: 'Alice',
+  });
+
+  const payloadJson = JSON.stringify(
+    componentPayload({ componentId: 'component-invalid-gzip', name: 'Invalid Gzip', visibility: 'private' }),
+  );
+  const gzippedPayload = gzipSync(Buffer.from(payloadJson));
+
+  const missingHeaderResponse = await worker.fetch(new Request('http://worker.test/v1/components', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      cookie: alice.cookie,
+    },
+    body: gzippedPayload,
+  }), env, {});
+  assert.equal(missingHeaderResponse.status, 400);
+  assert.equal((await missingHeaderResponse.json()).message, 'request body must be a JSON object');
+
+  const invalidGzipHeaderResponse = await worker.fetch(new Request('http://worker.test/v1/components', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Content-Encoding': 'gzip',
+      cookie: alice.cookie,
+    },
+    body: payloadJson,
+  }), env, {});
+  assert.equal(invalidGzipHeaderResponse.status, 400);
+  assert.equal((await invalidGzipHeaderResponse.json()).message, 'request body gzip decompression failed');
+});
+
 test('worker only gzips all /v1 json responses when explicitly enabled and still leaves /api/auth uncompressed', async (t) => {
   const env = createEnv({
     ENABLE_API_JSON_GZIP: 'true',
   });
   t.after(() => env.DB.close());
 
-  const searchRequest = new Request('http://worker.test/v1/search?assetType=component&owner=public', {
+  const listRequest = new Request('http://worker.test/v1/components?owner=public', {
     headers: {
       'Accept-Encoding': 'gzip',
     },
   });
-  const searchResponse = await worker.fetch(searchRequest, env, {});
-  assert.equal(searchResponse.status, 200);
-  assert.equal(searchResponse.headers.get('Content-Encoding'), 'gzip');
-  assert.match(searchResponse.headers.get('Content-Type') || '', /application\/json/);
-  const compressedBody = Buffer.from(await searchResponse.arrayBuffer());
-  const searchPayload = JSON.parse(gunzipSync(compressedBody).toString('utf-8'));
-  assert.ok(Array.isArray(searchPayload.entries));
+  const listResponse = await worker.fetch(listRequest, env, {});
+  assert.equal(listResponse.status, 200);
+  assert.equal(listResponse.headers.get('Content-Encoding'), 'gzip');
+  assert.match(listResponse.headers.get('Cache-Control') || '', /(?:^|,\s*)no-transform(?:,|$)/);
+  assert.match(listResponse.headers.get('Content-Type') || '', /application\/json/);
+  const compressedBody = Buffer.from(await listResponse.arrayBuffer());
+  const listPayload = JSON.parse(gunzipSync(compressedBody).toString('utf-8'));
+  assert.ok(Array.isArray(listPayload.entries));
 
   const sessionRequest = new Request('http://worker.test/api/auth/get-session', {
     headers: {

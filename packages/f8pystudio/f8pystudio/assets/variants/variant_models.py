@@ -40,6 +40,7 @@ class F8VariantEntry(Struct, kw_only=True):
     syncState: F8VariantSyncState = F8VariantSyncState.local_only
     downloadedAt: str | None = None
     installed: bool = True
+    hasCachedContent: bool | None = None
     subscribed: bool = False
     localVersionNumber: int | None = None
     remoteVersionNumber: int | None = None

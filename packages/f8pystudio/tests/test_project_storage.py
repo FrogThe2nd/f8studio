@@ -194,7 +194,6 @@ def _component_entry(
         componentId=component_id,
         name=f"Component {component_id}",
         description="",
-        usageNotes="",
         tags=["demo"],
         content=_session_payload(component_id),
         createdAt=now,

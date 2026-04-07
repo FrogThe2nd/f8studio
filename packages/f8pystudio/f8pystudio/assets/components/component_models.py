@@ -31,7 +31,6 @@ class F8ComponentRecord(Struct, kw_only=True):
     componentId: str
     name: str
     description: str = ""
-    usageNotes: str = ""
     tags: list[str] = field(default_factory=list)
     schemaVersion: str = SESSION_SCHEMA_VERSION
     content: JsonObject = field(default_factory=dict)
@@ -50,6 +49,7 @@ class F8ComponentEntry(Struct, kw_only=True):
     syncState: F8ComponentSyncState = F8ComponentSyncState.local_only
     downloadedAt: str | None = None
     installed: bool = True
+    hasCachedContent: bool | None = None
     subscribed: bool = False
     localVersionNumber: int | None = None
     remoteVersionNumber: int | None = None

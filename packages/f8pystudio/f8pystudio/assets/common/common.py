@@ -4,7 +4,9 @@ from collections.abc import Mapping
 from datetime import datetime, timezone
 import json
 from typing import TypeAlias, cast
+from urllib import parse
 from uuid import uuid4
+import zlib
 
 JsonObject: TypeAlias = dict[str, object]
 
@@ -60,3 +62,24 @@ def mapping_optional_str(mapping: Mapping[object, object], key: str) -> str | No
 
 def mapping_int(mapping: Mapping[object, object], key: str) -> int:
     return int(str(mapping[key]))
+
+
+def origin_headers_for_base_url(base_url: str) -> dict[str, str]:
+    parsed = parse.urlsplit(str(base_url or "").strip())
+    if not parsed.scheme or not parsed.netloc:
+        return {}
+    origin = f"{parsed.scheme}://{parsed.netloc}"
+    referer_path = parsed.path.rstrip("/")
+    referer = f"{origin}{referer_path}/" if referer_path else f"{origin}/"
+    return {
+        "Origin": origin,
+        "Referer": referer,
+    }
+
+
+def decode_http_response_text(raw_bytes: bytes, *, content_encoding: str) -> str:
+    decoded_bytes = bytes(raw_bytes)
+    normalized_encoding = str(content_encoding or "").strip().lower()
+    if "gzip" in normalized_encoding:
+        decoded_bytes = zlib.decompress(decoded_bytes, wbits=31)
+    return decoded_bytes.decode("utf-8", errors="replace")

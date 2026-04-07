@@ -12,7 +12,7 @@ from qtpy import QtCore
 
 from f8pysdk.msgspec_codec import copy_model, validate_as
 
-from ..common import JsonObject, json_object_from_value, json_object_loads
+from ..common import JsonObject, decode_http_response_text, json_object_from_value, json_object_loads, origin_headers_for_base_url
 from .component_catalog import (
     ComponentCatalogService,
     component_entry_can_hydrate,
@@ -164,8 +164,11 @@ class ComponentSyncClient:
         try:
             if self.current_access_token():
                 _ = self._post_json("/api/auth/sign-out", {}, authorized=True)
-        except F8ComponentRemoteRequestError:
-            logger.exception("Component remote logout failed")
+        except (F8ComponentRemoteAuthError, F8ComponentRemoteRequestError) as exc:
+            logger.warning(
+                "Component remote sign-out failed; cleared local session anyway: %s",
+                str(exc),
+            )
         self._access_token = ""
         if session is not None:
             self.clear_saved_session(session.accountId)
@@ -225,22 +228,12 @@ class ComponentSyncClient:
         return self._update_cached_remote_entry(_entry_from_asset_payload(payload))
 
     def get_component_content(self, component_id: str) -> F8ComponentRecord:
-        try:
-            payload = self._request_json(
-                "GET",
-                f"/v1/components/{parse.quote(str(component_id))}/content",
-                None,
-                authorized=bool(self.current_access_token()),
-            )
-        except F8ComponentRemoteRequestError as exc:
-            if exc.status_code != 404:
-                raise
-            payload = self._request_json(
-                "GET",
-                f"/v1/components/{parse.quote(str(component_id))}",
-                None,
-                authorized=bool(self.current_access_token()),
-            )
+        payload = self._request_json(
+            "GET",
+            f"/v1/components/{parse.quote(str(component_id))}/content",
+            None,
+            authorized=bool(self.current_access_token()),
+        )
         record_payload = payload.get("record")
         if not isinstance(record_payload, dict):
             raise F8ComponentRemoteRequestError(f"Component content payload is missing record for {component_id}.")
@@ -326,17 +319,12 @@ class ComponentSyncClient:
             None,
             authorized=bool(self.current_access_token()),
         )
-        try:
-            content_payload = self._request_json(
-                "GET",
-                f"/v1/components/{parse.quote(str(component_id))}/versions/{int(version_number)}/content",
-                None,
-                authorized=bool(self.current_access_token()),
-            )
-        except F8ComponentRemoteRequestError as exc:
-            if exc.status_code != 404:
-                raise
-            content_payload = detail_payload
+        content_payload = self._request_json(
+            "GET",
+            f"/v1/components/{parse.quote(str(component_id))}/versions/{int(version_number)}/content",
+            None,
+            authorized=bool(self.current_access_token()),
+        )
         detail_entry = _entry_from_asset_payload(detail_payload)
         record_payload = content_payload.get("record")
         if not isinstance(record_payload, dict):
@@ -445,6 +433,8 @@ class ComponentSyncClient:
             "Accept-Encoding": "gzip",
             "User-Agent": self._USER_AGENT,
         }
+        if path.startswith("/api/auth/"):
+            headers.update(origin_headers_for_base_url(base_url))
         if payload is not None:
             raw_json = json.dumps(payload, ensure_ascii=False).encode("utf-8")
             if len(raw_json) > 4096:
@@ -467,14 +457,7 @@ class ComponentSyncClient:
             with response_context as response_like:
                 response_data = response_like.read()
                 content_encoding = response_like.headers.get("Content-Encoding", "").lower()
-                
-                if "gzip" in content_encoding:
-                    try:
-                        raw_body = zlib.decompress(response_data, wbits=31).decode("utf-8")
-                    except Exception:
-                        raw_body = response_data.decode("utf-8", errors="replace")
-                else:
-                    raw_body = response_data.decode("utf-8")
+                raw_body = decode_http_response_text(response_data, content_encoding=content_encoding)
 
                 session_cookie = _session_cookie_from_headers(response_like.headers)
                 if session_cookie:
@@ -491,12 +474,11 @@ class ComponentSyncClient:
         except error.HTTPError as exc:
             response_bytes = exc.read()
             content_encoding = exc.headers.get("Content-Encoding", "").lower()
-            if "gzip" in content_encoding:
-                try:
-                    response_bytes = zlib.decompress(response_bytes, wbits=31)
-                except Exception:
-                    logger.exception("Failed to decompress component cloud error response")
-            body_text = response_bytes.decode("utf-8", errors="replace")
+            try:
+                body_text = decode_http_response_text(response_bytes, content_encoding=content_encoding)
+            except Exception:
+                logger.exception("Failed to decode component cloud error response")
+                body_text = response_bytes.decode("utf-8", errors="replace")
             payload_obj = _try_parse_json_object(body_text)
             message = _error_message(payload_obj) or body_text or f"{method} {path} failed with HTTP {exc.code}"
             if exc.code == 401:
@@ -660,9 +642,6 @@ def _conflict_component_id(payload: JsonObject, path: str) -> str:
     component_id = payload.get("componentId")
     if isinstance(component_id, str) and component_id.strip():
         return component_id.strip()
-    asset_id = payload.get("assetId")
-    if isinstance(asset_id, str) and asset_id.strip():
-        return asset_id.strip()
     return str(path.rstrip("/").split("/")[-1])
 
 
@@ -731,23 +710,17 @@ def _entry_from_asset_payload(payload: JsonObject) -> F8ComponentEntry:
         remoteRevision=(
             _payload_optional_str(payload, "revision")
             or _payload_optional_str(payload, "latestRevision")
-            or _payload_optional_str(payload, "remoteRevision")
         ),
         syncState=F8ComponentSyncState.synced,
         downloadedAt=_payload_optional_str(payload, "downloadedAt"),
         installed=_payload_bool(payload, "installed", default=_installed_from_asset_payload(payload, record)),
+        hasCachedContent=_payload_bool(payload, "hasCachedContent", default=_component_record_has_full_content(record)),
         subscribed=_payload_bool(payload, "subscribed", default=False),
-        remoteVersionNumber=(
-            _payload_optional_int(payload, "latestVersionNumber")
-            or _payload_optional_int(payload, "versionNumber")
-        ),
+        remoteVersionNumber=_payload_optional_int(payload, "latestVersionNumber"),
     )
 
 
 def _source_from_asset_payload(payload: JsonObject) -> F8ComponentSourceKind:
-    source_kind = str(payload.get("sourceKind") or "").strip()
-    if source_kind == F8ComponentSourceKind.remote_official.value:
-        return F8ComponentSourceKind.remote_official
     visibility = str(payload.get("visibility") or "").strip()
     if visibility == "public":
         return F8ComponentSourceKind.remote_public
@@ -762,32 +735,22 @@ def _installed_from_asset_payload(payload: JsonObject, record: F8ComponentRecord
 def _component_record_from_asset_payload(payload: JsonObject) -> F8ComponentRecord:
     record_payload = payload.get("record")
     if isinstance(record_payload, dict):
-        normalized_record_payload = json_object_from_value(cast(object, record_payload))
-        if _payload_has_component_id(normalized_record_payload):
-            return validate_as(F8ComponentRecord, normalized_record_payload)
+        return validate_as(F8ComponentRecord, json_object_from_value(cast(object, record_payload)))
     return _summary_component_record_from_payload(payload)
 
 
 def _summary_component_record_from_payload(payload: JsonObject) -> F8ComponentRecord:
-    component_id = _payload_optional_str(payload, "componentId") or _payload_optional_str(payload, "assetId") or ""
-    if not component_id.strip():
-        raise F8ComponentRemoteRequestError("Component remote payload is missing componentId.")
+    component_id = _payload_str(payload, "componentId")
     return F8ComponentRecord(
         componentId=component_id,
-        name=_payload_optional_str(payload, "name") or component_id,
+        name=_payload_str(payload, "name"),
         description=_payload_optional_str(payload, "description") or "",
-        usageNotes="",
         tags=_payload_string_list(payload, "tags"),
-        schemaVersion=_payload_optional_str(payload, "schemaVersion") or "f8studio-session/1",
+        schemaVersion=_payload_str(payload, "schemaVersion"),
         content={},
-        createdAt=_payload_optional_str(payload, "createdAt") or "",
-        updatedAt=_payload_optional_str(payload, "updatedAt") or "",
+        createdAt=_payload_str(payload, "createdAt"),
+        updatedAt=_payload_str(payload, "updatedAt"),
     )
-
-
-def _payload_has_component_id(payload: JsonObject) -> bool:
-    component_id = payload.get("componentId")
-    return isinstance(component_id, str) and bool(component_id.strip())
 
 
 def _component_record_has_full_content(record: F8ComponentRecord) -> bool:
@@ -816,6 +779,7 @@ def _merge_component_entries(existing_entry: F8ComponentEntry, incoming_entry: F
                 incoming_entry,
                 update={
                     "installed": True,
+                    "hasCachedContent": True,
                     "downloadedAt": incoming_entry.downloadedAt or existing_entry.downloadedAt,
                 },
             )
@@ -828,7 +792,6 @@ def _merge_component_entries(existing_entry: F8ComponentEntry, incoming_entry: F
         componentId=str(incoming_entry.record.componentId),
         name=str(incoming_entry.record.name),
         description=str(incoming_entry.record.description),
-        usageNotes=str(existing_entry.record.usageNotes),
         tags=list(incoming_entry.record.tags),
         schemaVersion=str(incoming_entry.record.schemaVersion),
         content=existing_entry.record.content,
@@ -840,6 +803,7 @@ def _merge_component_entries(existing_entry: F8ComponentEntry, incoming_entry: F
         update={
             "record": merged_record,
             "installed": True,
+            "hasCachedContent": True,
             "downloadedAt": incoming_entry.downloadedAt or existing_entry.downloadedAt,
         },
     )
@@ -850,7 +814,6 @@ def _hydrate_component_entry(entry: F8ComponentEntry, record: F8ComponentRecord)
         componentId=str(entry.record.componentId),
         name=str(entry.record.name or record.name),
         description=str(entry.record.description or record.description),
-        usageNotes=str(record.usageNotes),
         tags=list(entry.record.tags or record.tags),
         schemaVersion=str(entry.record.schemaVersion or record.schemaVersion),
         content=record.content,
@@ -862,6 +825,7 @@ def _hydrate_component_entry(entry: F8ComponentEntry, record: F8ComponentRecord)
         update={
             "record": hydrated_record,
             "installed": True,
+            "hasCachedContent": True,
             "downloadedAt": entry.downloadedAt or QtCore.QDateTime.currentDateTimeUtc().toString(QtCore.Qt.DateFormat.ISODate),
         },
     )
@@ -976,7 +940,7 @@ def _remote_version_list_from_payload(payload: JsonObject) -> F8ComponentRemoteV
         version_payload = json_object_from_value(cast(object, item))
         versions.append(
             F8ComponentRemoteVersionEntry(
-                componentId=_payload_str_fallback(version_payload, primary_key="componentId", fallback_key="assetId"),
+                componentId=_payload_str(version_payload, "componentId"),
                 assetType=_payload_str(version_payload, "assetType"),
                 versionNumber=_payload_int(version_payload, "versionNumber"),
                 revision=_payload_str(version_payload, "revision"),
@@ -993,7 +957,6 @@ def _record_payload(record: F8ComponentRecord) -> JsonObject:
         "componentId": str(record.componentId),
         "name": str(record.name),
         "description": str(record.description),
-        "usageNotes": str(record.usageNotes),
         "tags": [str(tag) for tag in list(record.tags or []) if str(tag).strip()],
         "schemaVersion": str(record.schemaVersion),
         "content": record.content,
@@ -1011,13 +974,6 @@ def _visibility_from_payload(payload: JsonObject) -> F8ComponentVisibility | Non
 
 def _payload_str(payload: JsonObject, key: str) -> str:
     return str(payload[key])
-
-
-def _payload_str_fallback(payload: JsonObject, *, primary_key: str, fallback_key: str) -> str:
-    primary_value = payload.get(primary_key)
-    if primary_value is not None:
-        return str(primary_value)
-    return _payload_str(payload, fallback_key)
 
 
 def _payload_optional_str(payload: JsonObject, key: str) -> str | None:
@@ -1039,6 +995,10 @@ def _payload_optional_int(payload: JsonObject, key: str) -> int | None:
     if value is None:
         return None
     return int(str(value))
+
+
+def _payload_int(payload: JsonObject, key: str) -> int:
+    return int(str(payload[key]))
 
 
 def _payload_string_list(payload: JsonObject, key: str) -> list[str]:

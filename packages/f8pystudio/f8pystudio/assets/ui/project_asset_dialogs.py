@@ -20,28 +20,20 @@ class ProjectAssetMetaDialog(QtWidgets.QDialog):
         name: str,
         description: str,
         tags: list[str],
-        usage_notes: str = "",
-        include_usage_notes: bool,
         name_validator: Callable[[str], str | None] | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle(title)
-        self.resize(520, 280 if include_usage_notes else 220)
+        self.resize(520, 220)
         self._name_validator = name_validator
-        self._include_usage_notes = bool(include_usage_notes)
         self._name = QtWidgets.QLineEdit(name, self)
         self._description = QtWidgets.QLineEdit(description, self)
         self._tags = QtWidgets.QLineEdit(", ".join(tags), self)
-        self._usage_notes = QtWidgets.QPlainTextEdit(self)
-        self._usage_notes.setPlainText(str(usage_notes or ""))
-        self._usage_notes.setVisible(self._include_usage_notes)
 
         form = QtWidgets.QFormLayout()
         form.addRow("Name", self._name)
         form.addRow("Description", self._description)
         form.addRow("Tags (comma-separated)", self._tags)
-        if self._include_usage_notes:
-            form.addRow("Usage Notes", self._usage_notes)
 
         buttons = QtWidgets.QDialogButtonBox(
             QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel,
@@ -66,13 +58,12 @@ class ProjectAssetMetaDialog(QtWidgets.QDialog):
                 return
         self.accept()
 
-    def values(self) -> tuple[str, str, list[str], str]:
+    def values(self) -> tuple[str, str, list[str]]:
         tags = [part.strip() for part in str(self._tags.text() or "").split(",")]
         return (
             str(self._name.text() or "").strip(),
             str(self._description.text() or "").strip(),
             [tag for tag in tags if tag],
-            str(self._usage_notes.toPlainText() or "").strip(),
         )
 
 

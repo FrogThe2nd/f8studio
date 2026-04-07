@@ -358,6 +358,32 @@ def test_component_catalog_selection_updates_preview_and_raw(monkeypatch) -> Non
     host_graph.widget.close()
 
 
+def test_component_catalog_dialog_defers_initial_remote_refresh(monkeypatch, tmp_path: Path) -> None:
+    _ensure_app()
+    refresh_calls: list[str] = []
+    scheduled_callbacks: list[object] = []
+
+    monkeypatch.setattr("f8pystudio.assets.db.asset_db.assets_db_path", lambda: tmp_path / "assets.db")
+    monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_dialog.subscribe_components_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(
+        ComponentCatalogDialog,
+        "_refresh_remote_catalog_if_needed",
+        lambda self: refresh_calls.append("refresh"),
+    )
+    monkeypatch.setattr(
+        QtCore.QTimer,
+        "singleShot",
+        staticmethod(lambda _delay_ms, callback: scheduled_callbacks.append(callback)),
+    )
+
+    dialog = ComponentCatalogDialog(parent=None, node_graph=None)
+
+    assert refresh_calls == []
+    assert len(scheduled_callbacks) == 1
+
+    dialog.close()
+
+
 def test_variant_dialog_hydration_failure_updates_raw_and_preview(monkeypatch) -> None:
     _ensure_app()
     monkeypatch.setattr("f8pystudio.assets.ui.variant_manager_dialog.subscribe_variants_changed", lambda _cb: (lambda: None))

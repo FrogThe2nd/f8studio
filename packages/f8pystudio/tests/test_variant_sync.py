@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
+import logging
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import threading
+import zlib
 
+import pytest
 from qtpy import QtCore
 from sqlalchemy import insert, select
 from f8pysdk.msgspec_codec import copy_model
@@ -13,6 +16,7 @@ from f8pystudio.assets.variants.variant_catalog import LocalVariantProvider, Rem
 from f8pystudio.assets.variants.variant_models import (
     F8VariantEntry,
     F8VariantKind,
+    F8VariantRemoteRequestError,
     F8VariantRemoteConflictError,
     F8VariantSourceKind,
     F8VariantSyncState,
@@ -92,6 +96,10 @@ class _VariantApiHandler(BaseHTTPRequestHandler):
             )
             return
         if self.path == "/api/auth/sign-out":
+            self.server.last_signout_origin = str(self.headers.get("Origin") or "")
+            if not self.server.last_signout_origin:
+                self._write_json(403, {"message": "Missing or null Origin"})
+                return
             if not self._check_auth():
                 return
             self._write_json(200, {}, set_cookie="session=; Path=/; Max-Age=0")
@@ -132,6 +140,20 @@ class _VariantApiHandler(BaseHTTPRequestHandler):
                 return
             self._write_json(200, self.server.public_asset)
             return
+        if self.path == "/v1/variants/public-1/content":
+            if not self._check_auth():
+                return
+            self._write_json(
+                200,
+                {
+                    "variantId": "public-1",
+                    "assetType": "variant",
+                    "versionNumber": 1,
+                    "revision": "r-public",
+                    "record": self.server.public_record,
+                },
+            )
+            return
         self._write_json(404, {"message": "missing"})
 
     def do_PUT(self) -> None:  # noqa: N802
@@ -155,6 +177,7 @@ class _Server(ThreadingHTTPServer):
     def __init__(self, server_address):
         super().__init__(server_address, _VariantApiHandler)
         self.last_login_user_agent = ""
+        self.last_signout_origin = ""
         self.public_record = {
             "variantId": "public-1",
             "kind": "operator",
@@ -271,6 +294,11 @@ def test_variant_sync_client_uses_cookie_sessions_and_marks_conflicts(tmp_path: 
         marked = service.entry("conflict-1", include_uninstalled=True)
         assert marked is not None
         assert marked.syncState == F8VariantSyncState.conflict
+        client.logout()
+        assert client.current_access_token() == ""
+        assert client.current_session() is None
+        assert client.saved_sessions() == []
+        assert server.last_signout_origin == f"http://127.0.0.1:{server.server_port}"
     finally:
         server.shutdown()
         server.server_close()
@@ -310,12 +338,80 @@ def test_variant_sync_client_drops_legacy_saved_sessions_without_crashing(tmp_pa
     assert client.current_session() is None
 
 
+def test_variant_logout_clears_local_session_when_remote_signout_fails(tmp_path: Path, monkeypatch, caplog) -> None:
+    server = _Server(("127.0.0.1", 0))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        settings = QtCore.QSettings(str(tmp_path / "variant-sync-logout.ini"), QtCore.QSettings.IniFormat)
+        db_path = tmp_path / "assets.db"
+        service = VariantCatalogService(
+            local_provider=LocalVariantProvider(db_path=db_path),
+            remote_provider=RemoteCacheProvider(db_path=db_path),
+        )
+        client = VariantSyncClient(settings=settings, catalog_service=service)
+        base_url = f"http://127.0.0.1:{server.server_port}"
+        _ = client.login(base_url=base_url, username="u", password="p", remember=True)
+
+        def _raise_signout_timeout(_path: str, _payload: dict[str, object], *, authorized: bool) -> dict[str, object]:
+            assert authorized is True
+            raise F8VariantRemoteRequestError("POST /api/auth/sign-out timed out after 10s")
+
+        monkeypatch.setattr(client, "_post_json", _raise_signout_timeout)
+
+        with caplog.at_level(logging.WARNING):
+            client.logout()
+
+        assert client.current_access_token() == ""
+        assert client.current_session() is None
+        assert client.saved_sessions() == []
+        assert "Variant remote sign-out failed; cleared local session anyway" in caplog.text
+        assert "Traceback" not in caplog.text
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_variant_sync_client_does_not_fallback_from_content_endpoint(tmp_path: Path, monkeypatch) -> None:
+    settings = QtCore.QSettings(str(tmp_path / "variant-sync-no-fallback.ini"), QtCore.QSettings.IniFormat)
+    db_path = tmp_path / "assets.db"
+    service = VariantCatalogService(
+        local_provider=LocalVariantProvider(db_path=db_path),
+        remote_provider=RemoteCacheProvider(db_path=db_path),
+    )
+    client = VariantSyncClient(settings=settings, catalog_service=service)
+    calls: list[str] = []
+
+    def _request_json(method: str, path: str, payload: dict[str, object] | None, *, authorized: bool) -> dict[str, object]:
+        del method, payload, authorized
+        calls.append(path)
+        raise F8VariantRemoteRequestError("missing", status_code=404)
+
+    monkeypatch.setattr(client, "_request_json", _request_json)
+
+    with pytest.raises(F8VariantRemoteRequestError):
+        client.get_variant_content("public-1")
+
+    assert calls == ["/v1/variants/public-1/content"]
+
+
 def test_variant_remote_cache_load_cleans_empty_variant_ids(tmp_path: Path) -> None:
     provider = RemoteCacheProvider(db_path=tmp_path / "assets.db")
     with provider._db.begin_sqla() as conn:
         _ = conn.execute(
             insert(variant_remote_cache_table).values(
                 variant_id="",
+                name="Broken Row",
+                description="",
+                tags_json="[]",
+                kind="operator",
+                base_node_type="svc.a.op",
+                service_class="svc.test",
+                operator_class="op.test",
+                remote_version_number=1,
+                created_at="2026-04-04T00:00:00+00:00",
+                updated_at="2026-04-04T00:00:00+00:00",
                 source="remote_public",
                 visibility="public",
                 owner_user_id="u1",
@@ -325,9 +421,9 @@ def test_variant_remote_cache_load_cleans_empty_variant_ids(tmp_path: Path) -> N
                 sync_state="synced",
                 downloaded_at=None,
                 installed=0,
+                has_cached_content=0,
                 subscribed=0,
-                content=b"{}",
-                updated_at="2026-04-04T00:00:00+00:00",
+                content=zlib.compress(b"{}", level=6, wbits=31),
             )
         )
 
@@ -336,6 +432,49 @@ def test_variant_remote_cache_load_cleans_empty_variant_ids(tmp_path: Path) -> N
     with provider._db.connect_sqla() as conn:
         rows = conn.execute(select(variant_remote_cache_table.c.variant_id)).all()
     assert rows == []
+
+
+def test_variant_remote_cache_row_with_spec_loads_as_installed(tmp_path: Path) -> None:
+    service = VariantCatalogService(db_path=tmp_path / "assets.db")
+    provider = service._remote_provider
+    entry = _make_entry(variant_id="remote-1", source=F8VariantSourceKind.remote_public, installed=True, remote_revision="r1")
+
+    with provider._db.begin_sqla() as conn:
+        _ = conn.execute(
+            insert(variant_remote_cache_table).values(
+                variant_id="remote-1",
+                name=str(entry.record.name),
+                description=str(entry.record.description),
+                tags_json=json.dumps(list(entry.record.tags or [])),
+                kind=str(entry.record.kind.value),
+                base_node_type=str(entry.record.baseNodeType),
+                service_class=str(entry.record.serviceClass),
+                operator_class=str(entry.record.operatorClass),
+                remote_version_number=2,
+                created_at=str(entry.record.createdAt),
+                updated_at=str(entry.record.updatedAt),
+                source="remote_public",
+                visibility="public",
+                owner_user_id="u1",
+                owner_display_name="User One",
+                library_slug="community",
+                remote_revision="r1",
+                sync_state="synced",
+                downloaded_at="2026-04-04T00:00:00+00:00",
+                installed=1,
+                has_cached_content=1,
+                subscribed=0,
+                content=zlib.compress(json.dumps(entry.record.spec).encode("utf-8"), level=6, wbits=31),
+            )
+        )
+
+    loaded = service.entry("remote-1", include_uninstalled=False)
+    assert loaded is not None
+    assert loaded.record.variantId == "remote-1"
+    assert loaded.installed is True
+    assert loaded.hasCachedContent is True
+    assert loaded.remoteVersionNumber == 2
+    assert loaded.record.spec == {"label": "remote-1"}
 
 
 def test_variant_row_state_badges_cover_remote_both_and_conflict() -> None:

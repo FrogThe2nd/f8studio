@@ -19,6 +19,8 @@ from ..common import (
     JsonObject,
     json_object_loads,
     json_string_list_loads,
+    mapping_optional_str,
+    mapping_str,
     stable_json_dumps,
 )
 from ..common.remote_cache_common import (
@@ -51,7 +53,16 @@ class LocalVariantProvider:
         statement = (
             select(
                 variant_heads_local_table.c.variant_id,
+                variant_heads_local_table.c.name,
+                variant_heads_local_table.c.description,
+                variant_heads_local_table.c.tags_json,
+                variant_heads_local_table.c.kind,
+                variant_heads_local_table.c.base_node_type,
+                variant_heads_local_table.c.service_class,
+                variant_heads_local_table.c.operator_class,
                 variant_heads_local_table.c.latest_version_number,
+                variant_heads_local_table.c.created_at,
+                variant_heads_local_table.c.updated_at,
                 variant_heads_local_table.c.content,
             )
             .order_by(func.lower(variant_heads_local_table.c.name), variant_heads_local_table.c.variant_id)
@@ -79,6 +90,16 @@ class RemoteCacheProvider:
         statement = (
             select(
                 variant_remote_cache_table.c.variant_id,
+                variant_remote_cache_table.c.name,
+                variant_remote_cache_table.c.description,
+                variant_remote_cache_table.c.tags_json,
+                variant_remote_cache_table.c.kind,
+                variant_remote_cache_table.c.base_node_type,
+                variant_remote_cache_table.c.service_class,
+                variant_remote_cache_table.c.operator_class,
+                variant_remote_cache_table.c.remote_version_number,
+                variant_remote_cache_table.c.created_at,
+                variant_remote_cache_table.c.updated_at,
                 variant_remote_cache_table.c.content,
                 variant_remote_cache_table.c.source,
                 variant_remote_cache_table.c.visibility,
@@ -89,6 +110,7 @@ class RemoteCacheProvider:
                 variant_remote_cache_table.c.sync_state,
                 variant_remote_cache_table.c.downloaded_at,
                 variant_remote_cache_table.c.installed,
+                variant_remote_cache_table.c.has_cached_content,
                 variant_remote_cache_table.c.subscribed,
             )
             .order_by(variant_remote_cache_table.c.variant_id)
@@ -237,6 +259,7 @@ class VariantCatalogService:
             entry,
             update={
                 "installed": True,
+                "hasCachedContent": True,
                 "downloadedAt": variant_now_iso(),
             },
         )
@@ -416,12 +439,13 @@ def _validate_unique_name(entries: list[F8VariantEntry], record: F8VariantRecord
 
 def _variant_entry_from_local_row(row: object) -> F8VariantEntry:
     row_mapping = _row_mapping(row)
-    record_payload = json_object_loads(_decompress_content(row_mapping.get("content")))
+    spec_payload = _json_value_dict_from_object(json_object_loads(_decompress_content(row_mapping.get("content"))))
     return F8VariantEntry(
-        record=_variant_record_from_payload(record_payload),
+        record=_variant_record_from_row(row_mapping, spec_payload=spec_payload),
         source=F8VariantSourceKind.local,
         syncState=F8VariantSyncState.local_only,
         installed=True,
+        hasCachedContent=True,
         localVersionNumber=int(str(row_mapping.get("latest_version_number") or 1)),
     )
 
@@ -429,37 +453,22 @@ def _variant_entry_from_local_row(row: object) -> F8VariantEntry:
 def _variant_entry_from_remote_row(row: object) -> F8VariantEntry:
     row_mapping = _row_mapping(row)
     metadata = RemoteCacheMetadata.from_row(row_mapping)
-    cache_payload = json_object_loads(_decompress_content(row_mapping.get("content")))
-    if "head" not in cache_payload:
-        entry = _variant_entry_from_remote_payload(record_payload=cache_payload, metadata=metadata)
-        return copy_model(
-            entry,
-            update={
-                "installed": bool(metadata.installed),
-                "remoteVersionNumber": _payload_optional_int(cache_payload, "remoteVersionNumber"),
-            },
-        )
-    head_payload = cache_payload.get("head")
-    if not isinstance(head_payload, dict):
-        raise ValueError("Remote variant cache is missing head payload.")
-    hydrated_payload = cache_payload.get("hydratedRecord")
-    head_entry = _variant_entry_from_remote_payload(record_payload=cast(JsonObject, head_payload), metadata=metadata)
-    if not isinstance(hydrated_payload, dict):
-        return copy_model(
-            head_entry,
-            update={
-                "installed": False,
-                "remoteVersionNumber": _payload_optional_int(cache_payload, "remoteVersionNumber"),
-            },
-        )
-    hydrated_record = _variant_record_from_payload(cast(JsonObject, hydrated_payload))
-    return copy_model(
-        head_entry,
-        update={
-            "record": hydrated_record,
-            "installed": True,
-            "remoteVersionNumber": _payload_optional_int(cache_payload, "remoteVersionNumber"),
-        },
+    spec_payload = _json_value_dict_from_object(json_object_loads(_decompress_content(row_mapping.get("content"))))
+    visibility = None if metadata.visibility is None else F8VariantVisibility(metadata.visibility)
+    return F8VariantEntry(
+        record=_variant_record_from_row(row_mapping, spec_payload=spec_payload),
+        source=F8VariantSourceKind(metadata.source),
+        visibility=visibility,
+        ownerUserId=metadata.owner_user_id,
+        ownerDisplayName=metadata.owner_display_name,
+        librarySlug=metadata.library_slug,
+        remoteRevision=metadata.remote_revision,
+        syncState=F8VariantSyncState(metadata.sync_state),
+        downloadedAt=metadata.downloaded_at,
+        installed=bool(metadata.installed),
+        hasCachedContent=_sqlite_row_bool(row_mapping, "has_cached_content"),
+        subscribed=metadata.subscribed,
+        remoteVersionNumber=int(str(row_mapping.get("remote_version_number"))) if row_mapping.get("remote_version_number") is not None else None,
     )
 
 
@@ -478,7 +487,7 @@ def _insert_local_variant_entry(conn: SqlAlchemyConnection, entry: F8VariantEntr
             service_class=str(record.serviceClass),
             operator_class=operator_class,
             latest_version_number=int(entry.localVersionNumber or 1),
-            content=_compress_content(stable_json_dumps(_variant_record_payload(record))),
+            content=_compress_content(stable_json_dumps(cast(JsonObject, record.spec))),
             created_at=str(record.createdAt),
             updated_at=str(record.updatedAt),
         )
@@ -501,6 +510,20 @@ def _insert_remote_variant_entry(conn: SqlAlchemyConnection, entry: F8VariantEnt
     _ = conn.execute(
         insert(variant_remote_cache_table).values(
             variant_id=str(entry.record.variantId),
+            name=str(entry.record.name),
+            description=str(entry.record.description),
+            tags_json=stable_json_dumps([] if isinstance(entry.record.tags, msgspec.UnsetType) else list(entry.record.tags or [])),
+            kind=str(entry.record.kind.value),
+            base_node_type=str(entry.record.baseNodeType),
+            service_class=str(entry.record.serviceClass),
+            operator_class=(
+                None
+                if entry.record.operatorClass is None or isinstance(entry.record.operatorClass, msgspec.UnsetType)
+                else str(entry.record.operatorClass)
+            ),
+            remote_version_number=entry.remoteVersionNumber,
+            created_at=str(entry.record.createdAt),
+            updated_at=str(entry.record.updatedAt),
             source=metadata.source,
             visibility=metadata.visibility,
             owner_user_id=metadata.owner_user_id,
@@ -509,47 +532,21 @@ def _insert_remote_variant_entry(conn: SqlAlchemyConnection, entry: F8VariantEnt
             remote_revision=metadata.remote_revision,
             sync_state=metadata.sync_state,
             downloaded_at=metadata.downloaded_at,
-            installed=1 if metadata.installed and variant_entry_has_cached_content(entry) else 0,
+            installed=1 if metadata.installed else 0,
+            has_cached_content=1 if variant_entry_has_cached_content(entry) else 0,
             subscribed=1 if metadata.subscribed else 0,
-            content=_compress_content(stable_json_dumps(_variant_remote_cache_payload(entry))),
-            updated_at=variant_now_iso(),
+            content=_compress_content(
+                stable_json_dumps(cast(JsonObject, entry.record.spec if variant_entry_has_cached_content(entry) else {}))
+            ),
         )
     )
-
-
-def _variant_entry_from_remote_payload(*, record_payload: JsonObject, metadata: RemoteCacheMetadata) -> F8VariantEntry:
-    visibility = None if metadata.visibility is None else F8VariantVisibility(metadata.visibility)
-    return F8VariantEntry(
-        record=_variant_record_from_payload(record_payload),
-        source=F8VariantSourceKind(metadata.source),
-        visibility=visibility,
-        ownerUserId=metadata.owner_user_id,
-        ownerDisplayName=metadata.owner_display_name,
-        librarySlug=metadata.library_slug,
-        remoteRevision=metadata.remote_revision,
-        syncState=F8VariantSyncState(metadata.sync_state),
-        downloadedAt=metadata.downloaded_at,
-        installed=metadata.installed,
-        subscribed=metadata.subscribed,
-        remoteVersionNumber=_payload_optional_int(record_payload, "remoteVersionNumber"),
-    )
-
-
-def _variant_remote_cache_payload(entry: F8VariantEntry) -> JsonObject:
-    return {
-        "head": _variant_record_payload(_variant_head_record(entry.record)),
-        "hydratedRecord": _variant_record_payload(entry.record) if entry.installed and variant_entry_has_cached_content(entry) else None,
-        "remoteVersionNumber": entry.remoteVersionNumber,
-    }
-
-
-def _variant_head_record(record: F8VariantRecord) -> F8VariantRecord:
-    return copy_model(record, update={"spec": {}, "createdAt": str(record.createdAt), "updatedAt": str(record.updatedAt)})
 
 
 def variant_entry_has_cached_content(entry: F8VariantEntry) -> bool:
     if entry.source == F8VariantSourceKind.local:
         return True
+    if entry.hasCachedContent is not None:
+        return bool(entry.hasCachedContent)
     return bool(entry.installed)
 
 
@@ -589,77 +586,37 @@ def _row_mapping(row: object) -> Mapping[object, object]:
     return cast(Mapping[object, object], row)
 
 
-def _variant_record_from_payload(payload: JsonObject) -> F8VariantRecord:
+def _variant_record_from_row(row: Mapping[object, object], *, spec_payload: dict[str, F8JsonValue]) -> F8VariantRecord:
+    kind = F8VariantKind(mapping_str(row, "kind"))
+    operator_class_value = row.get("operator_class")
     operator_class: str | None | msgspec.UnsetType
-    if "operatorClass" in payload:
-        operator_class = _payload_optional_str(payload, "operatorClass")
-    else:
+    if operator_class_value is None and kind == F8VariantKind.service:
         operator_class = msgspec.UNSET
+    else:
+        operator_class = None if operator_class_value is None else str(operator_class_value)
     return F8VariantRecord(
-        variantId=_payload_str(payload, "variantId"),
-        kind=F8VariantKind(_payload_str(payload, "kind")),
-        baseNodeType=_payload_str(payload, "baseNodeType"),
-        serviceClass=_payload_str(payload, "serviceClass"),
-        name=_payload_str(payload, "name"),
-        spec=_payload_json_value_dict(payload, "spec"),
-        createdAt=_payload_str(payload, "createdAt"),
-        updatedAt=_payload_str(payload, "updatedAt"),
+        variantId=mapping_str(row, "variant_id"),
+        kind=kind,
+        baseNodeType=mapping_str(row, "base_node_type"),
+        serviceClass=mapping_str(row, "service_class"),
+        name=mapping_str(row, "name"),
+        spec=spec_payload,
+        createdAt=mapping_str(row, "created_at"),
+        updatedAt=mapping_str(row, "updated_at"),
         operatorClass=operator_class,
-        description=_payload_optional_str(payload, "description") or "",
-        tags=_payload_string_list(payload, "tags"),
+        description=mapping_optional_str(row, "description") or "",
+        tags=json_string_list_loads(row.get("tags_json")),
     )
 
 
-def _variant_record_payload(record: F8VariantRecord) -> JsonObject:
-    tags = [] if isinstance(record.tags, msgspec.UnsetType) else [str(tag) for tag in list(record.tags or []) if str(tag).strip()]
-    payload: JsonObject = {
-        "variantId": str(record.variantId),
-        "kind": str(record.kind.value),
-        "baseNodeType": str(record.baseNodeType),
-        "serviceClass": str(record.serviceClass),
-        "name": str(record.name),
-        "spec": cast(JsonObject, record.spec),
-        "createdAt": str(record.createdAt),
-        "updatedAt": str(record.updatedAt),
-        "description": str(record.description),
-        "tags": tags,
-    }
-    if isinstance(record.operatorClass, msgspec.UnsetType):
-        return payload
-    payload["operatorClass"] = None if record.operatorClass is None else str(record.operatorClass)
-    return payload
-
-
-def _payload_str(payload: JsonObject, key: str) -> str:
-    return str(payload[key])
-
-
-def _payload_optional_str(payload: JsonObject, key: str) -> str | None:
-    value = payload.get(key)
-    if value is None:
-        return None
-    return str(value)
-
-
-def _payload_string_list(payload: JsonObject, key: str) -> list[str]:
-    value = payload.get(key)
-    if value is None:
-        return []
-    return json_string_list_loads(value)
-
-
-def _payload_json_value_dict(payload: JsonObject, key: str) -> dict[str, F8JsonValue]:
-    value = payload.get(key)
+def _json_value_dict_from_object(value: object) -> dict[str, F8JsonValue]:
     if not isinstance(value, dict):
-        raise ValueError(f"Expected JSON object field: {key}")
+        raise ValueError("Expected JSON object payload.")
     return cast(dict[str, F8JsonValue], value)
 
 
-def _payload_optional_int(payload: JsonObject, key: str) -> int | None:
-    value = payload.get(key)
-    if value is None:
-        return None
-    return int(str(value))
+def _sqlite_row_bool(row: Mapping[object, object], key: str) -> bool:
+    return bool(int(str(row[key])))
 
 
 def _local_variant_records() -> list[F8VariantRecord]:

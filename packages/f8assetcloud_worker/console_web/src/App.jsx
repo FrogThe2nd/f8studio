@@ -7,6 +7,7 @@ const CONSOLE_CALLBACK_PATH = `${CONSOLE_BASE_PATH}/`;
 const VERIFY_EMAIL_PATH = `${CONSOLE_BASE_PATH}/verify-email`;
 const RESET_PASSWORD_PATH = `${CONSOLE_BASE_PATH}/reset-password`;
 const MANAGEMENT_API_BASE_PATH = '/v1/management';
+const ASSET_TYPE_OPTIONS = ['component', 'variant'];
 const USER_ROLE_OPTIONS = [
   { value: 'admin', label: 'Admin' },
   { value: 'user', label: 'User' },
@@ -29,6 +30,100 @@ function downloadJson(filename, data) {
   anchor.download = filename;
   anchor.click();
   URL.revokeObjectURL(url);
+}
+
+function isPlainObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+export function downloadableContentForAsset(asset, payload) {
+  if (!isPlainObject(payload)) {
+    throw new Error('Asset content response must be a JSON object.');
+  }
+  const record = payload.record;
+  if (!isPlainObject(record)) {
+    throw new Error('Asset content response is missing record.');
+  }
+
+  const assetType = String(asset?.assetType || '');
+  const assetId = String(asset?.assetId || '');
+  if (assetType === 'component') {
+    if (!isPlainObject(record.content)) {
+      throw new Error('Component content response is missing record.content.');
+    }
+    return {
+      filename: `component-${assetId}-content.json`,
+      data: record.content,
+    };
+  }
+  if (assetType === 'variant') {
+    if (!isPlainObject(record.spec)) {
+      throw new Error('Variant content response is missing record.spec.');
+    }
+    return {
+      filename: `variant-${assetId}-spec.json`,
+      data: record.spec,
+    };
+  }
+  throw new Error(`Unsupported asset type: ${assetType || 'unknown'}`);
+}
+
+function managementCollectionPathForAssetType(assetType) {
+  const normalizedAssetType = String(assetType || '').trim();
+  if (normalizedAssetType === 'component') {
+    return `${MANAGEMENT_API_BASE_PATH}/components`;
+  }
+  if (normalizedAssetType === 'variant') {
+    return `${MANAGEMENT_API_BASE_PATH}/variants`;
+  }
+  throw new Error(`Unsupported asset type: ${normalizedAssetType || 'unknown'}`);
+}
+
+export function buildManagedAssetListPath(assetType, { ownerUserId = '', query = '', includeDeleted = false } = {}) {
+  const params = new URLSearchParams();
+  const normalizedOwnerUserId = String(ownerUserId || '').trim();
+  const normalizedQuery = String(query || '').trim();
+  if (normalizedOwnerUserId) {
+    params.set('ownerUserId', normalizedOwnerUserId);
+  }
+  if (normalizedQuery) {
+    params.set('q', normalizedQuery);
+  }
+  if (includeDeleted) {
+    params.set('includeDeleted', 'true');
+  }
+  const basePath = managementCollectionPathForAssetType(assetType);
+  const queryString = params.toString();
+  return queryString ? `${basePath}?${queryString}` : basePath;
+}
+
+export function buildManagedAssetDetailPath(asset, { includeDeleted = false } = {}) {
+  const assetType = String(asset?.assetType || '').trim();
+  const assetId = String(asset?.assetId || '').trim();
+  if (!assetId) {
+    throw new Error('Managed asset path requires assetId.');
+  }
+  const basePath = `${managementCollectionPathForAssetType(assetType)}/${encodeURIComponent(assetId)}`;
+  return includeDeleted ? `${basePath}?includeDeleted=true` : basePath;
+}
+
+export function buildAssetListPath(assetType, { owner = '', query = '' } = {}) {
+  const normalizedAssetType = String(assetType || '').trim();
+  if (normalizedAssetType !== 'component' && normalizedAssetType !== 'variant') {
+    throw new Error(`Unsupported asset type: ${normalizedAssetType || 'unknown'}`);
+  }
+  const params = new URLSearchParams();
+  const normalizedOwner = String(owner || '').trim();
+  const normalizedQuery = String(query || '').trim();
+  if (normalizedOwner) {
+    params.set('owner', normalizedOwner);
+  }
+  if (normalizedQuery) {
+    params.set('q', normalizedQuery);
+  }
+  const queryString = params.toString();
+  const basePath = normalizedAssetType === 'component' ? '/v1/components' : '/v1/variants';
+  return queryString ? `${basePath}?${queryString}` : basePath;
 }
 
 function compareAssetSummaries(left, right) {
@@ -326,31 +421,63 @@ function ConsoleApp() {
   }
 
   async function loadMineAssets() {
-    const result = await loadAssetSearchResults({
-      assetType: mineAssetType,
-      owner: 'me',
-      query: mineQuery,
-    });
+    const result = currentUser?.isAdmin
+      ? await loadManagedAssetResults({
+          assetType: mineAssetType,
+          ownerUserId: currentUser.userId,
+          query: mineQuery,
+          includeDeleted: true,
+        })
+      : await loadPublicAssetResults({
+          assetType: mineAssetType,
+          owner: 'me',
+          query: mineQuery,
+        });
     setMineAssets(result);
   }
 
   async function loadAllAssets() {
-    const result = await loadAssetSearchResults({
-      assetType: allAssetType,
-      owner: 'public',
-      query: allQuery,
-    });
+    const result = currentUser?.isAdmin
+      ? await loadManagedAssetResults({
+          assetType: allAssetType,
+          query: allQuery,
+          includeDeleted: true,
+        })
+      : await loadPublicAssetResults({
+          assetType: allAssetType,
+          owner: 'public',
+          query: allQuery,
+        });
     setAllAssets(result);
   }
 
-  async function loadAssetSearchResults({ assetType, owner, query }) {
+  async function loadManagedAssetResults({ assetType, ownerUserId = '', query, includeDeleted = false }) {
+    const normalizedType = String(assetType || '').trim() || 'all';
+    const assetTypes = normalizedType === 'all' ? ASSET_TYPE_OPTIONS : [normalizedType];
+    const results = await Promise.all(assetTypes.map(async (type) => {
+      const response = await apiRequest(
+        buildManagedAssetListPath(type, {
+          ownerUserId,
+          query,
+          includeDeleted,
+        }),
+      );
+      return Array.isArray(response.entries) ? response.entries : [];
+    }));
+    return results.flat().sort(compareAssetSummaries);
+  }
+
+  async function loadPublicAssetResults({ assetType, owner, query }) {
     const normalizedType = String(assetType || '').trim() || 'all';
     const normalizedOwner = String(owner || '').trim();
     const normalizedQuery = String(query || '').trim();
     const assetTypes = normalizedType === 'all' ? ['variant', 'component'] : [normalizedType];
     const results = await Promise.all(assetTypes.map(async (type) => {
       const response = await apiRequest(
-        `/v1/search?assetType=${encodeURIComponent(type)}&owner=${encodeURIComponent(normalizedOwner)}&q=${encodeURIComponent(normalizedQuery)}`,
+        buildAssetListPath(type, {
+          owner: normalizedOwner,
+          query: normalizedQuery,
+        }),
       );
       return Array.isArray(response.entries) ? response.entries : [];
     }));
@@ -658,11 +785,13 @@ function ConsoleApp() {
     }
     setLoading(true);
     try {
-      const endpoint = asset.assetType === 'variant'
-        ? `/v1/variants/${encodeURIComponent(asset.assetId)}`
-        : `/v1/components/${encodeURIComponent(asset.assetId)}`;
+      const endpoint = currentUser?.isAdmin
+        ? buildManagedAssetDetailPath(asset, { includeDeleted: true })
+        : asset.assetType === 'variant'
+          ? `/v1/variants/${encodeURIComponent(asset.assetId)}`
+          : `/v1/components/${encodeURIComponent(asset.assetId)}`;
       await apiRequest(endpoint, { method: 'DELETE' });
-      await loadMineAssets();
+      await refreshCurrentPage();
       setStatusText(`Deleted ${asset.assetId}`);
     } catch (error) {
       setStatusText(error instanceof Error ? error.message : String(error));
@@ -673,14 +802,36 @@ function ConsoleApp() {
 
   async function onDownloadAsset(asset) {
     try {
-      const endpoint = asset.assetType === 'variant'
-        ? `/v1/variants/${encodeURIComponent(asset.assetId)}/content`
-        : `/v1/components/${encodeURIComponent(asset.assetId)}/content`;
-      const detail = await apiRequest(endpoint);
-      downloadJson(`${asset.assetType}-${asset.assetId}.json`, detail);
-      setStatusText(`Downloaded ${asset.assetId}`);
+      const endpoint = currentUser?.isAdmin
+        ? buildManagedAssetDetailPath(asset, { includeDeleted: Boolean(asset.deletedAt) })
+        : asset.assetType === 'variant'
+          ? `/v1/variants/${encodeURIComponent(asset.assetId)}/content`
+          : `/v1/components/${encodeURIComponent(asset.assetId)}/content`;
+      const payload = await apiRequest(endpoint);
+      const downloadable = downloadableContentForAsset(asset, payload);
+      downloadJson(downloadable.filename, downloadable.data);
+      setStatusText(`Downloaded content for ${asset.assetId}`);
     } catch (error) {
       setStatusText(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function onRestoreAsset(asset) {
+    if (!currentUser?.isAdmin) {
+      return;
+    }
+    setLoading(true);
+    try {
+      await apiRequest(buildManagedAssetDetailPath(asset, { includeDeleted: true }), {
+        method: 'PUT',
+        body: JSON.stringify({ restore: true }),
+      });
+      await refreshCurrentPage();
+      setStatusText(`Restored ${asset.assetId}`);
+    } catch (error) {
+      setStatusText(error instanceof Error ? error.message : String(error));
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -1232,7 +1383,7 @@ function ConsoleApp() {
                   <input
                     value={mineQuery}
                     onChange={(event) => setMineQuery(event.target.value)}
-                    placeholder="Search my assets"
+                    placeholder={hasManagementAccess ? 'Search my managed assets' : 'Search my assets'}
                   />
                   <select value={mineAssetType} onChange={(event) => setMineAssetType(event.target.value)}>
                     <option value="all">all</option>
@@ -1243,15 +1394,20 @@ function ConsoleApp() {
                 </div>
               </div>
               <SimpleTable
-                columns={['Asset ID', 'Type', 'Visibility', 'Revision', 'Actions']}
+                columns={hasManagementAccess ? ['Asset ID', 'Type', 'Visibility', 'Revision', 'Deleted', 'Actions'] : ['Asset ID', 'Type', 'Visibility', 'Revision', 'Actions']}
                 rows={mineAssets.map((asset) => [
                   asset.assetId,
                   asset.assetType,
                   asset.visibility,
                   asset.revision,
+                  ...(hasManagementAccess ? [asset.deletedAt || 'No'] : []),
                   <div className="inline-form" key={`${asset.assetId}-actions`}>
-                    <button type="button" onClick={() => void onDownloadAsset(asset)}>Download</button>
-                    <button type="button" onClick={() => void onDeleteOwnAsset(asset)} disabled={loading}>Delete</button>
+                    <button type="button" onClick={() => void onDownloadAsset(asset)} disabled={loading}>Download Content</button>
+                    {asset.deletedAt ? (
+                      <button type="button" className="button-secondary" onClick={() => void onRestoreAsset(asset)} disabled={loading || !hasManagementAccess}>Restore</button>
+                    ) : (
+                      <button type="button" onClick={() => void onDeleteOwnAsset(asset)} disabled={loading}>Delete</button>
+                    )}
                   </div>,
                 ])}
                 emptyText="No assets"
@@ -1267,7 +1423,7 @@ function ConsoleApp() {
                   <input
                     value={allQuery}
                     onChange={(event) => setAllQuery(event.target.value)}
-                    placeholder="Search public assets"
+                    placeholder={hasManagementAccess ? 'Search all managed assets' : 'Search public assets'}
                   />
                   <select value={allAssetType} onChange={(event) => setAllAssetType(event.target.value)}>
                     <option value="all">all</option>
@@ -1278,20 +1434,35 @@ function ConsoleApp() {
                 </div>
               </div>
               <SimpleTable
-                columns={['Asset ID', 'Type', 'Owner', 'Subscribed', 'Actions']}
+                columns={hasManagementAccess ? ['Asset ID', 'Type', 'Owner', 'Visibility', 'Deleted', 'Actions'] : ['Asset ID', 'Type', 'Owner', 'Subscribed', 'Actions']}
                 rows={allAssets.map((asset) => [
                   asset.assetId,
                   asset.assetType,
                   asset.ownerDisplayName || asset.ownerUserId,
-                  asset.subscribed ? 'Yes' : 'No',
-                  <button
-                    type="button"
-                    key={`${asset.assetId}-sub`}
-                    onClick={() => void onToggleSubscribe(asset)}
-                    disabled={loading}
-                  >
-                    {asset.subscribed ? 'Unsubscribe' : 'Subscribe'}
-                  </button>,
+                  ...(hasManagementAccess
+                    ? [
+                        asset.visibility,
+                        asset.deletedAt || 'No',
+                        <div className="inline-form" key={`${asset.assetId}-manage`}>
+                          <button type="button" onClick={() => void onDownloadAsset(asset)} disabled={loading}>Download Content</button>
+                          {asset.deletedAt ? (
+                            <button type="button" className="button-secondary" onClick={() => void onRestoreAsset(asset)} disabled={loading}>Restore</button>
+                          ) : (
+                            <button type="button" className="button-danger" onClick={() => void onDeleteOwnAsset(asset)} disabled={loading}>Delete</button>
+                          )}
+                        </div>,
+                      ]
+                    : [
+                        asset.subscribed ? 'Yes' : 'No',
+                        <button
+                          type="button"
+                          key={`${asset.assetId}-sub`}
+                          onClick={() => void onToggleSubscribe(asset)}
+                          disabled={loading}
+                        >
+                          {asset.subscribed ? 'Unsubscribe' : 'Subscribe'}
+                        </button>,
+                      ]),
                 ])}
                 emptyText="No assets"
               />

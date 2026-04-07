@@ -20,6 +20,7 @@ export class AssetValidationError extends Error {}
 export class AssetRepository {
   constructor(db) {
     this._db = db;
+    this._hasVariantDetailsTableCached = null;
   }
 
   async listUsers({ query, cursor }) {
@@ -152,7 +153,7 @@ export class AssetRepository {
     return this.getSiteSettings();
   }
 
-  async listManagedAssets({ assetType, ownerUserId, query, includeDeleted, cursor }) {
+  async listManagedAssets({ assetType, ownerUserId, query, includeDeleted, cursor, kind = '', baseNodeType = '' }) {
     const filters = ['1 = 1'];
     const bindings = [];
     const normalizedAssetType = String(assetType || '').trim();
@@ -170,56 +171,87 @@ export class AssetRepository {
     }
     if (String(query || '').trim()) {
       const match = `%${escapeLikePattern(String(query).trim().toLowerCase())}%`;
-      filters.push("(LOWER(h.name) LIKE ? ESCAPE '\\' OR LOWER(h.description) LIKE ? ESCAPE '\\' OR LOWER(h.tags_json) LIKE ? ESCAPE '\\' OR LOWER(COALESCE(vd.base_node_type, '')) LIKE ? ESCAPE '\\')");
-      bindings.push(match, match, match, match);
+      if (normalizedAssetType === 'variant') {
+        filters.push("(LOWER(h.name) LIKE ? ESCAPE '\\' OR LOWER(h.description) LIKE ? ESCAPE '\\' OR LOWER(h.tags_json) LIKE ? ESCAPE '\\' OR LOWER(COALESCE(vd.base_node_type, '')) LIKE ? ESCAPE '\\')");
+        bindings.push(match, match, match, match);
+      } else {
+        filters.push("(LOWER(h.name) LIKE ? ESCAPE '\\' OR LOWER(h.description) LIKE ? ESCAPE '\\' OR LOWER(h.tags_json) LIKE ? ESCAPE '\\')");
+        bindings.push(match, match, match);
+      }
+    }
+    if (normalizedAssetType === 'variant') {
+      const normalizedKind = String(kind || '').trim();
+      if (normalizedKind) {
+        filters.push('vd.variant_kind = ?');
+        bindings.push(normalizedKind);
+      }
+      const normalizedBaseNodeType = String(baseNodeType || '').trim();
+      if (normalizedBaseNodeType) {
+        filters.push('vd.base_node_type = ?');
+        bindings.push(normalizedBaseNodeType);
+      }
     }
 
     const start = parseCursor(cursor);
-    const sql = `
-      SELECT
-        h.*,
-        vd.variant_kind,
-        vd.base_node_type,
-        vd.service_class,
-        vd.operator_class,
-        COALESCE(u.displayUsername, u.name) AS owner_display_name,
-        v.created_at AS version_created_at,
-        v.created_by_user_id,
-        v.change_summary,
-        v.version_number,
-        v.revision
-      FROM asset_heads h
-      LEFT JOIN variant_details vd ON vd.asset_id = h.asset_id
-      JOIN asset_versions v
-        ON v.asset_id = h.asset_id AND v.version_number = h.latest_version_number
-      LEFT JOIN user u ON u.id = h.owner_user_id
-      WHERE ${filters.join(' AND ')}
-      ORDER BY h.updated_at DESC, h.asset_id
-      LIMIT ? OFFSET ?
-    `;
+    const sql = normalizedAssetType === 'variant'
+      ? `
+        SELECT
+          h.*,
+          vd.variant_kind,
+          vd.base_node_type,
+          vd.service_class,
+          vd.operator_class,
+          COALESCE(u.displayUsername, u.name) AS owner_display_name,
+          v.created_at AS version_created_at,
+          v.created_by_user_id,
+          v.change_summary,
+          v.version_number,
+          v.revision
+        FROM asset_heads h
+        LEFT JOIN variant_details vd ON vd.asset_id = h.asset_id
+        JOIN asset_versions v
+          ON v.asset_id = h.asset_id AND v.version_number = h.latest_version_number
+        LEFT JOIN user u ON u.id = h.owner_user_id
+        WHERE ${filters.join(' AND ')}
+        ORDER BY h.updated_at DESC, h.asset_id
+        LIMIT ? OFFSET ?
+      `
+      : `
+        SELECT
+          h.*,
+          COALESCE(u.displayUsername, u.name) AS owner_display_name,
+          v.created_at AS version_created_at,
+          v.created_by_user_id,
+          v.change_summary,
+          v.version_number,
+          v.revision
+        FROM asset_heads h
+        JOIN asset_versions v
+          ON v.asset_id = h.asset_id AND v.version_number = h.latest_version_number
+        LEFT JOIN user u ON u.id = h.owner_user_id
+        WHERE ${filters.join(' AND ')}
+        ORDER BY h.updated_at DESC, h.asset_id
+        LIMIT ? OFFSET ?
+      `;
     const result = await this._db.prepare(sql).bind(...bindings, PAGE_SIZE + 1, start).all();
     const rows = Array.isArray(result.results) ? result.results : [];
     const hasMore = rows.length > PAGE_SIZE;
     const items = hasMore ? rows.slice(0, PAGE_SIZE) : rows;
+    const resolvedItems = normalizedAssetType === 'variant'
+      ? items
+      : await this._mergeVariantDetailsIntoRows(items);
     return {
-      entries: items.map((row) => adminAssetSummaryFromRow(row)),
+      entries: resolvedItems.map((row) => adminAssetSummaryFromRow(row)),
       nextCursor: hasMore ? String(start + PAGE_SIZE) : null,
     };
   }
 
-  async listAssetsByOwnerForManagement({ ownerUserId, assetType, includeDeleted, cursor }) {
-    return this.listManagedAssets({
-      ownerUserId,
-      assetType,
-      includeDeleted,
-      query: '',
-      cursor,
-    });
-  }
-
-  async getManagedAsset({ assetId, includeDeleted }) {
-    const head = await this._findAssetHeadRow(assetId, { includeDeleted: toBoolean(includeDeleted) });
+  async getManagedAsset({ assetId, includeDeleted, assetTypeHint = '' }) {
+    const head = await this._findAssetHeadRow(assetId, { includeDeleted: toBoolean(includeDeleted), assetTypeHint });
     if (head === null) {
+      return null;
+    }
+    if (assetTypeHint && String(head.asset_type) !== String(assetTypeHint)) {
       return null;
     }
     const version = await this._findAssetVersionRow(assetId, Number(head.latest_version_number));
@@ -229,9 +261,12 @@ export class AssetRepository {
     return adminAssetDetailFromRows({ head, version });
   }
 
-  async adminDeleteAsset({ assetId }) {
-    const existing = await this._findAssetHeadRow(assetId, { includeDeleted: true });
+  async adminDeleteAsset({ assetId, assetTypeHint = '' }) {
+    const existing = await this._findAssetHeadRow(assetId, { includeDeleted: true, assetTypeHint });
     if (existing === null) {
+      return false;
+    }
+    if (assetTypeHint && String(existing.asset_type) !== String(assetTypeHint)) {
       return false;
     }
     const timestamp = nowIso();
@@ -246,9 +281,12 @@ export class AssetRepository {
     return true;
   }
 
-  async adminRestoreAsset({ assetId }) {
-    const existing = await this._findAssetHeadRow(assetId, { includeDeleted: true });
+  async adminRestoreAsset({ assetId, assetTypeHint = '' }) {
+    const existing = await this._findAssetHeadRow(assetId, { includeDeleted: true, assetTypeHint });
     if (existing === null) {
+      return false;
+    }
+    if (assetTypeHint && String(existing.asset_type) !== String(assetTypeHint)) {
       return false;
     }
     await this._db.prepare(
@@ -262,9 +300,12 @@ export class AssetRepository {
     return true;
   }
 
-  async adminUpdateAssetVisibility({ assetId, visibility }) {
-    const existing = await this._findAssetHeadRow(assetId, { includeDeleted: true });
+  async adminUpdateAssetVisibility({ assetId, visibility, assetTypeHint = '' }) {
+    const existing = await this._findAssetHeadRow(assetId, { includeDeleted: true, assetTypeHint });
     if (existing === null) {
+      return null;
+    }
+    if (assetTypeHint && String(existing.asset_type) !== String(assetTypeHint)) {
       return null;
     }
     await this._db.prepare(
@@ -275,7 +316,7 @@ export class AssetRepository {
     )
       .bind(normalizeVisibility(visibility), nowIso(), String(assetId))
       .run();
-    return this.getManagedAsset({ assetId, includeDeleted: true });
+    return this.getManagedAsset({ assetId, includeDeleted: true, assetTypeHint });
   }
 
   async createVariant({ payload, user }) {
@@ -407,18 +448,6 @@ export class AssetRepository {
     return this._updateAssetVisibility({ assetId: componentId, assetType: 'component', visibility, revision, userId });
   }
 
-  async searchAssets({ assetType, userId, query, visibility, owner, cursor }) {
-    return this._listAssetSummaries({
-      assetType: normalizeAssetType(assetType),
-      userId,
-      query,
-      cursor,
-      visibility,
-      owner,
-      extraFilters: {},
-    });
-  }
-
   async _createAsset({ normalized, userId }) {
     const existing = await this._findAssetHeadRow(normalized.assetId, { includeDeleted: false });
     if (existing !== null) {
@@ -537,7 +566,7 @@ export class AssetRepository {
   }
 
   async _getAssetContext({ assetId, assetType, userId, versionNumber }) {
-    const head = await this.getAssetById(assetId);
+    const head = await this.getAssetById(assetId, assetType);
     if (head === null || String(head.asset_type) !== assetType) {
       throw new AssetNotFoundError(`Asset ${assetId} not found`);
     }
@@ -571,78 +600,56 @@ export class AssetRepository {
     applyAssetQueryFilters({ filters, bindings, query, assetType, extraFilters });
 
     const start = parseCursor(cursor);
-    const sql = `
-      SELECT
-        h.*,
-        vd.variant_kind,
-        vd.base_node_type,
-        vd.service_class,
-        vd.operator_class,
-        COALESCE(u.displayUsername, u.name) AS owner_display_name,
-        s.subscribed_at,
-        s.last_seen_revision,
-        v.created_by_user_id,
-        v.change_summary,
-        v.version_number,
-        v.revision
-      FROM asset_heads h
-      LEFT JOIN variant_details vd ON vd.asset_id = h.asset_id
-      JOIN asset_versions v
-        ON v.asset_id = h.asset_id AND v.version_number = h.latest_version_number
-      LEFT JOIN user u ON u.id = h.owner_user_id
-      LEFT JOIN asset_subscriptions s ON s.asset_id = h.asset_id AND s.subscriber_user_id = ?
-      WHERE ${filters.join(' AND ')}
-      ORDER BY LOWER(h.name), h.asset_id
-      LIMIT ? OFFSET ?
-    `;
+    const sql = assetType === 'variant'
+      ? `
+        SELECT
+          h.*,
+          vd.variant_kind,
+          vd.base_node_type,
+          vd.service_class,
+          vd.operator_class,
+          COALESCE(u.displayUsername, u.name) AS owner_display_name,
+          s.subscribed_at,
+          s.last_seen_revision,
+          v.created_by_user_id,
+          v.change_summary,
+          v.version_number,
+          v.revision
+        FROM asset_heads h
+        LEFT JOIN variant_details vd ON vd.asset_id = h.asset_id
+        JOIN asset_versions v
+          ON v.asset_id = h.asset_id AND v.version_number = h.latest_version_number
+        LEFT JOIN user u ON u.id = h.owner_user_id
+        LEFT JOIN asset_subscriptions s ON s.asset_id = h.asset_id AND s.subscriber_user_id = ?
+        WHERE ${filters.join(' AND ')}
+        ORDER BY LOWER(h.name), h.asset_id
+        LIMIT ? OFFSET ?
+      `
+      : `
+        SELECT
+          h.*,
+          COALESCE(u.displayUsername, u.name) AS owner_display_name,
+          s.subscribed_at,
+          s.last_seen_revision,
+          v.created_by_user_id,
+          v.change_summary,
+          v.version_number,
+          v.revision
+        FROM asset_heads h
+        JOIN asset_versions v
+          ON v.asset_id = h.asset_id AND v.version_number = h.latest_version_number
+        LEFT JOIN user u ON u.id = h.owner_user_id
+        LEFT JOIN asset_subscriptions s ON s.asset_id = h.asset_id AND s.subscriber_user_id = ?
+        WHERE ${filters.join(' AND ')}
+        ORDER BY LOWER(h.name), h.asset_id
+        LIMIT ? OFFSET ?
+      `;
     const result = await this._db.prepare(sql).bind(userId ? String(userId) : '', ...bindings, PAGE_SIZE + 1, start).all();
     const rows = Array.isArray(result.results) ? result.results : [];
     const hasMore = rows.length > PAGE_SIZE;
     const items = hasMore ? rows.slice(0, PAGE_SIZE) : rows;
     return {
       entries: items.map((row) => typedAssetSummaryPayloadFromRow(row, userId)),
-      nextCursor: hasMore ? String(start + PAGE_SIZE) : null,
-    };
-  }
-
-  async _listAssetSummaries({ assetType, userId, query, cursor, visibility, owner, extraFilters }) {
-    const filters = ['h.deleted_at IS NULL', 'h.asset_type = ?'];
-    const bindings = [assetType];
-    applyVisibilityOwnerFilters({ filters, bindings, userId, visibility, owner });
-    applyAssetQueryFilters({ filters, bindings, query, assetType, extraFilters });
-
-    const start = parseCursor(cursor);
-    const sql = `
-      SELECT
-        h.*,
-        vd.variant_kind,
-        vd.base_node_type,
-        vd.service_class,
-        vd.operator_class,
-        COALESCE(u.displayUsername, u.name) AS owner_display_name,
-        s.subscribed_at,
-        s.last_seen_revision,
-        v.created_at AS version_created_at,
-        v.created_by_user_id,
-        v.change_summary,
-        v.version_number,
-        v.revision
-      FROM asset_heads h
-      LEFT JOIN variant_details vd ON vd.asset_id = h.asset_id
-      JOIN asset_versions v
-        ON v.asset_id = h.asset_id AND v.version_number = h.latest_version_number
-      LEFT JOIN user u ON u.id = h.owner_user_id
-      LEFT JOIN asset_subscriptions s ON s.asset_id = h.asset_id AND s.subscriber_user_id = ?
-      WHERE ${filters.join(' AND ')}
-      ORDER BY LOWER(h.name), h.asset_id
-      LIMIT ? OFFSET ?
-    `;
-    const result = await this._db.prepare(sql).bind(userId ? String(userId) : '', ...bindings, PAGE_SIZE + 1, start).all();
-    const rows = Array.isArray(result.results) ? result.results : [];
-    const hasMore = rows.length > PAGE_SIZE;
-    const items = hasMore ? rows.slice(0, PAGE_SIZE) : rows;
-    return {
-      entries: items.map((row) => searchAssetSummaryFromRow(row, userId)),
       nextCursor: hasMore ? String(start + PAGE_SIZE) : null,
     };
   }
@@ -674,7 +681,7 @@ export class AssetRepository {
   }
 
   async _subscribeAsset({ assetId, assetType, userId }) {
-    const head = await this.getAssetById(assetId);
+    const head = await this.getAssetById(assetId, assetType);
     if (head === null || String(head.asset_type) !== assetType) {
       throw new AssetNotFoundError(`Asset ${assetId} not found`);
     }
@@ -694,7 +701,7 @@ export class AssetRepository {
   }
 
   async _unsubscribeAsset({ assetId, assetType, userId }) {
-    const head = await this.getAssetById(assetId);
+    const head = await this.getAssetById(assetId, assetType);
     if (head === null || String(head.asset_type) !== assetType) {
       throw new AssetNotFoundError(`Asset ${assetId} not found`);
     }
@@ -765,7 +772,7 @@ export class AssetRepository {
   }
 
   async _requireOwnedAsset({ assetId, assetType, userId }) {
-    const existing = await this.getAssetById(assetId);
+    const existing = await this.getAssetById(assetId, assetType);
     if (existing === null || String(existing.asset_type) !== assetType) {
       throw new AssetNotFoundError(`Asset ${assetId} not found`);
     }
@@ -822,24 +829,41 @@ export class AssetRepository {
       .run();
   }
 
-  async _findAssetHeadRow(assetId, { includeDeleted = false } = {}) {
+  async _findAssetHeadRow(assetId, { includeDeleted = false, assetTypeHint = '' } = {}) {
     const deletedFilter = includeDeleted ? '' : 'AND h.deleted_at IS NULL';
-    const row = await this._db.prepare(
-      `SELECT
-         h.*,
-         vd.variant_kind,
-         vd.base_node_type,
-         vd.service_class,
-         vd.operator_class,
-         COALESCE(u.displayUsername, u.name) AS owner_display_name
-       FROM asset_heads h
-       LEFT JOIN variant_details vd ON vd.asset_id = h.asset_id
-       LEFT JOIN user u ON u.id = h.owner_user_id
-       WHERE h.asset_id = ? ${deletedFilter}`,
-    )
-      .bind(String(assetId))
-      .first();
-    return row || null;
+    const row = assetTypeHint === 'variant'
+      ? await this._db.prepare(
+        `SELECT
+           h.*,
+           vd.variant_kind,
+           vd.base_node_type,
+           vd.service_class,
+           vd.operator_class,
+           COALESCE(u.displayUsername, u.name) AS owner_display_name
+         FROM asset_heads h
+         LEFT JOIN variant_details vd ON vd.asset_id = h.asset_id
+         LEFT JOIN user u ON u.id = h.owner_user_id
+         WHERE h.asset_id = ? ${deletedFilter}`,
+      )
+        .bind(String(assetId))
+        .first()
+      : await this._db.prepare(
+        `SELECT
+           h.*,
+           COALESCE(u.displayUsername, u.name) AS owner_display_name
+         FROM asset_heads h
+         LEFT JOIN user u ON u.id = h.owner_user_id
+         WHERE h.asset_id = ? ${deletedFilter}`,
+      )
+        .bind(String(assetId))
+        .first();
+    if (row === null) {
+      return null;
+    }
+    if (assetTypeHint === 'variant') {
+      return row;
+    }
+    return this._mergeVariantDetailsIntoRow(row);
   }
 
   async _findAssetVersionRow(assetId, versionNumber) {
@@ -863,8 +887,8 @@ export class AssetRepository {
     };
   }
 
-  async getAssetById(assetId) {
-    return this._findAssetHeadRow(assetId);
+  async getAssetById(assetId, assetTypeHint = '') {
+    return this._findAssetHeadRow(assetId, { assetTypeHint });
   }
 
   async getAssetVersion(assetId, versionNumber) {
@@ -879,6 +903,98 @@ export class AssetRepository {
       .bind(String(assetId), String(userId))
       .first();
     return row === null ? null : row;
+  }
+
+  async _hasVariantDetailsTable() {
+    if (this._hasVariantDetailsTableCached !== null) {
+      return this._hasVariantDetailsTableCached;
+    }
+    const row = await this._db.prepare(
+      `SELECT name
+       FROM sqlite_master
+       WHERE type = 'table' AND name = 'variant_details'
+       LIMIT 1`,
+    ).first();
+    const hasTable = row !== null;
+    this._hasVariantDetailsTableCached = hasTable;
+    return hasTable;
+  }
+
+  async _findVariantDetailsRow(assetId) {
+    if (!await this._hasVariantDetailsTable()) {
+      return null;
+    }
+    const row = await this._db.prepare(
+      `SELECT asset_id, variant_kind, base_node_type, service_class, operator_class
+       FROM variant_details
+       WHERE asset_id = ?`,
+    )
+      .bind(String(assetId))
+      .first();
+    return row === null ? null : row;
+  }
+
+  async _findVariantDetailsRows(assetIds) {
+    if (assetIds.length === 0 || !await this._hasVariantDetailsTable()) {
+      return new Map();
+    }
+    const placeholders = assetIds.map(() => '?').join(', ');
+    const result = await this._db.prepare(
+      `SELECT asset_id, variant_kind, base_node_type, service_class, operator_class
+       FROM variant_details
+       WHERE asset_id IN (${placeholders})`,
+    )
+      .bind(...assetIds)
+      .all();
+    const rows = Array.isArray(result.results) ? result.results : [];
+    const byAssetId = new Map();
+    for (const row of rows) {
+      byAssetId.set(String(row.asset_id), row);
+    }
+    return byAssetId;
+  }
+
+  async _mergeVariantDetailsIntoRow(row) {
+    if (String(row.asset_type) !== 'variant') {
+      return row;
+    }
+    const details = await this._findVariantDetailsRow(String(row.asset_id));
+    if (details === null) {
+      return row;
+    }
+    return {
+      ...row,
+      variant_kind: details.variant_kind,
+      base_node_type: details.base_node_type,
+      service_class: details.service_class,
+      operator_class: details.operator_class,
+    };
+  }
+
+  async _mergeVariantDetailsIntoRows(rows) {
+    const variantAssetIds = [];
+    for (const row of rows) {
+      if (String(row.asset_type) === 'variant') {
+        variantAssetIds.push(String(row.asset_id));
+      }
+    }
+    const detailsByAssetId = await this._findVariantDetailsRows(variantAssetIds);
+    return rows.map((row) => {
+      if (String(row.asset_type) !== 'variant') {
+        return row;
+      }
+      const details = detailsByAssetId.get(String(row.asset_id));
+      if (details === undefined) {
+        return row;
+      }
+      return {
+        ...row,
+        variant_kind: details.variant_kind,
+        base_node_type: details.base_node_type,
+        service_class: details.service_class,
+        operator_class: details.operator_class,
+      };
+    });
   }
 
   async hasAssets(userId) {
@@ -934,13 +1050,7 @@ function normalizeVariantCreatePayload(payload, user) {
       serviceClass: record.serviceClass,
       operatorClass: record.operatorClass,
     },
-    contentJson: stableJson({
-      record: {
-        ...record,
-        createdAt,
-        updatedAt,
-      },
-    }),
+    contentJson: stableJson(record.spec),
   };
 }
 
@@ -952,7 +1062,7 @@ function normalizeVariantUpdatePayload(payload, existing, user) {
     assetType: 'variant',
     ownerUserId: String(user.userId),
     visibility: normalizeVisibility(payload.visibility ?? existing.visibility),
-    revision: String(payload.revision || payload.remoteRevision || ''),
+    revision: String(payload.revision || ''),
     name: record.name,
     description: record.description,
     tags: record.tags,
@@ -966,13 +1076,7 @@ function normalizeVariantUpdatePayload(payload, existing, user) {
       serviceClass: record.serviceClass,
       operatorClass: record.operatorClass,
     },
-    contentJson: stableJson({
-      record: {
-        ...record,
-        createdAt: String(existing.created_at),
-        updatedAt: timestamp,
-      },
-    }),
+    contentJson: stableJson(record.spec),
   };
 }
 
@@ -994,13 +1098,7 @@ function normalizeComponentCreatePayload(payload, user) {
     createdAt,
     updatedAt,
     changeSummary: nullableString(payload.changeSummary),
-    contentJson: stableJson({
-      record: {
-        ...record,
-        createdAt,
-        updatedAt,
-      },
-    }),
+    contentJson: stableJson(record.content),
   };
 }
 
@@ -1012,7 +1110,7 @@ function normalizeComponentUpdatePayload(payload, existing, user) {
     assetType: 'component',
     ownerUserId: String(user.userId),
     visibility: normalizeVisibility(payload.visibility ?? existing.visibility),
-    revision: String(payload.revision || payload.remoteRevision || ''),
+    revision: String(payload.revision || ''),
     name: record.name,
     description: record.description,
     tags: record.tags,
@@ -1020,13 +1118,7 @@ function normalizeComponentUpdatePayload(payload, existing, user) {
     createdAt: String(existing.created_at),
     updatedAt: timestamp,
     changeSummary: nullableString(payload.changeSummary),
-    contentJson: stableJson({
-      record: {
-        ...record,
-        createdAt: String(existing.created_at),
-        updatedAt: timestamp,
-      },
-    }),
+    contentJson: stableJson(record.content),
   };
 }
 
@@ -1086,7 +1178,6 @@ function normalizeComponentRecord(record, { expectedComponentId }) {
     componentId,
     name: requireNonEmptyString(record.name, 'record.name is required'),
     description: stringOrDefault(record.description, ''),
-    usageNotes: stringOrDefault(record.usageNotes, ''),
     tags: normalizeTags(record.tags),
     schemaVersion,
     content: deepCloneJson(record.content),
@@ -1142,7 +1233,7 @@ function variantContentPayloadFromRows({ head, version }) {
     assetType: 'variant',
     versionNumber: Number(version.version_number),
     revision: String(version.revision),
-    record: parseVariantRecord(version.content),
+    record: parseVariantRecord(version.content, { head }),
   };
 }
 
@@ -1169,7 +1260,7 @@ function componentContentPayloadFromRows({ head, version }) {
     assetType: 'component',
     versionNumber: Number(version.version_number),
     revision: String(version.revision),
-    record: parseComponentRecord(version.content),
+    record: parseComponentRecord(version.content, { head, version }),
   };
 }
 
@@ -1208,12 +1299,12 @@ function adminAssetDetailFromRows({ head, version }) {
   if (String(head.asset_type) === 'variant') {
     return {
       ...summary,
-      record: parseVariantRecord(version.content),
+      record: parseVariantRecord(version.content, { head }),
     };
   }
   return {
     ...summary,
-    record: parseComponentRecord(version.content),
+    record: parseComponentRecord(version.content, { head, version }),
   };
 }
 
@@ -1230,27 +1321,6 @@ function adminAssetSummaryFromRow(row) {
   }
   return {
     ...base,
-    schemaVersion: nullableString(row.schema_version),
-  };
-}
-
-function searchAssetSummaryFromRow(row, viewerUserId) {
-  const base = genericAssetSummary(row);
-  const isOwner = String(row.owner_user_id) === String(viewerUserId || '');
-  const isSubscribed = hasSubscription(row);
-  if (String(row.asset_type) === 'variant') {
-    return {
-      ...base,
-      subscribed: isSubscribed,
-      editable: isOwner,
-      variantKind: stringOrDefault(row.variant_kind, ''),
-      baseNodeType: stringOrDefault(row.base_node_type, ''),
-    };
-  }
-  return {
-    ...base,
-    subscribed: isSubscribed,
-    editable: isOwner,
     schemaVersion: nullableString(row.schema_version),
   };
 }
@@ -1310,8 +1380,13 @@ function assetVersionSummaryFromRow(assetType, row) {
 function applyAssetQueryFilters({ filters, bindings, query, assetType, extraFilters }) {
   if (query) {
     const match = `%${escapeLikePattern(String(query).trim().toLowerCase())}%`;
-    filters.push("(LOWER(h.name) LIKE ? ESCAPE '\\' OR LOWER(h.description) LIKE ? ESCAPE '\\' OR LOWER(h.tags_json) LIKE ? ESCAPE '\\' OR LOWER(COALESCE(vd.base_node_type, '')) LIKE ? ESCAPE '\\')");
-    bindings.push(match, match, match, match);
+    if (assetType === 'variant') {
+      filters.push("(LOWER(h.name) LIKE ? ESCAPE '\\' OR LOWER(h.description) LIKE ? ESCAPE '\\' OR LOWER(h.tags_json) LIKE ? ESCAPE '\\' OR LOWER(COALESCE(vd.base_node_type, '')) LIKE ? ESCAPE '\\')");
+      bindings.push(match, match, match, match);
+    } else {
+      filters.push("(LOWER(h.name) LIKE ? ESCAPE '\\' OR LOWER(h.description) LIKE ? ESCAPE '\\' OR LOWER(h.tags_json) LIKE ? ESCAPE '\\')");
+      bindings.push(match, match, match);
+    }
   }
   if (assetType === 'variant') {
     if (extraFilters.variantKind) {
@@ -1325,35 +1400,40 @@ function applyAssetQueryFilters({ filters, bindings, query, assetType, extraFilt
   }
 }
 
-function parseVariantRecord(content) {
-  const record = extractRecordEnvelope(parseJsonObject(content));
+function parseVariantRecord(content, { head = null } = {}) {
+  const specPayload = normalizeVariantSpecPayload(parseJsonObject(content));
+  const variantId = stringOrDefault(head?.asset_id, '');
+  const createdAt = stringOrDefault(head?.created_at, '');
+  const updatedAt = stringOrDefault(head?.updated_at, createdAt);
   return {
-    variantId: stringOrDefault(record.variantId, ''),
-    kind: stringOrDefault(record.kind, ''),
-    baseNodeType: stringOrDefault(record.baseNodeType, ''),
-    serviceClass: stringOrDefault(record.serviceClass, ''),
-    operatorClass: nullableString(record.operatorClass),
-    name: stringOrDefault(record.name, ''),
-    description: stringOrDefault(record.description, ''),
-    tags: normalizeTags(record.tags),
-    spec: isPlainObject(record.spec) ? deepCloneJson(record.spec) : {},
-    createdAt: stringOrDefault(record.createdAt, ''),
-    updatedAt: stringOrDefault(record.updatedAt, ''),
+    variantId,
+    kind: stringOrDefault(head?.variant_kind, ''),
+    baseNodeType: stringOrDefault(head?.base_node_type, ''),
+    serviceClass: stringOrDefault(head?.service_class, ''),
+    operatorClass: nullableString(head?.operator_class),
+    name: stringOrDefault(head?.name, variantId),
+    description: stringOrDefault(head?.description, ''),
+    tags: normalizeTags(parseJsonArray(head?.tags_json)),
+    spec: specPayload,
+    createdAt,
+    updatedAt,
   };
 }
 
-function parseComponentRecord(content) {
-  const record = extractRecordEnvelope(parseJsonObject(content));
+function parseComponentRecord(content, { head = null, version = null } = {}) {
+  const contentPayload = normalizeComponentContentPayload(parseJsonObject(content));
+  const componentId = stringOrDefault(head?.asset_id, '');
+  const createdAt = stringOrDefault(head?.created_at, stringOrDefault(version?.created_at, ''));
+  const updatedAt = stringOrDefault(version?.created_at, stringOrDefault(head?.updated_at, createdAt));
   return {
-    componentId: stringOrDefault(record.componentId, ''),
-    name: stringOrDefault(record.name, ''),
-    description: stringOrDefault(record.description, ''),
-    usageNotes: stringOrDefault(record.usageNotes, ''),
-    tags: normalizeTags(record.tags),
-    schemaVersion: stringOrDefault(record.schemaVersion, COMPONENT_SCHEMA_VERSION),
-    content: isPlainObject(record.content) ? deepCloneJson(record.content) : {},
-    createdAt: stringOrDefault(record.createdAt, ''),
-    updatedAt: stringOrDefault(record.updatedAt, ''),
+    componentId,
+    name: stringOrDefault(head?.name, componentId),
+    description: stringOrDefault(head?.description, ''),
+    tags: normalizeTags(parseJsonArray(head?.tags_json)),
+    schemaVersion: stringOrDefault(head?.schema_version, COMPONENT_SCHEMA_VERSION),
+    content: contentPayload,
+    createdAt,
+    updatedAt,
   };
 }
 
@@ -1519,6 +1599,27 @@ function stableJson(value) {
   return JSON.stringify(value);
 }
 
+function normalizeVariantSpecPayload(spec) {
+  if (!isPlainObject(spec)) {
+    throw new AssetValidationError('variant version payload must be a JSON object');
+  }
+  return deepCloneJson(spec);
+}
+
+function normalizeComponentContentPayload(content) {
+  if (!isPlainObject(content)) {
+    throw new AssetValidationError('component version payload must be a JSON object');
+  }
+  const schemaVersion = requireNonEmptyString(content.schemaVersion, 'component version payload schemaVersion is required');
+  if (schemaVersion !== COMPONENT_SCHEMA_VERSION) {
+    throw new AssetValidationError(`component version payload schemaVersion must be ${COMPONENT_SCHEMA_VERSION}`);
+  }
+  if (!isPlainObject(content.layout)) {
+    throw new AssetValidationError('component version payload layout must be a JSON object');
+  }
+  return deepCloneJson(content);
+}
+
 async function decodeVersionContent(value) {
   if (value === null || value === undefined) {
     return {};
@@ -1527,15 +1628,33 @@ async function decodeVersionContent(value) {
     return parseJsonObject(value);
   }
   try {
-    const text = await decompressGzip(value);
-    return parseJsonObject(text);
-  } catch (error) {
-    try {
-      return parseJsonObject(new TextDecoder().decode(value));
-    } catch (decodeError) {
-      console.error('decodeVersionContent: failed to decode version content', decodeError);
-      return {};
+    const binaryValue = value instanceof Uint8Array
+      ? value
+      : value instanceof ArrayBuffer
+        ? new Uint8Array(value)
+        : ArrayBuffer.isView(value)
+          ? new Uint8Array(value.buffer, value.byteOffset, value.byteLength)
+          : null;
+    if (binaryValue !== null) {
+      try {
+        return parseJsonObject(await decompressGzip(binaryValue));
+      } catch (gzipError) {
+        console.warn('decodeVersionContent: stored content was not gzip-compressed, falling back to UTF-8 decode', gzipError);
+      }
     }
+    if (value instanceof Uint8Array) {
+      return parseJsonObject(new TextDecoder().decode(value));
+    }
+    if (ArrayBuffer.isView(value)) {
+      return parseJsonObject(new TextDecoder().decode(value));
+    }
+    if (value instanceof ArrayBuffer) {
+      return parseJsonObject(new TextDecoder().decode(new Uint8Array(value)));
+    }
+    return parseJsonObject(String(value));
+  } catch (decodeError) {
+    console.error('decodeVersionContent: failed to decode version content', decodeError);
+    return {};
   }
 }
 

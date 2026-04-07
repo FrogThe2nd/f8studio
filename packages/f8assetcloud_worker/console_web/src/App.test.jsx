@@ -23,7 +23,13 @@ vi.mock('./authClient.js', () => ({
   },
 }));
 
-import { ConsoleRootApp } from './App.jsx';
+import {
+  buildAssetListPath,
+  buildManagedAssetDetailPath,
+  buildManagedAssetListPath,
+  ConsoleRootApp,
+  downloadableContentForAsset,
+} from './App.jsx';
 
 function jsonResponse(data) {
   return new Response(JSON.stringify(data), {
@@ -151,5 +157,105 @@ describe('ConsoleRootApp session recovery', () => {
     expect(screen.queryByText('Google sign-in is available for direct login and for linking to an existing account.')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Continue with Google' })).toBeNull();
     expect(screen.getByText('New account registration is currently disabled.')).toBeTruthy();
+  });
+});
+
+describe('downloadableContentForAsset', () => {
+  it('extracts canonical component content from the content endpoint response', () => {
+    const result = downloadableContentForAsset(
+      { assetType: 'component', assetId: 'component-1' },
+      {
+        componentId: 'component-1',
+        assetType: 'component',
+        versionNumber: 3,
+        revision: 'r3',
+        record: {
+          componentId: 'component-1',
+          name: 'Component One',
+          description: '',
+          tags: [],
+          schemaVersion: 'f8studio-session/1',
+          content: {
+            schemaVersion: 'f8studio-session/1',
+            layout: {
+              nodes: {},
+              connections: [],
+            },
+          },
+          createdAt: '2026-04-06T00:00:00Z',
+          updatedAt: '2026-04-06T00:00:00Z',
+        },
+      },
+    );
+
+    expect(result).toEqual({
+      filename: 'component-component-1-content.json',
+      data: {
+        schemaVersion: 'f8studio-session/1',
+        layout: {
+          nodes: {},
+          connections: [],
+        },
+      },
+    });
+  });
+
+  it('extracts canonical variant spec from the content endpoint response', () => {
+    const result = downloadableContentForAsset(
+      { assetType: 'variant', assetId: 'variant-1' },
+      {
+        variantId: 'variant-1',
+        assetType: 'variant',
+        versionNumber: 2,
+        revision: 'r2',
+        record: {
+          variantId: 'variant-1',
+          kind: 'operator',
+          baseNodeType: 'svc.a.op',
+          serviceClass: 'svc.a',
+          operatorClass: 'svc.a.op',
+          name: 'Variant One',
+          description: '',
+          tags: [],
+          spec: {
+            label: 'Variant One',
+          },
+          createdAt: '2026-04-06T00:00:00Z',
+          updatedAt: '2026-04-06T00:00:00Z',
+        },
+      },
+    );
+
+    expect(result).toEqual({
+      filename: 'variant-variant-1-spec.json',
+      data: {
+        label: 'Variant One',
+      },
+    });
+  });
+});
+
+describe('management asset paths', () => {
+  it('builds typed public asset list paths', () => {
+    expect(buildAssetListPath('component', { owner: 'public', query: 'abc' })).toBe(
+      '/v1/components?owner=public&q=abc',
+    );
+    expect(buildAssetListPath('variant', { owner: 'me' })).toBe('/v1/variants?owner=me');
+  });
+
+  it('builds typed management list paths', () => {
+    expect(buildManagedAssetListPath('component', { ownerUserId: 'user-1', query: 'abc', includeDeleted: true })).toBe(
+      '/v1/management/components?ownerUserId=user-1&q=abc&includeDeleted=true',
+    );
+    expect(buildManagedAssetListPath('variant', { query: 'graph' })).toBe('/v1/management/variants?q=graph');
+  });
+
+  it('builds typed management detail paths', () => {
+    expect(buildManagedAssetDetailPath({ assetType: 'component', assetId: 'component-1' })).toBe(
+      '/v1/management/components/component-1',
+    );
+    expect(buildManagedAssetDetailPath({ assetType: 'variant', assetId: 'variant-1' }, { includeDeleted: true })).toBe(
+      '/v1/management/variants/variant-1?includeDeleted=true',
+    );
   });
 });

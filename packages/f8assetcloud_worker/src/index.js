@@ -19,6 +19,7 @@ function maybeCompressResponse(request, response, env) {
   }
   const headers = new Headers(response.headers);
   headers.set('Content-Encoding', 'gzip');
+  headers.set('Cache-Control', appendCacheControlDirective(headers.get('Cache-Control'), 'no-transform'));
   headers.set('Vary', appendVaryValue(headers.get('Vary'), 'Accept-Encoding'));
   headers.delete('Content-Length');
   const compressedBody = response.body.pipeThrough(new CompressionStream('gzip'));
@@ -26,6 +27,7 @@ function maybeCompressResponse(request, response, env) {
     status: response.status,
     statusText: response.statusText,
     headers,
+    encodeBody: 'manual',
   });
 }
 
@@ -96,6 +98,18 @@ function isLargeAssetPayloadRoute(request, pathname) {
 }
 
 function appendVaryValue(currentValue, nextValue) {
+  const existing = String(currentValue || '').trim();
+  if (!existing) {
+    return nextValue;
+  }
+  const parts = existing.split(',').map((part) => part.trim().toLowerCase());
+  if (parts.includes(String(nextValue).toLowerCase())) {
+    return existing;
+  }
+  return `${existing}, ${nextValue}`;
+}
+
+function appendCacheControlDirective(currentValue, nextValue) {
   const existing = String(currentValue || '').trim();
   if (!existing) {
     return nextValue;

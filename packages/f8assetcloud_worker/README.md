@@ -6,6 +6,8 @@ Cloudflare Worker + D1 backend for Feel8 asset management, rebuilt around `Hono 
 
 - Auth is provided by Better Auth at `/api/auth/*`
 - Business APIs stay under `/v1/*`
+- The long-term public API contract should be owned under `/v1/*`, not delegated to Better Auth internals
+- OpenAPI docs for audited `/v1/*` endpoints are served at `/docs` and `/openapi.json`
 - User and management console is the React app in `console_web`
 - The web UI is served at `/console`, and `/` redirects to `/console/`
 - Authentication uses Better Auth cookie sessions, not custom JWTs
@@ -26,6 +28,27 @@ Asset tables:
 - `variant_details`
 - `asset_versions`
 - `asset_subscriptions`
+
+Asset storage contract:
+
+- `asset_heads` stores current queryable metadata for all assets:
+  - owner
+  - visibility
+  - current revision and version number
+  - name
+  - description
+  - tags
+  - component `schema_version`
+- `variant_details` stores current variant-specific metadata:
+  - `variant_kind`
+  - `base_node_type`
+  - `service_class`
+  - `operator_class`
+- `asset_versions` stores versioned large payload blobs only:
+  - component versions store canonical session content `{ schemaVersion, layout }`
+  - variant versions store canonical `spec`
+- `GET .../content` reconstructs a full API `record` from current relational metadata plus the versioned blob payload
+- Historical content is versioned; historical metadata is not. `/content` always returns the current canonical API `record`, reconstructed from the current head metadata plus the selected version blob.
 
 ## Auth features
 
@@ -62,9 +85,13 @@ Web UI:
 - `GET /console/reset-password`
 - `GET /` redirects to `/console/`
 
+OpenAPI:
+
+- `GET /docs`
+- `GET /openapi.json`
+
 Assets:
 
-- `GET /v1/search`
 - `GET /v1/variants`
 - `POST /v1/variants`
 - `GET /v1/variants/:variantId`
@@ -85,6 +112,10 @@ Assets:
 - `POST /v1/components/:componentId/subscribe`
 - `DELETE /v1/components/:componentId/subscribe`
 - `POST /v1/components/:componentId/fork`
+- `GET /v1/components/:componentId/content`
+- `GET /v1/components/:componentId/versions/:versionNumber/content`
+- `GET /v1/variants/:variantId/content`
+- `GET /v1/variants/:variantId/versions/:versionNumber/content`
 
 Management:
 
@@ -93,11 +124,21 @@ Management:
 - `GET /v1/management/users/:userId`
 - `PUT /v1/management/users/:userId`
 - `DELETE /v1/management/users/:userId`
-- `GET /v1/management/users/:userId/assets`
-- `GET /v1/management/assets`
-- `GET /v1/management/assets/:assetId`
-- `PUT /v1/management/assets/:assetId`
-- `DELETE /v1/management/assets/:assetId`
+- `GET /v1/management/site-settings`
+- `PUT /v1/management/site-settings`
+- `GET /v1/management/components`
+- `GET /v1/management/components/:componentId`
+- `PUT /v1/management/components/:componentId`
+- `DELETE /v1/management/components/:componentId`
+- `GET /v1/management/variants`
+- `GET /v1/management/variants/:variantId`
+- `PUT /v1/management/variants/:variantId`
+- `DELETE /v1/management/variants/:variantId`
+
+OpenAPI contract:
+
+- `/openapi.json` and `/docs` should be treated as the canonical audited API contract for `/v1/*`
+- When routes or payloads change, update `src/openapi.js` in the same change so the runtime docs stay in sync
 
 ## Environment
 
@@ -136,7 +177,7 @@ Email delivery via Resend:
 Local debug only:
 
 - `EXPOSE_DEBUG_AUTH_LINKS=true` — prints verification/reset links to console (only effective when email delivery is not configured)
-- `ENABLE_ASSET_JSON_GZIP=true` — targeted default; compresses large asset payload endpoints such as create/get/update/version detail without touching auth or search
+- `ENABLE_ASSET_JSON_GZIP=true` — targeted default; compresses large asset content responses such as `/v1/components/:componentId/content` without touching auth routes
 - `ENABLE_API_JSON_GZIP=false` — broad `/v1/*` compression; keep this off unless you intentionally want to gzip nearly every app JSON response
 
 Variable precedence:
@@ -178,5 +219,10 @@ npx wrangler deploy
 - Old JWT auth tables and compatibility migrations have been removed.
 - To fully reset locally or in a disposable environment, recreate the D1 database and apply `0001_init.sql`.
 - A cron trigger runs daily at 03:00 UTC to clean up expired sessions.
-- Asset `content` is stored as GZIP-compressed BLOB.
-- Limit: 10 MB per version (raw JSON size), significantly optimized for storage.
+- Asset version `content` is stored as a GZIP-compressed BLOB in D1.
+- HTTP compression is negotiated only at the transport layer with standard `Content-Encoding` / `Accept-Encoding`.
+- The worker does not use field-level compression contracts. The canonical stored payload itself is already the minimal versioned blob:
+  - component: `{ schemaVersion, layout }`
+  - variant: `spec`
+- Limit: 10 MB per version before storage compression.
+- New application-owned endpoints should be added to the OpenAPI contract in `src/openapi.js` as part of the route change, so docs and clients do not drift from implementation.

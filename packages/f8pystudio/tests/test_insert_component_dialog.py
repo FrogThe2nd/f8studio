@@ -31,7 +31,6 @@ def _entry(
         componentId=component_id,
         name=name,
         description=f"Description for {name}",
-        usageNotes="Reusable graph fragment",
         tags=["graph", "demo"],
         content={"schemaVersion": "f8studio-session/1", "layout": {"nodes": {}, "connections": []}},
     )

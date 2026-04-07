@@ -13,7 +13,7 @@ from qtpy import QtCore
 
 from f8pysdk.msgspec_codec import copy_model, validate_as
 
-from ..common import JsonObject, json_object_from_value, json_object_loads
+from ..common import JsonObject, decode_http_response_text, json_object_from_value, json_object_loads, origin_headers_for_base_url
 from .variant_catalog import VariantCatalogService, variant_entry_is_installed
 from .variant_models import (
     F8VariantEntry,
@@ -162,8 +162,11 @@ class VariantSyncClient:
         try:
             if self.current_access_token():
                 _ = self._post_json("/api/auth/sign-out", {}, authorized=True)
-        except F8VariantRemoteRequestError:
-            logger.exception("Variant remote logout failed")
+        except (F8VariantRemoteAuthError, F8VariantRemoteRequestError) as exc:
+            logger.warning(
+                "Variant remote sign-out failed; cleared local session anyway: %s",
+                str(exc),
+            )
         self._access_token = ""
         if session is not None:
             self.clear_saved_session(session.accountId)
@@ -228,22 +231,12 @@ class VariantSyncClient:
         return self._update_cached_remote_entry(_entry_from_asset_payload(payload))
 
     def get_variant_content(self, variant_id: str) -> F8VariantRecord:
-        try:
-            payload = self._request_json(
-                "GET",
-                f"/v1/variants/{parse.quote(str(variant_id))}/content",
-                None,
-                authorized=bool(self.current_access_token()),
-            )
-        except F8VariantRemoteRequestError as exc:
-            if exc.status_code != 404:
-                raise
-            payload = self._request_json(
-                "GET",
-                f"/v1/variants/{parse.quote(str(variant_id))}",
-                None,
-                authorized=bool(self.current_access_token()),
-            )
+        payload = self._request_json(
+            "GET",
+            f"/v1/variants/{parse.quote(str(variant_id))}/content",
+            None,
+            authorized=bool(self.current_access_token()),
+        )
         record_payload = payload.get("record")
         if not isinstance(record_payload, dict):
             raise F8VariantRemoteRequestError(f"Variant content payload is missing record for {variant_id}.")
@@ -252,12 +245,12 @@ class VariantSyncClient:
     def hydrate_variant(self, variant_id: str) -> F8VariantEntry:
         detail_entry = self.get_variant(variant_id)
         record = self.get_variant_content(variant_id)
-        hydrated_entry = copy_model(detail_entry, update={"record": record, "installed": True})
+        hydrated_entry = copy_model(detail_entry, update={"record": record, "installed": True, "hasCachedContent": True})
         return self._catalog_service.install_remote_entry(hydrated_entry)
 
     def create_variant(self, entry: F8VariantEntry) -> F8VariantEntry:
         payload = self._request_json("POST", "/v1/variants", _asset_write_payload(entry), authorized=True)
-        result = copy_model(_entry_from_asset_payload(payload), update={"record": entry.record, "installed": True})
+        result = copy_model(_entry_from_asset_payload(payload), update={"record": entry.record, "installed": True, "hasCachedContent": True})
         return self._catalog_service.install_remote_entry(result)
 
     def update_variant(self, entry: F8VariantEntry) -> F8VariantEntry:
@@ -268,7 +261,7 @@ class VariantSyncClient:
             _asset_write_payload(entry),
             authorized=True,
         )
-        result = copy_model(_entry_from_asset_payload(payload), update={"record": entry.record, "installed": True})
+        result = copy_model(_entry_from_asset_payload(payload), update={"record": entry.record, "installed": True, "hasCachedContent": True})
         return self._catalog_service.install_remote_entry(result)
 
     def delete_variant(self, variant_id: str) -> None:
@@ -324,17 +317,12 @@ class VariantSyncClient:
             None,
             authorized=bool(self.current_access_token()),
         )
-        try:
-            content_payload = self._request_json(
-                "GET",
-                f"/v1/variants/{parse.quote(str(variant_id))}/versions/{int(version_number)}/content",
-                None,
-                authorized=bool(self.current_access_token()),
-            )
-        except F8VariantRemoteRequestError as exc:
-            if exc.status_code != 404:
-                raise
-            content_payload = detail_payload
+        content_payload = self._request_json(
+            "GET",
+            f"/v1/variants/{parse.quote(str(variant_id))}/versions/{int(version_number)}/content",
+            None,
+            authorized=bool(self.current_access_token()),
+        )
         detail_entry = _entry_from_asset_payload(detail_payload)
         record_payload = content_payload.get("record")
         if not isinstance(record_payload, dict):
@@ -504,6 +492,8 @@ class VariantSyncClient:
             "Content-Type": "application/json",
             "User-Agent": self._USER_AGENT,
         }
+        if path.startswith("/api/auth/"):
+            headers.update(origin_headers_for_base_url(base_url))
         if payload is not None:
             raw_data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
             if len(raw_data) > 4096:
@@ -528,13 +518,11 @@ class VariantSyncClient:
             with response_context as response_like:
                 content_encoding = response_like.headers.get("Content-Encoding")
                 raw_bytes = response_like.read()
-                if content_encoding == "gzip":
-                    try:
-                        raw_bytes = zlib.decompress(raw_bytes, wbits=31)
-                    except Exception:
-                        logger.exception("Failed to decompress variant cloud response")
-
-                raw_body = raw_bytes.decode("utf-8")
+                try:
+                    raw_body = decode_http_response_text(raw_bytes, content_encoding=str(content_encoding or ""))
+                except Exception:
+                    logger.exception("Failed to decode variant cloud response")
+                    raw_body = raw_bytes.decode("utf-8", errors="replace")
                 logger.debug("Variant cloud %s %s status=%s body=%s", method, url, response_like.status, raw_body[:1000])
                 session_cookie = _session_cookie_from_headers(response_like.headers)
                 if session_cookie:
@@ -551,12 +539,10 @@ class VariantSyncClient:
         except error.HTTPError as exc:
             content_encoding = exc.headers.get("Content-Encoding")
             body_bytes = exc.read()
-            if content_encoding == "gzip":
-                try:
-                    body_bytes = zlib.decompress(body_bytes, wbits=31)
-                except Exception:
-                    pass
-            body_text = body_bytes.decode("utf-8", errors="replace")
+            try:
+                body_text = decode_http_response_text(body_bytes, content_encoding=str(content_encoding or ""))
+            except Exception:
+                body_text = body_bytes.decode("utf-8", errors="replace")
             logger.warning("Variant cloud %s %s failed status=%s body=%s", method, url, exc.code, body_text[:1200])
             payload_obj = _try_parse_json_object(body_text)
             message = _error_message(payload_obj) or body_text or f"{method} {path} failed with HTTP {exc.code}"
@@ -725,9 +711,6 @@ def _conflict_variant_id(payload: JsonObject, path: str) -> str:
     variant_id = payload.get("variantId")
     if isinstance(variant_id, str) and variant_id.strip():
         return variant_id.strip()
-    asset_id = payload.get("assetId")
-    if isinstance(asset_id, str) and asset_id.strip():
-        return asset_id.strip()
     return str(path.rstrip("/").split("/")[-1])
 
 
@@ -801,23 +784,17 @@ def _entry_from_asset_payload(payload: JsonObject) -> F8VariantEntry:
         remoteRevision=(
             _payload_optional_str(payload, "revision")
             or _payload_optional_str(payload, "latestRevision")
-            or _payload_optional_str(payload, "remoteRevision")
         ),
         syncState=F8VariantSyncState.synced,
         downloadedAt=_payload_optional_str(payload, "downloadedAt"),
         installed=_payload_bool(payload, "installed", default=_installed_from_asset_payload(payload)),
+        hasCachedContent=_payload_bool(payload, "hasCachedContent", default=False),
         subscribed=_payload_bool(payload, "subscribed", default=False),
-        remoteVersionNumber=(
-            _payload_optional_int(payload, "latestVersionNumber")
-            or _payload_optional_int(payload, "versionNumber")
-        ),
+        remoteVersionNumber=_payload_optional_int(payload, "latestVersionNumber"),
     )
 
 
 def _source_from_asset_payload(payload: JsonObject) -> F8VariantSourceKind:
-    source_kind = _payload_optional_str(payload, "sourceKind")
-    if source_kind == F8VariantSourceKind.remote_official.value:
-        return F8VariantSourceKind.remote_official
     visibility = str(payload.get("visibility") or "").strip()
     if visibility == "public":
         return F8VariantSourceKind.remote_public
@@ -830,19 +807,17 @@ def _installed_from_asset_payload(payload: JsonObject) -> bool:
 
 
 def _summary_variant_record_from_payload(payload: JsonObject) -> F8VariantRecord:
-    variant_id = _payload_optional_str(payload, "variantId") or _payload_optional_str(payload, "assetId") or ""
-    if not variant_id.strip():
-        raise F8VariantRemoteRequestError("Variant remote payload is missing variantId.")
+    variant_id = _payload_str(payload, "variantId")
     return F8VariantRecord(
         variantId=variant_id,
-        kind=F8VariantKind(_payload_optional_str(payload, "variantKind") or "operator"),
-        baseNodeType=_payload_optional_str(payload, "baseNodeType") or "",
-        serviceClass=_payload_optional_str(payload, "serviceClass") or "",
+        kind=F8VariantKind(_payload_str(payload, "variantKind")),
+        baseNodeType=_payload_str(payload, "baseNodeType"),
+        serviceClass=_payload_str(payload, "serviceClass"),
         operatorClass=_payload_optional_str(payload, "operatorClass"),
-        name=_payload_optional_str(payload, "name") or variant_id,
+        name=_payload_str(payload, "name"),
         spec={},
-        createdAt=_payload_optional_str(payload, "createdAt") or "",
-        updatedAt=_payload_optional_str(payload, "updatedAt") or "",
+        createdAt=_payload_str(payload, "createdAt"),
+        updatedAt=_payload_str(payload, "updatedAt"),
         description=_payload_optional_str(payload, "description") or "",
         tags=_payload_string_list(payload, "tags"),
     )
@@ -893,7 +868,7 @@ def _request_timeout_seconds(*, method: str, path: str) -> int:
 def _merge_variant_entries(existing_entry: F8VariantEntry, incoming_entry: F8VariantEntry) -> F8VariantEntry:
     if incoming_entry.installed:
         if existing_entry.installed and not incoming_entry.downloadedAt:
-            return copy_model(incoming_entry, update={"downloadedAt": existing_entry.downloadedAt})
+            return copy_model(incoming_entry, update={"hasCachedContent": True, "downloadedAt": existing_entry.downloadedAt})
         return incoming_entry
     if not existing_entry.installed:
         return incoming_entry
@@ -904,6 +879,7 @@ def _merge_variant_entries(existing_entry: F8VariantEntry, incoming_entry: F8Var
         update={
             "record": existing_entry.record,
             "installed": bool(variant_entry_is_installed(existing_entry)),
+            "hasCachedContent": variant_entry_has_cached_content(existing_entry),
             "downloadedAt": incoming_entry.downloadedAt or existing_entry.downloadedAt,
         },
     )
@@ -995,7 +971,7 @@ def _remote_version_list_from_payload(payload: JsonObject) -> F8VariantRemoteVer
         version_payload = json_object_from_value(cast(object, item))
         versions.append(
             F8VariantRemoteVersionEntry(
-                variantId=_payload_str_fallback(version_payload, primary_key="variantId", fallback_key="assetId"),
+                variantId=_payload_str(version_payload, "variantId"),
                 assetType=_payload_str(version_payload, "assetType"),
                 versionNumber=_payload_int(version_payload, "versionNumber"),
                 revision=_payload_str(version_payload, "revision"),
@@ -1039,13 +1015,6 @@ def _visibility_from_payload(payload: JsonObject) -> F8VariantVisibility | None:
 
 def _payload_str(payload: JsonObject, key: str) -> str:
     return str(payload[key])
-
-
-def _payload_str_fallback(payload: JsonObject, *, primary_key: str, fallback_key: str) -> str:
-    primary_value = payload.get(primary_key)
-    if primary_value is not None:
-        return str(primary_value)
-    return _payload_str(payload, fallback_key)
 
 
 def _payload_optional_str(payload: JsonObject, key: str) -> str | None:

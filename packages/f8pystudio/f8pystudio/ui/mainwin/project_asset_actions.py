@@ -163,13 +163,12 @@ def import_project_json_as_dialog(
         name=Path(selected_path).stem or "Imported Project",
         description="",
         tags=[],
-        include_usage_notes=False,
     )
     if dialog.exec() != QtWidgets.QDialog.Accepted:
         return str(start_dir or ""), False
 
     try:
-        name, description, tags, _usage_notes = dialog.values()
+        name, description, tags = dialog.values()
         record = ProjectStorageService().import_project_from_json(
             path=selected_path,
             name=name,
@@ -202,13 +201,12 @@ def save_project_as_dialog(
         name="Untitled Project",
         description="",
         tags=[],
-        include_usage_notes=False,
     )
     if dialog.exec() != QtWidgets.QDialog.Accepted:
         return str(start_dir or ""), False
 
     try:
-        name, description, tags, _usage_notes = dialog.values()
+        name, description, tags = dialog.values()
         record = ProjectStorageService().save_project(
             content=studio_graph.serialize_session(),
             name=name,
@@ -302,19 +300,16 @@ def save_component_as_dialog(
         name="Untitled Component",
         description="",
         tags=[],
-        usage_notes="",
-        include_usage_notes=True,
     )
     if dialog.exec() != QtWidgets.QDialog.Accepted:
         return False
 
     try:
-        name, description, tags, usage_notes = dialog.values()
+        name, description, tags = dialog.values()
         record = F8ComponentRecord(
             componentId=new_asset_id(),
             name=name,
             description=description,
-            usageNotes=usage_notes,
             tags=tags,
             content=studio_graph.serialize_publish_session(),
         )

@@ -15,7 +15,6 @@ from ..db import (
     component_remote_cache_table,
 )
 from ..common import (
-    JsonObject,
     json_object_loads,
     json_string_list_loads,
     mapping_int,
@@ -53,7 +52,6 @@ class LocalComponentProvider:
                 component_heads_local_table.c.component_id,
                 component_heads_local_table.c.name,
                 component_heads_local_table.c.description,
-                component_heads_local_table.c.usage_notes,
                 component_heads_local_table.c.tags_json,
                 component_heads_local_table.c.schema_version,
                 component_heads_local_table.c.latest_version_number,
@@ -73,6 +71,7 @@ class LocalComponentProvider:
                 F8ComponentEntry(
                     record=record,
                     source=F8ComponentSourceKind.local,
+                    hasCachedContent=True,
                     localVersionNumber=mapping_int(row_mapping, "latest_version_number"),
                 )
             )
@@ -96,7 +95,6 @@ class LocalComponentProvider:
                         component_id=str(record.componentId),
                         name=str(record.name),
                         description=str(record.description),
-                        usage_notes=str(record.usageNotes),
                         tags_json=stable_json_dumps(list(record.tags or [])),
                         schema_version=str(record.schemaVersion),
                         latest_version_number=version_number,
@@ -115,7 +113,6 @@ class LocalComponentProvider:
                     .values(
                         name=str(record.name),
                         description=str(record.description),
-                        usage_notes=str(record.usageNotes),
                         tags_json=stable_json_dumps(list(record.tags or [])),
                         schema_version=str(record.schemaVersion),
                         latest_version_number=version_number,
@@ -128,7 +125,6 @@ class LocalComponentProvider:
             componentId=str(record.componentId),
             name=str(record.name),
             description=str(record.description),
-            usageNotes=str(record.usageNotes),
             tags=[str(tag) for tag in list(record.tags or []) if str(tag).strip()],
             schemaVersion=str(record.schemaVersion),
             content=record.content,
@@ -146,6 +142,7 @@ class LocalComponentProvider:
             syncState=entry.syncState,
             downloadedAt=entry.downloadedAt,
             installed=entry.installed,
+            hasCachedContent=True,
             subscribed=entry.subscribed,
             localVersionNumber=version_number,
             remoteVersionNumber=entry.remoteVersionNumber,
@@ -172,6 +169,13 @@ class RemoteComponentCacheProvider:
         statement = (
             select(
                 component_remote_cache_table.c.component_id,
+                component_remote_cache_table.c.name,
+                component_remote_cache_table.c.description,
+                component_remote_cache_table.c.tags_json,
+                component_remote_cache_table.c.schema_version,
+                component_remote_cache_table.c.remote_version_number,
+                component_remote_cache_table.c.created_at,
+                component_remote_cache_table.c.updated_at,
                 component_remote_cache_table.c.content,
                 component_remote_cache_table.c.source,
                 component_remote_cache_table.c.visibility,
@@ -182,6 +186,7 @@ class RemoteComponentCacheProvider:
                 component_remote_cache_table.c.sync_state,
                 component_remote_cache_table.c.downloaded_at,
                 component_remote_cache_table.c.installed,
+                component_remote_cache_table.c.has_cached_content,
                 component_remote_cache_table.c.subscribed,
             )
             .order_by(component_remote_cache_table.c.component_id)
@@ -194,8 +199,7 @@ class RemoteComponentCacheProvider:
             row_mapping = _row_mapping(row)
             try:
                 metadata = RemoteCacheMetadata.from_row(row_mapping)
-                cache_payload = json_object_loads(_decompress_content(row_mapping.get("content")))
-                entry = _component_entry_from_remote_cache_payload(cache_payload, metadata)
+                entry = _component_entry_from_remote_cache_row(row_mapping, metadata)
             except Exception:
                 logger.exception("Ignoring invalid cached remote component entry")
                 invalid_found = True
@@ -232,6 +236,13 @@ class RemoteComponentCacheProvider:
                 _ = conn.execute(
                     insert(component_remote_cache_table).values(
                         component_id=component_id,
+                        name=str(entry.record.name),
+                        description=str(entry.record.description),
+                        tags_json=stable_json_dumps(list(entry.record.tags or [])),
+                        schema_version=str(entry.record.schemaVersion),
+                        remote_version_number=entry.remoteVersionNumber,
+                        created_at=str(entry.record.createdAt),
+                        updated_at=str(entry.record.updatedAt),
                         source=metadata.source,
                         visibility=metadata.visibility,
                         owner_user_id=metadata.owner_user_id,
@@ -240,10 +251,14 @@ class RemoteComponentCacheProvider:
                         remote_revision=metadata.remote_revision,
                         sync_state=metadata.sync_state,
                         downloaded_at=metadata.downloaded_at,
-                        installed=1 if metadata.installed and component_entry_has_cached_content(entry) else 0,
+                        installed=1 if metadata.installed else 0,
+                        has_cached_content=1 if component_entry_has_cached_content(entry) else 0,
                         subscribed=1 if metadata.subscribed else 0,
-                        content=_compress_content(stable_json_dumps(_component_remote_cache_payload(entry))),
-                        updated_at=component_now_iso(),
+                        content=_compress_content(
+                            stable_json_dumps(
+                                entry.record.content if component_entry_has_cached_content(entry) else {}
+                            )
+                        ),
                     )
                 )
 
@@ -341,6 +356,7 @@ class ComponentCatalogService:
             entry,
             update={
                 "installed": component_entry_has_cached_content(entry),
+                "hasCachedContent": component_entry_has_cached_content(entry),
                 "downloadedAt": component_now_iso(),
             },
         )
@@ -393,7 +409,6 @@ def _component_record_from_row(row: Mapping[object, object], *, updated_at_key: 
         componentId=mapping_str(row, "component_id"),
         name=mapping_str(row, "name"),
         description=mapping_str(row, "description"),
-        usageNotes=mapping_str(row, "usage_notes"),
         tags=json_string_list_loads(row.get("tags_json")),
         schemaVersion=mapping_str(row, "schema_version"),
         content=json_object_loads(_decompress_content(content_raw)),
@@ -417,38 +432,12 @@ def _decompress_content(data: bytes | None) -> str:
         return (data or b"").decode("utf-8", errors="replace")
 
 
-def _component_record_from_payload(payload: JsonObject) -> F8ComponentRecord:
-    return F8ComponentRecord(
-        componentId=_payload_str(payload, "componentId"),
-        name=_payload_str(payload, "name"),
-        description=_payload_optional_str(payload, "description") or "",
-        usageNotes=_payload_optional_str(payload, "usageNotes") or "",
-        tags=_payload_string_list(payload, "tags"),
-        schemaVersion=_payload_str(payload, "schemaVersion"),
-        content=_payload_json_object(payload, "content"),
-        createdAt=_payload_str(payload, "createdAt"),
-        updatedAt=_payload_str(payload, "updatedAt"),
-    )
-
-
-def _component_record_payload(record: F8ComponentRecord) -> JsonObject:
-    return {
-        "componentId": str(record.componentId),
-        "name": str(record.name),
-        "description": str(record.description),
-        "usageNotes": str(record.usageNotes),
-        "tags": [str(tag) for tag in list(record.tags or []) if str(tag).strip()],
-        "schemaVersion": str(record.schemaVersion),
-        "content": record.content,
-        "createdAt": str(record.createdAt),
-        "updatedAt": str(record.updatedAt),
-    }
-
-
-def _component_entry_from_remote(record_payload: JsonObject, metadata: RemoteCacheMetadata) -> F8ComponentEntry:
+def _component_entry_from_remote_cache_row(row: Mapping[object, object], metadata: RemoteCacheMetadata) -> F8ComponentEntry:
     visibility = None if metadata.visibility is None else F8ComponentVisibility(metadata.visibility)
+    record = _component_record_from_row(row)
+    has_cached_content = _sqlite_row_bool(row, "has_cached_content")
     return F8ComponentEntry(
-        record=_component_record_from_payload(record_payload),
+        record=record,
         source=F8ComponentSourceKind(metadata.source),
         visibility=visibility,
         ownerUserId=metadata.owner_user_id,
@@ -458,67 +447,28 @@ def _component_entry_from_remote(record_payload: JsonObject, metadata: RemoteCac
         syncState=F8ComponentSyncState(metadata.sync_state),
         downloadedAt=metadata.downloaded_at,
         installed=metadata.installed,
+        hasCachedContent=has_cached_content,
         subscribed=metadata.subscribed,
-        remoteVersionNumber=_payload_optional_int(record_payload, "remoteVersionNumber"),
-    )
-
-
-def _component_entry_from_remote_cache_payload(cache_payload: JsonObject, metadata: RemoteCacheMetadata) -> F8ComponentEntry:
-    if "head" not in cache_payload:
-        entry = _component_entry_from_remote(cache_payload, metadata)
-        return copy_model(entry, update={"installed": component_entry_has_cached_content(entry) or bool(metadata.installed)})
-    head_payload = cache_payload.get("head")
-    if not isinstance(head_payload, dict):
-        raise ValueError("Remote component cache is missing head payload.")
-    hydrated_payload = cache_payload.get("hydratedRecord")
-    head_record = _component_record_from_payload(json_object_loads(stable_json_dumps(head_payload)))
-    if isinstance(hydrated_payload, dict):
-        record = _component_record_from_payload(json_object_loads(stable_json_dumps(hydrated_payload)))
-        installed = True
-    else:
-        record = head_record
-        installed = False
-    base_entry = _component_entry_from_remote(_component_record_payload(record), metadata)
-    return copy_model(
-        base_entry,
-        update={
-            "installed": installed,
-            "remoteVersionNumber": _payload_optional_int(cache_payload, "remoteVersionNumber"),
-        },
-    )
-
-
-def _component_remote_cache_payload(entry: F8ComponentEntry) -> JsonObject:
-    return {
-        "head": _component_record_payload(_component_head_record(entry.record)),
-        "hydratedRecord": (
-            _component_record_payload(entry.record)
-            if entry.installed and component_entry_has_cached_content(entry)
-            else None
-        ),
-        "remoteVersionNumber": entry.remoteVersionNumber,
-    }
-
-
-def _component_head_record(record: F8ComponentRecord) -> F8ComponentRecord:
-    return F8ComponentRecord(
-        componentId=str(record.componentId),
-        name=str(record.name),
-        description=str(record.description),
-        usageNotes=str(record.usageNotes),
-        tags=[str(tag) for tag in list(record.tags or []) if str(tag).strip()],
-        schemaVersion=str(record.schemaVersion),
-        content={},
-        createdAt=str(record.createdAt),
-        updatedAt=str(record.updatedAt),
+        remoteVersionNumber=mapping_int(row, "remote_version_number") if row.get("remote_version_number") is not None else None,
     )
 
 
 def component_entry_has_cached_content(entry: F8ComponentEntry) -> bool:
-    content = entry.record.content
+    if entry.source == F8ComponentSourceKind.local:
+        return True
+    if entry.hasCachedContent is not None:
+        return bool(entry.hasCachedContent)
+    return _component_content_is_hydrated(entry.record.content)
+
+
+def _component_content_is_hydrated(content: Mapping[str, object]) -> bool:
     layout_value = content.get("layout")
     schema_version_value = content.get("schemaVersion")
     return isinstance(layout_value, dict) and isinstance(schema_version_value, str) and bool(schema_version_value.strip())
+
+
+def _sqlite_row_bool(row: Mapping[object, object], key: str) -> bool:
+    return bool(int(str(row[key])))
 
 
 def component_entry_is_installed(entry: F8ComponentEntry) -> bool:
@@ -533,35 +483,3 @@ def component_entry_can_hydrate(entry: F8ComponentEntry) -> bool:
         F8ComponentSourceKind.remote_public,
         F8ComponentSourceKind.remote_private,
     }
-
-
-def _payload_str(payload: JsonObject, key: str) -> str:
-    return str(payload[key])
-
-
-def _payload_optional_str(payload: JsonObject, key: str) -> str | None:
-    value = payload.get(key)
-    if value is None:
-        return None
-    return str(value)
-
-
-def _payload_json_object(payload: JsonObject, key: str) -> JsonObject:
-    value = payload.get(key)
-    if not isinstance(value, dict):
-        raise ValueError(f"Expected JSON object field: {key}")
-    return cast(JsonObject, value)
-
-
-def _payload_string_list(payload: JsonObject, key: str) -> list[str]:
-    value = payload.get(key)
-    if value is None:
-        return []
-    return json_string_list_loads(value)
-
-
-def _payload_optional_int(payload: JsonObject, key: str) -> int | None:
-    value = payload.get(key)
-    if value is None:
-        return None
-    return int(str(value))

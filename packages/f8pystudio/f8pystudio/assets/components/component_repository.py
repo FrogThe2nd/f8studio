@@ -41,7 +41,6 @@ def import_component_from_json(path: str, *, metadata: dict[str, object] | None 
         componentId=str(meta.get("componentId") or ""),
         name=str(meta.get("name") or in_path.stem or "Imported Component"),
         description=str(meta.get("description") or ""),
-        usageNotes=str(meta.get("usageNotes") or ""),
         tags=_metadata_tags(meta),
         schemaVersion=_content_schema_version(raw),
         content=raw,

@@ -14,7 +14,6 @@ def _component_entry() -> F8ComponentEntry:
         componentId="component-1",
         name="Searchable Component",
         description="Reusable graph component",
-        usageNotes="Drop into graph",
         tags=["graph", "component"],
         content={
             "schemaVersion": "f8studio-session/1",

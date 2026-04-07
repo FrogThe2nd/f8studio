@@ -58,6 +58,7 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
         self._row_states_by_component_id: dict[str, AssetCatalogRowState] = {}
         self._sync_client = ComponentSyncClient()
         self._initial_remote_refresh_done = False
+        self._initial_remote_refresh_scheduled = False
         self._tab_queries: dict[int, str] = {
             self._TAB_MINE: "",
             self._TAB_COMMUNITY: "",
@@ -244,7 +245,7 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
             raise
 
     def _reload(self, *_args: Any) -> None:
-        self._refresh_remote_catalog_if_needed()
+        self._schedule_initial_remote_refresh_if_needed()
         self._row_states_by_component_id = self._build_row_states()
         self._entries = self._entries_for_current_tab()
         logger.debug(
@@ -278,6 +279,19 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
         self._refresh_auth_controls()
         self._on_selection_changed()
         self._schedule_auto_load_more_if_needed()
+
+    def _schedule_initial_remote_refresh_if_needed(self) -> None:
+        if self._initial_remote_refresh_done or self._initial_remote_refresh_scheduled:
+            return
+        self._initial_remote_refresh_scheduled = True
+        QtCore.QTimer.singleShot(0, self._run_initial_remote_refresh)
+
+    def _run_initial_remote_refresh(self) -> None:
+        self._initial_remote_refresh_scheduled = False
+        if self._initial_remote_refresh_done:
+            return
+        self._refresh_remote_catalog_if_needed()
+        self._reload()
 
     def _entries_for_current_tab(self) -> list[F8ComponentEntry]:
         current_tab = self._scope_tabs.currentIndex()
@@ -332,7 +346,6 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
         merged_record = copy_model(
             preferred_entry.record,
             update={
-                "usageNotes": str(fallback_entry.record.usageNotes),
                 "content": fallback_entry.record.content,
             },
         )
@@ -617,17 +630,14 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
             name="Untitled Component",
             description="",
             tags=[],
-            usage_notes="",
-            include_usage_notes=True,
         )
         if dialog.exec() != QtWidgets.QDialog.Accepted:
             return
-        name, description, tags, usage_notes = dialog.values()
+        name, description, tags = dialog.values()
         record = F8ComponentRecord(
             componentId=new_asset_id(),
             name=name,
             description=description,
-            usageNotes=usage_notes,
             tags=tags,
             content=graph.serialize_publish_session(),
         )
@@ -645,12 +655,10 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
             name=record.name,
             description=record.description,
             tags=list(record.tags or []),
-            usage_notes=record.usageNotes,
-            include_usage_notes=True,
         )
         if dialog.exec() != QtWidgets.QDialog.Accepted:
             return
-        name, description, tags, usage_notes = dialog.values()
+        name, description, tags = dialog.values()
         updated_record = validate_as(
             F8ComponentRecord,
             {
@@ -658,7 +666,6 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
                 "name": name,
                 "description": description,
                 "tags": tags,
-                "usageNotes": usage_notes,
                 "updatedAt": component_now_iso(),
             },
         )
@@ -821,12 +828,10 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
             name="Imported Component",
             description="",
             tags=[],
-            usage_notes="",
-            include_usage_notes=True,
         )
         if dialog.exec() != QtWidgets.QDialog.Accepted:
             return
-        name, description, tags, usage_notes = dialog.values()
+        name, description, tags = dialog.values()
         try:
             import_component_from_json(
                 selected_path,
@@ -834,7 +839,6 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
                     "componentId": new_asset_id(),
                     "name": name,
                     "description": description,
-                    "usageNotes": usage_notes,
                     "tags": tags,
                 },
             )
@@ -921,7 +925,6 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
             [
                 str(entry.record.name or ""),
                 str(entry.record.description or ""),
-                str(entry.record.usageNotes or ""),
                 " ".join(str(tag) for tag in list(entry.record.tags or [])),
                 str(entry.ownerDisplayName or ""),
             ]
@@ -1150,17 +1153,14 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
             name=f"{historical_entry.record.name} v{int(version_number)}",
             description=historical_entry.record.description,
             tags=list(historical_entry.record.tags or []),
-            usage_notes=historical_entry.record.usageNotes,
-            include_usage_notes=True,
         )
         if dialog.exec() != QtWidgets.QDialog.Accepted:
             return
-        name, description, tags, usage_notes = dialog.values()
+        name, description, tags = dialog.values()
         local_record = F8ComponentRecord(
             componentId=new_asset_id(),
             name=name,
             description=description,
-            usageNotes=usage_notes,
             tags=tags,
             content=historical_entry.record.content,
         )
@@ -1182,20 +1182,17 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
             name=f"{historical_entry.record.name} Copy",
             description=historical_entry.record.description,
             tags=list(historical_entry.record.tags or []),
-            usage_notes=historical_entry.record.usageNotes,
-            include_usage_notes=True,
         )
         if dialog.exec() != QtWidgets.QDialog.Accepted:
             return
         visibility = self._choose_visibility()
         if visibility is None:
             return
-        name, description, tags, usage_notes = dialog.values()
+        name, description, tags = dialog.values()
         forked_record = F8ComponentRecord(
             componentId=new_asset_id(),
             name=name,
             description=description,
-            usageNotes=usage_notes,
             tags=tags,
             content=historical_entry.record.content,
         )

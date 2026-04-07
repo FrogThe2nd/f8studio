@@ -7,7 +7,7 @@ from urllib.parse import urlparse
 from qtpy import QtCore, QtWidgets
 
 from ...ui.support.ui_icons import StudioIcon, icon_for
-from ...ui.support.ui_notifications import show_warning
+from ...ui.support.ui_notifications import show_info, show_warning
 
 
 class AssetCloudUserLike(Protocol):
@@ -109,6 +109,10 @@ def prompt_asset_cloud_sign_in(*, parent: QtWidgets.QWidget, sync_client: AssetC
     except Exception as exc:
         show_warning(parent, "Login failed", f"{exc}\n\nCloud URL: {base_url}")
         return False
+    current_user = sync_client.current_user()
+    user_name = _user_greeting_name(current_user)
+    if user_name:
+        show_info(parent, "Asset Cloud", f"Hi {user_name}, welcome back!")
     return True
 
 
@@ -172,7 +176,11 @@ def build_asset_account_menu(
     logout_action = menu.addAction(icon_for(parent, StudioIcon.USER_X), "Logout Current Account")
     logout_action.setEnabled(current_user is not None)
     logout_action.triggered.connect(  # type: ignore[attr-defined]
-        _menu_callback(parent=parent, action=sync_client.logout, on_changed=on_changed)
+        _menu_callback(
+            parent=parent,
+            action=lambda: _logout_current_account(parent=parent, sync_client=sync_client, on_changed=on_changed),
+            on_changed=None,
+        )
     )
     return menu
 
@@ -184,19 +192,33 @@ def _menu_callback(
     on_changed: Callable[[], None] | None,
 ) -> Callable[[], None]:
     def _callback() -> None:
-        _run_and_notify(parent=parent, action=action, on_changed=on_changed)
+        _ = _run_and_notify(parent=parent, action=action, on_changed=on_changed)
 
     return _callback
 
 
-def _run_and_notify(*, parent: QtWidgets.QWidget, action: Callable[[], object], on_changed: Callable[[], None] | None) -> None:
+def _run_and_notify(*, parent: QtWidgets.QWidget, action: Callable[[], object], on_changed: Callable[[], None] | None) -> bool:
     try:
         action()
     except Exception as exc:
         show_warning(parent, "Asset Cloud", str(exc))
-        return
+        return False
     if on_changed is not None:
         on_changed()
+    return True
+
+
+def _logout_current_account(
+    *,
+    parent: QtWidgets.QWidget,
+    sync_client: AssetCloudSyncClient,
+    on_changed: Callable[[], None] | None,
+) -> None:
+    current_user = sync_client.current_user()
+    user_name = _user_greeting_name(current_user)
+    succeeded = _run_and_notify(parent=parent, action=sync_client.logout, on_changed=on_changed)
+    if succeeded and user_name:
+        show_info(parent, "Asset Cloud", f"Goodbye, {user_name}.")
 
 
 def _preferred_base_url(sync_client: AssetCloudSyncClient) -> str:
@@ -206,6 +228,18 @@ def _preferred_base_url(sync_client: AssetCloudSyncClient) -> str:
     if hostname in {"127.0.0.1", "localhost", "0.0.0.0"}:
         return sync_client.default_base_url()
     return configured_base_url
+
+
+def _user_greeting_name(user: AssetCloudUserLike | None) -> str:
+    if user is None:
+        return ""
+    display_name = str(user.displayName or "").strip()
+    if display_name:
+        return display_name
+    username = str(user.username or "").strip()
+    if username:
+        return username
+    return str(user.userId or "").strip()
 
 
 __all__ = [

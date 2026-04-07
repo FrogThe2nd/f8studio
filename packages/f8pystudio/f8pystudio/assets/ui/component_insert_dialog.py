@@ -486,7 +486,6 @@ def component_entry_matches_query(entry: F8ComponentEntry, *, query: str) -> boo
         [
             str(entry.record.name or ""),
             str(entry.record.description or ""),
-            str(entry.record.usageNotes or ""),
             " ".join(str(tag) for tag in list(entry.record.tags or [])),
             str(entry.ownerDisplayName or ""),
         ]
