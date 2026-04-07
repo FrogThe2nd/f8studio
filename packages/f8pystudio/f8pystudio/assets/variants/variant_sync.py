@@ -14,7 +14,7 @@ from qtpy import QtCore
 from f8pysdk.msgspec_codec import copy_model, validate_as
 
 from ..common import JsonObject, decode_http_response_text, json_object_from_value, json_object_loads, origin_headers_for_base_url
-from .variant_catalog import VariantCatalogService, variant_entry_is_installed
+from .variant_catalog import VariantCatalogService, variant_entry_has_cached_content, variant_entry_is_installed
 from .variant_models import (
     F8VariantEntry,
     F8VariantRemoteAuth,
@@ -30,7 +30,7 @@ from .variant_models import (
     F8VariantSyncState,
     F8VariantVisibility,
 )
-from f8pysdk import F8VariantRecord
+from f8pysdk import F8VariantKind, F8VariantRecord
 
 logger = logging.getLogger(__name__)
 
@@ -1036,6 +1036,18 @@ def _payload_optional_int(payload: JsonObject, key: str) -> int | None:
     if value is None:
         return None
     return int(str(value))
+
+
+def _payload_string_list(payload: JsonObject, key: str) -> list[str]:
+    value = payload.get(key)
+    if not isinstance(value, list):
+        return []
+    out: list[str] = []
+    for item in cast(list[object], value):
+        text = str(item or "").strip()
+        if text:
+            out.append(text)
+    return out
 
 
 def _payload_int(payload: JsonObject, key: str) -> int:

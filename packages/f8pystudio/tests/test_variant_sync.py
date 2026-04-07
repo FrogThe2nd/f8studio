@@ -18,6 +18,7 @@ from f8pystudio.assets.variants.variant_models import (
     F8VariantKind,
     F8VariantRemoteRequestError,
     F8VariantRemoteConflictError,
+    F8VariantRemoteListPage,
     F8VariantSourceKind,
     F8VariantSyncState,
     F8VariantVisibility,
@@ -394,6 +395,129 @@ def test_variant_sync_client_does_not_fallback_from_content_endpoint(tmp_path: P
         client.get_variant_content("public-1")
 
     assert calls == ["/v1/variants/public-1/content"]
+
+
+def test_variant_sync_client_accepts_summary_variant_payloads_without_record(tmp_path: Path, monkeypatch) -> None:
+    settings = QtCore.QSettings(str(tmp_path / "variant-sync-summary.ini"), QtCore.QSettings.IniFormat)
+    db_path = tmp_path / "assets.db"
+    service = VariantCatalogService(
+        local_provider=LocalVariantProvider(db_path=db_path),
+        remote_provider=RemoteCacheProvider(db_path=db_path),
+    )
+    client = VariantSyncClient(settings=settings, catalog_service=service)
+
+    def _request_json(method: str, path: str, payload: dict[str, object] | None, *, authorized: bool) -> dict[str, object]:
+        del method, path, payload, authorized
+        now = variant_now_iso()
+        return {
+            "entries": [
+                {
+                    "variantId": "summary-1",
+                    "variantKind": "service",
+                    "baseNodeType": "svc.summary.node",
+                    "serviceClass": "svc.summary.Service",
+                    "operatorClass": None,
+                    "name": "Summary Variant",
+                    "description": "summary payload from remote",
+                    "tags": ["summary", "remote"],
+                    "visibility": "public",
+                    "ownerUserId": "u2",
+                    "ownerDisplayName": "Remote User",
+                    "revision": "r-summary",
+                    "latestRevision": "r-summary",
+                    "latestVersionNumber": 7,
+                    "createdAt": now,
+                    "updatedAt": now,
+                    "subscribed": True,
+                }
+            ],
+            "nextCursor": None,
+        }
+
+    monkeypatch.setattr(client, "_request_json", _request_json)
+
+    page = client.list_variants(scope="community", kind="service", base_node_type="svc.summary.node")
+
+    assert len(page.entries) == 1
+    entry = page.entries[0]
+    assert entry.record.variantId == "summary-1"
+    assert entry.record.kind == F8VariantKind.service
+    assert entry.record.baseNodeType == "svc.summary.node"
+    assert entry.record.serviceClass == "svc.summary.Service"
+    assert entry.record.operatorClass is None
+    assert entry.record.spec == {}
+    assert entry.remoteRevision == "r-summary"
+    assert entry.remoteVersionNumber == 7
+    assert entry.subscribed is True
+
+
+def test_variant_refresh_scope_page_preserves_cached_content_for_matching_revision(tmp_path: Path, monkeypatch) -> None:
+    settings = QtCore.QSettings(str(tmp_path / "variant-sync-refresh.ini"), QtCore.QSettings.IniFormat)
+    db_path = tmp_path / "assets.db"
+    service = VariantCatalogService(
+        local_provider=LocalVariantProvider(db_path=db_path),
+        remote_provider=RemoteCacheProvider(db_path=db_path),
+    )
+    client = VariantSyncClient(settings=settings, catalog_service=service)
+
+    existing_entry = copy_model(
+        _make_entry(
+            variant_id="public-1",
+            source=F8VariantSourceKind.remote_public,
+            installed=True,
+            remote_revision="r-public",
+        ),
+        update={
+            "downloadedAt": "2026-04-07T00:00:00+00:00",
+            "hasCachedContent": True,
+            "remoteVersionNumber": 1,
+        },
+    )
+    service.replace_remote_entries([existing_entry])
+
+    incoming_entry = copy_model(
+        _make_entry(
+            variant_id="public-1",
+            source=F8VariantSourceKind.remote_public,
+            installed=False,
+            remote_revision="r-public",
+        ),
+        update={
+            "record": copy_model(existing_entry.record, update={"spec": {}}),
+            "visibility": F8VariantVisibility.public,
+            "ownerUserId": "u2",
+            "ownerDisplayName": "Remote User",
+            "librarySlug": "community",
+            "hasCachedContent": False,
+            "downloadedAt": None,
+            "remoteVersionNumber": 2,
+            "syncState": F8VariantSyncState.synced,
+        },
+    )
+
+    def _list_variants(
+        *,
+        scope: str,
+        kind: str = "",
+        base_node_type: str = "",
+        query: str = "",
+        cursor: str = "",
+    ) -> F8VariantRemoteListPage:
+        del scope, kind, base_node_type, query, cursor
+        return F8VariantRemoteListPage(entries=[incoming_entry], nextCursor=None)
+
+    monkeypatch.setattr(client, "list_variants", _list_variants)
+
+    page = client.refresh_scope_page(scope="community", base_node_type="svc.a.op", append=False)
+
+    assert len(page.entries) == 1
+    refreshed_entry = service.entry("public-1", include_uninstalled=True)
+    assert refreshed_entry is not None
+    assert refreshed_entry.installed is True
+    assert refreshed_entry.hasCachedContent is True
+    assert refreshed_entry.downloadedAt == "2026-04-07T00:00:00+00:00"
+    assert refreshed_entry.record.spec == {"label": "public-1"}
+    assert refreshed_entry.remoteVersionNumber == 2
 
 
 def test_variant_remote_cache_load_cleans_empty_variant_ids(tmp_path: Path) -> None:

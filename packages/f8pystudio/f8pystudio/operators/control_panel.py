@@ -38,7 +38,7 @@ class ControlPanelRuntimeNode(OperatorNode):
         paletteCategory=SERVICE_CLASS,
         operatorClass=OPERATOR_CLASS,
         version="0.0.1",
-        label="ControlPanel",
+        label="Control Panel",
         description="Centralized state control panel for wiring key parameters through state edges.",
         tags=["panel", "state", "control", "ui"],
         dataInPorts=[],

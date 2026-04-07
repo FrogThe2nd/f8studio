@@ -7,6 +7,7 @@ from typing import Protocol, cast
 
 from qtpy import QtWidgets
 
+from f8pysdk import F8VariantRecord
 from f8pysdk.spec_metadata import palette_category_from_spec
 
 from ..assets.common import JsonObject
@@ -14,7 +15,7 @@ from ..assets.components.component_repository import component_entry, list_compo
 from ..assets.projects.project_storage import ProjectStorageService
 from ..ui.support.ui_notifications import show_warning
 from ..assets.variants.variant_ids import build_variant_node_type
-from ..assets.variants.variant_repository import list_entries_for_base
+from ..assets.variants.variant_repository import list_variants_grouped_by_base
 from .service_basenode import F8StudioServiceNodeItem
 from .spec_visibility import is_hidden_spec_node_class, typed_spec_template_or_none
 
@@ -123,12 +124,14 @@ class GraphSearchActionsMixin:
                 kept_types.append(alias_id)
             if kept_types:
                 filtered_names[str(node_name)] = kept_types
+        variants_by_base = list_variants_grouped_by_base(include_uninstalled=False)
         self._append_variant_search_entries(
             filtered_names=filtered_names,
             alias_counts=alias_counts,
             nodes=nodes,
             base_node_names=base_node_names,
             base_node_categories=base_node_categories,
+            variants_by_base=variants_by_base,
         )
         self._append_component_search_entries(filtered_names=filtered_names, alias_counts=alias_counts)
 
@@ -143,15 +146,17 @@ class GraphSearchActionsMixin:
         nodes: dict[str, type[object]],
         base_node_names: dict[str, str],
         base_node_categories: dict[str, str],
+        variants_by_base: dict[str, list[F8VariantRecord]],
     ) -> None:
         """
         Add saved variants to tab-search without requiring dynamic node-class registration.
+        Variants are grouped up front so tab-search does not re-scan the full
+        catalog once per base node.
         """
         node_type_aliases = self._node_type_aliases()
         seen_variant_ids: set[str] = set()
         for base_node_type in list(base_node_names.keys()):
-            for entry in list_entries_for_base(base_node_type):
-                variant = entry.record
+            for variant in list(variants_by_base.get(base_node_type, [])):
                 variant_id = str(variant.variantId or "").strip()
                 if not variant_id or variant_id in seen_variant_ids:
                     continue

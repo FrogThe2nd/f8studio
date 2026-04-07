@@ -3,7 +3,10 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any
 
+from f8pysdk import F8VariantRecord
 from f8pystudio.assets.components.component_models import F8ComponentEntry, F8ComponentRecord, F8ComponentSourceKind
+from f8pystudio.assets.variants.variant_models import F8VariantKind, variant_now_iso
+from f8pystudio.assets.variants.variant_ids import build_variant_node_type
 from f8pystudio.nodegraph.graph_insert_flow import GraphInsertRequest
 from f8pystudio.nodegraph.insert_layout_utils import GraphBounds
 from f8pystudio.nodegraph.node_graph import F8StudioGraph
@@ -30,6 +33,23 @@ def _component_entry() -> F8ComponentEntry:
         },
     )
     return F8ComponentEntry(record=record, source=F8ComponentSourceKind.local)
+
+
+def _variant_record(*, variant_id: str, base_node_type: str, name: str) -> F8VariantRecord:
+    now = variant_now_iso()
+    return F8VariantRecord(
+        variantId=variant_id,
+        kind=F8VariantKind.operator,
+        baseNodeType=base_node_type,
+        serviceClass="svc.test",
+        operatorClass="op.test",
+        name=name,
+        description="Reusable variant",
+        tags=["variant"],
+        spec={"label": name},
+        createdAt=now,
+        updatedAt=now,
+    )
 
 
 def test_toggle_node_search_includes_components_and_selection_inserts_graph(monkeypatch) -> None:
@@ -83,3 +103,43 @@ def test_toggle_node_search_includes_components_and_selection_inserts_graph(monk
     assert inserted["anchor_x"] == 320.0
     assert inserted["anchor_y"] == 180.0
     assert inserted["request"].source_path == "component:Searchable Component"
+
+
+def test_toggle_node_search_batches_variant_catalog_lookup(monkeypatch) -> None:
+    captured_nodes: dict[str, list[str]] = {}
+
+    graph = F8StudioGraph.__new__(F8StudioGraph)
+    graph._node_factory = SimpleNamespace(
+        names={"Base Node": ["svc.test.base"]},
+        nodes={},
+    )
+    graph._viewer = SimpleNamespace(
+        tab_search_set_nodes=lambda nodes: captured_nodes.update(nodes),
+        tab_search_toggle=lambda: None,
+    )
+    graph._tab_search_node_type_aliases = {}
+    graph._tab_search_component_ids = {}
+
+    grouped_calls: list[bool] = []
+
+    monkeypatch.setattr(
+        "f8pystudio.nodegraph.graph_search_actions.list_variants_grouped_by_base",
+        lambda include_uninstalled=False: grouped_calls.append(bool(include_uninstalled))
+        or {
+            "svc.test.base": [
+                _variant_record(
+                    variant_id="variant-1",
+                    base_node_type="svc.test.base",
+                    name="Fast Search Variant",
+                )
+            ]
+        },
+    )
+    monkeypatch.setattr("f8pystudio.nodegraph.graph_search_actions.list_component_entries", lambda include_uninstalled=False: [])
+
+    graph.toggle_node_search()
+
+    assert grouped_calls == [False]
+    assert "Base Node | Fast Search Variant" in captured_nodes
+    alias_id = captured_nodes["Base Node | Fast Search Variant"][0]
+    assert graph._tab_search_node_type_aliases[alias_id] == build_variant_node_type("variant-1")
