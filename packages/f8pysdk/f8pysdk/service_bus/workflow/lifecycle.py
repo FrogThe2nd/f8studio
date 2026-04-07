@@ -8,6 +8,7 @@ from ...capabilities import LifecycleNode
 from ...time_utils import now_ms
 from ..adapters.micro import _ServiceBusMicroEndpoints
 from ..domain.state_pipeline import publish_state
+from ..metadata import build_lifecycle_event_meta, build_lifecycle_state_meta
 from ..state_write import StateWriteOrigin
 from ..state_write import StateWriteSource
 from ..codec import encode_obj
@@ -153,7 +154,7 @@ async def apply_active(
     changed = active != bus._active
     bus._active = active
 
-    payload = {"source": str(source or "runtime"), **(dict(meta or {}))}
+    payload = build_lifecycle_event_meta(source=source, meta=meta)
 
     # Apply lifecycle change to local nodes/hooks first so pause/resume takes effect
     # with minimal latency; persist `active` state right after.
@@ -185,5 +186,5 @@ async def apply_active(
             bool(active),
             origin=StateWriteOrigin.runtime,
             source=source or StateWriteSource.runtime,
-            meta={"lifecycle": True, **(dict(meta or {}))},
+            meta=build_lifecycle_state_meta(meta=meta),
         )

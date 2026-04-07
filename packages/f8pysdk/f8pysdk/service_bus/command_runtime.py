@@ -14,6 +14,7 @@ from ..command_state import (
 )
 from ..generated import F8Command, F8OperatorSpec, F8ServiceSpec
 from .error_utils import log_error_once
+from .metadata import build_command_output_meta, build_hidden_command_call_meta
 from .state_write import StateWriteOrigin, StateWriteSource
 
 if TYPE_CHECKING:
@@ -370,18 +371,14 @@ class CommandGateway:
 
 
 def _hidden_state_command_meta(*, binding: CommandBinding, meta: dict[str, Any]) -> dict[str, Any]:
-    call_meta = dict(meta)
-    call_meta.setdefault("source", StateWriteSource.state_edge_intra.value)
-    call_meta.setdefault("commandInputField", binding.input_field)
-    return call_meta
+    return build_hidden_command_call_meta(command_input_field=binding.input_field, meta=meta)
 
 
 def _hidden_state_output_meta(*, binding: CommandBinding) -> dict[str, Any]:
-    return {
-        "command": binding.command_name,
-        "commandInputField": binding.input_field,
-        "source": StateWriteSource.cmd.value,
-    }
+    return build_command_output_meta(
+        command_name=binding.command_name,
+        command_input_field=binding.input_field,
+    )
 
 
 def _gateway_for_bus(bus: "ServiceBus") -> CommandGateway:

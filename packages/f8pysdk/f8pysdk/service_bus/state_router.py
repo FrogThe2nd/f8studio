@@ -8,6 +8,7 @@ from ..nats_naming import ensure_token, kv_bucket_for_service, kv_key_node_state
 from ..time_utils import now_ms
 from .codec import decode_obj
 from .error_utils import log_error_once
+from .metadata import build_cross_state_meta, build_state_validation_meta
 from .payload import coerce_inbound_ts_ms, extract_ts_field
 from .state_store import StateStore
 from .state_write import StatePublishOptions, StateWriteContext, StateWriteError, StateWriteOrigin, StateWriteSource
@@ -233,18 +234,18 @@ class StateRouter:
                         )
                     continue
 
-                meta_out = {
-                    "peerServiceId": peer_service_id_s,
-                    "remoteKey": key_s,
-                    **{k: vv for k, vv in dict(meta_in).items() if k not in ("value", "actor", "ts", "source")},
-                }
+                meta_out = build_cross_state_meta(
+                    peer_service_id=peer_service_id_s,
+                    remote_key=key_s,
+                    inbound_meta=meta_in,
+                )
                 value2 = await validate_state_update(
                     self._bus,
                     node_id=local_node_id_s,
                     field=local_field_s,
                     value=payload_value,
                     ts_ms=ts_i,
-                    meta={"source": StateWriteSource.state_edge_cross.value, **meta_out},
+                    meta=build_state_validation_meta(source=StateWriteSource.state_edge_cross, meta=meta_out),
                     ctx=StateWriteContext(origin=StateWriteOrigin.external, source=StateWriteSource.state_edge_cross),
                 )
                 value2 = coerce_state_value(value2)

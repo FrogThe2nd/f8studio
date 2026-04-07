@@ -77,7 +77,7 @@ This plan is intentionally incremental. Each phase should leave the SDK usable a
 - [x] Introduce a typed internal `StatePublishOptions` dataclass to replace magic propagation control keys like `_noStateFanout`.
 - [x] Introduce a typed internal `CommandInvokeOptions` dataclass for command source/result policy metadata.
 - [ ] Introduce a typed internal `DataEmitOptions` or `CrossPublishPolicy` abstraction.
-- [ ] Move compatibility-only flags and hidden metadata shaping behind helper constructors instead of open-coded dict assembly.
+- [x] Move compatibility-only flags and hidden metadata shaping behind helper constructors instead of open-coded dict assembly.
 - [ ] Add clear docstrings for the canonical meaning of:
   - local delivery
   - fanout

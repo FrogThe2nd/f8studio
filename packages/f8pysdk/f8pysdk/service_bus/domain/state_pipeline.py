@@ -11,6 +11,7 @@ from ...generated import F8StateAccess
 from ...json_unwrap import unwrap_json_value
 from ...nats_naming import ensure_token, kv_key_node_state
 from ..error_utils import log_error_once
+from ..metadata import build_intra_state_route_meta
 from ..state_write import StatePublishOptions, StateWriteContext, StateWriteError, StateWriteOrigin, StateWriteSource
 from ...time_utils import now_ms
 from ..codec import encode_obj
@@ -127,7 +128,7 @@ async def _route_intra_state_edges(
                 ts_ms=int(ts_ms),
                 origin=StateWriteOrigin.external,
                 source=StateWriteSource.state_edge_intra,
-                meta={"fromNodeId": node_id_s, "fromField": field_s},
+                meta=build_intra_state_route_meta(from_node_id=node_id_s, from_field=field_s),
             )
         except StateWriteError as exc:
             log_error_once(

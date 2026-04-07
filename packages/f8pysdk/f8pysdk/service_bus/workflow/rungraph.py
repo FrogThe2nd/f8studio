@@ -11,6 +11,7 @@ import msgspec
 from ...generated import F8Edge, F8EdgeKindEnum, F8RuntimeGraph, F8RuntimeGraphMeta, F8StateAccess
 from ...json_unwrap import unwrap_json_value
 from ...nats_naming import data_subject
+from ..metadata import build_builtin_identity_state_meta, build_intra_state_route_meta, build_rungraph_reconcile_meta
 from ..state_write import StatePublishOptions, StateWriteOrigin, StateWriteSource
 from ...time_utils import now_ms
 from ...rungraph_validation import (
@@ -207,7 +208,7 @@ async def apply_rungraph_state_values(bus: "ServiceBus", graph: F8RuntimeGraph) 
                     origin=StateWriteOrigin.rungraph,
                     source=StateWriteSource.rungraph,
                     ts_ms=(int(rungraph_ts) if rungraph_ts > 0 else None),
-                    meta={"via": "rungraph", "rungraphReconcile": True},
+                    meta=build_rungraph_reconcile_meta(),
                     options=StatePublishOptions(fanout_intra_state_edges=False),
                 )
             except Exception as exc:
@@ -366,7 +367,7 @@ async def initial_sync_intra_state_edges(bus: "ServiceBus", graph: F8RuntimeGrap
                         ts_ms=ts0,
                         origin=StateWriteOrigin.external,
                         source=StateWriteSource.state_edge_intra_init,
-                        meta={"fromNodeId": from_key[0], "fromField": from_key[1]},
+                        meta=build_intra_state_route_meta(from_node_id=from_key[0], from_field=from_key[1]),
                     )
                 except Exception as exc:
                     log_error_once(
@@ -407,7 +408,7 @@ async def seed_builtin_identity_state(bus: "ServiceBus", graph: F8RuntimeGraph) 
                     origin=StateWriteOrigin.system,
                     source=StateWriteSource.system,
                     ts_ms=ts,
-                    meta={"builtin": True},
+                    meta=build_builtin_identity_state_meta(),
                     deliver_local=False,
                 )
             operator_class = n.operatorClass
@@ -421,7 +422,7 @@ async def seed_builtin_identity_state(bus: "ServiceBus", graph: F8RuntimeGraph) 
                     origin=StateWriteOrigin.system,
                     source=StateWriteSource.system,
                     ts_ms=ts,
-                    meta={"builtin": True},
+                    meta=build_builtin_identity_state_meta(),
                     deliver_local=False,
                 )
         except Exception as exc:

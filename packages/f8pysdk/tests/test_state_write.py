@@ -93,6 +93,7 @@ class _CommandServiceNode(_DummyNode):
         )
         self.on_state_calls: list[tuple[str, object]] = []
         self.command_calls: list[tuple[str, dict[str, object]]] = []
+        self.command_meta_calls: list[dict[str, object]] = []
         self._block_event: asyncio.Event | None = None
 
     async def on_state(self, field: str, value: object, *, ts_ms: int | None = None) -> None:
@@ -105,7 +106,7 @@ class _CommandServiceNode(_DummyNode):
         *,
         meta: dict[str, object] | None = None,
     ) -> object:
-        del meta
+        self.command_meta_calls.append(dict(meta or {}))
         call_args = dict(args or {})
         self.command_calls.append((str(name), call_args))
         if self._block_event is not None and str(name) == "run":
@@ -142,7 +143,7 @@ class _FailingCommandServiceNode(_CommandServiceNode):
         *,
         meta: dict[str, object] | None = None,
     ) -> object:
-        del meta
+        self.command_meta_calls.append(dict(meta or {}))
         call_args = dict(args or {})
         self.command_calls.append((str(name), call_args))
         raise RuntimeError("command failed")
@@ -684,6 +685,15 @@ class StateWriteTests(unittest.IsolatedAsyncioTestCase):
         await bus.publish_state_external("svc", command_input_state_field("run"), [1, 2, 3], ts_ms=10)
 
         self.assertEqual(service_node.command_calls, [("run", {"a": 1, "b": 2})])
+        self.assertEqual(
+            service_node.command_meta_calls,
+            [
+                {
+                    "source": "endpoint",
+                    "commandInputField": command_input_state_field("run"),
+                }
+            ],
+        )
         self.assertEqual(service_node.on_state_calls, [])
         self.assertEqual((await bus.get_state("sink", "value")).value, {"echo": {"a": 1, "b": 2}})
         self.assertEqual(sink_node.state_calls, [("value", {"echo": {"a": 1, "b": 2}})])
