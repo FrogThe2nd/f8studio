@@ -1,33 +1,18 @@
-from .component_catalog_dialog import ComponentCatalogDialog
+from __future__ import annotations
+
+# Keep this package initializer lightweight. Importing concrete dialog modules
+# from here can easily create circular imports because preview dialogs depend
+# on the studio graph while graph mixins also import UI helpers.
+from . import asset_cloud_account_menu
 from .asset_cloud_account_menu import (
     AssetCloudSignInDialog,
     build_asset_account_menu,
     prompt_asset_cloud_sign_in,
 )
-from .project_asset_dialogs import (
-    AssetOverwriteChoice,
-    AssetOverwriteMetaDialog,
-    ProjectAssetMetaDialog,
-    AssetVersionBrowserAction,
-    AssetVersionBrowserDialog,
-    AssetVersionBrowserItem,
-    ProjectPickerDialog,
-)
-from .component_insert_dialog import ComponentInsertDialog
-from .variant_manager_dialog import VariantManagerDialog
 
 __all__ = [
+    "asset_cloud_account_menu",
     "AssetCloudSignInDialog",
-    "ComponentCatalogDialog",
-    "AssetOverwriteChoice",
-    "AssetOverwriteMetaDialog",
-    "ProjectAssetMetaDialog",
-    "AssetVersionBrowserAction",
-    "AssetVersionBrowserDialog",
-    "AssetVersionBrowserItem",
-    "ProjectPickerDialog",
-    "ComponentInsertDialog",
-    "VariantManagerDialog",
     "build_asset_account_menu",
     "prompt_asset_cloud_sign_in",
 ]

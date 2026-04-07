@@ -397,6 +397,42 @@ def test_variant_sync_client_does_not_fallback_from_content_endpoint(tmp_path: P
     assert calls == ["/v1/variants/public-1/content"]
 
 
+def test_variant_sync_client_accepts_flat_content_payloads(tmp_path: Path, monkeypatch) -> None:
+    settings = QtCore.QSettings(str(tmp_path / "variant-sync-flat-content.ini"), QtCore.QSettings.IniFormat)
+    db_path = tmp_path / "assets.db"
+    service = VariantCatalogService(
+        local_provider=LocalVariantProvider(db_path=db_path),
+        remote_provider=RemoteCacheProvider(db_path=db_path),
+    )
+    client = VariantSyncClient(settings=settings, catalog_service=service)
+
+    def _request_json(method: str, path: str, payload: dict[str, object] | None, *, authorized: bool) -> dict[str, object]:
+        del method, payload, authorized
+        assert path == "/v1/variants/public-1/content"
+        now = variant_now_iso()
+        return {
+            "variantId": "public-1",
+            "kind": "operator",
+            "baseNodeType": "svc.a.op",
+            "serviceClass": "svc.test",
+            "operatorClass": "op.test",
+            "name": "Flat Variant",
+            "description": "",
+            "tags": ["flat"],
+            "spec": {"label": "Flat Variant"},
+            "createdAt": now,
+            "updatedAt": now,
+        }
+
+    monkeypatch.setattr(client, "_request_json", _request_json)
+
+    record = client.get_variant_content("public-1")
+
+    assert record.variantId == "public-1"
+    assert record.kind == F8VariantKind.operator
+    assert record.spec == {"label": "Flat Variant"}
+
+
 def test_variant_sync_client_accepts_summary_variant_payloads_without_record(tmp_path: Path, monkeypatch) -> None:
     settings = QtCore.QSettings(str(tmp_path / "variant-sync-summary.ini"), QtCore.QSettings.IniFormat)
     db_path = tmp_path / "assets.db"
@@ -449,6 +485,37 @@ def test_variant_sync_client_accepts_summary_variant_payloads_without_record(tmp
     assert entry.remoteRevision == "r-summary"
     assert entry.remoteVersionNumber == 7
     assert entry.subscribed is True
+
+
+def test_variant_sync_client_rejects_upload_without_full_spec(tmp_path: Path) -> None:
+    settings = QtCore.QSettings(str(tmp_path / "variant-sync-upload-guard.ini"), QtCore.QSettings.IniFormat)
+    db_path = tmp_path / "assets.db"
+    service = VariantCatalogService(
+        local_provider=LocalVariantProvider(db_path=db_path),
+        remote_provider=RemoteCacheProvider(db_path=db_path),
+    )
+    client = VariantSyncClient(settings=settings, catalog_service=service)
+
+    entry = F8VariantEntry(
+        record=F8VariantRecord(
+            variantId="variant-empty",
+            kind=F8VariantKind.operator,
+            baseNodeType="svc.a.op",
+            serviceClass="svc.test",
+            operatorClass="op.test",
+            name="Broken Variant",
+            description="",
+            tags=[],
+            spec={},
+            createdAt=variant_now_iso(),
+            updatedAt=variant_now_iso(),
+        ),
+        source=F8VariantSourceKind.local,
+        installed=True,
+    )
+
+    with pytest.raises(ValueError, match="missing full spec content"):
+        client.upload_entry(entry)
 
 
 def test_variant_refresh_scope_page_preserves_cached_content_for_matching_revision(tmp_path: Path, monkeypatch) -> None:

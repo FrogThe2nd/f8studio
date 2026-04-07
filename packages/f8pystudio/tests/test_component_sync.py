@@ -19,6 +19,7 @@ from f8pystudio.assets.components.component_models import (
     F8ComponentRecord,
     F8ComponentSourceKind,
     F8ComponentVisibility,
+    component_now_iso,
 )
 from f8pystudio.assets.components.component_sync import ComponentSyncClient
 from f8pystudio.assets.db import component_remote_cache_table
@@ -419,6 +420,62 @@ def test_component_sync_client_does_not_fallback_from_content_endpoint(tmp_path:
         client.get_component_content("public-1")
 
     assert calls == ["/v1/components/public-1/content"]
+
+
+def test_component_sync_client_accepts_flat_content_payloads(tmp_path: Path, monkeypatch) -> None:
+    settings = QtCore.QSettings(str(tmp_path / "component-sync-flat-content.ini"), QtCore.QSettings.IniFormat)
+    service = ComponentCatalogService(db_path=tmp_path / "assets.db")
+    client = ComponentSyncClient(settings=settings, catalog_service=service)
+
+    def _request_json(method: str, path: str, payload: dict[str, object] | None, *, authorized: bool) -> dict[str, object]:
+        del method, payload, authorized
+        assert path == "/v1/components/public-1/content"
+        now = component_now_iso()
+        return {
+            "componentId": "public-1",
+            "name": "Flat Content Component",
+            "description": "",
+            "tags": ["flat"],
+            "schemaVersion": "f8studio-session/1",
+            "content": {
+                "schemaVersion": "f8studio-session/1",
+                "layout": {"nodes": {}, "connections": []},
+            },
+            "createdAt": now,
+            "updatedAt": now,
+        }
+
+    monkeypatch.setattr(client, "_request_json", _request_json)
+
+    record = client.get_component_content("public-1")
+
+    assert record.componentId == "public-1"
+    assert record.schemaVersion == "f8studio-session/1"
+    assert record.content["schemaVersion"] == "f8studio-session/1"
+
+
+def test_component_sync_client_rejects_upload_without_full_content(tmp_path: Path) -> None:
+    settings = QtCore.QSettings(str(tmp_path / "component-sync-upload-guard.ini"), QtCore.QSettings.IniFormat)
+    service = ComponentCatalogService(db_path=tmp_path / "assets.db")
+    client = ComponentSyncClient(settings=settings, catalog_service=service)
+
+    entry = F8ComponentEntry(
+        record=F8ComponentRecord(
+            componentId="component-empty",
+            name="Empty Component",
+            description="",
+            tags=[],
+            schemaVersion="f8studio-session/1",
+            content={},
+            createdAt="2026-04-07T00:00:00+00:00",
+            updatedAt="2026-04-07T00:00:00+00:00",
+        ),
+        source=F8ComponentSourceKind.local,
+        installed=True,
+    )
+
+    with pytest.raises(ValueError, match="missing full content"):
+        client.upload_entry(entry)
 
 
 def test_component_logout_clears_local_session_when_remote_signout_fails(tmp_path: Path, monkeypatch, caplog) -> None:

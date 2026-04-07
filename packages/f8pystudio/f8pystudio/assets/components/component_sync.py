@@ -234,10 +234,7 @@ class ComponentSyncClient:
             None,
             authorized=bool(self.current_access_token()),
         )
-        record_payload = payload.get("record")
-        if not isinstance(record_payload, dict):
-            raise F8ComponentRemoteRequestError(f"Component content payload is missing record for {component_id}.")
-        return validate_as(F8ComponentRecord, json_object_from_value(cast(object, record_payload)))
+        return _component_record_from_content_payload(payload, component_id=component_id)
 
     def hydrate_component(self, component_id: str) -> F8ComponentEntry:
         detail_entry = self.get_component(component_id)
@@ -246,6 +243,7 @@ class ComponentSyncClient:
         return self._catalog_service.install_remote_entry(hydrated_entry)
 
     def create_component(self, entry: F8ComponentEntry, *, change_summary: str | None = None) -> F8ComponentEntry:
+        _require_component_record_for_upload(entry.record)
         payload = self._request_json(
             "POST",
             "/v1/components",
@@ -256,6 +254,7 @@ class ComponentSyncClient:
         return self._catalog_service.install_remote_entry(result)
 
     def update_component(self, entry: F8ComponentEntry, *, change_summary: str | None = None) -> F8ComponentEntry:
+        _require_component_record_for_upload(entry.record)
         component_id = str(entry.record.componentId)
         payload = self._request_json(
             "PUT",
@@ -285,6 +284,7 @@ class ComponentSyncClient:
         return self._update_cached_remote_entry(_entry_from_asset_payload(payload))
 
     def upload_entry(self, entry: F8ComponentEntry) -> F8ComponentEntry:
+        _require_component_record_for_upload(entry.record)
         try:
             if entry.remoteRevision:
                 return self.update_component(entry)
@@ -326,12 +326,11 @@ class ComponentSyncClient:
             authorized=bool(self.current_access_token()),
         )
         detail_entry = _entry_from_asset_payload(detail_payload)
-        record_payload = content_payload.get("record")
-        if not isinstance(record_payload, dict):
-            raise F8ComponentRemoteRequestError(
-                f"Component version content payload is missing record for {component_id} v{int(version_number)}."
-            )
-        record = validate_as(F8ComponentRecord, json_object_from_value(cast(object, record_payload)))
+        record = _component_record_from_content_payload(
+            content_payload,
+            component_id=component_id,
+            version_number=int(version_number),
+        )
         return _hydrate_component_entry(detail_entry, record)
 
     def fork_component(
@@ -720,6 +719,31 @@ def _entry_from_asset_payload(payload: JsonObject) -> F8ComponentEntry:
     )
 
 
+def _component_record_from_content_payload(
+    payload: JsonObject,
+    *,
+    component_id: str,
+    version_number: int | None = None,
+) -> F8ComponentRecord:
+    record_payload = payload.get("record")
+    if isinstance(record_payload, dict):
+        return validate_as(F8ComponentRecord, json_object_from_value(cast(object, record_payload)))
+    if _looks_like_component_record_payload(payload):
+        return validate_as(F8ComponentRecord, payload)
+    version_suffix = "" if version_number is None else f" v{int(version_number)}"
+    raise F8ComponentRemoteRequestError(
+        f"Component content payload is missing record for {component_id}{version_suffix}."
+    )
+
+
+def _looks_like_component_record_payload(payload: JsonObject) -> bool:
+    if "componentId" not in payload:
+        return False
+    if "content" not in payload:
+        return False
+    return True
+
+
 def _source_from_asset_payload(payload: JsonObject) -> F8ComponentSourceKind:
     visibility = str(payload.get("visibility") or "").strip()
     if visibility == "public":
@@ -758,6 +782,15 @@ def _component_record_has_full_content(record: F8ComponentRecord) -> bool:
     layout_value = content.get("layout")
     schema_version_value = content.get("schemaVersion")
     return isinstance(layout_value, dict) and isinstance(schema_version_value, str) and bool(schema_version_value.strip())
+
+
+def _require_component_record_for_upload(record: F8ComponentRecord) -> None:
+    if _component_record_has_full_content(record):
+        return
+    raise ValueError(
+        f"Component {record.componentId} is missing full content and cannot be uploaded. "
+        "Load or install the component content before uploading."
+    )
 
 
 def _request_timeout_seconds(*, method: str, path: str) -> int:

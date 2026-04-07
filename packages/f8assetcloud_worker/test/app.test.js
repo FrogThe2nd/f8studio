@@ -926,7 +926,7 @@ test('component list and search do not depend on variant details table', async (
   assert.equal(managedDetail.json.assetId, 'component-no-vd');
 });
 
-test('component content endpoint reads canonical stored session payload and rejects full record blobs', async (t) => {
+test('component content endpoint reads canonical stored session payload and accepts legacy record envelopes', async (t) => {
   const env = createEnv();
   t.after(() => env.DB.close());
   const app = createApp();
@@ -1010,8 +1010,142 @@ test('component content endpoint reads canonical stored session payload and reje
     .run();
 
   const directRecordContent = await jsonRequest(app, env, '/v1/components/component-canonical/content');
-  assert.equal(directRecordContent.status, 400);
-  assert.equal(directRecordContent.json.message, 'component version payload layout must be a JSON object');
+  assert.equal(directRecordContent.status, 200);
+  assert.equal(directRecordContent.json.record.componentId, 'component-canonical');
+  assert.equal(directRecordContent.json.record.name, 'Canonical Component');
+  assert.equal(directRecordContent.json.record.content.schemaVersion, 'f8studio-session/1');
+
+  const legacyEnvelopeBlob = JSON.stringify({
+    componentId: 'component-canonical',
+    assetType: 'component',
+    versionNumber: 1,
+    revision: 'r1',
+    record: {
+      componentId: 'component-canonical',
+      name: 'Envelope Record Blob',
+      description: 'legacy envelope',
+      tags: ['legacy'],
+      schemaVersion: 'f8studio-session/1',
+      content: {
+        schemaVersion: 'f8studio-session/1',
+        layout: {
+          nodes: {
+            fromEnvelope: {
+              id: 'fromEnvelope',
+              name: 'Envelope Node',
+              pos: [10, 20],
+            },
+          },
+          connections: [],
+        },
+      },
+      createdAt: '2026-04-01T00:00:00.000Z',
+      updatedAt: '2026-04-02T00:00:00.000Z',
+    },
+  });
+  await env.DB.prepare(
+    `UPDATE asset_versions
+     SET content = ?
+     WHERE asset_id = ? AND version_number = 1`,
+  )
+    .bind(gzipSync(Buffer.from(legacyEnvelopeBlob)), 'component-canonical')
+    .run();
+
+  const envelopeContent = await jsonRequest(app, env, '/v1/components/component-canonical/content');
+  assert.equal(envelopeContent.status, 200);
+  assert.equal(envelopeContent.json.record.componentId, 'component-canonical');
+  assert.equal(envelopeContent.json.record.content.layout.nodes.fromEnvelope.name, 'Envelope Node');
+});
+
+test('variant content endpoint accepts raw spec, full record blobs, and record envelopes', async (t) => {
+  const env = createEnv();
+  t.after(() => env.DB.close());
+  const app = createApp();
+
+  const alice = await createVerifiedSession(app, env, {
+    username: 'alice',
+    email: 'alice@example.com',
+    displayName: 'Alice',
+  });
+
+  const created = await jsonRequest(app, env, '/v1/variants', {
+    method: 'POST',
+    cookie: alice.cookie,
+    payload: variantPayload({ variantId: 'variant-canonical', name: 'Canonical Variant', visibility: 'public' }),
+  });
+  assert.equal(created.status, 200);
+
+  const rawSpecContent = await jsonRequest(app, env, '/v1/variants/variant-canonical/content');
+  assert.equal(rawSpecContent.status, 200);
+  assert.equal(rawSpecContent.json.record.variantId, 'variant-canonical');
+  assert.equal(rawSpecContent.json.record.spec.label, 'Canonical Variant');
+
+  const fullRecordBlob = JSON.stringify({
+    variantId: 'variant-canonical',
+    kind: 'operator',
+    baseNodeType: 'svc.base.op',
+    serviceClass: 'svc.test',
+    operatorClass: 'op.test',
+    name: 'Legacy Variant Record',
+    description: 'legacy record blob',
+    tags: ['legacy'],
+    spec: {
+      label: 'Legacy Variant Spec',
+      fields: ['a', 'b'],
+    },
+    createdAt: '2026-04-01T00:00:00.000Z',
+    updatedAt: '2026-04-02T00:00:00.000Z',
+  });
+  await env.DB.prepare(
+    `UPDATE asset_versions
+     SET content = ?
+     WHERE asset_id = ? AND version_number = 1`,
+  )
+    .bind(gzipSync(Buffer.from(fullRecordBlob)), 'variant-canonical')
+    .run();
+
+  const fullRecordContent = await jsonRequest(app, env, '/v1/variants/variant-canonical/content');
+  assert.equal(fullRecordContent.status, 200);
+  assert.equal(fullRecordContent.json.record.variantId, 'variant-canonical');
+  assert.equal(fullRecordContent.json.record.name, 'Canonical Variant');
+  assert.equal(fullRecordContent.json.record.spec.label, 'Legacy Variant Spec');
+  assert.deepEqual(fullRecordContent.json.record.spec.fields, ['a', 'b']);
+
+  const envelopeBlob = JSON.stringify({
+    variantId: 'variant-canonical',
+    assetType: 'variant',
+    versionNumber: 1,
+    revision: 'r1',
+    record: {
+      variantId: 'variant-canonical',
+      kind: 'operator',
+      baseNodeType: 'svc.base.op',
+      serviceClass: 'svc.test',
+      operatorClass: 'op.test',
+      name: 'Envelope Variant Record',
+      description: 'legacy envelope',
+      tags: ['envelope'],
+      spec: {
+        label: 'Envelope Variant Spec',
+        knobs: 4,
+      },
+      createdAt: '2026-04-01T00:00:00.000Z',
+      updatedAt: '2026-04-02T00:00:00.000Z',
+    },
+  });
+  await env.DB.prepare(
+    `UPDATE asset_versions
+     SET content = ?
+     WHERE asset_id = ? AND version_number = 1`,
+  )
+    .bind(gzipSync(Buffer.from(envelopeBlob)), 'variant-canonical')
+    .run();
+
+  const envelopeContent = await jsonRequest(app, env, '/v1/variants/variant-canonical/content');
+  assert.equal(envelopeContent.status, 200);
+  assert.equal(envelopeContent.json.record.variantId, 'variant-canonical');
+  assert.equal(envelopeContent.json.record.spec.label, 'Envelope Variant Spec');
+  assert.equal(envelopeContent.json.record.spec.knobs, 4);
 });
 
 test('management APIs support Better Auth backed user and asset management', async (t) => {

@@ -1401,7 +1401,7 @@ function applyAssetQueryFilters({ filters, bindings, query, assetType, extraFilt
 }
 
 function parseVariantRecord(content, { head = null } = {}) {
-  const specPayload = normalizeVariantSpecPayload(parseJsonObject(content));
+  const specPayload = normalizeVariantContentPayload(parseJsonObject(content));
   const variantId = stringOrDefault(head?.asset_id, '');
   const createdAt = stringOrDefault(head?.created_at, '');
   const updatedAt = stringOrDefault(head?.updated_at, createdAt);
@@ -1606,9 +1606,28 @@ function normalizeVariantSpecPayload(spec) {
   return deepCloneJson(spec);
 }
 
+function normalizeVariantContentPayload(content) {
+  if (!isPlainObject(content)) {
+    throw new AssetValidationError('variant version payload must be a JSON object');
+  }
+  if (looksLikeRecordEnvelope(content)) {
+    return normalizeVariantContentPayload(extractRecordEnvelope(content));
+  }
+  if (looksLikeVariantRecordPayload(content)) {
+    return normalizeVariantSpecPayload(content.spec);
+  }
+  return normalizeVariantSpecPayload(content);
+}
+
 function normalizeComponentContentPayload(content) {
   if (!isPlainObject(content)) {
     throw new AssetValidationError('component version payload must be a JSON object');
+  }
+  if (looksLikeRecordEnvelope(content)) {
+    return normalizeComponentContentPayload(extractRecordEnvelope(content));
+  }
+  if (looksLikeComponentRecordPayload(content)) {
+    return normalizeComponentContentPayload(content.content);
   }
   const schemaVersion = requireNonEmptyString(content.schemaVersion, 'component version payload schemaVersion is required');
   if (schemaVersion !== COMPONENT_SCHEMA_VERSION) {
@@ -1618,6 +1637,30 @@ function normalizeComponentContentPayload(content) {
     throw new AssetValidationError('component version payload layout must be a JSON object');
   }
   return deepCloneJson(content);
+}
+
+function looksLikeRecordEnvelope(payload) {
+  return isPlainObject(payload) && isPlainObject(payload.record);
+}
+
+function looksLikeVariantRecordPayload(payload) {
+  if (!isPlainObject(payload)) {
+    return false;
+  }
+  if (!Object.hasOwn(payload, 'variantId')) {
+    return false;
+  }
+  return isPlainObject(payload.spec);
+}
+
+function looksLikeComponentRecordPayload(payload) {
+  if (!isPlainObject(payload)) {
+    return false;
+  }
+  if (!Object.hasOwn(payload, 'componentId')) {
+    return false;
+  }
+  return isPlainObject(payload.content);
 }
 
 async function decodeVersionContent(value) {

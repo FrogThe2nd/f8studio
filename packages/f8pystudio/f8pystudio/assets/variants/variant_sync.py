@@ -12,6 +12,7 @@ import msgspec
 from qtpy import QtCore
 
 from f8pysdk.msgspec_codec import copy_model, validate_as
+from f8pysdk.spec_metadata import coerce_spec_payload
 
 from ..common import JsonObject, decode_http_response_text, json_object_from_value, json_object_loads, origin_headers_for_base_url
 from .variant_catalog import VariantCatalogService, variant_entry_has_cached_content, variant_entry_is_installed
@@ -237,10 +238,7 @@ class VariantSyncClient:
             None,
             authorized=bool(self.current_access_token()),
         )
-        record_payload = payload.get("record")
-        if not isinstance(record_payload, dict):
-            raise F8VariantRemoteRequestError(f"Variant content payload is missing record for {variant_id}.")
-        return validate_as(F8VariantRecord, json_object_from_value(cast(object, record_payload)))
+        return _variant_record_from_content_payload(payload, variant_id=variant_id)
 
     def hydrate_variant(self, variant_id: str) -> F8VariantEntry:
         detail_entry = self.get_variant(variant_id)
@@ -249,11 +247,13 @@ class VariantSyncClient:
         return self._catalog_service.install_remote_entry(hydrated_entry)
 
     def create_variant(self, entry: F8VariantEntry, *, change_summary: str | None = None) -> F8VariantEntry:
+        _require_variant_record_for_upload(entry.record)
         payload = self._request_json("POST", "/v1/variants", _asset_write_payload(entry, change_summary=change_summary), authorized=True)
         result = copy_model(_entry_from_asset_payload(payload), update={"record": entry.record, "installed": True, "hasCachedContent": True})
         return self._catalog_service.install_remote_entry(result)
 
     def update_variant(self, entry: F8VariantEntry, *, change_summary: str | None = None) -> F8VariantEntry:
+        _require_variant_record_for_upload(entry.record)
         variant_id = str(entry.record.variantId)
         payload = self._request_json(
             "PUT",
@@ -325,12 +325,11 @@ class VariantSyncClient:
             authorized=bool(self.current_access_token()),
         )
         detail_entry = _entry_from_asset_payload(detail_payload)
-        record_payload = content_payload.get("record")
-        if not isinstance(record_payload, dict):
-            raise F8VariantRemoteRequestError(
-                f"Variant version content payload is missing record for {variant_id} v{int(version_number)}."
-            )
-        record = validate_as(F8VariantRecord, json_object_from_value(cast(object, record_payload)))
+        record = _variant_record_from_content_payload(
+            content_payload,
+            variant_id=variant_id,
+            version_number=int(version_number),
+        )
         return copy_model(detail_entry, update={"record": record, "installed": True})
 
     def switch_account(self, account_id: str) -> F8VariantRemoteAuth:
@@ -436,6 +435,7 @@ class VariantSyncClient:
         return page
 
     def upload_entry(self, entry: F8VariantEntry) -> F8VariantEntry:
+        _require_variant_record_for_upload(entry.record)
         try:
             return self._upload_entry_with_history(entry)
         except F8VariantRemoteConflictError as exc:
@@ -879,6 +879,52 @@ def _entry_from_asset_payload(payload: JsonObject) -> F8VariantEntry:
         hasCachedContent=_payload_bool(payload, "hasCachedContent", default=False),
         subscribed=_payload_bool(payload, "subscribed", default=False),
         remoteVersionNumber=_payload_optional_int(payload, "latestVersionNumber"),
+    )
+
+
+def _variant_record_from_content_payload(
+    payload: JsonObject,
+    *,
+    variant_id: str,
+    version_number: int | None = None,
+) -> F8VariantRecord:
+    record_payload = payload.get("record")
+    if isinstance(record_payload, dict):
+        return validate_as(F8VariantRecord, json_object_from_value(cast(object, record_payload)))
+    if _looks_like_variant_record_payload(payload):
+        return validate_as(F8VariantRecord, payload)
+    version_suffix = "" if version_number is None else f" v{int(version_number)}"
+    raise F8VariantRemoteRequestError(
+        f"Variant content payload is missing record for {variant_id}{version_suffix}."
+    )
+
+
+def _looks_like_variant_record_payload(payload: JsonObject) -> bool:
+    return "variantId" in payload and "spec" in payload
+
+
+def _variant_record_has_full_content(record: F8VariantRecord) -> bool:
+    spec = record.spec
+    if not isinstance(spec, dict) or not spec:
+        return False
+    schema_version = spec.get("schemaVersion")
+    if schema_version is None:
+        return True
+    if not isinstance(schema_version, str) or not schema_version.strip():
+        return False
+    try:
+        _ = coerce_spec_payload(cast(JsonObject, spec))
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
+def _require_variant_record_for_upload(record: F8VariantRecord) -> None:
+    if _variant_record_has_full_content(record):
+        return
+    raise ValueError(
+        f"Variant {record.variantId} is missing full spec content and cannot be uploaded. "
+        "Load or rebuild the variant before uploading."
     )
 
 
