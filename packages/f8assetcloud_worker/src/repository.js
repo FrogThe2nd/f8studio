@@ -1462,13 +1462,6 @@ function parseComponentRecord(content, { head = null, version = null } = {}) {
   };
 }
 
-function extractRecordEnvelope(payload) {
-  if (!isPlainObject(payload.record)) {
-    return {};
-  }
-  return payload.record;
-}
-
 function parseJsonArray(value) {
   if (typeof value !== 'string') {
     return [];
@@ -1633,26 +1626,20 @@ function normalizeVariantSpecPayload(spec) {
 
 function normalizeVariantContentPayload(content) {
   if (!isPlainObject(content)) {
-    throw new AssetValidationError('variant version payload must be a JSON object');
+    throw new AssetValidationError('stored variant content must be the raw spec JSON object');
   }
-  if (looksLikeRecordEnvelope(content)) {
-    return normalizeVariantContentPayload(extractRecordEnvelope(content));
-  }
-  if (looksLikeVariantRecordPayload(content)) {
-    return normalizeVariantSpecPayload(content.spec);
+  if (looksLikeStoredRecordEnvelope(content) || looksLikeStoredVariantRecord(content)) {
+    throw new AssetValidationError('stored variant content must be the raw spec JSON object without record or envelope metadata');
   }
   return normalizeVariantSpecPayload(content);
 }
 
 function normalizeComponentContentPayload(content) {
   if (!isPlainObject(content)) {
-    throw new AssetValidationError('component version payload must be a JSON object');
+    throw new AssetValidationError(`stored component content must be the canonical session payload { schemaVersion, layout }`);
   }
-  if (looksLikeRecordEnvelope(content)) {
-    return normalizeComponentContentPayload(extractRecordEnvelope(content));
-  }
-  if (looksLikeComponentRecordPayload(content)) {
-    return normalizeComponentContentPayload(content.content);
+  if (looksLikeStoredRecordEnvelope(content) || looksLikeStoredComponentRecord(content)) {
+    throw new AssetValidationError(`stored component content must be the canonical session payload { schemaVersion, layout }`);
   }
   const schemaVersion = requireNonEmptyString(content.schemaVersion, 'component version payload schemaVersion is required');
   if (schemaVersion !== COMPONENT_SCHEMA_VERSION) {
@@ -1664,80 +1651,121 @@ function normalizeComponentContentPayload(content) {
   return deepCloneJson(content);
 }
 
-function looksLikeRecordEnvelope(payload) {
-  return isPlainObject(payload) && isPlainObject(payload.record);
-}
-
-function looksLikeVariantRecordPayload(payload) {
-  if (!isPlainObject(payload)) {
-    return false;
-  }
-  if (!Object.hasOwn(payload, 'variantId')) {
-    return false;
-  }
-  return isPlainObject(payload.spec);
-}
-
-function looksLikeComponentRecordPayload(payload) {
-  if (!isPlainObject(payload)) {
-    return false;
-  }
-  if (!Object.hasOwn(payload, 'componentId')) {
-    return false;
-  }
-  return isPlainObject(payload.content);
-}
-
 async function decodeVersionContent(value) {
   if (value === null || value === undefined) {
-    return {};
+    throw new AssetValidationError('stored version content is missing');
   }
   if (typeof value === 'string') {
-    return parseJsonObject(value);
+    return parseJsonObject(value, 'stored version content must be a JSON object');
   }
   try {
-    const binaryValue = value instanceof Uint8Array
-      ? value
-      : value instanceof ArrayBuffer
-        ? new Uint8Array(value)
-        : ArrayBuffer.isView(value)
-          ? new Uint8Array(value.buffer, value.byteOffset, value.byteLength)
-          : null;
+    const binaryValue = toBinaryContent(value);
     if (binaryValue !== null) {
       try {
-        return parseJsonObject(await decompressGzip(binaryValue));
+        return parseJsonObject(await decompressGzip(binaryValue), 'stored version content must be a JSON object');
       } catch (gzipError) {
-        console.warn('decodeVersionContent: stored content was not gzip-compressed, falling back to UTF-8 decode', gzipError);
+        throw new AssetValidationError('stored version content must be valid gzip-compressed JSON');
       }
     }
     if (value instanceof Uint8Array) {
-      return parseJsonObject(new TextDecoder().decode(value));
+      return parseJsonObject(new TextDecoder().decode(value), 'stored version content must be a JSON object');
     }
     if (ArrayBuffer.isView(value)) {
-      return parseJsonObject(new TextDecoder().decode(value));
+      return parseJsonObject(new TextDecoder().decode(value), 'stored version content must be a JSON object');
     }
     if (value instanceof ArrayBuffer) {
-      return parseJsonObject(new TextDecoder().decode(new Uint8Array(value)));
+      return parseJsonObject(new TextDecoder().decode(new Uint8Array(value)), 'stored version content must be a JSON object');
     }
-    return parseJsonObject(String(value));
+    return parseJsonObject(String(value), 'stored version content must be a JSON object');
   } catch (decodeError) {
+    if (decodeError instanceof AssetValidationError) {
+      throw decodeError;
+    }
     console.error('decodeVersionContent: failed to decode version content', decodeError);
-    return {};
+    throw new AssetValidationError('stored version content must be a JSON object');
   }
 }
 
-function parseJsonObject(value) {
+function looksLikeStoredRecordEnvelope(payload) {
+  return isPlainObject(payload) && isPlainObject(payload.record);
+}
+
+function looksLikeStoredVariantRecord(payload) {
+  return isPlainObject(payload)
+    && Object.hasOwn(payload, 'variantId')
+    && isPlainObject(payload.spec);
+}
+
+function looksLikeStoredComponentRecord(payload) {
+  return isPlainObject(payload)
+    && Object.hasOwn(payload, 'componentId')
+    && isPlainObject(payload.content);
+}
+
+function toBinaryContent(value) {
+  if (value instanceof Uint8Array) {
+    return value;
+  }
+  if (value instanceof ArrayBuffer) {
+    return new Uint8Array(value);
+  }
+  if (ArrayBuffer.isView(value)) {
+    return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+  }
+  if (Array.isArray(value)) {
+    return numericArrayToUint8Array(value);
+  }
+  if (!isPlainObject(value)) {
+    return null;
+  }
+  if (Array.isArray(value.data)) {
+    return numericArrayToUint8Array(value.data);
+  }
+  if (Array.isArray(value.bytes)) {
+    return numericArrayToUint8Array(value.bytes);
+  }
+  if (typeof value.base64 === 'string' && value.base64) {
+    return base64ToUint8Array(value.base64);
+  }
+  return null;
+}
+
+function numericArrayToUint8Array(values) {
+  const bytes = [];
+  for (const value of values) {
+    const numberValue = Number(value);
+    if (!Number.isInteger(numberValue) || numberValue < 0 || numberValue > 255) {
+      return null;
+    }
+    bytes.push(numberValue);
+  }
+  return new Uint8Array(bytes);
+}
+
+function base64ToUint8Array(value) {
+  const decoded = atob(String(value));
+  const bytes = new Uint8Array(decoded.length);
+  for (let index = 0; index < decoded.length; index += 1) {
+    bytes[index] = decoded.charCodeAt(index);
+  }
+  return bytes;
+}
+
+function parseJsonObject(value, errorMessage = 'stored version content must be a JSON object') {
   if (isPlainObject(value)) {
     return deepCloneJson(value);
   }
   try {
     const parsed = JSON.parse(String(value || '{}'));
     if (!isPlainObject(parsed)) {
-      return {};
+      throw new AssetValidationError(errorMessage);
     }
     return parsed;
   } catch (error) {
-    return {};
+    if (error instanceof AssetValidationError) {
+      throw error;
+    }
+    throw new AssetValidationError(errorMessage);
   }
 }
 

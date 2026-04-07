@@ -105,6 +105,65 @@ function responseCookie(headers) {
   return setCookie ? String(setCookie).split(';')[0] : '';
 }
 
+function wrapBlobRowsAsDataArrays(db) {
+  const originalPrepare = db.prepare.bind(db);
+
+  function wrapRow(row) {
+    if (row === null || row === undefined) {
+      return row;
+    }
+    if (!Object.hasOwn(row, 'content')) {
+      return row;
+    }
+    const content = row.content;
+    if (content instanceof Uint8Array) {
+      return {
+        ...row,
+        content: {
+          data: Array.from(content),
+        },
+      };
+    }
+    if (ArrayBuffer.isView(content)) {
+      return {
+        ...row,
+        content: {
+          data: Array.from(new Uint8Array(content.buffer, content.byteOffset, content.byteLength)),
+        },
+      };
+    }
+    return row;
+  }
+
+  function wrapPrepared(prepared) {
+    return {
+      bind(...values) {
+        return wrapPrepared(prepared.bind(...values));
+      },
+      async first() {
+        return wrapRow(await prepared.first());
+      },
+      async all() {
+        const result = await prepared.all();
+        return {
+          ...result,
+          results: Array.isArray(result.results) ? result.results.map((row) => wrapRow(row)) : result.results,
+        };
+      },
+      async run() {
+        return prepared.run();
+      },
+      async raw() {
+        return prepared.raw();
+      },
+    };
+  }
+
+  db.prepare = function prepare(sql) {
+    return wrapPrepared(originalPrepare(sql));
+  };
+}
+
 async function signUpUser(app, env, { username, email, displayName, password = TEST_PASSWORD }) {
   const { result, logs } = await captureConsoleInfo(() => jsonRequest(app, env, '/api/auth/sign-up/email', {
     method: 'POST',
@@ -927,7 +986,7 @@ test('component list and search do not depend on variant details table', async (
   assert.equal(managedDetail.json.assetId, 'component-no-vd');
 });
 
-test('component content endpoint reads canonical stored session payload and accepts legacy record envelopes', async (t) => {
+test('component content endpoint reads canonical stored session payload and rejects legacy wrapped blobs', async (t) => {
   const env = createEnv();
   t.after(() => env.DB.close());
   const app = createApp();
@@ -1011,10 +1070,8 @@ test('component content endpoint reads canonical stored session payload and acce
     .run();
 
   const directRecordContent = await jsonRequest(app, env, '/v1/components/component-canonical/content');
-  assert.equal(directRecordContent.status, 200);
-  assert.equal(directRecordContent.json.record.componentId, 'component-canonical');
-  assert.equal(directRecordContent.json.record.name, 'Canonical Component');
-  assert.equal(directRecordContent.json.record.content.schemaVersion, 'f8studio-session/1');
+  assert.equal(directRecordContent.status, 400);
+  assert.equal(directRecordContent.json.message, 'stored component content must be the canonical session payload { schemaVersion, layout }');
 
   const legacyEnvelopeBlob = JSON.stringify({
     componentId: 'component-canonical',
@@ -1053,12 +1110,38 @@ test('component content endpoint reads canonical stored session payload and acce
     .run();
 
   const envelopeContent = await jsonRequest(app, env, '/v1/components/component-canonical/content');
-  assert.equal(envelopeContent.status, 200);
-  assert.equal(envelopeContent.json.record.componentId, 'component-canonical');
-  assert.equal(envelopeContent.json.record.content.layout.nodes.fromEnvelope.name, 'Envelope Node');
+  assert.equal(envelopeContent.status, 400);
+  assert.equal(envelopeContent.json.message, 'stored component content must be the canonical session payload { schemaVersion, layout }');
 });
 
-test('variant content endpoint accepts raw spec, full record blobs, and record envelopes', async (t) => {
+test('component content endpoint decodes canonical gzip blobs from buffer-like D1 rows', async (t) => {
+  const env = createEnv();
+  t.after(() => env.DB.close());
+  const app = createApp();
+
+  const alice = await createVerifiedSession(app, env, {
+    username: 'alice',
+    email: 'alice@example.com',
+    displayName: 'Alice',
+  });
+
+  const created = await jsonRequest(app, env, '/v1/components', {
+    method: 'POST',
+    cookie: alice.cookie,
+    payload: componentPayload({ componentId: 'component-buffer-shape', name: 'Buffer Shape', visibility: 'public' }),
+  });
+  assert.equal(created.status, 200);
+
+  wrapBlobRowsAsDataArrays(env.DB);
+
+  const contentResponse = await jsonRequest(app, env, '/v1/components/component-buffer-shape/content');
+  assert.equal(contentResponse.status, 200);
+  assert.equal(contentResponse.json.record.componentId, 'component-buffer-shape');
+  assert.equal(contentResponse.json.record.content.schemaVersion, 'f8studio-session/1');
+  assert.ok(contentResponse.json.record.content.layout);
+});
+
+test('variant content endpoint reads canonical raw spec and rejects wrapped blobs', async (t) => {
   const env = createEnv();
   t.after(() => env.DB.close());
   const app = createApp();
@@ -1106,11 +1189,8 @@ test('variant content endpoint accepts raw spec, full record blobs, and record e
     .run();
 
   const fullRecordContent = await jsonRequest(app, env, '/v1/variants/variant-canonical/content');
-  assert.equal(fullRecordContent.status, 200);
-  assert.equal(fullRecordContent.json.record.variantId, 'variant-canonical');
-  assert.equal(fullRecordContent.json.record.name, 'Canonical Variant');
-  assert.equal(fullRecordContent.json.record.spec.label, 'Legacy Variant Spec');
-  assert.deepEqual(fullRecordContent.json.record.spec.fields, ['a', 'b']);
+  assert.equal(fullRecordContent.status, 400);
+  assert.equal(fullRecordContent.json.message, 'stored variant content must be the raw spec JSON object without record or envelope metadata');
 
   const envelopeBlob = JSON.stringify({
     variantId: 'variant-canonical',
@@ -1143,10 +1223,8 @@ test('variant content endpoint accepts raw spec, full record blobs, and record e
     .run();
 
   const envelopeContent = await jsonRequest(app, env, '/v1/variants/variant-canonical/content');
-  assert.equal(envelopeContent.status, 200);
-  assert.equal(envelopeContent.json.record.variantId, 'variant-canonical');
-  assert.equal(envelopeContent.json.record.spec.label, 'Envelope Variant Spec');
-  assert.equal(envelopeContent.json.record.spec.knobs, 4);
+  assert.equal(envelopeContent.status, 400);
+  assert.equal(envelopeContent.json.message, 'stored variant content must be the raw spec JSON object without record or envelope metadata');
 });
 
 test('management APIs support Better Auth backed user and asset management', async (t) => {

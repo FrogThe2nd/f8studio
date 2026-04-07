@@ -213,6 +213,60 @@ npm run d1:migrate
 npx wrangler deploy
 ```
 
+## Rebuild D1 databases
+
+Production reset:
+
+```bash
+cd packages/f8assetcloud_worker
+npx wrangler d1 delete feel8-assets -y
+npx wrangler d1 create feel8-assets --location enam
+```
+
+After `wrangler d1 create`, copy the new UUID into `[[d1_databases]].database_id` in `wrangler.toml`, then run:
+
+```bash
+cd packages/f8assetcloud_worker
+npm run d1:migrate
+npm run web:build
+npm run deploy
+```
+
+Preview reset:
+
+```bash
+cd packages/f8assetcloud_worker
+npx wrangler d1 delete feel8-assets-preview -y
+npx wrangler d1 create feel8-assets-preview --location enam
+```
+
+After `wrangler d1 create`, copy the new UUID into `[[d1_databases]].preview_database_id` in `wrangler.toml`, then run:
+
+```bash
+cd packages/f8assetcloud_worker
+npm run d1:migrate:preview
+```
+
+If you recreate both databases, update both IDs in `wrangler.toml` before deploying.
+
+Reset an existing D1 database in place without creating a new database ID:
+
+Production:
+
+```bash
+cd packages/f8assetcloud_worker
+npm run d1:reset:remote
+```
+
+Preview:
+
+```bash
+cd packages/f8assetcloud_worker
+npm run d1:reset:preview
+```
+
+This in-place reset approach does not require hard-coding table names. It enumerates every non-`sqlite_%` table, drops them all, including `d1_migrations`, and then reapplies the current baseline migration.
+
 ## Notes
 
 - This package now assumes a brand-new database baseline.
@@ -224,5 +278,9 @@ npx wrangler deploy
 - The worker does not use field-level compression contracts. The canonical stored payload itself is already the minimal versioned blob:
   - component: `{ schemaVersion, layout }`
   - variant: `spec`
+- Stored version blobs are validated strictly on read:
+  - component blobs must be the canonical `{ schemaVersion, layout }` object
+  - variant blobs must be the raw `spec` object
+  - legacy record wrappers and response envelopes are treated as invalid stored content
 - Limit: 10 MB per version before storage compression.
 - New application-owned endpoints should be added to the OpenAPI contract in `src/openapi.js` as part of the route change, so docs and clients do not drift from implementation.

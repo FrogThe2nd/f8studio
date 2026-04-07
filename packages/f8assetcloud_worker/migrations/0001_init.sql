@@ -84,11 +84,17 @@ CREATE TABLE asset_heads (
   FOREIGN KEY (owner_user_id) REFERENCES user(id)
 );
 
-CREATE INDEX idx_asset_heads_asset_type ON asset_heads(asset_type);
-CREATE INDEX idx_asset_heads_owner_user_id ON asset_heads(owner_user_id);
-CREATE INDEX idx_asset_heads_visibility ON asset_heads(visibility);
-CREATE INDEX idx_asset_heads_deleted_at ON asset_heads(deleted_at);
 CREATE INDEX idx_asset_heads_schema_version ON asset_heads(schema_version);
+CREATE INDEX idx_asset_heads_type_visibility_name
+  ON asset_heads(asset_type, visibility, deleted_at, LOWER(name), asset_id);
+CREATE INDEX idx_asset_heads_type_owner_name
+  ON asset_heads(asset_type, owner_user_id, deleted_at, LOWER(name), asset_id);
+CREATE INDEX idx_asset_heads_type_deleted_updated
+  ON asset_heads(asset_type, deleted_at, updated_at DESC, asset_id);
+CREATE INDEX idx_asset_heads_deleted_updated
+  ON asset_heads(deleted_at, updated_at DESC, asset_id);
+CREATE INDEX idx_asset_heads_owner_deleted_updated
+  ON asset_heads(owner_user_id, deleted_at, updated_at DESC, asset_id);
 
 CREATE TABLE variant_details (
   asset_id TEXT PRIMARY KEY,
@@ -132,3 +138,23 @@ CREATE TABLE asset_subscriptions (
 );
 
 CREATE INDEX idx_asset_subscriptions_subscriber_user_id ON asset_subscriptions(subscriber_user_id);
+
+CREATE TABLE site_settings (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  allow_user_registration INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_by_user_id TEXT,
+  FOREIGN KEY (updated_by_user_id) REFERENCES user(id)
+);
+
+INSERT INTO site_settings (id, allow_user_registration, updated_at, updated_by_user_id)
+VALUES (1, 0, CURRENT_TIMESTAMP, NULL)
+ON CONFLICT(id) DO NOTHING;
+
+CREATE TABLE bootstrap_admin_state (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  config_fingerprint TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  synced_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES user(id)
+);
