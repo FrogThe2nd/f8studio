@@ -107,6 +107,31 @@ def test_prompt_asset_cloud_sign_in_shows_welcome_message(monkeypatch) -> None:
     assert info_messages == [("Asset Cloud", "Hi Alice, welcome back!")]
 
 
+def test_prompt_asset_cloud_sign_in_preserves_loopback_base_url(monkeypatch) -> None:
+    _ensure_app()
+    parent = QtWidgets.QWidget()
+    client = _FakeSyncClient()
+    client.set_base_url("http://127.0.0.1:8787")
+    info_messages: list[tuple[str, str]] = []
+
+    def _fail_warning(_parent: QtWidgets.QWidget | None, title: str, message: str) -> None:
+        raise AssertionError(f"unexpected warning: {title} {message}")
+
+    monkeypatch.setattr(asset_cloud_account_menu, "AssetCloudSignInDialog", _AcceptedSignInDialog)
+    monkeypatch.setattr(
+        asset_cloud_account_menu,
+        "show_info",
+        lambda _parent, title, message: info_messages.append((str(title), str(message))),
+    )
+    monkeypatch.setattr(asset_cloud_account_menu, "show_warning", _fail_warning)
+
+    result = asset_cloud_account_menu.prompt_asset_cloud_sign_in(parent=parent, sync_client=client)
+
+    assert result is True
+    assert client.login_calls == [("http://127.0.0.1:8787", "alice", "secret", True)]
+    assert info_messages == [("Asset Cloud", "Hi Alice, welcome back!")]
+
+
 def test_logout_current_account_shows_goodbye_message(monkeypatch) -> None:
     _ensure_app()
     parent = QtWidgets.QWidget()

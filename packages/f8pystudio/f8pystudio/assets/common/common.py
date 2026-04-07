@@ -3,12 +3,14 @@ from __future__ import annotations
 from collections.abc import Mapping
 from datetime import datetime, timezone
 import json
+import os
 from typing import TypeAlias, cast
 from urllib import parse
 from uuid import uuid4
 import zlib
 
 JsonObject: TypeAlias = dict[str, object]
+ASSET_CLOUD_BASE_URL_ENV: str = "F8_ASSET_CLOUD_BASE_URL"
 
 
 def now_iso() -> str:
@@ -75,6 +77,16 @@ def origin_headers_for_base_url(base_url: str) -> dict[str, str]:
         "Origin": origin,
         "Referer": referer,
     }
+
+
+def resolve_asset_cloud_base_url(*, saved_base_url: str, default_base_url: str) -> str:
+    normalized_saved_base_url = str(saved_base_url or "").strip().rstrip("/")
+    if normalized_saved_base_url:
+        return normalized_saved_base_url
+    configured_base_url = str(os.environ.get(ASSET_CLOUD_BASE_URL_ENV) or "").strip().rstrip("/")
+    if configured_base_url:
+        return configured_base_url
+    return str(default_base_url or "").strip().rstrip("/")
 
 
 def decode_http_response_text(raw_bytes: bytes, *, content_encoding: str) -> str:

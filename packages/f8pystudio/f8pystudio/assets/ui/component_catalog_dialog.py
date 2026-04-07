@@ -4,7 +4,6 @@ from collections.abc import Callable
 import json
 import logging
 from typing import Any
-from urllib.parse import urlparse
 
 from qtpy import QtCore, QtWidgets
 
@@ -1277,9 +1276,3 @@ def component_row_state_for_entries(
         local_sync_state=local_sync_state,
         remote_sync_state=remote_sync_state,
     )
-
-
-def _is_loopback_url(base_url: str) -> bool:
-    parsed = urlparse(str(base_url or "").strip())
-    hostname = str(parsed.hostname or "").strip().lower()
-    return hostname in {"127.0.0.1", "localhost", "0.0.0.0"}

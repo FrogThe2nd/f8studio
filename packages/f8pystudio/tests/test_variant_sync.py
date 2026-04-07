@@ -339,6 +339,31 @@ def test_variant_sync_client_drops_legacy_saved_sessions_without_crashing(tmp_pa
     assert client.current_session() is None
 
 
+def test_variant_sync_client_uses_env_base_url_when_settings_are_empty(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("F8_ASSET_CLOUD_BASE_URL", "http://127.0.0.1:8787/")
+    settings = QtCore.QSettings(str(tmp_path / "variant-sync-env.ini"), QtCore.QSettings.IniFormat)
+    service = VariantCatalogService(
+        local_provider=LocalVariantProvider(db_path=tmp_path / "assets.db"),
+        remote_provider=RemoteCacheProvider(db_path=tmp_path / "assets.db"),
+    )
+    client = VariantSyncClient(settings=settings, catalog_service=service)
+
+    assert client.base_url() == "http://127.0.0.1:8787"
+
+
+def test_variant_sync_client_prefers_saved_base_url_over_env(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("F8_ASSET_CLOUD_BASE_URL", "http://127.0.0.1:8787")
+    settings = QtCore.QSettings(str(tmp_path / "variant-sync-env-override.ini"), QtCore.QSettings.IniFormat)
+    service = VariantCatalogService(
+        local_provider=LocalVariantProvider(db_path=tmp_path / "assets.db"),
+        remote_provider=RemoteCacheProvider(db_path=tmp_path / "assets.db"),
+    )
+    client = VariantSyncClient(settings=settings, catalog_service=service)
+    client.set_base_url("https://preview-assetcloud.feel8.fun/")
+
+    assert client.base_url() == "https://preview-assetcloud.feel8.fun"
+
+
 def test_variant_logout_clears_local_session_when_remote_signout_fails(tmp_path: Path, monkeypatch, caplog) -> None:
     server = _Server(("127.0.0.1", 0))
     thread = threading.Thread(target=server.serve_forever, daemon=True)

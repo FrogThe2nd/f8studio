@@ -5,7 +5,6 @@ import json
 from collections.abc import Callable
 import logging
 from typing import Any
-from urllib.parse import urlparse
 
 from qtpy import QtCore, QtWidgets
 
@@ -1181,12 +1180,6 @@ class VariantManagerDialog(QtWidgets.QDialog):
             logger.exception("Variant manager account state refresh failed")
         self._reload()
 
-    def _preferred_login_base_url(self) -> str:
-        configured_base_url = self._sync_client.base_url()
-        if _is_loopback_url(configured_base_url):
-            return VariantSyncClient.default_base_url()
-        return configured_base_url
-
     def _ensure_logged_in(self) -> bool:
         if self._sync_client.current_user() is not None and self._sync_client.current_access_token():
             return True
@@ -1414,9 +1407,3 @@ def variant_row_state_for_entries(
         local_sync_state=local_sync_state,
         remote_sync_state=remote_sync_state,
     )
-
-
-def _is_loopback_url(base_url: str) -> bool:
-    parsed = urlparse(str(base_url or "").strip())
-    hostname = str(parsed.hostname or "").strip().lower()
-    return hostname in {"127.0.0.1", "localhost", "0.0.0.0"}

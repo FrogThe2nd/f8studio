@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from typing import Protocol
-from urllib.parse import urlparse
 
 from qtpy import QtCore, QtWidgets
 
@@ -98,7 +97,7 @@ class AssetCloudSignInDialog(QtWidgets.QDialog):
 
 
 def prompt_asset_cloud_sign_in(*, parent: QtWidgets.QWidget, sync_client: AssetCloudSyncClient) -> bool:
-    base_url = _preferred_base_url(sync_client)
+    base_url = sync_client.base_url()
     sync_client.set_base_url(base_url)
     dialog = AssetCloudSignInDialog(parent=parent, base_url=base_url, username=sync_client.remembered_username())
     if dialog.exec() != QtWidgets.QDialog.Accepted:
@@ -219,15 +218,6 @@ def _logout_current_account(
     succeeded = _run_and_notify(parent=parent, action=sync_client.logout, on_changed=on_changed)
     if succeeded and user_name:
         show_info(parent, "Asset Cloud", f"Goodbye, {user_name}.")
-
-
-def _preferred_base_url(sync_client: AssetCloudSyncClient) -> str:
-    configured_base_url = sync_client.base_url()
-    parsed = urlparse(configured_base_url)
-    hostname = str(parsed.hostname or "").strip().lower()
-    if hostname in {"127.0.0.1", "localhost", "0.0.0.0"}:
-        return sync_client.default_base_url()
-    return configured_base_url
 
 
 def _user_greeting_name(user: AssetCloudUserLike | None) -> str:

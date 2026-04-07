@@ -393,6 +393,23 @@ def test_component_sync_client_drops_legacy_saved_sessions_without_crashing(tmp_
     assert client.current_session() is None
 
 
+def test_component_sync_client_uses_env_base_url_when_settings_are_empty(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("F8_ASSET_CLOUD_BASE_URL", "http://127.0.0.1:8787/")
+    settings = QtCore.QSettings(str(tmp_path / "component-sync-env.ini"), QtCore.QSettings.IniFormat)
+    client = ComponentSyncClient(settings=settings, catalog_service=ComponentCatalogService(db_path=tmp_path / "assets.db"))
+
+    assert client.base_url() == "http://127.0.0.1:8787"
+
+
+def test_component_sync_client_prefers_saved_base_url_over_env(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("F8_ASSET_CLOUD_BASE_URL", "http://127.0.0.1:8787")
+    settings = QtCore.QSettings(str(tmp_path / "component-sync-env-override.ini"), QtCore.QSettings.IniFormat)
+    client = ComponentSyncClient(settings=settings, catalog_service=ComponentCatalogService(db_path=tmp_path / "assets.db"))
+    client.set_base_url("https://preview-assetcloud.feel8.fun/")
+
+    assert client.base_url() == "https://preview-assetcloud.feel8.fun"
+
+
 def test_decode_http_response_text_only_decodes_one_gzip_layer() -> None:
     payload = json.dumps({"message": "ok"}, ensure_ascii=False).encode("utf-8")
     compressed_once = zlib.compress(payload, level=6, wbits=31)

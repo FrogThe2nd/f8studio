@@ -12,7 +12,14 @@ from qtpy import QtCore
 
 from f8pysdk.msgspec_codec import copy_model, validate_as
 
-from ..common import JsonObject, decode_http_response_text, json_object_from_value, json_object_loads, origin_headers_for_base_url
+from ..common import (
+    JsonObject,
+    decode_http_response_text,
+    json_object_from_value,
+    json_object_loads,
+    origin_headers_for_base_url,
+    resolve_asset_cloud_base_url,
+)
 from .component_catalog import (
     ComponentCatalogService,
     component_entry_can_hydrate,
@@ -53,8 +60,10 @@ class ComponentSyncClient:
         self._access_token: str = ""
 
     def base_url(self) -> str:
-        saved = self._value_str("base_url").rstrip("/")
-        return saved or self._DEFAULT_BASE_URL
+        return resolve_asset_cloud_base_url(
+            saved_base_url=self._value_str("base_url"),
+            default_base_url=self._DEFAULT_BASE_URL,
+        )
 
     @classmethod
     def default_base_url(cls) -> str:
