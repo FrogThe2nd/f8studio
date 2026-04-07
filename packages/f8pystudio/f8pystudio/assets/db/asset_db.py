@@ -4,6 +4,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 import sqlite3
+import threading
 
 from sqlalchemy import Column, ForeignKey, Index, Integer, LargeBinary, MetaData, Table, Text, create_engine, event, inspect, text
 from sqlalchemy.engine import Connection as SqlAlchemyConnection
@@ -11,6 +12,8 @@ from sqlalchemy.engine import URL, Engine
 from sqlalchemy.engine.reflection import Inspector
 
 _METADATA = MetaData()
+_INITIALIZATION_LOCKS: dict[Path, threading.Lock] = {}
+_INITIALIZATION_LOCKS_GUARD = threading.Lock()
 
 project_heads_table = Table(
     "project_heads",
@@ -139,6 +142,17 @@ def assets_db_path() -> Path:
     return Path.home() / ".f8" / "studio" / "assets.db"
 
 
+def _initialization_lock_for(path: Path) -> threading.Lock:
+    normalized_path = path.expanduser().resolve()
+    with _INITIALIZATION_LOCKS_GUARD:
+        existing_lock = _INITIALIZATION_LOCKS.get(normalized_path)
+        if existing_lock is not None:
+            return existing_lock
+        created_lock = threading.Lock()
+        _INITIALIZATION_LOCKS[normalized_path] = created_lock
+        return created_lock
+
+
 class AssetsDatabase:
     def __init__(self, path: Path | None = None) -> None:
         self._path = assets_db_path() if path is None else Path(path)
@@ -149,12 +163,13 @@ class AssetsDatabase:
 
     def ensure_initialized(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        engine = self._engine()
-        try:
-            _METADATA.create_all(bind=engine)
-            self._apply_additive_migrations(engine)
-        finally:
-            engine.dispose()
+        with _initialization_lock_for(self.path):
+            engine = self._engine()
+            try:
+                _METADATA.create_all(bind=engine)
+                self._apply_additive_migrations(engine)
+            finally:
+                engine.dispose()
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:

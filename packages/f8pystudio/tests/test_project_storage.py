@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import sqlite3
+import threading
+import time
 from typing import Any
 import zlib
 
@@ -12,6 +14,7 @@ from qtpy import QtCore
 from f8pysdk.msgspec_codec import copy_model
 from f8pystudio.assets.common import stable_json_dumps
 from f8pystudio.assets.db import AssetsDatabase
+from f8pystudio.assets.db import asset_db as asset_db_module
 from f8pystudio.assets.components.component_catalog import ComponentCatalogService
 from f8pystudio.assets.components.component_models import (
     F8ComponentEntry,
@@ -43,6 +46,50 @@ def test_assets_database_initializes_component_project_and_variant_tables(tmp_pa
     }.issubset(table_names)
 
     assert "component_versions_local" not in table_names
+
+
+def test_assets_database_serializes_concurrent_initialization_for_same_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    db = AssetsDatabase(path=tmp_path / "assets.db")
+    start_barrier = threading.Barrier(3)
+    state_lock = threading.Lock()
+    errors: list[BaseException] = []
+    active_create_all_calls = 0
+    max_concurrent_create_all_calls = 0
+
+    def _create_all(*, bind: object) -> None:
+        nonlocal active_create_all_calls, max_concurrent_create_all_calls
+        del bind
+        with state_lock:
+            active_create_all_calls += 1
+            max_concurrent_create_all_calls = max(max_concurrent_create_all_calls, active_create_all_calls)
+        try:
+            time.sleep(0.1)
+        finally:
+            with state_lock:
+                active_create_all_calls -= 1
+
+    def _apply_additive_migrations(self: AssetsDatabase, engine: object) -> None:
+        del self, engine
+
+    monkeypatch.setattr(asset_db_module._METADATA, "create_all", _create_all)
+    monkeypatch.setattr(AssetsDatabase, "_apply_additive_migrations", _apply_additive_migrations)
+
+    def _worker() -> None:
+        try:
+            start_barrier.wait(timeout=5)
+            db.ensure_initialized()
+        except BaseException as exc:  # pragma: no cover - test helper collects worker failures
+            errors.append(exc)
+
+    threads = [threading.Thread(target=_worker), threading.Thread(target=_worker)]
+    for thread in threads:
+        thread.start()
+    start_barrier.wait(timeout=5)
+    for thread in threads:
+        thread.join(timeout=5)
+
+    assert errors == []
+    assert max_concurrent_create_all_calls == 1
 
 
 def test_assets_database_migrates_remote_cache_library_slug_columns(tmp_path: Path) -> None:
