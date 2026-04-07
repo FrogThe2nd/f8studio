@@ -10,15 +10,16 @@ from typing import Any, TYPE_CHECKING
 from ...generated import F8StateAccess
 from ...json_unwrap import unwrap_json_value
 from ...nats_naming import ensure_token, kv_key_node_state
+from ...state import StateWriteContext, StateWriteError, StateWriteOrigin, StateWriteSource
 from ..internal.logging import log_error_once
 from .helpers import build_intra_state_route_meta
-from .write import StatePublishOptions, StateWriteContext, StateWriteError, StateWriteOrigin, StateWriteSource
+from .options import StatePublishOptions
 from ...time_utils import now_ms
 from ...codec import encode_obj
 from ..internal.command import dispatch_command_input
 
 if TYPE_CHECKING:
-    from ..api.bus import ServiceBus
+    from ..runtime import ServiceBus
 
 
 log = logging.getLogger(__name__)

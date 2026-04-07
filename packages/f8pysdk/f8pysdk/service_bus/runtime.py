@@ -5,46 +5,34 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import Any, Protocol, TYPE_CHECKING
 
-from ...capabilities import (
+from ..capabilities import (
     BusAttachableNode,
     ClosableNode,
     RungraphHook,
     ServiceHook,
     StatefulNode,
 )
-from ...generated import F8RuntimeGraph
-from ...nats_naming import ensure_token, kv_key_ready, kv_bucket_for_service, kv_key_rungraph
-from ...nats_transport import NatsTransport, NatsTransportConfig
-from ...time_utils import now_ms
-from ..state.pipeline import (
-    publish_state as _publish_state_impl,
-)
-from ..workflow.rungraph import (
-    set_rungraph as _set_rungraph_impl,
-)
-from ..state.write import StateWriteOrigin, StateWriteSource
-from ..workflow.lifecycle import (
-    set_active as _set_active_impl,
-    start as _start_impl,
-    stop as _stop_impl,
-)
-from ..state.read import StateRead
-from .config import CrossPublishPolicy, DataDeliveryMode, ServiceBusConfig, _debug_state_enabled
-from ..monitor_collector import MonitorCollector, MonitorCollectorConfig
-from ..internal.command import (
-    CommandBinding,
-    CommandExecutionResult,
-    CommandGateway,
-    CommandInvocation,
-    CommandInvokeOptions,
-    CommandOutputPolicy,
-)
-from ..data.router import DataRouter
-from ..state.router import StateRouter
-from ..state.store import StateStore
+from ..command import CommandExecutionResult, CommandOutputPolicy
+from ..data import CrossPublishPolicy, DataDeliveryMode
+from ..generated import F8RuntimeGraph
+from ..nats_naming import ensure_token, kv_bucket_for_service, kv_key_ready, kv_key_rungraph
+from ..nats_transport import NatsTransport, NatsTransportConfig
+from ..state import StateRead, StateWriteOrigin, StateWriteSource
+from ..time_utils import now_ms
+from .config import ServiceBusConfig, _debug_state_enabled
+from .data.router import DataRouter
+from .internal.command import CommandBinding, CommandGateway, CommandInvocation, CommandInvokeOptions
+from .monitor_collector import MonitorCollector, MonitorCollectorConfig
+from .state.pipeline import publish_state as _publish_state_impl
+from .state.router import StateRouter
+from .state.store import StateStore
+from .workflow.lifecycle import set_active as _set_active_impl
+from .workflow.lifecycle import start as _start_impl
+from .workflow.lifecycle import stop as _stop_impl
+from .workflow.rungraph import set_rungraph as _set_rungraph_impl
 
 if TYPE_CHECKING:
-    from ..internal.micro import ServiceBusMicroEndpoints
+    from .internal.micro import ServiceBusMicroEndpoints
 
 
 log = logging.getLogger(__name__)
@@ -326,7 +314,6 @@ class ServiceBus:
         reg = self._service_hooks
         reg.remove(hook)
 
-    # ---- lifecycle ------------------------------------------------------
     @property
     def active(self) -> bool:
         return bool(self._active)
@@ -380,7 +367,6 @@ class ServiceBus:
         self._started = False
         self._closed = True
 
-    # ---- raw subscription ---------------------------------------------
     async def subscribe_subject(
         self,
         subject: str,
@@ -392,8 +378,6 @@ class ServiceBus:
 
     async def unsubscribe_subject(self, handle: Any) -> None:
         await self._data_router.unsubscribe_subject(handle)
-
-    # ---- KV state -------------------------------------------------------
 
     async def publish_state_external(
         self,
@@ -488,11 +472,9 @@ class ServiceBus:
         """
         return self._state_store.get_cached_value(node_id, field, default)
 
-    # ---- rungraph -------------------------------------------------------
     async def set_rungraph(self, graph: F8RuntimeGraph) -> None:
         await _set_rungraph_impl(self, graph)
 
-    # ---- data routing ---------------------------------------------------
     async def publish(self, subject: str, payload: bytes) -> None:
         """Publish a message to a subject."""
         if not self._active:

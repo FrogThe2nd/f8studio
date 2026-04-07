@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .write import StateWriteSource
+from ...state import StateWriteSource
 
 
 _STATE_PAYLOAD_RESERVED_KEYS = frozenset(("value", "actor", "ts", "source", "origin"))

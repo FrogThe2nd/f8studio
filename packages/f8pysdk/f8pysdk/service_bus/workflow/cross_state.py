@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 from ...generated import F8RuntimeGraph
 
 if TYPE_CHECKING:
-    from ..api.bus import ServiceBus
+    from ..runtime import ServiceBus
 
 
 def update_cross_state_bindings(bus: "ServiceBus", graph: F8RuntimeGraph) -> None:

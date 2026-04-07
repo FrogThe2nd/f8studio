@@ -6,7 +6,7 @@ import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ..api.bus import ServiceBus
+    from ..runtime import ServiceBus
 
 
 log = logging.getLogger(__name__)

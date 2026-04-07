@@ -5,16 +5,15 @@ import logging
 from typing import Any, TYPE_CHECKING
 
 from ...capabilities import LifecycleNode
+from ...state import StateWriteOrigin, StateWriteSource
 from ...time_utils import now_ms
 from ..state.pipeline import publish_state
 from ..internal.micro import ServiceBusMicroEndpoints
-from ..state.write import StateWriteOrigin
-from ..state.write import StateWriteSource
 from ...codec import encode_obj
 from .metadata import build_lifecycle_event_meta, build_lifecycle_state_meta
 
 if TYPE_CHECKING:
-    from ..api.bus import ServiceBus
+    from ..runtime import ServiceBus
 
 
 log = logging.getLogger(__name__)

@@ -33,18 +33,8 @@ from f8pysdk.service_bus import (  # noqa: E402
     StateWriteOrigin as BusStateWriteOrigin,
     StateWriteSource as BusStateWriteSource,
 )
-from f8pysdk.service_bus.api.types import (  # noqa: E402
-    CommandExecutionErrorKind as ApiCommandExecutionErrorKind,
-    CommandExecutionResult as ApiCommandExecutionResult,
-    CommandOutputPolicy as ApiCommandOutputPolicy,
-    CrossPublishPolicy as ApiCrossPublishPolicy,
-    DataDeliveryMode as ApiDataDeliveryMode,
-    StateRead as ApiStateRead,
-    StateWriteContext as ApiStateWriteContext,
-    StateWriteError as ApiStateWriteError,
-    StateWriteOrigin as ApiStateWriteOrigin,
-    StateWriteSource as ApiStateWriteSource,
-)
+from f8pysdk.service_bus.config import ServiceBusConfig as OwnerServiceBusConfig  # noqa: E402
+from f8pysdk.service_bus.runtime import ServiceBus as OwnerServiceBus  # noqa: E402
 from f8pysdk.state import StateRead, StateWriteContext, StateWriteError, StateWriteOrigin, StateWriteSource  # noqa: E402
 from f8pysdk.transport import NatsTransport, NatsTransportConfig  # noqa: E402
 
@@ -89,30 +79,22 @@ class PublicApiModuleTests(unittest.TestCase):
     def test_service_bus_package_remains_public_bus_entrypoint(self) -> None:
         self.assertIsNotNone(ServiceBus)
         self.assertIsNotNone(ServiceBusConfig)
+        self.assertIs(ServiceBus, OwnerServiceBus)
+        self.assertIs(ServiceBusConfig, OwnerServiceBusConfig)
 
     def test_public_type_barrels_share_single_objects(self) -> None:
         self.assertIs(CommandExecutionErrorKind, BusCommandExecutionErrorKind)
-        self.assertIs(CommandExecutionErrorKind, ApiCommandExecutionErrorKind)
         self.assertIs(CommandExecutionResult, BusCommandExecutionResult)
-        self.assertIs(CommandExecutionResult, ApiCommandExecutionResult)
         self.assertIs(CommandOutputPolicy, BusCommandOutputPolicy)
-        self.assertIs(CommandOutputPolicy, ApiCommandOutputPolicy)
 
         self.assertIs(CrossPublishPolicy, BusCrossPublishPolicy)
-        self.assertIs(CrossPublishPolicy, ApiCrossPublishPolicy)
         self.assertIs(DataDeliveryMode, BusDataDeliveryMode)
-        self.assertIs(DataDeliveryMode, ApiDataDeliveryMode)
 
         self.assertIs(StateRead, BusStateRead)
-        self.assertIs(StateRead, ApiStateRead)
         self.assertIs(StateWriteContext, BusStateWriteContext)
-        self.assertIs(StateWriteContext, ApiStateWriteContext)
         self.assertIs(StateWriteError, BusStateWriteError)
-        self.assertIs(StateWriteError, ApiStateWriteError)
         self.assertIs(StateWriteOrigin, BusStateWriteOrigin)
-        self.assertIs(StateWriteOrigin, ApiStateWriteOrigin)
         self.assertIs(StateWriteSource, BusStateWriteSource)
-        self.assertIs(StateWriteSource, ApiStateWriteSource)
 
 
 if __name__ == "__main__":

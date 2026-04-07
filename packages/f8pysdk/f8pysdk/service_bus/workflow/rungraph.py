@@ -11,9 +11,10 @@ import msgspec
 from ...generated import F8Edge, F8EdgeKindEnum, F8RuntimeGraph, F8RuntimeGraphMeta, F8StateAccess
 from ...json_unwrap import unwrap_json_value
 from ...nats_naming import data_subject
+from ...state import StateWriteOrigin, StateWriteSource
 from ..internal.logging import log_error_once
 from ..state.helpers import build_intra_state_route_meta
-from ..state.write import StatePublishOptions, StateWriteOrigin, StateWriteSource
+from ..state.options import StatePublishOptions
 from ...time_utils import now_ms
 from ...rungraph_validation import (
     validate_state_edge_targets_writable_or_raise,
@@ -31,7 +32,7 @@ from ..internal.command import command_state_bindings_ready
 from .metadata import build_builtin_identity_state_meta, build_rungraph_reconcile_meta
 
 if TYPE_CHECKING:
-    from ..api.bus import ServiceBus
+    from ..runtime import ServiceBus
 
 
 log = logging.getLogger(__name__)

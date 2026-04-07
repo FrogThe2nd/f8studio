@@ -7,13 +7,14 @@ from ...generated import F8Edge, F8EdgeKindEnum, F8RuntimeGraph, F8StateAccess
 from ...nats_naming import ensure_token, kv_bucket_for_service, kv_key_node_state, parse_kv_key_node_state
 from ...time_utils import now_ms
 from ...codec import decode_obj
+from ...state import StateWriteContext, StateWriteError, StateWriteOrigin, StateWriteSource
 from ..internal.logging import log_error_once
 from .helpers import build_cross_state_meta, build_state_validation_meta, coerce_inbound_ts_ms, extract_ts_field
-from .write import StatePublishOptions, StateWriteContext, StateWriteError, StateWriteOrigin, StateWriteSource
+from .options import StatePublishOptions
 from .store import StateStore
 
 if TYPE_CHECKING:
-    from ..api.bus import ServiceBus
+    from ..runtime import ServiceBus
 
 
 StateRouteTarget = tuple[str, str, F8Edge]

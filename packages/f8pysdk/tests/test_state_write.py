@@ -30,7 +30,8 @@ from f8pysdk.nodes import RuntimeNode  # noqa: E402
 from f8pysdk.schema_helpers import string_schema  # noqa: E402
 from f8pysdk.service_bus import ServiceBus, ServiceBusConfig  # noqa: E402
 from f8pysdk.service_bus.internal.micro import ServiceBusMicroEndpoints  # noqa: E402
-from f8pysdk.service_bus.internal.state import StatePublishOptions, publish_state, validate_state_update  # noqa: E402
+from f8pysdk.service_bus.state.options import StatePublishOptions  # noqa: E402
+from f8pysdk.service_bus.state.pipeline import publish_state, validate_state_update  # noqa: E402
 from f8pysdk.state import StateWriteContext, StateWriteError, StateWriteOrigin  # noqa: E402
 from f8pysdk.codec import decode_as, decode_obj, encode_obj  # noqa: E402
 from f8pysdk.testing import InMemoryCluster, InMemoryTransport, ServiceBusHarness  # noqa: E402

@@ -31,7 +31,7 @@ from ..nats_naming import data_subject
 from ..time_utils import now_ms
 
 if TYPE_CHECKING:
-    from .api.bus import ServiceBus
+    from .runtime import ServiceBus
 
 
 def _percentile95(values: list[float]) -> float | None:

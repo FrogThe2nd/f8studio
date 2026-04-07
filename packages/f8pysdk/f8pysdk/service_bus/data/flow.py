@@ -8,7 +8,7 @@ from .emit import DataEmitOptions
 from .router import DataRouter, InputBuffer as _InputBuffer
 
 if TYPE_CHECKING:
-    from ..api.bus import ServiceBus
+    from ..runtime import ServiceBus
 
 
 def precreate_input_buffers_for_cross_in(

@@ -15,11 +15,11 @@ from ...command_state import (
     command_output_state_field,
 )
 from ...generated import F8Command, F8OperatorSpec, F8ServiceSpec
+from ...state import StateWriteOrigin, StateWriteSource
 from .logging import log_error_once
-from ..state.write import StateWriteOrigin, StateWriteSource
 
 if TYPE_CHECKING:
-    from ..api.bus import ServiceBus
+    from ..runtime import ServiceBus
 
 
 log = logging.getLogger(__name__)

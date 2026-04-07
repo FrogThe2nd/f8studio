@@ -4,13 +4,13 @@ from typing import TYPE_CHECKING, Any
 
 from ...generated import F8StateAccess
 from ...nats_naming import ensure_token, kv_key_node_state
+from ...state import StateRead
 from ...codec import decode_obj
 from ..internal.cache import CappedOrderedDict
-from .read import StateRead
 from .helpers import coerce_inbound_ts_ms, extract_ts_field
 
 if TYPE_CHECKING:
-    from ..api.bus import ServiceBus
+    from ..runtime import ServiceBus
 
 
 class StateStore:

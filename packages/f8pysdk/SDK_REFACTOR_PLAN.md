@@ -384,8 +384,8 @@ This milestone does not redesign the SDK yet, but it makes the system much safer
     - moved non-public test/runtime helpers behind explicit `f8pysdk.service_bus.internal` boundaries owned by the ServiceBus subsystem instead of a top-level pseudo-internal package
   - compatibility notes:
     - `f8pysdk.service_bus` remains the public bus entrypoint for `ServiceBus` and `ServiceBusConfig`
-    - deep `service_bus.*` modules still exist for compatibility, but new code should prefer the stable top-level modules or `f8pysdk.service_bus`
-    - repo-internal callers that still need non-public helpers should import from `f8pysdk.service_bus.internal` rather than ad hoc deep module paths
+    - the earlier deep `service_bus.*` compatibility layers from this phase have since been removed
+    - repo-internal callers that still need non-public helpers should import from concrete owner modules under `f8pysdk.service_bus.*`
 
 - 2026-04-07
   - owner: Codex + repository maintainer
@@ -398,7 +398,7 @@ This milestone does not redesign the SDK yet, but it makes the system much safer
     - converted legacy `metadata`, `payload`, `runtime_collections`, `error_utils`, `state_store`, and `state_router` modules into explicit compatibility shims with deprecation warnings
   - compatibility notes:
     - repo-internal callers should prefer concrete owner modules such as `f8pysdk.service_bus.state.*`, `f8pysdk.service_bus.workflow.metadata`, and `f8pysdk.service_bus.internal.*`
-    - deep `service_bus.*` helper modules remain importable for migration only and now warn on import
+    - the temporary helper-level compatibility shells introduced during this migration have since been removed
 
 - 2026-04-07
   - owner: Codex + repository maintainer
@@ -406,11 +406,11 @@ This milestone does not redesign the SDK yet, but it makes the system much safer
   - completed:
     - promoted `service_bus.data.*` as the canonical owner package for data-side runtime internals
     - moved the real implementations to `service_bus.data.emit`, `service_bus.data.flow`, and `service_bus.data.router`
-    - converted `service_bus.routing.data_emit`, `service_bus.routing.data_flow`, and `service_bus.routing.data_router` into explicit compatibility shims
-    - repointed `routing_data.py` compatibility guidance at `service_bus.data.flow`
+    - migrated temporary compatibility paths off the old `routing/*` namespace and then removed those shims
+    - repointed repo callers and tests at direct data owner modules
   - compatibility notes:
     - repo-internal callers should prefer `f8pysdk.service_bus.data.*` and `f8pysdk.service_bus.state.*` as the symmetric owner packages for runtime data and state concerns
-    - `service_bus.routing/*` remains available only as a legacy data-side namespace during migration
+    - the legacy data-side routing compatibility namespace has since been removed
 
 - 2026-04-07
   - owner: Codex + repository maintainer
@@ -418,23 +418,23 @@ This milestone does not redesign the SDK yet, but it makes the system much safer
   - completed:
     - moved the real state publish pipeline implementation to `service_bus.state.pipeline`
     - repointed `ServiceBus`, workflow, command, and internal state helpers to the new owner path
-    - converted `service_bus.domain.state_pipeline` into an explicit compatibility shim
-    - reduced `service_bus.domain` to a legacy compatibility namespace instead of an active owner layer
+    - used a temporary migration shim during rollout and then removed the old `domain` compatibility layer
+    - reduced the state-side runtime to explicit owner modules instead of a mixed owner/compat layout
   - compatibility notes:
     - repo-internal callers should prefer `f8pysdk.service_bus.state.pipeline` for state validation/persistence/local-delivery logic
-    - `service_bus.domain.state_pipeline` remains importable only for migration and now warns on import
+    - the legacy state-pipeline compatibility path has since been removed
 
 - 2026-04-07
   - owner: Codex + repository maintainer
   - scope: Slice D state protocol-type owner cleanup
   - completed:
-    - promoted `service_bus.state.read` and `service_bus.state.write` as the canonical owner modules for state read/write protocol types
-    - repointed state-side runtime code to the new owner modules instead of importing the root-level `state_read.py` / `state_write.py` modules directly
-    - reduced `service_bus.state_read` and `service_bus.state_write` to thin public facades over the state owner package
-    - repointed top-level `f8pysdk.state` and `service_bus` public exports at the state owner modules
+    - promoted top-level `f8pysdk.state` as the canonical public owner for state read/write protocol types
+    - repointed state-side runtime code to direct state owner modules instead of root-level state facade paths
+    - moved state publish controls to `service_bus.state.options`
+    - repointed `f8pysdk.service_bus` public exports directly at the stable top-level state types instead of via a separate `service_bus.types` barrel
   - compatibility notes:
     - public imports via `f8pysdk.state` and `f8pysdk.service_bus` remain unchanged
-    - deep root modules `service_bus.state_read` and `service_bus.state_write` still work, but they now exist only as façade entrypoints rather than owner modules
+    - the temporary deep root state facade modules and `service_bus.types` compatibility barrel introduced during migration have since been removed
 
 - When we start a phase, create a short changelog section here with:
   - date

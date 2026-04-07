@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..state.write import StateWriteSource
+from ...state import StateWriteSource
 
 
 def _resolved_source_text(source: StateWriteSource | str | None, *, default: str) -> str:

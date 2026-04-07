@@ -11,19 +11,16 @@ The implementation is still compatibility-heavy, but the runtime is now split mo
 - data routing/buffering/subscriptions live behind `DataRouter`
 - state cache/access/read semantics live behind `StateStore`
 - intra-service state routing and cross-state watch lifecycle live behind `StateRouter`
-- several top-level modules are compatibility re-export layers
+- a few top-level modules intentionally remain as ergonomic SDK entrypoints
 
 The long-term plan is tracked in `packages/f8pysdk/SDK_REFACTOR_PLAN.md`.
 
 ## Layered Modules
 
-- `api/`: public façade and config
 - `data/`: data routing, buffering, local delivery, and cross-service data fanout
 - `state/`: state cache, routing, validation, persistence, and state-side helper ownership
-- `domain/`: legacy compatibility namespace for pre-owner split state pipeline imports
 - `workflow/`: rungraph apply, lifecycle transitions, cross-state synchronization
 - `internal/`: non-public typed command/data/runtime infrastructure helpers
-- `adapters/`: transport-specific endpoint integration
 
 Slice D notes:
 
@@ -43,16 +40,13 @@ Slice D notes:
   - cross-service state bindings
   - remote state watch handles
   - cross-state target tracking and remote timestamp ordering
-- `state/read.py` now owns the canonical state read result model.
-- `state/write.py` now owns canonical state write enums, context, error, and publish-option types.
 - `state/pipeline.py` now owns state validation, normalization, persistence, and local state delivery.
 - `state/helpers.py` now owns state-side metadata and inbound timestamp coercion helpers.
+- `state/options.py` now owns typed state publish controls.
 - `workflow/metadata.py` now owns rungraph/lifecycle metadata builders.
 - `internal/cache.py` and `internal/logging.py` now own shared runtime infrastructure helpers.
-- `routing/` and `routing_data.py` now remain only as thin compatibility layers for the older data-side paths.
-- `domain/state_pipeline.py` now remains only as a thin compatibility layer for the older state-side path.
 - `ServiceBus` delegates data emit/pull/subscribe behavior to `DataRouter` instead of storing that mutable state directly.
-- `workflow/cross_state.py` is now a thin compatibility wrapper over `StateRouter`.
+- `workflow/cross_state.py` remains a focused helper for remote state sync lifecycle.
 
 ## Current Contracts
 
@@ -150,31 +144,17 @@ Current compatibility note:
 
 ## Compatibility Surface
 
-These modules currently exist mostly as compatibility shims:
+The old deep `service_bus.*` compatibility shims have now been removed from the
+repo. New code should use stable SDK modules and owner packages directly:
 
-- `bus.py`
-- `codec.py`
-- `command_runtime.py`
-- `cross_state.py`
-- `domain.state_pipeline`
-- `error_utils.py`
-- `lifecycle.py`
-- `metadata.py`
-- `micro.py`
-- `payload.py`
-- `routing.data_emit`
-- `routing.data_flow`
-- `routing.data_router`
-- `routing_data.py`
-- `rungraph_apply.py`
-- `runtime_collections.py`
-- `state_publish.py`
-- `state_router.py`
-- `state_store.py`
-
-New code should prefer the documented façade types and avoid depending on compatibility modules unless migration constraints require it.
-These shim modules now emit compatibility deprecation warnings when imported
-through their deep legacy paths.
+- public bus/runtime entrypoints: `f8pysdk.service_bus`, `f8pysdk.app`
+- public protocol/type modules: `f8pysdk.command`, `f8pysdk.data`, `f8pysdk.state`
+- stable helpers: `f8pysdk.codec`, `f8pysdk.testing`, `f8pysdk.monitoring`
+- canonical service-bus owners: `f8pysdk.service_bus.runtime`,
+  `f8pysdk.service_bus.config`
+- owner packages for runtime internals: `f8pysdk.service_bus.data.*`,
+  `f8pysdk.service_bus.state.*`, `f8pysdk.service_bus.workflow.*`,
+  `f8pysdk.service_bus.internal.*`
 
 Stable top-level modules introduced during Slice D:
 
@@ -194,15 +174,19 @@ Stable top-level modules introduced during public API cleanup:
 
 Explicit internal boundary introduced during public API cleanup:
 
-- `f8pysdk.service_bus.internal.*` for repo-internal tests and compatibility
-  shims that still need typed access to non-public runtime helpers without
-  depending on ad hoc deep module paths
+- `f8pysdk.service_bus.internal.*` for repo-internal tests and runtime helpers
+  that still need typed access to non-public behavior without depending on ad
+  hoc deep module paths
 - `f8pysdk.service_bus.data.*` for data-runtime owner modules; the old
-  `routing/*` namespace is now data-side compatibility only
+  `routing/*` compatibility namespace has been removed
 - `f8pysdk.service_bus.state.*` for state-runtime owner modules that should not
   sit at the public `service_bus` root
-- root modules `state_read.py` and `state_write.py` now act only as thin public
-  facades over the state owner package
-- compatibility shells now point at explicit owner modules such as
-  `data.router`, `data.flow`, `internal.micro`, `internal.state`,
-  `state.pipeline`, `state.router`, and `state.store`
+- `runtime.py` and `config.py` now hold the canonical owner paths behind the
+  stable `f8pysdk.service_bus` entrypoint
+- older thin API facades under `service_bus.api.*` and root thin state facade
+  modules have been removed
+- internal publish controls live in `state.options`
+- legacy compatibility shells have been removed; imports should point at
+  explicit owner modules such as `data.emit`, `data.router`, `data.flow`,
+  `internal.micro`, `state.options`, `state.pipeline`, `state.router`, and
+  `state.store`

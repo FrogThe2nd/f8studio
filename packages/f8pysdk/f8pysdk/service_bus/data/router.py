@@ -8,17 +8,17 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from ...capabilities import ComputableNode, DataReceivableNode
+from ...data import CrossPublishPolicy, DataDeliveryMode
 from ...generated import F8Edge, F8EdgeStrategyEnum
 from ...nats_naming import data_subject
 from ...time_utils import now_ms
-from ..api.config import CrossPublishPolicy, DataDeliveryMode
 from ...codec import decode_obj, encode_obj
 from ..internal.cache import CappedOrderedDict
 from ..internal.logging import log_error_once
 from .emit import CrossPublishPlan, DataEmitOptions
 
 if TYPE_CHECKING:
-    from ..api.bus import ServiceBus
+    from ..runtime import ServiceBus
 
 
 log = logging.getLogger(__name__)

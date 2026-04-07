@@ -22,8 +22,9 @@ def _coerce_inbound_ts_ms(ts_raw: Any, *, default: int) -> int:
     """
     Best-effort coercion of inbound timestamps to milliseconds.
 
-    Mirrors `f8pysdk.service_bus.payload.coerce_inbound_ts_ms(...)` but kept local
-    to Studio so it can watch arbitrary services without depending on ServiceBus.
+    Mirrors `f8pysdk.service_bus.state.helpers.coerce_inbound_ts_ms(...)` but
+    stays local to Studio so it can watch arbitrary services without depending
+    on ServiceBus internals.
     """
     try:
         if ts_raw is None:
