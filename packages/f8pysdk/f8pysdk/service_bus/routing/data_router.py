@@ -15,6 +15,7 @@ from ..api.config import CrossPublishPolicy, DataDeliveryMode
 from ..codec import decode_obj, encode_obj
 from ..error_utils import log_error_once
 from ..runtime_collections import CappedOrderedDict
+from .data_emit import CrossPublishPlan, DataEmitOptions
 
 if TYPE_CHECKING:
     from ..api.bus import ServiceBus
@@ -151,27 +152,29 @@ class DataRouter:
         self._on_data_push_queue.clear()
         await self._stop_flush_task()
 
-    async def emit_data(self, node_id: str, port: str, value: Any, *, ts_ms: int | None = None) -> None:
+    async def emit_data(
+        self,
+        node_id: str,
+        port: str,
+        value: Any,
+        *,
+        ts_ms: int | None = None,
+        options: DataEmitOptions | None = None,
+    ) -> None:
         bus = self._bus
         if not bus._active:
             return
+        emit_options = options or DataEmitOptions()
         ts = int(ts_ms or now_ms())
         bus._monitor_record_emit(str(node_id), str(port), int(ts))
-
-        for to_node, to_port, edge in self._intra_data_out.get((node_id, port), ()):
-            self.push_input(to_node, to_port, value, ts_ms=ts, edge=edge)
-
-        subject, decision = self._cross_publish_decision(node_id=str(node_id), port=str(port))
-        if not subject:
-            if decision == "suppressed":
-                bus._monitor_record_suppressed_cross_publish()
-            else:
-                bus._monitor_record_local_only_emit()
-            return
-
-        payload = encode_obj({"value": value, "ts": ts})
-        await bus._transport.publish(subject, payload)
-        bus._monitor_record_routed_cross_emit()
+        await self._route_emitted_value(
+            from_node=str(node_id),
+            from_port=str(port),
+            value=value,
+            ts_ms=ts,
+            ctx_id=None,
+            options=emit_options,
+        )
 
     async def pull_data(self, node_id: str, port: str, *, ctx_id: str | int | None = None) -> Any:
         bus = self._bus
@@ -245,6 +248,7 @@ class DataRouter:
             return
         stack.add(key)
         try:
+            local_compute_options = DataEmitOptions.local_compute_only()
             for from_node, from_port, edge in self._intra_data_in.get(key) or ():
                 src = bus._nodes.get(from_node)
                 if src is None:
@@ -266,21 +270,15 @@ class DataRouter:
                     continue
 
                 ts_now = int(now_ms())
-                _subject, decision = self._cross_publish_decision(node_id=str(from_node), port=str(from_port))
-                if decision in ("publish", "suppressed"):
-                    bus._monitor_record_suppressed_cross_publish()
-                delivered = False
-                for to_node, to_port, to_edge in self._intra_data_out.get((from_node, from_port), ()):
-                    self._deliver_local_input(
-                        to_node=to_node,
-                        to_port=to_port,
-                        value=value,
-                        ts_ms=ts_now,
-                        edge=to_edge,
-                        ctx_id=ctx_id,
-                        force_buffer=(str(to_node) == str(node_id) and str(to_port) == str(port)),
-                    )
-                    delivered = True
+                delivered = await self._route_emitted_value(
+                    from_node=str(from_node),
+                    from_port=str(from_port),
+                    value=value,
+                    ts_ms=ts_now,
+                    ctx_id=ctx_id,
+                    options=local_compute_options,
+                    force_buffer_target=key,
+                )
                 if delivered:
                     continue
                 self._deliver_local_input(
@@ -498,17 +496,87 @@ class DataRouter:
         if self._callbacks_data_locally():
             self._enqueue_on_data_callback(to_node=to_node, to_port=to_port, value=value, ts_ms=int(ts_ms))
 
-    def _cross_publish_decision(self, *, node_id: str, port: str) -> tuple[str, str]:
+    async def _route_emitted_value(
+        self,
+        *,
+        from_node: str,
+        from_port: str,
+        value: Any,
+        ts_ms: int,
+        ctx_id: str | int | None,
+        options: DataEmitOptions,
+        force_buffer_target: tuple[str, str] | None = None,
+    ) -> bool:
+        delivered = self._fanout_local_routes(
+            from_node=from_node,
+            from_port=from_port,
+            value=value,
+            ts_ms=int(ts_ms),
+            ctx_id=ctx_id,
+            options=options,
+            force_buffer_target=force_buffer_target,
+        )
+        plan = self._cross_publish_plan(node_id=from_node, port=from_port)
+        if options.publish_cross_service and plan.will_publish:
+            payload = encode_obj({"value": value, "ts": int(ts_ms)})
+            await self._bus._transport.publish(plan.subject, payload)
+            self._bus._monitor_record_routed_cross_emit()
+            return delivered
+        self._record_skipped_cross_publish(plan=plan, publish_enabled=options.publish_cross_service)
+        return delivered
+
+    def _fanout_local_routes(
+        self,
+        *,
+        from_node: str,
+        from_port: str,
+        value: Any,
+        ts_ms: int,
+        ctx_id: str | int | None,
+        options: DataEmitOptions,
+        force_buffer_target: tuple[str, str] | None,
+    ) -> bool:
+        if not options.deliver_local:
+            return False
+        delivered = False
+        for to_node, to_port, edge in self._intra_data_out.get((from_node, from_port), ()):
+            self._deliver_local_input(
+                to_node=to_node,
+                to_port=to_port,
+                value=value,
+                ts_ms=int(ts_ms),
+                edge=edge,
+                ctx_id=ctx_id,
+                force_buffer=force_buffer_target == (str(to_node), str(to_port)),
+            )
+            delivered = True
+        return delivered
+
+    def _record_skipped_cross_publish(self, *, plan: CrossPublishPlan, publish_enabled: bool) -> None:
+        bus = self._bus
+        if publish_enabled:
+            if plan.decision == "suppressed":
+                bus._monitor_record_suppressed_cross_publish()
+            elif plan.decision == "local_only":
+                bus._monitor_record_local_only_emit()
+            return
+        if plan.decision in ("publish", "suppressed"):
+            bus._monitor_record_suppressed_cross_publish()
+
+    def _cross_publish_plan(self, *, node_id: str, port: str) -> CrossPublishPlan:
         if self._cross_publish_policy == "none":
             if (node_id, port) in self._cross_out_subjects:
-                return "", "suppressed"
-            return "", "local_only"
+                return CrossPublishPlan(subject="", decision="suppressed")
+            return CrossPublishPlan(subject="", decision="local_only")
         if self._cross_publish_policy == "all":
-            return data_subject(self._bus.service_id, from_node_id=node_id, port_id=port), "publish"
+            return CrossPublishPlan(
+                subject=data_subject(self._bus.service_id, from_node_id=node_id, port_id=port),
+                decision="publish",
+            )
         subject = self._cross_out_subjects.get((node_id, port)) or ""
         if subject:
-            return subject, "publish"
-        return "", "local_only"
+            return CrossPublishPlan(subject=subject, decision="publish")
+        return CrossPublishPlan(subject="", decision="local_only")
 
     async def _flush_on_data_push_queue(self) -> None:
         try:

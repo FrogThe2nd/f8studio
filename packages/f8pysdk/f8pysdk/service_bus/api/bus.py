@@ -408,6 +408,12 @@ class ServiceBus:
         """
         Publish a state update as an external/user write.
 
+        Canonical semantics:
+        - persistence: the value is validated and written to KV/state cache
+        - local delivery: same-process consumers are notified immediately
+        - fanout: intra-service state edges fan out unless typed publish options disable them
+        - cross-service propagation: remote services observe the persisted value through state watches
+
         This method intentionally does not allow callers to choose `origin`.
         `source` is allowed for diagnostics, but does not affect access control.
         """
@@ -423,6 +429,12 @@ class ServiceBus:
         )
 
     async def publish_state_runtime(self, node_id: str, field: str, value: Any, *, ts_ms: int | None = None) -> None:
+        """
+        Publish a runtime-owned state update through the same validated/persisted state chain.
+
+        Use this for SDK/runtime writes that should persist and participate in
+        the normal local state delivery/fanout behavior.
+        """
         await _publish_state_impl(
             self,
             node_id,
@@ -498,11 +510,30 @@ class ServiceBus:
         return await self._transport.subscribe(str(subject), queue=queue, cb=cb)
 
     async def emit_data(self, node_id: str, port: str, value: Any, *, ts_ms: int | None = None) -> None:
+        """
+        Emit one output sample from a local node port.
+
+        Canonical semantics:
+        - local delivery: local routed consumers are satisfied first according to `data_delivery`
+        - cross-service publish: controlled separately by `cross_publish_policy`
+        - persistence: data samples are transient and are not written to KV state
+
+        `emit_data(...)` is the public data-output path. Pull-triggered local
+        recompute uses an internal local-only routing option so `pull_data(...)`
+        never turns into hidden cross-service publication.
+        """
         node_id_s = ensure_token(node_id, label="node_id")
         port_s = ensure_token(port, label="port_id")
         await self._data_router.emit_data(node_id_s, port_s, value, ts_ms=ts_ms)
 
     async def pull_data(self, node_id: str, port: str, *, ctx_id: str | int | None = None) -> Any:
+        """
+        Read the current buffered input value for a local node input port.
+
+        In buffered modes this may trigger same-service upstream `compute_output(...)`
+        when the input has no fresh sample yet. That recompute satisfies local
+        consumers only; it does not publish cross-service data.
+        """
         node_id_s = ensure_token(node_id, label="node_id")
         port_s = ensure_token(port, label="port_id")
         return await self._data_router.pull_data(node_id_s, port_s, ctx_id=ctx_id)

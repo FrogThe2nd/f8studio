@@ -13,6 +13,7 @@ if ROOT not in sys.path:
 from f8pysdk.generated import F8Edge, F8EdgeKindEnum, F8EdgeStrategyEnum, F8RuntimeGraph, F8RuntimeNode  # noqa: E402
 from f8pysdk.nats_naming import data_subject  # noqa: E402
 from f8pysdk.service_bus.bus import ServiceBus, ServiceBusConfig  # noqa: E402
+from f8pysdk.service_bus.routing.data_emit import DataEmitOptions  # noqa: E402
 from f8pysdk.testing import InMemoryCluster, InMemoryTransport, push_input  # noqa: E402
 
 
@@ -201,6 +202,56 @@ class SliceCDataFlowTests(unittest.IsolatedAsyncioTestCase):
             transport.published_subjects,
             [data_subject("svc", from_node_id="node1", port_id="out")],
         )
+
+    async def test_data_emit_options_can_force_local_only_emit_without_cross_publish(self) -> None:
+        cluster = InMemoryCluster()
+        transport = _RecordingTransport(cluster=cluster, kv_bucket="kv.svcA")
+        bus = ServiceBus(
+            ServiceBusConfig(service_id="svcA", cross_publish_policy="all", data_delivery="buffered"),
+            transport=transport,
+        )
+
+        graph = F8RuntimeGraph(
+            graphId="g-local-only-emit",
+            revision="r1",
+            nodes=[
+                _runtime_node(node_id="src", service_id="svcA", data_out=["out"]),
+                _runtime_node(node_id="local_dst", service_id="svcA", data_in=["in"]),
+                _runtime_node(node_id="remote_dst", service_id="svcB", data_in=["in"]),
+            ],
+            edges=[
+                _data_edge(
+                    edge_id="local",
+                    from_service="svcA",
+                    from_node="src",
+                    from_port="out",
+                    to_service="svcA",
+                    to_node="local_dst",
+                    to_port="in",
+                ),
+                _data_edge(
+                    edge_id="remote",
+                    from_service="svcA",
+                    from_node="src",
+                    from_port="out",
+                    to_service="svcB",
+                    to_node="remote_dst",
+                    to_port="in",
+                ),
+            ],
+        )
+
+        await bus.set_rungraph(graph)
+        await bus.data_router.emit_data(
+            "src",
+            "out",
+            99,
+            ts_ms=11,
+            options=DataEmitOptions.local_compute_only(),
+        )
+
+        self.assertEqual(transport.published_subjects, [])
+        self.assertEqual(bus.data_router.input_buffers[("local_dst", "in")].last_seen_value, 99)
 
 
 if __name__ == "__main__":

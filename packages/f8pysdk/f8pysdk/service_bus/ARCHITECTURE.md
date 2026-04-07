@@ -114,6 +114,7 @@ Current compatibility note:
 
 1. `emit_data(...)` delegates to `DataRouter.emit_data(...)`
 2. local samples are delivered to intra-service targets first
+   internal propagation controls are carried by typed `DataEmitOptions`, not ad hoc branching
 3. local delivery mode is explicit:
    - `callback`: `on_data(...)` only
    - `buffered`: `pull_data(...)` only
@@ -122,7 +123,7 @@ Current compatibility note:
    - `routed`: publish only when the rungraph has a cross-service outgoing edge
    - `all`: publish every emitted output subject
    - `none`: never publish cross-service data
-5. pull-based local computation may call `compute_output(...)` upstream, but it now satisfies local targets only and does not implicitly cross-publish
+5. pull-based local computation may call `compute_output(...)` upstream, but it now does so through explicit local-only emit options and does not implicitly cross-publish
 
 ### Rungraph Apply Chain
 

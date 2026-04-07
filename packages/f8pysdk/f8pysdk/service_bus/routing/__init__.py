@@ -1,3 +1,4 @@
+from .data_emit import DataEmitOptions
 from .data_flow import (
     _InputBuffer,
     buffer_input,
@@ -8,6 +9,7 @@ from .data_flow import (
 )
 
 __all__ = [
+    "DataEmitOptions",
     "_InputBuffer",
     "buffer_input",
     "emit_data",

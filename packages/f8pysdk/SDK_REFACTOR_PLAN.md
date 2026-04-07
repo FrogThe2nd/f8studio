@@ -76,9 +76,9 @@ This plan is intentionally incremental. Each phase should leave the SDK usable a
 
 - [x] Introduce a typed internal `StatePublishOptions` dataclass to replace magic propagation control keys like `_noStateFanout`.
 - [x] Introduce a typed internal `CommandInvokeOptions` dataclass for command source/result policy metadata.
-- [ ] Introduce a typed internal `DataEmitOptions` or `CrossPublishPolicy` abstraction.
+- [x] Introduce a typed internal `DataEmitOptions` or `CrossPublishPolicy` abstraction.
 - [x] Move compatibility-only flags and hidden metadata shaping behind helper constructors instead of open-coded dict assembly.
-- [ ] Add clear docstrings for the canonical meaning of:
+- [x] Add clear docstrings for the canonical meaning of:
   - local delivery
   - fanout
   - persistence
@@ -359,6 +359,17 @@ This milestone does not redesign the SDK yet, but it makes the system much safer
     - `f8pysdk.service_bus.routing_data` remains available as a thin compatibility layer
     - `ServiceBus` still exposes the same public emit/pull/subscribe API, but the data runtime now lives behind `DataRouter`
     - repo-internal callers should prefer `f8pysdk.codec`, `f8pysdk.state`, and `f8pysdk.testing` over deep `service_bus.*` imports
+
+- 2026-04-07
+  - owner: Codex + repository maintainer
+  - scope: Slice 1 semantic cleanup follow-up
+  - completed:
+    - introduced typed internal `DataEmitOptions` and `CrossPublishPlan` for data-side propagation decisions
+    - refactored `DataRouter` to route normal emits and pull-triggered local compute through the same explicit data-side semantics
+    - documented canonical state/data command semantics on the public `ServiceBus` façade
+  - compatibility notes:
+    - public `ServiceBus.emit_data(...)` / `pull_data(...)` signatures remain unchanged
+    - pull-triggered local recompute is still local-only, but that behavior is now represented by typed router options instead of open-coded branching
 
 - When we start a phase, create a short changelog section here with:
   - date

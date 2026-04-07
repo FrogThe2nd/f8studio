@@ -4,6 +4,7 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 from ...generated import F8Edge
+from .data_emit import DataEmitOptions
 from .data_router import DataRouter, InputBuffer as _InputBuffer
 
 if TYPE_CHECKING:
@@ -17,8 +18,16 @@ def precreate_input_buffers_for_cross_in(
     bus.data_router.precreate_input_buffers_for_cross_in(cross_in)
 
 
-async def emit_data(bus: "ServiceBus", node_id: str, port: str, value: Any, *, ts_ms: int | None = None) -> None:
-    await bus.data_router.emit_data(node_id, port, value, ts_ms=ts_ms)
+async def emit_data(
+    bus: "ServiceBus",
+    node_id: str,
+    port: str,
+    value: Any,
+    *,
+    ts_ms: int | None = None,
+    options: DataEmitOptions | None = None,
+) -> None:
+    await bus.data_router.emit_data(node_id, port, value, ts_ms=ts_ms, options=options)
 
 
 async def pull_data(bus: "ServiceBus", node_id: str, port: str, *, ctx_id: str | int | None = None) -> Any:
