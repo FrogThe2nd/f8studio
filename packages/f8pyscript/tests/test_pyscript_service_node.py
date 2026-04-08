@@ -22,7 +22,7 @@ from f8pysdk.shm.video import VideoShmWriter  # noqa: E402
 from f8pysdk.testing import ServiceBusHarness  # noqa: E402
 
 from f8pyscript.constants import SERVICE_CLASS  # noqa: E402
-from f8pyscript.main_script import PythonScriptServiceProgram  # noqa: E402
+from f8pyscript.main_script import build_app  # noqa: E402
 from f8pyscript.script_node_registry import create_pyscript_registry  # noqa: E402
 from f8pyscript.script_service_node import PythonScriptServiceNode  # noqa: E402
 
@@ -88,8 +88,8 @@ class PyScriptServiceNodeTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(bool((states_binding or {}).get("enabled")))
 
     def test_program_defaults_data_delivery_to_both(self) -> None:
-        program = PythonScriptServiceProgram()
-        cfg = program.build_runtime_config(service_id="svcA", nats_url="mem://")
+        app = build_app()
+        cfg = app.build_runtime_config(service_id="svcA", nats_url="mem://")
         self.assertEqual(str(cfg.bus.data_delivery), "both")
 
     async def _build_runtime(self) -> tuple[object, object, PythonScriptServiceNode]:

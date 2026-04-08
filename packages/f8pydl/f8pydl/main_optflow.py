@@ -1,23 +1,20 @@
 from __future__ import annotations
 
-from f8pysdk.app import ServiceCliTemplate
-from f8pysdk.registry import RuntimeNodeRegistry
+from f8pysdk.app import ServiceApp
+from f8pysdk.registry import Registry
 
 from .constants import OPTFLOW_SERVICE_CLASS
 from .node_registry import register_specs
 
 
-class DlOptflowService(ServiceCliTemplate):
-    @property
-    def service_class(self) -> str:
-        return OPTFLOW_SERVICE_CLASS
-
-    def register_specs(self, registry: RuntimeNodeRegistry) -> None:
-        register_specs(registry)
+def build_app() -> ServiceApp:
+    registry = Registry()
+    register_specs(registry.runtime_registry)
+    return ServiceApp(service_class=OPTFLOW_SERVICE_CLASS, registry=registry)
 
 
 def main(argv: list[str] | None = None) -> int:
-    return DlOptflowService().cli(argv, program_name=OPTFLOW_SERVICE_CLASS)
+    return build_app().cli(argv, program_name=OPTFLOW_SERVICE_CLASS)
 
 
 if __name__ == "__main__":

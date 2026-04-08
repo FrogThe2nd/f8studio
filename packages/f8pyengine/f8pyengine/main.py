@@ -10,9 +10,9 @@ def _main(argv: list[str] | None = None) -> int:
         logging.basicConfig(level=level, format="%(levelname)s:%(name)s:%(message)s")
 
     # Local import: keep `python -m f8pyengine.main --describe` as lightweight as possible.
-    from f8pyengine.pyengine_service import PyEngineService
+    from f8pyengine.pyengine_service import build_app
 
-    return PyEngineService().cli(argv, program_name="F8PyEngine")
+    return build_app().cli(argv, program_name="F8PyEngine")
 
 
 if __name__ == "__main__":

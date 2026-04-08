@@ -58,7 +58,7 @@ Slice D notes:
 
 ### Registry
 
-- `ServiceCliTemplate.build_registry()` should return a fresh registry by default.
+- Service entrypoints should own a fresh `Registry()` / `ServiceApp(...)` by default rather than depending on process-global registration state.
 - Shared registries are explicit opt-in.
 - Passing an explicit registry instance is the supported way to share registrations across components in one process.
 

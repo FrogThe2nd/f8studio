@@ -47,40 +47,44 @@ Lifecycle contract:
 - `ServiceBus` and `ServiceRuntime` are single-run objects.
 - After `stop()`, create a new instance instead of calling `start()` again.
 
-### Recommended “fill-in-the-blanks” entrypoint
-Use `ServiceCliTemplate` (`f8pysdk/service_cli.py`) to keep each service process consistent:
+### Recommended service entrypoint
+Prefer `ServiceApp` plus `Registry` for new services:
+- one explicit owner object for describe/build/run/CLI
+- one explicit registry owner for specs and runtime node factories
 - standard CLI: `--describe`, `--service-id`, `--nats-url` (with `F8_SERVICE_ID`, `F8_NATS_URL` env fallbacks)
-- fixed lifecycle hooks:
-  - `register_specs(registry)` (required)
-  - `setup(app)` (optional)
-  - `teardown(app)` (optional)
 
 Minimal example:
 
 ```py
-from f8pysdk.app import ServiceCliTemplate
-from f8pysdk.registry import RuntimeNodeRegistry
+from f8pysdk.app import ServiceApp
+from f8pysdk.registry import Registry
+from mysvc.specs import MY_OPERATOR_SPEC, MY_SERVICE_SPEC
+from mysvc.nodes import MyOperatorNode, MyServiceNode
 
-class MyService(ServiceCliTemplate):
-    @property
-    def service_class(self) -> str:
-        return "f8.myservice"
+registry = Registry()
+registry.register_service(MY_SERVICE_SPEC, MyServiceNode)
+registry.register_operator(MY_OPERATOR_SPEC, MyOperatorNode)
 
-    def register_specs(self, registry: RuntimeNodeRegistry) -> None:
-        # registry.register_service_spec(...)
-        # registry.register_service_factory(...)
-        # registry.register_operator_spec(...)
-        # registry.register_operator_factory(...)
-        pass
+app = ServiceApp(
+    service_class="f8.myservice",
+    registry=registry,
+)
+
+app.run(service_id="svc-a", nats_url="nats://127.0.0.1:4222")
 ```
 
 Registry contract:
-- `ServiceCliTemplate.build_registry()` returns a fresh `RuntimeNodeRegistry` by default.
-- Use `ServiceCliTemplate.build_shared_registry()` only when process-global sharing is intentional.
+- `Registry()` creates a fresh process-local runtime registry owner by default.
+- Use `ServiceApp.build_shared_registry()` or `shared_runtime_node_registry()` only when process-global sharing is intentional.
+- `Registry.register_service(spec, node_type_or_factory)` pairs describe-time metadata with runtime node construction in one call.
+- `Registry.register_operator(spec, node_type_or_factory)` does the same for operators.
 - Pass an explicit registry into `ServiceRuntime(...)` or `ServiceHost(...)` when multiple components must share registration state.
 - Use `register_service_spec(...)` / `register_operator_spec(...)` for describe-time metadata.
 - Use `register_service_factory(...)` / `register_operator_factory(...)` for runtime node construction.
 - Missing operator runtime factories now fail explicitly; generic `ServiceNode` remains the default container when a service class has no custom service factory.
+
+Compatibility note:
+- repo entrypoints now use `ServiceApp`; new code should follow that single explicit app owner model.
 
 Command contract:
 - `ServiceBus.invoke_command(node_id, call, args, ...)` is the explicit local command API.

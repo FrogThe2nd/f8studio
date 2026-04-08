@@ -18,7 +18,7 @@ from f8pysdk.testing import ServiceBusHarness  # noqa: E402
 from f8pyscript.constants import EXPR_SERVICE_CLASS  # noqa: E402
 from f8pyscript.expr_node_registry import create_pyexpr_registry  # noqa: E402
 from f8pyscript.expr_service_node import PythonExprServiceNode, np  # noqa: E402
-from f8pyscript.main_expr import PythonExprServiceProgram  # noqa: E402
+from f8pyscript.main_expr import build_app  # noqa: E402
 
 
 def _expr_node(
@@ -56,8 +56,8 @@ class PyExprServiceNodeTests(unittest.IsolatedAsyncioTestCase):
         bus.set_data_delivery("both", source="test")
 
     def test_program_defaults_data_delivery_to_both(self) -> None:
-        program = PythonExprServiceProgram()
-        cfg = program.build_runtime_config(service_id="svcExpr", nats_url="mem://")
+        app = build_app()
+        cfg = app.build_runtime_config(service_id="svcExpr", nats_url="mem://")
         self.assertEqual(str(cfg.bus.data_delivery), "both")
 
     def test_expr_spec_placeholder_ports_not_required(self) -> None:

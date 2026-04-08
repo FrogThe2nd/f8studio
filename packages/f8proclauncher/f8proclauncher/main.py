@@ -10,11 +10,10 @@ def _main(argv: list[str] | None = None) -> int:
         level = getattr(logging, raw, logging.WARNING) if raw else logging.WARNING
         logging.basicConfig(level=level, format="%(levelname)s:%(name)s:%(message)s")
 
-    from .proclauncher_service import ProcLauncherService
+    from .proclauncher_service import build_app
 
-    return ProcLauncherService().cli(argv, program_name="F8ProcLauncher")
+    return build_app().cli(argv, program_name="F8ProcLauncher")
 
 
 if __name__ == "__main__":
     raise SystemExit(_main())
-

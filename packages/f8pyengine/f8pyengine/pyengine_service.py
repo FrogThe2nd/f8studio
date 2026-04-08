@@ -3,13 +3,14 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from f8pysdk.app import ServiceCliTemplate, ServiceRuntime
+from f8pysdk.app import ServiceApp
+from f8pysdk.capabilities import ExecutableNode, ServiceHookBase
 from f8pysdk.executors.exec_flow import ExecFlowExecutor
 from f8pysdk.executors.exec_flow import validate_exec_topology_or_raise
-from f8pysdk.specs import F8RuntimeGraph
-from f8pysdk.capabilities import ExecutableNode, ServiceHookBase
 from f8pysdk.nats_naming import ensure_token
-from f8pysdk.registry import RuntimeNodeRegistry
+from f8pysdk.registry import Registry
+from f8pysdk.service_runtime import ServiceRuntime
+from f8pysdk.specs import F8RuntimeGraph
 
 from .constants import SERVICE_CLASS
 from .pyengine_node_registry import register_pyengine_specs
@@ -17,15 +18,14 @@ from .pyengine_node_registry import register_pyengine_specs
 logger = logging.getLogger(__name__)
 
 
-class PyEngineService(ServiceCliTemplate, ServiceHookBase):
+class PyEngineService(ServiceHookBase):
     """
-    Fill-in-the-blanks service program for `f8.pyengine`.
+    Canonical entry wiring for `f8.pyengine`.
 
-    This is the canonical entry wiring:
-    - register pyengine runtime node specs
-    - attach ExecFlowExecutor (exec runtime)
-    - bind exec-capable nodes (including entrypoints) from the rungraph
-    - pause/resume executor via ServiceBus lifecycle events
+    - registers pyengine runtime node specs
+    - attaches ExecFlowExecutor
+    - binds exec-capable nodes from the rungraph
+    - pauses/resumes executor from ServiceBus lifecycle events
     """
 
     def __init__(self) -> None:
@@ -33,16 +33,7 @@ class PyEngineService(ServiceCliTemplate, ServiceHookBase):
         self._exec_node_ids: set[str] = set()
         self._runtime: ServiceRuntime | None = None
 
-    @property
-    def service_class(self) -> str:
-        return SERVICE_CLASS
-
-    def register_specs(self, registry: RuntimeNodeRegistry) -> None:
-        register_pyengine_specs(registry)
-
     async def setup(self, runtime: ServiceRuntime) -> None:
-        # PyEngine primarily relies on pull-based `compute_output(...)` evaluation.
-        # Keep its default behavior stable even if the global ServiceBus default changes.
         runtime.bus.set_data_delivery("pull", source="service")
         executor = ExecFlowExecutor(runtime.bus)
         self._executor = executor
@@ -75,7 +66,7 @@ class PyEngineService(ServiceCliTemplate, ServiceHookBase):
     async def _sync_exec_nodes(self, runtime: ServiceRuntime, graph: F8RuntimeGraph) -> None:
         want: set[str] = set()
         for n in list(graph.nodes or []):
-            if n.serviceClass != self.service_class:
+            if n.serviceClass != SERVICE_CLASS:
                 continue
             exec_in = list(n.execInPorts or [])
             exec_out = list(n.execOutPorts or [])
@@ -98,8 +89,6 @@ class PyEngineService(ServiceCliTemplate, ServiceHookBase):
                 logger.exception("unregister exec node failed: %s", node_id)
             self._exec_node_ids.discard(node_id)
 
-        # Always (re-)register nodes in `want` so hot-recreated runtime node instances
-        # are picked up by the executor without requiring a nodeId change.
         for node_id in sorted(want):
             node = runtime.bus.get_node(node_id)
             if node is None:
@@ -139,3 +128,15 @@ class PyEngineService(ServiceCliTemplate, ServiceHookBase):
         if executor is None:
             return
         await executor.set_active(False)
+
+
+def build_app() -> ServiceApp:
+    registry = Registry()
+    register_pyengine_specs(registry.runtime_registry)
+    hooks = PyEngineService()
+    return ServiceApp(
+        service_class=SERVICE_CLASS,
+        registry=registry,
+        setup=hooks.setup,
+        teardown=hooks.teardown,
+    )

@@ -27,7 +27,7 @@ This plan is intentionally incremental. Each phase should leave the SDK usable a
 - Commands currently have two execution paths: hidden state command dispatch and micro request/reply command dispatch.
 - `data_delivery="both"` creates dual-consumption semantics for the same sample.
 - `ServiceBus.stop()` clears hook registrations, which makes restart/reuse semantics fragile.
-- `RuntimeNodeRegistry` and `ServiceCliTemplate` lean on process-global singleton behavior.
+- `RuntimeNodeRegistry` and the old template-style service entrypoints lean on process-global singleton behavior.
 - Missing operator runtime factories can silently degrade into generic nodes.
 - Service runtime factory behavior is still partly compatibility-driven and needs explicit docs/tests.
 - Layered module structure exists on paper, but runtime state still lives in one large mutable `ServiceBus`.
@@ -159,7 +159,7 @@ This plan is intentionally incremental. Each phase should leave the SDK usable a
 
 - [x] Stop clearing rungraph/service hook registrations inside `ServiceBus.stop()`, or re-register them explicitly on restart.
 - [x] Define whether `ServiceRuntime` and `ServiceBus` are restartable objects; document and test that contract.
-- [x] Stop defaulting `ServiceCliTemplate.build_registry()` to a process-global singleton.
+- [x] Stop defaulting service entrypoint registry creation to a process-global singleton.
 - [x] Make shared registries opt-in rather than default.
 - [x] Split "spec registration" and "runtime factory registration" APIs more clearly.
 - [x] Change missing operator factory behavior from silent fallback to explicit structured errors.
@@ -180,7 +180,7 @@ This plan is intentionally incremental. Each phase should leave the SDK usable a
 ### Phase 4 status
 
 - Sibling package registry owners now expose explicit `create_*_registry()` / `shared_*_registry()` helpers rather than relying on implicit singleton fallback.
-- Repeated describe / CLI setup behavior is locked by `packages/f8pysdk/tests/test_service_cli_monitor_overrides.py`.
+- Repeated describe / CLI setup behavior is locked by `packages/f8pysdk/tests/test_service_app_monitor_overrides.py`.
 - Repeated runtime creation and stop/start reuse contracts are locked by `packages/f8pysdk/tests/test_runtime_regressions.py`.
 
 ## Phase 5: Break Up the Large ServiceBus
@@ -299,7 +299,7 @@ If we want the first code-change milestone to be low risk and high leverage, do 
 
 - [x] Add Phase 0 regression tests.
 - [x] Fix hook clearing on stop or document non-restartability and enforce it.
-- [x] Make `ServiceCliTemplate` use a fresh registry by default.
+- [x] Make service entrypoints use a fresh registry by default.
 - [x] Add an explicit opt-in path for shared registries in tests or plugin discovery code.
 
 This milestone does not redesign the SDK yet, but it makes the system much safer to refactor.
@@ -311,7 +311,7 @@ This milestone does not redesign the SDK yet, but it makes the system much safer
   - scope: Slice A baseline hardening
   - completed:
     - documented single-run lifecycle for `ServiceBus` and `ServiceRuntime`
-    - switched `ServiceCliTemplate`, `ServiceRuntime`, and `ServiceHost` defaults to fresh registries
+    - switched service entrypoint wiring, `ServiceRuntime`, and `ServiceHost` defaults to fresh registries
     - added explicit shared-registry opt-in
     - added regression coverage for over-publish, dual delivery, registry contamination, missing operator fallback, and split command semantics
     - added a current-state architecture note for canonical runtime chains
@@ -400,7 +400,7 @@ This milestone does not redesign the SDK yet, but it makes the system much safer
     - migrated SDK-internal callers away from `service_bus.codec`, `service_bus.bus`, and direct `nats_transport` imports where stable wrappers now exist
     - migrated representative SDK tests to the public import surfaces and added explicit coverage for the new top-level modules
     - moved stable test helpers off `service_bus.routing_data` so benchmarks/tests can stay on `f8pysdk.testing`
-    - migrated repo-wide callers off `runtime_node`, `runtime_node_registry`, `service_cli`, `service_runtime`, `service_host`, and `nats_transport` import paths onto the stable public modules
+    - migrated repo-wide callers off `runtime_node`, `runtime_node_registry`, old template app helpers, `service_runtime`, `service_host`, and `nats_transport` import paths onto the stable public modules
     - promoted monitor snapshot collection to stable top-level module `f8pysdk.monitoring`
     - moved non-public test/runtime helpers behind explicit `f8pysdk.service_bus.internal` boundaries owned by the ServiceBus subsystem instead of a top-level pseudo-internal package
   - compatibility notes:
@@ -491,6 +491,32 @@ This milestone does not redesign the SDK yet, but it makes the system much safer
     - added regression coverage that registered hooks remain attached after stop on single-run bus instances
   - compatibility notes:
     - `ServiceBus` and `ServiceRuntime` remain single-run objects; this change only removes surprising post-stop mutation of hook registration state
+
+- 2026-04-07
+  - owner: Codex + repository maintainer
+  - scope: Post-plan ergonomic service entrypoint bootstrap
+  - completed:
+    - introduced user-facing `f8pysdk.registry.Registry` plus `create_registry()` / `shared_registry()` helpers
+    - introduced user-facing `f8pysdk.app.ServiceApp` and `ServiceAppDefaults` to own describe/build/run/CLI from one explicit object
+    - added regression coverage for direct spec+node registration, runtime config/build, describe output, and setup/teardown hook execution
+    - migrated `f8pydl.main_detector` to the new `ServiceApp` entry style as the first in-repo example
+    - updated the README canonical example to prefer `ServiceApp + Registry` for new services
+  - compatibility notes:
+    - the old subclass-based template entrypoint has since been removed in favor of `ServiceApp`
+    - `RuntimeNodeRegistry` remains the low-level owner for callers that need direct runtime-factory control
+
+- 2026-04-08
+  - owner: Codex + repository maintainer
+  - scope: Full repo service-entry migration to `ServiceApp`
+  - completed:
+    - migrated remaining service entrypoints in `f8pydl`, `f8pyaudiofeat`, `f8pyscript`, `f8pyengine`, `f8pymppose`, and `f8proclauncher` to explicit `build_app()` / `ServiceApp` wiring
+    - kept hook-heavy services on explicit runtime hook owners while removing the subclass-based app template layer
+    - added describe smoke coverage that runs `--describe` across all current repo service entrypoints
+    - removed `ServiceCliTemplate` from the SDK implementation and public exports
+    - renamed the monitor override tests to the new `ServiceApp` terminology
+  - compatibility notes:
+    - repo service entrypoints now have a single canonical organization pattern: `Registry` + `ServiceApp`
+    - service-specific helper classes may still exist when they own runtime hook behavior, but they are no longer app templates
 
 - When we start a phase, create a short changelog section here with:
   - date
