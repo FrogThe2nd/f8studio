@@ -201,7 +201,7 @@ This plan is intentionally incremental. Each phase should leave the SDK usable a
 - [x] Extract data buffer/subscription/push callback logic from `ServiceBus`.
 - [x] Extract command binding and dispatch state from `ServiceBus`.
 - [x] Reduce direct `bus._...` access across modules.
-- [ ] Replace implicit shared mutable access with explicit constructor injection.
+- [x] Replace implicit shared mutable access with explicit constructor injection.
 - [x] Keep `ServiceBus` as a thin façade for compatibility.
 
 ### Acceptance
@@ -215,6 +215,7 @@ This plan is intentionally incremental. Each phase should leave the SDK usable a
 - `StateStore` is the canonical owner for state cache, access maps, and KV-backed reads.
 - `StateRouter` is the canonical owner for intra-state routes, cross-state bindings, remote watches, and ordering guards.
 - `ServiceBus` now acts as the compatibility façade over those focused components.
+- `ServiceBus` now accepts an explicit component factory, so owner components can be injected for tests or alternate runtime wiring.
 
 ## Phase 6: Public API Cleanup and Compatibility Pass
 
@@ -236,11 +237,11 @@ This plan is intentionally incremental. Each phase should leave the SDK usable a
   - `f8pysdk.command`
   - `f8pysdk.transport`
   - `f8pysdk.testing`
-- [ ] Remove wildcard exports from package root or replace them with explicit exports.
-- [ ] Move compatibility re-export modules under a clearly marked compatibility boundary.
-- [ ] Audit sibling packages for internal imports and migrate them to stable modules.
-- [ ] Add deprecation warnings and migration notes for unstable paths such as deep `service_bus.*` imports.
-- [ ] Update README examples to use the new canonical entrypoints only.
+- [x] Remove wildcard exports from package root or replace them with explicit exports.
+- [x] Move compatibility re-export modules under a clearly marked compatibility boundary.
+- [x] Audit sibling packages for internal imports and migrate them to stable modules.
+- [x] Add deprecation warnings and migration notes for unstable paths such as deep `service_bus.*` imports.
+- [x] Update README examples to use the new canonical entrypoints only.
 
 ### Acceptance
 

@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from NodeGraphQt import NodeGraph
 from f8pysdk.msgspec_codec import dump_json
-from f8pysdk.generated import (
+from f8pysdk.specs import (
     F8DataPortSpec,
     F8StateAccess,
     F8StateSpec,
@@ -15,7 +15,7 @@ from f8pysdk.generated import (
     F8ServiceSchemaVersion,
     F8ServiceSpec,
 )
-from f8pysdk.schema_helpers import any_schema, boolean_schema, string_schema
+from f8pysdk.specs import any_schema, boolean_schema, string_schema
 
 from f8pystudio.nodegraph.node_graph import F8StudioGraph
 from f8pystudio.nodegraph.missing_operator_basenode import F8StudioOperatorMissingNode

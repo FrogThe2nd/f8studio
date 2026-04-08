@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from f8pysdk.specs import F8ServiceSchemaVersion, F8ServiceSpec, F8StateAccess, F8StateSpec, boolean_schema, string_schema
-from f8pysdk.generated import F8RuntimeNode
+from f8pysdk.specs import F8RuntimeNode
 from f8pysdk.nodes import RuntimeNode
 from f8pysdk.registry import create_runtime_node_registry, RuntimeNodeRegistry, shared_runtime_node_registry
 

@@ -6,9 +6,9 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from f8pysdk.generated import F8OperatorSpec, F8ServiceSpec, F8StateAccess, F8StateSpec  # noqa: E402
+from f8pysdk.specs import F8OperatorSpec, F8ServiceSpec, F8StateAccess, F8StateSpec  # noqa: E402
 from f8pysdk.registry import create_runtime_node_registry  # noqa: E402
-from f8pysdk.schema_helpers import boolean_schema, string_schema  # noqa: E402
+from f8pysdk.specs import boolean_schema, string_schema  # noqa: E402
 
 
 class RuntimeNodeRegistryBuiltinTests(unittest.TestCase):

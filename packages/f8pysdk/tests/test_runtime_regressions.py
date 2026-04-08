@@ -10,7 +10,7 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from f8pysdk.generated import F8RuntimeGraph, F8RuntimeNode, F8ServiceSpec  # noqa: E402
+from f8pysdk.specs import F8RuntimeGraph, F8RuntimeNode, F8ServiceSpec  # noqa: E402
 from f8pysdk.nats_naming import data_subject  # noqa: E402
 from f8pysdk.nodes import ServiceNode  # noqa: E402
 from f8pysdk.registry import (  # noqa: E402
@@ -19,7 +19,7 @@ from f8pysdk.registry import (  # noqa: E402
     RuntimeNodeRegistry,
     shared_runtime_node_registry,
 )
-from f8pysdk.bus import ServiceBus, ServiceBusConfig  # noqa: E402
+from f8pysdk.bus import DefaultServiceBusComponentFactory, ServiceBus, ServiceBusConfig  # noqa: E402
 from f8pysdk.app import ServiceHost, ServiceHostConfig, ServiceRuntime, ServiceRuntimeConfig  # noqa: E402
 from f8pysdk.testing import InMemoryCluster, InMemoryTransport, ServiceBusHarness, push_input  # noqa: E402
 
@@ -77,6 +77,40 @@ class _NoopServiceHook:
         _ = bus
 
 
+class _RecordingComponentFactory(DefaultServiceBusComponentFactory):
+    def __init__(self) -> None:
+        self.created_data_router = None
+        self.created_state_store = None
+        self.created_state_router = None
+        self.created_command_gateway = None
+        self.created_monitor_collector = None
+
+    def create_data_router(self, **kwargs: object):
+        router = super().create_data_router(**kwargs)
+        self.created_data_router = router
+        return router
+
+    def create_state_store(self, **kwargs: object):
+        store = super().create_state_store(**kwargs)
+        self.created_state_store = store
+        return store
+
+    def create_state_router(self, **kwargs: object):
+        router = super().create_state_router(**kwargs)
+        self.created_state_router = router
+        return router
+
+    def create_command_gateway(self, **kwargs: object):
+        gateway = super().create_command_gateway(**kwargs)
+        self.created_command_gateway = gateway
+        return gateway
+
+    def create_monitor_collector(self, **kwargs: object):
+        collector = super().create_monitor_collector(**kwargs)
+        self.created_monitor_collector = collector
+        return collector
+
+
 class RuntimeRegressionTests(unittest.IsolatedAsyncioTestCase):
     async def test_registry_helpers_make_fresh_and_shared_semantics_explicit(self) -> None:
         original_instance = RuntimeNodeRegistry._instance
@@ -109,6 +143,20 @@ class RuntimeRegressionTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIs(rt_a._registry, registry)
         self.assertIs(rt_b._registry, registry)
+
+    async def test_service_bus_uses_explicit_component_factory(self) -> None:
+        factory = _RecordingComponentFactory()
+
+        bus = ServiceBus(
+            ServiceBusConfig(service_id="svc"),
+            component_factory=factory,
+        )
+
+        self.assertIs(bus.data_router, factory.created_data_router)
+        self.assertIs(bus.state_store, factory.created_state_store)
+        self.assertIs(bus.state_router, factory.created_state_router)
+        self.assertIs(bus.command_gateway, factory.created_command_gateway)
+        self.assertIs(bus.monitor_collector, factory.created_monitor_collector)
 
     async def test_publish_all_data_publishes_without_cross_routes(self) -> None:
         cluster = InMemoryCluster()

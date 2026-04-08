@@ -8,7 +8,7 @@ from typing import Protocol, cast
 from qtpy import QtWidgets
 
 from f8pysdk.specs import F8VariantRecord
-from f8pysdk.spec_metadata import palette_category_from_spec
+from f8pysdk.specs import palette_category_from_spec
 
 from ..assets.common import JsonObject
 from ..assets.components.component_repository import component_entry, list_component_entries

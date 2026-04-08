@@ -8,7 +8,7 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from f8pysdk.generated import (  # noqa: E402
+from f8pysdk.specs import (  # noqa: E402
     Code,
     F8Command,
     F8CommandInvokeRequest,
@@ -27,7 +27,7 @@ from f8pysdk.command_state import command_input_state_field, command_output_stat
 from f8pysdk.command import CommandExecutionErrorKind, CommandOutputPolicy  # noqa: E402
 from f8pysdk.nats_naming import kv_key_node_state  # noqa: E402
 from f8pysdk.nodes import RuntimeNode  # noqa: E402
-from f8pysdk.schema_helpers import string_schema  # noqa: E402
+from f8pysdk.specs import string_schema  # noqa: E402
 from f8pysdk.bus import ServiceBus, ServiceBusConfig  # noqa: E402
 from f8pysdk.service_bus.internal.micro import ServiceBusMicroEndpoints  # noqa: E402
 from f8pysdk.service_bus.state.options import StatePublishOptions  # noqa: E402

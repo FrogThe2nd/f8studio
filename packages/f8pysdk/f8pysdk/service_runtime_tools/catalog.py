@@ -7,7 +7,7 @@ from typing import ClassVar
 
 import msgspec
 
-from f8pysdk.generated import F8OperatorSchemaVersion, F8OperatorSpec, F8ServiceSchemaVersion, F8ServiceSpec
+from f8pysdk.specs import F8OperatorSchemaVersion, F8OperatorSpec, F8ServiceSchemaVersion, F8ServiceSpec
 
 
 class ServiceSpecRegistry:

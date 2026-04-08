@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 import msgspec
-from f8pysdk.generated import F8CommandInvokeReply
+from f8pysdk.specs import F8CommandInvokeReply
 from f8pysdk.nats_naming import cmd_channel_subject, ensure_token, new_id
 
 from .json_codec import coerce_json_value

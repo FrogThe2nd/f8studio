@@ -4,7 +4,7 @@ import enum
 from typing import Any
 
 from f8pysdk.specs import F8StateAccess
-from f8pysdk.generated import (
+from f8pysdk.specs import (
     F8AnyTypeSchema,
     F8ArrayTypeSchema,
     F8BooleanTypeSchema,

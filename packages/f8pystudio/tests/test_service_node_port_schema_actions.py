@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from f8pysdk.generated import F8DataPortSpec, F8ServiceSpec, F8StateAccess, F8StateSpec
-from f8pysdk.schema_helpers import number_schema, string_schema
+from f8pysdk.specs import F8DataPortSpec, F8ServiceSpec, F8StateAccess, F8StateSpec
+from f8pysdk.specs import number_schema, string_schema
 
 from f8pystudio.nodegraph.items import service_node_port_schema_actions as actions
 

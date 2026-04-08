@@ -13,11 +13,11 @@ from NodeGraphQt.errors import NodeCreationError
 
 from f8pysdk.specs import F8OperatorSpec, F8ServiceSpec
 from f8pysdk.command_state import command_input_port_name, command_output_port_name
-from f8pysdk.spec_metadata import (
+from f8pysdk.specs import (
     coerce_spec_payload,
     spec_kind_from_spec,
 )
-from f8pysdk.spec_edit_policy import (
+from f8pysdk.specs import (
     can_add as _policy_can_add,
     can_delete as _policy_can_delete,
     can_edit_existing as _policy_can_edit_existing,

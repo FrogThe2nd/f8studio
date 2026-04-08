@@ -3,8 +3,8 @@ from __future__ import annotations
 from f8pysdk.msgspec_codec import dump_json
 from copy import deepcopy
 
-from f8pysdk.generated import F8Command, F8DataPortSpec, F8ServiceSpec
-from f8pysdk.schema_helpers import any_schema, number_schema
+from f8pysdk.specs import F8Command, F8DataPortSpec, F8ServiceSpec
+from f8pysdk.specs import any_schema, number_schema
 from f8pystudio.nodegraph.layers import F8LayerDef
 from f8pystudio.nodegraph.session_layout_codec import SessionLayoutCodecMixin
 from NodeGraphQt import NodeGraph

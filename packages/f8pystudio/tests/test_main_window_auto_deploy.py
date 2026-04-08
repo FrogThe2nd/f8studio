@@ -8,7 +8,7 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from f8pysdk.generated import (  # noqa: E402
+from f8pysdk.specs import (  # noqa: E402
     F8Edge,
     F8EdgeKindEnum,
     F8EdgeStrategyEnum,
@@ -18,7 +18,7 @@ from f8pysdk.generated import (  # noqa: E402
     F8StateAccess,
     F8StateSpec,
 )
-from f8pysdk.schema_helpers import string_schema  # noqa: E402
+from f8pysdk.specs import string_schema  # noqa: E402
 
 from f8pystudio.ui.mainwin.main_window import F8StudioMainWin  # noqa: E402
 

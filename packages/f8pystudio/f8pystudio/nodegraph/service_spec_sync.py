@@ -7,7 +7,7 @@ from NodeGraphQt.constants import NodePropWidgetEnum
 
 from f8pysdk.specs import F8StateAccess
 from f8pysdk.command_state import command_input_port_name, command_output_port_name
-from f8pysdk.schema_helpers import schema_default, schema_type
+from f8pysdk.specs import schema_default, schema_type
 
 from .items.node_item_core import state_field_info as _state_field_info
 from .port_painter import COMMAND_PORT_COLOR, DATA_PORT_COLOR, STATE_PORT_COLOR, draw_square_port

@@ -12,7 +12,7 @@ for p in (PKG_STUDIO, PKG_SDK):
         sys.path.insert(0, p)
 
 from f8pysdk.specs import F8DataPortSpec, any_schema  # noqa: E402
-from f8pysdk.generated import F8RuntimeNode  # noqa: E402
+from f8pysdk.specs import F8RuntimeNode  # noqa: E402
 from f8pysdk.registry import create_runtime_node_registry  # noqa: E402
 
 from f8pystudio.studio_specs.identifiers import SERVICE_CLASS  # noqa: E402

@@ -22,11 +22,11 @@ from f8pysdk.specs import (
     number_schema,
     string_schema,
 )
-from f8pysdk.generated import UNSET
+from f8pysdk.specs import UNSET
 from f8pysdk.nats_naming import ensure_token
 from f8pysdk.nodes import OperatorNode
 from f8pysdk.registry import RuntimeNodeRegistry
-from f8pysdk.schema_helpers import array_schema, number_schema as helper_number_schema
+from f8pysdk.specs import array_schema, number_schema as helper_number_schema
 
 from ..constants import SERVICE_CLASS
 from .wave_loop_sampler import LoopingLinearSampler

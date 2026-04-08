@@ -20,7 +20,7 @@ from f8pysdk.specs import (  # noqa: E402
     any_schema,
     string_schema,
 )
-from f8pysdk.generated import F8RuntimeGraph, F8RuntimeNode  # noqa: E402
+from f8pysdk.specs import F8RuntimeGraph, F8RuntimeNode  # noqa: E402
 from f8pysdk.registry import create_runtime_node_registry  # noqa: E402
 from f8pysdk.app import ServiceHost, ServiceHostConfig  # noqa: E402
 from f8pysdk.testing import ServiceBusHarness  # noqa: E402

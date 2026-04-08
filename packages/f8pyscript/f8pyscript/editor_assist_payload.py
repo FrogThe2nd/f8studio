@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from f8pysdk.editor_assist_protocol import validate_editor_assist_spec
-from f8pysdk.generated import F8EditorAssistSpec
+from f8pysdk.specs import F8EditorAssistSpec
 
 _PYSCRIPT_STUB = """from __future__ import annotations
 

@@ -14,7 +14,7 @@ from f8pysdk.specs import (
     can_edit_existing as _policy_can_edit_existing,
 )
 from f8pysdk.command_state import command_input_state_field
-from f8pysdk.schema_helpers import schema_default
+from f8pysdk.specs import schema_default
 
 from qtpy import QtCore, QtWidgets
 

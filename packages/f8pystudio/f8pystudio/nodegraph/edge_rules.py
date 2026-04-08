@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from f8pysdk.specs import F8OperatorSpec, F8ServiceSpec
-from f8pysdk.spec_metadata import coerce_spec_payload, spec_kind_from_spec
+from f8pysdk.specs import coerce_spec_payload, spec_kind_from_spec
 
 EDGE_KIND_EXEC = "exec"
 EDGE_KIND_DATA = "data"

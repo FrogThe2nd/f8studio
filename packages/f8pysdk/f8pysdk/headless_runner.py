@@ -32,10 +32,10 @@ def _load_injector(ref: str) -> Callable[[Any], str | None]:
 
 
 async def _deploy_runtime_graph(*, nats_url: str, service_id: str, graph: Any) -> None:
-    from f8pysdk.generated import F8SetRungraphArgs, F8SetRungraphReply, F8SetRungraphRequest
     from f8pysdk.msgspec_codec import copy_model
     from f8pysdk.codec import decode_as, encode_obj
     from f8pysdk.nats_naming import kv_bucket_for_service, new_id, svc_endpoint_subject
+    from f8pysdk.specs import F8SetRungraphArgs, F8SetRungraphReply, F8SetRungraphRequest
     from f8pysdk.transport import NatsTransport, NatsTransportConfig
     from f8pysdk.service_ready import wait_service_ready
 

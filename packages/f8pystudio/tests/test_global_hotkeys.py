@@ -8,8 +8,8 @@ from typing import Any
 import pytest
 from qtpy import QtCore, QtGui, QtWidgets
 
-from f8pysdk.generated import F8StateAccess, F8StateSpec
-from f8pysdk.schema_helpers import integer_schema, number_schema, string_schema
+from f8pysdk.specs import F8StateAccess, F8StateSpec
+from f8pysdk.specs import integer_schema, number_schema, string_schema
 
 from f8pystudio.global_hotkeys.backend import (
     WM_HOTKEY,

@@ -16,7 +16,7 @@ from f8pysdk.specs import (
     editable_collection_edit_policy,
     string_schema,
 )
-from f8pysdk.generated import UNSET
+from f8pysdk.specs import UNSET
 from f8pysdk.nats_naming import ensure_token
 from f8pysdk.nodes import OperatorNode
 from f8pysdk.registry import RuntimeNodeRegistry

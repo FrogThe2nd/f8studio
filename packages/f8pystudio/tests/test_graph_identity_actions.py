@@ -3,7 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any
 
-from f8pysdk.generated import F8OperatorSchemaVersion, F8OperatorSpec, F8ServiceSpec
+from f8pysdk.specs import F8OperatorSchemaVersion, F8OperatorSpec, F8ServiceSpec
 from f8pystudio.nodegraph.graph_identity_actions import GraphIdentityActionsMixin
 
 

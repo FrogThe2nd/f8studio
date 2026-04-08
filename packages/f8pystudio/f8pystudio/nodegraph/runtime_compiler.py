@@ -40,9 +40,9 @@ from f8pysdk.rungraph_validation import (
     validate_state_edge_targets_writable_or_raise,
     validate_state_edges_or_raise,
 )
-from f8pysdk.schema_helpers import boolean_schema
-from f8pysdk.schema_helpers import integer_schema
-from f8pysdk.schema_helpers import any_schema
+from f8pysdk.specs import boolean_schema
+from f8pysdk.specs import integer_schema
+from f8pysdk.specs import any_schema
 from f8pysdk.nats_naming import ensure_token
 
 from f8pystudio.studio_specs.registry import SERVICE_CLASS as STUDIO_SERVICE_CLASS

@@ -5,7 +5,7 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Any
 
-from f8pysdk.generated import (
+from f8pysdk.specs import (
     F8MonitorErrorSummary,
     F8MonitorHotspotEntry,
     F8MonitorHotspots,

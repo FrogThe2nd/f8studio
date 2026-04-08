@@ -12,7 +12,7 @@ if SDK_ROOT not in sys.path:
     sys.path.insert(0, SDK_ROOT)
 
 from f8pysdk.specs import F8DataPortSpec, F8RuntimeGraph, F8RuntimeNode, F8StateAccess, F8StateSpec, any_schema, integer_schema  # noqa: E402
-from f8pysdk.generated import F8Edge, F8EdgeKindEnum, F8EdgeStrategyEnum  # noqa: E402
+from f8pysdk.specs import F8Edge, F8EdgeKindEnum, F8EdgeStrategyEnum  # noqa: E402
 from f8pysdk.registry import create_runtime_node_registry  # noqa: E402
 from f8pysdk.app import ServiceHost, ServiceHostConfig  # noqa: E402
 from f8pysdk.testing import buffer_input  # noqa: E402

@@ -3,12 +3,14 @@
 Python runtime SDK for running an F8 service process.
 
 ### Core building blocks
-- `ServiceBus` (`f8pysdk.service_bus`): public runtime facade over transport, routing, state, commands, and lifecycle.
+- `ServiceBus` (`f8pysdk.bus`): public runtime facade over transport, routing, state, commands, and lifecycle.
 - `ServiceHost` (`f8pysdk/service_host.py`): rungraph-driven runtime node materialization/registration.
 - `ServiceRuntime` (`f8pysdk/service_runtime.py`): runtime facade that wires `ServiceBus` + `ServiceHost`.
 
 Stable public modules:
 - `f8pysdk.app`: service program/runtime/host entrypoints
+- `f8pysdk.bus`: `ServiceBus`, `ServiceBusConfig`, and explicit bus component factory types
+- `f8pysdk.specs`: generated protocol models, schema helpers, and spec metadata/edit-policy helpers
 - `f8pysdk.nodes`: `RuntimeNode`, `ServiceNode`, `OperatorNode`
 - `f8pysdk.registry`: `RuntimeNodeRegistry` and registry errors
 - `f8pysdk.command`: command result/output policy types
@@ -24,7 +26,8 @@ Explicit internal-only modules:
 
 Removed deep legacy paths:
 - old `f8pysdk.service_bus.*` compatibility shims such as `bus`, `codec`, `command_runtime`, `cross_state`, `domain.state_pipeline`, `error_utils`, `lifecycle`, `metadata`, `micro`, `payload`, `routing.data_*`, `routing_data`, `rungraph_apply`, `runtime_collections`, `state_publish`, `state_router`, and `state_store` have been removed from this repo
-- repo code should import stable SDK modules such as `f8pysdk.service_bus`, `f8pysdk.command`, `f8pysdk.data`, `f8pysdk.state`, `f8pysdk.codec`, and `f8pysdk.testing` directly
+- repo code should import stable SDK modules such as `f8pysdk.bus`, `f8pysdk.specs`, `f8pysdk.command`, `f8pysdk.data`, `f8pysdk.state`, `f8pysdk.codec`, and `f8pysdk.testing` directly
+- package root `f8pysdk` no longer wildcard-reexports generated types or helper functions; import from explicit owner modules instead
 
 Internal runtime split:
 - `DataRouter`: data routing, buffering, subscriptions, callback batching
@@ -98,6 +101,7 @@ Data contract:
 
 Stable helper modules:
 - `f8pysdk.codec`: msgpack request/reply helpers (`encode_obj`, `decode_obj`, `decode_as`)
+- `f8pysdk.specs`: generated protocol models plus schema/spec helpers
 - `f8pysdk.state`: canonical state result/error/context types
 - `f8pysdk.command`: command output/result enums and result envelopes
 - `f8pysdk.data`: data delivery and cross-publish policy types

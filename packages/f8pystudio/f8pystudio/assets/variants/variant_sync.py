@@ -12,7 +12,7 @@ import msgspec
 from qtpy import QtCore
 
 from f8pysdk.msgspec_codec import copy_model, validate_as
-from f8pysdk.spec_metadata import coerce_spec_payload
+from f8pysdk.specs import coerce_spec_payload
 
 from ..common import (
     JsonObject,

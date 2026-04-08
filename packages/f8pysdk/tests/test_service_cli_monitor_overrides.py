@@ -8,7 +8,7 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from f8pysdk.generated import F8ServiceSpec  # noqa: E402
+from f8pysdk.specs import F8ServiceSpec  # noqa: E402
 from f8pysdk.registry import create_runtime_node_registry, RuntimeNodeRegistry  # noqa: E402
 from f8pysdk.nodes import ServiceNode  # noqa: E402
 from f8pysdk.app import MonitorRuntimeOverrides, ServiceCliTemplate  # noqa: E402

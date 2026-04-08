@@ -19,11 +19,11 @@ from f8pysdk.specs import (
     number_schema,
     string_schema,
 )
-from f8pysdk.generated import UNSET
+from f8pysdk.specs import UNSET
 from f8pysdk.nats_naming import ensure_token
 from f8pysdk.nodes import OperatorNode
 from f8pysdk.registry import RuntimeNodeRegistry
-from f8pysdk.schema_helpers import schema_type
+from f8pysdk.specs import schema_type
 
 from ..constants import SERVICE_CLASS
 from ..wave_expr_lang import RESERVED_NAMES, compile_expr, eval_compiled, eval_scalar, render_expression

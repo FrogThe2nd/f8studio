@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Any, Protocol, TYPE_CHECKING
 
 from ..capabilities import (
@@ -62,6 +63,105 @@ class _ServiceBusNode(StatefulNode, BusAttachableNode, Protocol):
     """
 
 
+class ServiceBusComponentFactory(Protocol):
+    """
+    Explicit component builder for `ServiceBus` owner subsystems.
+
+    This keeps component wiring out of `ServiceBus.__init__` so tests and
+    future alternate runtimes can supply focused implementations explicitly.
+    """
+
+    def create_data_router(
+        self,
+        *,
+        bus: "ServiceBus",
+        cross_publish_policy: CrossPublishPolicy,
+        data_delivery: DataDeliveryMode,
+        input_max_buffers: int,
+        default_queue_size: int,
+    ) -> DataRouter: ...
+
+    def create_state_store(
+        self,
+        *,
+        bus: "ServiceBus",
+        cache_max_entries: int,
+    ) -> StateStore: ...
+
+    def create_state_router(
+        self,
+        *,
+        bus: "ServiceBus",
+        store: StateStore,
+    ) -> StateRouter: ...
+
+    def create_command_gateway(
+        self,
+        *,
+        bus: "ServiceBus",
+        nodes: dict[str, _ServiceBusNode],
+    ) -> CommandGateway: ...
+
+    def create_monitor_collector(
+        self,
+        *,
+        bus: "ServiceBus",
+        config: MonitorCollectorConfig,
+    ) -> MonitorCollector: ...
+
+
+@dataclass(frozen=True)
+class DefaultServiceBusComponentFactory:
+    def create_data_router(
+        self,
+        *,
+        bus: "ServiceBus",
+        cross_publish_policy: CrossPublishPolicy,
+        data_delivery: DataDeliveryMode,
+        input_max_buffers: int,
+        default_queue_size: int,
+    ) -> DataRouter:
+        return DataRouter(
+            bus,
+            cross_publish_policy=cross_publish_policy,
+            data_delivery=data_delivery,
+            input_max_buffers=input_max_buffers,
+            default_queue_size=default_queue_size,
+        )
+
+    def create_state_store(
+        self,
+        *,
+        bus: "ServiceBus",
+        cache_max_entries: int,
+    ) -> StateStore:
+        return StateStore(bus, cache_max_entries=cache_max_entries)
+
+    def create_state_router(
+        self,
+        *,
+        bus: "ServiceBus",
+        store: StateStore,
+    ) -> StateRouter:
+        return StateRouter(bus, store=store)
+
+    def create_command_gateway(
+        self,
+        *,
+        bus: "ServiceBus",
+        nodes: dict[str, _ServiceBusNode],
+    ) -> CommandGateway:
+        return CommandGateway(bus=bus, nodes=nodes)
+
+    def create_monitor_collector(
+        self,
+        *,
+        bus: "ServiceBus",
+        config: MonitorCollectorConfig,
+    ) -> MonitorCollector:
+        return MonitorCollector(bus, config)
+
+
 class ServiceBus:
     """
     Service bus (clean, protocol-first).
@@ -74,7 +174,13 @@ class ServiceBus:
     - Pull-based consumers may trigger intra-service computation via `compute_output(...)`.
     """
 
-    def __init__(self, config: ServiceBusConfig, *, transport: NatsTransport | None = None) -> None:
+    def __init__(
+        self,
+        config: ServiceBusConfig,
+        *,
+        transport: NatsTransport | None = None,
+        component_factory: ServiceBusComponentFactory | None = None,
+    ) -> None:
         self.service_id = ensure_token(config.service_id, label="service_id")
         self._service_name = str(config.service_name or "") or self.service_id
         self._service_class = str(config.service_class or "")
@@ -118,17 +224,21 @@ class ServiceBus:
         self._rungraph_key = kv_key_rungraph()
         self._ready_key = kv_key_ready()
         self._micro_endpoints: ServiceBusMicroEndpoints | None = None
+        self._component_factory = component_factory if component_factory is not None else DefaultServiceBusComponentFactory()
 
-        self._data_router = DataRouter(
-            self,
+        self._data_router = self._component_factory.create_data_router(
+            bus=self,
             cross_publish_policy=cross_publish_policy,
             data_delivery=mode,
             input_max_buffers=self._data_input_max_buffers,
             default_queue_size=self._data_input_default_queue_size,
         )
-        self._state_store = StateStore(self, cache_max_entries=self._state_cache_max_entries)
-        self._state_router = StateRouter(self, store=self._state_store)
-        self._command_gateway = CommandGateway(bus=self, nodes=self._nodes)
+        self._state_store = self._component_factory.create_state_store(
+            bus=self,
+            cache_max_entries=self._state_cache_max_entries,
+        )
+        self._state_router = self._component_factory.create_state_router(bus=self, store=self._state_store)
+        self._command_gateway = self._component_factory.create_command_gateway(bus=self, nodes=self._nodes)
 
         self._rungraph_hooks: list[RungraphHook] = []
         self._service_hooks: list[ServiceHook] = []
@@ -141,9 +251,9 @@ class ServiceBus:
         # Process-level termination request (set via `svc.<serviceId>.terminate`).
         # Service entrypoints may `await bus.wait_terminate()` to exit gracefully.
         self._terminate_event = asyncio.Event()
-        self._monitor_collector = MonitorCollector(
-            self,
-            MonitorCollectorConfig(
+        self._monitor_collector = self._component_factory.create_monitor_collector(
+            bus=self,
+            config=MonitorCollectorConfig(
                 enabled=bool(config.monitor_enabled),
                 interval_ms=max(200, int(config.monitor_interval_ms)),
                 window_ms=max(1000, int(config.monitor_window_ms)),
@@ -317,6 +427,10 @@ class ServiceBus:
     @property
     def command_gateway(self) -> CommandGateway:
         return self._command_gateway
+
+    @property
+    def monitor_collector(self) -> MonitorCollector:
+        return self._monitor_collector
 
     async def set_active(
         self,

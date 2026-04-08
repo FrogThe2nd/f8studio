@@ -6,7 +6,7 @@ from typing import Any
 
 from f8pysdk.app import ServiceCliTemplate, ServiceRuntime, ServiceRuntimeConfig
 from f8pysdk.capabilities import RungraphHook
-from f8pysdk.generated import F8RuntimeGraph
+from f8pysdk.specs import F8RuntimeGraph
 from f8pysdk.json_unwrap import unwrap_json_value
 from f8pysdk.registry import RuntimeNodeRegistry
 

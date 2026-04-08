@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from f8pysdk.specs import F8ServiceSpec, F8StateAccess, F8StateSpec
 from f8pysdk.msgspec_codec import copy_model
-from f8pysdk.schema_helpers import string_schema
+from f8pysdk.specs import string_schema
 
 from f8pystudio.nodegraph.ui_override_mutations import (
     apply_named_order,

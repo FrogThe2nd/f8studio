@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import msgspec
 
-from f8pysdk.generated import F8RuntimeGraph, F8RuntimeNode
+from f8pysdk.specs import F8RuntimeGraph, F8RuntimeNode
 from f8pysdk.msgspec_codec import dump_json
 
 from f8pystudio.bridge.rungraph_deployer import NatsRungraphGateway, RungraphDeployConfig

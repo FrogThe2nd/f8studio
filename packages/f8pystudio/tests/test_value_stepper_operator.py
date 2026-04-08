@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from f8pysdk.generated import (
+from f8pysdk.specs import (
     F8Edge,
     F8EdgeKindEnum,
     F8EdgeStrategyEnum,
@@ -13,8 +13,8 @@ from f8pysdk.generated import (
 )
 from f8pysdk.nodes import RuntimeNode
 from f8pysdk.registry import create_runtime_node_registry
-from f8pysdk.schema_helpers import integer_schema, number_schema
-from f8pysdk.spec_edit_policy import (
+from f8pysdk.specs import integer_schema, number_schema
+from f8pysdk.specs import (
     can_add as policy_can_add,
     can_delete as policy_can_delete,
     can_edit_existing as policy_can_edit_existing,

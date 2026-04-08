@@ -4,7 +4,7 @@ import logging
 from typing import Any, Protocol, cast
 
 from f8pysdk.nats_naming import ensure_token
-from f8pysdk.generated import F8RuntimeNode
+from f8pysdk.specs import F8RuntimeNode
 from f8pysdk.nodes import ServiceNode
 
 logger = logging.getLogger(__name__)

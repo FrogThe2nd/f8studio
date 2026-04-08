@@ -12,7 +12,7 @@ from f8pysdk.command_state import parse_command_port_name
 
 from collections import OrderedDict
 
-from f8pysdk.schema_helpers import schema_default, schema_type
+from f8pysdk.specs import schema_default, schema_type
 
 from qtpy import QtCore, QtGui, QtWidgets
 

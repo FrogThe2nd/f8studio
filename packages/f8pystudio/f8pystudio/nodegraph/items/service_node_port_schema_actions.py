@@ -7,9 +7,9 @@ from typing import Any
 
 from qtpy import QtCore, QtWidgets
 
-from f8pysdk.schema_helpers import schema_type
+from f8pysdk.specs import schema_type
 from f8pysdk.command_state import parse_command_port_name
-from f8pysdk.spec_edit_policy import can_edit_existing as _policy_can_edit_existing
+from f8pysdk.specs import can_edit_existing as _policy_can_edit_existing
 
 from ...ui.dialogs.schema_builder_dialog import SchemaBuilderDialog, schema_from_json_obj as _schema_from_json_obj
 from ...nodegraph.state_schema import (

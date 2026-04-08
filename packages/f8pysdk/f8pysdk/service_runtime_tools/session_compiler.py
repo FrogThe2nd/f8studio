@@ -9,7 +9,7 @@ from uuid import uuid4
 
 import msgspec
 
-from f8pysdk.generated import (
+from f8pysdk.specs import (
     F8Edge,
     F8EdgeDirection,
     F8EdgeKindEnum,
@@ -32,7 +32,7 @@ from f8pysdk.rungraph_validation import (
     validate_state_edge_targets_writable_or_raise,
     validate_state_edges_or_raise,
 )
-from f8pysdk.spec_metadata import coerce_spec_payload
+from f8pysdk.specs import coerce_spec_payload
 
 from .catalog import ServiceCatalog
 

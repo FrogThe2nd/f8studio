@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import msgspec
-from f8pysdk.generated import (
+from f8pysdk.specs import (
     F8ActivateRequest,
     F8ActiveReply,
     F8CommandError,

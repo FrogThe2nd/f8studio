@@ -16,7 +16,7 @@ from f8pysdk.specs import (
 from f8pysdk.nats_naming import ensure_token
 from f8pysdk.nodes import OperatorNode
 from f8pysdk.registry import RuntimeNodeRegistry
-from f8pysdk.schema_helpers import integer_schema
+from f8pysdk.specs import integer_schema
 
 from f8pystudio.studio_specs.identifiers import SERVICE_CLASS
 

@@ -10,7 +10,7 @@ if ROOT not in sys.path:
 if SDK_ROOT not in sys.path:
     sys.path.insert(0, SDK_ROOT)
 
-from f8pysdk.generated import F8RuntimeNode  # noqa: E402
+from f8pysdk.specs import F8RuntimeNode  # noqa: E402
 
 from f8pyengine.operators.udp_skeleton import UdpSkeletonRuntimeNode  # noqa: E402
 

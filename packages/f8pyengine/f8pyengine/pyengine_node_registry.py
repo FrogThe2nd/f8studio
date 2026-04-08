@@ -9,7 +9,7 @@ from f8pysdk.specs import (
     F8StateSpec,
     string_schema,
 )
-from f8pysdk.generated import F8RuntimeNode
+from f8pysdk.specs import F8RuntimeNode
 from f8pysdk.nodes import RuntimeNode
 from f8pysdk.registry import create_runtime_node_registry, RuntimeNodeRegistry, shared_runtime_node_registry
 

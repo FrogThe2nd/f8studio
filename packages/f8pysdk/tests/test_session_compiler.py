@@ -8,7 +8,7 @@ if ROOT not in sys.path:
 
 from f8pysdk.msgspec_codec import dump_json
 from f8pysdk.command_state import command_input_state_field, command_output_state_field
-from f8pysdk.generated import (  # noqa: E402
+from f8pysdk.specs import (  # noqa: E402
     F8Command,
     F8OperatorSchemaVersion,
     F8OperatorSpec,

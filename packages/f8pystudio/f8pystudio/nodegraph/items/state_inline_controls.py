@@ -14,7 +14,7 @@ from typing import Any
 
 from qtpy import QtCore, QtGui, QtWidgets
 
-from f8pysdk.schema_helpers import schema_type
+from f8pysdk.specs import schema_type
 
 from ...ui.components.controls import parse_multiselect_pool, parse_select_pool
 from ...ui.support.ui_control import parse_ui_control

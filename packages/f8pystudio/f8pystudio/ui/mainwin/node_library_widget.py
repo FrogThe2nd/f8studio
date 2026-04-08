@@ -9,7 +9,7 @@ from NodeGraphQt.custom_widgets.nodes_tree import _BaseNodeTreeItem, TYPE_CATEGO
 
 from ...nodegraph.spec_visibility import is_hidden_spec_node_class, typed_spec_template_or_none
 from f8pysdk.specs import F8OperatorSpec, F8ServiceSpec
-from f8pysdk.spec_metadata import palette_category_from_spec
+from f8pysdk.specs import palette_category_from_spec
 from ...ui.support.ui_notifications import show_warning
 from ...assets.variants.variant_ids import build_variant_node_type, is_variant_node_type, parse_variant_node_type
 from ...assets.variants.variant_repository import (

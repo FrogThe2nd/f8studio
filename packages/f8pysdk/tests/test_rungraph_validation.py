@@ -6,7 +6,7 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from f8pysdk.generated import (  # noqa: E402
+from f8pysdk.specs import (  # noqa: E402
     F8Edge,
     F8EdgeKindEnum,
     F8EdgeStrategyEnum,
@@ -20,7 +20,7 @@ from f8pysdk.rungraph_validation import (  # noqa: E402
     validate_exec_edges_or_raise,
     validate_state_edge_targets_writable_or_raise,
 )
-from f8pysdk.schema_helpers import string_schema  # noqa: E402
+from f8pysdk.specs import string_schema  # noqa: E402
 
 
 class RungraphValidationTests(unittest.TestCase):

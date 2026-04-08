@@ -13,7 +13,7 @@ from f8pysdk.specs import (
     F8StateSpec,
     editable_collection_edit_policy,
 )
-from f8pysdk.schema_helpers import string_schema
+from f8pysdk.specs import string_schema
 from f8pystudio.ui.widgets import node_property_panel as npw
 from f8pystudio.ui.widgets.node_property_panel import _F8SpecPortEditor
 from f8pystudio.ui.widgets.node_property_panel import editor as property_panel_editor

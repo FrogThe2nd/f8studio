@@ -16,9 +16,9 @@ from typing import Any
 
 import yaml
 
-from f8pysdk.generated import F8ServiceDescribe, F8ServiceEntry
 from f8pysdk.builtin_state_fields import normalize_describe_payload_dict
 from f8pysdk.monitor_schema import MonitorContractError, validate_describe_monitor_contract
+from f8pysdk.specs import F8ServiceDescribe, F8ServiceEntry
 
 from .catalog import ServiceCatalog
 
