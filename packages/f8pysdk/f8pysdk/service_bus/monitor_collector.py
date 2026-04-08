@@ -7,7 +7,7 @@ Runtime monitor snapshot collection.
 runtime state, but the stable SDK-facing import is `f8pysdk.monitoring`.
 """
 
-from f8pysdk.msgspec_codec import dump_json, validate_as
+from ..msgspec_codec import dump_json, validate_as
 import asyncio
 import os
 import threading

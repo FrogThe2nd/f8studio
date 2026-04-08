@@ -97,7 +97,7 @@ Data contract:
 - `ServiceBus.pull_data(node_id, port, ...)` reads local buffered inputs and may trigger same-service upstream compute when needed.
 - Pull-triggered local compute satisfies local consumers only; internal typed emit options keep it from turning into hidden cross-service traffic.
 - Monitor snapshots now expose routing counters in `frame`, including local-only emits, routed cross emits, suppressed cross publishes, callback deliveries, and buffered pull deliveries.
-- Legacy aliases remain accepted for migration: `publish_all_data=True|False`, `data_delivery="push"|"pull"|"both"`.
+- Compatibility aliases remain limited to local delivery naming: `data_delivery="push"|"pull"|"both"`.
 
 Stable helper modules:
 - `f8pysdk.codec`: msgpack request/reply helpers (`encode_obj`, `decode_obj`, `decode_as`)

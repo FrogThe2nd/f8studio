@@ -190,10 +190,10 @@ class DataFlowRoutingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(transport.published_subjects, [])
         self.assertEqual(bus.data_router.input_buffers[("local_dst", "in")].last_seen_value, 42)
 
-    async def test_publish_all_data_compat_true_maps_to_all_policy(self) -> None:
+    async def test_cross_publish_policy_all_publishes_without_cross_routes(self) -> None:
         cluster = InMemoryCluster()
         transport = _RecordingTransport(cluster=cluster, kv_bucket="kv.svc")
-        bus = ServiceBus(ServiceBusConfig(service_id="svc", publish_all_data=True), transport=transport)
+        bus = ServiceBus(ServiceBusConfig(service_id="svc", cross_publish_policy="all"), transport=transport)
 
         await bus.emit_data("node1", "out", {"x": 1}, ts_ms=1)
 

@@ -158,10 +158,10 @@ class RuntimeRegressionTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(bus.command_gateway, factory.created_command_gateway)
         self.assertIs(bus.monitor_collector, factory.created_monitor_collector)
 
-    async def test_publish_all_data_publishes_without_cross_routes(self) -> None:
+    async def test_cross_publish_policy_all_publishes_without_cross_routes(self) -> None:
         cluster = InMemoryCluster()
         transport = _RecordingTransport(cluster=cluster, kv_bucket="kv.svc")
-        bus = ServiceBus(ServiceBusConfig(service_id="svc", publish_all_data=True), transport=transport)
+        bus = ServiceBus(ServiceBusConfig(service_id="svc", cross_publish_policy="all"), transport=transport)
 
         await bus.emit_data("node1", "out", {"x": 1}, ts_ms=1)
 

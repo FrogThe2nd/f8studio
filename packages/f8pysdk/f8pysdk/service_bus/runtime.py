@@ -188,8 +188,6 @@ class ServiceBus:
         self._active = True
         self._ready = False
         cross_publish_policy = _coerce_cross_publish_policy(config.cross_publish_policy)
-        if config.publish_all_data is not None:
-            cross_publish_policy = "all" if bool(config.publish_all_data) else "routed"
         if cross_publish_policy is None:
             if self._debug_state or log.isEnabledFor(logging.WARNING):
                 log.warning("Invalid cross_publish_policy=%r; defaulting to 'routed'", config.cross_publish_policy)
@@ -356,10 +354,6 @@ class ServiceBus:
     @property
     def cross_publish_policy(self) -> CrossPublishPolicy:
         return self._data_router.cross_publish_policy
-
-    @property
-    def publish_all_data(self) -> bool:
-        return self.cross_publish_policy == "all"
 
     @property
     def data_delivery(self) -> DataDeliveryMode:

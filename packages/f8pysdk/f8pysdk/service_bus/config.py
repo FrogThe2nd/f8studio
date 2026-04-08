@@ -19,10 +19,6 @@ class ServiceBusConfig:
     service_class: str | None = None
     nats_url: str = "nats://127.0.0.1:4222"
     cross_publish_policy: CrossPublishPolicy = "routed"
-    # Compatibility alias for pre-Slice-C callers.
-    # - True  -> "all"
-    # - False -> "routed"
-    publish_all_data: bool | None = None
     kv_storage: StorageType = StorageType.MEMORY
     delete_bucket_on_start: bool = False
     delete_bucket_on_stop: bool = False

@@ -34,7 +34,6 @@ class ServiceRuntimeConfig:
         service_name: str | None = None,
         nats_url: str = "nats://127.0.0.1:4222",
         cross_publish_policy: CrossPublishPolicy = "routed",
-        publish_all_data: bool | None = None,
         kv_storage: StorageType = StorageType.MEMORY,
         delete_bucket_on_start: bool = False,
         delete_bucket_on_stop: bool = False,
@@ -55,7 +54,6 @@ class ServiceRuntimeConfig:
             service_class=str(service_class or "") or None,
             nats_url=str(nats_url),
             cross_publish_policy=cross_publish_policy,
-            publish_all_data=(None if publish_all_data is None else bool(publish_all_data)),
             kv_storage=kv_storage,
             delete_bucket_on_start=bool(delete_bucket_on_start),
             delete_bucket_on_stop=bool(delete_bucket_on_stop),
@@ -84,10 +82,6 @@ class ServiceRuntimeConfig:
     @property
     def nats_url(self) -> str:
         return str(self.bus.nats_url)
-
-    @property
-    def publish_all_data(self) -> bool:
-        return bool(self.bus.publish_all_data)
 
     @property
     def cross_publish_policy(self) -> CrossPublishPolicy:

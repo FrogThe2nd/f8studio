@@ -49,7 +49,7 @@ This plan is intentionally incremental. Each phase should leave the SDK usable a
 
 ### Checklist
 
-- [x] Add a regression test for redundant cross-publish when `publish_all_data=True` and no cross-service subscribers exist.
+- [x] Add a regression test for redundant cross-publish when explicit eager cross-publish is enabled and no cross-service subscribers exist.
 - [x] Add a regression test that demonstrates current dual-delivery behavior for `data_delivery="both"`.
 - [x] Lock in lifecycle behavior by documenting and testing the current non-restartable `ServiceBus` / `ServiceRuntime` contract.
 - [x] Add a regression test for singleton registry contamination across repeated `describe_json()` or repeated CLI use.
@@ -126,7 +126,6 @@ This plan is intentionally incremental. Each phase should leave the SDK usable a
 
 ### Checklist
 
-- [ ] Replace `publish_all_data: bool` with a more explicit policy:
 - [x] Replace `publish_all_data: bool` with a more explicit policy:
   - `routed`
   - `all`
@@ -165,8 +164,8 @@ This plan is intentionally incremental. Each phase should leave the SDK usable a
 - [x] Split "spec registration" and "runtime factory registration" APIs more clearly.
 - [x] Change missing operator factory behavior from silent fallback to explicit structured errors.
 - [x] Document and test that known services without a custom service runtime factory still fall back to generic `ServiceNode`.
-- [ ] Continue migrating sibling package registry helpers from implicit singleton fallback to explicit fresh/shared registry APIs.
-- [ ] Add strict tests for:
+- [x] Continue migrating sibling package registry helpers from implicit singleton fallback to explicit fresh/shared registry APIs.
+- [x] Add strict tests for:
   - repeated describe
   - repeated CLI setup
   - repeated runtime creation
@@ -177,6 +176,12 @@ This plan is intentionally incremental. Each phase should leave the SDK usable a
 - Repeated CLI or describe calls do not depend on singleton state.
 - Missing factory registration fails loudly and locally.
 - Restart semantics are explicit and covered by tests.
+
+### Phase 4 status
+
+- Sibling package registry owners now expose explicit `create_*_registry()` / `shared_*_registry()` helpers rather than relying on implicit singleton fallback.
+- Repeated describe / CLI setup behavior is locked by `packages/f8pysdk/tests/test_service_cli_monitor_overrides.py`.
+- Repeated runtime creation and stop/start reuse contracts are locked by `packages/f8pysdk/tests/test_runtime_regressions.py`.
 
 ## Phase 5: Break Up the Large ServiceBus
 
@@ -340,15 +345,25 @@ This milestone does not redesign the SDK yet, but it makes the system much safer
   - completed:
     - introduced explicit `cross_publish_policy = "routed" | "all" | "none"` and made `routed` the default
     - changed canonical local data delivery names to `callback | buffered | both`
-    - kept `publish_all_data` and `data_delivery="push"|"pull"` as compatibility aliases
+    - kept `data_delivery="push"|"pull"` as local-delivery compatibility aliases during migration
     - separated local delivery from cross-service publish decisions in the routing layer
     - stopped pull-triggered local compute from implicitly cross-publishing network samples
     - extended monitor snapshots with routing counters for local-only emits, routed cross emits, suppressed cross publishes, callback deliveries, and buffered pull deliveries
     - added regression coverage for routed-default suppression, callback-only local delivery, compatibility alias mapping, and local-only pull compute
   - compatibility notes:
-    - `publish_all_data=True` now maps to `cross_publish_policy="all"`; `False` maps to `routed`
     - `data_delivery="push"` maps to `callback`; `data_delivery="pull"` maps to `buffered`
     - `data_delivery="both"` remains available as explicit compatibility mode, but it is no longer the default-facing recommendation
+
+- 2026-04-07
+  - owner: Codex + repository maintainer
+  - scope: Phase 3 explicit cross-publish API completion
+  - completed:
+    - removed the remaining `publish_all_data` compatibility boolean from `ServiceBusConfig`, `ServiceRuntimeConfig`, and `ServiceBus`
+    - repointed data-flow regression coverage to explicit `cross_publish_policy="all"` semantics
+    - updated README and plan notes so the public contract only documents explicit cross-publish policy values
+  - compatibility notes:
+    - cross-service publish control is now exposed only as `cross_publish_policy="routed"|"all"|"none"`
+    - `data_delivery="push"|"pull"|"both"` remains the only temporary compatibility alias family in this area
 
 - 2026-04-07
   - owner: Codex + repository maintainer
