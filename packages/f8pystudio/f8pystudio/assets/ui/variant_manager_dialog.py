@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from f8pysdk.msgspec_codec import copy_model, dump_json, validate_as
+from f8pysdk.codec import copy_model, dump_json, validate_as
 import json
 from collections.abc import Callable
 import logging

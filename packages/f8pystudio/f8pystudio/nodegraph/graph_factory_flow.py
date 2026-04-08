@@ -5,7 +5,7 @@ from typing import Any
 
 from NodeGraphQt.base.commands import NodeAddedCmd
 from NodeGraphQt.errors import NodeCreationError
-from f8pysdk.msgspec_codec import dump_json
+from f8pysdk.codec import dump_json
 
 from f8pysdk.specs import F8OperatorSpec, F8ServiceSpec, F8StateAccess
 

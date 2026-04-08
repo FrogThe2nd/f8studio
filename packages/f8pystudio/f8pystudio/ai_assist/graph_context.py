@@ -8,7 +8,7 @@ from typing import Any, Iterable
 import msgspec
 
 from f8pysdk.specs import F8OperatorSpec, F8ServiceSpec
-from f8pysdk.msgspec_codec import dump_json
+from f8pysdk.codec import dump_json
 
 from ..ui.support.ui_control import ui_control_language
 from ..nodegraph.edge_rules import EDGE_KIND_DATA, port_kind

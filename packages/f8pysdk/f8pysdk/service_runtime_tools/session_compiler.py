@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from f8pysdk.msgspec_codec import dump_json, validate_as
+from f8pysdk.codec import dump_json, validate_as
 import enum
 import logging
 from dataclasses import dataclass
@@ -20,7 +20,7 @@ from f8pysdk.specs import (
     F8RuntimeService,
     F8ServiceSpec,
 )
-from f8pysdk.command_state import (
+from f8pysdk.command import (
     command_input_state_field,
     command_output_state_field,
     hidden_command_state_specs,

@@ -11,7 +11,7 @@ import zlib
 import pytest
 from qtpy import QtCore
 
-from f8pysdk.msgspec_codec import copy_model
+from f8pysdk.codec import copy_model
 from f8pystudio.assets.common import stable_json_dumps
 from f8pystudio.assets.db import AssetsDatabase
 from f8pystudio.assets.db import asset_db as asset_db_module

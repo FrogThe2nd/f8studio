@@ -4,10 +4,10 @@ import asyncio
 import logging
 from typing import Any
 
-from .codec import decode_obj
-from .nats_naming import kv_key_ready
-from .transport import NatsTransport
-from .time_utils import now_ms
+from ..codec import decode_obj
+from ..nats_naming import kv_key_ready
+from ..time_utils import now_ms
+from ..transport import NatsTransport
 
 
 log = logging.getLogger(__name__)
@@ -77,7 +77,6 @@ async def wait_service_ready(
         watch = None
 
     try:
-        # Re-check KV after starting the watch to avoid a "missed update" race.
         try:
             raw2 = await tr.kv_get(key)
         except Exception:
@@ -104,3 +103,6 @@ async def wait_service_ready(
                 await watcher.stop()
             except Exception as exc:
                 log.error("ready watcher stop failed key=%s", key, exc_info=exc)
+
+
+__all__ = ["wait_service_ready"]

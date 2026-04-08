@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from f8pysdk.msgspec_codec import dump_json, validate_as
+from f8pysdk.codec import dump_json, validate_as
 from collections import deque
 from dataclasses import dataclass
 from typing import Any

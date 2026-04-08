@@ -11,6 +11,18 @@ if ROOT not in sys.path:
 
 
 REMOVED_THIN_FACADES = [
+    "f8pysdk.command_state",
+    "f8pysdk.json_unwrap",
+    "f8pysdk.msgspec_codec",
+    "f8pysdk.nats_transport",
+    "f8pysdk.monitor_schema",
+    "f8pysdk.schema_helpers",
+    "f8pysdk.spec_edit_policy",
+    "f8pysdk.spec_metadata",
+    "f8pysdk.builtin_state_fields",
+    "f8pysdk.service_ready",
+    "f8pysdk.nats_server_bootstrap",
+    "f8pysdk.service_bus.monitor_collector",
     "f8pysdk.service_bus.api",
     "f8pysdk.service_bus.api.bus",
     "f8pysdk.service_bus.api.config",

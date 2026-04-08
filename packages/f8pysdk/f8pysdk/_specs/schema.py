@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .generated import (
+from ..generated import (
     F8AnyTypeSchema,
     F8ArrayTypeSchema,
     F8BooleanTypeSchema,

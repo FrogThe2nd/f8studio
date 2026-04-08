@@ -10,7 +10,7 @@ from typing import Any
 from qtpy import QtCore, QtWidgets
 
 from f8pysdk.specs import F8OperatorSpec
-from f8pysdk.msgspec_codec import dump_json, validate_as
+from f8pysdk.codec import dump_json, validate_as
 
 from f8pystudio.diagnostics.logging import configure_root_logging_from_env
 from f8pystudio.editor_assist.protocol import editor_assist_context_for_field

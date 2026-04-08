@@ -5,7 +5,7 @@ from typing import Any
 from unittest.mock import patch
 
 from NodeGraphQt import NodeGraph
-from f8pysdk.msgspec_codec import dump_json
+from f8pysdk.codec import dump_json
 from f8pysdk.specs import (
     F8DataPortSpec,
     F8StateAccess,

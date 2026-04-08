@@ -7,7 +7,7 @@ from typing import Any
 
 from qtpy import QtCore, QtWidgets
 
-from f8pysdk.msgspec_codec import copy_model, dump_json, validate_as
+from f8pysdk.codec import copy_model, dump_json, validate_as
 
 from ..common import new_asset_id
 from ..components.component_events import subscribe_components_changed

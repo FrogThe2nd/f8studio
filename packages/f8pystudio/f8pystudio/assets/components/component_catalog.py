@@ -7,7 +7,7 @@ from typing import cast
 
 import zlib
 from sqlalchemy import and_, delete, func, insert, select, update
-from f8pysdk.msgspec_codec import copy_model
+from f8pysdk.codec import copy_model
 
 from ..db import (
     AssetsDatabase,

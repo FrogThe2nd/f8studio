@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import copy
-from f8pysdk.msgspec_codec import copy_model, dump_json, validate_as
+from f8pysdk.codec import copy_model, dump_json, validate_as
 import json
 import logging
 import os
@@ -12,7 +12,7 @@ from NodeGraphQt.base.commands import PortConnectedCmd
 from NodeGraphQt.errors import NodeCreationError
 
 from f8pysdk.specs import F8OperatorSpec, F8ServiceSpec
-from f8pysdk.command_state import command_input_port_name, command_output_port_name
+from f8pysdk.command import command_input_port_name, command_output_port_name
 from f8pysdk.specs import (
     coerce_spec_payload,
     spec_kind_from_spec,

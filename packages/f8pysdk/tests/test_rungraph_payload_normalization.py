@@ -5,7 +5,7 @@ from typing import Any
 import msgspec
 
 from f8pysdk.specs import F8SetRungraphRequest, F8RuntimeGraph, F8RuntimeNode
-from f8pysdk.msgspec_codec import dump_json, validate_as
+from f8pysdk.codec import dump_json, validate_as
 
 
 def _contains_unset(value: Any) -> bool:

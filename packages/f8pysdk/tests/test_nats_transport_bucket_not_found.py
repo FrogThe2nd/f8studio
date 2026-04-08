@@ -54,7 +54,7 @@ def test_connect_ignores_delete_key_value_not_found(monkeypatch) -> None:
         del args, kwargs
         return nc
 
-    monkeypatch.setattr("f8pysdk.nats_transport.nats.connect", _fake_connect)
+    monkeypatch.setattr("f8pysdk.transport.nats.connect", _fake_connect)
 
     tr = NatsTransport(
         NatsTransportConfig(
@@ -80,7 +80,7 @@ def test_open_kv_creates_bucket_when_js_not_found(monkeypatch) -> None:
         del args, kwargs
         return nc
 
-    monkeypatch.setattr("f8pysdk.nats_transport.nats.connect", _fake_connect)
+    monkeypatch.setattr("f8pysdk.transport.nats.connect", _fake_connect)
 
     tr = NatsTransport(
         NatsTransportConfig(
@@ -104,7 +104,7 @@ def test_close_ignores_delete_key_value_not_found(monkeypatch) -> None:
         del args, kwargs
         return nc
 
-    monkeypatch.setattr("f8pysdk.nats_transport.nats.connect", _fake_connect)
+    monkeypatch.setattr("f8pysdk.transport.nats.connect", _fake_connect)
 
     tr = NatsTransport(
         NatsTransportConfig(

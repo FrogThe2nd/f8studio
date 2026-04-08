@@ -1,4 +1,4 @@
-from f8pysdk.msgspec_codec import copy_model
+from f8pysdk.codec import copy_model
 import asyncio
 import os
 import sys

@@ -4,7 +4,7 @@ from typing import Literal
 
 import msgspec
 
-from .generated import F8CollectionEditPolicy, F8OperatorSpec, F8ServiceSpec, F8SpecEditPolicy
+from ..generated import F8CollectionEditPolicy, F8OperatorSpec, F8ServiceSpec, F8SpecEditPolicy
 
 
 EditableCollectionName = Literal["stateFields", "commands", "dataInPorts", "dataOutPorts", "execInPorts", "execOutPorts"]

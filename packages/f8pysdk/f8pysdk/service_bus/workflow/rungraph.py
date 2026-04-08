@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from f8pysdk.msgspec_codec import copy_model, dump_json
+from f8pysdk.codec import copy_model, dump_json
 import asyncio
 import logging
 from collections import deque
@@ -9,7 +9,7 @@ from typing import Any, TYPE_CHECKING
 import msgspec
 
 from ...generated import F8Edge, F8EdgeKindEnum, F8RuntimeGraph, F8RuntimeGraphMeta, F8StateAccess
-from ...json_unwrap import unwrap_json_value
+from ...codec import unwrap_json_value
 from ...nats_naming import data_subject
 from ...state import StateWriteOrigin, StateWriteSource
 from ..internal.logging import log_error_once

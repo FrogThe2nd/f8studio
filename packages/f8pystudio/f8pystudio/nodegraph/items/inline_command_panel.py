@@ -6,7 +6,7 @@ from typing import Any
 
 from qtpy import QtCore, QtWidgets
 
-from f8pysdk.command_state import command_input_state_field
+from f8pysdk.command import command_input_state_field
 from f8pysdk.specs import schema_default, schema_type
 
 from f8pystudio.contracts.command_ui import CommandUiHandler, CommandUiSource

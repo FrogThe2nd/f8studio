@@ -4,7 +4,7 @@ from typing import Any, Callable
 
 import msgspec
 from f8pysdk.specs import F8DataPortSpec, F8StateAccess, F8StateSpec
-from f8pysdk.msgspec_codec import copy_model
+from f8pysdk.codec import copy_model
 from qtpy import QtCore, QtGui, QtWidgets
 
 from ...global_hotkeys.parser import parse_global_hotkey

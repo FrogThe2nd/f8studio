@@ -1,4 +1,4 @@
-from f8pysdk.msgspec_codec import validate_as
+from f8pysdk.codec import validate_as
 import os
 import sys
 import unittest

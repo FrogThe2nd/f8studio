@@ -4,12 +4,14 @@ Python runtime SDK for running an F8 service process.
 
 ### Core building blocks
 - `ServiceBus` (`f8pysdk.bus`): public runtime facade over transport, routing, state, commands, and lifecycle.
-- `ServiceHost` (`f8pysdk/service_host.py`): rungraph-driven runtime node materialization/registration.
-- `ServiceRuntime` (`f8pysdk/service_runtime.py`): runtime facade that wires `ServiceBus` + `ServiceHost`.
+- `ServiceHost` (`f8pysdk.host`): rungraph-driven runtime node materialization/registration.
+- `ServiceRuntime` (`f8pysdk.runtime`): runtime facade that wires `ServiceBus` + `ServiceHost`.
 
-Stable public modules:
-- `f8pysdk.app`: service program/runtime/host entrypoints
+Core stable public modules:
+- `f8pysdk.app`: high-level service app entrypoint
 - `f8pysdk.bus`: `ServiceBus`, `ServiceBusConfig`, and explicit bus component factory types
+- `f8pysdk.host`: `ServiceHost` and `ServiceHostConfig`
+- `f8pysdk.runtime`: `ServiceRuntime` and `ServiceRuntimeConfig`
 - `f8pysdk.specs`: generated protocol models, schema helpers, and spec metadata/edit-policy helpers
 - `f8pysdk.nodes`: `RuntimeNode`, `ServiceNode`, `OperatorNode`
 - `f8pysdk.registry`: `RuntimeNodeRegistry` and registry errors
@@ -20,12 +22,27 @@ Stable public modules:
 - `f8pysdk.transport`: NATS transport façade
 - `f8pysdk.testing`: in-memory harness plus emit/pull/buffer test helpers
 
+Additional stable utility modules:
+- `f8pysdk.nats_naming`: canonical NATS subject / KV naming helpers
+- `f8pysdk.capabilities`: explicit runtime node capability protocols and mixins
+- `f8pysdk.shm`: shared-memory naming and audio/video helpers
+- `f8pysdk.rungraph_validation`: rungraph validation helpers used by Studio/runtime tooling
+- `f8pysdk.editor_assist_protocol`: editor-assist payload validation helpers
+- `f8pysdk.time_utils`: small runtime timestamp helpers
+- `f8pysdk.service_runtime_tools`: advanced runtime/deployment/session tooling package
+  specific owner modules include `catalog`, `discovery`, `process_manager`, `session_loader`, `session_compiler`, `readiness`, and `nats_bootstrap`
+
 Explicit internal-only modules:
 - `f8pysdk.service_bus.internal.*`: repo-internal runtime/test helpers owned by the ServiceBus runtime and not part of the public SDK API
   this replaces the earlier top-level pseudo-internal boundary so ownership stays with the runtime subsystem that defines these helpers
+- `f8pysdk._specs.*`: repo-internal spec-shaping helpers owned by the `specs` subsystem
+  builtin describe/state-field shaping now lives under `f8pysdk._specs.builtin_fields` instead of a top-level helper module
 
 Removed deep legacy paths:
 - old `f8pysdk.service_bus.*` compatibility shims such as `bus`, `codec`, `command_runtime`, `cross_state`, `domain.state_pipeline`, `error_utils`, `lifecycle`, `metadata`, `micro`, `payload`, `routing.data_*`, `routing_data`, `rungraph_apply`, `runtime_collections`, `state_publish`, `state_router`, and `state_store` have been removed from this repo
+- historical top-level implementation paths such as `f8pysdk.runtime_node`, `f8pysdk.runtime_node_registry`, `f8pysdk.service_host`, `f8pysdk.service_runtime`, `f8pysdk.msgspec_codec`, `f8pysdk.nats_transport`, `f8pysdk.command_state`, `f8pysdk.json_unwrap`, and `f8pysdk.monitor_schema` have been removed in favor of stable owner modules like `f8pysdk.nodes`, `f8pysdk.registry`, `f8pysdk.host`, `f8pysdk.runtime`, `f8pysdk.codec`, `f8pysdk.transport`, `f8pysdk.command`, and `f8pysdk.monitoring`
+- top-level helper modules `f8pysdk.builtin_state_fields`, `f8pysdk.service_ready`, and `f8pysdk.nats_server_bootstrap` have been removed
+  use `f8pysdk._specs.builtin_fields`, `f8pysdk.service_runtime_tools.readiness`, and `f8pysdk.service_runtime_tools.nats_bootstrap` instead
 - repo code should import stable SDK modules such as `f8pysdk.bus`, `f8pysdk.specs`, `f8pysdk.command`, `f8pysdk.data`, `f8pysdk.state`, `f8pysdk.codec`, and `f8pysdk.testing` directly
 - package root `f8pysdk` no longer wildcard-reexports generated types or helper functions; import from explicit owner modules instead
 
@@ -85,6 +102,7 @@ Registry contract:
 
 Compatibility note:
 - repo entrypoints now use `ServiceApp`; new code should follow that single explicit app owner model.
+- lower-level runtime composition should import `f8pysdk.host` and `f8pysdk.runtime`; the historical `service_host.py` / `service_runtime.py` implementation files have been removed.
 
 Command contract:
 - `ServiceBus.invoke_command(node_id, call, args, ...)` is the explicit local command API.

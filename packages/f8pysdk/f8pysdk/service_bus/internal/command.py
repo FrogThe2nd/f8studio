@@ -10,7 +10,7 @@ from typing import Any, TYPE_CHECKING
 
 from ...capabilities import CommandableNode
 from ...command import CommandExecutionErrorKind, CommandExecutionResult, CommandOutputPolicy
-from ...command_state import (
+from ...command import (
     command_input_state_field,
     command_key_for_name,
     command_output_state_field,

@@ -14,7 +14,7 @@ from f8pysdk.specs import (
     any_schema,
     editable_collection_edit_policy,
 )
-from f8pysdk.msgspec_codec import copy_model
+from f8pysdk.codec import copy_model
 from f8pysdk.nats_naming import ensure_token
 from f8pysdk.nodes import OperatorNode
 from f8pysdk.registry import RuntimeNodeRegistry

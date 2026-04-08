@@ -25,7 +25,7 @@ from f8pysdk.specs import (
 )
 from f8pysdk.capabilities import ClosableNode, EntrypointNode, NodeBus
 from f8pysdk.executors.exec_flow import EntrypointContext
-from f8pysdk.json_unwrap import unwrap_json_value as _unwrap_json_value
+from f8pysdk.codec import unwrap_json_value as _unwrap_json_value
 from f8pysdk.nats_naming import ensure_token
 from f8pysdk.nodes import OperatorNode
 from f8pysdk.registry import RuntimeNodeRegistry

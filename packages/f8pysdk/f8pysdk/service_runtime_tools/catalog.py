@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from f8pysdk.msgspec_codec import copy_model, validate_as
+from f8pysdk.codec import copy_model, validate_as
 from collections.abc import Iterable
 from pathlib import Path
 from typing import ClassVar

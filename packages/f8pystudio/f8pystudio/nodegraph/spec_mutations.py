@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from f8pysdk.msgspec_codec import copy_model
+from f8pysdk.codec import copy_model
 from typing import Any, Callable, Iterable
 
 from f8pysdk.specs import F8Command, F8DataPortSpec, F8OperatorSpec, F8ServiceSpec, F8StateSpec

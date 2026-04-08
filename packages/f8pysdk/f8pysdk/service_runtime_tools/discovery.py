@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from f8pysdk.msgspec_codec import dump_json, validate_as
+from f8pysdk.codec import dump_json, validate_as
 import concurrent.futures
 import json
 import logging
@@ -16,8 +16,8 @@ from typing import Any
 
 import yaml
 
-from f8pysdk.builtin_state_fields import normalize_describe_payload_dict
-from f8pysdk.monitor_schema import MonitorContractError, validate_describe_monitor_contract
+from f8pysdk._specs.builtin_fields import normalize_describe_payload_dict
+from f8pysdk.monitoring import MonitorContractError, validate_describe_monitor_contract
 from f8pysdk.specs import F8ServiceDescribe, F8ServiceEntry
 
 from .catalog import ServiceCatalog

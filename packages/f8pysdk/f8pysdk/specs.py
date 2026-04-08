@@ -8,7 +8,7 @@ Prefer importing generated protocol types and schema/spec helper functions from
 compatibility surface for legacy imports.
 """
 
+from ._specs.edit_policy import *  # type: ignore[F401,F403]
+from ._specs.metadata import *  # type: ignore[F401,F403]
+from ._specs.schema import *  # type: ignore[F401,F403]
 from .generated import *  # type: ignore[F401,F403]
-from .schema_helpers import *  # type: ignore[F401,F403]
-from .spec_edit_policy import *  # type: ignore[F401,F403]
-from .spec_metadata import *  # type: ignore[F401,F403]

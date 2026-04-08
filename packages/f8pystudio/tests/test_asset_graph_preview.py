@@ -5,7 +5,7 @@ from typing import cast
 from qtpy import QtCore, QtTest, QtWidgets
 
 from f8pysdk.specs import F8DataPortSpec, F8OperatorSpec, F8ServiceSpec, F8VariantKind, F8VariantRecord
-from f8pysdk.msgspec_codec import dump_json
+from f8pysdk.codec import dump_json
 from f8pysdk.specs import any_schema, number_schema
 
 from f8pystudio.assets.ui.asset_graph_preview import AssetGraphPreviewPane

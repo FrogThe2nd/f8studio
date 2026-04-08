@@ -23,7 +23,7 @@ from f8pysdk.specs import (  # noqa: E402
     F8StateAccess,
     F8StateSpec,
 )
-from f8pysdk.command_state import command_input_state_field, command_output_state_field, hidden_command_state_specs  # noqa: E402
+from f8pysdk.command import command_input_state_field, command_output_state_field, hidden_command_state_specs  # noqa: E402
 from f8pysdk.command import CommandExecutionErrorKind, CommandOutputPolicy  # noqa: E402
 from f8pysdk.nats_naming import kv_key_node_state  # noqa: E402
 from f8pysdk.nodes import RuntimeNode  # noqa: E402

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from f8pysdk.msgspec_codec import copy_model, dump_json
+from f8pysdk.codec import copy_model, dump_json
 import enum
 import hashlib
 import logging
@@ -24,11 +24,11 @@ from f8pysdk.specs import (
     F8RuntimeNode,
     F8RuntimeService,
 )
-from f8pysdk.builtin_state_fields import (
+from f8pysdk._specs.builtin_fields import (
     operator_state_fields_with_builtins,
     service_state_fields_with_builtins,
 )
-from f8pysdk.command_state import (
+from f8pysdk.command import (
     command_input_state_field,
     command_output_state_field,
     hidden_command_state_specs,

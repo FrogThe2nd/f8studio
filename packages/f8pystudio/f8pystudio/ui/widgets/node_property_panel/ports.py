@@ -13,7 +13,7 @@ from f8pysdk.specs import (
     can_delete as _policy_can_delete,
     can_edit_existing as _policy_can_edit_existing,
 )
-from f8pysdk.msgspec_codec import copy_model
+from f8pysdk.codec import copy_model
 
 from qtpy import QtCore, QtGui, QtWidgets
 

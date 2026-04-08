@@ -6,8 +6,8 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from f8pysdk.msgspec_codec import dump_json
-from f8pysdk.command_state import command_input_state_field, command_output_state_field
+from f8pysdk.codec import dump_json
+from f8pysdk.command import command_input_state_field, command_output_state_field
 from f8pysdk.specs import (  # noqa: E402
     F8Command,
     F8OperatorSchemaVersion,

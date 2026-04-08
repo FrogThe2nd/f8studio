@@ -10,7 +10,7 @@ import msgspec
 import zlib
 from sqlalchemy import and_, delete, func, insert, select, update
 from sqlalchemy.engine import Connection as SqlAlchemyConnection
-from f8pysdk.msgspec_codec import copy_model, dump_json, validate_as
+from f8pysdk.codec import copy_model, dump_json, validate_as
 
 from f8pysdk.specs import F8JsonValue, F8VariantKind, F8VariantLibrary, F8VariantRecord
 

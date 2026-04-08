@@ -21,7 +21,7 @@ from f8pysdk.specs import (  # noqa: E402
 )
 from f8pysdk.registry import create_runtime_node_registry  # noqa: E402
 from f8pysdk.nodes import OperatorNode  # noqa: E402
-from f8pysdk.app import ServiceHost, ServiceHostConfig  # noqa: E402
+from f8pysdk.host import ServiceHost, ServiceHostConfig  # noqa: E402
 from f8pysdk.testing import ServiceBusHarness  # noqa: E402
 
 from f8pyengine.constants import SERVICE_CLASS  # noqa: E402

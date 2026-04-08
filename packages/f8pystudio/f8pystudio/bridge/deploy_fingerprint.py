@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from f8pysdk.msgspec_codec import dump_json
+from f8pysdk.codec import dump_json
 
 from ..nodegraph.runtime_compiler import CompiledRuntimeGraphs
 

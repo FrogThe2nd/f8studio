@@ -12,7 +12,7 @@ if SDK_ROOT not in sys.path:
 
 from f8pysdk.specs import F8DataPortSpec, F8Edge, F8EdgeKindEnum, F8EdgeStrategyEnum, any_schema  # noqa: E402
 from f8pysdk.specs import F8RuntimeGraph, F8RuntimeNode  # noqa: E402
-from f8pysdk.app import ServiceHost, ServiceHostConfig  # noqa: E402
+from f8pysdk.host import ServiceHost, ServiceHostConfig  # noqa: E402
 from f8pysdk.testing import ServiceBusHarness  # noqa: E402
 
 from f8pyscript.constants import EXPR_SERVICE_CLASS  # noqa: E402

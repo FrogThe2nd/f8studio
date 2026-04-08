@@ -306,3 +306,11 @@ def ensure_nats_server(nats_url: str, *, log_cb: Callable[[str], None] | None = 
       `~/.f8/nats-server/nats-server/`.
     """
     return bool(ensure_nats_server_with_result(nats_url, log_cb=log_cb).reachable)
+
+
+__all__ = [
+    "NatsServerBootstrapResult",
+    "ensure_nats_server",
+    "ensure_nats_server_with_result",
+    "stop_nats_server_process",
+]

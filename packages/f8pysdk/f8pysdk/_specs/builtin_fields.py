@@ -2,19 +2,20 @@ from __future__ import annotations
 
 from typing import Any
 
-from .generated import F8DataPortSpec, F8OperatorSpec, F8ServiceSpec, F8StateAccess, F8StateSpec
-from .schema_helpers import boolean_schema, string_schema
-from .monitor_schema import (
+from ..generated import F8DataPortSpec, F8OperatorSpec, F8ServiceSpec, F8StateAccess, F8StateSpec
+from ..monitoring import (
     LEGACY_TELEMETRY_PORT_NAME,
     MONITOR_PORT_NAME,
     monitor_snapshot_data_port,
     monitor_snapshot_schema_dict,
 )
+from .schema import boolean_schema, string_schema
 
 
 ACTIVE_FIELD_NAME = "active"
 SVC_ID_FIELD_NAME = "svcId"
 OPERATOR_ID_FIELD_NAME = "operatorId"
+
 
 def _service_active_state_spec() -> F8StateSpec:
     return F8StateSpec(
@@ -247,4 +248,27 @@ def normalize_describe_payload_dict(payload: dict[str, Any]) -> dict[str, Any]:
             names_to_remove={MONITOR_PORT_NAME, LEGACY_TELEMETRY_PORT_NAME},
             builtin_ports=[_monitor_port_dict()],
         )
+        return out
+
+    operator_class = str(out.get("operatorClass") or "").strip()
+    if operator_class or schema_version == "f8operator/1":
+        out["stateFields"] = _state_field_dicts_with_builtins(
+            out.get("stateFields"),
+            names_to_remove={SVC_ID_FIELD_NAME, OPERATOR_ID_FIELD_NAME},
+            builtin_fields=[_svc_id_field_dict(), _operator_id_field_dict()],
+        )
     return out
+
+
+__all__ = [
+    "ACTIVE_FIELD_NAME",
+    "MONITOR_PORT_NAME",
+    "OPERATOR_ID_FIELD_NAME",
+    "SVC_ID_FIELD_NAME",
+    "normalize_describe_payload_dict",
+    "operator_state_fields_with_builtins",
+    "service_data_out_ports_with_builtins",
+    "service_state_fields_with_builtins",
+    "upsert_builtin_state_fields_for_operator_spec",
+    "upsert_builtin_state_fields_for_service_spec",
+]

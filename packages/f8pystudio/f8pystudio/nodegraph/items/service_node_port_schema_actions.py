@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import json
 
-from f8pysdk.msgspec_codec import copy_model, dump_json
+from f8pysdk.codec import copy_model, dump_json
 from typing import Any
 
 from qtpy import QtCore, QtWidgets
 
 from f8pysdk.specs import schema_type
-from f8pysdk.command_state import parse_command_port_name
+from f8pysdk.command import parse_command_port_name
 from f8pysdk.specs import can_edit_existing as _policy_can_edit_existing
 
 from ...ui.dialogs.schema_builder_dialog import SchemaBuilderDialog, schema_from_json_obj as _schema_from_json_obj

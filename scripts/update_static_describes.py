@@ -9,10 +9,10 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from f8pysdk import F8ServiceDescribe
-from f8pysdk.builtin_state_fields import normalize_describe_payload_dict
-from f8pysdk.msgspec_codec import dump_json, validate_as
-from f8pysdk.monitor_schema import validate_describe_monitor_contract
+from f8pysdk._specs.builtin_fields import normalize_describe_payload_dict
+from f8pysdk.codec import dump_json, validate_as
+from f8pysdk.monitoring import validate_describe_monitor_contract
+from f8pysdk.specs import F8ServiceDescribe
 from f8pysdk.service_runtime_tools.discovery import find_service_dirs, load_service_entry
 
 

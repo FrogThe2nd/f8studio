@@ -7,7 +7,7 @@ from typing import Any
 
 from qtpy import QtCore, QtWidgets
 
-from f8pysdk.msgspec_codec import dump_json
+from f8pysdk.codec import dump_json
 
 from ..components.component_events import subscribe_components_changed
 from ..components.component_catalog import component_entry_is_installed

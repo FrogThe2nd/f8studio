@@ -7,7 +7,7 @@ from typing import Callable, Protocol
 
 from qtpy import QtWidgets
 
-from f8pysdk.msgspec_codec import dump_json
+from f8pysdk.codec import dump_json
 
 from ...assets.common import JsonObject, new_asset_id
 from ...assets.ui.component_catalog_dialog import ComponentCatalogDialog

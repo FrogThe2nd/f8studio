@@ -6,12 +6,11 @@ from typing import Any
 
 import msgspec
 
-from .generated import F8RuntimeGraph, F8RuntimeNode
 from .bus import ServiceBus
-from .json_unwrap import unwrap_json_value
+from .generated import F8RuntimeGraph, F8RuntimeNode
+from .codec import unwrap_json_value
+from .nodes import OperatorNode, RuntimeNode
 from .registry import OperatorFactoryNotRegistered, RuntimeNodeRegistry, create_runtime_node_registry
-from .runtime_node import OperatorNode, RuntimeNode
-
 
 log = logging.getLogger(__name__)
 
@@ -86,26 +85,23 @@ class ServiceHost:
 
         want_operator_nodes: list[F8RuntimeNode] = []
         service_snapshot: F8RuntimeNode | None = None
-        for n in graph.nodes:
-            if service_class and str(n.serviceClass) != service_class:
+        for node in graph.nodes:
+            if service_class and str(node.serviceClass) != service_class:
                 continue
-            operator_class = n.operatorClass
+            operator_class = node.operatorClass
             is_service_node = operator_class is None or isinstance(operator_class, msgspec.UnsetType)
             if is_service_node:
-                # Service/container node snapshot (state only).
-                if n.nodeId == str(self._bus.service_id):
-                    service_snapshot = n
+                if node.nodeId == str(self._bus.service_id):
+                    service_snapshot = node
                 continue
-            want_operator_nodes.append(n)
+            want_operator_nodes.append(node)
 
         if service_snapshot is not None and self._service_node is not None:
-            # Keep the long-lived service node metadata aligned with the latest rungraph
-            # snapshot so runtime helpers observe the same declared fields as Studio.
-            self._service_node.data_in_ports = [str(p.name) for p in (service_snapshot.dataInPorts or [])]
-            self._service_node.data_out_ports = [str(p.name) for p in (service_snapshot.dataOutPorts or [])]
-            self._service_node.state_fields = [str(s.name) for s in (service_snapshot.stateFields or [])]
+            self._service_node.data_in_ports = [str(port.name) for port in (service_snapshot.dataInPorts or [])]
+            self._service_node.data_out_ports = [str(port.name) for port in (service_snapshot.dataOutPorts or [])]
+            self._service_node.state_fields = [str(field.name) for field in (service_snapshot.stateFields or [])]
 
-        want_ids = {str(n.nodeId) for n in want_operator_nodes}
+        want_ids = {str(node.nodeId) for node in want_operator_nodes}
 
         for node_id in list(self._operator_nodes.keys()):
             if node_id in want_ids:
@@ -116,14 +112,11 @@ class ServiceHost:
                 log.error("failed to unregister runtime node node_id=%s", node_id, exc_info=exc)
             self._operator_nodes.pop(node_id, None)
 
-        for n in want_operator_nodes:
-            node_id = str(n.nodeId)
+        for node in want_operator_nodes:
+            node_id = str(node.nodeId)
             if node_id in self._operator_nodes:
-                # If the node definition changed (ports/state), re-create the runtime node so
-                # the local instance matches the rungraph snapshot. Otherwise, edited ports
-                # may show in UI but not work at runtime.
                 existing = self._operator_nodes.get(node_id)
-                if existing is not None and self._needs_recreate(existing, n):
+                if existing is not None and self._needs_recreate(existing, node):
                     try:
                         self._bus.unregister_node(node_id)
                     except Exception as exc:
@@ -131,35 +124,37 @@ class ServiceHost:
                     self._operator_nodes.pop(node_id, None)
                 else:
                     continue
-            initial_state = self._node_initial_state(n)
+            initial_state = self._node_initial_state(node)
             try:
-                node = self._registry.create_operator_node(node_id=node_id, node=n, initial_state=initial_state)
+                runtime_node = self._registry.create_operator_node(
+                    node_id=node_id,
+                    node=node,
+                    initial_state=initial_state,
+                )
             except OperatorFactoryNotRegistered:
                 log.error(
                     "missing operator runtime factory service_class=%s operator_class=%s node_id=%s",
-                    n.serviceClass,
-                    n.operatorClass,
+                    node.serviceClass,
+                    node.operatorClass,
                     node_id,
                 )
-                node = None
+                runtime_node = None
             except Exception as exc:
                 log.error("failed to create runtime node node_id=%s", node_id, exc_info=exc)
-                node = None
-            if node is None:
+                runtime_node = None
+            if runtime_node is None:
                 continue
-            if not isinstance(node, OperatorNode):
-                log.error("runtime node has invalid type node_id=%s type=%s", node_id, type(node).__name__)
+            if not isinstance(runtime_node, OperatorNode):
+                log.error("runtime node has invalid type node_id=%s type=%s", node_id, type(runtime_node).__name__)
                 continue
-            # Make runtime node metadata match the rungraph snapshot explicitly.
-            # This keeps change detection deterministic and avoids "ghost fields".
-            node.data_in_ports = [str(p.name) for p in (n.dataInPorts or [])]
-            node.data_out_ports = [str(p.name) for p in (n.dataOutPorts or [])]
-            node.state_fields = [str(s.name) for s in (n.stateFields or [])]
-            node.exec_in_ports = [str(x) for x in (n.execInPorts or [])]
-            node.exec_out_ports = [str(x) for x in (n.execOutPorts or [])]
-            self._operator_nodes[node_id] = node
+            runtime_node.data_in_ports = [str(port.name) for port in (node.dataInPorts or [])]
+            runtime_node.data_out_ports = [str(port.name) for port in (node.dataOutPorts or [])]
+            runtime_node.state_fields = [str(field.name) for field in (node.stateFields or [])]
+            runtime_node.exec_in_ports = [str(port) for port in (node.execInPorts or [])]
+            runtime_node.exec_out_ports = [str(port) for port in (node.execOutPorts or [])]
+            self._operator_nodes[node_id] = runtime_node
             try:
-                self._bus.register_node(node)
+                self._bus.register_node(runtime_node)
             except Exception as exc:
                 log.error("failed to register runtime node node_id=%s", node_id, exc_info=exc)
                 self._operator_nodes.pop(node_id, None)
@@ -173,38 +168,31 @@ class ServiceHost:
 
     @staticmethod
     def _needs_recreate(node: OperatorNode, snapshot: F8RuntimeNode) -> bool:
-        """
-        Return True if the local runtime node should be re-created for the given snapshot.
+        desired_in = [str(port.name) for port in (snapshot.dataInPorts or [])]
+        desired_out = [str(port.name) for port in (snapshot.dataOutPorts or [])]
+        desired_state = [str(field.name) for field in (snapshot.stateFields or [])]
 
-        Nodes are cached by nodeId; without this check, editing ports in Studio can
-        yield a rungraph that routes to ports the old instance doesn't expose.
-        """
-        desired_in = [str(p.name) for p in (snapshot.dataInPorts or [])]
-        desired_out = [str(p.name) for p in (snapshot.dataOutPorts or [])]
-        desired_state = [str(sf.name) for sf in (snapshot.stateFields or [])]
-
-        current_in = [str(x) for x in list(node.data_in_ports or [])]
-        current_out = [str(x) for x in list(node.data_out_ports or [])]
-        current_state = [str(x) for x in list(node.state_fields or [])]
+        current_in = [str(port) for port in list(node.data_in_ports or [])]
+        current_out = [str(port) for port in list(node.data_out_ports or [])]
+        current_state = [str(field) for field in list(node.state_fields or [])]
 
         if current_in != desired_in or current_out != desired_out or current_state != desired_state:
             return True
 
-        desired_exec_in = [str(x) for x in (snapshot.execInPorts or [])]
-        desired_exec_out = [str(x) for x in (snapshot.execOutPorts or [])]
-        current_exec_in = [str(x) for x in list(node.exec_in_ports or [])]
-        current_exec_out = [str(x) for x in list(node.exec_out_ports or [])]
-        if current_exec_in != desired_exec_in or current_exec_out != desired_exec_out:
-            return True
-
-        return False
+        desired_exec_in = [str(port) for port in (snapshot.execInPorts or [])]
+        desired_exec_out = [str(port) for port in (snapshot.execOutPorts or [])]
+        current_exec_in = [str(port) for port in list(node.exec_in_ports or [])]
+        current_exec_out = [str(port) for port in list(node.exec_out_ports or [])]
+        return current_exec_in != desired_exec_in or current_exec_out != desired_exec_out
 
     @staticmethod
-    def _node_initial_state(n: F8RuntimeNode) -> dict[str, Any]:
-        out: dict[str, Any] = {}
-        values = n.stateValues or {}
+    def _node_initial_state(node: F8RuntimeNode) -> dict[str, Any]:
+        initial_state: dict[str, Any] = {}
+        values = node.stateValues or {}
         if not values:
-            return out
-        for k, v in dict(values).items():
-            out[str(k)] = unwrap_json_value(v)
-        return out
+            return initial_state
+        for key, value in dict(values).items():
+            initial_state[str(key)] = unwrap_json_value(value)
+        return initial_state
+
+__all__ = ["ServiceHost", "ServiceHostConfig"]

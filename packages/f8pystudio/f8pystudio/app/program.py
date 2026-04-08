@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from f8pysdk.msgspec_codec import dump_json
+from f8pysdk.codec import dump_json
 from f8pysdk.specs import palette_category_from_spec
 from f8pysdk.service_runtime_tools.catalog import ServiceCatalog
 from f8pysdk.service_runtime_tools.discovery import (

@@ -10,7 +10,7 @@ import zlib
 import pytest
 from qtpy import QtCore
 from sqlalchemy import insert, select
-from f8pysdk.msgspec_codec import copy_model
+from f8pysdk.codec import copy_model
 
 from f8pystudio.assets.variants.variant_catalog import LocalVariantProvider, RemoteCacheProvider, VariantCatalogService
 from f8pystudio.assets.variants.variant_models import (

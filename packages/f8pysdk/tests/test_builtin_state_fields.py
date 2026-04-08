@@ -7,7 +7,7 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from f8pysdk.builtin_state_fields import (  # noqa: E402
+from f8pysdk._specs.builtin_fields import (  # noqa: E402
     MONITOR_PORT_NAME,
     normalize_describe_payload_dict,
     operator_state_fields_with_builtins,

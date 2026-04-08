@@ -4,8 +4,8 @@ from typing import Any, Literal, Mapping
 
 import msgspec
 
-from .generated import F8OperatorSpec, F8ServiceSpec
-from .msgspec_codec import validate_as
+from ..generated import F8OperatorSpec, F8ServiceSpec
+from ..codec import validate_as
 
 
 SpecKind = Literal["service", "operator"]
@@ -47,7 +47,6 @@ def coerce_spec_payload(value: object) -> F8ServiceSpec | F8OperatorSpec:
     if spec_kind == "service":
         return validate_as(F8ServiceSpec, value)
 
-    # Compatibility path for persisted payloads that predate `specKind`.
     if "operatorClass" in value:
         return validate_as(F8OperatorSpec, value)
     return validate_as(F8ServiceSpec, value)

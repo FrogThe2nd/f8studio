@@ -15,8 +15,8 @@ from f8pysdk.specs import (
     F8StateAccess,
     F8StateSpec,
 )
-from f8pysdk.command_state import command_input_state_field, command_output_state_field
-from f8pysdk.msgspec_codec import copy_model
+from f8pysdk.command import command_input_state_field, command_output_state_field
+from f8pysdk.codec import copy_model
 from f8pysdk.specs import any_schema, number_schema
 
 from f8pystudio.nodegraph.operator_basenode import F8StudioOperatorBaseNode

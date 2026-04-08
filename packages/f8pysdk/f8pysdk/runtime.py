@@ -6,8 +6,8 @@ from nats.js.api import StorageType  # type: ignore[import-not-found]
 
 from .bus import ServiceBus, ServiceBusConfig
 from .data import CrossPublishPolicy, DataDeliveryMode
+from .host import ServiceHost, ServiceHostConfig
 from .registry import RuntimeNodeRegistry, create_runtime_node_registry
-from .service_host import ServiceHost, ServiceHostConfig
 
 
 @dataclass(frozen=True)
@@ -68,7 +68,7 @@ class ServiceRuntimeConfig:
             monitor_gpu_enabled=bool(monitor_gpu_enabled),
         )
         host = ServiceHostConfig(service_class=str(service_class))
-        modules = tuple(str(m).strip() for m in (registry_modules or ()) if str(m).strip())
+        modules = tuple(str(module).strip() for module in (registry_modules or ()) if str(module).strip())
         return cls(bus=bus, host=host, registry_modules=modules)
 
     @property
@@ -130,3 +130,5 @@ class ServiceRuntime:
     async def stop(self) -> None:
         await self.bus.stop()
         self._closed = True
+
+__all__ = ["ServiceRuntime", "ServiceRuntimeConfig"]

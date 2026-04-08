@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from f8pysdk.msgspec_codec import dump_json
+from f8pysdk.codec import dump_json
 import asyncio
 import enum
 import logging
@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Any, TYPE_CHECKING
 
 from ...generated import F8StateAccess
-from ...json_unwrap import unwrap_json_value
+from ...codec import unwrap_json_value
 from ...nats_naming import ensure_token, kv_key_node_state
 from ...state import StateWriteContext, StateWriteError, StateWriteOrigin, StateWriteSource
 from ..internal.logging import log_error_once

@@ -17,7 +17,7 @@ if SDK_ROOT not in sys.path:
     sys.path.insert(0, SDK_ROOT)
 
 from f8pysdk.specs import F8RuntimeGraph, F8RuntimeNode
-from f8pysdk.app import ServiceHost, ServiceHostConfig
+from f8pysdk.host import ServiceHost, ServiceHostConfig
 from f8pysdk.testing import ServiceBusHarness
 
 from f8pyscript.constants import SERVICE_CLASS

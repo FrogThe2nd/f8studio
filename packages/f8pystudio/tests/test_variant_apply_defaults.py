@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from f8pysdk.msgspec_codec import copy_model, dump_json
+from f8pysdk.codec import copy_model, dump_json
 from typing import Any
 
 from f8pysdk.specs import F8OperatorSchemaVersion, F8OperatorSpec, F8StateAccess, F8StateSpec

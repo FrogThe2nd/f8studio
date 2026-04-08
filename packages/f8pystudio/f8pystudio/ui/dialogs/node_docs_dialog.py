@@ -4,7 +4,7 @@ import json
 from typing import Any
 
 from f8pysdk.specs import F8OperatorSpec, F8ServiceSpec
-from f8pysdk.msgspec_codec import dump_json
+from f8pysdk.codec import dump_json
 from qtpy import QtCore, QtWidgets
 
 from ..support.json_text_editor import attach_json_enhancements

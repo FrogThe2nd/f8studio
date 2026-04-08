@@ -10,7 +10,7 @@ from urllib import error, parse, request
 
 from qtpy import QtCore
 
-from f8pysdk.msgspec_codec import copy_model, validate_as
+from f8pysdk.codec import copy_model, validate_as
 
 from ..common import (
     JsonObject,

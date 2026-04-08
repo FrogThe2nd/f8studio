@@ -234,6 +234,8 @@ This plan is intentionally incremental. Each phase should leave the SDK usable a
 - [x] Define stable public modules, for example:
   - `f8pysdk.app`
   - `f8pysdk.bus`
+  - `f8pysdk.host`
+  - `f8pysdk.runtime`
   - `f8pysdk.specs`
   - `f8pysdk.registry`
   - `f8pysdk.nodes`
@@ -246,12 +248,24 @@ This plan is intentionally incremental. Each phase should leave the SDK usable a
 - [x] Move compatibility re-export modules under a clearly marked compatibility boundary.
 - [x] Audit sibling packages for internal imports and migrate them to stable modules.
 - [x] Add deprecation warnings and migration notes for unstable paths such as deep `service_bus.*` imports.
+- [x] Demote remaining implementation-ish top-level helpers into explicit owner packages or internal modules.
 - [x] Update README examples to use the new canonical entrypoints only.
 
 ### Acceptance
 
 - A new user can discover the SDK from a small number of obvious modules.
 - Internal modules are no longer the default import path for sibling packages.
+
+### Phase 6 status
+
+- Stable top-level owner modules are now real owners rather than thin implementation façades:
+  `app`, `bus`, `host`, `runtime`, `specs`, `nodes`, `registry`, `command`, `data`, `state`, `codec`, `transport`, `monitoring`, and `testing`.
+- Additional stable utility modules are explicitly documented instead of being left ambiguous:
+  `nats_naming`, `capabilities`, `shm`, `rungraph_validation`, `editor_assist_protocol`, `time_utils`, and `service_runtime_tools`.
+- Non-owner helper modules that did not justify top-level placement have been removed from the package root:
+  `builtin_state_fields` moved under `f8pysdk._specs.builtin_fields`,
+  `service_ready` moved to `f8pysdk.service_runtime_tools.readiness`,
+  and `nats_server_bootstrap` moved to `f8pysdk.service_runtime_tools.nats_bootstrap`.
 
 ## Recommended Implementation Order
 
@@ -456,6 +470,19 @@ This milestone does not redesign the SDK yet, but it makes the system much safer
   - compatibility notes:
     - public imports via `f8pysdk.state` and `f8pysdk.service_bus` remain unchanged
     - the temporary deep root state facade modules and `service_bus.types` compatibility barrel introduced during migration have since been removed
+
+- 2026-04-08
+  - owner: Codex + repository maintainer
+  - scope: Phase 6 final top-level cleanup and documentation backfill
+  - completed:
+    - documented the remaining stable utility modules so the public surface is split into core owners vs advanced utility packages
+    - removed top-level helper modules `f8pysdk.builtin_state_fields`, `f8pysdk.service_ready`, and `f8pysdk.nats_server_bootstrap`
+    - moved builtin spec-shaping helpers under `f8pysdk._specs.builtin_fields`
+    - moved readiness / local NATS bootstrap helpers under `f8pysdk.service_runtime_tools.readiness` and `f8pysdk.service_runtime_tools.nats_bootstrap`
+    - repointed repo-internal imports and regression tests to the new owner paths
+  - compatibility notes:
+    - repo-internal callers should treat `_specs.*` as internal owner modules, not public SDK surface
+    - deployment/runtime-tooling helpers now live under `service_runtime_tools.*` rather than the package root
 
 - 2026-04-07
   - owner: Codex + repository maintainer

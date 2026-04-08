@@ -6,7 +6,7 @@ from typing import Any
 from NodeGraphQt.constants import NodePropWidgetEnum
 
 from f8pysdk.specs import F8StateAccess
-from f8pysdk.command_state import command_input_port_name, command_output_port_name
+from f8pysdk.command import command_input_port_name, command_output_port_name
 from f8pysdk.specs import schema_default, schema_type
 
 from .items.node_item_core import state_field_info as _state_field_info

@@ -8,7 +8,7 @@ from typing import Any
 from .node_base import F8StudioBaseNode
 
 from f8pysdk.specs import F8OperatorSpec, F8ServiceSpec, F8StateAccess
-from f8pysdk.command_state import parse_command_port_name
+from f8pysdk.command import parse_command_port_name
 
 from collections import OrderedDict
 
