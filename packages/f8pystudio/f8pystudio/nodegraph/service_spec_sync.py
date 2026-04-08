@@ -5,7 +5,7 @@ from typing import Any
 
 from NodeGraphQt.constants import NodePropWidgetEnum
 
-from f8pysdk import F8StateAccess
+from f8pysdk.specs import F8StateAccess
 from f8pysdk.command_state import command_input_port_name, command_output_port_name
 from f8pysdk.schema_helpers import schema_default, schema_type
 

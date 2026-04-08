@@ -8,9 +8,9 @@ import msgspec
 
 from .generated import F8RuntimeGraph, F8RuntimeNode
 from .json_unwrap import unwrap_json_value
+from .registry import OperatorFactoryNotRegistered, RuntimeNodeRegistry, create_runtime_node_registry
 from .runtime_node import OperatorNode, RuntimeNode
-from .runtime_node_registry import RuntimeNodeRegistry
-from .service_bus import ServiceBus
+from .service_bus.runtime import ServiceBus
 
 
 log = logging.getLogger(__name__)
@@ -45,7 +45,7 @@ class ServiceHost:
     ) -> None:
         self._bus = bus
         self._config = config
-        self._registry = registry if registry is not None else RuntimeNodeRegistry()
+        self._registry = registry if registry is not None else create_runtime_node_registry()
 
         self._service_node: RuntimeNode | None = None
         self._operator_nodes: dict[str, OperatorNode] = {}
@@ -133,7 +133,15 @@ class ServiceHost:
                     continue
             initial_state = self._node_initial_state(n)
             try:
-                node = self._registry.create(node_id=node_id, node=n, initial_state=initial_state)
+                node = self._registry.create_operator_node(node_id=node_id, node=n, initial_state=initial_state)
+            except OperatorFactoryNotRegistered:
+                log.error(
+                    "missing operator runtime factory service_class=%s operator_class=%s node_id=%s",
+                    n.serviceClass,
+                    n.operatorClass,
+                    node_id,
+                )
+                node = None
             except Exception as exc:
                 log.error("failed to create runtime node node_id=%s", node_id, exc_info=exc)
                 node = None

@@ -38,7 +38,7 @@ from .variant_models import (
     F8VariantSyncState,
     F8VariantVisibility,
 )
-from f8pysdk import F8VariantKind, F8VariantRecord
+from f8pysdk.specs import F8VariantKind, F8VariantRecord
 
 logger = logging.getLogger(__name__)
 

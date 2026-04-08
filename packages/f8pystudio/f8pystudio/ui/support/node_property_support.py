@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from f8pysdk import F8DataTypeSchema
+from f8pysdk.specs import F8DataTypeSchema
 from f8pysdk.msgspec_codec import dump_json
 
 from ...editor_assist.protocol import editor_assist_context_for_field

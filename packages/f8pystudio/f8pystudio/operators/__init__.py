@@ -1,3 +1,5 @@
+from f8pysdk.registry import create_runtime_node_registry, RuntimeNodeRegistry, shared_runtime_node_registry
+
 from .viz_text import VizTextRuntimeNode, register_operator as register_viz_text
 from .viz_track import VizTrackRuntimeNode, register_operator as register_viz_track
 from .viz_wave import VizWaveRuntimeNode, register_operator as register_viz_wave
@@ -24,11 +26,13 @@ __all__ = [
     "PatchHubRuntimeNode",
     "StateExprRuntimeNode",
     "ValueStepperRuntimeNode",
+    "create_operator_registry",
     "register_operator",
+    "shared_operator_registry",
 ]
 
 
-def register_operator(registry=None):
+def register_operator(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
     """
     Register all Studio in-process operators.
     """
@@ -45,3 +49,11 @@ def register_operator(registry=None):
     reg = register_state_expr(reg)
     reg = register_value_stepper(reg)
     return reg
+
+
+def create_operator_registry() -> RuntimeNodeRegistry:
+    return register_operator(create_runtime_node_registry())
+
+
+def shared_operator_registry() -> RuntimeNodeRegistry:
+    return register_operator(shared_runtime_node_registry())

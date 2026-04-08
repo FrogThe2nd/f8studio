@@ -7,7 +7,7 @@ import msgspec
 
 from NodeGraphQt.base.model import NodeModel
 
-from f8pysdk import F8OperatorSpec, F8ServiceSpec, F8VariantRef
+from f8pysdk.specs import F8OperatorSpec, F8ServiceSpec, F8VariantRef
 from f8pysdk.spec_metadata import coerce_spec_payload
 from ..assets.variants.variant_metadata import normalize_variant_sys_metadata, variant_ref_from_dict, variant_ref_to_json
 

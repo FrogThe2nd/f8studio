@@ -6,7 +6,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any
 
-from f8pysdk import (
+from f8pysdk.specs import (
     F8OperatorSpec,
     F8ServiceSpec,
     F8StateAccess,

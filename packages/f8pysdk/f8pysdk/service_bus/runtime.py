@@ -21,7 +21,7 @@ from ..state import StateRead, StateWriteOrigin, StateWriteSource
 from ..time_utils import now_ms
 from .config import ServiceBusConfig, _debug_state_enabled
 from .data.router import DataRouter
-from .internal.command import CommandBinding, CommandGateway, CommandInvocation, CommandInvokeOptions
+from .internal.command import CommandGateway, CommandInvocation, CommandInvokeOptions
 from .monitor_collector import MonitorCollector, MonitorCollectorConfig
 from .state.pipeline import publish_state as _publish_state_impl
 from .state.router import StateRouter
@@ -128,11 +128,7 @@ class ServiceBus:
         )
         self._state_store = StateStore(self, cache_max_entries=self._state_cache_max_entries)
         self._state_router = StateRouter(self, store=self._state_store)
-        self._command_input_bindings: dict[tuple[str, str], CommandBinding] = {}
-        self._command_output_bindings: dict[tuple[str, str], CommandBinding] = {}
-        self._command_hidden_fields: set[tuple[str, str]] = set()
-        self._command_dispatch_states: dict[tuple[str, str], Any] = {}
-        self._command_gateway = CommandGateway(self)
+        self._command_gateway = CommandGateway(bus=self, nodes=self._nodes)
 
         self._rungraph_hooks: list[RungraphHook] = []
         self._service_hooks: list[ServiceHook] = []
@@ -318,6 +314,10 @@ class ServiceBus:
     def active(self) -> bool:
         return bool(self._active)
 
+    @property
+    def command_gateway(self) -> CommandGateway:
+        return self._command_gateway
+
     async def set_active(
         self,
         active: bool,
@@ -338,6 +338,8 @@ class ServiceBus:
         node_id = ensure_token(node_id, label="node_id")
         node = self._nodes.pop(node_id, None)
         self._data_router.remove_node_inputs(node_id)
+        if self._graph is not None:
+            self._command_gateway.refresh_bindings()
         if node is not None and isinstance(node, ClosableNode):
             try:
                 loop = asyncio.get_running_loop()

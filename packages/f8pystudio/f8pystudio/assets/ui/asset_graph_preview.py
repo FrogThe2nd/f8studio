@@ -7,7 +7,7 @@ from NodeGraphQt.errors import NodeCreationError
 from NodeGraphQt.nodes.base_node import NodeBaseWidget
 from qtpy import QtCore, QtGui, QtWidgets
 
-from f8pysdk import F8VariantRecord
+from f8pysdk.specs import F8VariantRecord
 from f8pysdk.msgspec_codec import dump_json
 
 from ...assets.common import JsonObject, json_object_from_value

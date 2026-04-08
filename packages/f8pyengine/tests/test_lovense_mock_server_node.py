@@ -23,7 +23,7 @@ from f8pysdk.generated import (  # noqa: E402
     F8RuntimeNode,
 )
 from f8pysdk.nodes import OperatorNode  # noqa: E402
-from f8pysdk.registry import RuntimeNodeRegistry  # noqa: E402
+from f8pysdk.registry import create_runtime_node_registry  # noqa: E402
 from f8pysdk.app import ServiceHost, ServiceHostConfig  # noqa: E402
 from f8pysdk.testing import ServiceBusHarness  # noqa: E402
 
@@ -158,7 +158,7 @@ class LovenseMockServerNodeTests(unittest.IsolatedAsyncioTestCase):
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
 
-        reg = RuntimeNodeRegistry.instance()
+        reg = create_runtime_node_registry()
         register_operator(reg)
 
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
@@ -240,7 +240,7 @@ class LovenseMockServerNodeTests(unittest.IsolatedAsyncioTestCase):
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
 
-        reg = RuntimeNodeRegistry.instance()
+        reg = create_runtime_node_registry()
         register_operator(reg)
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
@@ -273,9 +273,9 @@ class LovenseMockServerExecTriggerTests(unittest.IsolatedAsyncioTestCase):
     async def _setup_exec_runtime(self, *, port: int) -> tuple[object, PyEngineService, _RuntimeStub]:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
-        reg = RuntimeNodeRegistry.instance()
+        reg = create_runtime_node_registry()
         register_pyengine_specs(reg)
-        reg.register(
+        reg.register_operator_factory(
             SERVICE_CLASS,
             "f8.test_probe_exec",
             lambda node_id, node, initial_state: _ProbeExecRuntimeNode(

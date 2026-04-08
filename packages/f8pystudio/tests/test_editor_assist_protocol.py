@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from f8pysdk.msgspec_codec import validate_as
-from f8pysdk import F8OperatorSchemaVersion, F8OperatorSpec
+from f8pysdk.specs import F8OperatorSchemaVersion, F8OperatorSpec
 
 from f8pystudio.editor_assist.protocol import editor_assist_context_for_field
 

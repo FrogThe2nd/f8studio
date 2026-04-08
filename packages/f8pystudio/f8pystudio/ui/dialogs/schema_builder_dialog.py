@@ -7,7 +7,7 @@ from typing import Any
 
 from qtpy import QtCore, QtGui, QtWidgets
 
-from f8pysdk import F8DataTypeSchema
+from f8pysdk.specs import F8DataTypeSchema
 
 from ..support.json_text_editor import attach_json_enhancements
 

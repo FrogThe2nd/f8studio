@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Callable
 
-from f8pysdk import F8RuntimeGraph, F8RuntimeGraphMeta
+from f8pysdk.specs import F8RuntimeGraph, F8RuntimeGraphMeta
 from f8pysdk.command_state import is_hidden_command_state_field
 from f8pysdk.nats_naming import ensure_token
 

@@ -7,7 +7,7 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from f8pysdk import F8Command  # noqa: E402
+from f8pysdk.specs import F8Command  # noqa: E402
 
 
 class F8CommandRequiredFieldTests(unittest.TestCase):

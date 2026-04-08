@@ -14,22 +14,21 @@ if ROOT not in sys.path:
 if SDK_ROOT not in sys.path:
     sys.path.insert(0, SDK_ROOT)
 
-from f8pysdk import F8StateAccess, F8StateSpec, any_schema  # noqa: E402
+from f8pysdk.specs import F8StateAccess, F8StateSpec, any_schema  # noqa: E402
 from f8pysdk.generated import F8RuntimeGraph, F8RuntimeNode  # noqa: E402
 from f8pysdk.msgspec_codec import dump_json  # noqa: E402
-from f8pysdk.registry import RuntimeNodeRegistry  # noqa: E402
 from f8pysdk.app import ServiceHost, ServiceHostConfig  # noqa: E402
 from f8pysdk.shm.video import VideoShmWriter  # noqa: E402
 from f8pysdk.testing import ServiceBusHarness  # noqa: E402
 
 from f8pyscript.constants import SERVICE_CLASS  # noqa: E402
 from f8pyscript.main_script import PythonScriptServiceProgram  # noqa: E402
-from f8pyscript.script_node_registry import register_specs  # noqa: E402
+from f8pyscript.script_node_registry import create_pyscript_registry  # noqa: E402
 from f8pyscript.script_service_node import PythonScriptServiceNode  # noqa: E402
 
 
 def _service_node(*, code: str, state_fields: list[F8StateSpec] | None = None, state_values: dict[str, object] | None = None) -> F8RuntimeNode:
-    desc = RuntimeNodeRegistry.instance().describe(SERVICE_CLASS)
+    desc = create_pyscript_registry().describe(SERVICE_CLASS)
     spec = desc.service
     merged_state = {"code": code}
     if state_values is not None:
@@ -48,8 +47,7 @@ def _service_node(*, code: str, state_fields: list[F8StateSpec] | None = None, s
 
 class PyScriptServiceNodeTests(unittest.IsolatedAsyncioTestCase):
     def test_service_spec_contains_editor_assist_protocol(self) -> None:
-        reg = RuntimeNodeRegistry.instance()
-        register_specs(reg)
+        reg = create_pyscript_registry()
         spec = reg.describe(SERVICE_CLASS).service
         state_fields_by_name = {str(field.name or ""): field for field in list(spec.stateFields or [])}
         self.assertIn("tickEnabled", state_fields_by_name)
@@ -97,8 +95,7 @@ class PyScriptServiceNodeTests(unittest.IsolatedAsyncioTestCase):
     async def _build_runtime(self) -> tuple[object, object, PythonScriptServiceNode]:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
-        reg = RuntimeNodeRegistry.instance()
-        register_specs(reg)
+        reg = create_pyscript_registry()
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
         graph = F8RuntimeGraph(graphId="g1", revision="r1", nodes=[_service_node(code="")], edges=[])
@@ -111,8 +108,7 @@ class PyScriptServiceNodeTests(unittest.IsolatedAsyncioTestCase):
     async def test_on_start_and_lifecycle_hooks(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
-        reg = RuntimeNodeRegistry.instance()
-        register_specs(reg)
+        reg = create_pyscript_registry()
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
         code = (
@@ -130,7 +126,7 @@ class PyScriptServiceNodeTests(unittest.IsolatedAsyncioTestCase):
             "    ctx.set_state('resumeCount', c)\n"
         )
 
-        fields = list(RuntimeNodeRegistry.instance().describe(SERVICE_CLASS).service.stateFields or [])
+        fields = list(create_pyscript_registry().describe(SERVICE_CLASS).service.stateFields or [])
         fields.append(F8StateSpec(name="startedCount", label="", description="", valueSchema=any_schema(), access=F8StateAccess.rw))
         fields.append(F8StateSpec(name="pauseCount", label="", description="", valueSchema=any_schema(), access=F8StateAccess.rw))
         fields.append(F8StateSpec(name="resumeCount", label="", description="", valueSchema=any_schema(), access=F8StateAccess.rw))
@@ -155,8 +151,7 @@ class PyScriptServiceNodeTests(unittest.IsolatedAsyncioTestCase):
     async def test_tick_pause_resume(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
-        reg = RuntimeNodeRegistry.instance()
-        register_specs(reg)
+        reg = create_pyscript_registry()
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
         code = (
@@ -166,7 +161,7 @@ class PyScriptServiceNodeTests(unittest.IsolatedAsyncioTestCase):
             "    ctx.set_state('tickCount', c)\n"
         )
 
-        fields = list(RuntimeNodeRegistry.instance().describe(SERVICE_CLASS).service.stateFields or [])
+        fields = list(create_pyscript_registry().describe(SERVICE_CLASS).service.stateFields or [])
         fields.append(F8StateSpec(name="tickCount", label="", description="", valueSchema=any_schema(), access=F8StateAccess.rw))
 
         graph = F8RuntimeGraph(
@@ -203,8 +198,7 @@ class PyScriptServiceNodeTests(unittest.IsolatedAsyncioTestCase):
     async def test_command_grant_and_revoke_local_exec(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
-        reg = RuntimeNodeRegistry.instance()
-        register_specs(reg)
+        reg = create_pyscript_registry()
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
         code = (
@@ -242,8 +236,7 @@ class PyScriptServiceNodeTests(unittest.IsolatedAsyncioTestCase):
     async def test_video_shm_subscription(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
-        reg = RuntimeNodeRegistry.instance()
-        register_specs(reg)
+        reg = create_pyscript_registry()
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
         shm_name = f"test.shm.pyscript.{uuid.uuid4().hex}"
@@ -285,11 +278,10 @@ class PyScriptServiceNodeTests(unittest.IsolatedAsyncioTestCase):
     async def test_get_state_cached_sync_snapshot(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
-        reg = RuntimeNodeRegistry.instance()
-        register_specs(reg)
+        reg = create_pyscript_registry()
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
-        fields = list(RuntimeNodeRegistry.instance().service_spec(SERVICE_CLASS).stateFields or [])  # type: ignore[union-attr]
+        fields = list(create_pyscript_registry().service_spec(SERVICE_CLASS).stateFields or [])  # type: ignore[union-attr]
         fields.append(F8StateSpec(name="myState", label="", description="", valueSchema=any_schema(), access=F8StateAccess.rw))
 
         code = (
@@ -323,11 +315,10 @@ class PyScriptServiceNodeTests(unittest.IsolatedAsyncioTestCase):
     async def test_states_view_supports_object_and_mapping_access_and_exposes_wo(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
-        reg = RuntimeNodeRegistry.instance()
-        register_specs(reg)
+        reg = create_pyscript_registry()
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
-        fields = list(RuntimeNodeRegistry.instance().service_spec(SERVICE_CLASS).stateFields or [])  # type: ignore[union-attr]
+        fields = list(create_pyscript_registry().service_spec(SERVICE_CLASS).stateFields or [])  # type: ignore[union-attr]
         fields.append(F8StateSpec(name="my_rw", label="", description="", valueSchema=any_schema(), access=F8StateAccess.rw))
         fields.append(F8StateSpec(name="my_ro", label="", description="", valueSchema=any_schema(), access=F8StateAccess.ro))
         fields.append(F8StateSpec(name="my_wo", label="", description="", valueSchema=any_schema(), access=F8StateAccess.wo))
@@ -369,11 +360,10 @@ class PyScriptServiceNodeTests(unittest.IsolatedAsyncioTestCase):
     async def test_states_view_fallback_declared_state_names_exposes_wo(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
-        reg = RuntimeNodeRegistry.instance()
-        register_specs(reg)
+        reg = create_pyscript_registry()
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
-        fields = list(RuntimeNodeRegistry.instance().service_spec(SERVICE_CLASS).stateFields or [])  # type: ignore[union-attr]
+        fields = list(create_pyscript_registry().service_spec(SERVICE_CLASS).stateFields or [])  # type: ignore[union-attr]
         fields.append(F8StateSpec(name="my_rw", label="", description="", valueSchema=any_schema(), access=F8StateAccess.rw))
         fields.append(F8StateSpec(name="my_ro", label="", description="", valueSchema=any_schema(), access=F8StateAccess.ro))
         fields.append(F8StateSpec(name="my_wo", label="", description="", valueSchema=any_schema(), access=F8StateAccess.wo))
@@ -395,8 +385,7 @@ class PyScriptServiceNodeTests(unittest.IsolatedAsyncioTestCase):
     async def test_legacy_ctx_dict_access_sets_last_error(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
-        reg = RuntimeNodeRegistry.instance()
-        register_specs(reg)
+        reg = create_pyscript_registry()
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
         graph = F8RuntimeGraph(graphId="g8", revision="r1", nodes=[_service_node(code="")], edges=[])
@@ -415,8 +404,7 @@ class PyScriptServiceNodeTests(unittest.IsolatedAsyncioTestCase):
     async def test_on_data_passes_raw_value(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
-        reg = RuntimeNodeRegistry.instance()
-        register_specs(reg)
+        reg = create_pyscript_registry()
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
         graph = F8RuntimeGraph(graphId="g11", revision="r1", nodes=[_service_node(code="")], edges=[])
@@ -446,11 +434,10 @@ class PyScriptServiceNodeTests(unittest.IsolatedAsyncioTestCase):
     async def test_outputs_unwrap_state_object_view_to_dict(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
-        reg = RuntimeNodeRegistry.instance()
-        register_specs(reg)
+        reg = create_pyscript_registry()
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
-        fields = list(RuntimeNodeRegistry.instance().service_spec(SERVICE_CLASS).stateFields or [])  # type: ignore[union-attr]
+        fields = list(create_pyscript_registry().service_spec(SERVICE_CLASS).stateFields or [])  # type: ignore[union-attr]
         fields.append(F8StateSpec(name="pose", label="", description="", valueSchema=any_schema(), access=F8StateAccess.rw))
 
         graph = F8RuntimeGraph(
@@ -516,8 +503,7 @@ class PyScriptServiceNodeTests(unittest.IsolatedAsyncioTestCase):
     async def test_hook_async_flags_and_invoke_context_reuse(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
-        reg = RuntimeNodeRegistry.instance()
-        register_specs(reg)
+        reg = create_pyscript_registry()
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
         graph = F8RuntimeGraph(graphId="g10", revision="r1", nodes=[_service_node(code="")], edges=[])

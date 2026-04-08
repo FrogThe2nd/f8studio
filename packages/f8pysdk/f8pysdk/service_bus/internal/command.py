@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
+from collections.abc import Mapping
 from typing import Any, TYPE_CHECKING
 
 from ...capabilities import CommandableNode
@@ -79,7 +80,7 @@ def _command_specs_for_node(node: Any) -> list[F8Command]:
     return []
 
 
-def build_command_bindings(bus: "ServiceBus") -> tuple[
+def build_command_bindings(nodes: Mapping[str, Any]) -> tuple[
     dict[tuple[str, str], CommandBinding],
     dict[tuple[str, str], CommandBinding],
     set[tuple[str, str]],
@@ -88,7 +89,7 @@ def build_command_bindings(bus: "ServiceBus") -> tuple[
     output_bindings: dict[tuple[str, str], CommandBinding] = {}
     hidden_fields: set[tuple[str, str]] = set()
 
-    for node_id, node in list(bus._nodes.items()):
+    for node_id, node in list(nodes.items()):
         for command in _command_specs_for_node(node):
             command_name = str(command.name or "").strip()
             if not command_name:
@@ -158,26 +159,35 @@ def build_command_output_meta(*, command_name: str, command_input_field: str) ->
 
 
 class CommandGateway:
-    def __init__(self, bus: "ServiceBus") -> None:
+    def __init__(self, *, bus: "ServiceBus", nodes: dict[str, Any]) -> None:
         self._bus = bus
+        self._nodes = nodes
+        self._input_bindings: dict[tuple[str, str], CommandBinding] = {}
+        self._output_bindings: dict[tuple[str, str], CommandBinding] = {}
+        self._hidden_fields: set[tuple[str, str]] = set()
+        self._dispatch_states: dict[tuple[str, str], _CommandDispatchState] = {}
 
     def refresh_bindings(self) -> None:
-        input_bindings, output_bindings, hidden_fields = build_command_bindings(self._bus)
-        self._bus._command_input_bindings = input_bindings
-        self._bus._command_output_bindings = output_bindings
-        self._bus._command_hidden_fields = hidden_fields
+        input_bindings, output_bindings, hidden_fields = build_command_bindings(self._nodes)
+        self._input_bindings = input_bindings
+        self._output_bindings = output_bindings
+        self._hidden_fields = hidden_fields
+        active_dispatch_keys = set(output_bindings.keys())
+        stale_dispatch_keys = [key for key in self._dispatch_states if key not in active_dispatch_keys]
+        for key in stale_dispatch_keys:
+            del self._dispatch_states[key]
 
     def input_binding(self, *, node_id: str, field: str) -> CommandBinding | None:
-        return self._bus._command_input_bindings.get((str(node_id), str(field)))
+        return self._input_bindings.get((str(node_id), str(field)))
 
     def output_binding(self, *, node_id: str, call: str) -> CommandBinding | None:
-        binding = self._bus._command_output_bindings.get((str(node_id), str(call)))
+        binding = self._output_bindings.get((str(node_id), str(call)))
         if binding is not None:
             return binding
         return self._binding_from_node_spec(node_id=str(node_id), call=str(call))
 
     def is_hidden_field(self, *, node_id: str, field: str) -> bool:
-        return (str(node_id), str(field)) in self._bus._command_hidden_fields
+        return (str(node_id), str(field)) in self._hidden_fields
 
     async def write_output(
         self,
@@ -279,7 +289,7 @@ class CommandGateway:
         binding = self.input_binding(node_id=str(node_id), field=str(field))
         if binding is None:
             return
-        dispatch_state = self._bus._command_dispatch_states.setdefault(
+        dispatch_state = self._dispatch_states.setdefault(
             (binding.node_id, binding.command_name),
             _CommandDispatchState(),
         )
@@ -354,7 +364,7 @@ class CommandGateway:
         )
 
     def _binding_from_node_spec(self, *, node_id: str, call: str) -> CommandBinding | None:
-        node = self._bus.get_node(str(node_id))
+        node = self._nodes.get(str(node_id))
         if node is None:
             return None
         for command in _command_specs_for_node(node):
@@ -386,21 +396,6 @@ def _hidden_state_output_meta(*, binding: CommandBinding) -> dict[str, Any]:
         command_name=binding.command_name,
         command_input_field=binding.input_field,
     )
-
-
-def _gateway_for_bus(bus: "ServiceBus") -> CommandGateway:
-    gateway = getattr(bus, "_command_gateway", None)
-    if isinstance(gateway, CommandGateway):
-        return gateway
-    gateway = CommandGateway(bus)
-    bus._command_gateway = gateway
-    return gateway
-
-
-def command_state_bindings_ready(bus: "ServiceBus") -> None:
-    _gateway_for_bus(bus).refresh_bindings()
-
-
 async def write_command_output(
     bus: "ServiceBus",
     *,
@@ -410,7 +405,7 @@ async def write_command_output(
     ts_ms: int | None,
     meta: dict[str, Any] | None,
 ) -> None:
-    await _gateway_for_bus(bus).write_output(
+    await bus.command_gateway.write_output(
         node_id=node_id,
         call=call,
         result=result,
@@ -425,7 +420,7 @@ async def execute_command(
     invocation: CommandInvocation,
     options: CommandInvokeOptions | None = None,
 ) -> CommandExecutionResult:
-    return await _gateway_for_bus(bus).invoke(invocation=invocation, options=options)
+    return await bus.command_gateway.invoke(invocation=invocation, options=options)
 
 
 async def dispatch_command_input(
@@ -437,7 +432,7 @@ async def dispatch_command_input(
     ts_ms: int,
     meta: dict[str, Any],
 ) -> None:
-    await _gateway_for_bus(bus).dispatch_hidden_input(
+    await bus.command_gateway.dispatch_hidden_input(
         node_id=node_id,
         field=field,
         value=value,

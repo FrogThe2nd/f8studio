@@ -10,7 +10,7 @@ if SDK_ROOT not in sys.path:
     sys.path.insert(0, SDK_ROOT)
 
 from f8pysdk.generated import F8RuntimeGraph, F8RuntimeNode  # noqa: E402
-from f8pysdk.registry import RuntimeNodeRegistry  # noqa: E402
+from f8pysdk.registry import create_runtime_node_registry  # noqa: E402
 from f8pysdk.app import ServiceHost, ServiceHostConfig  # noqa: E402
 from f8pysdk.testing import ServiceBusHarness  # noqa: E402
 
@@ -22,7 +22,7 @@ class LovenseProgramAdapterTests(unittest.IsolatedAsyncioTestCase):
     async def test_converts_solace_thrusting_event_to_program_and_amplitude(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
-        reg = RuntimeNodeRegistry.instance()
+        reg = create_runtime_node_registry()
         register_operator(reg)
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
@@ -74,7 +74,7 @@ class LovenseProgramAdapterTests(unittest.IsolatedAsyncioTestCase):
     async def test_converts_pattern_event_to_hz_sequence(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
-        reg = RuntimeNodeRegistry.instance()
+        reg = create_runtime_node_registry()
         register_operator(reg)
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 

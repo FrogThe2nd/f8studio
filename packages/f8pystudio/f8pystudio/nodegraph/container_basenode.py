@@ -11,7 +11,7 @@ from NodeGraphQt.qgraphics.node_abstract import AbstractNodeItem
 from NodeGraphQt.qgraphics.node_backdrop import BackdropSizer
 from NodeGraphQt.qgraphics.node_overlay_disabled import XDisabledItem
 
-from f8pysdk import F8ServiceSpec
+from f8pysdk.specs import F8ServiceSpec
 from f8pysdk.schema_helpers import schema_default, schema_type
 from .node_base import F8StudioBaseNode
 from .service_process_toolbar import ServiceProcessToolbar

@@ -11,7 +11,7 @@ if ROOT not in sys.path:
 if SDK_ROOT not in sys.path:
     sys.path.insert(0, SDK_ROOT)
 
-from f8pysdk.registry import RuntimeNodeRegistry  # noqa: E402
+from f8pysdk.registry import create_runtime_node_registry  # noqa: E402
 
 from f8pyengine.constants import SERVICE_CLASS  # noqa: E402
 from f8pyengine.pyengine_node_registry import register_pyengine_specs  # noqa: E402
@@ -19,7 +19,7 @@ from f8pyengine.pyengine_node_registry import register_pyengine_specs  # noqa: E
 
 class PyEngineSignalOperatorRegistryTests(unittest.TestCase):
     def test_signal_processing_operators_are_registered(self) -> None:
-        reg = RuntimeNodeRegistry.instance()
+        reg = create_runtime_node_registry()
         register_pyengine_specs(reg)
         desc = reg.describe(SERVICE_CLASS)
         operator_classes = {str(spec.operatorClass or "") for spec in list(desc.operators or [])}

@@ -8,13 +8,13 @@ from typing import Any
 
 from qtpy import QtCore, QtWidgets
 
-from f8pysdk import F8OperatorSpec, F8ServiceSpec
+from f8pysdk.specs import F8OperatorSpec, F8ServiceSpec
 
 from ...ui.support.ui_icons import StudioIcon, icon_for
 from ...ui.support.ui_notifications import show_info, show_warning
 from ..variants.variant_compose import build_variant_record_from_node
 from ..variants.variant_ids import build_variant_node_type
-from f8pysdk import F8VariantRecord
+from f8pysdk.specs import F8VariantRecord
 from ..variants.variant_models import F8VariantEntry, F8VariantSourceKind, F8VariantSyncState, F8VariantVisibility, variant_now_iso
 from ..variants.variant_repository import (
     delete_variant,

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from f8pysdk import (
+from f8pysdk.specs import (
     F8DataPortSpec,
     F8RuntimeNode,
     F8SpecEditPolicy,
@@ -16,15 +16,14 @@ from f8pysdk import (
     string_schema,
 )
 from f8pysdk.nodes import RuntimeNode
-from f8pysdk.registry import RuntimeNodeRegistry
+from f8pysdk.registry import create_runtime_node_registry, RuntimeNodeRegistry, shared_runtime_node_registry
 
 from .constants import EXPR_SERVICE_CLASS
 from .expr_service_node import DEFAULT_CODE, PythonExprServiceNode
 
 
-def register_expr_specs(registry: RuntimeNodeRegistry | None = None) -> RuntimeNodeRegistry:
-    reg = registry or RuntimeNodeRegistry.instance()
-    reg.register_service_spec(
+def register_expr_specs(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
+    registry.register_service_spec(
         F8ServiceSpec(
             schemaVersion=F8ServiceSchemaVersion.f8service_1,
             serviceClass=EXPR_SERVICE_CLASS,
@@ -90,5 +89,13 @@ def register_expr_specs(registry: RuntimeNodeRegistry | None = None) -> RuntimeN
     def _service_factory(node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any]) -> RuntimeNode:
         return PythonExprServiceNode(node_id=node_id, node=node, initial_state=initial_state)
 
-    reg.register_service(EXPR_SERVICE_CLASS, _service_factory, overwrite=True)
-    return reg
+    registry.register_service_factory(EXPR_SERVICE_CLASS, _service_factory, overwrite=True)
+    return registry
+
+
+def create_pyexpr_registry() -> RuntimeNodeRegistry:
+    return register_expr_specs(create_runtime_node_registry())
+
+
+def shared_pyexpr_registry() -> RuntimeNodeRegistry:
+    return register_expr_specs(shared_runtime_node_registry())

@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, Callable
 
 import msgspec
-from f8pysdk import F8DataPortSpec, F8StateAccess, F8StateSpec
+from f8pysdk.specs import F8DataPortSpec, F8StateAccess, F8StateSpec
 from f8pysdk.msgspec_codec import copy_model
 from qtpy import QtCore, QtGui, QtWidgets
 

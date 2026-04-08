@@ -64,8 +64,10 @@ class MyService(ServiceCliTemplate):
         return "f8.myservice"
 
     def register_specs(self, registry: RuntimeNodeRegistry) -> None:
-        # registry.register_service(...)
-        # registry.register(...)
+        # registry.register_service_spec(...)
+        # registry.register_service_factory(...)
+        # registry.register_operator_spec(...)
+        # registry.register_operator_factory(...)
         pass
 ```
 
@@ -73,6 +75,9 @@ Registry contract:
 - `ServiceCliTemplate.build_registry()` returns a fresh `RuntimeNodeRegistry` by default.
 - Use `ServiceCliTemplate.build_shared_registry()` only when process-global sharing is intentional.
 - Pass an explicit registry into `ServiceRuntime(...)` or `ServiceHost(...)` when multiple components must share registration state.
+- Use `register_service_spec(...)` / `register_operator_spec(...)` for describe-time metadata.
+- Use `register_service_factory(...)` / `register_operator_factory(...)` for runtime node construction.
+- Missing operator runtime factories now fail explicitly; generic `ServiceNode` remains the default container when a service class has no custom service factory.
 
 Command contract:
 - `ServiceBus.invoke_command(node_id, call, args, ...)` is the explicit local command API.

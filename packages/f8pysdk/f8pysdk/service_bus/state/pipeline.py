@@ -160,8 +160,9 @@ async def _deliver_state_local(
 ) -> None:
     node_id_s = str(node_id)
     field_s = str(field)
-    if (node_id_s, field_s) in bus._command_hidden_fields:
-        binding = bus._command_input_bindings.get((node_id_s, field_s))
+    command_gateway = bus.command_gateway
+    if command_gateway.is_hidden_field(node_id=node_id_s, field=field_s):
+        binding = command_gateway.input_binding(node_id=node_id_s, field=field_s)
         if binding is not None:
             await dispatch_command_input(
                 bus,
@@ -258,7 +259,7 @@ async def validate_state_update(
             },
         )
 
-    if (node_id_s, field_s) in bus._command_hidden_fields:
+    if bus.command_gateway.is_hidden_field(node_id=node_id_s, field=field_s):
         return value
 
     if node is None:

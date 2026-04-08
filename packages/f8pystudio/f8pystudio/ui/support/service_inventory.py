@@ -4,7 +4,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Iterable
 
-from f8pysdk import F8ServiceSpec
+from f8pysdk.specs import F8ServiceSpec
 
 logger = logging.getLogger(__name__)
 

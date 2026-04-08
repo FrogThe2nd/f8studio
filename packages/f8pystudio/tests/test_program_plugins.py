@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from NodeGraphQt import BaseNode
-from f8pysdk.registry import RuntimeNodeRegistry
+from f8pysdk.registry import create_runtime_node_registry
 
 from f8pystudio.plugins.api import PluginOperatorRegistration, PluginRendererRegistration, StudioPluginManifest
 from f8pystudio.app.program import PyStudioProgram
@@ -80,13 +80,13 @@ def test_program_manifest_application_enables_renderer_key_in_registry() -> None
 
 def test_program_applies_plugin_operator_registration() -> None:
     called = {"count": 0}
+    registry = create_runtime_node_registry()
 
-    def _register(registry: RuntimeNodeRegistry | None) -> RuntimeNodeRegistry:
-        assert isinstance(registry, RuntimeNodeRegistry)
+    def _register(received_registry: object) -> object:
+        assert received_registry is registry
         called["count"] += 1
-        return registry
+        return received_registry
 
     manifest = _manifest("plugin_ops", "renderer.ops", operator_reg=PluginOperatorRegistration(register=_register))
-    registry = RuntimeNodeRegistry.instance()
     PyStudioProgram._apply_plugin_manifests_to_runtime_registry([manifest], registry=registry)
     assert called["count"] == 1

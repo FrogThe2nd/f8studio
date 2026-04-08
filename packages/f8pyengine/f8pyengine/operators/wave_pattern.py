@@ -9,7 +9,7 @@ from typing import Any
 import numpy as np
 from scipy.interpolate import Akima1DInterpolator, CubicSpline, PchipInterpolator, interp1d
 
-from f8pysdk import (
+from f8pysdk.specs import (
     F8ArrayTypeSchema,
     F8DataPortSpec,
     F8OperatorSchemaVersion,
@@ -538,12 +538,11 @@ WavePatternRuntimeNode.SPEC = F8OperatorSpec(
 )
 
 
-def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNodeRegistry:
-    reg = registry or RuntimeNodeRegistry.instance()
+def register_operator(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
 
     def _factory(node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any]) -> OperatorNode:
         return WavePatternRuntimeNode(node_id=node_id, node=node, initial_state=initial_state)
 
-    reg.register(SERVICE_CLASS, OPERATOR_CLASS, _factory, overwrite=True)
-    reg.register_operator_spec(WavePatternRuntimeNode.SPEC, overwrite=True)
-    return reg
+    registry.register_operator_factory(SERVICE_CLASS, OPERATOR_CLASS, _factory, overwrite=True)
+    registry.register_operator_spec(WavePatternRuntimeNode.SPEC, overwrite=True)
+    return registry

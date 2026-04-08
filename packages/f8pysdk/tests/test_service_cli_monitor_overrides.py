@@ -9,7 +9,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from f8pysdk.generated import F8ServiceSpec  # noqa: E402
-from f8pysdk.registry import RuntimeNodeRegistry  # noqa: E402
+from f8pysdk.registry import create_runtime_node_registry, RuntimeNodeRegistry  # noqa: E402
 from f8pysdk.nodes import ServiceNode  # noqa: E402
 from f8pysdk.app import MonitorRuntimeOverrides, ServiceCliTemplate  # noqa: E402
 from f8pysdk.registry import OperatorAlreadyRegistered  # noqa: E402
@@ -47,7 +47,7 @@ class _DescribeProgram(ServiceCliTemplate):
 
     def register_specs(self, registry: RuntimeNodeRegistry) -> None:
         registry.register_service_spec(F8ServiceSpec(serviceClass=self.service_class, label="Describe Test"))
-        registry.register_service(self.service_class, lambda node_id, node, initial_state: ServiceNode(node_id=node_id))
+        registry.register_service_factory(self.service_class, lambda node_id, node, initial_state: ServiceNode(node_id=node_id))
 
 
 class _SharedDescribeProgram(_DescribeProgram):
@@ -149,7 +149,7 @@ def test_build_shared_registry_is_explicit_opt_in() -> None:
 
 def test_shared_registry_opt_in_preserves_process_global_behavior() -> None:
     original_instance = RuntimeNodeRegistry._instance
-    RuntimeNodeRegistry._instance = RuntimeNodeRegistry()
+    RuntimeNodeRegistry._instance = create_runtime_node_registry()
     try:
         program = _SharedDescribeProgram()
         payload = program.describe_json()

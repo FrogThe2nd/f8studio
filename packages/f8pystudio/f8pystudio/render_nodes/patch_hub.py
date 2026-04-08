@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from f8pysdk import F8OperatorSpec
+from f8pysdk.specs import F8OperatorSpec
 from f8pysdk.msgspec_codec import dump_json
 
 from ..nodegraph.operator_basenode import F8StudioOperatorBaseNode

@@ -11,7 +11,7 @@ if SDK_ROOT not in sys.path:
     sys.path.insert(0, SDK_ROOT)
 
 from f8pysdk.generated import F8RuntimeGraph, F8RuntimeNode  # noqa: E402
-from f8pysdk.registry import RuntimeNodeRegistry  # noqa: E402
+from f8pysdk.registry import create_runtime_node_registry  # noqa: E402
 from f8pysdk.app import ServiceHost, ServiceHostConfig  # noqa: E402
 from f8pysdk.testing import ServiceBusHarness  # noqa: E402
 
@@ -23,7 +23,7 @@ class SequencePlayerTests(unittest.IsolatedAsyncioTestCase):
     async def test_outputs_expected_value_for_elapsed_time(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
-        reg = RuntimeNodeRegistry.instance()
+        reg = create_runtime_node_registry()
         register_operator(reg)
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
@@ -54,7 +54,7 @@ class SequencePlayerTests(unittest.IsolatedAsyncioTestCase):
     async def test_done_outputs_zero(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
-        reg = RuntimeNodeRegistry.instance()
+        reg = create_runtime_node_registry()
         register_operator(reg)
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
@@ -90,7 +90,7 @@ class SequencePlayerTests(unittest.IsolatedAsyncioTestCase):
     async def test_index_wraps_when_looping(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
-        reg = RuntimeNodeRegistry.instance()
+        reg = create_runtime_node_registry()
         register_operator(reg)
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 

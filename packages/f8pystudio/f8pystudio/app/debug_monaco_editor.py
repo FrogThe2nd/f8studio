@@ -9,7 +9,7 @@ from typing import Any
 
 from qtpy import QtCore, QtWidgets
 
-from f8pysdk import F8OperatorSpec
+from f8pysdk.specs import F8OperatorSpec
 from f8pysdk.msgspec_codec import dump_json, validate_as
 
 from f8pystudio.diagnostics.logging import configure_root_logging_from_env

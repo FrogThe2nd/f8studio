@@ -28,7 +28,6 @@ from .cross_state import (
 )
 from ..state.pipeline import publish_state
 from ...codec import encode_obj
-from ..internal.command import command_state_bindings_ready
 from .metadata import build_builtin_identity_state_meta, build_rungraph_reconcile_meta
 
 if TYPE_CHECKING:
@@ -119,7 +118,7 @@ async def apply_rungraph(bus: "ServiceBus", graph: F8RuntimeGraph) -> bool:
     bus._graph = graph
     bus.state_router.reset_remote_state_ordering()
     bus.state_store.set_access_map(state_access_by_node_field)
-    command_state_bindings_ready(bus)
+    bus.command_gateway.refresh_bindings()
     if bus._debug_state:
         node_count = len(list(graph.nodes or []))
         edge_count = len(list(graph.edges or []))

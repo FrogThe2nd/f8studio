@@ -87,8 +87,6 @@ async def stop(bus: "ServiceBus") -> None:
         await bus._monitor_collector.stop()
     await bus._transport.close()
     await notify_after_stop(bus)
-    bus._rungraph_hooks.clear()
-    bus._service_hooks.clear()
 
 
 async def announce_ready(bus: "ServiceBus", ready: bool, *, reason: str) -> None:

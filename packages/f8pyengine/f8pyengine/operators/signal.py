@@ -4,7 +4,7 @@ import math
 import time
 from typing import Any
 
-from f8pysdk import (
+from f8pysdk.specs import (
     F8DataPortSpec,
     F8OperatorSchemaVersion,
     F8OperatorSpec,
@@ -485,8 +485,7 @@ TempestRuntimeNode.SPEC = F8OperatorSpec(
 )
 
 
-def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNodeRegistry:
-    reg = registry or RuntimeNodeRegistry.instance()
+def register_operator(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
 
     def _cosine_factory(node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any]) -> OperatorNode:
         return CosineRuntimeNode(node_id=node_id, node=node, initial_state=initial_state)
@@ -497,11 +496,11 @@ def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNod
     def _phase_factory(node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any]) -> OperatorNode:
         return PhaseRuntimeNode(node_id=node_id, node=node, initial_state=initial_state)
 
-    reg.register(SERVICE_CLASS, COSINE_OPERATOR_CLASS, _cosine_factory, overwrite=True)
-    reg.register(SERVICE_CLASS, TEMPEST_OPERATOR_CLASS, _tempest_factory, overwrite=True)
-    reg.register(SERVICE_CLASS, PHASE_OPERATOR_CLASS, _phase_factory, overwrite=True)
+    registry.register_operator_factory(SERVICE_CLASS, COSINE_OPERATOR_CLASS, _cosine_factory, overwrite=True)
+    registry.register_operator_factory(SERVICE_CLASS, TEMPEST_OPERATOR_CLASS, _tempest_factory, overwrite=True)
+    registry.register_operator_factory(SERVICE_CLASS, PHASE_OPERATOR_CLASS, _phase_factory, overwrite=True)
 
-    reg.register_operator_spec(CosineRuntimeNode.SPEC, overwrite=True)
-    reg.register_operator_spec(TempestRuntimeNode.SPEC, overwrite=True)
-    reg.register_operator_spec(PhaseRuntimeNode.SPEC, overwrite=True)
-    return reg
+    registry.register_operator_spec(CosineRuntimeNode.SPEC, overwrite=True)
+    registry.register_operator_spec(TempestRuntimeNode.SPEC, overwrite=True)
+    registry.register_operator_spec(PhaseRuntimeNode.SPEC, overwrite=True)
+    return registry

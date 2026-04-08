@@ -4,7 +4,7 @@ import logging
 from typing import Any, Callable
 
 import msgspec
-from f8pysdk import (
+from f8pysdk.specs import (
     F8DataPortSpec,
     F8OperatorSpec,
     F8StateAccess,

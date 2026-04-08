@@ -11,7 +11,7 @@ from qtpy import QtCore, QtWidgets
 from NodeGraphQt.base.commands import PortConnectedCmd
 from NodeGraphQt.errors import NodeCreationError
 
-from f8pysdk import F8OperatorSpec, F8ServiceSpec
+from f8pysdk.specs import F8OperatorSpec, F8ServiceSpec
 from f8pysdk.command_state import command_input_port_name, command_output_port_name
 from f8pysdk.spec_metadata import (
     coerce_spec_payload,

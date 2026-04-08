@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from f8pysdk import (
+from f8pysdk.specs import (
     F8DataPortSpec,
     F8RuntimeNode,
     F8ServiceSchemaVersion,
@@ -17,7 +17,7 @@ from f8pysdk import (
     string_schema,
 )
 from f8pysdk.nodes import RuntimeNode
-from f8pysdk.registry import RuntimeNodeRegistry
+from f8pysdk.registry import create_runtime_node_registry, RuntimeNodeRegistry, shared_runtime_node_registry
 
 from .constants import CLASSIFIER_SERVICE_CLASS, DETECTOR_SERVICE_CLASS, DETECTION_SORTER_SERVICE_CLASS, HUMAN_DETECTOR_SERVICE_CLASS
 from .constants import OPTFLOW_SERVICE_CLASS, TCNWAVE_SERVICE_CLASS
@@ -546,7 +546,7 @@ def _register_classifier(reg: RuntimeNodeRegistry) -> None:
             allowed_tasks={"yolo_cls"},
         )
 
-    reg.register_service(CLASSIFIER_SERVICE_CLASS, _factory, overwrite=True)
+    reg.register_service_factory(CLASSIFIER_SERVICE_CLASS, _factory, overwrite=True)
 
 
 def _register_detector(reg: RuntimeNodeRegistry) -> None:
@@ -587,7 +587,7 @@ def _register_detector(reg: RuntimeNodeRegistry) -> None:
             allowed_tasks={"yolo_det", "yolo_obb", "yowo_temporal_det"},
         )
 
-    reg.register_service(DETECTOR_SERVICE_CLASS, _factory, overwrite=True)
+    reg.register_service_factory(DETECTOR_SERVICE_CLASS, _factory, overwrite=True)
 
 
 def _register_human_detector(reg: RuntimeNodeRegistry) -> None:
@@ -628,7 +628,7 @@ def _register_human_detector(reg: RuntimeNodeRegistry) -> None:
             allowed_tasks={"yolo_det", "yolo_pose"},
         )
 
-    reg.register_service(HUMAN_DETECTOR_SERVICE_CLASS, _factory, overwrite=True)
+    reg.register_service_factory(HUMAN_DETECTOR_SERVICE_CLASS, _factory, overwrite=True)
 
 
 def _register_optflow(reg: RuntimeNodeRegistry) -> None:
@@ -657,7 +657,7 @@ def _register_optflow(reg: RuntimeNodeRegistry) -> None:
             allowed_tasks={"optflow_neuflowv2"},
         )
 
-    reg.register_service(OPTFLOW_SERVICE_CLASS, _factory, overwrite=True)
+    reg.register_service_factory(OPTFLOW_SERVICE_CLASS, _factory, overwrite=True)
 
 
 def _register_detection_sorter(reg: RuntimeNodeRegistry) -> None:
@@ -695,7 +695,7 @@ def _register_detection_sorter(reg: RuntimeNodeRegistry) -> None:
     def _factory(node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any]) -> RuntimeNode:
         return DetectionSorterServiceNode(node_id=node_id, node=node, initial_state=initial_state)
 
-    reg.register_service(DETECTION_SORTER_SERVICE_CLASS, _factory, overwrite=True)
+    reg.register_service_factory(DETECTION_SORTER_SERVICE_CLASS, _factory, overwrite=True)
 
 
 def _register_tcn_wave(reg: RuntimeNodeRegistry) -> None:
@@ -730,15 +730,22 @@ def _register_tcn_wave(reg: RuntimeNodeRegistry) -> None:
             allowed_tasks={"tcn_wave"},
         )
 
-    reg.register_service(TCNWAVE_SERVICE_CLASS, _factory, overwrite=True)
+    reg.register_service_factory(TCNWAVE_SERVICE_CLASS, _factory, overwrite=True)
 
 
-def register_specs(registry: RuntimeNodeRegistry | None = None) -> RuntimeNodeRegistry:
-    reg = registry or RuntimeNodeRegistry.instance()
-    _register_classifier(reg)
-    _register_detector(reg)
-    _register_human_detector(reg)
-    _register_optflow(reg)
-    _register_detection_sorter(reg)
-    _register_tcn_wave(reg)
-    return reg
+def register_specs(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
+    _register_classifier(registry)
+    _register_detector(registry)
+    _register_human_detector(registry)
+    _register_optflow(registry)
+    _register_detection_sorter(registry)
+    _register_tcn_wave(registry)
+    return registry
+
+
+def create_pydl_registry() -> RuntimeNodeRegistry:
+    return register_specs(create_runtime_node_registry())
+
+
+def shared_pydl_registry() -> RuntimeNodeRegistry:
+    return register_specs(shared_runtime_node_registry())

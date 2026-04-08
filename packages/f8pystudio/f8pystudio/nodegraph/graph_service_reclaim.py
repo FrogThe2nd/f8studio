@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from qtpy import QtCore
 
-from f8pysdk import F8ServiceSpec
+from f8pysdk.specs import F8ServiceSpec
 
 from f8pystudio.studio_specs.identifiers import SERVICE_CLASS as _CANVAS_SERVICE_CLASS_
 from f8pystudio.studio_specs.identifiers import STUDIO_SERVICE_ID

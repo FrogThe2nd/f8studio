@@ -7,7 +7,7 @@ from typing import Any
 
 import numpy as np
 
-from f8pysdk import (
+from f8pysdk.specs import (
     F8DataPortSpec,
     F8OperatorSchemaVersion,
     F8OperatorSpec,
@@ -539,12 +539,11 @@ WaveExprRuntimeNode.SPEC = F8OperatorSpec(
 )
 
 
-def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNodeRegistry:
-    reg = registry or RuntimeNodeRegistry.instance()
+def register_operator(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
 
     def _factory(node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any]) -> OperatorNode:
         return WaveExprRuntimeNode(node_id=node_id, node=node, initial_state=initial_state)
 
-    reg.register(SERVICE_CLASS, OPERATOR_CLASS, _factory, overwrite=True)
-    reg.register_operator_spec(WaveExprRuntimeNode.SPEC, overwrite=True)
-    return reg
+    registry.register_operator_factory(SERVICE_CLASS, OPERATOR_CLASS, _factory, overwrite=True)
+    registry.register_operator_spec(WaveExprRuntimeNode.SPEC, overwrite=True)
+    return registry

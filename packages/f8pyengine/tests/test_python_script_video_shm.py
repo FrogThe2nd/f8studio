@@ -12,7 +12,7 @@ if SDK_ROOT not in sys.path:
     sys.path.insert(0, SDK_ROOT)
 
 from f8pysdk.generated import F8RuntimeGraph, F8RuntimeNode  # noqa: E402
-from f8pysdk.registry import RuntimeNodeRegistry  # noqa: E402
+from f8pysdk.registry import create_runtime_node_registry  # noqa: E402
 from f8pysdk.app import ServiceHost, ServiceHostConfig  # noqa: E402
 from f8pysdk.shm.video import VIDEO_FORMAT_FLOW2_F16, VideoShmWriter  # noqa: E402
 from f8pysdk.testing import ServiceBusHarness  # noqa: E402
@@ -41,7 +41,7 @@ class PythonScriptVideoShmTests(unittest.IsolatedAsyncioTestCase):
     async def test_subscribe_latest_and_decode_flow2_f16(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
-        reg = RuntimeNodeRegistry.instance()
+        reg = create_runtime_node_registry()
         register_operator(reg)
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
@@ -102,7 +102,7 @@ class PythonScriptVideoShmTests(unittest.IsolatedAsyncioTestCase):
     async def test_decode_none_returns_raw_only(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
-        reg = RuntimeNodeRegistry.instance()
+        reg = create_runtime_node_registry()
         register_operator(reg)
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
@@ -150,7 +150,7 @@ class PythonScriptVideoShmTests(unittest.IsolatedAsyncioTestCase):
     async def test_replace_subscription_same_key(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
-        reg = RuntimeNodeRegistry.instance()
+        reg = create_runtime_node_registry()
         register_operator(reg)
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
@@ -192,7 +192,7 @@ class PythonScriptVideoShmTests(unittest.IsolatedAsyncioTestCase):
     async def test_close_clears_video_subscriptions(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
-        reg = RuntimeNodeRegistry.instance()
+        reg = create_runtime_node_registry()
         register_operator(reg)
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 

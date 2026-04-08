@@ -7,7 +7,7 @@ from typing import Any
 
 from NodeGraphQt import BaseNode
 
-from f8pysdk import F8OperatorSpec, F8ServiceSpec
+from f8pysdk.specs import F8OperatorSpec, F8ServiceSpec
 
 logger = logging.getLogger(__name__)
 

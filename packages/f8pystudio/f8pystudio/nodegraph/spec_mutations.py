@@ -3,7 +3,7 @@ from __future__ import annotations
 from f8pysdk.msgspec_codec import copy_model
 from typing import Any, Callable, Iterable
 
-from f8pysdk import F8Command, F8DataPortSpec, F8OperatorSpec, F8ServiceSpec, F8StateSpec
+from f8pysdk.specs import F8Command, F8DataPortSpec, F8OperatorSpec, F8ServiceSpec, F8StateSpec
 
 
 def _mutate_or_copy(model: Any, *, mutate: Callable[[Any], None], update: dict[str, Any] | None = None) -> Any:

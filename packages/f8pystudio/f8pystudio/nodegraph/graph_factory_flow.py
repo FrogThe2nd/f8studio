@@ -7,7 +7,7 @@ from NodeGraphQt.base.commands import NodeAddedCmd
 from NodeGraphQt.errors import NodeCreationError
 from f8pysdk.msgspec_codec import dump_json
 
-from f8pysdk import F8OperatorSpec, F8ServiceSpec, F8StateAccess
+from f8pysdk.specs import F8OperatorSpec, F8ServiceSpec, F8StateAccess
 
 from f8pystudio.studio_specs.identifiers import SERVICE_CLASS as _CANVAS_SERVICE_CLASS_
 from f8pystudio.studio_specs.identifiers import STUDIO_SERVICE_ID

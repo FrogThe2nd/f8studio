@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from f8pysdk import F8StateAccess
+from f8pysdk.specs import F8StateAccess
 from NodeGraphQt.custom_widgets.properties_bin.node_property_factory import NodePropertyWidgetFactory
 
 from .state_builders import StateControlSpec, build_panel_control_binding, set_control_read_only

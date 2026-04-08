@@ -5,7 +5,7 @@ from typing import Any
 
 from qtpy import QtWidgets
 
-from f8pysdk import (
+from f8pysdk.specs import (
     F8DataPortSpec,
     F8ServiceSpec,
     F8SpecEditPolicy,

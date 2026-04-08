@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import OrderedDict
 
-from f8pysdk import (
+from f8pysdk.specs import (
     F8Command,
     F8DataPortSpec,
     F8OperatorSpec,

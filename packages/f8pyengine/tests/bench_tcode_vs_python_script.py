@@ -19,7 +19,7 @@ if SDK_ROOT not in sys.path:
 if PYSCRIPT_ROOT not in sys.path:
     sys.path.insert(0, PYSCRIPT_ROOT)
 
-from f8pysdk import F8DataPortSpec, F8RuntimeNode, any_schema, number_schema, string_schema  # noqa: E402
+from f8pysdk.specs import F8DataPortSpec, F8RuntimeNode, any_schema, number_schema, string_schema  # noqa: E402
 
 from f8pyengine.constants import SERVICE_CLASS  # noqa: E402
 from f8pyengine.operators.data_expr import DataExprRuntimeNode  # noqa: E402

@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 import msgspec
-from f8pysdk import F8RuntimeGraph
+from f8pysdk.specs import F8RuntimeGraph
 from f8pysdk.generated import F8SetRungraphArgs, F8SetRungraphReply, F8SetRungraphRequest
 from f8pysdk.msgspec_codec import copy_model
 from f8pysdk.nats_naming import kv_bucket_for_service, new_id, svc_endpoint_subject

@@ -3,7 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any
 
-from f8pysdk import F8VariantRecord
+from f8pysdk.specs import F8VariantRecord
 from f8pystudio.assets.components.component_models import F8ComponentEntry, F8ComponentRecord, F8ComponentSourceKind
 from f8pystudio.assets.variants.variant_models import F8VariantKind, variant_now_iso
 from f8pystudio.assets.variants.variant_ids import build_variant_node_type

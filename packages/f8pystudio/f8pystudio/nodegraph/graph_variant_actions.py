@@ -8,7 +8,7 @@ import msgspec
 from NodeGraphQt import BaseNode
 from qtpy import QtWidgets
 
-from f8pysdk import F8OperatorSpec, F8ServiceSpec, F8StateAccess, F8VariantRecord
+from f8pysdk.specs import F8OperatorSpec, F8ServiceSpec, F8StateAccess, F8VariantRecord
 from f8pysdk.spec_metadata import coerce_spec_payload
 
 from ..assets.common import JsonObject, json_object_from_value

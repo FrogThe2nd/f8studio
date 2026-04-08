@@ -6,7 +6,7 @@ from typing import Any
 
 from qtpy import QtCore
 
-from f8pysdk import F8RuntimeGraph
+from f8pysdk.specs import F8RuntimeGraph
 from f8pysdk.nats_naming import ensure_token
 from f8pysdk.state import StateWriteError
 

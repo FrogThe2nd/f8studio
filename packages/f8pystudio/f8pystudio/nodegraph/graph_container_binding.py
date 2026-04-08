@@ -6,7 +6,7 @@ from typing import Any
 from qtpy import QtCore, QtWidgets
 from NodeGraphQt import BaseNode
 
-from f8pysdk import F8OperatorSpec
+from f8pysdk.specs import F8OperatorSpec
 
 from .container_basenode import F8StudioContainerBaseNode
 from .operator_basenode import F8StudioOperatorBaseNode

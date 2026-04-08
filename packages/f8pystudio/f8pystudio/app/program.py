@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Any
 
 from f8pysdk.msgspec_codec import dump_json
-from f8pysdk.registry import RuntimeNodeRegistry
 from f8pysdk.spec_metadata import palette_category_from_spec
 from f8pysdk.service_runtime_tools.catalog import ServiceCatalog
 from f8pysdk.service_runtime_tools.discovery import (
@@ -19,7 +18,11 @@ from f8pysdk.service_runtime_tools.discovery import (
 from f8pystudio.plugins.api import StudioPluginManifest
 from f8pystudio.plugins.loader import load_entrypoint_plugins
 from f8pystudio.bridge.nats_lifecycle import SINGLETON_GUARD_DIALOG_TITLE
-from f8pystudio.studio_specs.registry import SERVICE_CLASS, register_pystudio_specs
+from f8pystudio.studio_specs.registry import (
+    create_pystudio_registry,
+    SERVICE_CLASS,
+    shared_pystudio_registry,
+)
 from f8pystudio.bridge.studio_bridge import STARTUP_GATE_TIMEOUT_S, PyStudioServiceBridge, PyStudioServiceBridgeConfig
 from f8pystudio.ui.support.ui_resources import studio_logo_path
 
@@ -66,14 +69,14 @@ class PyStudioProgram:
         return None
 
     def describe_json(self) -> dict[str, Any]:
-        registry = register_pystudio_specs()
+        registry = create_pystudio_registry()
         manifests = self._load_plugin_manifests()
         self._apply_plugin_manifests_to_runtime_registry(manifests, registry=registry)
-        return dump_json(RuntimeNodeRegistry.instance().describe(SERVICE_CLASS), mode="json")
+        return dump_json(registry.describe(SERVICE_CLASS), mode="json")
 
     @staticmethod
     def _inject_builtin_pystudio_specs(catalog: ServiceCatalog) -> str | None:
-        registry = register_pystudio_specs()
+        registry = create_pystudio_registry()
         service_spec = registry.service_spec(SERVICE_CLASS)
         if service_spec is None:
             return None
@@ -203,7 +206,7 @@ class PyStudioProgram:
         from f8pystudio.ui.mainwin.main_window import F8StudioMainWin
 
         manifests = self._load_plugin_manifests()
-        self._apply_plugin_manifests_to_runtime_registry(manifests, registry=RuntimeNodeRegistry.instance())
+        self._apply_plugin_manifests_to_runtime_registry(manifests, registry=shared_pystudio_registry())
 
         load_discovery_into_catalog(
             catalog=ServiceCatalog.instance(),

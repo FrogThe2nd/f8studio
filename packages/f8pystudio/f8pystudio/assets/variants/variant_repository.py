@@ -6,7 +6,7 @@ from typing import Literal
 
 from f8pysdk.msgspec_codec import dump_json, validate_as
 
-from f8pysdk import F8VariantLibrary, F8VariantRecord
+from f8pysdk.specs import F8VariantLibrary, F8VariantRecord
 
 from .variant_catalog import (
     VariantCatalogService,

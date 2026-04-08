@@ -4,8 +4,6 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from f8pysdk.registry import RuntimeNodeRegistry
-
 from f8pystudio.plugins.api import (
     PluginOperatorRegistration,
     PluginRendererRegistration,
@@ -46,9 +44,7 @@ class _Plugin(StudioPlugin):
 
 
 def _manifest(plugin_id: str) -> StudioPluginManifest:
-    def _register(registry: RuntimeNodeRegistry | None) -> RuntimeNodeRegistry:
-        if registry is None:
-            return RuntimeNodeRegistry.instance()
+    def _register(registry: object) -> object:
         return registry
 
     return StudioPluginManifest(

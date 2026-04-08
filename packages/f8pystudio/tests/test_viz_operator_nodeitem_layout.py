@@ -13,7 +13,7 @@ for p in (PKG_STUDIO, PKG_SDK):
 
 from qtpy import QtCore
 
-from f8pysdk import F8DataPortSpec, F8OperatorSchemaVersion, F8OperatorSpec, any_schema
+from f8pysdk.specs import F8DataPortSpec, F8OperatorSchemaVersion, F8OperatorSpec, any_schema
 from f8pystudio.nodegraph.service_basenode import F8StudioServiceNodeItem
 from f8pystudio.nodegraph.viz_operator_nodeitem import (
     F8StudioVizOperatorNodeItem,

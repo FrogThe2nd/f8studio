@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from f8pysdk import (
+from f8pysdk.specs import (
     F8Command,
     F8CommandParam,
     F8DataPortSpec,
@@ -19,17 +19,15 @@ from f8pysdk import (
     string_schema,
 )
 from f8pysdk.nodes import RuntimeNode
-from f8pysdk.registry import RuntimeNodeRegistry
+from f8pysdk.registry import create_runtime_node_registry, RuntimeNodeRegistry, shared_runtime_node_registry
 
 from .constants import SERVICE_CLASS
 from .editor_assist_payload import pyscript_code_field_editor_assist_payload
 from .script_service_node import DEFAULT_CODE, PythonScriptServiceNode
 
 
-def register_specs(registry: RuntimeNodeRegistry | None = None) -> RuntimeNodeRegistry:
-    reg = registry or RuntimeNodeRegistry.instance()
-
-    reg.register_service_spec(
+def register_specs(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
+    registry.register_service_spec(
         F8ServiceSpec(
             schemaVersion=F8ServiceSchemaVersion.f8service_1,
             serviceClass=SERVICE_CLASS,
@@ -117,5 +115,13 @@ def register_specs(registry: RuntimeNodeRegistry | None = None) -> RuntimeNodeRe
     def _service_factory(node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any]) -> RuntimeNode:
         return PythonScriptServiceNode(node_id=node_id, node=node, initial_state=initial_state)
 
-    reg.register_service(SERVICE_CLASS, _service_factory, overwrite=True)
-    return reg
+    registry.register_service_factory(SERVICE_CLASS, _service_factory, overwrite=True)
+    return registry
+
+
+def create_pyscript_registry() -> RuntimeNodeRegistry:
+    return register_specs(create_runtime_node_registry())
+
+
+def shared_pyscript_registry() -> RuntimeNodeRegistry:
+    return register_specs(shared_runtime_node_registry())

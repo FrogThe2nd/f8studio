@@ -7,7 +7,7 @@ from uuid import uuid4
 
 import msgspec
 
-from f8pysdk import F8JsonValue, F8OperatorSpec, F8ServiceSpec, F8VariantRecord
+from f8pysdk.specs import F8JsonValue, F8OperatorSpec, F8ServiceSpec, F8VariantRecord
 from f8pysdk.msgspec_codec import dump_json, validate_as
 
 from ..common import JsonObject, json_object_from_value

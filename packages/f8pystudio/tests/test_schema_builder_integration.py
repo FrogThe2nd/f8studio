@@ -6,7 +6,7 @@ from typing import Any
 from qtpy import QtWidgets
 from NodeGraphQt.constants import NodePropWidgetEnum
 
-from f8pysdk import (
+from f8pysdk.specs import (
     F8Command,
     F8CommandParam,
     F8DataPortSpec,

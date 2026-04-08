@@ -5,7 +5,7 @@ from typing import Any, Callable, TypeVar
 
 from .node_base import F8StudioBaseNode
 
-from f8pysdk import F8OperatorSpec, F8StateAccess
+from f8pysdk.specs import F8OperatorSpec, F8StateAccess
 from f8pysdk.schema_helpers import schema_default, schema_type
 
 from qtpy import QtCore, QtWidgets

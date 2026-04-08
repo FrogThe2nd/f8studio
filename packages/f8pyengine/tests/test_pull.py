@@ -13,7 +13,7 @@ if SDK_ROOT not in sys.path:
     sys.path.insert(0, SDK_ROOT)
 
 from f8pysdk.generated import F8DataPortSpec, F8RuntimeGraph, F8RuntimeNode  # noqa: E402
-from f8pysdk.registry import RuntimeNodeRegistry  # noqa: E402
+from f8pysdk.registry import create_runtime_node_registry  # noqa: E402
 from f8pysdk.schema_helpers import any_schema  # noqa: E402
 from f8pysdk.app import ServiceHost, ServiceHostConfig  # noqa: E402
 from f8pysdk.testing import ServiceBusHarness  # noqa: E402
@@ -26,7 +26,7 @@ class PullNodeTests(unittest.IsolatedAsyncioTestCase):
     async def _build_bus_and_host(self) -> tuple[Any, ServiceHost]:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
-        reg = RuntimeNodeRegistry.instance()
+        reg = create_runtime_node_registry()
         register_operator(reg)
         host = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
         return bus, host

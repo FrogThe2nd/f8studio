@@ -4,7 +4,7 @@ import logging
 from typing import cast
 
 import msgspec
-from f8pysdk import F8VariantRecord, F8VariantRef
+from f8pysdk.specs import F8VariantRecord, F8VariantRef
 from f8pysdk.msgspec_codec import validate_as
 
 from ..common import JsonObject, json_object_from_value

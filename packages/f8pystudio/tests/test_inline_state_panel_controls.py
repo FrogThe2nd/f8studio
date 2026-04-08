@@ -6,7 +6,7 @@ from typing import Any
 from qtpy import QtCore, QtGui, QtWidgets
 from NodeGraphQt.custom_widgets.properties_bin.node_property_factory import NodePropertyWidgetFactory
 
-from f8pysdk import F8StateAccess, F8StateSpec, integer_schema, number_schema, string_schema
+from f8pysdk.specs import F8StateAccess, F8StateSpec, integer_schema, number_schema, string_schema
 from f8pystudio.nodegraph.items.state_inline_controls import (
     build_state_inline_control,
     ensure_state_inline_controls,

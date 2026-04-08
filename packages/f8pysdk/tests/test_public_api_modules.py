@@ -14,9 +14,11 @@ from f8pysdk.data import CrossPublishPolicy, DataDeliveryMode  # noqa: E402
 from f8pysdk.monitoring import MonitorCollector, MonitorCollectorConfig  # noqa: E402
 from f8pysdk.nodes import OperatorNode, RuntimeNode, ServiceNode  # noqa: E402
 from f8pysdk.registry import (  # noqa: E402
+    OperatorFactoryNotRegistered,
     OperatorAlreadyRegistered,
     RegistryError,
     RuntimeNodeRegistry,
+    ServiceFactoryNotRegistered,
     ServiceNotRegistered,
 )
 from f8pysdk.service_bus import (  # noqa: E402
@@ -35,6 +37,7 @@ from f8pysdk.service_bus import (  # noqa: E402
 )
 from f8pysdk.service_bus.config import ServiceBusConfig as OwnerServiceBusConfig  # noqa: E402
 from f8pysdk.service_bus.runtime import ServiceBus as OwnerServiceBus  # noqa: E402
+from f8pysdk.specs import F8OperatorSpec, F8ServiceSpec, F8StateAccess, F8StateSpec, any_schema, schema_type  # noqa: E402
 from f8pysdk.state import StateRead, StateWriteContext, StateWriteError, StateWriteOrigin, StateWriteSource  # noqa: E402
 from f8pysdk.transport import NatsTransport, NatsTransportConfig  # noqa: E402
 
@@ -63,8 +66,17 @@ class PublicApiModuleTests(unittest.TestCase):
         self.assertTrue(issubclass(ServiceNode, RuntimeNode))
         self.assertTrue(issubclass(OperatorNode, RuntimeNode))
 
+    def test_specs_exports_generated_types_and_helpers(self) -> None:
+        self.assertIsNotNone(F8OperatorSpec)
+        self.assertIsNotNone(F8ServiceSpec)
+        self.assertEqual(F8StateAccess.rw.value, "rw")
+        self.assertIsNotNone(F8StateSpec)
+        self.assertEqual(schema_type(any_schema()), "any")
+
     def test_registry_exports_registry_types(self) -> None:
+        self.assertTrue(issubclass(OperatorFactoryNotRegistered, RegistryError))
         self.assertTrue(issubclass(OperatorAlreadyRegistered, RegistryError))
+        self.assertTrue(issubclass(ServiceFactoryNotRegistered, RegistryError))
         self.assertTrue(issubclass(ServiceNotRegistered, RegistryError))
         self.assertIsNotNone(RuntimeNodeRegistry)
 

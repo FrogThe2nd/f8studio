@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, Protocol
 
 import msgspec
-from f8pysdk import F8OperatorSpec, F8ServiceSpec, F8StateSpec
+from f8pysdk.specs import F8OperatorSpec, F8ServiceSpec, F8StateSpec
 
 
 class _UiOverrideNode(Protocol):

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from qtpy import QtWidgets
 
-from f8pysdk import (
+from f8pysdk.specs import (
     F8ServiceSchemaVersion,
     F8ServiceSpec,
 )

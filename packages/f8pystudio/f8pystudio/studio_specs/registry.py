@@ -1,23 +1,18 @@
 from __future__ import annotations
 
-from f8pysdk import F8ServiceSchemaVersion, F8ServiceSpec
-from f8pysdk import F8StateAccess, F8StateSpec, integer_schema
-from f8pysdk.registry import RuntimeNodeRegistry
+from f8pysdk.specs import F8ServiceSchemaVersion, F8ServiceSpec
+from f8pysdk.specs import F8StateAccess, F8StateSpec, integer_schema
+from f8pysdk.registry import create_runtime_node_registry, RuntimeNodeRegistry, shared_runtime_node_registry
 
 from f8pystudio.operators import register_operator
 from f8pystudio.studio_specs.identifiers import SERVICE_CLASS, STUDIO_SERVICE_ID
 
 
-def register_pystudio_specs(registry: RuntimeNodeRegistry | None = None) -> RuntimeNodeRegistry:
+def register_pystudio_specs(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
     """
     Register f8.pystudio service/operator specs for discovery / `--describe`.
-
-    This uses the shared `RuntimeNodeRegistry` so other tools/services can call
-    `RuntimeNodeRegistry.instance().describe("f8.pystudio")` uniformly.
     """
-    reg = registry or RuntimeNodeRegistry.instance()
-
-    reg.register_service_spec(
+    registry.register_service_spec(
         F8ServiceSpec(
             schemaVersion=F8ServiceSchemaVersion.f8service_1,
             serviceClass=SERVICE_CLASS,
@@ -44,6 +39,14 @@ def register_pystudio_specs(registry: RuntimeNodeRegistry | None = None) -> Runt
     )
 
     # debug
-    register_operator(reg)
+    register_operator(registry)
 
-    return reg
+    return registry
+
+
+def create_pystudio_registry() -> RuntimeNodeRegistry:
+    return register_pystudio_specs(create_runtime_node_registry())
+
+
+def shared_pystudio_registry() -> RuntimeNodeRegistry:
+    return register_pystudio_specs(shared_runtime_node_registry())

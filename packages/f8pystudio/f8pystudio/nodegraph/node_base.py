@@ -9,7 +9,7 @@ from NodeGraphQt import BaseNode
 from NodeGraphQt.nodes.base_node import NodeBaseWidget
 from NodeGraphQt.errors import NodeWidgetError
 
-from f8pysdk import F8OperatorSpec, F8ServiceSpec
+from f8pysdk.specs import F8OperatorSpec, F8ServiceSpec
 from f8pysdk.spec_metadata import coerce_spec_payload
 from .ui_override_mutations import apply_named_order, get_list_order_override
 

@@ -4,7 +4,7 @@ from typing import cast
 
 from qtpy import QtCore, QtTest, QtWidgets
 
-from f8pysdk import F8DataPortSpec, F8OperatorSpec, F8ServiceSpec, F8VariantKind, F8VariantRecord
+from f8pysdk.specs import F8DataPortSpec, F8OperatorSpec, F8ServiceSpec, F8VariantKind, F8VariantRecord
 from f8pysdk.msgspec_codec import dump_json
 from f8pysdk.schema_helpers import any_schema, number_schema
 

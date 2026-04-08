@@ -8,9 +8,8 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from f8pysdk import F8DataPortSpec, any_schema  # noqa: E402
+from f8pysdk.specs import F8DataPortSpec, any_schema  # noqa: E402
 from f8pysdk.generated import F8RuntimeGraph, F8RuntimeNode, F8StateAccess, F8StateSpec  # noqa: E402
-from f8pysdk.registry import RuntimeNodeRegistry  # noqa: E402
 from f8pysdk.schema_helpers import number_schema  # noqa: E402
 from f8pysdk.testing import buffer_input  # noqa: E402
 from f8pysdk.app import ServiceHost, ServiceHostConfig  # noqa: E402
@@ -19,13 +18,12 @@ from f8pysdk.testing import ServiceBusHarness  # noqa: E402
 from f8pystudio.studio_specs.identifiers import SERVICE_CLASS  # noqa: E402
 from f8pystudio.operators.data_expr import DataExprRuntimeNode  # noqa: E402
 from f8pystudio.operators.state_expr import StateExprRuntimeNode  # noqa: E402
-from f8pystudio.studio_specs.registry import register_pystudio_specs  # noqa: E402
+from f8pystudio.studio_specs.registry import create_pystudio_registry  # noqa: E402
 
 
 class PyStudioExprNodeTests(unittest.IsolatedAsyncioTestCase):
     def test_registered_in_pystudio_specs(self) -> None:
-        reg = RuntimeNodeRegistry.instance()
-        register_pystudio_specs(reg)
+        reg = create_pystudio_registry()
         desc = reg.describe(SERVICE_CLASS)
         operator_classes = {str(spec.operatorClass or "") for spec in list(desc.operators or [])}
         self.assertIn("f8.data_expr", operator_classes)
@@ -34,8 +32,7 @@ class PyStudioExprNodeTests(unittest.IsolatedAsyncioTestCase):
     async def test_data_expr_evaluates_inside_pystudio_runtime(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("studio")
-        reg = RuntimeNodeRegistry.instance()
-        register_pystudio_specs(reg)
+        reg = create_pystudio_registry()
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
         op = F8RuntimeNode(
@@ -67,8 +64,7 @@ class PyStudioExprNodeTests(unittest.IsolatedAsyncioTestCase):
     async def test_state_expr_publishes_out_inside_pystudio_runtime(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("studio")
-        reg = RuntimeNodeRegistry.instance()
-        register_pystudio_specs(reg)
+        reg = create_pystudio_registry()
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
         op = F8RuntimeNode(

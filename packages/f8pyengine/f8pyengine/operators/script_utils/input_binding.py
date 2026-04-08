@@ -7,7 +7,7 @@ import re
 from typing import Any, Literal
 
 import msgspec
-from f8pysdk import (
+from f8pysdk.specs import (
     F8AnyTypeSchema,
     F8ArrayTypeSchema,
     F8BooleanTypeSchema,

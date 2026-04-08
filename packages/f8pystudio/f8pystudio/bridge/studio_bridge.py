@@ -10,7 +10,7 @@ from typing import Any, Callable
 
 from qtpy import QtCore
 
-from f8pysdk import F8RuntimeGraph
+from f8pysdk.specs import F8RuntimeGraph
 from f8pysdk.nats_naming import ensure_token, new_id
 from f8pysdk.registry import RuntimeNodeRegistry
 from f8pysdk.state import StateWriteError

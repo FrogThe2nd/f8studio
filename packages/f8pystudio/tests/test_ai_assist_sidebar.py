@@ -9,7 +9,7 @@ import uuid
 
 from qtpy import QtCore, QtWidgets
 
-from f8pysdk import F8OperatorSpec
+from f8pysdk.specs import F8OperatorSpec
 
 from f8pystudio.ui.mainwin.ai_assist_sidebar import AiAssistSidebarWidget
 from f8pystudio.ui.support import webengine_utils

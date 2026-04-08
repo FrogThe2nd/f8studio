@@ -10,7 +10,7 @@ if SDK_ROOT not in sys.path:
     sys.path.insert(0, SDK_ROOT)
 
 from f8pysdk.generated import F8RuntimeGraph, F8RuntimeNode  # noqa: E402
-from f8pysdk.registry import RuntimeNodeRegistry  # noqa: E402
+from f8pysdk.registry import create_runtime_node_registry  # noqa: E402
 from f8pysdk.app import ServiceHost, ServiceHostConfig  # noqa: E402
 from f8pysdk.testing import ServiceBusHarness  # noqa: E402
 
@@ -29,7 +29,7 @@ class NetworkBindSecurityTests(unittest.IsolatedAsyncioTestCase):
     async def test_lovense_mock_server_rejects_non_loopback_by_default(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
-        reg = RuntimeNodeRegistry.instance()
+        reg = create_runtime_node_registry()
         register_lovense_mock_server(reg)
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
@@ -56,7 +56,7 @@ class NetworkBindSecurityTests(unittest.IsolatedAsyncioTestCase):
     async def test_udp_skeleton_rejects_non_loopback_by_default(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
-        reg = RuntimeNodeRegistry.instance()
+        reg = create_runtime_node_registry()
         register_udp_skeleton(reg)
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 

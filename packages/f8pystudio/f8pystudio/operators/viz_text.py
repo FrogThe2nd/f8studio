@@ -4,7 +4,7 @@ import asyncio
 import time
 from typing import Any
 
-from f8pysdk import (
+from f8pysdk.specs import (
     F8DataPortSpec,
     F8OperatorSchemaVersion,
     F8OperatorSpec,
@@ -106,20 +106,18 @@ class VizTextRuntimeNode(StudioVizRuntimeNodeBase):
             await asyncio.sleep(max(0.02, float(throttle_ms) / 1000.0))
 
 
-def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNodeRegistry:
+def register_operator(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
     """
     Register:
     - runtime factory (studio in-process)
     - operator spec (for discovery/UI)
     """
-    reg = registry or RuntimeNodeRegistry.instance()
-
     def _print_factory(node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any]) -> RuntimeNode:
         return VizTextRuntimeNode(node_id=node_id, node=node, initial_state=initial_state)
 
-    reg.register(SERVICE_CLASS, OPERATOR_CLASS, _print_factory, overwrite=True)
+    registry.register_operator_factory(SERVICE_CLASS, OPERATOR_CLASS, _print_factory, overwrite=True)
 
-    reg.register_operator_spec(
+    registry.register_operator_spec(
         F8OperatorSpec(
             schemaVersion=F8OperatorSchemaVersion.f8operator_1,
             serviceClass=SERVICE_CLASS,
@@ -172,4 +170,4 @@ def register_operator(registry: RuntimeNodeRegistry | None = None) -> RuntimeNod
         overwrite=True,
     )
 
-    return reg
+    return registry

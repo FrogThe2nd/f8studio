@@ -27,7 +27,7 @@ from f8pystudio.assets.variants.variant_models import (
 from f8pystudio.assets.variants.variant_sync import VariantSyncClient
 from f8pystudio.assets.db import variant_remote_cache_table
 from f8pystudio.assets.ui.variant_manager_dialog import variant_row_state_for_entries
-from f8pysdk import F8VariantRecord
+from f8pysdk.specs import F8VariantRecord
 
 
 def _make_entry(*, variant_id: str, source: F8VariantSourceKind, installed: bool = True, remote_revision: str | None = None) -> F8VariantEntry:

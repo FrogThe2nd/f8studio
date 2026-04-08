@@ -11,8 +11,8 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from .msgspec_codec import dump_json
-from .runtime_node_registry import RuntimeNodeRegistry
 from .monitor_schema import validate_describe_monitor_contract
+from .registry import create_runtime_node_registry, shared_runtime_node_registry, RuntimeNodeRegistry
 from .service_runtime import ServiceRuntime, ServiceRuntimeConfig
 
 
@@ -78,7 +78,7 @@ class ServiceCliTemplate(ABC):
 
     # ---- registry/app construction ------------------------------------
     def build_registry(self) -> RuntimeNodeRegistry:
-        return RuntimeNodeRegistry()
+        return create_runtime_node_registry()
 
     @staticmethod
     def build_shared_registry() -> RuntimeNodeRegistry:
@@ -88,7 +88,7 @@ class ServiceCliTemplate(ABC):
         Use this only when shared registration state is required across multiple
         callers in the same process.
         """
-        return RuntimeNodeRegistry.instance()
+        return shared_runtime_node_registry()
 
     @abstractmethod
     def register_specs(self, registry: RuntimeNodeRegistry) -> None:

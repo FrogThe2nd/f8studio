@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from f8pysdk import F8StateAccess, F8StateSpec, integer_schema, string_schema
+from f8pysdk.specs import F8StateAccess, F8StateSpec, integer_schema, string_schema
 from f8pysdk.nodes import OperatorNode
 
 

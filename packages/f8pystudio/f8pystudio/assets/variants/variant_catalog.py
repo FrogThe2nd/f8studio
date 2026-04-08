@@ -12,7 +12,7 @@ from sqlalchemy import and_, delete, func, insert, select, update
 from sqlalchemy.engine import Connection as SqlAlchemyConnection
 from f8pysdk.msgspec_codec import copy_model, dump_json, validate_as
 
-from f8pysdk import F8JsonValue, F8VariantKind, F8VariantLibrary, F8VariantRecord
+from f8pysdk.specs import F8JsonValue, F8VariantKind, F8VariantLibrary, F8VariantRecord
 
 from ..db import AssetsDatabase, variant_heads_local_table, variant_remote_cache_table, variant_versions_local_table
 from ..common import (

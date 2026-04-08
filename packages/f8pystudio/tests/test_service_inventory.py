@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from f8pysdk import F8ServiceSpec
+from f8pysdk.specs import F8ServiceSpec
 
 from f8pystudio.ui.support.service_inventory import collect_declared_service_ids, collect_declared_services
 

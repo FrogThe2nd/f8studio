@@ -4,7 +4,7 @@ import asyncio
 import time
 from typing import Any, Callable
 
-from f8pysdk import F8RuntimeGraph
+from f8pysdk.specs import F8RuntimeGraph
 
 from ..nodegraph.runtime_compiler import CompiledRuntimeGraphs
 from f8pystudio.bridge.remote_state_watcher import WatchTarget

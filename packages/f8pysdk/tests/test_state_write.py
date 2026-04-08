@@ -1050,6 +1050,34 @@ class StateWriteTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertTrue(reply.ok)
 
+    async def test_unregister_node_refreshes_command_hidden_bindings(self) -> None:
+        harness = ServiceBusHarness()
+        bus = harness.create_bus("svc")
+        service_node = _CommandServiceNode("svc")
+        bus.register_node(service_node)
+        graph = F8RuntimeGraph(
+            graphId="g1",
+            revision="r1",
+            nodes=[
+                F8RuntimeNode(
+                    nodeId="svc",
+                    serviceId="svc",
+                    serviceClass="svc.test.command",
+                    stateFields=hidden_command_state_specs(list(service_node.spec.commands or [])),
+                )
+            ],
+            edges=[],
+        )
+        await bus.set_rungraph(graph)
+
+        self.assertTrue(bus.command_gateway.is_hidden_field(node_id="svc", field=command_input_state_field("run")))
+        self.assertIsNotNone(bus.command_gateway.input_binding(node_id="svc", field=command_input_state_field("run")))
+
+        bus.unregister_node("svc")
+
+        self.assertFalse(bus.command_gateway.is_hidden_field(node_id="svc", field=command_input_state_field("run")))
+        self.assertIsNone(bus.command_gateway.input_binding(node_id="svc", field=command_input_state_field("run")))
+
     async def test_micro_command_rejects_positional_args_without_declared_params(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svc")

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from f8pysdk import F8OperatorSpec, F8ServiceSpec
+from f8pysdk.specs import F8OperatorSpec, F8ServiceSpec
 from f8pysdk.msgspec_codec import dump_json
 from qtpy import QtCore, QtWidgets
 

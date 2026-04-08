@@ -4,7 +4,7 @@ from enum import Enum
 
 from msgspec import Struct, field
 
-from f8pysdk import F8VariantKind, F8VariantLibrary, F8VariantRecord, F8VariantRef
+from f8pysdk.specs import F8VariantKind, F8VariantLibrary, F8VariantRecord, F8VariantRef
 from ..common import now_iso
 
 

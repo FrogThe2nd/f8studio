@@ -28,7 +28,8 @@ This plan is intentionally incremental. Each phase should leave the SDK usable a
 - `data_delivery="both"` creates dual-consumption semantics for the same sample.
 - `ServiceBus.stop()` clears hook registrations, which makes restart/reuse semantics fragile.
 - `RuntimeNodeRegistry` and `ServiceCliTemplate` lean on process-global singleton behavior.
-- Missing runtime factories can silently degrade into generic nodes.
+- Missing operator runtime factories can silently degrade into generic nodes.
+- Service runtime factory behavior is still partly compatibility-driven and needs explicit docs/tests.
 - Layered module structure exists on paper, but runtime state still lives in one large mutable `ServiceBus`.
 - Public API boundaries are blurry; sibling packages import internal modules directly.
 
@@ -157,12 +158,14 @@ This plan is intentionally incremental. Each phase should leave the SDK usable a
 
 ### Checklist
 
-- [ ] Stop clearing rungraph/service hook registrations inside `ServiceBus.stop()`, or re-register them explicitly on restart.
-- [ ] Define whether `ServiceRuntime` and `ServiceBus` are restartable objects; document and test that contract.
-- [ ] Stop defaulting `ServiceCliTemplate.build_registry()` to a process-global singleton.
-- [ ] Make shared registries opt-in rather than default.
-- [ ] Split "spec registration" and "runtime factory registration" APIs more clearly.
-- [ ] Change missing operator/service factory behavior from silent fallback to explicit structured errors.
+- [x] Stop clearing rungraph/service hook registrations inside `ServiceBus.stop()`, or re-register them explicitly on restart.
+- [x] Define whether `ServiceRuntime` and `ServiceBus` are restartable objects; document and test that contract.
+- [x] Stop defaulting `ServiceCliTemplate.build_registry()` to a process-global singleton.
+- [x] Make shared registries opt-in rather than default.
+- [x] Split "spec registration" and "runtime factory registration" APIs more clearly.
+- [x] Change missing operator factory behavior from silent fallback to explicit structured errors.
+- [x] Document and test that known services without a custom service runtime factory still fall back to generic `ServiceNode`.
+- [ ] Continue migrating sibling package registry helpers from implicit singleton fallback to explicit fresh/shared registry APIs.
 - [ ] Add strict tests for:
   - repeated describe
   - repeated CLI setup
@@ -196,7 +199,7 @@ This plan is intentionally incremental. Each phase should leave the SDK usable a
 - [x] Extract state cache/persist/read logic from `ServiceBus`.
 - [x] Extract state edge fanout and cross-state watch logic from `ServiceBus`.
 - [x] Extract data buffer/subscription/push callback logic from `ServiceBus`.
-- [ ] Extract command binding and dispatch state from `ServiceBus`.
+- [x] Extract command binding and dispatch state from `ServiceBus`.
 - [x] Reduce direct `bus._...` access across modules.
 - [ ] Replace implicit shared mutable access with explicit constructor injection.
 - [x] Keep `ServiceBus` as a thin façade for compatibility.
@@ -224,6 +227,7 @@ This plan is intentionally incremental. Each phase should leave the SDK usable a
 
 - [x] Define stable public modules, for example:
   - `f8pysdk.app`
+  - `f8pysdk.specs`
   - `f8pysdk.registry`
   - `f8pysdk.nodes`
   - `f8pysdk.state`
@@ -435,6 +439,41 @@ This milestone does not redesign the SDK yet, but it makes the system much safer
   - compatibility notes:
     - public imports via `f8pysdk.state` and `f8pysdk.service_bus` remain unchanged
     - the temporary deep root state facade modules and `service_bus.types` compatibility barrel introduced during migration have since been removed
+
+- 2026-04-07
+  - owner: Codex + repository maintainer
+  - scope: Slice E command subsystem extraction
+  - completed:
+    - moved command input bindings, command output bindings, hidden command field tracking, and hidden dispatch state out of `ServiceBus` and into `CommandGateway`
+    - changed state write local-delivery and rungraph apply paths to consult `bus.command_gateway` instead of reading command-specific `bus._private` fields
+    - injected the node registry mapping into `CommandGateway` so command binding refresh no longer depends on whole-bus mutable state
+    - removed the now-redundant command binding refresh helper shim
+    - added regression coverage that unregistering a node also clears command hidden bindings
+  - compatibility notes:
+    - public `ServiceBus.invoke_command(...)` behavior remains unchanged
+    - internal callers should prefer `bus.command_gateway` over command-specific `ServiceBus` private fields
+
+- 2026-04-07
+  - owner: Codex + repository maintainer
+  - scope: Slice F registry API clarification and operator-factory strictness
+  - completed:
+    - introduced explicit `RuntimeNodeRegistry.register_service_factory(...)` and `register_operator_factory(...)` entrypoints alongside explicit `create_operator_node(...)` / `create_runtime_node(...)`
+    - migrated repo-internal runtime registration helpers and tests off the ambiguous `register(...)` / `register_service(...)` names
+    - changed missing operator runtime factories from silent generic-node fallback to structured `OperatorFactoryNotRegistered` errors
+    - updated `ServiceHost` to skip operator nodes with missing runtime factories instead of materializing generic placeholder operators
+    - exported the new registry error types from the stable `f8pysdk.registry` module and added regression coverage
+  - compatibility notes:
+    - existing `register(...)`, `register_service(...)`, and `create(...)` methods still delegate to the new explicit APIs for repo compatibility
+    - generic `ServiceNode` remains the current default container when a service class is known but does not provide a custom service runtime factory
+
+- 2026-04-07
+  - owner: Codex + repository maintainer
+  - scope: Slice G lifecycle hook retention cleanup
+  - completed:
+    - stopped clearing rungraph hooks and service hooks inside `ServiceBus.stop()`
+    - added regression coverage that registered hooks remain attached after stop on single-run bus instances
+  - compatibility notes:
+    - `ServiceBus` and `ServiceRuntime` remain single-run objects; this change only removes surprising post-stop mutation of hook registration state
 
 - When we start a phase, create a short changelog section here with:
   - date

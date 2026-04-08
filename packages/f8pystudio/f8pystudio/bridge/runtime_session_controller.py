@@ -4,8 +4,6 @@ from f8pysdk.msgspec_codec import dump_json
 from f8pysdk.codec import decode_obj
 from typing import Any
 
-from f8pysdk.registry import RuntimeNodeRegistry
-
 from .nats_lifecycle import (
     SINGLETON_GUARD_DIALOG_MESSAGE,
     ensure_nats_server_owned_pid,
@@ -16,6 +14,7 @@ from .studio_runtime_flow import wait_for_studio_runtime_ready
 from f8pystudio.bridge.studio_service import PyStudioService, PyStudioServiceConfig
 from f8pystudio.bridge.remote_state_watcher import RemoteStateWatcher
 from f8pystudio.contracts.ui_commands import UiCommand
+from f8pystudio.studio_specs.registry import shared_pystudio_registry
 
 
 class RuntimeSessionControllerMixin:
@@ -76,7 +75,7 @@ class RuntimeSessionControllerMixin:
 
         try:
             cfg = PyStudioServiceConfig(nats_url=nats_url, studio_service_id=self.studio_service_id)
-            self._svc = PyStudioService(cfg, registry=RuntimeNodeRegistry.instance())
+            self._svc = PyStudioService(cfg, registry=shared_pystudio_registry())
             await self._svc.start(
                 on_ui_command=lambda cmd: self.ui_command.emit(cmd),
             )

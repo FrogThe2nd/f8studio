@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from qtpy import QtWidgets
 
-from f8pysdk import F8OperatorSpec, F8SpecEditPolicy, editable_collection_edit_policy
+from f8pysdk.specs import F8OperatorSpec, F8SpecEditPolicy, editable_collection_edit_policy
+from f8pysdk.registry import RuntimeNodeRegistry
 from f8pystudio.studio_specs.identifiers import SERVICE_CLASS as STUDIO_SERVICE_CLASS
 from f8pystudio.nodegraph.operator_basenode import F8StudioOperatorBaseNode
 from f8pystudio.nodegraph.service_basenode import F8StudioServiceBaseNode
@@ -11,7 +12,7 @@ from f8pystudio.operators.note import OPERATOR_CLASS as NOTE_OPERATOR_CLASS
 from f8pystudio.operators.patch_hub import OPERATOR_CLASS as PATCH_HUB_OPERATOR_CLASS
 from f8pystudio.operators.state_expr import OPERATOR_CLASS as STATE_EXPR_OPERATOR_CLASS
 from f8pystudio.operators.value_stepper import OPERATOR_CLASS as VALUE_STEPPER_OPERATOR_CLASS
-from f8pystudio.studio_specs.registry import register_pystudio_specs
+from f8pystudio.studio_specs.registry import create_pystudio_registry, shared_pystudio_registry
 from f8pystudio.render_nodes.note import NoteRenderNode
 from f8pystudio.render_nodes.patch_hub import PatchHubRenderNode
 from f8pystudio.render_nodes.registry import RenderNodeRegistry
@@ -22,7 +23,7 @@ from f8pysdk.service_runtime_tools.discovery import load_discovery_into_catalog
 
 
 def _inject_builtin_pystudio_specs(catalog: ServiceCatalog) -> str | None:
-    registry = register_pystudio_specs()
+    registry = create_pystudio_registry()
     service_spec = registry.service_spec(STUDIO_SERVICE_CLASS)
     if service_spec is None:
         return None
@@ -55,6 +56,27 @@ def test_discovery_injects_builtin_pystudio_without_service_yml() -> None:
     assert service_spec.paletteCategory == "svc"
     assert all(op.serviceClass == STUDIO_SERVICE_CLASS for op in catalog.operators.all())
     assert catalog.service_entry_path(STUDIO_SERVICE_CLASS) is None
+
+
+def test_create_pystudio_registry_returns_fresh_registered_instances() -> None:
+    reg_a = create_pystudio_registry()
+    reg_b = create_pystudio_registry()
+
+    assert reg_a is not reg_b
+    assert reg_a.service_spec(STUDIO_SERVICE_CLASS) is not None
+    assert reg_b.service_spec(STUDIO_SERVICE_CLASS) is not None
+
+
+def test_shared_pystudio_registry_is_explicit_singleton_opt_in() -> None:
+    original_instance = RuntimeNodeRegistry._instance
+    RuntimeNodeRegistry._instance = create_pystudio_registry()
+    try:
+        reg_a = shared_pystudio_registry()
+        reg_b = shared_pystudio_registry()
+        assert reg_a is reg_b
+        assert reg_a.service_spec(STUDIO_SERVICE_CLASS) is not None
+    finally:
+        RuntimeNodeRegistry._instance = original_instance
 
 
 def test_discovery_builtin_pystudio_injection_is_idempotent() -> None:

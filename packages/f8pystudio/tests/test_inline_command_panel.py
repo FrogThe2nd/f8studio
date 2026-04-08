@@ -4,7 +4,7 @@ from typing import Any
 
 from qtpy import QtCore, QtWidgets
 
-from f8pysdk import F8Command, F8OperatorSpec, F8ServiceSpec
+from f8pysdk.specs import F8Command, F8OperatorSpec, F8ServiceSpec
 from f8pysdk.command_state import command_input_state_field
 
 from f8pystudio.nodegraph.items.inline_command_panel import (

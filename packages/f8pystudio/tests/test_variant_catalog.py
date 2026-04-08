@@ -13,7 +13,7 @@ from f8pystudio.assets.variants.variant_models import (
     F8VariantSyncState,
     variant_now_iso,
 )
-from f8pysdk import F8VariantRecord
+from f8pysdk.specs import F8VariantRecord
 
 
 def _make_record(*, variant_id: str, base_node_type: str, name: str) -> F8VariantRecord:

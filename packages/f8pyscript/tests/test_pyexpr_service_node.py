@@ -10,14 +10,13 @@ if ROOT not in sys.path:
 if SDK_ROOT not in sys.path:
     sys.path.insert(0, SDK_ROOT)
 
-from f8pysdk import F8DataPortSpec, F8Edge, F8EdgeKindEnum, F8EdgeStrategyEnum, any_schema  # noqa: E402
+from f8pysdk.specs import F8DataPortSpec, F8Edge, F8EdgeKindEnum, F8EdgeStrategyEnum, any_schema  # noqa: E402
 from f8pysdk.generated import F8RuntimeGraph, F8RuntimeNode  # noqa: E402
-from f8pysdk.registry import RuntimeNodeRegistry  # noqa: E402
 from f8pysdk.app import ServiceHost, ServiceHostConfig  # noqa: E402
 from f8pysdk.testing import ServiceBusHarness  # noqa: E402
 
 from f8pyscript.constants import EXPR_SERVICE_CLASS  # noqa: E402
-from f8pyscript.expr_node_registry import register_expr_specs  # noqa: E402
+from f8pyscript.expr_node_registry import create_pyexpr_registry  # noqa: E402
 from f8pyscript.expr_service_node import PythonExprServiceNode, np  # noqa: E402
 from f8pyscript.main_expr import PythonExprServiceProgram  # noqa: E402
 
@@ -29,7 +28,7 @@ def _expr_node(
     data_in_ports: list[F8DataPortSpec] | None = None,
     data_out_ports: list[F8DataPortSpec] | None = None,
 ) -> F8RuntimeNode:
-    desc = RuntimeNodeRegistry.instance().describe(EXPR_SERVICE_CLASS)
+    desc = create_pyexpr_registry().describe(EXPR_SERVICE_CLASS)
     spec = desc.service
     state = {"code": "inputs['in']"}
     if state_values is not None:
@@ -52,8 +51,7 @@ def _any_port(name: str) -> F8DataPortSpec:
 
 class PyExprServiceNodeTests(unittest.IsolatedAsyncioTestCase):
     def _register_runtime(self, bus: object) -> None:
-        reg = RuntimeNodeRegistry.instance()
-        register_expr_specs(reg)
+        reg = create_pyexpr_registry()
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=EXPR_SERVICE_CLASS), registry=reg)
         bus.set_data_delivery("both", source="test")
 
@@ -63,8 +61,7 @@ class PyExprServiceNodeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(str(cfg.bus.data_delivery), "both")
 
     def test_expr_spec_placeholder_ports_not_required(self) -> None:
-        reg = RuntimeNodeRegistry.instance()
-        register_expr_specs(reg)
+        reg = create_pyexpr_registry()
         spec = reg.describe(EXPR_SERVICE_CLASS).service
         state_fields = {str(field.name or ""): field for field in list(spec.stateFields or [])}
         self.assertIn("code", state_fields)

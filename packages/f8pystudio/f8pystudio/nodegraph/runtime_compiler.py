@@ -10,7 +10,7 @@ from uuid import uuid4
 
 import msgspec
 
-from f8pysdk import (
+from f8pysdk.specs import (
     F8DataPortSpec,
     F8Edge,
     F8EdgeDirection,

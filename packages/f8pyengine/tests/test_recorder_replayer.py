@@ -11,9 +11,9 @@ if ROOT not in sys.path:
 if SDK_ROOT not in sys.path:
     sys.path.insert(0, SDK_ROOT)
 
-from f8pysdk import F8DataPortSpec, F8RuntimeGraph, F8RuntimeNode, F8StateAccess, F8StateSpec, any_schema, integer_schema  # noqa: E402
+from f8pysdk.specs import F8DataPortSpec, F8RuntimeGraph, F8RuntimeNode, F8StateAccess, F8StateSpec, any_schema, integer_schema  # noqa: E402
 from f8pysdk.generated import F8Edge, F8EdgeKindEnum, F8EdgeStrategyEnum  # noqa: E402
-from f8pysdk.registry import RuntimeNodeRegistry  # noqa: E402
+from f8pysdk.registry import create_runtime_node_registry  # noqa: E402
 from f8pysdk.app import ServiceHost, ServiceHostConfig  # noqa: E402
 from f8pysdk.testing import buffer_input  # noqa: E402
 from f8pysdk.testing import ServiceBusHarness  # noqa: E402
@@ -56,7 +56,7 @@ class RecorderReplayerTests(unittest.IsolatedAsyncioTestCase):
     ) -> tuple[ServiceBusHarness, object]:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
-        reg = RuntimeNodeRegistry.instance()
+        reg = create_runtime_node_registry()
         register_pyengine_specs(reg)
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
         graph = F8RuntimeGraph(graphId="g_recording", revision="r1", nodes=list(nodes), edges=list(edges or []))

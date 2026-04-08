@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import logging
 from typing import Any, Callable
 
-from f8pysdk.registry import RuntimeNodeRegistry
+from f8pysdk.registry import create_runtime_node_registry, RuntimeNodeRegistry
 from f8pysdk.app import ServiceRuntime, ServiceRuntimeConfig
 
 from f8pystudio.plugins.loader import load_entrypoint_plugins
@@ -39,7 +39,7 @@ class PyStudioService:
         registry: RuntimeNodeRegistry | None = None,
     ) -> None:
         self._cfg = config
-        self._registry = registry or RuntimeNodeRegistry.instance()
+        self._registry = registry or create_runtime_node_registry()
         self.runtime: ServiceRuntime | None = None
 
     @property

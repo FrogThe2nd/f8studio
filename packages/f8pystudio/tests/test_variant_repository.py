@@ -7,7 +7,7 @@ import pytest
 
 from f8pysdk.msgspec_codec import dump_json
 from f8pystudio.assets.variants.variant_models import F8VariantKind, variant_now_iso
-from f8pysdk import F8VariantRecord
+from f8pysdk.specs import F8VariantRecord
 from f8pystudio.assets.variants.variant_catalog import VariantCatalogService
 from f8pystudio.assets.variants.variant_repository import (
     import_from_json,

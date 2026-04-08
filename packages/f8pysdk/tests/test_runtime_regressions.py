@@ -10,12 +10,17 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from f8pysdk.generated import F8RuntimeNode  # noqa: E402
+from f8pysdk.generated import F8RuntimeGraph, F8RuntimeNode, F8ServiceSpec  # noqa: E402
 from f8pysdk.nats_naming import data_subject  # noqa: E402
-from f8pysdk.nodes import OperatorNode, ServiceNode  # noqa: E402
-from f8pysdk.registry import RuntimeNodeRegistry  # noqa: E402
+from f8pysdk.nodes import ServiceNode  # noqa: E402
+from f8pysdk.registry import (  # noqa: E402
+    create_runtime_node_registry,
+    OperatorFactoryNotRegistered,
+    RuntimeNodeRegistry,
+    shared_runtime_node_registry,
+)
 from f8pysdk.service_bus import ServiceBus, ServiceBusConfig  # noqa: E402
-from f8pysdk.app import ServiceRuntime, ServiceRuntimeConfig  # noqa: E402
+from f8pysdk.app import ServiceHost, ServiceHostConfig, ServiceRuntime, ServiceRuntimeConfig  # noqa: E402
 from f8pysdk.testing import InMemoryCluster, InMemoryTransport, ServiceBusHarness, push_input  # noqa: E402
 
 
@@ -53,7 +58,40 @@ class _DataReceiverNode:
         self.data_calls.append((str(port), value, ts_ms))
 
 
+class _NoopRungraphHook:
+    async def on_rungraph(self, graph: F8RuntimeGraph) -> None:
+        _ = graph
+
+
+class _NoopServiceHook:
+    async def on_before_ready(self, bus: object) -> None:
+        _ = bus
+
+    async def on_after_ready(self, bus: object) -> None:
+        _ = bus
+
+    async def on_before_stop(self, bus: object) -> None:
+        _ = bus
+
+    async def on_after_stop(self, bus: object) -> None:
+        _ = bus
+
+
 class RuntimeRegressionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_registry_helpers_make_fresh_and_shared_semantics_explicit(self) -> None:
+        original_instance = RuntimeNodeRegistry._instance
+        RuntimeNodeRegistry._instance = create_runtime_node_registry()
+        try:
+            fresh_a = create_runtime_node_registry()
+            fresh_b = create_runtime_node_registry()
+            shared_a = shared_runtime_node_registry()
+            shared_b = shared_runtime_node_registry()
+        finally:
+            RuntimeNodeRegistry._instance = original_instance
+
+        self.assertIsNot(fresh_a, fresh_b)
+        self.assertIs(shared_a, shared_b)
+
     async def test_service_runtime_defaults_to_fresh_registry_instances(self) -> None:
         cfg = ServiceRuntimeConfig.from_values(service_id="svc", service_class="svc.test")
 
@@ -64,7 +102,7 @@ class RuntimeRegressionTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_service_runtime_uses_explicit_shared_registry(self) -> None:
         cfg = ServiceRuntimeConfig.from_values(service_id="svc", service_class="svc.test")
-        registry = RuntimeNodeRegistry()
+        registry = create_runtime_node_registry()
 
         rt_a = ServiceRuntime(cfg, registry=registry)
         rt_b = ServiceRuntime(cfg, registry=registry)
@@ -98,23 +136,66 @@ class RuntimeRegressionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(node.data_calls, [("in", 123, 5)])
         self.assertEqual(pulled, 123)
 
-    async def test_missing_operator_factory_falls_back_to_generic_operator_node(self) -> None:
-        registry = RuntimeNodeRegistry()
-        registry.register_service("svc.test", lambda node_id, node, initial_state: ServiceNode(node_id=node_id))
+    async def test_missing_operator_factory_raises_explicit_error(self) -> None:
+        registry = create_runtime_node_registry()
+        registry.register_service_factory("svc.test", lambda node_id, node, initial_state: ServiceNode(node_id=node_id))
 
-        node = registry.create(
-            node_id="op1",
-            node=F8RuntimeNode(
-                nodeId="op1",
-                serviceId="svc",
-                serviceClass="svc.test",
-                operatorClass="missing.operator",
-            ),
+        with self.assertRaises(OperatorFactoryNotRegistered):
+            registry.create_operator_node(
+                node_id="op1",
+                node=F8RuntimeNode(
+                    nodeId="op1",
+                    serviceId="svc",
+                    serviceClass="svc.test",
+                    operatorClass="missing.operator",
+                ),
+                initial_state={},
+            )
+
+    async def test_missing_service_factory_uses_generic_service_node_default(self) -> None:
+        registry = create_runtime_node_registry()
+        registry.register_service_spec(F8ServiceSpec(serviceClass="svc.test", label="svc"))
+
+        node = registry.create_service_node(
+            service_class="svc.test",
+            node_id="svc",
             initial_state={},
         )
 
-        self.assertIsInstance(node, OperatorNode)
-        self.assertEqual(node.node_id, "op1")
+        self.assertIsInstance(node, ServiceNode)
+        self.assertEqual(node.node_id, "svc")
+
+    async def test_service_host_skips_operator_node_when_factory_is_missing(self) -> None:
+        harness = ServiceBusHarness()
+        bus = harness.create_bus("svc")
+        registry = create_runtime_node_registry()
+        registry.register_service_factory("svc.test", lambda node_id, node, initial_state: ServiceNode(node_id=node_id))
+        host = ServiceHost(bus, config=ServiceHostConfig(service_class="svc.test"), registry=registry)
+
+        await host.start()
+        await host.apply_rungraph(
+            F8RuntimeGraph(
+                graphId="g1",
+                revision="r1",
+                nodes=[
+                    F8RuntimeNode(
+                        nodeId="svc",
+                        serviceId="svc",
+                        serviceClass="svc.test",
+                    ),
+                    F8RuntimeNode(
+                        nodeId="op1",
+                        serviceId="svc",
+                        serviceClass="svc.test",
+                        operatorClass="missing.operator",
+                    ),
+                ],
+                edges=[],
+            )
+        )
+
+        self.assertIsNotNone(bus.get_node("svc"))
+        self.assertIsNone(bus.get_node("op1"))
 
     async def test_service_bus_is_not_restartable_after_stop(self) -> None:
         harness = ServiceBusHarness()
@@ -131,8 +212,8 @@ class RuntimeRegressionTests(unittest.IsolatedAsyncioTestCase):
             await bus.start()
 
     async def test_service_runtime_is_not_restartable_after_stop(self) -> None:
-        registry = RuntimeNodeRegistry()
-        registry.register_service("svc.test", lambda node_id, node, initial_state: ServiceNode(node_id=node_id))
+        registry = create_runtime_node_registry()
+        registry.register_service_factory("svc.test", lambda node_id, node, initial_state: ServiceNode(node_id=node_id))
         runtime = ServiceRuntime(
             ServiceRuntimeConfig.from_values(service_id="svc", service_class="svc.test"),
             registry=registry,
@@ -145,6 +226,25 @@ class RuntimeRegressionTests(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaisesRegex(RuntimeError, "not restartable"):
             await runtime.start()
+
+    async def test_service_bus_stop_keeps_registered_hooks(self) -> None:
+        harness = ServiceBusHarness()
+        bus = harness.create_bus("svcA")
+        rungraph_hook = _NoopRungraphHook()
+        service_hook = _NoopServiceHook()
+        bus.register_rungraph_hook(rungraph_hook)
+        bus.register_service_hook(service_hook)
+
+        with patch("f8pysdk.service_bus.workflow.lifecycle._ensure_micro_endpoints_started") as ensure_micro:
+            async def _noop(_bus: object) -> None:
+                return None
+
+            ensure_micro.side_effect = _noop
+            await bus.start()
+        await bus.stop()
+
+        self.assertIn(rungraph_hook, bus._rungraph_hooks)
+        self.assertIn(service_hook, bus._service_hooks)
 
 
 async def asyncio_sleep_ticks(ticks: int) -> None:

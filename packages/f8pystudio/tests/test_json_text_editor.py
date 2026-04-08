@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from f8pysdk import F8ServiceSpec
+from f8pysdk.specs import F8ServiceSpec
 from qtpy import QtGui, QtWidgets
 
 from f8pystudio.ui.support.json_text_editor import (

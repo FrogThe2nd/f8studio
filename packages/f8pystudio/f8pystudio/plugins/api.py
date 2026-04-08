@@ -15,7 +15,7 @@ class PluginRendererRegistration:
 
 @dataclass(frozen=True)
 class PluginOperatorRegistration:
-    register: Callable[[RuntimeNodeRegistry | None], RuntimeNodeRegistry]
+    register: Callable[[RuntimeNodeRegistry], RuntimeNodeRegistry]
 
 
 @dataclass(frozen=True)
