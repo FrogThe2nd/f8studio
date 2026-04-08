@@ -37,7 +37,7 @@ async def _deploy_runtime_graph(*, nats_url: str, service_id: str, graph: Any) -
     from f8pysdk.nats_naming import kv_bucket_for_service, new_id, svc_endpoint_subject
     from f8pysdk.specs import F8SetRungraphArgs, F8SetRungraphReply, F8SetRungraphRequest
     from f8pysdk.transport import NatsTransport, NatsTransportConfig
-    from f8pysdk.service_runtime_tools.readiness import wait_service_ready
+    from f8pysdk.service_runtime_tools.deploy.readiness import wait_service_ready
 
     bucket = kv_bucket_for_service(service_id)
     transport = NatsTransport(NatsTransportConfig(url=str(nats_url).strip(), kv_bucket=bucket))
@@ -132,7 +132,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 def _ensure_bootstrap_or_raise(*, nats_url: str, bootstrap: bool) -> None:
     if not bool(bootstrap):
         return
-    from f8pysdk.service_runtime_tools.nats_bootstrap import ensure_nats_server
+    from f8pysdk.service_runtime_tools.deploy.nats_bootstrap import ensure_nats_server
 
     ok = ensure_nats_server(str(nats_url), log_cb=lambda line: logger.info("%s", line))
     if not ok:
@@ -140,15 +140,12 @@ def _ensure_bootstrap_or_raise(*, nats_url: str, bootstrap: bool) -> None:
 
 
 def _run_headless(args: argparse.Namespace) -> int:
-    from f8pysdk.service_runtime_tools import (
-        ServiceCatalog,
-        ServiceProcessConfig,
-        ServiceProcessManager,
-        compile_runtime_graphs_from_session_layout,
-        default_discovery_roots,
-        load_discovery_into_catalog,
-        load_session_layout,
-    )
+    from f8pysdk.service_runtime_tools.deploy.process_manager import ServiceProcessConfig, ServiceProcessManager
+    from f8pysdk.service_runtime_tools.inventory.catalog import ServiceCatalog
+    from f8pysdk.service_runtime_tools.inventory.discovery import load_discovery_into_catalog
+    from f8pysdk.service_runtime_tools.inventory.entry import default_discovery_roots
+    from f8pysdk.service_runtime_tools.session.compiler import compile_runtime_graphs_from_session_layout
+    from f8pysdk.service_runtime_tools.session.loader import load_session_layout
 
     catalog = ServiceCatalog.instance()
     catalog.clear()

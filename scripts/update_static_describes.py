@@ -13,7 +13,7 @@ from f8pysdk._specs.builtin_fields import normalize_describe_payload_dict
 from f8pysdk.codec import dump_json, validate_as
 from f8pysdk.monitoring import validate_describe_monitor_contract
 from f8pysdk.specs import F8ServiceDescribe
-from f8pysdk.service_runtime_tools.discovery import find_service_dirs, load_service_entry
+from f8pysdk.service_runtime_tools.inventory.entry import find_service_dirs, load_service_entry
 
 
 def _extract_last_json_obj(text: str) -> Any | None:

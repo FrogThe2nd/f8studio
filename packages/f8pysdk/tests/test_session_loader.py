@@ -8,7 +8,7 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from f8pysdk.service_runtime_tools.session_loader import (  # noqa: E402
+from f8pysdk.service_runtime_tools.session.loader import (  # noqa: E402
     SESSION_SCHEMA_VERSION,
     extract_layout,
     load_session_layout,

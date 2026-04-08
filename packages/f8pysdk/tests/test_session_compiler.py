@@ -15,8 +15,8 @@ from f8pysdk.specs import (  # noqa: E402
     F8ServiceSchemaVersion,
     F8ServiceSpec,
 )
-from f8pysdk.service_runtime_tools.catalog import ServiceCatalog  # noqa: E402
-from f8pysdk.service_runtime_tools.session_compiler import (  # noqa: E402
+from f8pysdk.service_runtime_tools.inventory.catalog import ServiceCatalog  # noqa: E402
+from f8pysdk.service_runtime_tools.session.compiler import (  # noqa: E402
     compile_runtime_graphs_from_session_layout,
 )
 

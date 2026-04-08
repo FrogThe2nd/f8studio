@@ -8,10 +8,12 @@ from typing import Any
 
 from f8pysdk.codec import dump_json
 from f8pysdk.specs import palette_category_from_spec
-from f8pysdk.service_runtime_tools.catalog import ServiceCatalog
-from f8pysdk.service_runtime_tools.discovery import (
+from f8pysdk.service_runtime_tools.inventory.catalog import ServiceCatalog
+from f8pysdk.service_runtime_tools.inventory.describe import (
     last_discovery_error_lines,
     last_discovery_timing_lines,
+)
+from f8pysdk.service_runtime_tools.inventory.discovery import (
     load_discovery_into_catalog,
 )
 

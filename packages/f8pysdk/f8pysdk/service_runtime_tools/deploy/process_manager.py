@@ -9,9 +9,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .catalog import ServiceCatalog
-from .discovery import load_service_entry
-from .error_reporting import ExceptionLogOnce, fingerprint_exception
+from .._internal.error_reporting import ExceptionLogOnce, fingerprint_exception
+from ..inventory.catalog import ServiceCatalog
+from ..inventory.entry import load_service_entry
 
 
 logger = logging.getLogger(__name__)

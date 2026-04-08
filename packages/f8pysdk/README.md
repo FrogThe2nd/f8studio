@@ -29,8 +29,11 @@ Additional stable utility modules:
 - `f8pysdk.rungraph_validation`: rungraph validation helpers used by Studio/runtime tooling
 - `f8pysdk.editor_assist_protocol`: editor-assist payload validation helpers
 - `f8pysdk.time_utils`: small runtime timestamp helpers
-- `f8pysdk.service_runtime_tools`: advanced runtime/deployment/session tooling package
-  specific owner modules include `catalog`, `discovery`, `process_manager`, `session_loader`, `session_compiler`, `readiness`, and `nats_bootstrap`
+- `f8pysdk.service_runtime_tools`: advanced tooling namespace
+  import from explicit owner subpackages:
+  `service_runtime_tools.inventory.*`, `service_runtime_tools.session.*`, and `service_runtime_tools.deploy.*`
+  the old flat helper paths under `service_runtime_tools.*` have been removed
+  within `inventory`, use `entry` for `service.yml` loading/roots, `describe` for describe diagnostics, and `discovery` for catalog-loading orchestration
 
 Explicit internal-only modules:
 - `f8pysdk.service_bus.internal.*`: repo-internal runtime/test helpers owned by the ServiceBus runtime and not part of the public SDK API
@@ -42,7 +45,7 @@ Removed deep legacy paths:
 - old `f8pysdk.service_bus.*` compatibility shims such as `bus`, `codec`, `command_runtime`, `cross_state`, `domain.state_pipeline`, `error_utils`, `lifecycle`, `metadata`, `micro`, `payload`, `routing.data_*`, `routing_data`, `rungraph_apply`, `runtime_collections`, `state_publish`, `state_router`, and `state_store` have been removed from this repo
 - historical top-level implementation paths such as `f8pysdk.runtime_node`, `f8pysdk.runtime_node_registry`, `f8pysdk.service_host`, `f8pysdk.service_runtime`, `f8pysdk.msgspec_codec`, `f8pysdk.nats_transport`, `f8pysdk.command_state`, `f8pysdk.json_unwrap`, and `f8pysdk.monitor_schema` have been removed in favor of stable owner modules like `f8pysdk.nodes`, `f8pysdk.registry`, `f8pysdk.host`, `f8pysdk.runtime`, `f8pysdk.codec`, `f8pysdk.transport`, `f8pysdk.command`, and `f8pysdk.monitoring`
 - top-level helper modules `f8pysdk.builtin_state_fields`, `f8pysdk.service_ready`, and `f8pysdk.nats_server_bootstrap` have been removed
-  use `f8pysdk._specs.builtin_fields`, `f8pysdk.service_runtime_tools.readiness`, and `f8pysdk.service_runtime_tools.nats_bootstrap` instead
+  use `f8pysdk._specs.builtin_fields`, `f8pysdk.service_runtime_tools.deploy.readiness`, and `f8pysdk.service_runtime_tools.deploy.nats_bootstrap` instead
 - repo code should import stable SDK modules such as `f8pysdk.bus`, `f8pysdk.specs`, `f8pysdk.command`, `f8pysdk.data`, `f8pysdk.state`, `f8pysdk.codec`, and `f8pysdk.testing` directly
 - package root `f8pysdk` no longer wildcard-reexports generated types or helper functions; import from explicit owner modules instead
 

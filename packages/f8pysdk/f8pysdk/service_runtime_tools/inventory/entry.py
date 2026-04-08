@@ -1,0 +1,188 @@
+from __future__ import annotations
+
+import os
+import sys
+from collections.abc import Iterable
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+from f8pysdk.codec import dump_json, validate_as
+from f8pysdk.specs import F8ServiceEntry
+
+
+def _default_roots() -> list[Path]:
+    env = (os.environ.get("F8_SERVICE_DISCOVERY_DIRS") or "").strip()
+    if env:
+        return [Path(p).expanduser().resolve() for p in env.split(os.pathsep) if p.strip()]
+
+    try:
+        for parent in Path(__file__).resolve().parents:
+            candidate = parent / "services"
+            if candidate.is_dir():
+                return [candidate.resolve()]
+    except (OSError, RuntimeError, TypeError, ValueError):
+        pass
+    return []
+
+
+def default_discovery_roots() -> list[Path]:
+    return _default_roots()
+
+
+def _read_yaml(path: Path) -> Any:
+    try:
+        raw = path.read_text("utf-8")
+    except Exception as exc:
+        raise ValueError(f"Failed to read {path}: {exc}") from exc
+    try:
+        return yaml.safe_load(raw) if raw.strip() else None
+    except Exception as exc:
+        raise ValueError(f"Failed to parse YAML {path}: {exc}") from exc
+
+
+def _platform_service_yml_names() -> list[str]:
+    if os.name == "nt" or sys.platform.startswith("win"):
+        return ["service.win.yml"]
+    if sys.platform.startswith("darwin"):
+        return ["service.mac.yml"]
+    return ["service.linux.yml"]
+
+
+def _service_yml_candidates(service_dir: Path) -> list[Path]:
+    service_dir = Path(service_dir).resolve()
+    platform_names = _platform_service_yml_names()
+    all_platform_names = ["service.win.yml", "service.linux.yml", "service.mac.yml"]
+    fallback_names: list[str] = []
+    for name in all_platform_names:
+        if name not in platform_names:
+            fallback_names.append(name)
+    ordered_names = platform_names + ["service.yml"] + fallback_names
+    return [service_dir / name for name in ordered_names]
+
+
+def find_service_dirs(roots: Iterable[Path]) -> list[Path]:
+    found: set[Path] = set()
+    for root in roots:
+        resolved_root = Path(root).expanduser()
+        if not resolved_root.is_absolute():
+            resolved_root = (Path.cwd() / resolved_root).resolve()
+        else:
+            resolved_root = resolved_root.resolve()
+
+        if not resolved_root.exists() or not resolved_root.is_dir():
+            continue
+        try:
+            patterns = ["service.yml", "service.win.yml", "service.linux.yml", "service.mac.yml"]
+            for pattern in patterns:
+                for svc_file in resolved_root.rglob(pattern):
+                    if svc_file.is_file():
+                        found.add(svc_file.parent.resolve())
+        except Exception:
+            for child in sorted(resolved_root.iterdir()):
+                if not child.is_dir():
+                    continue
+                if any(
+                    (child / name).is_file()
+                    for name in ("service.yml", "service.win.yml", "service.linux.yml", "service.mac.yml")
+                ):
+                    found.add(child.resolve())
+    return sorted(found)
+
+
+def _absolutize_entry_paths(entry: F8ServiceEntry, *, service_dir: Path) -> F8ServiceEntry:
+    service_dir = Path(service_dir).resolve()
+    payload = dump_json(entry, mode="json")
+
+    launch = dict(payload.get("launch") or {})
+    workdir_raw = str(launch.get("workdir") or "./")
+    workdir_path = Path(workdir_raw).expanduser()
+    if not workdir_path.is_absolute():
+        workdir_path = (service_dir / workdir_path).resolve()
+    else:
+        workdir_path = workdir_path.resolve()
+    launch["workdir"] = str(workdir_path)
+
+    command_raw = str(launch.get("command") or "").strip()
+    try:
+        command_path = Path(command_raw).expanduser()
+        looks_like_path = bool(command_raw) and (
+            "/" in command_raw or "\\" in command_raw or command_raw.startswith(".") or bool(command_path.suffix)
+        )
+        if looks_like_path and not command_path.is_absolute():
+            launch["command"] = str((workdir_path / command_path).resolve())
+    except (OSError, RuntimeError, TypeError, ValueError):
+        pass
+
+    payload["launch"] = launch
+    return validate_as(F8ServiceEntry, payload)
+
+
+def load_service_entry(service_dir: Path) -> F8ServiceEntry:
+    service_dir = Path(service_dir).resolve()
+
+    def _try_load_candidate(candidate: Path) -> dict[str, Any] | None:
+        if not candidate.is_file():
+            return None
+        obj = _read_yaml(candidate)
+        if not isinstance(obj, dict):
+            raise ValueError(f"{candidate} must be a YAML mapping")
+
+        if candidate.name != "service.yml":
+            try:
+                launch = obj.get("launch") if isinstance(obj.get("launch"), dict) else {}
+                command_raw = str((launch or {}).get("command") or "").strip()
+                workdir_raw = str((launch or {}).get("workdir") or "./").strip() or "./"
+                command_path = Path(command_raw)
+                if command_raw and not command_path.is_absolute() and (
+                    "/" in command_raw or "\\" in command_raw or command_path.suffix
+                ):
+                    workdir_path = Path(workdir_raw).expanduser()
+                    if not workdir_path.is_absolute():
+                        workdir_path = (service_dir / workdir_path).resolve()
+                    else:
+                        workdir_path = workdir_path.resolve()
+                    resolved_command = (workdir_path / command_path).resolve()
+                    if not resolved_command.is_file():
+                        return None
+            except Exception:
+                pass
+        return obj
+
+    data: Any | None = None
+    for candidate in _service_yml_candidates(service_dir):
+        try:
+            loaded = _try_load_candidate(candidate)
+        except Exception as exc:
+            raise ValueError(str(exc)) from exc
+        if loaded is not None:
+            data = loaded
+            break
+
+    if data is None:
+        tried = ", ".join(str(path.name) for path in _service_yml_candidates(service_dir))
+        raise ValueError(f"{service_dir} is missing a service entry YAML (tried: {tried})")
+
+    if "launch" not in data and "command" in data:
+        launch = validate_as(
+            F8ServiceEntry,
+            {
+                "command": data.get("command"),
+                "args": data.get("args") or [],
+                "env": data.get("env") or {},
+                "workdir": data.get("workdir") or "./",
+            },
+        )
+        data = dict(data)
+        data["launch"] = dump_json(launch, mode="json")
+
+    try:
+        entry = validate_as(F8ServiceEntry, data)
+    except Exception as exc:
+        raise ValueError(f"Invalid service entry in {service_dir}: {exc}") from exc
+
+    return _absolutize_entry_paths(entry, service_dir=service_dir)
+
+
+__all__ = ["default_discovery_roots", "find_service_dirs", "load_service_entry"]

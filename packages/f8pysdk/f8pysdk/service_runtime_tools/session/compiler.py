@@ -34,7 +34,7 @@ from f8pysdk.rungraph_validation import (
 )
 from f8pysdk.specs import coerce_spec_payload
 
-from .catalog import ServiceCatalog
+from ..inventory.catalog import ServiceCatalog
 
 
 logger = logging.getLogger(__name__)

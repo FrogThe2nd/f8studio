@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Protocol
 
 from f8pysdk.nats_naming import svc_micro_name
-from f8pysdk.service_runtime_tools.nats_bootstrap import ensure_nats_server_with_result, stop_nats_server_process
+from f8pysdk.service_runtime_tools.deploy.nats_bootstrap import ensure_nats_server_with_result, stop_nats_server_process
 
 SINGLETON_GUARD_LOG_MESSAGE = "Another PyStudio instance is already running (micro service ping responded)."
 SINGLETON_GUARD_DIALOG_TITLE = "F8PyStudio Already Running"

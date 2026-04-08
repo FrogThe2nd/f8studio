@@ -18,8 +18,8 @@ from f8pystudio.render_nodes.patch_hub import PatchHubRenderNode
 from f8pystudio.render_nodes.registry import RenderNodeRegistry
 from f8pystudio.ui.widgets.node_property_panel.editor import _should_show_commands_tab
 from f8pystudio.ui.widgets.node_property_panel.ports import _F8SpecPortEditor
-from f8pysdk.service_runtime_tools.catalog import ServiceCatalog
-from f8pysdk.service_runtime_tools.discovery import load_discovery_into_catalog
+from f8pysdk.service_runtime_tools.inventory.catalog import ServiceCatalog
+from f8pysdk.service_runtime_tools.inventory.discovery import load_discovery_into_catalog
 
 
 def _inject_builtin_pystudio_specs(catalog: ServiceCatalog) -> str | None:

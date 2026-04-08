@@ -264,8 +264,13 @@ This plan is intentionally incremental. Each phase should leave the SDK usable a
   `nats_naming`, `capabilities`, `shm`, `rungraph_validation`, `editor_assist_protocol`, `time_utils`, and `service_runtime_tools`.
 - Non-owner helper modules that did not justify top-level placement have been removed from the package root:
   `builtin_state_fields` moved under `f8pysdk._specs.builtin_fields`,
-  `service_ready` moved to `f8pysdk.service_runtime_tools.readiness`,
-  and `nats_server_bootstrap` moved to `f8pysdk.service_runtime_tools.nats_bootstrap`.
+  `service_ready` moved to `f8pysdk.service_runtime_tools.deploy.readiness`,
+  and `nats_server_bootstrap` moved to `f8pysdk.service_runtime_tools.deploy.nats_bootstrap`.
+- `service_runtime_tools` itself is now a narrow namespace package;
+  concrete owners live under `inventory`, `session`, `deploy`, and `_internal`.
+  the earlier flat helper modules under `service_runtime_tools.*` have been removed.
+- within `inventory`, `entry` owns service-entry loading, `describe` owns describe execution/diagnostics,
+  and `discovery` is the catalog-loading orchestration layer.
 
 ## Recommended Implementation Order
 
@@ -478,11 +483,27 @@ This milestone does not redesign the SDK yet, but it makes the system much safer
     - documented the remaining stable utility modules so the public surface is split into core owners vs advanced utility packages
     - removed top-level helper modules `f8pysdk.builtin_state_fields`, `f8pysdk.service_ready`, and `f8pysdk.nats_server_bootstrap`
     - moved builtin spec-shaping helpers under `f8pysdk._specs.builtin_fields`
-    - moved readiness / local NATS bootstrap helpers under `f8pysdk.service_runtime_tools.readiness` and `f8pysdk.service_runtime_tools.nats_bootstrap`
+    - moved readiness / local NATS bootstrap helpers under `f8pysdk.service_runtime_tools.deploy.readiness` and `f8pysdk.service_runtime_tools.deploy.nats_bootstrap`
     - repointed repo-internal imports and regression tests to the new owner paths
   - compatibility notes:
     - repo-internal callers should treat `_specs.*` as internal owner modules, not public SDK surface
     - deployment/runtime-tooling helpers now live under `service_runtime_tools.*` rather than the package root
+
+- 2026-04-08
+  - owner: Codex + repository maintainer
+  - scope: Phase 6 follow-up owner split for `service_runtime_tools`
+  - completed:
+    - split `service_runtime_tools` into explicit owner subpackages:
+      `inventory`, `session`, `deploy`, and `_internal`
+    - moved repo callers off the root barrel and off flat helper module names onto the new owner paths
+    - reduced `service_runtime_tools.__init__` to a namespace package instead of a broad re-export surface
+    - removed the earlier flat module files after repo callers were migrated
+    - further split the inventory/discovery subsystem into `inventory.entry`, `inventory.describe`, and a thinner `inventory.discovery` orchestration layer
+  - compatibility notes:
+    - stable imports should prefer `f8pysdk.service_runtime_tools.inventory.*`,
+      `f8pysdk.service_runtime_tools.session.*`,
+      and `f8pysdk.service_runtime_tools.deploy.*`
+    - `service_runtime_tools.error_reporting` is now explicitly backed by `_internal` and should not be treated as stable API
 
 - 2026-04-07
   - owner: Codex + repository maintainer

@@ -21,7 +21,7 @@ from f8pystudio.nodegraph.node_graph import F8StudioGraph
 from f8pystudio.nodegraph.missing_operator_basenode import F8StudioOperatorMissingNode
 from f8pystudio.nodegraph.missing_service_basenode import F8StudioServiceMissingNode
 from f8pystudio.app.program import PyStudioProgram
-from f8pysdk.service_runtime_tools.catalog import ServiceCatalog
+from f8pysdk.service_runtime_tools.inventory.catalog import ServiceCatalog
 
 MISSING_SERVICE_NODE_TYPE = "svc.f8.missing.service"
 MISSING_OPERATOR_NODE_TYPE = "svc.f8.missing.operator"
