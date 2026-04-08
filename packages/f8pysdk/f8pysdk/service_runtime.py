@@ -4,10 +4,9 @@ from dataclasses import dataclass
 
 from nats.js.api import StorageType  # type: ignore[import-not-found]
 
+from .bus import ServiceBus, ServiceBusConfig
 from .data import CrossPublishPolicy, DataDeliveryMode
 from .registry import RuntimeNodeRegistry, create_runtime_node_registry
-from .service_bus.config import ServiceBusConfig
-from .service_bus.runtime import ServiceBus
 from .service_host import ServiceHost, ServiceHostConfig
 
 

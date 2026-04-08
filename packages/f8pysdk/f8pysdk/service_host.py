@@ -7,10 +7,10 @@ from typing import Any
 import msgspec
 
 from .generated import F8RuntimeGraph, F8RuntimeNode
+from .bus import ServiceBus
 from .json_unwrap import unwrap_json_value
 from .registry import OperatorFactoryNotRegistered, RuntimeNodeRegistry, create_runtime_node_registry
 from .runtime_node import OperatorNode, RuntimeNode
-from .service_bus.runtime import ServiceBus
 
 
 log = logging.getLogger(__name__)

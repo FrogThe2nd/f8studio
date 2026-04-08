@@ -28,7 +28,7 @@ from f8pysdk.command import CommandExecutionErrorKind, CommandOutputPolicy  # no
 from f8pysdk.nats_naming import kv_key_node_state  # noqa: E402
 from f8pysdk.nodes import RuntimeNode  # noqa: E402
 from f8pysdk.schema_helpers import string_schema  # noqa: E402
-from f8pysdk.service_bus import ServiceBus, ServiceBusConfig  # noqa: E402
+from f8pysdk.bus import ServiceBus, ServiceBusConfig  # noqa: E402
 from f8pysdk.service_bus.internal.micro import ServiceBusMicroEndpoints  # noqa: E402
 from f8pysdk.service_bus.state.options import StatePublishOptions  # noqa: E402
 from f8pysdk.service_bus.state.pipeline import publish_state, validate_state_update  # noqa: E402

@@ -3,8 +3,8 @@ from __future__ import annotations
 from typing import Any, Protocol, runtime_checkable, TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from ..bus import ServiceBus
     from ..generated import F8RuntimeGraph
-    from ..service_bus import ServiceBus
     from ..state import StateRead
 
 

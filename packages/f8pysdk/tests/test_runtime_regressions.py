@@ -19,7 +19,7 @@ from f8pysdk.registry import (  # noqa: E402
     RuntimeNodeRegistry,
     shared_runtime_node_registry,
 )
-from f8pysdk.service_bus import ServiceBus, ServiceBusConfig  # noqa: E402
+from f8pysdk.bus import ServiceBus, ServiceBusConfig  # noqa: E402
 from f8pysdk.app import ServiceHost, ServiceHostConfig, ServiceRuntime, ServiceRuntimeConfig  # noqa: E402
 from f8pysdk.testing import InMemoryCluster, InMemoryTransport, ServiceBusHarness, push_input  # noqa: E402
 

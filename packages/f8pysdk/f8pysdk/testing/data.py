@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any
 from ..generated import F8Edge
 
 if TYPE_CHECKING:
-    from ..service_bus import ServiceBus
+    from ..bus import ServiceBus
 
 
 async def emit_data(bus: "ServiceBus", node_id: str, port: str, value: Any, *, ts_ms: int | None = None) -> None:

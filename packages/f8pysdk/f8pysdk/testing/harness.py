@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from ..bus import ServiceBus, ServiceBusConfig
 from ..nats_naming import kv_bucket_for_service
-from ..service_bus import ServiceBus, ServiceBusConfig
 from .in_memory_transport import InMemoryCluster, InMemoryTransport
 
 

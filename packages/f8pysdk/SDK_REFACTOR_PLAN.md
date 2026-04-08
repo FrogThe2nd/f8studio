@@ -227,6 +227,7 @@ This plan is intentionally incremental. Each phase should leave the SDK usable a
 
 - [x] Define stable public modules, for example:
   - `f8pysdk.app`
+  - `f8pysdk.bus`
   - `f8pysdk.specs`
   - `f8pysdk.registry`
   - `f8pysdk.nodes`

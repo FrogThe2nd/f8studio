@@ -1,14 +1,21 @@
 from __future__ import annotations
 
 """
-Service bus package.
+Internal service bus package.
 
-Stable public bus imports:
-- `from f8pysdk.service_bus import ServiceBus, ServiceBusConfig, CrossPublishPolicy, DataDeliveryMode`
-- `from f8pysdk.service_bus import StateRead, StateWriteOrigin, ...`
+This package remains because concrete owner modules still live under:
+- `f8pysdk.service_bus.config`
+- `f8pysdk.service_bus.runtime`
+- `f8pysdk.service_bus.data.*`
+- `f8pysdk.service_bus.state.*`
+- `f8pysdk.service_bus.internal.*`
 
-Adjacent stable public modules:
+Do not treat `f8pysdk.service_bus` itself as a public barrel.
+
+Stable public SDK entrypoints live under:
+- `f8pysdk.bus`
 - `f8pysdk.app`
+- `f8pysdk.specs`
 - `f8pysdk.command`
 - `f8pysdk.data`
 - `f8pysdk.nodes`
@@ -17,24 +24,3 @@ Adjacent stable public modules:
 - `f8pysdk.transport`
 - `f8pysdk.testing`
 """
-
-from .config import ServiceBusConfig
-from .runtime import ServiceBus
-from ..command import CommandExecutionErrorKind, CommandExecutionResult, CommandOutputPolicy
-from ..data import CrossPublishPolicy, DataDeliveryMode
-from ..state import StateRead, StateWriteContext, StateWriteError, StateWriteOrigin, StateWriteSource
-
-__all__ = [
-    "CommandExecutionErrorKind",
-    "CommandExecutionResult",
-    "CommandOutputPolicy",
-    "CrossPublishPolicy",
-    "DataDeliveryMode",
-    "ServiceBus",
-    "ServiceBusConfig",
-    "StateRead",
-    "StateWriteContext",
-    "StateWriteError",
-    "StateWriteOrigin",
-    "StateWriteSource",
-]

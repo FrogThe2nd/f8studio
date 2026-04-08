@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import os
 import sys
 import unittest
@@ -9,6 +10,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from f8pysdk.app import MonitorRuntimeOverrides, ServiceCliTemplate, ServiceHost, ServiceHostConfig, ServiceRuntime, ServiceRuntimeConfig  # noqa: E402
+from f8pysdk.bus import ServiceBus, ServiceBusConfig  # noqa: E402
 from f8pysdk.command import CommandExecutionErrorKind, CommandExecutionResult, CommandOutputPolicy  # noqa: E402
 from f8pysdk.data import CrossPublishPolicy, DataDeliveryMode  # noqa: E402
 from f8pysdk.monitoring import MonitorCollector, MonitorCollectorConfig  # noqa: E402
@@ -21,22 +23,6 @@ from f8pysdk.registry import (  # noqa: E402
     ServiceFactoryNotRegistered,
     ServiceNotRegistered,
 )
-from f8pysdk.service_bus import (  # noqa: E402
-    CommandExecutionErrorKind as BusCommandExecutionErrorKind,
-    CommandExecutionResult as BusCommandExecutionResult,
-    CommandOutputPolicy as BusCommandOutputPolicy,
-    CrossPublishPolicy as BusCrossPublishPolicy,
-    DataDeliveryMode as BusDataDeliveryMode,
-    ServiceBus,
-    ServiceBusConfig,
-    StateRead as BusStateRead,
-    StateWriteContext as BusStateWriteContext,
-    StateWriteError as BusStateWriteError,
-    StateWriteOrigin as BusStateWriteOrigin,
-    StateWriteSource as BusStateWriteSource,
-)
-from f8pysdk.service_bus.config import ServiceBusConfig as OwnerServiceBusConfig  # noqa: E402
-from f8pysdk.service_bus.runtime import ServiceBus as OwnerServiceBus  # noqa: E402
 from f8pysdk.specs import F8OperatorSpec, F8ServiceSpec, F8StateAccess, F8StateSpec, any_schema, schema_type  # noqa: E402
 from f8pysdk.state import StateRead, StateWriteContext, StateWriteError, StateWriteOrigin, StateWriteSource  # noqa: E402
 from f8pysdk.transport import NatsTransport, NatsTransportConfig  # noqa: E402
@@ -88,25 +74,18 @@ class PublicApiModuleTests(unittest.TestCase):
         self.assertIsNotNone(MonitorCollector)
         self.assertIsNotNone(MonitorCollectorConfig)
 
-    def test_service_bus_package_remains_public_bus_entrypoint(self) -> None:
+    def test_bus_exports_public_bus_entrypoint(self) -> None:
         self.assertIsNotNone(ServiceBus)
         self.assertIsNotNone(ServiceBusConfig)
-        self.assertIs(ServiceBus, OwnerServiceBus)
-        self.assertIs(ServiceBusConfig, OwnerServiceBusConfig)
+        self.assertIs(ServiceBus, importlib.import_module("f8pysdk.service_bus.runtime").ServiceBus)
+        self.assertIs(ServiceBusConfig, importlib.import_module("f8pysdk.service_bus.config").ServiceBusConfig)
 
-    def test_public_type_barrels_share_single_objects(self) -> None:
-        self.assertIs(CommandExecutionErrorKind, BusCommandExecutionErrorKind)
-        self.assertIs(CommandExecutionResult, BusCommandExecutionResult)
-        self.assertIs(CommandOutputPolicy, BusCommandOutputPolicy)
-
-        self.assertIs(CrossPublishPolicy, BusCrossPublishPolicy)
-        self.assertIs(DataDeliveryMode, BusDataDeliveryMode)
-
-        self.assertIs(StateRead, BusStateRead)
-        self.assertIs(StateWriteContext, BusStateWriteContext)
-        self.assertIs(StateWriteError, BusStateWriteError)
-        self.assertIs(StateWriteOrigin, BusStateWriteOrigin)
-        self.assertIs(StateWriteSource, BusStateWriteSource)
+    def test_service_bus_root_is_not_a_public_barrel(self) -> None:
+        service_bus_module = importlib.import_module("f8pysdk.service_bus")
+        self.assertFalse(hasattr(service_bus_module, "ServiceBus"))
+        self.assertFalse(hasattr(service_bus_module, "ServiceBusConfig"))
+        self.assertFalse(hasattr(service_bus_module, "CrossPublishPolicy"))
+        self.assertFalse(hasattr(service_bus_module, "StateRead"))
 
 
 if __name__ == "__main__":
