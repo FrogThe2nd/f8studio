@@ -152,6 +152,7 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
     _auto_proxy_action: QtGui.QAction
     _performance_overlay_action: QtGui.QAction
     _global_hotkeys_action: QtGui.QAction
+    _variant_catalog_action: QtGui.QAction
     _log_level_action_group: QtGui.QActionGroup
     _log_level_actions: dict[int, QtGui.QAction]
     _dock_widgets: list[QtWidgets.QDockWidget]
@@ -509,6 +510,7 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
             sections=MainWindowToolsMenuSections(
                 catalog_actions=[
                     self._manage_components_action,
+                    self._variant_catalog_action,
                     self._global_hotkeys_action,
                 ],
                 log_level_menu=self._log_level_menu,
@@ -659,6 +661,7 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
             on_deploy_action=self._on_deploy_action,
             on_stop_all_services_action=self._on_stop_all_services_action,
             on_global_hotkeys_action=self._on_global_hotkeys_action,
+            on_variant_catalog_action=self._on_variant_catalog_action,
         )
         self._quickload_project_action = action_bundle.quickload_project_action
         self._quicksave_project_action = action_bundle.quicksave_project_action
@@ -680,6 +683,7 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         self._deploy_action = action_bundle.deploy_action
         self._stop_all_services_action = action_bundle.stop_all_services_action
         self._global_hotkeys_action = action_bundle.global_hotkeys_action
+        self._variant_catalog_action = action_bundle.variant_catalog_action
 
     @QtCore.Slot()
     def _on_reset_layout_action(self) -> None:
@@ -1057,6 +1061,21 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         dialog.node_requested.connect(self._focus_node_by_id)  # type: ignore[attr-defined]
         self._global_hotkey_controller.registry_changed.connect(dialog.refresh_entries)  # type: ignore[attr-defined]
         dialog.exec()
+
+    @QtCore.Slot()
+    def _on_variant_catalog_action(self) -> None:
+        from ...assets.ui.variant_manager_dialog import VariantManagerDialog
+
+        dialog = VariantManagerDialog(
+            parent=self,
+            base_node_type=None,  # Global mode
+            base_node_name=None,
+            node_graph=self.studio_graph,
+        )
+        dialog.setAttribute(QtCore.Qt.WA_DeleteOnClose, True)
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
 
     @QtCore.Slot(str)
     def _focus_node_by_id(self, node_id: str) -> None:
