@@ -7,7 +7,7 @@
 ## Common Wiring Patterns
 
 - **Validation Branch**: Keep the mock server active on a side branch. Use it to confirm that your `Lovense Out` or `Lovense Program Adapter` nodes are sending the expected intensity values.
-- **Protocol Sniffing**: Inspect the emitted event state and execution triggers using `Print` or `TextViz` nodes to see exactly how the "virtual device" is responding to your graph.
+- **Protocol Sniffing**: Inspect the emitted event state and execution triggers using `Print` or `Text Viz` nodes to see exactly how the "virtual device" is responding to your graph.
 - **Automated Testing**: Use it in automated scenario tests to verify that a logic chain produces the correct device commands without needing human interaction.
 
 ## Pitfalls / Gotchas

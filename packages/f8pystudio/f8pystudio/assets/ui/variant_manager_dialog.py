@@ -51,13 +51,14 @@ class VariantManagerDialog(QtWidgets.QDialog):
         self,
         *,
         parent: QtWidgets.QWidget | None,
-        base_node_type: str,
-        base_node_name: str,
+        base_node_type: str | None = None,
+        base_node_name: str | None = None,
         node_graph: Any,
     ) -> None:
         super().__init__(parent)
         self._base_node_type = str(base_node_type or "").strip()
-        self._base_node_name = str(base_node_name or "").strip() or self._base_node_type
+        self._is_global_mode = not self._base_node_type
+        self._base_node_name = str(base_node_name or "").strip() or self._base_node_type or "All Variants"
         self._graph = node_graph
         self._entries: list[F8VariantEntry] = []
         self._row_states_by_variant_id: dict[str, AssetCatalogRowState] = {}
@@ -117,12 +118,23 @@ class VariantManagerDialog(QtWidgets.QDialog):
         self._filter_combo = QtWidgets.QComboBox(self)
         self._filter_combo.currentIndexChanged.connect(self._on_filter_changed)  # type: ignore[attr-defined]
 
+        # Node Type filter for global mode
+        self._node_type_combo = QtWidgets.QComboBox(self)
+        self._node_type_combo.currentIndexChanged.connect(self._on_node_type_filter_changed)  # type: ignore[attr-defined]
+        if self._is_global_mode:
+            self._node_type_combo.setMinimumWidth(150)
+            self._node_type_combo.setToolTip("Filter by node type")
+
         self._toolbar = QtWidgets.QToolBar("Variants", self)
         self._toolbar.setMovable(False)
         self._toolbar.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
         self._toolbar.setIconSize(QtCore.QSize(16, 16))
         self._toolbar.addWidget(self._scope_tabs)
         self._toolbar.addSeparator()
+        if self._is_global_mode:
+            self._toolbar.addWidget(QtWidgets.QLabel("Node Type:", self))
+            self._toolbar.addWidget(self._node_type_combo)
+            self._toolbar.addSeparator()
         self._toolbar.addWidget(self._search_input)
         self._toolbar.addWidget(self._search_btn)
         self._toolbar.addWidget(self._filter_combo)
@@ -252,6 +264,10 @@ class VariantManagerDialog(QtWidgets.QDialog):
         self._btn_history = btn_history
         self._btn_visibility = btn_visibility
 
+        # Initialize node type combo for global mode
+        if self._is_global_mode:
+            self._populate_node_type_combo()
+
         self.destroyed.connect(self._on_destroyed)  # type: ignore[attr-defined]
         self._reload()
 
@@ -379,6 +395,23 @@ class VariantManagerDialog(QtWidgets.QDialog):
         meta_row = QtWidgets.QHBoxLayout()
         meta_row.setContentsMargins(0, 0, 0, 0)
         meta_row.setSpacing(6)
+
+        # In global mode, show the base node type as the first badge
+        if self._is_global_mode and not self._get_current_base_node_type():
+            base_type = str(entry.record.baseNodeType or "").strip()
+            if base_type:
+                type_badge = QtWidgets.QLabel(base_type, container)
+                type_badge.setStyleSheet(
+                    "QLabel {"
+                    " border: 1px solid palette(highlight);"
+                    " border-radius: 4px;"
+                    " padding: 1px 6px;"
+                    " color: palette(highlighted-text);"
+                    " background: palette(highlight);"
+                    "}"
+                )
+                meta_row.addWidget(type_badge, 0)
+
         for badge_text in self._badge_texts_for_entry(entry):
             badge = QtWidgets.QLabel(badge_text, container)
             badge.setStyleSheet(
@@ -413,20 +446,28 @@ class VariantManagerDialog(QtWidgets.QDialog):
         current_tab = self._scope_tabs.currentIndex()
         service = self._sync_client._catalog_service
         normalized_query = self._current_query().lower()
+        current_base_type = self._get_current_base_node_type()
+
+        # Filter entries by base node type (or show all in global mode)
+        def matches_base_type(entry: F8VariantEntry) -> bool:
+            if not current_base_type:  # Global mode with "All" selected
+                return True
+            return str(entry.record.baseNodeType or "").strip() == current_base_type
+
         local_entries = [
             entry
             for entry in service._local_provider.load_entries()
-            if str(entry.record.baseNodeType or "").strip() == self._base_node_type
+            if matches_base_type(entry)
         ]
         remote_entries = [
             entry
             for entry in service._remote_provider.load_entries()
-            if str(entry.record.baseNodeType or "").strip() == self._base_node_type
+            if matches_base_type(entry)
         ]
         logger.debug(
             "Variant manager source snapshot tab=%s base_node_type=%s local=%d remote=%d remote_entries=%s",
             self._scope_tabs.tabText(current_tab),
-            self._base_node_type,
+            current_base_type,
             len(local_entries),
             len(remote_entries),
             [
@@ -458,23 +499,37 @@ class VariantManagerDialog(QtWidgets.QDialog):
                 if self._is_owned_remote_entry(entry) and self._entry_matches_query(entry, normalized_query):
                     merged[str(entry.record.variantId)] = entry
             return sorted(merged.values(), key=self._entry_sort_key)
+        # Installed tab
+        if current_base_type:
+            entries = list_entries_for_base(current_base_type, include_uninstalled=True)
+        else:
+            # Global mode: load all entries
+            entries = service.load_all_entries()
         return [
             entry
-            for entry in list_entries_for_base(self._base_node_type, include_uninstalled=True)
+            for entry in entries
             if self._matches_filter(entry) and self._entry_matches_query(entry, normalized_query)
         ]
 
     def _build_row_states(self) -> dict[str, AssetCatalogRowState]:
         service = self._sync_client._catalog_service
+        current_base_type = self._get_current_base_node_type()
+
+        # Filter entries by base node type (or show all in global mode)
+        def matches_base_type(entry: F8VariantEntry) -> bool:
+            if not current_base_type:  # Global mode with "All" selected
+                return True
+            return str(entry.record.baseNodeType or "").strip() == current_base_type
+
         local_entries = [
             entry
             for entry in service._local_provider.load_entries()
-            if str(entry.record.baseNodeType or "").strip() == self._base_node_type
+            if matches_base_type(entry)
         ]
         remote_entries = [
             entry
             for entry in service._remote_provider.load_entries()
-            if str(entry.record.baseNodeType or "").strip() == self._base_node_type
+            if matches_base_type(entry)
         ]
         local_by_id = {
             str(entry.record.variantId): entry
@@ -705,18 +760,29 @@ class VariantManagerDialog(QtWidgets.QDialog):
         graph = self._graph
         if graph is None:
             return None
+        current_base_type = self._get_current_base_node_type()
         for n in list(graph.selected_nodes() or []):
-            if str(n.type_ or "").strip() == self._base_node_type:
+            node_type = str(n.type_ or "").strip()
+            # In global mode with "All" selected, accept any node
+            if not current_base_type:
+                return n
+            # Otherwise, match the specific type
+            if node_type == current_base_type:
                 return n
         return None
 
     def _on_add_clicked(self) -> None:
         node = self._find_selected_base_node()
         if node is None:
+            current_base_type = self._get_current_base_node_type()
+            if current_base_type:
+                message = f"Please select a node of type:\n{current_base_type}\nthen try again."
+            else:
+                message = "Please select a node in the graph, then try again."
             show_info(
                 self,
                 "No matching selected node",
-                f"Please select a node of type:\n{self._base_node_type}\nthen try again.",
+                message,
             )
             return
         spec = node.spec
@@ -1220,6 +1286,43 @@ class VariantManagerDialog(QtWidgets.QDialog):
         self._tab_filters[current_tab] = filter_value
         self._reload()
 
+    def _on_node_type_filter_changed(self) -> None:
+        if not self._is_global_mode:
+            return
+        selected_type = str(self._node_type_combo.currentData() or "").strip()
+        self._base_node_type = selected_type
+        self._reload()
+
+    def _populate_node_type_combo(self) -> None:
+        """Populate the node type combo with all available base node types."""
+        if not self._is_global_mode:
+            return
+
+        self._node_type_combo.blockSignals(True)
+        self._node_type_combo.clear()
+
+        # Add "All" option
+        self._node_type_combo.addItem("All Types", "")
+
+        # Collect all unique base node types from local and remote entries
+        service = self._sync_client._catalog_service
+        node_types: set[str] = set()
+
+        for entry in service.load_all_entries():
+            base_type = str(entry.record.baseNodeType or "").strip()
+            if base_type:
+                node_types.add(base_type)
+
+        # Add sorted node types
+        for node_type in sorted(node_types):
+            self._node_type_combo.addItem(node_type, node_type)
+
+        self._node_type_combo.blockSignals(False)
+
+    def _get_current_base_node_type(self) -> str:
+        """Returns the current base node type for filtering. Empty string means show all in global mode."""
+        return self._base_node_type
+
     def _refresh_current_remote_scope(self, *, reset: bool) -> None:
         if self._is_loading_remote_scope:
             return
@@ -1228,7 +1331,7 @@ class VariantManagerDialog(QtWidgets.QDialog):
             self._reload()
             return
         current_query = self._current_query()
-        current_base = self._base_node_type
+        current_base = self._get_current_base_node_type()
         if remote_scope == "mine" and not self._ensure_logged_in():
             return
         if reset:
@@ -1270,26 +1373,27 @@ class VariantManagerDialog(QtWidgets.QDialog):
 
     def _on_refresh_clicked(self) -> None:
         remote_scope = self._remote_scope_for_current_tab()
+        current_base = self._get_current_base_node_type()
         if remote_scope is None:
             try:
                 self._sync_client.refresh_scope(
                     scope="community",
-                    base_node_type=self._base_node_type,
+                    base_node_type=current_base,
                     query=self._tab_queries[self._TAB_COMMUNITY],
                 )
                 self._remote_next_cursor_by_scope["community"] = None
                 self._remote_loaded_query_by_scope["community"] = self._tab_queries[self._TAB_COMMUNITY]
-                self._remote_loaded_base_by_scope["community"] = self._base_node_type
+                self._remote_loaded_base_by_scope["community"] = current_base
                 if self._sync_client.current_access_token() or self._sync_client.current_session() is not None:
                     if self._ensure_logged_in():
                         self._sync_client.refresh_scope(
                             scope="mine",
-                            base_node_type=self._base_node_type,
+                            base_node_type=current_base,
                             query=self._tab_queries[self._TAB_MINE],
                         )
                         self._remote_next_cursor_by_scope["mine"] = None
                         self._remote_loaded_query_by_scope["mine"] = self._tab_queries[self._TAB_MINE]
-                        self._remote_loaded_base_by_scope["mine"] = self._base_node_type
+                        self._remote_loaded_base_by_scope["mine"] = current_base
             except Exception as exc:
                 show_warning(self, "Refresh failed", str(exc))
                 return

@@ -2858,7 +2858,7 @@
       "jYSr": {
         "type_": "f8.pystudio.f8.viz.three_d",
         "icon": null,
-        "name": "3DViz",
+        "name": "3D Viz",
         "color": [
           13,
           18,
@@ -2894,7 +2894,7 @@
           "serviceClass": "f8.pystudio",
           "rendererClass": "viz_three_d",
           "version": "0.0.1",
-          "label": "3DViz",
+          "label": "3D Viz",
           "description": "3D viewer for multi-person skeleton streams (Studio UI-only).",
           "tags": [
             "viz",
@@ -3307,7 +3307,7 @@
       "tZjy": {
         "type_": "f8.pystudio.f8.viz.wave",
         "icon": null,
-        "name": "WaveViz",
+        "name": "Wave Viz",
         "color": [
           13,
           18,
@@ -3343,7 +3343,7 @@
           "serviceClass": "f8.pystudio",
           "rendererClass": "viz_wave",
           "version": "0.0.1",
-          "label": "WaveViz",
+          "label": "Wave Viz",
           "description": "Plot numeric values over time (UI-only).",
           "tags": [
             "plot",
@@ -3691,7 +3691,7 @@
       "kdxG": {
         "type_": "f8.pystudio.f8.viz.wave",
         "icon": null,
-        "name": "WaveViz 1",
+        "name": "Wave Viz 1",
         "color": [
           13,
           18,
@@ -3727,7 +3727,7 @@
           "serviceClass": "f8.pystudio",
           "rendererClass": "viz_wave",
           "version": "0.0.1",
-          "label": "WaveViz",
+          "label": "Wave Viz",
           "description": "Plot numeric values over time (UI-only).",
           "tags": [
             "plot",

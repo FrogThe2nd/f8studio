@@ -30,6 +30,7 @@ class MainWindowActionBundle:
     deploy_action: QtGui.QAction
     stop_all_services_action: QtGui.QAction
     global_hotkeys_action: QtGui.QAction
+    variant_catalog_action: QtGui.QAction
 
 
 def build_main_window_actions(
@@ -59,26 +60,26 @@ def build_main_window_actions(
     on_deploy_action: Callable[[], None],
     on_stop_all_services_action: Callable[[], None],
     on_global_hotkeys_action: Callable[[], None],
+    on_variant_catalog_action: Callable[[], None],
 ) -> MainWindowActionBundle:
     return MainWindowActionBundle(
         quickload_project_action=create_action(
-            "Open Recent Project",
+            "Load Last Project",
             handler=on_quickload_project_action,
-            shortcut="Ctrl+O",
             icon=StudioIcon.FOLDER_OPEN,
-            tool_tip="Open the most recent local project",
+            tool_tip="Load the most recent project",
         ),
         quicksave_project_action=create_action(
             "Save Project",
             handler=on_quicksave_project_action,
             shortcut="Ctrl+S",
             icon=StudioIcon.SAVE,
-            tool_tip="Save the current graph into the local project store",
+            tool_tip="Save the current graph to the current project",
         ),
         open_project_action=create_action(
             "Open Project…",
             handler=on_open_project_action,
-            shortcut="Ctrl+Shift+O",
+            shortcut="Ctrl+O",
             icon=StudioIcon.FOLDER_OPEN,
             tool_tip="Open a project from the local project catalog",
         ),
@@ -193,5 +194,11 @@ def build_main_window_actions(
             handler=on_global_hotkeys_action,
             icon=StudioIcon.KEYBOARD,
             tool_tip="Show the current global hotkey registry",
+        ),
+        variant_catalog_action=create_action(
+            "Variant Catalog…",
+            handler=on_variant_catalog_action,
+            icon=StudioIcon.PACKAGE_IMPORT,
+            tool_tip="Browse and manage all variants",
         ),
     )

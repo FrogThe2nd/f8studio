@@ -46,7 +46,7 @@ class VizAudioRuntimeNode(OperatorNode):
         paletteCategory=SERVICE_CLASS,
         operatorClass=OPERATOR_CLASS,
         version="0.0.1",
-        label="AudioViz",
+        label="Audio Viz",
         description="Display waveform from an AudioSHM region.",
         tags=["ui", "shm", "audio", "viewer", "waveform"],
         dataInPorts=[],

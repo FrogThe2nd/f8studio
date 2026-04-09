@@ -15,7 +15,7 @@ Capture live audio, extract audio features, and transform signal energy into smo
 ## Steps
 
 1. Import the script and start `Audio Capture`, `Audio Feature Core`, `Audio Feature Rhythm`, and `PyEngine`.
-2. Verify `Audio Capture.audioShmName` is connected to both `AudioViz.shmName` and `Audio Feature Core.audioShmName`.
+2. Verify `Audio Capture.audioShmName` is connected to both `Audio Viz.shmName` and `Audio Feature Core.audioShmName`.
 3. Use `Python Expr Service` to extract the drive value from `coreFeatures` (current expression: `msg['rms']`).
 4. Check output stability through `Envelope`, `Smooth Filter`, and `Range Map`.
 5. Verify timing link `Tick.tickMs -> TCode.intervalMs` (both are `100` in this script).
@@ -30,8 +30,8 @@ Capture live audio, extract audio features, and transform signal energy into smo
 
 ## Validation
 
-- `TextViz 1/2` continuously display core and rhythm feature payloads.
-- `WaveViz` shows a sensible progression from raw -> envelope -> smoothed.
+- `Text Viz 1/2` continuously display core and rhythm feature payloads.
+- `Wave Viz` shows a sensible progression from raw -> envelope -> smoothed.
 - `TCodeViz` and serial stream stay continuous and stable.
 
 ## Image Placeholders

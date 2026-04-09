@@ -1830,7 +1830,7 @@
       "V2Ym": {
         "type_": "f8.pystudio.f8.viz.wave",
         "icon": null,
-        "name": "WaveViz",
+        "name": "Wave Viz",
         "color": [
           13,
           18,
@@ -1866,7 +1866,7 @@
           "serviceClass": "f8.pystudio",
           "rendererClass": "viz_wave",
           "version": "0.0.1",
-          "label": "WaveViz",
+          "label": "Wave Viz",
           "description": "Plot numeric values over time (UI-only).",
           "tags": [
             "plot",
@@ -2214,7 +2214,7 @@
       "VUjB": {
         "type_": "f8.pystudio.f8.viz.text",
         "icon": null,
-        "name": "TextViz",
+        "name": "Text Viz",
         "color": [
           13,
           18,
@@ -2250,7 +2250,7 @@
           "serviceClass": "f8.pystudio",
           "rendererClass": "viz_text",
           "version": "0.0.1",
-          "label": "TextViz",
+          "label": "Text Viz",
           "description": "Operator that displays incoming data in the editor (preview).",
           "tags": [
             "print",

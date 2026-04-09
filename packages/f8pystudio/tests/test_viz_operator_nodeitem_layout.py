@@ -169,7 +169,7 @@ def test_viz_widget_region_port_alignment_uses_ordered_data_ports() -> None:
         schemaVersion=F8OperatorSchemaVersion.f8operator_1,
         serviceClass="f8.test",
         operatorClass="f8.viz.wave",
-        label="WaveViz",
+        label="Wave Viz",
         dataInPorts=[
             F8DataPortSpec(name="alpha", valueSchema=any_schema()),
             F8DataPortSpec(name="beta", valueSchema=any_schema()),

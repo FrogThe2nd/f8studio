@@ -61,7 +61,7 @@ class ValueStepperOperatorSpecTests(unittest.TestCase):
         )
         fields = {state_field.name: state_field for state_field in list(spec.stateFields or [])}
 
-        self.assertEqual(spec.label, "ValueStepper")
+        self.assertEqual(spec.label, "Value Stepper")
         self.assertFalse(policy_can_add(spec, "stateFields"))
         self.assertFalse(policy_can_delete(spec, "stateFields"))
         self.assertTrue(policy_can_edit_existing(spec, "stateFields"))

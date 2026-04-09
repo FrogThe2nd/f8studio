@@ -7,7 +7,7 @@
 ## Common Wiring Patterns
 
 - **Live Body Ingest**: Feed the `skeleton` output into a `Bone Selector` to pick a joint, or directly into `f8-viz-three-d` to verify coordinate alignment.
-- **Monitoring Branch**: Keep a `Print` or `TextViz` node attached to the incoming stream to monitor the packet rate and verify the protocol schema.
+- **Monitoring Branch**: Keep a `Print` or `Text Viz` node attached to the incoming stream to monitor the packet rate and verify the protocol schema.
 - **Coordinate Calibration**: Use the `offset` and `scale` properties (if available) to align the external skeleton with your graph's internal world-space expectations.
 
 ## Pitfalls / Gotchas

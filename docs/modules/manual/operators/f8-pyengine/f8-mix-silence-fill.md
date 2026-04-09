@@ -7,7 +7,7 @@
 ## Common Wiring Patterns
 
 - **Safe Blending**: Combine multiple upstream branches before final scaling or mapping nodes. This allows you to inspect one combined, high-level signal instead of managing dozens of individual branches.
-- **Fall-Through Monitoring**: Keep a `WaveViz` immediately after the mixer to observe how different signals are being prioritized or added together in real-time.
+- **Fall-Through Monitoring**: Keep a `Wave Viz` immediately after the mixer to observe how different signals are being prioritized or added together in real-time.
 - **Default State Engine**: Use the mixer to provide a "Default" or "Base" set of values that are only overridden when higher-priority signals become active.
 
 ## Pitfalls / Gotchas

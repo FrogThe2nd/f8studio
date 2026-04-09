@@ -6,7 +6,7 @@
 
 ## Common Wiring Patterns
 
-- **Signal Extraction**: Feed it structured data (e.g., from `f8.audiofeat.core` or `f8.dl.detector`), write an expression like `data.get("loudness", 0) * 100`, and forward the result to a visualizer or `TextViz`.
+- **Signal Extraction**: Feed it structured data (e.g., from `f8.audiofeat.core` or `f8.dl.detector`), write an expression like `data.get("loudness", 0) * 100`, and forward the result to a visualizer or `Text Viz`.
 - **Conditional Trigger**: Use it to create a boolean signal (e.g., `data["score"] > 0.8`) that downstream nodes use to activate or deactivate behavior.
 - **Payload Rewriting**: Quickly rename or re-format keys in a JSON object before sending it to a generic consumer that expects a specific schema.
 

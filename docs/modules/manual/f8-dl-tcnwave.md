@@ -6,7 +6,7 @@
 
 ## Common Wiring Patterns
 
-- Feed it normalized sequential features, then inspect the generated output with `WaveViz`, `TCodeViz`, or device-output branches.
+- Feed it normalized sequential features, then inspect the generated output with `Wave Viz`, `TCodeViz`, or device-output branches.
 - Keep the pre-model feature branch visible so release tuning can separate model issues from input issues.
 
 ## Pitfalls / Gotchas

@@ -16,7 +16,7 @@ ONNXRuntime image classifier service (no tracking).
 
 ## Common Wiring Patterns
 
-- Feed it from `f8.implayer` or `f8.screencap`, then inspect outputs with `TextViz`, `Python Expr`, or downstream state mappings to drive application logic.
+- Feed it from `f8.implayer` or `f8.screencap`, then inspect outputs with `Text Viz`, `Python Expr`, or downstream state mappings to drive application logic.
 - Keep a visualization or logging branch attached while tuning thresholds and class interpretation.
 
 ## Pitfalls / Gotchas

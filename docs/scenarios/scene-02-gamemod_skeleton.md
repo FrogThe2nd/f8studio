@@ -30,8 +30,8 @@ Receive skeleton streams from `UDP Skeleton`, extract a distance feature in `Pyt
 
 ## Validation
 
-- `3DViz` shows stable skeleton updates.
-- `WaveViz` shows reasonable raw/envelope variation.
+- `3D Viz` shows stable skeleton updates.
+- `Wave Viz` shows reasonable raw/envelope variation.
 - `TCodeViz` and serial output are continuous and stable.
 
 ## Image Placeholders

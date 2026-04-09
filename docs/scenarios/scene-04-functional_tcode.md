@@ -23,7 +23,7 @@ Build multi-channel control signals from functional operators (`Phase`, `Tempest
 3. Verify signal paths: `Phase -> Tempest -> Expr.x` and `Phase 1 -> Cosine -> Expr.y`.
 4. Review `Expr.code` (current: `x*(y*0.5+0.5)`) to confirm mixing behavior.
 5. Ensure output mapping is correct: `Expr.out -> TCode.L0/R0`, `Cosine.value -> TCode.L1`.
-6. Configure and enable `Serial Out`; inspect behavior with `TCodeViz`, `TextViz`, and `WaveViz`.
+6. Configure and enable `Serial Out`; inspect behavior with `TCodeViz`, `Text Viz`, and `Wave Viz`.
 
 ## Key Parameters
 
@@ -34,8 +34,8 @@ Build multi-channel control signals from functional operators (`Phase`, `Tempest
 
 ## Validation
 
-- `WaveViz` shows clear phase/amplitude variation for `Tempest`, `Cosine`, and `Expr`.
-- `TextViz` continuously refreshes `TCode` strings.
+- `Wave Viz` shows clear phase/amplitude variation for `Tempest`, `Cosine`, and `Expr`.
+- `Text Viz` continuously refreshes `TCode` strings.
 - `TCodeViz` and serial output stay synchronized without abrupt jumps.
 
 ## Image Placeholders

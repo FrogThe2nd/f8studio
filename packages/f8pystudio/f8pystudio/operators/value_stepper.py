@@ -45,7 +45,7 @@ class ValueStepperRuntimeNode(OperatorNode):
         paletteCategory=SERVICE_CLASS,
         operatorClass=OPERATOR_CLASS,
         version="0.0.1",
-        label="ValueStepper",
+        label="Value Stepper",
         description="Studio-only numeric stepper for hotkey-driven increase/decrease control with clamp support.",
         tags=["studio", "state", "stepper", "slider", "hotkey"],
         dataInPorts=[],
