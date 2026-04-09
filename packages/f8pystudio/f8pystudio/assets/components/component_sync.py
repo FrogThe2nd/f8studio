@@ -480,27 +480,33 @@ class ComponentSyncClient:
                         status_code=response_like.status,
                     ) from exc
         except error.HTTPError as exc:
-            response_bytes = exc.read()
-            content_encoding = exc.headers.get("Content-Encoding", "").lower()
             try:
-                body_text = decode_http_response_text(response_bytes, content_encoding=content_encoding)
-            except Exception:
-                logger.exception("Failed to decode component cloud error response")
-                body_text = response_bytes.decode("utf-8", errors="replace")
-            payload_obj = _try_parse_json_object(body_text)
-            message = _error_message(payload_obj) or body_text or f"{method} {path} failed with HTTP {exc.code}"
-            if exc.code == 401:
-                raise F8ComponentRemoteAuthError(message) from exc
-            if exc.code == 409:
-                remote_revision = None
-                if isinstance(payload_obj.get("remoteRevision"), str):
-                    remote_revision = str(payload_obj["remoteRevision"])
-                raise F8ComponentRemoteConflictError(
-                    message or "Component update conflict",
-                    component_id=_conflict_component_id(payload_obj, path),
-                    remote_revision=remote_revision,
+                response_bytes = exc.read()
+                content_encoding = exc.headers.get("Content-Encoding", "").lower()
+                try:
+                    body_text = decode_http_response_text(response_bytes, content_encoding=content_encoding)
+                except Exception:
+                    logger.exception("Failed to decode component cloud error response")
+                    body_text = response_bytes.decode("utf-8", errors="replace")
+                payload_obj = _try_parse_json_object(body_text)
+                message = _error_message(payload_obj) or body_text or f"{method} {path} failed with HTTP {exc.code}"
+                if exc.code == 401:
+                    raise F8ComponentRemoteAuthError(message) from exc
+                if exc.code == 409:
+                    remote_revision = None
+                    if isinstance(payload_obj.get("remoteRevision"), str):
+                        remote_revision = str(payload_obj["remoteRevision"])
+                    raise F8ComponentRemoteConflictError(
+                        message or "Component update conflict",
+                        component_id=_conflict_component_id(payload_obj, path),
+                        remote_revision=remote_revision,
+                    ) from exc
+                raise F8ComponentRemoteRequestError(
+                    message or f"{method} {path} failed with HTTP {exc.code}",
+                    status_code=exc.code,
                 ) from exc
-            raise F8ComponentRemoteRequestError(message or f"{method} {path} failed with HTTP {exc.code}", status_code=exc.code) from exc
+            finally:
+                exc.close()
         except (TimeoutError, socket.timeout) as exc:
             raise F8ComponentRemoteRequestError(
                 f"{method} {path} timed out after {timeout_seconds}s",

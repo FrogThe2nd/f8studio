@@ -4,6 +4,7 @@ import asyncio
 import sys
 from typing import Any
 
+from f8pysdk.codec import coerce_flag
 from f8pysdk.specs import (
     F8OperatorSchemaVersion,
     F8OperatorSpec,
@@ -48,7 +49,7 @@ class TickRuntimeNode(OperatorNode, EntrypointNode):
             self._tick_ms = self._coerce_tick_ms(self._initial_state.get("tickMs"), default=100)
         except ValueError:
             self._tick_ms = 100
-        self._want_hires = self._coerce_bool(self._initial_state.get("hiResTimer"), default=True)
+        self._want_hires = coerce_flag(self._initial_state.get("hiResTimer"), default=True)
 
     async def on_exec(self, _exec_id: str | int, _in_port: str | None = None) -> list[str]:
         return list(self._exec_out_ports)
@@ -60,7 +61,7 @@ class TickRuntimeNode(OperatorNode, EntrypointNode):
         if name == "tickMs":
             return self._coerce_tick_ms(value, default=100)
         if name == "hiResTimer":
-            return self._coerce_bool(value, default=False)
+            return coerce_flag(value, default=False)
         return value
 
     async def on_state(self, field: str, value: Any, *, ts_ms: int | None = None) -> None:
@@ -70,7 +71,7 @@ class TickRuntimeNode(OperatorNode, EntrypointNode):
             self._tick_ms = self._coerce_tick_ms(value, default=self._tick_ms)
             return
         if name == "hiResTimer":
-            self._want_hires = self._coerce_bool(value, default=self._want_hires)
+            self._want_hires = coerce_flag(value, default=self._want_hires)
             return
 
     def _apply_windows_timer_resolution(self, enabled: bool) -> None:
@@ -164,19 +165,6 @@ class TickRuntimeNode(OperatorNode, EntrypointNode):
         if ms > 50000:
             raise ValueError("tickMs must be <= 50000")
         return int(ms)
-
-    @staticmethod
-    def _coerce_bool(value: Any, *, default: bool) -> bool:
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, (int, float)):
-            return bool(value)
-        text = str(value or "").strip().lower()
-        if text in ("1", "true", "yes", "on"):
-            return True
-        if text in ("0", "false", "no", "off", ""):
-            return False
-        return bool(default)
 
 
 TickRuntimeNode.SPEC = F8OperatorSpec(

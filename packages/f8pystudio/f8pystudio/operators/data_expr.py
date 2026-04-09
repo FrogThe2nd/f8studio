@@ -5,6 +5,7 @@ import time
 from types import CodeType
 from typing import Any
 
+from f8pysdk.codec import coerce_bool
 from f8pysdk.specs import (
     F8DataPortSpec,
     F8OperatorSchemaVersion,
@@ -24,7 +25,6 @@ from f8pysdk.registry import RuntimeNodeRegistry
 
 from f8pystudio.studio_specs.identifiers import SERVICE_CLASS
 from ._py_expr_eval import (
-    coerce_bool as _coerce_bool,
     compile_expr as _compile_expr,
     is_identifier as _is_identifier,
     normalize_expr_code,
@@ -51,8 +51,8 @@ class DataExprRuntimeNode(OperatorNode):
         )
         self._initial_state = dict(initial_state or {})
         self._code = self._normalize_code(self._initial_state.get("code") or "input")
-        self._allow_numpy = _coerce_bool(self._initial_state.get("allowNumpy"), default=False)
-        self._unpack_dict_outputs = _coerce_bool(self._initial_state.get("unpackDictOutputs"), default=False)
+        self._allow_numpy = coerce_bool(self._initial_state.get("allowNumpy"), default=False)
+        self._unpack_dict_outputs = coerce_bool(self._initial_state.get("unpackDictOutputs"), default=False)
         self._compiled: CodeType | None = None
         self._compile_error: str | None = None
         self._recompile()
@@ -101,12 +101,12 @@ class DataExprRuntimeNode(OperatorNode):
         _ = ts_ms
         name = str(field or "")
         if name == "allowNumpy":
-            self._allow_numpy = _coerce_bool(value, default=False)
+            self._allow_numpy = coerce_bool(value, default=False)
             self._recompile()
             self._dirty = True
             return
         if name == "unpackDictOutputs":
-            self._unpack_dict_outputs = _coerce_bool(value, default=False)
+            self._unpack_dict_outputs = coerce_bool(value, default=False)
             self._dirty = True
             return
         if name != "code":
@@ -119,9 +119,9 @@ class DataExprRuntimeNode(OperatorNode):
         del ts_ms, meta
         name = str(field or "").strip()
         if name == "allowNumpy":
-            return _coerce_bool(value, default=False)
+            return coerce_bool(value, default=False)
         if name == "unpackDictOutputs":
-            return _coerce_bool(value, default=False)
+            return coerce_bool(value, default=False)
         if name == "code":
             return self._normalize_code(value)
         return value

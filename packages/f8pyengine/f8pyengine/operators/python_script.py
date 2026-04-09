@@ -33,8 +33,8 @@ from .script_utils.input_binding import (
     INPUT_MODE_MSGSPEC_STRUCT,
     INPUT_MODE_RAW_DICT,
     InputBinding,
+    coerce_input_mode,
     infer_script_input_style,
-    parse_input_mode,
     script_uses_inputs_object_access,
 )
 from .script_utils.python_editor_assist import python_script_field_editor_assist_payload
@@ -294,7 +294,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         self._data_out_port_set: set[str] = set()
         self._single_data_out_port: str | None = None
         self._has_out_port = False
-        self._input_mode = parse_input_mode(self._initial_state.get("inputMode"), default=INPUT_MODE_INPUT_VIEW)
+        self._input_mode = coerce_input_mode(self._initial_state.get("inputMode"), default=INPUT_MODE_INPUT_VIEW)
         self._input_binding = InputBinding(
             node_id=self.node_id,
             data_in_ports=list(node.dataInPorts or []),
@@ -840,7 +840,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
             self._compile_and_start()
             return
         if name == "inputMode":
-            self._input_mode = parse_input_mode(value, default=INPUT_MODE_INPUT_VIEW)
+            self._input_mode = coerce_input_mode(value, default=INPUT_MODE_INPUT_VIEW)
             self._input_binding.set_mode(self._input_mode)
             self._input_decode_mode_logged = None
 
@@ -865,7 +865,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         if name == "code":
             return str(value or "")
         if name == "inputMode":
-            mode = parse_input_mode(value, default=INPUT_MODE_INPUT_VIEW)
+            mode = coerce_input_mode(value, default=INPUT_MODE_INPUT_VIEW)
             if str(value or "").strip().lower().replace("-", "_") not in ("raw_dict", "input_view", "msgspec_struct"):
                 raise ValueError(f"invalid inputMode: {value}")
             return mode

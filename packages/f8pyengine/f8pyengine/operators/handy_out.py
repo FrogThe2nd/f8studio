@@ -23,7 +23,7 @@ from f8pysdk.specs import (
     number_schema,
     string_schema,
 )
-from f8pysdk.codec import unwrap_json_value as _unwrap_json_value
+from f8pysdk.codec import coerce_flag, parse_number, parse_int, unwrap_json_value
 from f8pysdk.nats_naming import ensure_token
 from f8pysdk.nodes import OperatorNode
 from f8pysdk.registry import RuntimeNodeRegistry
@@ -36,7 +36,6 @@ OPERATOR_CLASS: Final[str] = "f8.handy_out"
 _CONNECTION_KEY_RE: Final[re.Pattern[str]] = re.compile(r"^[A-Za-z0-9]{5,64}$")
 _MODE_HDSP: Final[int] = 2
 _ERROR_DEDUPE_MS: Final[int] = 2000
-
 
 @dataclass(frozen=True)
 class _HandyConfig:
@@ -53,7 +52,6 @@ class _HandyConfig:
     immediate_response: bool
     stop_on_target: bool
 
-
 @dataclass(frozen=True)
 class _PendingCommand:
     position_percent: float
@@ -61,12 +59,10 @@ class _PendingCommand:
     immediate_response: bool
     stop_on_target: bool
 
-
 @dataclass(frozen=True)
 class _QueuedRequest:
     cfg: _HandyConfig
     cmd: _PendingCommand
-
 
 @dataclass(frozen=True)
 class _HttpResult:
@@ -75,51 +71,8 @@ class _HttpResult:
     json_body: dict[str, Any] | None
     error_message: str
 
-
 def _now_ms() -> int:
     return int(time.time() * 1000.0)
-
-
-def _coerce_bool(value: Any, *, default: bool) -> bool:
-    v = _unwrap_json_value(value)
-    if isinstance(v, bool):
-        return v
-    if isinstance(v, (int, float)):
-        return bool(v)
-    text = str(v or "").strip().lower()
-    if text in ("1", "true", "yes", "on"):
-        return True
-    if text in ("0", "false", "no", "off", ""):
-        return False
-    return bool(default)
-
-
-def _coerce_float(value: Any) -> float | None:
-    v = _unwrap_json_value(value)
-    if v is None or isinstance(v, bool):
-        return None
-    try:
-        out = float(v)
-    except (TypeError, ValueError):
-        return None
-    if out != out:
-        return None
-    if out in (float("inf"), float("-inf")):
-        return None
-    return float(out)
-
-
-def _coerce_int(value: Any) -> int | None:
-    v = _unwrap_json_value(value)
-    if v is None:
-        return None
-    if isinstance(v, bool):
-        return int(v)
-    try:
-        return int(v)
-    except (TypeError, ValueError):
-        return None
-
 
 def _clamp(value: float, minimum: float, maximum: float) -> float:
     if value < minimum:
@@ -128,10 +81,8 @@ def _clamp(value: float, minimum: float, maximum: float) -> float:
         return float(maximum)
     return float(value)
 
-
 def _normalize_base_url(value: str) -> str:
     return str(value).strip().rstrip("/")
-
 
 class HandyOutRuntimeNode(OperatorNode):
     def __init__(self, *, node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any] | None = None) -> None:
@@ -190,10 +141,10 @@ class HandyOutRuntimeNode(OperatorNode):
     ) -> Any:
         del ts_ms, meta
         name = str(field or "").strip()
-        unwrapped = _unwrap_json_value(value)
+        unwrapped = unwrap_json_value(value)
 
         if name in ("enabled", "ensureHdspMode", "invert", "immediateResponse", "stopOnTarget"):
-            return _coerce_bool(unwrapped, default=False)
+            return coerce_flag(unwrapped, default=False)
 
         if name == "connectionKey":
             key = str(unwrapped or "").strip()
@@ -273,7 +224,7 @@ class HandyOutRuntimeNode(OperatorNode):
                 return []
 
         raw_value = await self.pull("value", ctx_id=exec_id)
-        value_num = _coerce_float(raw_value)
+        value_num = parse_number(raw_value)
         if value_num is None:
             await self._emit_data_ports()
             return []
@@ -287,19 +238,19 @@ class HandyOutRuntimeNode(OperatorNode):
         position_percent = _clamp(position_percent, 0.0, 100.0)
 
         duration_ms = cfg.default_duration_ms
-        duration_input = _coerce_int(await self.pull("durationMs", ctx_id=exec_id))
+        duration_input = parse_int(await self.pull("durationMs", ctx_id=exec_id))
         if duration_input is not None:
             duration_ms = int(_clamp(float(duration_input), 0.0, 120000.0))
 
         immediate_response = cfg.immediate_response
         immediate_input_raw = await self.pull("immediateResponse", ctx_id=exec_id)
-        if _unwrap_json_value(immediate_input_raw) is not None:
-            immediate_response = _coerce_bool(immediate_input_raw, default=immediate_response)
+        if unwrap_json_value(immediate_input_raw) is not None:
+            immediate_response = coerce_flag(immediate_input_raw, default=immediate_response)
 
         stop_on_target = cfg.stop_on_target
         stop_input_raw = await self.pull("stopOnTarget", ctx_id=exec_id)
-        if _unwrap_json_value(stop_input_raw) is not None:
-            stop_on_target = _coerce_bool(stop_input_raw, default=stop_on_target)
+        if unwrap_json_value(stop_input_raw) is not None:
+            stop_on_target = coerce_flag(stop_input_raw, default=stop_on_target)
 
         queued = _QueuedRequest(
             cfg=cfg,
@@ -395,7 +346,7 @@ class HandyOutRuntimeNode(OperatorNode):
         body = response.json_body or {}
         error_obj = body.get("error") if isinstance(body, dict) else None
         if isinstance(error_obj, dict):
-            code = _coerce_int(error_obj.get("code"))
+            code = parse_int(error_obj.get("code"))
             if code == 2002:
                 method_not_found = True
 
@@ -430,11 +381,11 @@ class HandyOutRuntimeNode(OperatorNode):
         await self.set_state(field, value)
 
     async def _read_config(self) -> _HandyConfig:
-        enabled = _coerce_bool(await self._read_raw_state("enabled"), default=True)
+        enabled = coerce_flag(await self._read_raw_state("enabled"), default=True)
         connection_key = str(await self._read_raw_state("connectionKey") or "").strip()
         base_url = _normalize_base_url(str(await self._read_raw_state("baseUrl") or "https://www.handyfeeling.com/api/handy/v2"))
-        ensure_hdsp_mode = _coerce_bool(await self._read_raw_state("ensureHdspMode"), default=True)
-        invert = _coerce_bool(await self._read_raw_state("invert"), default=False)
+        ensure_hdsp_mode = coerce_flag(await self._read_raw_state("ensureHdspMode"), default=True)
+        invert = coerce_flag(await self._read_raw_state("invert"), default=False)
         min_percent = self._state_number(await self._read_raw_state("minPercent"), default=0.0, minimum=0.0, maximum=100.0)
         max_percent = self._state_number(await self._read_raw_state("maxPercent"), default=100.0, minimum=0.0, maximum=100.0)
         if min_percent > max_percent:
@@ -442,8 +393,8 @@ class HandyOutRuntimeNode(OperatorNode):
         default_duration_ms = self._state_int(await self._read_raw_state("defaultDurationMs"), default=100, minimum=0, maximum=120000)
         request_timeout_ms = self._state_int(await self._read_raw_state("requestTimeoutMs"), default=5000, minimum=100, maximum=120000)
         min_send_interval_ms = self._state_int(await self._read_raw_state("minSendIntervalMs"), default=0, minimum=0, maximum=120000)
-        immediate_response = _coerce_bool(await self._read_raw_state("immediateResponse"), default=False)
-        stop_on_target = _coerce_bool(await self._read_raw_state("stopOnTarget"), default=False)
+        immediate_response = coerce_flag(await self._read_raw_state("immediateResponse"), default=False)
+        stop_on_target = coerce_flag(await self._read_raw_state("stopOnTarget"), default=False)
         return _HandyConfig(
             enabled=enabled,
             connection_key=connection_key,
@@ -461,25 +412,25 @@ class HandyOutRuntimeNode(OperatorNode):
 
     async def _read_raw_state(self, name: str) -> Any:
         live = await self.get_state_value(name)
-        unwrapped_live = _unwrap_json_value(live)
+        unwrapped_live = unwrap_json_value(live)
         if unwrapped_live is not None:
             return unwrapped_live
-        return _unwrap_json_value(self._initial_state.get(name))
+        return unwrap_json_value(self._initial_state.get(name))
 
     def _state_number(self, value: Any, *, default: float, minimum: float, maximum: float) -> float:
-        parsed = _coerce_float(value)
+        parsed = parse_number(value)
         if parsed is None:
             return float(default)
         return _clamp(parsed, minimum, maximum)
 
     def _state_int(self, value: Any, *, default: int, minimum: int, maximum: int) -> int:
-        parsed = _coerce_int(value)
+        parsed = parse_int(value)
         if parsed is None:
             return int(default)
         return int(_clamp(float(parsed), float(minimum), float(maximum)))
 
     def _validate_number(self, value: Any, *, label: str, minimum: float, maximum: float) -> float:
-        parsed = _coerce_float(value)
+        parsed = parse_number(value)
         if parsed is None:
             raise ValueError(f"{label} must be a number")
         if parsed < minimum or parsed > maximum:
@@ -487,7 +438,7 @@ class HandyOutRuntimeNode(OperatorNode):
         return float(parsed)
 
     def _validate_int(self, value: Any, *, label: str, minimum: int, maximum: int) -> int:
-        parsed = _coerce_int(value)
+        parsed = parse_int(value)
         if parsed is None:
             raise ValueError(f"{label} must be an integer")
         if parsed < minimum or parsed > maximum:
@@ -496,10 +447,10 @@ class HandyOutRuntimeNode(OperatorNode):
 
     async def _validation_state_number(self, field: str, *, default: float) -> float:
         current = await self.get_state_value(field)
-        current_unwrapped = _unwrap_json_value(current)
+        current_unwrapped = unwrap_json_value(current)
         if current_unwrapped is None:
-            current_unwrapped = _unwrap_json_value(self._initial_state.get(field))
-        parsed = _coerce_float(current_unwrapped)
+            current_unwrapped = unwrap_json_value(self._initial_state.get(field))
+        parsed = parse_number(current_unwrapped)
         if parsed is None:
             return float(default)
         return float(_clamp(parsed, 0.0, 100.0))
@@ -539,7 +490,7 @@ class HandyOutRuntimeNode(OperatorNode):
         if not isinstance(body, dict):
             return 0.0
         raw = body.get("result")
-        parsed = _coerce_float(raw)
+        parsed = parse_number(raw)
         if parsed is None:
             return 0.0
         return float(parsed)
@@ -569,8 +520,8 @@ class HandyOutRuntimeNode(OperatorNode):
     def _apply_rate_limit_headers(self, headers: dict[str, str]) -> None:
         remaining_raw = headers.get("x-ratelimit-remaining", "")
         reset_raw = headers.get("x-ratelimit-reset", "")
-        remaining = _coerce_int(remaining_raw)
-        reset_ms = _coerce_int(reset_raw)
+        remaining = parse_int(remaining_raw)
+        reset_ms = parse_int(reset_raw)
         if remaining is None or reset_ms is None:
             return
         if remaining <= 0 and reset_ms > 0:
@@ -644,7 +595,6 @@ class HandyOutRuntimeNode(OperatorNode):
             json_body=json_body,
             error_message="",
         )
-
 
 HandyOutRuntimeNode.SPEC = F8OperatorSpec(
     schemaVersion=F8OperatorSchemaVersion.f8operator_1,
@@ -849,7 +799,6 @@ HandyOutRuntimeNode.SPEC = F8OperatorSpec(
         ),
     ],
 )
-
 
 def register_operator(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
 

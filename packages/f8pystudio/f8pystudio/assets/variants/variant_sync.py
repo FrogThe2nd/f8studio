@@ -632,27 +632,33 @@ class VariantSyncClient:
                         status_code=response_like.status,
                     ) from exc
         except error.HTTPError as exc:
-            content_encoding = exc.headers.get("Content-Encoding")
-            body_bytes = exc.read()
             try:
-                body_text = decode_http_response_text(body_bytes, content_encoding=str(content_encoding or ""))
-            except Exception:
-                body_text = body_bytes.decode("utf-8", errors="replace")
-            logger.warning("Variant cloud %s %s failed status=%s body=%s", method, url, exc.code, body_text[:1200])
-            payload_obj = _try_parse_json_object(body_text)
-            message = _error_message(payload_obj) or body_text or f"{method} {path} failed with HTTP {exc.code}"
-            if exc.code == 401:
-                raise F8VariantRemoteAuthError(message) from exc
-            if exc.code == 409:
-                remote_revision = None
-                if isinstance(payload_obj.get("remoteRevision"), str):
-                    remote_revision = str(payload_obj["remoteRevision"])
-                raise F8VariantRemoteConflictError(
-                    message or "Variant update conflict",
-                    variant_id=_conflict_variant_id(payload_obj, path),
-                    remote_revision=remote_revision,
+                content_encoding = exc.headers.get("Content-Encoding")
+                body_bytes = exc.read()
+                try:
+                    body_text = decode_http_response_text(body_bytes, content_encoding=str(content_encoding or ""))
+                except Exception:
+                    body_text = body_bytes.decode("utf-8", errors="replace")
+                logger.warning("Variant cloud %s %s failed status=%s body=%s", method, url, exc.code, body_text[:1200])
+                payload_obj = _try_parse_json_object(body_text)
+                message = _error_message(payload_obj) or body_text or f"{method} {path} failed with HTTP {exc.code}"
+                if exc.code == 401:
+                    raise F8VariantRemoteAuthError(message) from exc
+                if exc.code == 409:
+                    remote_revision = None
+                    if isinstance(payload_obj.get("remoteRevision"), str):
+                        remote_revision = str(payload_obj["remoteRevision"])
+                    raise F8VariantRemoteConflictError(
+                        message or "Variant update conflict",
+                        variant_id=_conflict_variant_id(payload_obj, path),
+                        remote_revision=remote_revision,
+                    ) from exc
+                raise F8VariantRemoteRequestError(
+                    message or f"{method} {path} failed with HTTP {exc.code}",
+                    status_code=exc.code,
                 ) from exc
-            raise F8VariantRemoteRequestError(message or f"{method} {path} failed with HTTP {exc.code}", status_code=exc.code) from exc
+            finally:
+                exc.close()
         except (TimeoutError, socket.timeout) as exc:
             raise F8VariantRemoteRequestError(
                 f"{method} {path} timed out after {timeout_seconds}s",

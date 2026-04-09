@@ -63,21 +63,6 @@ def is_identifier(name: str) -> bool:
         return bool(name) and name.isidentifier()
     except Exception:
         return False
-
-
-def coerce_bool(value: Any, *, default: bool) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        return bool(value)
-    text = str(value or "").strip().lower()
-    if text in ("1", "true", "yes", "on"):
-        return True
-    if text in ("", "0", "false", "no", "off"):
-        return False
-    return bool(default)
-
-
 def normalize_expr_code(value: Any) -> str:
     text = str("" if value is None else value)
     if "\n" not in text and "\r" not in text:

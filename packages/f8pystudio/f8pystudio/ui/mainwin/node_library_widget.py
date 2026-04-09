@@ -7,6 +7,7 @@ from qtpy import QtCore, QtWidgets, QtGui
 from NodeGraphQt import NodesTreeWidget
 from NodeGraphQt.custom_widgets.nodes_tree import _BaseNodeTreeItem, TYPE_CATEGORY, TYPE_NODE
 
+from f8pysdk.codec import coerce_bool
 from ...nodegraph.spec_visibility import is_hidden_spec_node_class, typed_spec_template_or_none
 from f8pysdk.specs import F8OperatorSpec, F8ServiceSpec
 from f8pysdk.specs import palette_category_from_spec
@@ -526,19 +527,6 @@ class F8StudioNodeLibraryWidget(QtWidgets.QWidget):
     def _settings(self) -> QtCore.QSettings:
         return QtCore.QSettings(self._SETTINGS_ORGANIZATION, self._SETTINGS_APPLICATION)
 
-    @staticmethod
-    def _coerce_bool_setting(raw: Any, *, default: bool) -> bool:
-        if isinstance(raw, bool):
-            return raw
-        if isinstance(raw, (int, float)):
-            return bool(raw)
-        text = str(raw or "").strip().lower()
-        if text in {"1", "true", "yes", "on"}:
-            return True
-        if text in {"0", "false", "no", "off"}:
-            return False
-        return bool(default)
-
     def _read_saved_search_variants_enabled(self) -> bool:
         settings = self._settings()
         settings.beginGroup(self._SETTINGS_GROUP)
@@ -546,7 +534,7 @@ class F8StudioNodeLibraryWidget(QtWidgets.QWidget):
             raw = settings.value(self._SEARCH_VARIANTS_ENABLED_KEY, False)
         finally:
             settings.endGroup()
-        return self._coerce_bool_setting(raw, default=False)
+        return coerce_bool(raw, default=False)
 
     def _write_saved_search_variants_enabled(self, *, enabled: bool) -> None:
         settings = self._settings()

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from f8pysdk.codec import copy_model, dump_json
+from f8pysdk.codec import coerce_int, copy_model, dump_json
 import enum
 import hashlib
 import logging
@@ -129,17 +129,6 @@ def _stable_id(prefix: str, *parts: str) -> str:
     return ensure_token(f"{prefix}_{digest}", label="node_id")
 
 
-def _as_int(value: Any, *, default: int, minimum: int, maximum: int) -> int:
-    try:
-        out = int(value) if value is not None else int(default)
-    except (TypeError, ValueError):
-        out = int(default)
-    if out < minimum:
-        out = minimum
-    if out > maximum:
-        out = maximum
-    return out
-
 
 def _coerce_state_payload_value(value: Any) -> tuple[bool, Any]:
     if value is None or isinstance(value, (str, int, float, bool)):
@@ -216,7 +205,7 @@ def _inject_studio_auto_pull_triggers(graph: F8RuntimeGraph) -> tuple[F8RuntimeG
         if mode != "auto":
             continue
 
-        interval_ms = _as_int(
+        interval_ms = coerce_int(
             state_values.get("upstreamSampleIntervalMs", 100),
             default=100,
             minimum=8,

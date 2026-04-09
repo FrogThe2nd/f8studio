@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from f8pysdk.codec import coerce_float, coerce_int, parse_str_list
+
 
 FlowInputOrder = Literal["prev_now", "now_prev"]
 TemporalResizeMode = Literal["direct_resize"]
@@ -75,19 +77,6 @@ def _as_str(v: Any, *, default: str = "") -> str:
     return s if s else default
 
 
-def _as_int(v: Any, *, default: int) -> int:
-    try:
-        return int(v)
-    except Exception:
-        return int(default)
-
-
-def _as_float(v: Any, *, default: float) -> float:
-    try:
-        return float(v)
-    except Exception:
-        return float(default)
-
 
 def _parse_task(v: Any) -> ModelTask | None:
     s = _as_str(v).lower()
@@ -143,37 +132,6 @@ def _normalize_optional_sha256(v: Any) -> str:
     return s
 
 
-def _coerce_str_list(v: Any) -> list[str] | None:
-    if isinstance(v, (list, tuple)):
-        out: list[str] = []
-        for x in v:
-            s = _as_str(x)
-            if s:
-                out.append(s)
-        return out
-    if isinstance(v, dict):
-        # Accept class maps like {0: "person", 1: "car"}.
-        try:
-            items = list(v.items())
-        except Exception:
-            items = []
-
-        def _sort_key(item: tuple[Any, Any]) -> tuple[int, str]:
-            key = item[0]
-            try:
-                return (0, f"{int(key):08d}")
-            except Exception:
-                return (1, _as_str(key))
-
-        items.sort(key=_sort_key)
-        out2: list[str] = []
-        for _k, val in items:
-            s = _as_str(val)
-            if s:
-                out2.append(s)
-        return out2
-    return None
-
 
 def _normalize_skeleton_protocol(v: Any) -> str:
     text = _as_str(v).strip()
@@ -183,7 +141,7 @@ def _normalize_skeleton_protocol(v: Any) -> str:
 
 
 def _as_positive_int(v: Any, *, default: int, label: str, yaml_path: Path) -> int:
-    out = _as_int(v, default=default)
+    out = coerce_int(v, default=default)
     if out <= 0:
         raise ValueError(f"Invalid {label} in {yaml_path}")
     return out
@@ -237,34 +195,36 @@ def load_model_spec(yaml_path: Path) -> ModelSpec:
             else data.get("sha256")
         )
 
-        input_width = _as_int(inp.get("width"), default=_as_int(data.get("input_width"), default=0))
-        input_height = _as_int(inp.get("height"), default=_as_int(data.get("input_height"), default=0))
+        input_width = coerce_int(inp.get("width"), default=coerce_int(data.get("input_width"), default=0))
+        input_height = coerce_int(inp.get("height"), default=coerce_int(data.get("input_height"), default=0))
         if input_width <= 0 or input_height <= 0:
             raise ValueError(f"Invalid input size in {yaml_path}")
 
-        conf_threshold = _as_float(thresholds.get("conf"), default=_as_float(data.get("conf_threshold"), default=0.25))
-        iou_threshold = _as_float(thresholds.get("iou"), default=_as_float(data.get("iou_threshold"), default=0.45))
+        conf_threshold = coerce_float(thresholds.get("conf"), default=coerce_float(data.get("conf_threshold"), default=0.25))
+        iou_threshold = coerce_float(thresholds.get("iou"), default=coerce_float(data.get("iou_threshold"), default=0.45))
 
-        classes = _coerce_str_list(labels.get("classes")) or _coerce_str_list(data.get("classes")) or []
-        keypoints = _coerce_str_list(pose.get("keypoints"))
-        keypoint_dims = _as_int(pose.get("dims"), default=3)
-        top_k = _as_int(classification.get("topK"), default=_as_int(data.get("top_k"), default=5))
+        classes = parse_str_list(labels.get("classes"), allow_mapping_values=True) or parse_str_list(
+            data.get("classes"), allow_mapping_values=True
+        ) or []
+        keypoints = parse_str_list(pose.get("keypoints"), allow_mapping_values=True)
+        keypoint_dims = coerce_int(pose.get("dims"), default=3)
+        top_k = coerce_int(classification.get("topK"), default=coerce_int(data.get("top_k"), default=5))
         flow_format = _as_str(
             optflow.get("flowFormat"),
             default=_as_str(data.get("flow_format"), default="flow2_f16"),
         ).lower()
         flow_input_order: FlowInputOrder = "prev_now"
-        temporal_clip_length = _as_int(
+        temporal_clip_length = coerce_int(
             temporal.get("clipLength"),
-            default=_as_int(data.get("clip_length"), default=16),
+            default=coerce_int(data.get("clip_length"), default=16),
         )
-        temporal_sampling_rate = _as_int(
+        temporal_sampling_rate = coerce_int(
             temporal.get("samplingRate"),
-            default=_as_int(data.get("sampling_rate"), default=1),
+            default=coerce_int(data.get("sampling_rate"), default=1),
         )
-        temporal_max_det = _as_int(
+        temporal_max_det = coerce_int(
             temporal.get("maxDet"),
-            default=_as_int(data.get("max_det"), default=300),
+            default=coerce_int(data.get("max_det"), default=300),
         )
         temporal_resize_mode = _parse_temporal_resize_mode(
             temporal.get("resizeMode") if temporal.get("resizeMode") is not None else data.get("resize_mode")
@@ -356,25 +316,25 @@ def load_model_spec(yaml_path: Path) -> ModelSpec:
         data.get("onnxSHA256") if data.get("onnxSHA256") is not None else data.get("sha256")
     )
 
-    input_width = _as_int(data.get("input_width"), default=0)
-    input_height = _as_int(data.get("input_height"), default=0)
+    input_width = coerce_int(data.get("input_width"), default=0)
+    input_height = coerce_int(data.get("input_height"), default=0)
     if input_width <= 0 or input_height <= 0:
         raise ValueError(f"Invalid input_width/input_height in {yaml_path}")
 
-    conf_threshold = _as_float(data.get("conf_threshold"), default=0.25)
-    iou_threshold = _as_float(data.get("iou_threshold"), default=0.45)
-    classes = _coerce_str_list(data.get("classes")) or []
+    conf_threshold = coerce_float(data.get("conf_threshold"), default=0.25)
+    iou_threshold = coerce_float(data.get("iou_threshold"), default=0.45)
+    classes = parse_str_list(data.get("classes"), allow_mapping_values=True) or []
     skeleton_protocol = _normalize_skeleton_protocol(
         data.get("skeletonProtocol") if data.get("skeletonProtocol") is not None else data.get("skeleton_protocol")
     )
-    keypoints = _coerce_str_list(data.get("keypoints"))
-    keypoint_dims = _as_int(data.get("keypoint_dims"), default=3)
-    top_k = _as_int(data.get("top_k"), default=5)
+    keypoints = parse_str_list(data.get("keypoints"), allow_mapping_values=True)
+    keypoint_dims = coerce_int(data.get("keypoint_dims"), default=3)
+    top_k = coerce_int(data.get("top_k"), default=5)
     flow_format = _as_str(data.get("flow_format"), default="flow2_f16").lower()
     flow_input_order: FlowInputOrder = "prev_now"
-    temporal_clip_length = _as_int(data.get("clip_length"), default=16)
-    temporal_sampling_rate = _as_int(data.get("sampling_rate"), default=1)
-    temporal_max_det = _as_int(data.get("max_det"), default=300)
+    temporal_clip_length = coerce_int(data.get("clip_length"), default=16)
+    temporal_sampling_rate = coerce_int(data.get("sampling_rate"), default=1)
+    temporal_max_det = coerce_int(data.get("max_det"), default=300)
     temporal_resize_mode = _parse_temporal_resize_mode(data.get("resize_mode"))
     temporal_normalization = _parse_temporal_normalization(data.get("normalization"))
 

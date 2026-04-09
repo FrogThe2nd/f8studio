@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from f8pysdk.codec import coerce_flag
 from f8pysdk.specs import (
     F8DataPortSpec,
     F8OperatorSchemaVersion,
@@ -35,26 +36,11 @@ class PrintRuntimeNode(OperatorNode):
             data_out_ports=[p.name for p in (node.dataOutPorts or [])],
             state_fields=[s.name for s in (node.stateFields or [])],
         )
-        self._strip = self._coerce_bool((initial_state or {}).get("strip"), default=True)
-
-    @staticmethod
-    def _coerce_bool(value: Any, *, default: bool) -> bool:
-        if isinstance(value, bool):
-            return value
-        if value is None:
-            return default
-        if isinstance(value, (int, float)):
-            return bool(value)
-        s = str(value).strip().lower()
-        if s in ("1", "true", "yes", "on"):
-            return True
-        if s in ("0", "false", "no", "off", ""):
-            return False
-        return default
+        self._strip = coerce_flag((initial_state or {}).get("strip"), default=True)
 
     async def on_state(self, field: str, value: Any, *, ts_ms: int | None = None) -> None:
         if str(field) == "strip":
-            self._strip = self._coerce_bool(value, default=self._strip)
+            self._strip = coerce_flag(value, default=self._strip)
             return
 
     async def on_data(self, port: str, value: Any, *, ts_ms: int | None = None) -> None:

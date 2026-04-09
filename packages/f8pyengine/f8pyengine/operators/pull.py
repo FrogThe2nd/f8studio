@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from f8pysdk.codec import dump_json
+from f8pysdk.codec import coerce_flag, coerce_int, dump_json
 import asyncio
 import logging
 import time
@@ -48,8 +48,8 @@ class PullRuntimeNode(OperatorNode):
         self._task: asyncio.Task[object] | None = None
         self._stop = asyncio.Event()
         self._last_log_ms_by_sig: dict[str, int] = {}
-        self._auto_trigger_enabled = self._coerce_bool(self._initial_state.get("autoTriggerEnabled"), default=False)
-        self._auto_trigger_interval_ms = self._coerce_int(
+        self._auto_trigger_enabled = coerce_flag(self._initial_state.get("autoTriggerEnabled"), default=False)
+        self._auto_trigger_interval_ms = coerce_int(
             self._initial_state.get("autoTriggerIntervalMs"),
             default=100,
             minimum=8,
@@ -138,47 +138,20 @@ class PullRuntimeNode(OperatorNode):
         del ts_ms
         name = str(field or "").strip()
         if name == "autoTriggerEnabled":
-            self._auto_trigger_enabled = self._coerce_bool(value, default=False)
+            self._auto_trigger_enabled = coerce_flag(value, default=False)
             return
         if name == "autoTriggerIntervalMs":
-            self._auto_trigger_interval_ms = self._coerce_int(value, default=100, minimum=8, maximum=5000)
+            self._auto_trigger_interval_ms = coerce_int(value, default=100, minimum=8, maximum=5000)
             return
 
     async def validate_state(self, field: str, value: Any, *, ts_ms: int, meta: dict[str, Any]) -> Any:
         del ts_ms, meta
         name = str(field or "").strip()
         if name == "autoTriggerEnabled":
-            return self._coerce_bool(value, default=False)
+            return coerce_flag(value, default=False)
         if name == "autoTriggerIntervalMs":
-            return self._coerce_int(value, default=100, minimum=8, maximum=5000)
+            return coerce_int(value, default=100, minimum=8, maximum=5000)
         return value
-
-    @staticmethod
-    def _coerce_int(value: Any, *, default: int, minimum: int, maximum: int) -> int:
-        raw = _unwrap_json_value(value)
-        try:
-            out = int(raw) if raw is not None else int(default)
-        except (TypeError, ValueError):
-            out = int(default)
-        if out < minimum:
-            return int(minimum)
-        if out > maximum:
-            return int(maximum)
-        return int(out)
-
-    @staticmethod
-    def _coerce_bool(value: Any, *, default: bool) -> bool:
-        raw = _unwrap_json_value(value)
-        if isinstance(raw, bool):
-            return raw
-        if isinstance(raw, (int, float)):
-            return bool(raw)
-        text = str(raw or "").strip().lower()
-        if text in ("1", "true", "yes", "on"):
-            return True
-        if text in ("0", "false", "no", "off", ""):
-            return False
-        return bool(default)
 
 
 def _unwrap_json_value(value: Any) -> Any:

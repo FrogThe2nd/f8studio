@@ -361,6 +361,7 @@ def test_component_sync_client_supports_anonymous_public_install_and_cookie_sess
         assert server.last_signout_origin == f"http://127.0.0.1:{server.server_port}"
     finally:
         server.shutdown()
+        server.server_close()
         thread.join(timeout=5)
 
 
@@ -522,6 +523,7 @@ def test_component_logout_clears_local_session_when_remote_signout_fails(tmp_pat
         assert "Traceback" not in caplog.text
     finally:
         server.shutdown()
+        server.server_close()
         thread.join(timeout=5)
 
 

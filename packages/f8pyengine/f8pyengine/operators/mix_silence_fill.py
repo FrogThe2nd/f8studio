@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from f8pysdk.codec import parse_number
 import math
 import time
 from dataclasses import dataclass
@@ -24,28 +25,12 @@ from ._ports import exec_out_ports
 
 OPERATOR_CLASS: Final[str] = "f8.mix_silence_fill"
 
-
-def _coerce_number(value: Any) -> float | None:
-    if value is None:
-        return None
-    if isinstance(value, bool):
-        return None
-    try:
-        f = float(value)
-    except Exception:
-        return None
-    if math.isnan(f) or math.isinf(f):
-        return None
-    return f
-
-
 def _clamp01(x: float) -> float:
     if x < 0.0:
         return 0.0
     if x > 1.0:
         return 1.0
     return float(x)
-
 
 @dataclass
 class _Slew:
@@ -67,7 +52,6 @@ class _Slew:
         alpha = 1.0 - math.exp(-dt / tau)
         self.value = float(self.value + alpha * (self.target - self.value))
         return float(self.value)
-
 
 class MixSilenceFillRuntimeNode(OperatorNode):
     """
@@ -145,8 +129,8 @@ class MixSilenceFillRuntimeNode(OperatorNode):
 
         a_raw = await self.pull("A", ctx_id=ctx_id)
         b_raw = await self.pull("B", ctx_id=ctx_id)
-        a_num = _coerce_number(a_raw)
-        b_num = _coerce_number(b_raw)
+        a_num = parse_number(a_raw)
+        b_num = parse_number(b_raw)
 
         silence_s = float(self._silence_s)
         eps = float(self._delta_threshold)
@@ -191,19 +175,18 @@ class MixSilenceFillRuntimeNode(OperatorNode):
 
     def _refresh_runtime_params(self, values: dict[str, Any]) -> None:
         if "silenceMs" in values:
-            silence_ms = _coerce_number(values.get("silenceMs"))
+            silence_ms = parse_number(values.get("silenceMs"))
             if silence_ms is not None:
                 self._silence_s = float(max(0.0, float(silence_ms)) / 1000.0)
         if "deltaThreshold" in values:
-            delta = _coerce_number(values.get("deltaThreshold"))
+            delta = parse_number(values.get("deltaThreshold"))
             if delta is not None:
                 self._delta_threshold = float(max(0.0, float(delta)))
         if "fadeMs" in values:
-            fade_ms = _coerce_number(values.get("fadeMs"))
+            fade_ms = parse_number(values.get("fadeMs"))
             if fade_ms is not None:
                 fade_s = float(max(0.0, float(fade_ms)) / 1000.0)
                 self._tau_s = float(fade_s / 3.0) if fade_s > 0.0 else 0.0
-
 
 MixSilenceFillRuntimeNode.SPEC = F8OperatorSpec(
     schemaVersion=F8OperatorSchemaVersion.f8operator_1,
@@ -255,7 +238,6 @@ MixSilenceFillRuntimeNode.SPEC = F8OperatorSpec(
         ),
     ],
 )
-
 
 def register_operator(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
 

@@ -10,6 +10,7 @@ from sqlalchemy import Column, ForeignKey, Index, Integer, LargeBinary, MetaData
 from sqlalchemy.engine import Connection as SqlAlchemyConnection
 from sqlalchemy.engine import URL, Engine
 from sqlalchemy.engine.reflection import Inspector
+from sqlalchemy.pool import NullPool
 
 _METADATA = MetaData()
 _INITIALIZATION_LOCKS: dict[Path, threading.Lock] = {}
@@ -204,7 +205,9 @@ class AssetsDatabase:
 
     def _engine(self) -> Engine:
         database_url = URL.create("sqlite+pysqlite", database=str(self.path.resolve()))
-        engine = create_engine(database_url)
+        # This service creates short-lived engines for small local operations.
+        # Disable pooling so every SQLite connection is closed deterministically.
+        engine = create_engine(database_url, poolclass=NullPool)
 
         @event.listens_for(engine, "connect")
         def _configure_sqlite(dbapi_connection: object, connection_record: object) -> None:

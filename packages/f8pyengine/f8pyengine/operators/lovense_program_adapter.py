@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from typing import Any, Final
 
 from f8pysdk.specs import (
-    F8DataPortSpec,
     F8OperatorSchemaVersion,
     F8OperatorSpec,
     F8RuntimeNode,
@@ -19,7 +18,8 @@ from f8pysdk.specs import (
     number_schema,
     string_schema,
 )
-from f8pysdk.codec import unwrap_json_value as _unwrap_json_value
+
+from f8pysdk.codec import unwrap_json_value, parse_number
 from f8pysdk.nats_naming import ensure_token
 from f8pysdk.nodes import OperatorNode
 from f8pysdk.registry import RuntimeNodeRegistry
@@ -78,20 +78,6 @@ def _lovense_event_schema():
             "request": complex_object_schema(properties={}),
         }
     )
-
-
-def _coerce_number(value: Any) -> float | None:
-    if value is None:
-        return None
-    if isinstance(value, bool):
-        return None
-    try:
-        f = float(value)
-    except (TypeError, ValueError):
-        return None
-    if math.isnan(f) or math.isinf(f):
-        return None
-    return f
 
 
 def _clamp01(x: float) -> float:
@@ -189,7 +175,7 @@ class LovenseProgramAdapterRuntimeNode(OperatorNode):
         _ = ts_ms
         name = str(field or "")
         if name == "lovenseEvent":
-            event = _unwrap_json_value(value)
+            event = unwrap_json_value(value)
             if isinstance(event, dict):
                 self._last_event = event
                 self._dirty = True
@@ -230,17 +216,17 @@ class LovenseProgramAdapterRuntimeNode(OperatorNode):
         if self._last_event is not None:
             return
         ev = await self.get_state_value("lovenseEvent")
-        event = _unwrap_json_value(ev)
+        event = unwrap_json_value(ev)
         if isinstance(event, dict):
             self._last_event = event
 
     async def _get_state_number(self, field: str, *, default: float) -> float:
-        live = _unwrap_json_value(await self.get_state_value(str(field)))
-        n_live = _coerce_number(live)
+        live = unwrap_json_value(await self.get_state_value(str(field)))
+        n_live = parse_number(live)
         if n_live is not None:
             return float(n_live)
-        init = _unwrap_json_value(self._initial_state.get(str(field)))
-        n_init = _coerce_number(init)
+        init = unwrap_json_value(self._initial_state.get(str(field)))
+        n_init = parse_number(init)
         if n_init is not None:
             return float(n_init)
         return float(default)
@@ -266,9 +252,9 @@ class LovenseProgramAdapterRuntimeNode(OperatorNode):
             self._log_error_once(f"failed to publish output states: {type(exc).__name__}: {exc}", exc=exc)
 
     @staticmethod
-    def _parse_step_ms(rule: Any, *, default_ms: float) -> float:
+    def _coerce_step_ms_or_default(rule: Any, *, default_ms: float) -> float:
         # Example: "V:1;F:v,r,p,t,f,s,d,o;S:200#"
-        txt = str(_unwrap_json_value(rule) or "")
+        txt = str(unwrap_json_value(rule) or "")
         idx = txt.find("S:")
         if idx == -1:
             return float(default_ms)
@@ -289,7 +275,7 @@ class LovenseProgramAdapterRuntimeNode(OperatorNode):
 
     @staticmethod
     def _parse_strengths(value: Any) -> list[float]:
-        v = _unwrap_json_value(value)
+        v = unwrap_json_value(value)
         if v is None:
             return []
         if isinstance(v, (int, float)) and not isinstance(v, bool):
@@ -302,7 +288,7 @@ class LovenseProgramAdapterRuntimeNode(OperatorNode):
             frag = part.strip()
             if not frag:
                 continue
-            n = _coerce_number(frag)
+            n = parse_number(frag)
             if n is None:
                 continue
             out.append(float(n))
@@ -314,7 +300,7 @@ class LovenseProgramAdapterRuntimeNode(OperatorNode):
             self._cache = {"kind": "", "program": self._done_program_dict(), "amplitude": 0.0, "sequence": None}
             return
 
-        ts_ms_v = _coerce_number(event.get("tsMs"))
+        ts_ms_v = parse_number(event.get("tsMs"))
         ts_ms = int(ts_ms_v) if ts_ms_v is not None and ts_ms_v > 0 else int(time.time() * 1000.0)
 
         # Prefer canonical summary if present, but do not require it.
@@ -350,14 +336,16 @@ class LovenseProgramAdapterRuntimeNode(OperatorNode):
             if loop_pause_raw is None:
                 loop_pause_raw = params.get("loopPauseSec")
 
-        time_sec_raw_n = _coerce_number(time_sec_raw)
+        time_sec_raw_n = parse_number(time_sec_raw)
         time_sec: float | None = None
         if time_sec_raw_n is not None and time_sec_raw_n > 0.0:
             time_sec = float(time_sec_raw_n)
 
-        loop_running_raw_n = _coerce_number(loop_running_raw)
-        loop_pause_raw_n = _coerce_number(loop_pause_raw)
-        loop_running = float(loop_running_raw_n) if loop_running_raw_n is not None and loop_running_raw_n > 0.0 else None
+        loop_running_raw_n = parse_number(loop_running_raw)
+        loop_pause_raw_n = parse_number(loop_pause_raw)
+        loop_running = (
+            float(loop_running_raw_n) if loop_running_raw_n is not None and loop_running_raw_n > 0.0 else None
+        )
         loop_pause = float(loop_pause_raw_n) if loop_pause_raw_n is not None and loop_pause_raw_n > 0.0 else None
 
         if kind == "stop":
@@ -368,12 +356,12 @@ class LovenseProgramAdapterRuntimeNode(OperatorNode):
             thrusting = None
             depth = None
             if isinstance(summary, dict):
-                thrusting = _coerce_number(summary.get("thrusting"))
-                depth = _coerce_number(summary.get("depth"))
+                thrusting = parse_number(summary.get("thrusting"))
+                depth = parse_number(summary.get("depth"))
             if thrusting is None or depth is None:
                 t_i, d_i = _parse_action_thrusting_depth(action)
-                thrusting = _coerce_number(t_i)
-                depth = _coerce_number(d_i)
+                thrusting = parse_number(t_i)
+                depth = parse_number(d_i)
             if thrusting is None or depth is None:
                 self._cache = {"kind": kind, "program": self._done_program_dict(), "amplitude": 0.0}
                 return
@@ -405,9 +393,9 @@ class LovenseProgramAdapterRuntimeNode(OperatorNode):
         if kind == "all_vibrate":
             strength = None
             if isinstance(summary, dict):
-                strength = _coerce_number(summary.get("all"))
+                strength = parse_number(summary.get("all"))
             if strength is None:
-                strength = _coerce_number(_parse_action_int(action, prefix="All:"))
+                strength = parse_number(_parse_action_int(action, prefix="All:"))
             if strength is None:
                 self._cache = {"kind": kind, "program": self._done_program_dict(), "amplitude": 0.0}
                 return
@@ -436,7 +424,7 @@ class LovenseProgramAdapterRuntimeNode(OperatorNode):
                 self._cache = {"kind": kind, "program": self._done_program_dict(), "amplitude": 0.0, "sequence": None}
                 return
 
-            step_ms = self._parse_step_ms(params.get("rule"), default_ms=150.0)
+            step_ms = self._coerce_step_ms_or_default(params.get("rule"), default_ms=150.0)
 
             strength_max = float(await self._get_state_number("patternStrengthMax", default=20.0))
             hz_min = float(await self._get_state_number("patternMinHz", default=0.0))

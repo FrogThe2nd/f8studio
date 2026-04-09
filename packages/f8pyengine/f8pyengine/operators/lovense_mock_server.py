@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import parse_qsl
 
+from f8pysdk.codec import coerce_flag
 from f8pysdk.specs import (
     F8OperatorSchemaVersion,
     F8OperatorSpec,
@@ -25,7 +26,7 @@ from f8pysdk.specs import (
 )
 from f8pysdk.capabilities import ClosableNode, EntrypointNode, NodeBus
 from f8pysdk.executors.exec_flow import EntrypointContext
-from f8pysdk.codec import unwrap_json_value as _unwrap_json_value
+from f8pysdk.codec import unwrap_json_value
 from f8pysdk.nats_naming import ensure_token
 from f8pysdk.nodes import OperatorNode
 from f8pysdk.registry import RuntimeNodeRegistry
@@ -384,23 +385,23 @@ class LovenseMockServerRuntimeNode(OperatorNode, ClosableNode, EntrypointNode):
         self._lock = asyncio.Lock()
         self._event_lock = asyncio.Lock()
         self._server: asyncio.AbstractServer | None = None
-        self._allow_non_loopback_bind = self._parse_bool(
-            _unwrap_json_value(self._initial_state.get("allowNonLoopbackBind")),
+        self._allow_non_loopback_bind = coerce_flag(
+            unwrap_json_value(self._initial_state.get("allowNonLoopbackBind")),
             default=False,
         )
         self._cfg: _ServerConfig = _ServerConfig(
-            bind_address=str(_unwrap_json_value(self._initial_state.get("bindAddress")) or "127.0.0.1"),
-            port=self._parse_port(_unwrap_json_value(self._initial_state.get("port")), default=30010),
+            bind_address=str(unwrap_json_value(self._initial_state.get("bindAddress")) or "127.0.0.1"),
+            port=self._coerce_port_or_default(unwrap_json_value(self._initial_state.get("port")), default=30010),
         )
-        self._print_enabled = self._parse_bool(
-            _unwrap_json_value(self._initial_state.get("printEnabled")), default=False
+        self._print_enabled = coerce_flag(
+            unwrap_json_value(self._initial_state.get("printEnabled")), default=False
         )
 
-        self._event_include_payload = self._parse_bool(
-            _unwrap_json_value(self._initial_state.get("eventIncludePayload")), default=False
+        self._event_include_payload = coerce_flag(
+            unwrap_json_value(self._initial_state.get("eventIncludePayload")), default=False
         )
-        self._event_include_request = self._parse_bool(
-            _unwrap_json_value(self._initial_state.get("eventIncludeRequest")), default=False
+        self._event_include_request = coerce_flag(
+            unwrap_json_value(self._initial_state.get("eventIncludeRequest")), default=False
         )
 
         self._seq = 0
@@ -449,7 +450,7 @@ class LovenseMockServerRuntimeNode(OperatorNode, ClosableNode, EntrypointNode):
     ) -> Any:
         _ = ts_ms
         _ = meta
-        value = _unwrap_json_value(value)
+        value = unwrap_json_value(value)
         name = str(field or "").strip()
         if name == "bindAddress":
             v = str(value or "").strip()
@@ -459,25 +460,25 @@ class LovenseMockServerRuntimeNode(OperatorNode, ClosableNode, EntrypointNode):
                 raise ValueError("bindAddress must be loopback unless allowNonLoopbackBind is true")
             return v
         if name == "port":
-            port = self._parse_port(value, default=30010)
+            port = self._coerce_port_or_default(value, default=30010)
             if port < 1 or port > 65535:
                 raise ValueError("port must be 1..65535")
             return port
         if name == "printEnabled":
-            return self._parse_bool(value, default=False)
+            return coerce_flag(value, default=False)
         if name == "allowNonLoopbackBind":
-            return self._parse_bool(value, default=False)
+            return coerce_flag(value, default=False)
         if name == "eventIncludePayload":
-            return self._parse_bool(value, default=False)
+            return coerce_flag(value, default=False)
         if name == "eventIncludeRequest":
-            return self._parse_bool(value, default=False)
+            return coerce_flag(value, default=False)
         return value
 
     async def on_state(self, field: str, value: Any, *, ts_ms: int | None = None) -> None:
         _ = ts_ms
         name = str(field or "").strip()
         if name == "bindAddress":
-            bind_address = str(_unwrap_json_value(value) or "").strip()
+            bind_address = str(unwrap_json_value(value) or "").strip()
             if bind_address and bind_address != self._cfg.bind_address:
                 if (not self._allow_non_loopback_bind) and (not _is_loopback_bind_address(bind_address)):
                     self._set_error("bindAddress must be loopback unless allowNonLoopbackBind is true")
@@ -487,7 +488,7 @@ class LovenseMockServerRuntimeNode(OperatorNode, ClosableNode, EntrypointNode):
             return
         if name == "port":
             try:
-                port = int(_unwrap_json_value(value))
+                port = int(unwrap_json_value(value))
             except Exception:
                 return
             if port != self._cfg.port:
@@ -495,19 +496,19 @@ class LovenseMockServerRuntimeNode(OperatorNode, ClosableNode, EntrypointNode):
                 await self._restart_server()
             return
         if name == "printEnabled":
-            self._print_enabled = self._parse_bool(_unwrap_json_value(value), default=False)
+            self._print_enabled = coerce_flag(unwrap_json_value(value), default=False)
             return
         if name == "allowNonLoopbackBind":
-            self._allow_non_loopback_bind = self._parse_bool(_unwrap_json_value(value), default=False)
+            self._allow_non_loopback_bind = coerce_flag(unwrap_json_value(value), default=False)
             if (not self._allow_non_loopback_bind) and (not _is_loopback_bind_address(self._cfg.bind_address)):
                 self._cfg = _ServerConfig(bind_address="127.0.0.1", port=self._cfg.port)
             await self._restart_server()
             return
         if name == "eventIncludePayload":
-            self._event_include_payload = self._parse_bool(_unwrap_json_value(value), default=False)
+            self._event_include_payload = coerce_flag(unwrap_json_value(value), default=False)
             return
         if name == "eventIncludeRequest":
-            self._event_include_request = self._parse_bool(_unwrap_json_value(value), default=False)
+            self._event_include_request = coerce_flag(unwrap_json_value(value), default=False)
             return
 
     async def _restart_server(self) -> None:
@@ -1372,19 +1373,7 @@ class LovenseMockServerRuntimeNode(OperatorNode, ClosableNode, EntrypointNode):
             return "Internal Server Error"
         return "OK"
 
-    def _parse_bool(self, value: Any, *, default: bool) -> bool:
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, (int, float)):
-            return bool(value)
-        s = str(value or "").strip().lower()
-        if s in ("1", "true", "yes", "on"):
-            return True
-        if s in ("0", "false", "no", "off", ""):
-            return False
-        return bool(default)
-
-    def _parse_port(self, value: Any, *, default: int) -> int:
+    def _coerce_port_or_default(self, value: Any, *, default: int) -> int:
         try:
             v = int(value)
         except Exception:

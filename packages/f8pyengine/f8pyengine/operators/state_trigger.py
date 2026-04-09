@@ -4,6 +4,7 @@ import asyncio
 import logging
 from typing import Any
 
+from f8pysdk.codec import coerce_flag
 from f8pysdk.specs import (
     F8OperatorSchemaVersion,
     F8OperatorSpec,
@@ -15,7 +16,7 @@ from f8pysdk.specs import (
 )
 from f8pysdk.capabilities import EntrypointNode
 from f8pysdk.executors.exec_flow import EntrypointContext
-from f8pysdk.codec import unwrap_json_value as _unwrap_json_value
+from f8pysdk.codec import unwrap_json_value
 from f8pysdk.nats_naming import ensure_token
 from f8pysdk.nodes import OperatorNode
 from f8pysdk.registry import RuntimeNodeRegistry
@@ -41,10 +42,10 @@ class StateTriggerRuntimeNode(OperatorNode, EntrypointNode):
             exec_out_ports=[str(p) for p in (node.execOutPorts or [])],
         )
         self._initial_state = dict(initial_state or {})
-        self._enabled = self._coerce_bool(_unwrap_json_value(self._initial_state.get("enabled")), default=True)
-        self._fire_on_start = self._coerce_bool(_unwrap_json_value(self._initial_state.get("fireOnStart")), default=False)
+        self._enabled = coerce_flag(unwrap_json_value(self._initial_state.get("enabled")), default=True)
+        self._fire_on_start = coerce_flag(unwrap_json_value(self._initial_state.get("fireOnStart")), default=False)
         self._has_last_value = "value" in self._initial_state
-        self._last_value = _unwrap_json_value(self._initial_state.get("value"))
+        self._last_value = unwrap_json_value(self._initial_state.get("value"))
 
         self._entrypoint_ctx: EntrypointContext | None = None
         self._pending_exec_id: str | int | None = None
@@ -71,11 +72,11 @@ class StateTriggerRuntimeNode(OperatorNode, EntrypointNode):
         _ = ts_ms
         _ = meta
         name = str(field or "").strip()
-        raw_value = _unwrap_json_value(value)
+        raw_value = unwrap_json_value(value)
         if name == "enabled":
-            return self._coerce_bool(raw_value, default=True)
+            return coerce_flag(raw_value, default=True)
         if name == "fireOnStart":
-            return self._coerce_bool(raw_value, default=False)
+            return coerce_flag(raw_value, default=False)
         if name == "value":
             return raw_value
         return value
@@ -84,15 +85,15 @@ class StateTriggerRuntimeNode(OperatorNode, EntrypointNode):
         _ = ts_ms
         name = str(field or "").strip()
         if name == "enabled":
-            self._enabled = self._coerce_bool(_unwrap_json_value(value), default=self._enabled)
+            self._enabled = coerce_flag(unwrap_json_value(value), default=self._enabled)
             return
         if name == "fireOnStart":
-            self._fire_on_start = self._coerce_bool(_unwrap_json_value(value), default=self._fire_on_start)
+            self._fire_on_start = coerce_flag(unwrap_json_value(value), default=self._fire_on_start)
             return
         if name != "value":
             return
 
-        new_value = _unwrap_json_value(value)
+        new_value = unwrap_json_value(value)
         changed = (not self._has_last_value) or (not self._values_equal(self._last_value, new_value))
         self._last_value = new_value
         self._has_last_value = True
@@ -161,20 +162,6 @@ class StateTriggerRuntimeNode(OperatorNode, EntrypointNode):
             return bool(left == right)
         except Exception:
             return False
-
-    @staticmethod
-    def _coerce_bool(value: Any, *, default: bool) -> bool:
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, (int, float)):
-            return bool(value)
-        text = str(value or "").strip().lower()
-        if text in ("1", "true", "yes", "on"):
-            return True
-        if text in ("0", "false", "no", "off", ""):
-            return False
-        return bool(default)
-
 
 StateTriggerRuntimeNode.SPEC = F8OperatorSpec(
     schemaVersion=F8OperatorSchemaVersion.f8operator_1,

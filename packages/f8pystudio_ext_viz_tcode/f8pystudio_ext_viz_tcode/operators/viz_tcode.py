@@ -5,6 +5,7 @@ import logging
 import time
 from typing import Any
 
+from f8pysdk.codec import coerce_int
 from f8pysdk.specs import (
     F8DataPortSpec,
     F8OperatorSchemaVersion,
@@ -99,21 +100,21 @@ class VizTCodeRuntimeNode(StudioVizRuntimeNodeBase):
             return
 
         if name == "throttleMs":
-            self._throttle_ms = self._coerce_int(value, default=self._throttle_ms, minimum=0, maximum=60000)
+            self._throttle_ms = coerce_int(value, default=self._throttle_ms, minimum=0, maximum=60000)
             return
 
         if name == "maxLineLength":
-            self._max_line_length = self._coerce_int(value, default=self._max_line_length, minimum=32, maximum=65536)
+            self._max_line_length = coerce_int(value, default=self._max_line_length, minimum=32, maximum=65536)
             return
 
     async def _ensure_config_loaded(self) -> None:
         if self._config_loaded:
             return
         self._model = self._coerce_model(await self._get_state_or_initial("model", "SR6"), default="SR6")
-        self._throttle_ms = self._coerce_int(
+        self._throttle_ms = coerce_int(
             await self._get_state_or_initial("throttleMs", 0), default=0, minimum=0, maximum=60000
         )
-        self._max_line_length = self._coerce_int(
+        self._max_line_length = coerce_int(
             await self._get_state_or_initial("maxLineLength", 4096), default=4096, minimum=32, maximum=65536
         )
         self._config_loaded = True
@@ -194,18 +195,6 @@ class VizTCodeRuntimeNode(StudioVizRuntimeNodeBase):
         if text in MODEL_VALUES:
             return text
         return default
-
-    @staticmethod
-    def _coerce_int(value: Any, *, default: int, minimum: int, maximum: int) -> int:
-        try:
-            out = int(value) if value is not None else int(default)
-        except (TypeError, ValueError):
-            out = int(default)
-        if out < minimum:
-            out = minimum
-        if out > maximum:
-            out = maximum
-        return out
 
     def _log_bad_input_once(self, value: Any) -> None:
         sig = f"{type(value).__name__}"

@@ -6,6 +6,7 @@ from typing import Callable, Iterable, TypeAlias
 
 from qtpy import QtCore, QtGui, QtWidgets
 
+from f8pysdk.codec import coerce_bool
 from ...assets.projects.project_models import F8ProjectRecord
 from ...assets.projects.project_storage import ProjectStorageService
 from ...nodegraph.edge_rules import EDGE_KIND_DATA, EDGE_KIND_EXEC, EDGE_KIND_STATE
@@ -1114,19 +1115,6 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
             text = text + "\n"
         self._log_dock.append("studio", text)
 
-    @staticmethod
-    def _coerce_bool_setting(raw: object, *, default: bool) -> bool:
-        if isinstance(raw, bool):
-            return raw
-        if isinstance(raw, (int, float)):
-            return bool(raw)
-        text = str(raw or "").strip().lower()
-        if text in {"1", "true", "yes", "on"}:
-            return True
-        if text in {"0", "false", "no", "off"}:
-            return False
-        return bool(default)
-
     def _read_saved_auto_save_enabled(self) -> bool:
         settings = self._layout_settings()
         settings.beginGroup(self._AUTOMATION_SETTINGS_GROUP)
@@ -1134,7 +1122,7 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
             raw = settings.value(self._AUTO_SAVE_ENABLED_SETTINGS_KEY, True)
         finally:
             settings.endGroup()
-        return self._coerce_bool_setting(raw, default=True)
+        return coerce_bool(raw, default=True)
 
     def _write_saved_auto_save_enabled(self, *, enabled: bool) -> None:
         settings = self._layout_settings()
@@ -1152,7 +1140,7 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
             raw = settings.value(self._AUTO_DEPLOY_ENABLED_SETTINGS_KEY, False)
         finally:
             settings.endGroup()
-        return self._coerce_bool_setting(raw, default=False)
+        return coerce_bool(raw, default=False)
 
     def _write_saved_auto_deploy_enabled(self, *, enabled: bool) -> None:
         settings = self._layout_settings()
@@ -1170,7 +1158,7 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
             raw = settings.value(self._PERFORMANCE_OVERLAY_ENABLED_SETTINGS_KEY, False)
         finally:
             settings.endGroup()
-        return self._coerce_bool_setting(raw, default=False)
+        return coerce_bool(raw, default=False)
 
     def _write_saved_performance_overlay_enabled(self, *, enabled: bool) -> None:
         settings = self._layout_settings()
@@ -1196,7 +1184,7 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
             raw = settings.value(self._AUTO_PROXY_ENABLED_SETTINGS_KEY, False)
         finally:
             settings.endGroup()
-        return self._coerce_bool_setting(raw, default=False)
+        return coerce_bool(raw, default=False)
 
     def _write_saved_auto_proxy_enabled(self, *, enabled: bool) -> None:
         settings = self._layout_settings()

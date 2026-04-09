@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+from f8pysdk.codec import parse_number
 import logging
-import math
 import time
 from dataclasses import dataclass
 from typing import Any, Final
@@ -28,7 +28,6 @@ OPERATOR_CLASS: Final[str] = "f8.program_wave"
 
 logger = logging.getLogger(__name__)
 
-
 def _program_state_schema():
     return complex_object_schema(
         properties={
@@ -40,21 +39,6 @@ def _program_state_schema():
         }
     )
 
-
-def _coerce_number(value: Any) -> float | None:
-    if value is None:
-        return None
-    if isinstance(value, bool):
-        return None
-    try:
-        f = float(value)
-    except Exception:
-        return None
-    if math.isnan(f) or math.isinf(f):
-        return None
-    return f
-
-
 def _coerce_epoch_us(value: Any) -> int | None:
     """
     Coerce an epoch timestamp into microseconds.
@@ -63,7 +47,7 @@ def _coerce_epoch_us(value: Any) -> int | None:
     - microseconds since epoch (>= 1e13-ish for modern timestamps)
     - milliseconds since epoch (smaller), auto-upscaled to microseconds
     """
-    n = _coerce_number(value)
+    n = parse_number(value)
     if n is None:
         return None
     i = int(n)
@@ -74,7 +58,6 @@ def _coerce_epoch_us(value: Any) -> int | None:
         return int(i)
     return int(i) * 1000
 
-
 @dataclass(frozen=True)
 class _Program:
     start_us: int
@@ -82,7 +65,6 @@ class _Program:
     hz: float
     loop_running_s: float | None
     loop_pause_s: float | None
-
 
 def _parse_program(v: Any) -> _Program | None:
     if not isinstance(v, dict):
@@ -92,19 +74,19 @@ def _parse_program(v: Any) -> _Program | None:
     if start_us is None:
         return None
 
-    time_sec = _coerce_number(v.get("timeSec"))
+    time_sec = parse_number(v.get("timeSec"))
     time_s: float | None = None
     if time_sec is not None and time_sec > 0.0:
         time_s = float(time_sec)
 
-    hz = _coerce_number(v.get("hz"))
+    hz = parse_number(v.get("hz"))
     if hz is None:
         hz_f = 1.0
     else:
         hz_f = max(0.0, float(hz))
 
-    loop_running_sec = _coerce_number(v.get("loopRunningSec"))
-    loop_pause_sec = _coerce_number(v.get("loopPauseSec"))
+    loop_running_sec = parse_number(v.get("loopRunningSec"))
+    loop_pause_sec = parse_number(v.get("loopPauseSec"))
     loop_running_s = float(loop_running_sec) if loop_running_sec is not None and loop_running_sec > 0.0 else None
     loop_pause_s = float(loop_pause_sec) if loop_pause_sec is not None and loop_pause_sec > 0.0 else None
 
@@ -116,10 +98,8 @@ def _parse_program(v: Any) -> _Program | None:
         loop_pause_s=loop_pause_s,
     )
 
-
 def _elapsed_s(*, now_us: int, start_us: int) -> float:
     return float(now_us - start_us) / 1_000_000.0
-
 
 def _active_at(t_s: float, *, loop_running_s: float | None, loop_pause_s: float | None) -> bool:
     if t_s < 0.0:
@@ -137,7 +117,6 @@ def _active_at(t_s: float, *, loop_running_s: float | None, loop_pause_s: float 
         return True
     pos = t_s % cycle
     return pos < run_s
-
 
 def _active_time_s(t_s: float, *, loop_running_s: float | None, loop_pause_s: float | None) -> float:
     """
@@ -162,7 +141,6 @@ def _active_time_s(t_s: float, *, loop_running_s: float | None, loop_pause_s: fl
     full = int(t_s // cycle)
     rem = float(t_s - float(full) * cycle)
     return float(full) * run_s + min(run_s, rem)
-
 
 class ProgramWaveRuntimeNode(OperatorNode):
     """
@@ -270,7 +248,6 @@ class ProgramWaveRuntimeNode(OperatorNode):
             return float(t_s_nonneg)
         return None
 
-
 ProgramWaveRuntimeNode.SPEC = F8OperatorSpec(
     schemaVersion=F8OperatorSchemaVersion.f8operator_1,
     serviceClass=SERVICE_CLASS,
@@ -300,7 +277,6 @@ ProgramWaveRuntimeNode.SPEC = F8OperatorSpec(
         ),
     ],
 )
-
 
 def register_operator(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
 

@@ -11,6 +11,7 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
+from f8pysdk.codec import coerce_bool  # noqa: E402
 from f8pystudio.nodegraph.viewer import F8StudioNodeViewer  # noqa: E402
 from f8pystudio.ui.mainwin.main_window import F8StudioMainWin  # noqa: E402
 
@@ -47,7 +48,7 @@ class _LayoutHarness(QtWidgets.QMainWindow):
     _PERFORMANCE_OVERLAY_ENABLED_SETTINGS_KEY = F8StudioMainWin._PERFORMANCE_OVERLAY_ENABLED_SETTINGS_KEY
 
     _as_qbytearray = staticmethod(F8StudioMainWin._as_qbytearray)
-    _coerce_bool_setting = staticmethod(F8StudioMainWin._coerce_bool_setting)
+    _coerce_bool_setting = staticmethod(coerce_bool)
     _normalize_supported_log_level = staticmethod(F8StudioMainWin._normalize_supported_log_level)
     _log_level_name_for_value = staticmethod(F8StudioMainWin._log_level_name_for_value)
     _log_level_value_from_name = staticmethod(F8StudioMainWin._log_level_value_from_name)

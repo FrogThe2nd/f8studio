@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-import math
 import time
 from typing import Any
 
+from f8pysdk.codec import coerce_bool
+from f8pysdk.codec import parse_number
 from f8pysdk.specs import (
     F8DataPortSpec,
     F8OperatorSchemaVersion,
@@ -25,37 +26,6 @@ OPERATOR_CLASS = "f8.envelope"
 
 _METHODS = ("EMA", "DEMA", "SMA")
 _EPS = 1e-9
-
-
-def _coerce_number(value: Any) -> float | None:
-    if value is None:
-        return None
-    if isinstance(value, bool):
-        return None
-    try:
-        f = float(value)
-    except Exception:
-        return None
-    if math.isnan(f) or math.isinf(f):
-        return None
-    return f
-
-
-def _coerce_bool(value: Any) -> bool | None:
-    if isinstance(value, bool):
-        return value
-    numeric = _coerce_number(value)
-    if numeric is not None:
-        return bool(numeric != 0.0)
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized in {"1", "true", "yes", "on"}:
-            return True
-        if normalized in {"0", "false", "no", "off"}:
-            return False
-    return None
-
-
 def _normalize_method(value: Any, *, default: str = "EMA") -> str:
     method = str(value or "").strip().upper()
     if method in _METHODS:
@@ -248,17 +218,11 @@ class EnvelopeTracker:
         for filt in (self.upper_filter, self.lower_filter):
             if filt is None:
                 continue
-            try:
-                filt.set_window(self.sma_window)
-            except Exception:
-                continue
+            filt.set_window(self.sma_window)
 
     def _update_filter(self, filt, value: float, alpha: float) -> float:
         if self.method == "SMA":
-            try:
-                filt.set_window(self.sma_window)
-            except Exception:
-                pass
+            filt.set_window(self.sma_window)
             return float(filt.update(value))
         return float(filt.update(value, alpha=alpha))
 
@@ -276,14 +240,14 @@ class EnvelopeRuntimeNode(OperatorNode):
         self._initial_state = dict(initial_state or {})
 
         self._method = _normalize_method(self._initial_state.get("method"), default="EMA")
-        self._rise_alpha = float(_coerce_number(self._initial_state.get("rise_alpha")) or 0.4)
-        self._fall_alpha = float(_coerce_number(self._initial_state.get("fall_alpha")) or 0.05)
-        self._min_span = max(0.0, float(_coerce_number(self._initial_state.get("min_span")) or 0.25))
+        self._rise_alpha = float(parse_number(self._initial_state.get("rise_alpha")) or 0.4)
+        self._fall_alpha = float(parse_number(self._initial_state.get("fall_alpha")) or 0.05)
+        self._min_span = max(0.0, float(parse_number(self._initial_state.get("min_span")) or 0.25))
         self._sma_window = self._coerce_window(self._initial_state.get("sma_window"), default=10)
-        self._margin = float(_coerce_number(self._initial_state.get("margin")) or 0.0)
+        self._margin = float(parse_number(self._initial_state.get("margin")) or 0.0)
 
-        self._jump_enabled = self._coerce_bool(self._initial_state.get("jumpEnabled"), default=True)
-        self._jump_span_mult = max(0.5, float(_coerce_number(self._initial_state.get("jumpSpanMult")) or 4.0))
+        self._jump_enabled = coerce_bool(self._initial_state.get("jumpEnabled"), default=True)
+        self._jump_span_mult = max(0.5, float(parse_number(self._initial_state.get("jumpSpanMult")) or 4.0))
         self._jump_consecutive_frames = self._coerce_window(
             self._initial_state.get("jumpConsecutiveFrames"), default=4
         )
@@ -317,24 +281,17 @@ class EnvelopeRuntimeNode(OperatorNode):
 
     @staticmethod
     def _coerce_window(value: Any, *, default: int) -> int:
-        numeric = _coerce_number(value)
+        numeric = parse_number(value)
         if numeric is None:
             return int(default)
         return max(1, int(round(float(numeric))))
 
     @staticmethod
     def _coerce_alpha(value: Any, *, default: float) -> float:
-        numeric = _coerce_number(value)
+        numeric = parse_number(value)
         if numeric is None:
             return float(default)
         return _clamp01(float(numeric))
-
-    @staticmethod
-    def _coerce_bool(value: Any, *, default: bool) -> bool:
-        coerced = _coerce_bool(value)
-        if coerced is None:
-            return bool(default)
-        return bool(coerced)
 
     def _reset_cache(self) -> None:
         self._last_outputs = {
@@ -366,19 +323,19 @@ class EnvelopeRuntimeNode(OperatorNode):
                 tracker_changed = True
 
         if "rise_alpha" in values:
-            numeric = _coerce_number(values.get("rise_alpha"))
+            numeric = parse_number(values.get("rise_alpha"))
             if numeric is not None and numeric != self._rise_alpha:
                 self._rise_alpha = float(numeric)
                 tracker_changed = True
 
         if "fall_alpha" in values:
-            numeric = _coerce_number(values.get("fall_alpha"))
+            numeric = parse_number(values.get("fall_alpha"))
             if numeric is not None and numeric != self._fall_alpha:
                 self._fall_alpha = float(numeric)
                 tracker_changed = True
 
         if "min_span" in values:
-            numeric = _coerce_number(values.get("min_span"))
+            numeric = parse_number(values.get("min_span"))
             if numeric is not None:
                 numeric = max(0.0, float(numeric))
                 if numeric != self._min_span:
@@ -392,19 +349,19 @@ class EnvelopeRuntimeNode(OperatorNode):
                 tracker_changed = True
 
         if "margin" in values:
-            numeric = _coerce_number(values.get("margin"))
+            numeric = parse_number(values.get("margin"))
             if numeric is not None and float(numeric) != self._margin:
                 self._margin = float(numeric)
                 margin_changed = True
 
         if "jumpEnabled" in values:
-            jump_enabled = self._coerce_bool(values.get("jumpEnabled"), default=self._jump_enabled)
+            jump_enabled = coerce_bool(values.get("jumpEnabled"), default=self._jump_enabled)
             if jump_enabled != self._jump_enabled:
                 self._jump_enabled = jump_enabled
                 jump_changed = True
 
         if "jumpSpanMult" in values:
-            numeric = _coerce_number(values.get("jumpSpanMult"))
+            numeric = parse_number(values.get("jumpSpanMult"))
             if numeric is not None:
                 numeric = max(0.5, float(numeric))
                 if numeric != self._jump_span_mult:
@@ -472,7 +429,7 @@ class EnvelopeRuntimeNode(OperatorNode):
             return None
 
         raw_value = await self.pull("value", ctx_id=ctx_id)
-        numeric = _coerce_number(raw_value)
+        numeric = parse_number(raw_value)
         if numeric is None:
             return self._last_outputs.get(port_s)
 

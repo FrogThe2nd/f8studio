@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import math
 import numbers
 from typing import Any, TypeVar
 
@@ -7,6 +9,8 @@ import msgspec
 
 T = TypeVar("T")
 _UNSET_SENTINEL = object()
+_TRUE_STRINGS = frozenset({"1", "true", "yes", "on"})
+_FALSE_STRINGS = frozenset({"0", "false", "no", "off"})
 
 
 def _strip_unset(value: Any, *, _seen: set[int] | None = None) -> Any:
@@ -155,6 +159,197 @@ def unwrap_json_value(value: Any) -> Any:
         return value
 
 
+def parse_bool(value: Any, *, empty_as_false: bool = False) -> bool | None:
+    """Best-effort bool parse. Return None when the input is not interpretable."""
+    normalized = unwrap_json_value(value)
+    if isinstance(normalized, bool):
+        return normalized
+    if isinstance(normalized, (int, float)):
+        return bool(normalized)
+    if normalized is None:
+        return False if empty_as_false else None
+    text = str(normalized).strip().lower()
+    if not text:
+        return False if empty_as_false else None
+    if text in _TRUE_STRINGS:
+        return True
+    if text in _FALSE_STRINGS:
+        return False
+    return None
+
+
+def coerce_bool(value: Any, *, default: bool, empty_as_false: bool = False) -> bool:
+    """Parse a bool and fall back to ``default`` when parsing fails."""
+    parsed = parse_bool(value, empty_as_false=empty_as_false)
+    if parsed is None:
+        return bool(default)
+    return parsed
+
+
+def coerce_flag(value: Any, *, default: bool) -> bool:
+    return coerce_bool(value, default=default, empty_as_false=True)
+
+
+def parse_int(value: Any, *, allow_bool: bool = True) -> int | None:
+    """Best-effort int parse. Return None when the input is not interpretable."""
+    normalized = unwrap_json_value(value)
+    if normalized is None:
+        return None
+    if isinstance(normalized, bool):
+        if not allow_bool:
+            return None
+        return int(normalized)
+    try:
+        return int(normalized)
+    except (TypeError, ValueError):
+        return None
+
+
+def coerce_int(
+    value: Any,
+    *,
+    default: int,
+    minimum: int | None = None,
+    maximum: int | None = None,
+    allow_bool: bool = True,
+) -> int:
+    """Parse an int, then fall back to ``default`` and optional bounds."""
+    parsed = parse_int(value, allow_bool=allow_bool)
+    out = int(default) if parsed is None else int(parsed)
+    if minimum is not None and out < int(minimum):
+        out = int(minimum)
+    if maximum is not None and out > int(maximum):
+        out = int(maximum)
+    return out
+
+
+def parse_float(value: Any, *, allow_bool: bool = False, finite_only: bool = False) -> float | None:
+    """Best-effort float parse. Return None when the input is not interpretable."""
+    normalized = unwrap_json_value(value)
+    if normalized is None:
+        return None
+    if isinstance(normalized, bool) and not allow_bool:
+        return None
+    try:
+        out = float(normalized)
+    except (TypeError, ValueError):
+        return None
+    if finite_only and not math.isfinite(out):
+        return None
+    return float(out)
+
+
+def parse_number(value: Any) -> float | None:
+    """Parse a finite non-bool number, or return None when parsing fails."""
+    return parse_float(value, allow_bool=False, finite_only=True)
+
+
+def parse_number_sequence(value: Any) -> tuple[float, ...] | None:
+    """Parse a scalar/sequence into finite floats, or return None when parsing fails."""
+    normalized = unwrap_json_value(value)
+    if normalized is None or isinstance(normalized, bool):
+        return None
+    if isinstance(normalized, (list, tuple)):
+        if not normalized:
+            return ()
+        out: list[float] = []
+        for item in normalized:
+            parsed = parse_number(item)
+            if parsed is None:
+                return None
+            out.append(float(parsed))
+        return tuple(out)
+    parsed = parse_number(normalized)
+    if parsed is None:
+        return None
+    return (float(parsed),)
+
+
+def coerce_float(
+    value: Any,
+    *,
+    default: float,
+    minimum: float | None = None,
+    maximum: float | None = None,
+    allow_bool: bool = True,
+    finite_only: bool = False,
+) -> float:
+    """Parse a float, then fall back to ``default`` and optional bounds."""
+    parsed = parse_float(value, allow_bool=allow_bool, finite_only=finite_only)
+    out = float(default) if parsed is None else float(parsed)
+    if minimum is not None and out < float(minimum):
+        out = float(minimum)
+    if maximum is not None and out > float(maximum):
+        out = float(maximum)
+    return float(out)
+
+
+def coerce_number(
+    value: Any,
+    *,
+    default: float,
+    minimum: float | None = None,
+    maximum: float | None = None,
+) -> float:
+    """Parse a finite non-bool number, then fall back to ``default`` and bounds."""
+    return coerce_float(value, default=default, minimum=minimum, maximum=maximum, allow_bool=False, finite_only=True)
+
+
+def coerce_str(value: Any, *, default: str = "") -> str:
+    """Return trimmed text, or ``default`` when the input is empty/missing."""
+    normalized = unwrap_json_value(value)
+    if normalized is None:
+        return str(default)
+    text = str(normalized).strip()
+    if text:
+        return text
+    return str(default)
+
+
+def parse_str_list(
+    value: Any,
+    *,
+    allow_json_string: bool = False,
+    allow_mapping_values: bool = False,
+) -> list[str] | None:
+    """Parse a list of strings, or return None when the input shape is unsupported."""
+    normalized = unwrap_json_value(value)
+    if isinstance(normalized, (list, tuple)):
+        out: list[str] = []
+        for item in normalized:
+            text = coerce_str(item, default="")
+            if text:
+                out.append(text)
+        return out
+    if allow_mapping_values and isinstance(normalized, dict):
+        items = list(normalized.items())
+
+        def _sort_key(item: tuple[Any, Any]) -> tuple[int, str]:
+            key = item[0]
+            parsed = parse_int(key, allow_bool=False)
+            if parsed is not None:
+                return (0, f"{parsed:08d}")
+            return (1, coerce_str(key, default=""))
+
+        items.sort(key=_sort_key)
+        out2: list[str] = []
+        for _key, item in items:
+            text = coerce_str(item, default="")
+            if text:
+                out2.append(text)
+        return out2
+    if allow_json_string and isinstance(normalized, str):
+        raw = normalized.strip()
+        if not raw:
+            return []
+        try:
+            parsed_json = json.loads(raw)
+        except json.JSONDecodeError:
+            return None
+        return parse_str_list(parsed_json, allow_mapping_values=allow_mapping_values)
+    return None
+
+
 def _msgpack_enc_hook(obj: Any) -> Any:
     if isinstance(obj, msgspec.UnsetType):
         return None
@@ -194,11 +389,23 @@ def decode_as(raw: bytes, model_type: type[T]) -> T:
         raise ValueError(f"msgpack decode failed: {exc}") from exc
 
 __all__ = [
+    "coerce_bool",
+    "coerce_flag",
+    "coerce_float",
+    "coerce_int",
+    "coerce_number",
+    "coerce_str",
     "copy_model",
     "decode_as",
     "decode_obj",
     "dump_json",
     "encode_obj",
+    "parse_bool",
+    "parse_float",
+    "parse_int",
+    "parse_number",
+    "parse_number_sequence",
+    "parse_str_list",
     "unwrap_json_value",
     "validate_as",
 ]

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from f8pysdk.codec import coerce_int, coerce_flag
 import asyncio
 import logging
 import time
@@ -50,19 +51,6 @@ _CONTROL_STATE_NAMES = {
 _POSITION_PORT = "positionMs"
 
 
-def _coerce_bool(value: Any, *, default: bool) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        return bool(value)
-    text = str(value or "").strip().lower()
-    if text in ("1", "true", "yes", "on"):
-        return True
-    if text in ("0", "false", "no", "off", ""):
-        return False
-    return bool(default)
-
-
 class ReplayerRuntimeNode(OperatorNode):
     def __init__(self, *, node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any] | None = None) -> None:
         super().__init__(
@@ -75,10 +63,10 @@ class ReplayerRuntimeNode(OperatorNode):
         )
         self._initial_state = dict(initial_state or {})
         self._path = str(self._initial_state.get("path") or "").strip()
-        self._loop_enabled = _coerce_bool(self._initial_state.get("loop"), default=False)
+        self._loop_enabled = coerce_flag(self._initial_state.get("loop"), default=False)
         self._time_mode = _coerce_time_mode(self._initial_state.get("timeMode"), default=TIME_MODE_OFFSET_FROM_PLAY)
-        self._playing = _coerce_bool(self._initial_state.get("playing"), default=False)
-        self._duration_ms = _coerce_int(self._initial_state.get("durationMs"), default=0)
+        self._playing = coerce_flag(self._initial_state.get("playing"), default=False)
+        self._duration_ms = coerce_int(self._initial_state.get("durationMs"), default=0)
         self._loaded = False
         self._events: list[Any] = []
         self._first_event_ts_ms = 0
@@ -125,13 +113,13 @@ class ReplayerRuntimeNode(OperatorNode):
             await self._load_recording()
             return
         if name == "loop":
-            self._loop_enabled = _coerce_bool(value, default=self._loop_enabled)
+            self._loop_enabled = coerce_flag(value, default=self._loop_enabled)
             return
         if name == "timeMode":
             self._time_mode = _coerce_time_mode(value, default=self._time_mode)
             return
         if name == "playing":
-            await self._set_playing(_coerce_bool(value, default=self._playing))
+            await self._set_playing(coerce_flag(value, default=self._playing))
             return
 
     async def validate_state(self, field: str, value: Any, *, ts_ms: int, meta: dict[str, Any]) -> Any:
@@ -140,11 +128,11 @@ class ReplayerRuntimeNode(OperatorNode):
         if name == "path":
             return str(value or "").strip()
         if name == "loop":
-            return _coerce_bool(value, default=False)
+            return coerce_flag(value, default=False)
         if name == "timeMode":
             return _coerce_time_mode(value, default=TIME_MODE_OFFSET_FROM_PLAY)
         if name == "playing":
-            return _coerce_bool(value, default=False)
+            return coerce_flag(value, default=False)
         return value
 
     async def _set_playing(self, playing: bool) -> None:
@@ -296,7 +284,9 @@ class ReplayerRuntimeNode(OperatorNode):
 
     async def _dispatch_event(self, event: Any) -> None:
         if event.type == "data_sample":
-            allowed_ports = {str(name) for name in self.data_out_ports if str(name).strip() and str(name) != _POSITION_PORT}
+            allowed_ports = {
+                str(name) for name in self.data_out_ports if str(name).strip() and str(name) != _POSITION_PORT
+            }
             for port, value in dict(event.data).items():
                 if port in allowed_ports:
                     await self._safe_emit(str(port), value)
@@ -327,13 +317,6 @@ def _event_ts_ms(event: Any) -> int:
     if event.type == "data_sample":
         return int(event.tick_ts_ms)
     return int(event.state_ts_ms)
-
-
-def _coerce_int(value: Any, *, default: int) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return int(default)
 
 
 def _coerce_time_mode(value: Any, *, default: str) -> str:
@@ -390,7 +373,9 @@ ReplayerRuntimeNode.SPEC = F8OperatorSpec(
             name="timeMode",
             label="Time Mode",
             description="Playback time mapping mode.",
-            valueSchema=string_schema(default=TIME_MODE_OFFSET_FROM_PLAY, enum=[TIME_MODE_RECORDED_EPOCH, TIME_MODE_OFFSET_FROM_PLAY]),
+            valueSchema=string_schema(
+                default=TIME_MODE_OFFSET_FROM_PLAY, enum=[TIME_MODE_RECORDED_EPOCH, TIME_MODE_OFFSET_FROM_PLAY]
+            ),
             access=F8StateAccess.rw,
             required=True,
             showOnNode=True,

@@ -9,6 +9,7 @@ from typing import Any, Literal
 
 import numpy as np
 
+from f8pysdk.codec import coerce_int, coerce_str
 from f8pysdk.nats_naming import ensure_token
 from f8pysdk.nodes import ServiceNode
 from f8pysdk.shm.video import VIDEO_FORMAT_FLOW2_F16, VIDEO_FORMAT_SCALAR1_F32, VideoShmHeader, VideoShmReader
@@ -23,28 +24,8 @@ _CLS_WEIGHTS_REGEX_PREFIX = "re:"
 
 class ScoreShmUnavailableError(RuntimeError):
     """Raised when score SHM is missing/unreadable/unsupported for sorting."""
-
-
-def _coerce_str(value: Any, *, default: str = "") -> str:
-    if value is None:
-        return default
-    text = str(value).strip()
-    if text:
-        return text
-    return default
-
-
-def _coerce_int(value: Any, *, default: int = 0) -> int:
-    if isinstance(value, bool):
-        return int(default)
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return int(default)
-
-
 def _coerce_sort_direction(value: Any, *, default: SortDirection = "desc") -> SortDirection:
-    text = _coerce_str(value, default=default).lower()
+    text = coerce_str(value, default=default).lower()
     if text == "asc":
         return "asc"
     if text == "desc":
@@ -53,7 +34,7 @@ def _coerce_sort_direction(value: Any, *, default: SortDirection = "desc") -> So
 
 
 def _coerce_score_aggregation(value: Any, *, default: ScoreAggregation = "mean") -> ScoreAggregation:
-    text = _coerce_str(value, default=default).lower()
+    text = coerce_str(value, default=default).lower()
     if text == "max":
         return "max"
     if text == "sum":
@@ -184,10 +165,10 @@ def rescale_bbox_to_score_map(
     if detections_width <= 0 or detections_height <= 0 or score_width <= 0 or score_height <= 0:
         return None
 
-    x1 = _coerce_int(bbox[0], default=0)
-    y1 = _coerce_int(bbox[1], default=0)
-    x2 = _coerce_int(bbox[2], default=0)
-    y2 = _coerce_int(bbox[3], default=0)
+    x1 = coerce_int(bbox[0], default=0, allow_bool=False)
+    y1 = coerce_int(bbox[1], default=0, allow_bool=False)
+    x2 = coerce_int(bbox[2], default=0, allow_bool=False)
+    y2 = coerce_int(bbox[3], default=0, allow_bool=False)
     if x2 <= x1 or y2 <= y1:
         return None
 
@@ -344,10 +325,10 @@ class DetectionSorterServiceNode(ServiceNode):
     async def _ensure_config_loaded(self) -> None:
         if self._config_loaded:
             return
-        self._score_shm_name = _coerce_str(self._read_initial_or_cached_state("scoreShmName", ""))
+        self._score_shm_name = coerce_str(self._read_initial_or_cached_state("scoreShmName", ""))
         self._sort_direction = _coerce_sort_direction(self._read_initial_or_cached_state("sortDirection", "desc"))
         self._score_aggregation = _coerce_score_aggregation(self._read_initial_or_cached_state("scoreAggregation", "mean"))
-        cls_weights_text = _coerce_str(self._read_initial_or_cached_state("clsWeights", "{}"), default="{}")
+        cls_weights_text = coerce_str(self._read_initial_or_cached_state("clsWeights", "{}"), default="{}")
         self._set_cls_weights(cls_weights_text)
         self._config_loaded = True
 
@@ -355,19 +336,19 @@ class DetectionSorterServiceNode(ServiceNode):
         del ts_ms, meta
         name = str(field or "").strip()
         if name == "sortDirection":
-            direction = _coerce_str(value).lower()
+            direction = coerce_str(value).lower()
             if direction not in ("asc", "desc"):
                 raise ValueError("invalid sortDirection (expected asc or desc)")
             return direction
         if name == "scoreAggregation":
-            aggregation = _coerce_str(value).lower()
+            aggregation = coerce_str(value).lower()
             if aggregation not in ("mean", "max", "sum", "median"):
                 raise ValueError("invalid scoreAggregation (expected mean, max, sum, or median)")
             return aggregation
         if name == "scoreShmName":
-            return _coerce_str(value)
+            return coerce_str(value)
         if name == "clsWeights":
-            text = _coerce_str(value, default="{}")
+            text = coerce_str(value, default="{}")
             _ = _parse_cls_weights_json(text)
             return text
         return value
@@ -377,7 +358,7 @@ class DetectionSorterServiceNode(ServiceNode):
         await self._ensure_config_loaded()
         name = str(field or "").strip()
         if name == "scoreShmName":
-            self._score_shm_name = _coerce_str(value, default=self._score_shm_name)
+            self._score_shm_name = coerce_str(value, default=self._score_shm_name)
             self._close_score_reader()
             return
         if name == "sortDirection":
@@ -387,7 +368,7 @@ class DetectionSorterServiceNode(ServiceNode):
             self._score_aggregation = _coerce_score_aggregation(value, default=self._score_aggregation)
             return
         if name == "clsWeights":
-            text = _coerce_str(value, default="{}")
+            text = coerce_str(value, default="{}")
             self._set_cls_weights(text)
             return
 

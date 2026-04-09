@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from f8pysdk.codec import coerce_flag
 from pathlib import Path
 import logging
 import time
@@ -42,20 +43,6 @@ _CONTROL_STATE_NAMES = {
     OPERATOR_ID_FIELD_NAME,
 }
 
-
-def _coerce_bool(value: Any, *, default: bool) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        return bool(value)
-    text = str(value or "").strip().lower()
-    if text in ("1", "true", "yes", "on"):
-        return True
-    if text in ("0", "false", "no", "off", ""):
-        return False
-    return bool(default)
-
-
 class RecorderRuntimeNode(OperatorNode):
     def __init__(self, *, node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any] | None = None) -> None:
         super().__init__(
@@ -68,8 +55,8 @@ class RecorderRuntimeNode(OperatorNode):
         )
         self._initial_state = dict(initial_state or {})
         self._path = str(self._initial_state.get("path") or "").strip()
-        self._enabled = _coerce_bool(self._initial_state.get("enabled"), default=True)
-        self._append = _coerce_bool(self._initial_state.get("append"), default=True)
+        self._enabled = coerce_flag(self._initial_state.get("enabled"), default=True)
+        self._append = coerce_flag(self._initial_state.get("append"), default=True)
         self._writer: RecordingWriter | None = None
         self._writer_path = ""
         self._session_start_ts_ms: int | None = None
@@ -94,13 +81,13 @@ class RecorderRuntimeNode(OperatorNode):
             self._close_writer()
             return
         if name == "enabled":
-            self._enabled = _coerce_bool(value, default=self._enabled)
+            self._enabled = coerce_flag(value, default=self._enabled)
             if not self._enabled:
                 self._close_writer()
                 await self._safe_set_state("recording", False)
             return
         if name == "append":
-            self._append = _coerce_bool(value, default=self._append)
+            self._append = coerce_flag(value, default=self._append)
             self._close_writer()
             return
         if name not in self._user_state_names:
@@ -127,7 +114,7 @@ class RecorderRuntimeNode(OperatorNode):
         del ts_ms, meta
         name = str(field or "").strip()
         if name in ("enabled", "append"):
-            return _coerce_bool(value, default=(name == "enabled"))
+            return coerce_flag(value, default=(name == "enabled"))
         if name == "path":
             return str(value or "").strip()
         return value
@@ -220,7 +207,6 @@ class RecorderRuntimeNode(OperatorNode):
         if writer is not None:
             writer.close()
 
-
 def _coerce_ts_ms(exec_id: str | int) -> int:
     if isinstance(exec_id, int):
         return int(exec_id)
@@ -230,10 +216,8 @@ def _coerce_ts_ms(exec_id: str | int) -> int:
     except ValueError:
         return now_ms()
 
-
 def now_ms() -> int:
     return int(time.time() * 1000.0)
-
 
 RecorderRuntimeNode.SPEC = F8OperatorSpec(
     schemaVersion=F8OperatorSchemaVersion.f8operator_1,
@@ -327,7 +311,6 @@ RecorderRuntimeNode.SPEC = F8OperatorSpec(
         ),
     ],
 )
-
 
 def register_operator(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
 

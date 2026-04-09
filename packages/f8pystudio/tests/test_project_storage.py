@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import closing
 import json
 from pathlib import Path
 import sqlite3
@@ -31,7 +32,7 @@ def test_assets_database_initializes_component_project_and_variant_tables(tmp_pa
     db = AssetsDatabase(path=tmp_path / "assets.db")
     db.ensure_initialized()
 
-    with sqlite3.connect(db.path) as conn:
+    with closing(sqlite3.connect(db.path)) as conn:
         rows = conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
     table_names = {str(row[0]) for row in rows}
 
@@ -94,7 +95,7 @@ def test_assets_database_serializes_concurrent_initialization_for_same_path(tmp_
 
 def test_assets_database_migrates_remote_cache_library_slug_columns(tmp_path: Path) -> None:
     db_path = tmp_path / "assets.db"
-    with sqlite3.connect(db_path) as conn:
+    with closing(sqlite3.connect(db_path)) as conn:
         conn.execute(
             """
             CREATE TABLE component_remote_cache (
@@ -136,7 +137,7 @@ def test_assets_database_migrates_remote_cache_library_slug_columns(tmp_path: Pa
     db = AssetsDatabase(path=db_path)
     db.ensure_initialized()
 
-    with sqlite3.connect(db.path) as conn:
+    with closing(sqlite3.connect(db.path)) as conn:
         component_columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(component_remote_cache)").fetchall()}
         variant_columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(variant_remote_cache)").fetchall()}
 
@@ -154,7 +155,7 @@ def test_component_catalog_uses_head_only_local_component_schema(tmp_path: Path)
     assert [version.versionNumber for version in versions] == [1]
     assert service.local_version_record(saved.record.componentId, 1) is not None
 
-    with sqlite3.connect(tmp_path / "assets.db") as conn:
+    with closing(sqlite3.connect(tmp_path / "assets.db")) as conn:
         table_names = {str(row[0]) for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
 
     assert "component_heads_local" in table_names
@@ -186,7 +187,7 @@ def _insert_legacy_project_history(
 ) -> None:
     created_at = "2026-01-01T00:00:00Z"
     updated_at = "2026-01-31T00:00:00Z"
-    with sqlite3.connect(db_path) as conn:
+    with closing(sqlite3.connect(db_path)) as conn:
         conn.execute(
             """
             INSERT INTO project_heads (

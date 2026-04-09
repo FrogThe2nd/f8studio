@@ -125,7 +125,7 @@ Data contract:
 - Compatibility aliases remain limited to local delivery naming: `data_delivery="push"|"pull"|"both"`.
 
 Stable helper modules:
-- `f8pysdk.codec`: msgpack request/reply helpers (`encode_obj`, `decode_obj`, `decode_as`)
+- `f8pysdk.codec`: msgpack request/reply helpers plus shared primitive coercion helpers (`encode_obj`, `decode_obj`, `decode_as`, `coerce_*`, `parse_*`)
 - `f8pysdk.specs`: generated protocol models plus schema/spec helpers
 - `f8pysdk.state`: canonical state result/error/context types
 - `f8pysdk.command`: command output/result enums and result envelopes
@@ -135,6 +135,13 @@ Stable helper modules:
 - `f8pysdk.registry`: runtime registry and registry errors
 - `f8pysdk.transport`: NATS transport façade and KV reset helpers
 - `f8pysdk.testing`: in-memory harness plus emit/pull/buffer helpers for tests
+
+Coercion contract:
+- `parse_*` means “best-effort parse”. It returns `None` when the input is missing or invalid, so callers can decide what to do next.
+- `coerce_*` means “produce a usable value here”. It falls back to an explicit `default` and may also clamp/bound the result.
+- Prefer `parse_*` at validation or branching points where `None` is meaningful.
+- Prefer `coerce_*` at config/state consumption points where runtime code needs a concrete value.
+- Avoid naming a helper `parse_*` if it always returns a fallback value; that is `coerce_*` semantics.
 
 ### Headless Runner
 

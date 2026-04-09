@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from f8pysdk.codec import parse_bool, parse_number_sequence
 from f8pysdk.specs import (
     F8DataPortSpec,
     F8OperatorSchemaVersion,
@@ -23,8 +24,6 @@ from ._signal_processing import (
     ExponentialTrendTracker,
     NodeComputationCache,
     clamp_alpha,
-    coerce_bool,
-    coerce_sequence,
     format_output,
 )
 
@@ -52,7 +51,7 @@ class DetrendRuntimeNode(OperatorNode):
         self._initial_state = dict(initial_state or {})
         self._mode = _normalize_mode(self._initial_state.get("mode"))
         self._alpha = clamp_alpha(self._initial_state.get("alpha"), default=0.05)
-        self._reset_on_state_change = coerce_bool(self._initial_state.get("reset_on_state_change"))
+        self._reset_on_state_change = parse_bool(self._initial_state.get("reset_on_state_change"))
         if self._reset_on_state_change is None:
             self._reset_on_state_change = True
         self._trackers: list[ExponentialTrendTracker] = []
@@ -87,7 +86,7 @@ class DetrendRuntimeNode(OperatorNode):
                 self._cache.mark_dirty()
             return
         if name == "reset_on_state_change":
-            reset_value = coerce_bool(value)
+            reset_value = parse_bool(value)
             if reset_value is not None:
                 self._reset_on_state_change = reset_value
 
@@ -95,7 +94,7 @@ class DetrendRuntimeNode(OperatorNode):
         if str(port) != "value":
             return None
 
-        sample = coerce_sequence(await self.pull("value", ctx_id=ctx_id))
+        sample = parse_number_sequence(await self.pull("value", ctx_id=ctx_id))
         if sample is None:
             return format_output(self._cache.last_output)
         if self._cache.should_reuse(sample, ctx_id):

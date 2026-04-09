@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from f8pysdk.codec import parse_bool, parse_number_sequence
 from f8pysdk.specs import (
     F8DataPortSpec,
     F8OperatorSchemaVersion,
@@ -23,8 +24,6 @@ from ._signal_processing import (
     SosFilterBank,
     clamp_order,
     clamp_positive,
-    coerce_bool,
-    coerce_sequence,
     design_bandpass,
     format_output,
     sampling_hz_from_interval_ms,
@@ -48,7 +47,7 @@ class BandpassFilterRuntimeNode(OperatorNode):
         self._low_cutoff = clamp_positive(self._initial_state.get("low_cutoff"), default=1.0, minimum=1e-6)
         self._high_cutoff = clamp_positive(self._initial_state.get("high_cutoff"), default=8.0, minimum=1e-6)
         self._order = clamp_order(self._initial_state.get("order"), default=2)
-        self._reset_on_state_change = coerce_bool(self._initial_state.get("reset_on_state_change"))
+        self._reset_on_state_change = parse_bool(self._initial_state.get("reset_on_state_change"))
         if self._reset_on_state_change is None:
             self._reset_on_state_change = True
         self._sos = design_bandpass(
@@ -100,7 +99,7 @@ class BandpassFilterRuntimeNode(OperatorNode):
             self._rebuild_filter(reset_state=self._reset_on_state_change)
             return
         if name == "reset_on_state_change":
-            reset_value = coerce_bool(value)
+            reset_value = parse_bool(value)
             if reset_value is not None:
                 self._reset_on_state_change = reset_value
 
@@ -108,7 +107,7 @@ class BandpassFilterRuntimeNode(OperatorNode):
         if str(port) != "value":
             return None
 
-        sample = coerce_sequence(await self.pull("value", ctx_id=ctx_id))
+        sample = parse_number_sequence(await self.pull("value", ctx_id=ctx_id))
         if sample is None:
             return format_output(self._cache.last_output)
         if self._cache.should_reuse(sample, ctx_id):

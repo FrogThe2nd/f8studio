@@ -4,6 +4,7 @@ import logging
 import time
 from typing import Any
 
+from f8pysdk.codec import coerce_bool
 from f8pysdk.specs import (
     F8OperatorSchemaVersion,
     F8OperatorSpec,
@@ -23,7 +24,6 @@ from f8pysdk.registry import RuntimeNodeRegistry
 
 from f8pystudio.studio_specs.identifiers import SERVICE_CLASS
 from ._py_expr_eval import (
-    coerce_bool,
     compile_expr,
     is_identifier,
     normalize_expr_code,

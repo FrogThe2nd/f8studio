@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import math
+from f8pysdk.codec import parse_number
 import time
 from typing import Any
 
@@ -14,30 +14,12 @@ from f8pysdk.specs import (
     number_schema,
 )
 from f8pysdk.nats_naming import ensure_token
-from f8pysdk.nodes import RuntimeNode, OperatorNode
+from f8pysdk.nodes import OperatorNode
 from f8pysdk.registry import RuntimeNodeRegistry
 
 from ..constants import SERVICE_CLASS
-from ._ports import exec_out_ports
 
 OPERATOR_CLASS = "f8.rate_limiter"
-
-_EPS = 1e-9
-
-
-def _coerce_number(value: Any) -> float | None:
-    if value is None:
-        return None
-    if isinstance(value, bool):
-        return None
-    try:
-        f = float(value)
-    except Exception:
-        return None
-    if math.isnan(f) or math.isinf(f):
-        return None
-    return f
-
 
 def _clamp(v: float, lo: float, hi: float) -> float:
     if v < lo:
@@ -45,7 +27,6 @@ def _clamp(v: float, lo: float, hi: float) -> float:
     if v > hi:
         return hi
     return v
-
 
 class RateLimiterRuntimeNode(OperatorNode):
     """
@@ -69,11 +50,11 @@ class RateLimiterRuntimeNode(OperatorNode):
         )
         self._initial_state = dict(initial_state or {})
 
-        self._in_min = float(_coerce_number(self._initial_state.get("inMin")) or 0.0)
-        self._in_max = float(_coerce_number(self._initial_state.get("inMax")) or 1.0)
-        self._max_rate_up = float(_coerce_number(self._initial_state.get("maxRateUp")) or 2.0)
-        self._max_rate_down = float(_coerce_number(self._initial_state.get("maxRateDown")) or 2.0)
-        self._max_accel = float(_coerce_number(self._initial_state.get("maxAccel")) or 0.0)
+        self._in_min = float(parse_number(self._initial_state.get("inMin")) or 0.0)
+        self._in_max = float(parse_number(self._initial_state.get("inMax")) or 1.0)
+        self._max_rate_up = float(parse_number(self._initial_state.get("maxRateUp")) or 2.0)
+        self._max_rate_down = float(parse_number(self._initial_state.get("maxRateDown")) or 2.0)
+        self._max_accel = float(parse_number(self._initial_state.get("maxAccel")) or 0.0)
 
         self._y: float | None = None
         self._v: float = 0.0
@@ -85,7 +66,7 @@ class RateLimiterRuntimeNode(OperatorNode):
         self._dirty = True
 
     def _apply_state(self, name: str, value: Any) -> None:
-        numeric = _coerce_number(value)
+        numeric = parse_number(value)
         if name in {"inMin", "inMax"}:
             if numeric is None:
                 return
@@ -176,7 +157,7 @@ class RateLimiterRuntimeNode(OperatorNode):
             return None
 
         raw = await self.pull("value", ctx_id=ctx_id)
-        numeric = _coerce_number(raw)
+        numeric = parse_number(raw)
         if numeric is None:
             return self._last_out
 
@@ -192,7 +173,6 @@ class RateLimiterRuntimeNode(OperatorNode):
         self._last_ctx_id = ctx_id
         self._dirty = False
         return self._last_out
-
 
 RateLimiterRuntimeNode.SPEC = F8OperatorSpec(
     schemaVersion=F8OperatorSchemaVersion.f8operator_1,
@@ -255,7 +235,6 @@ RateLimiterRuntimeNode.SPEC = F8OperatorSpec(
         ),
     ],
 )
-
 
 def register_operator(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
 

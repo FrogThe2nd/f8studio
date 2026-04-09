@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import math
+from f8pysdk.codec import parse_number
 from typing import Any, Callable
 
 from f8pysdk.specs import (
@@ -37,49 +37,28 @@ CURVE_CHOICES = (
     CURVE_EASE_IN_OUT,
 )
 
-
-def _coerce_number(value: Any) -> float | None:
-    if value is None:
-        return None
-    if isinstance(value, bool):
-        return None
-    try:
-        f = float(value)
-    except Exception:
-        return None
-    if math.isnan(f) or math.isinf(f):
-        return None
-    return f
-
-
 def _normalize_curve(value: Any) -> str:
     name = str(value or "").strip().upper()
     if name in CURVE_CHOICES:
         return name
     return CURVE_LINEAR
 
-
 def _smoothstep(t: float) -> float:
     return t * t * (3.0 - 2.0 * t)
-
 
 def _smootherstep(t: float) -> float:
     return t * t * t * (t * (t * 6.0 - 15.0) + 10.0)
 
-
 def _ease_in(t: float) -> float:
     return t * t
 
-
 def _ease_out(t: float) -> float:
     return 1.0 - (1.0 - t) * (1.0 - t)
-
 
 def _ease_in_out(t: float) -> float:
     if t < 0.5:
         return 2.0 * t * t
     return 1.0 - 2.0 * (1.0 - t) * (1.0 - t)
-
 
 _CURVE_FN: dict[str, Callable[[float], float]] = {
     CURVE_LINEAR: lambda t: t,
@@ -89,7 +68,6 @@ _CURVE_FN: dict[str, Callable[[float], float]] = {
     CURVE_EASE_OUT: _ease_out,
     CURVE_EASE_IN_OUT: _ease_in_out,
 }
-
 
 class RangeMapRuntimeNode(OperatorNode):
     """
@@ -105,10 +83,10 @@ class RangeMapRuntimeNode(OperatorNode):
         )
         self._initial_state = dict(initial_state or {})
 
-        self._in_min = float(_coerce_number(self._initial_state.get("inMin")) or 0.0)
-        self._in_max = float(_coerce_number(self._initial_state.get("inMax")) or 1.0)
-        self._out_min = float(_coerce_number(self._initial_state.get("outMin")) or 0.0)
-        self._out_max = float(_coerce_number(self._initial_state.get("outMax")) or 1.0)
+        self._in_min = float(parse_number(self._initial_state.get("inMin")) or 0.0)
+        self._in_max = float(parse_number(self._initial_state.get("inMax")) or 1.0)
+        self._out_min = float(parse_number(self._initial_state.get("outMin")) or 0.0)
+        self._out_max = float(parse_number(self._initial_state.get("outMax")) or 1.0)
         self._curve = _normalize_curve(self._initial_state.get("curve"))
 
         self._last_output: float | None = None
@@ -118,19 +96,19 @@ class RangeMapRuntimeNode(OperatorNode):
 
     def _apply_state(self, name: str, value: Any) -> None:
         if name == "inMin":
-            numeric = _coerce_number(value)
+            numeric = parse_number(value)
             if numeric is not None:
                 self._in_min = float(numeric)
         elif name == "inMax":
-            numeric = _coerce_number(value)
+            numeric = parse_number(value)
             if numeric is not None:
                 self._in_max = float(numeric)
         elif name == "outMin":
-            numeric = _coerce_number(value)
+            numeric = parse_number(value)
             if numeric is not None:
                 self._out_min = float(numeric)
         elif name == "outMax":
-            numeric = _coerce_number(value)
+            numeric = parse_number(value)
             if numeric is not None:
                 self._out_max = float(numeric)
         elif name == "curve":
@@ -147,7 +125,7 @@ class RangeMapRuntimeNode(OperatorNode):
             return None
 
         raw_value = await self.pull("value", ctx_id=ctx_id)
-        numeric = _coerce_number(raw_value)
+        numeric = parse_number(raw_value)
         if numeric is None:
             return self._last_output
 
@@ -181,7 +159,6 @@ class RangeMapRuntimeNode(OperatorNode):
         self._last_ctx_id = ctx_id
         self._dirty = False
         return self._last_output
-
 
 RangeMapRuntimeNode.SPEC = F8OperatorSpec(
     schemaVersion=F8OperatorSchemaVersion.f8operator_1,
@@ -246,7 +223,6 @@ RangeMapRuntimeNode.SPEC = F8OperatorSpec(
         ),
     ],
 )
-
 
 def register_operator(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
 

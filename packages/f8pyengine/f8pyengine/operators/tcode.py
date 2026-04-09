@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from f8pysdk.codec import parse_number
 import math
 from typing import Any, Final
 
@@ -24,21 +25,6 @@ OPERATOR_CLASS: Final[str] = "f8.tcode"
 
 AXES: Final[tuple[str, ...]] = ("L0", "L1", "L2", "R0", "R1", "R2", "V0", "V1", "A0", "A1")
 
-
-def _coerce_number(value: Any) -> float | None:
-    if value is None:
-        return None
-    if isinstance(value, bool):
-        return None
-    try:
-        f = float(value)
-    except Exception:
-        return None
-    if math.isnan(f) or math.isinf(f):
-        return None
-    return f
-
-
 def _js_round(value: float) -> int:
     """
     Match JavaScript Math.round behavior: halves round away from zero.
@@ -46,7 +32,6 @@ def _js_round(value: float) -> int:
     if value >= 0:
         return int(math.floor(value + 0.5))
     return -int(math.floor(abs(value) + 0.5))
-
 
 class TCodeRuntimeNode(OperatorNode):
     """
@@ -69,7 +54,7 @@ class TCodeRuntimeNode(OperatorNode):
         if port_s != "tcode":
             return None
 
-        interval_ms = _coerce_number(await self.pull("intervalMs", ctx_id=ctx_id))
+        interval_ms = parse_number(await self.pull("intervalMs", ctx_id=ctx_id))
         if interval_ms is None:
             interval_ms = await self.get_state_value("intervalMs")
             if interval_ms is None:
@@ -79,7 +64,7 @@ class TCodeRuntimeNode(OperatorNode):
         commands: list[str] = []
         for axis in AXES:
             raw_value = await self.pull(axis, ctx_id=ctx_id)
-            numeric = _coerce_number(raw_value)
+            numeric = parse_number(raw_value)
             if numeric is None:
                 continue
             clamped = min(1.0, max(0.0, float(numeric)))
@@ -97,14 +82,13 @@ class TCodeRuntimeNode(OperatorNode):
         name = str(field or "").strip()
         if name != "intervalMs":
             return value
-        numeric = _coerce_number(value)
+        numeric = parse_number(value)
         if numeric is None:
             raise ValueError("intervalMs must be a number")
         interval_i = max(1, _js_round(float(numeric)))
         if interval_i > 50000:
             raise ValueError("intervalMs must be <= 50000")
         return interval_i
-
 
 TCodeRuntimeNode.SPEC = F8OperatorSpec(
     schemaVersion=F8OperatorSchemaVersion.f8operator_1,
@@ -147,7 +131,6 @@ TCodeRuntimeNode.SPEC = F8OperatorSpec(
         )
     ],
 )
-
 
 def register_operator(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
 

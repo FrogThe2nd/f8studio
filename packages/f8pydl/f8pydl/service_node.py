@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import time
 import traceback
 from collections import deque
@@ -9,6 +8,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal
 
+from f8pysdk.codec import coerce_bool, coerce_float, coerce_int, coerce_str, parse_str_list
 from f8pysdk.nats_naming import ensure_token
 from f8pysdk.nodes import ServiceNode
 from f8pysdk.shm.video import VideoShmReader
@@ -39,79 +39,6 @@ def _default_weights_dir() -> Path:
         except Exception:
             continue
     return candidates[0] if candidates else Path.cwd().resolve()
-
-
-def _coerce_int(v: Any, *, default: int, minimum: int | None = None, maximum: int | None = None) -> int:
-    try:
-        out = int(v)
-    except Exception:
-        out = int(default)
-    if minimum is not None and out < minimum:
-        out = int(minimum)
-    if maximum is not None and out > maximum:
-        out = int(maximum)
-    return out
-
-
-def _coerce_float(v: Any, *, default: float, minimum: float | None = None, maximum: float | None = None) -> float:
-    try:
-        out = float(v)
-    except Exception:
-        out = float(default)
-    if minimum is not None and out < minimum:
-        out = float(minimum)
-    if maximum is not None and out > maximum:
-        out = float(maximum)
-    return out
-
-
-def _coerce_str(v: Any, *, default: str = "") -> str:
-    try:
-        s = str(v) if v is not None else ""
-    except Exception:
-        s = ""
-    s = s.strip()
-    return s if s else default
-
-
-def _coerce_str_list(v: Any) -> list[str]:
-    if isinstance(v, (list, tuple)):
-        out: list[str] = []
-        for item in v:
-            s = _coerce_str(item)
-            if s:
-                out.append(s)
-        return out
-    if isinstance(v, str):
-        raw = v.strip()
-        if not raw:
-            return []
-        try:
-            parsed = json.loads(raw)
-        except Exception:
-            parsed = None
-        if isinstance(parsed, (list, tuple)):
-            out2: list[str] = []
-            for item in parsed:
-                s = _coerce_str(item)
-                if s:
-                    out2.append(s)
-            return out2
-    return []
-
-
-def _coerce_bool(v: Any, *, default: bool) -> bool:
-    if isinstance(v, bool):
-        return v
-    if isinstance(v, (int, float)):
-        return bool(v)
-    if isinstance(v, str):
-        s = v.strip().lower()
-        if s in ("1", "true", "yes", "on"):
-            return True
-        if s in ("0", "false", "no", "off"):
-            return False
-    return bool(default)
 
 
 def _resolve_path_from_cwd_or_repo(raw: str) -> Path:
@@ -333,30 +260,32 @@ class OnnxVisionServiceNode(ServiceNode):
         await self._ensure_config_loaded()
 
         if name == "weightsDir":
-            raw = _coerce_str(await self.get_state_value("weightsDir"), default=str(self._weights_dir))
+            raw = coerce_str(await self.get_state_value("weightsDir"), default=str(self._weights_dir))
             self._weights_dir = _resolve_path_from_cwd_or_repo(raw)
             await self._publish_model_index()
             await self._reset_runtime()
             return
 
         if name == "modelId":
-            self._model_id = _coerce_str(await self.get_state_value("modelId"), default=self._model_id)
+            self._model_id = coerce_str(await self.get_state_value("modelId"), default=self._model_id)
             await self._reset_runtime()
             return
 
         if name == "modelYamlPath":
-            self._model_yaml_path = _coerce_str(await self.get_state_value("modelYamlPath"), default=self._model_yaml_path)
+            self._model_yaml_path = coerce_str(
+                await self.get_state_value("modelYamlPath"), default=self._model_yaml_path
+            )
             await self._reset_runtime()
             return
 
         if name == "ortProvider":
-            v = _coerce_str(await self.get_state_value("ortProvider"), default=str(self._ort_provider)).lower()
+            v = coerce_str(await self.get_state_value("ortProvider"), default=str(self._ort_provider)).lower()
             self._ort_provider = v if v in ("auto", "cuda", "cpu") else "auto"
             await self._reset_runtime()
             return
 
         if name == "inferEveryN":
-            self._infer_every_n = _coerce_int(
+            self._infer_every_n = coerce_int(
                 await self.get_state_value("inferEveryN"),
                 default=self._infer_every_n,
                 minimum=1,
@@ -365,31 +294,39 @@ class OnnxVisionServiceNode(ServiceNode):
             return
 
         if name == "confThreshold":
-            self._conf_override = _coerce_float(await self.get_state_value("confThreshold"), default=self._conf_override)
+            self._conf_override = coerce_float(
+                await self.get_state_value("confThreshold"), default=self._conf_override
+            )
             await self._reset_runtime()
             return
 
         if name == "iouThreshold":
-            self._iou_override = _coerce_float(await self.get_state_value("iouThreshold"), default=self._iou_override)
+            self._iou_override = coerce_float(await self.get_state_value("iouThreshold"), default=self._iou_override)
             await self._reset_runtime()
             return
 
         if name == "topK":
-            self._top_k = _coerce_int(await self.get_state_value("topK"), default=self._top_k, minimum=1, maximum=100)
+            self._top_k = coerce_int(await self.get_state_value("topK"), default=self._top_k, minimum=1, maximum=100)
             return
 
         if name == "shmName":
-            self._shm_name = _coerce_str(await self.get_state_value("shmName"), default=self._shm_name)
+            self._shm_name = coerce_str(await self.get_state_value("shmName"), default=self._shm_name)
             await self._maybe_reopen_shm()
             return
 
         if name == "enabledClasses":
-            self._enabled_classes = _coerce_str_list(await self.get_state_value("enabledClasses"))
+            self._enabled_classes = (
+                parse_str_list(
+                    await self.get_state_value("enabledClasses"),
+                    allow_json_string=True,
+                )
+                or []
+            )
             self._enabled_classes = self._normalize_enabled_classes(self._enabled_classes)
             return
 
         if name == "perClassK":
-            self._per_class_k = _coerce_int(
+            self._per_class_k = coerce_int(
                 await self.get_state_value("perClassK"),
                 default=self._per_class_k,
                 minimum=0,
@@ -398,7 +335,7 @@ class OnnxVisionServiceNode(ServiceNode):
             return
 
         if name == "autoDownloadWeights":
-            self._auto_download_weights = _coerce_bool(
+            self._auto_download_weights = coerce_bool(
                 await self.get_state_value("autoDownloadWeights"),
                 default=self._auto_download_weights,
             )
@@ -408,53 +345,63 @@ class OnnxVisionServiceNode(ServiceNode):
         if self._config_loaded:
             return
 
-        raw_weights = _coerce_str(
+        raw_weights = coerce_str(
             await self.get_state_value("weightsDir"),
             default=str(self._initial_state.get("weightsDir") or _default_weights_dir()),
         )
         self._weights_dir = _resolve_path_from_cwd_or_repo(raw_weights)
-        self._model_id = _coerce_str(await self.get_state_value("modelId"), default=str(self._initial_state.get("modelId") or ""))
-        self._model_yaml_path = _coerce_str(
+        self._model_id = coerce_str(
+            await self.get_state_value("modelId"), default=str(self._initial_state.get("modelId") or "")
+        )
+        self._model_yaml_path = coerce_str(
             await self.get_state_value("modelYamlPath"),
             default=str(self._initial_state.get("modelYamlPath") or ""),
         )
-        v = _coerce_str(await self.get_state_value("ortProvider"), default=str(self._initial_state.get("ortProvider") or "auto")).lower()
+        v = coerce_str(
+            await self.get_state_value("ortProvider"), default=str(self._initial_state.get("ortProvider") or "auto")
+        ).lower()
         self._ort_provider = v if v in ("auto", "cuda", "cpu") else "auto"
-        self._infer_every_n = _coerce_int(
+        self._infer_every_n = coerce_int(
             await self.get_state_value("inferEveryN"),
             default=int(self._initial_state.get("inferEveryN") or 1),
             minimum=1,
             maximum=10000,
         )
-        self._conf_override = _coerce_float(
+        self._conf_override = coerce_float(
             await self.get_state_value("confThreshold"),
             default=float(self._initial_state.get("confThreshold") or -1.0),
         )
-        self._iou_override = _coerce_float(
+        self._iou_override = coerce_float(
             await self.get_state_value("iouThreshold"),
             default=float(self._initial_state.get("iouThreshold") or -1.0),
         )
-        self._top_k = _coerce_int(
+        self._top_k = coerce_int(
             await self.get_state_value("topK"),
             default=int(self._initial_state.get("topK") or 5),
             minimum=1,
             maximum=100,
         )
-        self._enabled_classes = _coerce_str_list(
-            await self.get_state_value("enabledClasses"),
+        self._enabled_classes = (
+            parse_str_list(
+                await self.get_state_value("enabledClasses"),
+                allow_json_string=True,
+            )
+            or []
         )
         self._enabled_classes = self._normalize_enabled_classes(self._enabled_classes)
-        self._per_class_k = _coerce_int(
+        self._per_class_k = coerce_int(
             await self.get_state_value("perClassK"),
             default=int(self._initial_state.get("perClassK") or 0),
             minimum=0,
             maximum=10000,
         )
-        self._auto_download_weights = _coerce_bool(
+        self._auto_download_weights = coerce_bool(
             await self.get_state_value("autoDownloadWeights"),
             default=bool(self._initial_state.get("autoDownloadWeights", True)),
         )
-        self._shm_name = _coerce_str(await self.get_state_value("shmName"), default=str(self._initial_state.get("shmName") or ""))
+        self._shm_name = coerce_str(
+            await self.get_state_value("shmName"), default=str(self._initial_state.get("shmName") or "")
+        )
         self._config_loaded = True
         await self._publish_model_index()
 
@@ -584,7 +531,7 @@ class OnnxVisionServiceNode(ServiceNode):
         out: list[str] = []
         seen: set[str] = set()
         for raw in values:
-            name = _coerce_str(raw)
+            name = coerce_str(raw)
             if not name:
                 continue
             if allowed and name not in allowed:
@@ -793,8 +740,7 @@ class OnnxVisionServiceNode(ServiceNode):
             )
         if not spec.onnx_url:
             raise FileNotFoundError(
-                f"Model file not found: {spec.onnx_path}. "
-                "No onnxUrl is configured in model yaml."
+                f"Model file not found: {spec.onnx_path}. " "No onnxUrl is configured in model yaml."
             )
         now = time.monotonic()
         if float(now) < float(self._download_retry_at_monotonic):
@@ -941,7 +887,9 @@ class OnnxVisionServiceNode(ServiceNode):
                 await self._record_exception(where="loop", exc=exc)
                 await asyncio.sleep(0.1)
 
-    def _build_detection_payload(self, *, width: int, height: int, frame_id: int, ts_ms: int, detections: list[Any]) -> dict[str, Any]:
+    def _build_detection_payload(
+        self, *, width: int, height: int, frame_id: int, ts_ms: int, detections: list[Any]
+    ) -> dict[str, Any]:
         detections = self._apply_detection_filters(detections)
         skeleton_protocol = "none"
         if self._model is not None:

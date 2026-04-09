@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from f8pysdk.codec import coerce_flag
 from f8pysdk.specs import (
     F8CollectionEditPolicy,
     F8OperatorSchemaVersion,
@@ -147,16 +148,16 @@ class ValueStepperRuntimeNode(OperatorNode):
 
     def __init__(self, *, node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any] | None = None) -> None:
         initial = dict(initial_state or {})
-        minimum = self._coerce_float(initial.get("min"), 0.0)
-        maximum = self._coerce_float(initial.get("max"), 1.0)
+        minimum = self._convert_float_or_default(initial.get("min"), 0.0)
+        maximum = self._convert_float_or_default(initial.get("max"), 1.0)
         self._minimum, self._maximum = self._ordered_bounds(minimum, maximum)
-        self._step = self._coerce_non_negative_float(initial.get("step"), 0.01)
-        self._accelerated_step = self._coerce_non_negative_float(initial.get("acceleratedStep"), 0.05)
+        self._step = self._convert_non_negative_float_or_default(initial.get("step"), 0.01)
+        self._accelerated_step = self._convert_non_negative_float_or_default(initial.get("acceleratedStep"), 0.05)
         self._step_mode = self._coerce_step_mode(initial.get("stepMode"))
-        self._loop = self._coerce_bool(initial.get("loop"), False)
-        self._value = self._coerce_value_in_bounds(self._coerce_float(initial.get("value"), 0.0))
-        self._increase_trigger = self._coerce_int(initial.get("increaseTrigger"), 0)
-        self._decrease_trigger = self._coerce_int(initial.get("decreaseTrigger"), 0)
+        self._loop = coerce_flag(initial.get("loop"), default=False)
+        self._value = self._coerce_value_in_bounds(self._convert_float_or_default(initial.get("value"), 0.0))
+        self._increase_trigger = self._convert_int_or_default(initial.get("increaseTrigger"), 0)
+        self._decrease_trigger = self._convert_int_or_default(initial.get("decreaseTrigger"), 0)
         self._last_trigger_ts_ms = 0
 
         super().__init__(
@@ -169,18 +170,18 @@ class ValueStepperRuntimeNode(OperatorNode):
         )
 
     @staticmethod
-    def _coerce_float(value: Any, default: float) -> float:
+    def _convert_float_or_default(value: Any, default: float) -> float:
         if value is None:
             return float(default)
         return float(value)
 
     @staticmethod
-    def _coerce_non_negative_float(value: Any, default: float) -> float:
-        coerced = ValueStepperRuntimeNode._coerce_float(value, default)
+    def _convert_non_negative_float_or_default(value: Any, default: float) -> float:
+        coerced = ValueStepperRuntimeNode._convert_float_or_default(value, default)
         return coerced if coerced >= 0.0 else 0.0
 
     @staticmethod
-    def _coerce_int(value: Any, default: int) -> int:
+    def _convert_int_or_default(value: Any, default: int) -> int:
         if value is None:
             return int(default)
         return int(value)
@@ -197,21 +198,6 @@ class ValueStepperRuntimeNode(OperatorNode):
         if text not in _STEP_MODE_VALUES:
             return _STEP_MODE_FIXED
         return text
-
-    @staticmethod
-    def _coerce_bool(value: Any, default: bool) -> bool:
-        if value is None:
-            return bool(default)
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, (int, float)):
-            return bool(value)
-        text = str(value).strip().lower()
-        if text in {"1", "true", "yes", "on"}:
-            return True
-        if text in {"0", "false", "no", "off"}:
-            return False
-        return bool(default)
 
     def _clamp_value(self, value: float) -> float:
         lower, upper = self._ordered_bounds(self._minimum, self._maximum)
@@ -255,52 +241,52 @@ class ValueStepperRuntimeNode(OperatorNode):
         del meta
 
         if field == "value":
-            return self._coerce_value_in_bounds(self._coerce_float(value, self._value))
+            return self._coerce_value_in_bounds(self._convert_float_or_default(value, self._value))
         if field == "min":
-            candidate = self._coerce_float(value, self._minimum)
+            candidate = self._convert_float_or_default(value, self._minimum)
             return candidate if candidate <= self._maximum else self._maximum
         if field == "max":
-            candidate = self._coerce_float(value, self._maximum)
+            candidate = self._convert_float_or_default(value, self._maximum)
             return candidate if candidate >= self._minimum else self._minimum
         if field == "step":
-            return self._coerce_non_negative_float(value, self._step)
+            return self._convert_non_negative_float_or_default(value, self._step)
         if field == "acceleratedStep":
-            return self._coerce_non_negative_float(value, self._accelerated_step)
+            return self._convert_non_negative_float_or_default(value, self._accelerated_step)
         if field == "loop":
-            return self._coerce_bool(value, self._loop)
+            return coerce_flag(value, default=self._loop)
         if field == "increaseTrigger":
-            return self._coerce_int(value, self._increase_trigger)
+            return self._convert_int_or_default(value, self._increase_trigger)
         if field == "decreaseTrigger":
-            return self._coerce_int(value, self._decrease_trigger)
+            return self._convert_int_or_default(value, self._decrease_trigger)
         if field == "stepMode":
             return self._coerce_step_mode(value)
         return value
 
     async def on_state(self, field: str, value: Any, *, ts_ms: int | None = None) -> None:
         if field == "value":
-            self._value = self._clamp_value(self._coerce_float(value, self._value))
+            self._value = self._clamp_value(self._convert_float_or_default(value, self._value))
             return
 
         if field == "min":
-            self._minimum = self._coerce_float(value, self._minimum)
+            self._minimum = self._convert_float_or_default(value, self._minimum)
             await self._sync_value_after_bounds_change(ts_ms=ts_ms)
             return
 
         if field == "max":
-            self._maximum = self._coerce_float(value, self._maximum)
+            self._maximum = self._convert_float_or_default(value, self._maximum)
             await self._sync_value_after_bounds_change(ts_ms=ts_ms)
             return
 
         if field == "step":
-            self._step = self._coerce_non_negative_float(value, self._step)
+            self._step = self._convert_non_negative_float_or_default(value, self._step)
             return
 
         if field == "acceleratedStep":
-            self._accelerated_step = self._coerce_non_negative_float(value, self._accelerated_step)
+            self._accelerated_step = self._convert_non_negative_float_or_default(value, self._accelerated_step)
             return
 
         if field == "loop":
-            self._loop = self._coerce_bool(value, self._loop)
+            self._loop = coerce_flag(value, default=self._loop)
             coerced_value = self._coerce_value_in_bounds(self._value)
             if coerced_value == self._value:
                 return
@@ -313,12 +299,12 @@ class ValueStepperRuntimeNode(OperatorNode):
             return
 
         if field == "increaseTrigger":
-            self._increase_trigger = self._coerce_int(value, self._increase_trigger)
+            self._increase_trigger = self._convert_int_or_default(value, self._increase_trigger)
             await self._apply_trigger(delta=1.0, ts_ms=ts_ms)
             return
 
         if field == "decreaseTrigger":
-            self._decrease_trigger = self._coerce_int(value, self._decrease_trigger)
+            self._decrease_trigger = self._convert_int_or_default(value, self._decrease_trigger)
             await self._apply_trigger(delta=-1.0, ts_ms=ts_ms)
             return
 

@@ -7,6 +7,7 @@ import socket
 from dataclasses import dataclass
 from typing import Any
 
+from f8pysdk.codec import coerce_flag
 from f8pysdk.specs import (
     F8DataPortSpec,
     F8OperatorSchemaVersion,
@@ -98,7 +99,7 @@ class UdpOutRuntimeNode(OperatorNode):
                 raise ValueError("port must be in range 1..65535")
             return port
         if field_name in ("enabled", "appendNewline", "forceText"):
-            return self._coerce_bool(value, default=False if field_name == "appendNewline" else True)
+            return coerce_flag(value, default=False if field_name == "appendNewline" else True)
         return value
 
     async def close(self) -> None:
@@ -133,9 +134,9 @@ class UdpOutRuntimeNode(OperatorNode):
         return _UdpOutConfig(
             host=host_s,
             port=port_i,
-            enabled=self._coerce_bool(enabled, default=True),
-            append_newline=self._coerce_bool(append_newline, default=False),
-            force_text=self._coerce_bool(force_text, default=True),
+            enabled=coerce_flag(enabled, default=True),
+            append_newline=coerce_flag(append_newline, default=False),
+            force_text=coerce_flag(force_text, default=True),
         )
 
     async def _ensure_socket(self, *, force_restart: bool = False) -> None:
@@ -255,21 +256,6 @@ class UdpOutRuntimeNode(OperatorNode):
             return json.dumps(value, ensure_ascii=False, default=str)
         except TypeError:
             return str(value)
-
-    @staticmethod
-    def _coerce_bool(value: Any, *, default: bool) -> bool:
-        if isinstance(value, bool):
-            return value
-        if value is None:
-            return default
-        if isinstance(value, (int, float)):
-            return bool(value)
-        lowered = str(value).strip().lower()
-        if lowered in ("1", "true", "yes", "on"):
-            return True
-        if lowered in ("0", "false", "no", "off", ""):
-            return False
-        return default
 
     @staticmethod
     def _coerce_int(value: Any, *, default: int) -> int:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from f8pysdk.codec import parse_number
 import math
 import time
 from typing import Any
@@ -19,34 +20,17 @@ from f8pysdk.registry import RuntimeNodeRegistry
 
 from ..constants import SERVICE_CLASS
 
-
 COSINE_OPERATOR_CLASS = "f8.cosine"
 TEMPEST_OPERATOR_CLASS = "f8.tempest"
 PHASE_OPERATOR_CLASS = "f8.phase"
 
 _TWO_PI = 2.0 * math.pi
 
-
 def _float_or(value: Any, default: float) -> float:
     try:
         return float(value)
     except Exception:
         return float(default)
-
-
-def _coerce_number(value: Any) -> float | None:
-    if value is None:
-        return None
-    if isinstance(value, bool):
-        return None
-    try:
-        f = float(value)
-    except Exception:
-        return None
-    if math.isnan(f):
-        return None
-    return f
-
 
 class _PhaseAccumulator:
     """
@@ -92,7 +76,6 @@ class _PhaseAccumulator:
         self._turns = float(self._turns + hz_f * delta_s)
         return float(self._turns)
 
-
 class PhaseRuntimeNode(OperatorNode):
     """
     Phase source: advances and emits a normalized phase (0..1) plus unwrapped turns.
@@ -109,7 +92,7 @@ class PhaseRuntimeNode(OperatorNode):
         )
         self._initial_state = dict(initial_state or {})
 
-        init_phase = _coerce_number(self._initial_state.get("phase", 0.0))
+        init_phase = parse_number(self._initial_state.get("phase", 0.0))
         init_last = self._initial_state.get("__lastTimeS", None)
         self._acc = _PhaseAccumulator(
             initial_phase=float(init_phase if init_phase is not None else 0.0),
@@ -125,8 +108,8 @@ class PhaseRuntimeNode(OperatorNode):
         if p not in ("phase", "phaseTurns"):
             return None
 
-        in_hz = _coerce_number(await self.pull("hz", ctx_id=ctx_id))
-        in_phase = _coerce_number(await self.pull("phase", ctx_id=ctx_id))
+        in_hz = parse_number(await self.pull("hz", ctx_id=ctx_id))
+        in_phase = parse_number(await self.pull("phase", ctx_id=ctx_id))
         in_reset = await self.pull("reset", ctx_id=ctx_id)
 
         hz = in_hz
@@ -135,7 +118,7 @@ class PhaseRuntimeNode(OperatorNode):
             if hz is None:
                 hz = self._initial_state.get("hz", 1.0)
 
-        hz_f = _coerce_number(hz)
+        hz_f = parse_number(hz)
         if hz_f is None:
             hz_f = 1.0
         hz_f = max(0.0, hz_f)
@@ -149,7 +132,6 @@ class PhaseRuntimeNode(OperatorNode):
         if p == "phase":
             return float(float(turns) % 1.0)
         return float(turns)
-
 
 PhaseRuntimeNode.SPEC = F8OperatorSpec(
     schemaVersion=F8OperatorSchemaVersion.f8operator_1,
@@ -186,7 +168,6 @@ PhaseRuntimeNode.SPEC = F8OperatorSpec(
     ],
 )
 
-
 class CosineRuntimeNode(OperatorNode):
     """
     Sine phase transform: emits a numeric sample.
@@ -207,10 +188,10 @@ class CosineRuntimeNode(OperatorNode):
         if str(port) != "value":
             return None
 
-        in_amp = _coerce_number(await self.pull("amp", ctx_id=ctx_id))
-        in_dc = _coerce_number(await self.pull("dc", ctx_id=ctx_id))
-        in_phase_in = _coerce_number(await self.pull("phase", ctx_id=ctx_id))
-        in_phase = _coerce_number(await self.pull("phaseOffset", ctx_id=ctx_id))
+        in_amp = parse_number(await self.pull("amp", ctx_id=ctx_id))
+        in_dc = parse_number(await self.pull("dc", ctx_id=ctx_id))
+        in_phase_in = parse_number(await self.pull("phase", ctx_id=ctx_id))
+        in_phase = parse_number(await self.pull("phaseOffset", ctx_id=ctx_id))
 
         amp = in_amp
         if amp is None:
@@ -230,26 +211,25 @@ class CosineRuntimeNode(OperatorNode):
             if phase is None:
                 phase = self._initial_state.get("phaseOffset", 0.0)
 
-        amp_f = _coerce_number(amp)
+        amp_f = parse_number(amp)
         if amp_f is None:
             amp_f = 0.5
 
-        dc_f = _coerce_number(dc)
+        dc_f = parse_number(dc)
         if dc_f is None:
             dc_f = 0.5
 
-        phase_offset_f = _coerce_number(phase)
+        phase_offset_f = parse_number(phase)
         if phase_offset_f is None:
             phase_offset_f = 0.0
 
-        phase_in_f = _coerce_number(in_phase_in)
+        phase_in_f = parse_number(in_phase_in)
         if phase_in_f is None:
             phase_in_f = 0.0
         else:
             phase_in_f = float(phase_in_f) % 1.0
 
         return dc_f + amp_f * math.cos(_TWO_PI * (phase_in_f + phase_offset_f))
-
 
 CosineRuntimeNode.SPEC = F8OperatorSpec(
     schemaVersion=F8OperatorSchemaVersion.f8operator_1,
@@ -322,7 +302,6 @@ CosineRuntimeNode.SPEC = F8OperatorSpec(
     ],
 )
 
-
 class TempestRuntimeNode(OperatorNode):
     """
     Tempest phase transform: emits a numeric sample.
@@ -345,11 +324,11 @@ class TempestRuntimeNode(OperatorNode):
         if str(port) != "out":
             return None
 
-        in_amplitude = _coerce_number(await self.pull("amp", ctx_id=ctx_id))
-        in_phase_in = _coerce_number(await self.pull("phase", ctx_id=ctx_id))
-        in_phase_offset = _coerce_number(await self.pull("phaseOffset", ctx_id=ctx_id))
-        in_eccentricity = _coerce_number(await self.pull("eccentric", ctx_id=ctx_id))
-        in_dc_offset = _coerce_number(await self.pull("dc", ctx_id=ctx_id))
+        in_amplitude = parse_number(await self.pull("amp", ctx_id=ctx_id))
+        in_phase_in = parse_number(await self.pull("phase", ctx_id=ctx_id))
+        in_phase_offset = parse_number(await self.pull("phaseOffset", ctx_id=ctx_id))
+        in_eccentricity = parse_number(await self.pull("eccentric", ctx_id=ctx_id))
+        in_dc_offset = parse_number(await self.pull("dc", ctx_id=ctx_id))
 
         amplitude = in_amplitude
         if amplitude is None:
@@ -372,20 +351,20 @@ class TempestRuntimeNode(OperatorNode):
             if dc_offset is None:
                 dc_offset = self._initial_state.get("dc", 0.0)
 
-        amplitude_f = _coerce_number(amplitude)
+        amplitude_f = parse_number(amplitude)
         if amplitude_f is None:
             amplitude_f = 1.0
-        phase_offset_f = _coerce_number(phase_offset)
+        phase_offset_f = parse_number(phase_offset)
         if phase_offset_f is None:
             phase_offset_f = 0.0
-        eccentricity_f = _coerce_number(eccentricity)
+        eccentricity_f = parse_number(eccentricity)
         if eccentricity_f is None:
             eccentricity_f = 0.0
-        dc_offset_f = _coerce_number(dc_offset)
+        dc_offset_f = parse_number(dc_offset)
         if dc_offset_f is None:
             dc_offset_f = 0.0
 
-        phase_in_f = _coerce_number(in_phase_in)
+        phase_in_f = parse_number(in_phase_in)
         if phase_in_f is None:
             phase_in_f = 0.0
         else:
@@ -395,7 +374,6 @@ class TempestRuntimeNode(OperatorNode):
         value = amplitude_f * math.cos(theta_term + (eccentricity_f * math.sin(theta_term))) + dc_offset_f
 
         return float(value)
-
 
 TempestRuntimeNode.SPEC = F8OperatorSpec(
     schemaVersion=F8OperatorSchemaVersion.f8operator_1,
@@ -483,7 +461,6 @@ TempestRuntimeNode.SPEC = F8OperatorSpec(
         ),
     ],
 )
-
 
 def register_operator(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
 

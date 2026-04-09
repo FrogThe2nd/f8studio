@@ -9,6 +9,7 @@ import struct
 from dataclasses import dataclass
 from typing import Any
 
+from f8pysdk.codec import coerce_flag
 from f8pysdk.specs import (
     F8DataPortSpec,
     F8OperatorSchemaVersion,
@@ -224,12 +225,15 @@ class UdpVmcRuntimeNode(OperatorNode, EntrypointNode):
 
         self._packet_count = 0
         self._last_error: str | None = None
-        self._allow_non_loopback_bind = self._parse_bool(
+        self._allow_non_loopback_bind = coerce_flag(
             self._initial_state.get("allowNonLoopbackBind"),
             default=False,
         )
 
-        self._cleanup_after_ms = self._parse_int(self._initial_state.get("cleanupAfterMs", 10000), default=10000)
+        self._cleanup_after_ms = self._coerce_int_or_default(
+            self._initial_state.get("cleanupAfterMs", 10000),
+            default=10000,
+        )
         self._selected_key = str(self._initial_state.get("selectedKey", "") or "")
 
         self._skeletons_by_key: dict[str, _SkeletonEntry] = {}
@@ -315,7 +319,7 @@ class UdpVmcRuntimeNode(OperatorNode, EntrypointNode):
         _ = ts_ms
         f = str(field)
         if f == "allowNonLoopbackBind":
-            self._allow_non_loopback_bind = self._parse_bool(value, default=False)
+            self._allow_non_loopback_bind = coerce_flag(value, default=False)
             if self._bus_active():
                 await self._ensure_receiver(force_restart=True)
             return
@@ -326,7 +330,7 @@ class UdpVmcRuntimeNode(OperatorNode, EntrypointNode):
                 await self._stop_receiver()
             return
         if f == "cleanupAfterMs":
-            self._cleanup_after_ms = self._parse_int(value, default=self._cleanup_after_ms)
+            self._cleanup_after_ms = self._coerce_int_or_default(value, default=self._cleanup_after_ms)
             await self._cleanup_stale()
             await self._sync_available_keys_and_selection()
             return
@@ -343,7 +347,7 @@ class UdpVmcRuntimeNode(OperatorNode, EntrypointNode):
         await self._stop_receiver()
 
     @staticmethod
-    def _parse_int(value: Any, *, default: int) -> int:
+    def _coerce_int_or_default(value: Any, *, default: int) -> int:
         if value is None:
             return int(default)
         if isinstance(value, bool):
@@ -356,24 +360,11 @@ class UdpVmcRuntimeNode(OperatorNode, EntrypointNode):
             except (TypeError, ValueError):
                 return int(default)
 
-    @staticmethod
-    def _parse_bool(value: Any, *, default: bool) -> bool:
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, (int, float)):
-            return bool(value)
-        s = str(value or "").strip().lower()
-        if s in ("1", "true", "yes", "on"):
-            return True
-        if s in ("0", "false", "no", "off", ""):
-            return False
-        return bool(default)
-
     async def validate_state(self, field: str, value: Any, *, ts_ms: int, meta: dict[str, Any]) -> Any:
         del ts_ms, meta
         f = str(field or "").strip()
         if f == "allowNonLoopbackBind":
-            return self._parse_bool(value, default=False)
+            return coerce_flag(value, default=False)
         if f == "bindAddress":
             bind_address = str(value or "").strip() or "127.0.0.1"
             allow_non_loopback = self._allow_non_loopback_bind
