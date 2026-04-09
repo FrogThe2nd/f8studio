@@ -5,7 +5,7 @@ from typing import cast
 from qtpy import QtCore, QtTest, QtWidgets
 
 from f8pysdk.specs import F8DataPortSpec, F8OperatorSpec, F8ServiceSpec, F8VariantKind, F8VariantRecord
-from f8pysdk.codec import dump_json
+from f8pysdk.codec import copy_model, dump_json
 from f8pysdk.specs import any_schema, number_schema
 
 from f8pystudio.assets.ui.asset_graph_preview import AssetGraphPreviewPane
@@ -387,7 +387,7 @@ def test_component_catalog_dialog_defers_initial_remote_refresh(monkeypatch, tmp
 def test_variant_dialog_hydration_failure_updates_raw_and_preview(monkeypatch) -> None:
     _ensure_app()
     monkeypatch.setattr("f8pystudio.assets.ui.variant_manager_dialog.subscribe_variants_changed", lambda _cb: (lambda: None))
-    monkeypatch.setattr(VariantManagerDialog, "_reload", lambda self, *_args: None)
+    monkeypatch.setattr(VariantManagerDialog, "_reload", lambda self, *_args, **_kwargs: None)
     dialog = VariantManagerDialog(
         parent=None,
         base_node_type="svc.preview.variant",
@@ -415,12 +415,12 @@ def test_variant_dialog_hydration_failure_updates_raw_and_preview(monkeypatch) -
     item = QtWidgets.QListWidgetItem()
     item.setData(QtCore.Qt.ItemDataRole.UserRole, "variant-remote")
     dialog._list.addItem(item)
-    dialog._sync_client.hydrate_variant = lambda _variant_id: (_ for _ in ()).throw(ValueError("boom"))  # type: ignore[method-assign]
+    dialog._sync_client.cache_variant_content = lambda _variant_id: (_ for _ in ()).throw(ValueError("boom"))  # type: ignore[method-assign]
 
     dialog._list.setCurrentRow(0)
     _wait_for_preview_completion(dialog._preview)
 
-    assert "hydrate_variant" in dialog._raw.toPlainText()
+    assert "cache_variant_content" in dialog._raw.toPlainText()
     assert "boom" in dialog._preview.current_status_text()
 
     dialog.close()
@@ -429,7 +429,7 @@ def test_variant_dialog_hydration_failure_updates_raw_and_preview(monkeypatch) -
 def test_variant_dialog_install_allows_anonymous_public_variant(monkeypatch) -> None:
     _ensure_app()
     monkeypatch.setattr("f8pystudio.assets.ui.variant_manager_dialog.subscribe_variants_changed", lambda _cb: (lambda: None))
-    monkeypatch.setattr(VariantManagerDialog, "_reload", lambda self, *_args: None)
+    monkeypatch.setattr(VariantManagerDialog, "_reload", lambda self, *_args, **_kwargs: None)
     monkeypatch.setattr("f8pystudio.assets.ui.variant_manager_dialog.show_info", lambda *_args, **_kwargs: None)
     dialog = VariantManagerDialog(
         parent=None,
@@ -457,11 +457,218 @@ def test_variant_dialog_install_allows_anonymous_public_variant(monkeypatch) -> 
     install_calls: list[str] = []
 
     dialog._selected_entry = lambda: entry  # type: ignore[method-assign]
+    dialog._selected_remote_entry = lambda: entry  # type: ignore[method-assign]
     dialog._ensure_logged_in = lambda: (_ for _ in ()).throw(AssertionError("install should not require login"))  # type: ignore[method-assign]
-    dialog._sync_client.hydrate_variant = lambda variant_id: install_calls.append(str(variant_id)) or entry  # type: ignore[method-assign]
+    dialog._sync_client.install_variant = lambda variant_id: install_calls.append(str(variant_id)) or copy_model(entry, update={"installed": True, "hasCachedContent": True})  # type: ignore[method-assign]
 
     dialog._on_install_clicked()
 
     assert install_calls == ["variant-public"]
+
+    dialog.close()
+
+
+def test_variant_dialog_defers_reload_during_selection_cache(monkeypatch) -> None:
+    _ensure_app()
+    callbacks: list[object] = []
+
+    def _subscribe(callback):
+        callbacks.append(callback)
+        return lambda: callbacks.remove(callback)
+
+    monkeypatch.setattr("f8pystudio.assets.ui.variant_manager_dialog.subscribe_variants_changed", _subscribe)
+    dialog = VariantManagerDialog(
+        parent=None,
+        base_node_type="svc.preview.variant",
+        base_node_name="Preview Variant",
+        node_graph=None,
+    )
+    entry = F8VariantEntry(
+        record=F8VariantRecord(
+            variantId="variant-remote",
+            kind=F8VariantKind.service,
+            baseNodeType="svc.preview.service",
+            serviceClass="svc.preview.service",
+            operatorClass=None,
+            name="Remote Variant",
+            description="",
+            tags=[],
+            spec={"label": "Remote Variant"},
+            createdAt=variant_now_iso(),
+            updatedAt=variant_now_iso(),
+        ),
+        source=F8VariantSourceKind.remote_private,
+        installed=False,
+    )
+    dialog._entries = [entry]
+    item = QtWidgets.QListWidgetItem()
+    item.setData(QtCore.Qt.ItemDataRole.UserRole, "variant-remote")
+    dialog._list.addItem(item)
+
+    events: list[str] = []
+    def _recording_reload(*args, **kwargs) -> None:
+        del args, kwargs
+        events.append("reload")
+
+    cached_entry = copy_model(entry, update={"installed": False, "hasCachedContent": True})
+    dialog._selected_remote_entry = lambda: cached_entry  # type: ignore[method-assign]
+    dialog._remote_entry_for_variant_id = lambda _variant_id: cached_entry  # type: ignore[method-assign]
+
+    def _cache_variant_content(_variant_id: str) -> F8VariantEntry:
+        events.append("cache:start")
+        callback = callbacks[0]
+        callback()
+        events.append("cache:end")
+        return cached_entry
+
+    dialog._reload = _recording_reload  # type: ignore[method-assign]
+    dialog._sync_client.cache_variant_content = _cache_variant_content  # type: ignore[method-assign]
+    events.clear()
+
+    dialog._list.setCurrentRow(0)
+    QtWidgets.QApplication.processEvents()
+
+    assert events[:3] == ["cache:start", "cache:end", "reload"]
+    assert dialog._selected_variant_id() == "variant-remote"
+    assert dialog._btn_install.isEnabled() is True
+    assert dialog._btn_create.isEnabled() is False
+
+    dialog.close()
+
+
+def test_variant_dialog_subscribe_also_loads_public_variant(monkeypatch) -> None:
+    _ensure_app()
+    monkeypatch.setattr("f8pystudio.assets.ui.variant_manager_dialog.subscribe_variants_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(VariantManagerDialog, "_reload", lambda self, *_args, **_kwargs: None)
+    monkeypatch.setattr("f8pystudio.assets.ui.variant_manager_dialog.show_info", lambda *_args, **_kwargs: None)
+    dialog = VariantManagerDialog(
+        parent=None,
+        base_node_type="svc.preview.variant",
+        base_node_name="Preview Variant",
+        node_graph=None,
+    )
+    entry = F8VariantEntry(
+        record=F8VariantRecord(
+            variantId="variant-community",
+            kind=F8VariantKind.service,
+            baseNodeType="svc.preview.service",
+            serviceClass="svc.preview.service",
+            operatorClass=None,
+            name="Community Variant",
+            description="",
+            tags=[],
+            spec={"label": "Community Variant"},
+            createdAt=variant_now_iso(),
+            updatedAt=variant_now_iso(),
+        ),
+        source=F8VariantSourceKind.remote_public,
+        installed=False,
+        subscribed=False,
+    )
+    calls: list[str] = []
+    subscribed_entry = copy_model(entry, update={"subscribed": True})
+    loaded_entry = copy_model(subscribed_entry, update={"installed": True, "hasCachedContent": True})
+
+    dialog._selected_entry = lambda: entry  # type: ignore[method-assign]
+    dialog._ensure_logged_in = lambda: True  # type: ignore[method-assign]
+    dialog._sync_client.subscribe_variant = lambda variant_id: calls.append(f"subscribe:{variant_id}") or subscribed_entry  # type: ignore[method-assign]
+    dialog._sync_client.install_variant = lambda variant_id: calls.append(f"install:{variant_id}") or loaded_entry  # type: ignore[method-assign]
+
+    dialog._on_subscribe_clicked()
+
+    assert calls == ["subscribe:variant-community", "install:variant-community"]
+
+    dialog.close()
+
+
+def test_variant_dialog_community_actions_hide_load_and_show_fork(monkeypatch) -> None:
+    _ensure_app()
+    monkeypatch.setattr("f8pystudio.assets.ui.variant_manager_dialog.subscribe_variants_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(VariantManagerDialog, "_reload", lambda self, *_args, **_kwargs: None)
+    dialog = VariantManagerDialog(
+        parent=None,
+        base_node_type="svc.preview.variant",
+        base_node_name="Preview Variant",
+        node_graph=None,
+    )
+    entry = F8VariantEntry(
+        record=F8VariantRecord(
+            variantId="variant-community",
+            kind=F8VariantKind.service,
+            baseNodeType="svc.preview.service",
+            serviceClass="svc.preview.service",
+            operatorClass=None,
+            name="Community Variant",
+            description="",
+            tags=[],
+            spec={"label": "Community Variant"},
+            createdAt=variant_now_iso(),
+            updatedAt=variant_now_iso(),
+        ),
+        source=F8VariantSourceKind.remote_public,
+        installed=False,
+        subscribed=False,
+    )
+    dialog._entries = [entry]
+    dialog._remote_entry_for_variant_id = lambda _variant_id: entry  # type: ignore[method-assign]
+    item = QtWidgets.QListWidgetItem()
+    item.setData(QtCore.Qt.ItemDataRole.UserRole, "variant-community")
+    dialog._list.addItem(item)
+
+    dialog._scope_tabs.setCurrentIndex(dialog._TAB_COMMUNITY)
+    dialog._list.setCurrentRow(0)
+    QtWidgets.QApplication.processEvents()
+
+    assert dialog._btn_subscribe.isHidden() is False
+    assert dialog._btn_subscribe.toolTip() == "Subscribe"
+    assert dialog._btn_copy_local.isHidden() is False
+    assert dialog._btn_copy_local.toolTip() == "Fork"
+    assert dialog._btn_install.isHidden() is True
+    assert dialog._btn_upload.isHidden() is True
+
+    dialog.close()
+
+
+def test_variant_dialog_cached_remote_preview_does_not_refetch_content(monkeypatch) -> None:
+    _ensure_app()
+    monkeypatch.setattr("f8pystudio.assets.ui.variant_manager_dialog.subscribe_variants_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(VariantManagerDialog, "_reload", lambda self, *_args, **_kwargs: None)
+    dialog = VariantManagerDialog(
+        parent=None,
+        base_node_type="svc.preview.variant",
+        base_node_name="Preview Variant",
+        node_graph=None,
+    )
+    cached_entry = F8VariantEntry(
+        record=F8VariantRecord(
+            variantId="variant-cached",
+            kind=F8VariantKind.service,
+            baseNodeType="svc.preview.service",
+            serviceClass="svc.preview.service",
+            operatorClass=None,
+            name="Cached Variant",
+            description="",
+            tags=[],
+            spec={"label": "Cached Variant"},
+            createdAt=variant_now_iso(),
+            updatedAt=variant_now_iso(),
+        ),
+        source=F8VariantSourceKind.remote_public,
+        installed=False,
+        hasCachedContent=True,
+    )
+    dialog._entries = [cached_entry]
+    item = QtWidgets.QListWidgetItem()
+    item.setData(QtCore.Qt.ItemDataRole.UserRole, "variant-cached")
+    dialog._list.addItem(item)
+    dialog._remote_entry_for_variant_id = lambda _variant_id: cached_entry  # type: ignore[method-assign]
+    cache_calls: list[str] = []
+    dialog._sync_client.cache_variant_content = lambda variant_id: cache_calls.append(str(variant_id)) or cached_entry  # type: ignore[method-assign]
+
+    dialog._list.setCurrentRow(0)
+    QtWidgets.QApplication.processEvents()
+
+    assert cache_calls == []
+    assert "variant-cached" in dialog._raw.toPlainText()
 
     dialog.close()

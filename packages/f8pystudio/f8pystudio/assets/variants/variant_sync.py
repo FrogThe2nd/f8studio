@@ -249,11 +249,15 @@ class VariantSyncClient:
         )
         return _variant_record_from_content_payload(payload, variant_id=variant_id)
 
-    def hydrate_variant(self, variant_id: str) -> F8VariantEntry:
+    def cache_variant_content(self, variant_id: str) -> F8VariantEntry:
         detail_entry = self.get_variant(variant_id)
         record = self.get_variant_content(variant_id)
-        hydrated_entry = copy_model(detail_entry, update={"record": record, "installed": True, "hasCachedContent": True})
-        return self._catalog_service.install_remote_entry(hydrated_entry)
+        cached_entry = copy_model(detail_entry, update={"record": record, "installed": False, "hasCachedContent": True})
+        return self._catalog_service.cache_remote_entry(cached_entry)
+
+    def hydrate_variant(self, variant_id: str) -> F8VariantEntry:
+        cached_entry = self.cache_variant_content(variant_id)
+        return self._catalog_service.install_remote_entry(cached_entry)
 
     def create_variant(self, entry: F8VariantEntry, *, change_summary: str | None = None) -> F8VariantEntry:
         _require_variant_record_for_upload(entry.record)
@@ -1019,7 +1023,7 @@ def _merge_variant_entries(existing_entry: F8VariantEntry, incoming_entry: F8Var
         if existing_entry.installed and not incoming_entry.downloadedAt:
             return copy_model(incoming_entry, update={"hasCachedContent": True, "downloadedAt": existing_entry.downloadedAt})
         return incoming_entry
-    if not existing_entry.installed:
+    if not variant_entry_has_cached_content(existing_entry):
         return incoming_entry
     if str(existing_entry.remoteRevision or "") != str(incoming_entry.remoteRevision or ""):
         return incoming_entry

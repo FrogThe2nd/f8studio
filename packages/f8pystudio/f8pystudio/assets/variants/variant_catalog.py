@@ -469,8 +469,26 @@ class VariantCatalogService:
             update={
                 "installed": True,
                 "hasCachedContent": True,
-                "downloadedAt": variant_now_iso(),
+                "downloadedAt": entry.downloadedAt or variant_now_iso(),
             },
+        )
+        return self._save_remote_entry(installed_entry)
+
+    def cache_remote_entry(self, entry: F8VariantEntry) -> F8VariantEntry:
+        cached_entry = copy_model(
+            entry,
+            update={
+                "installed": False,
+                "hasCachedContent": True,
+                "downloadedAt": entry.downloadedAt or variant_now_iso(),
+            },
+        )
+        return self._save_remote_entry(cached_entry)
+
+    def _save_remote_entry(self, entry: F8VariantEntry) -> F8VariantEntry:
+        installed_entry = copy_model(
+            entry,
+            update={"downloadedAt": entry.downloadedAt or variant_now_iso()},
         )
         current = self._remote_provider.load_entries()
         out: list[F8VariantEntry] = []

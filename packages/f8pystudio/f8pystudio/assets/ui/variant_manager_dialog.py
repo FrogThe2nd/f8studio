@@ -10,6 +10,7 @@ from qtpy import QtCore, QtWidgets
 
 from f8pysdk.specs import F8OperatorSpec, F8ServiceSpec
 
+from ..common import new_asset_id
 from ...ui.support.ui_icons import StudioIcon, icon_for
 from ...ui.support.ui_notifications import show_info, show_warning
 from ..variants.variant_compose import build_variant_record_from_node
@@ -18,6 +19,7 @@ from f8pysdk.specs import F8VariantRecord
 from ..variants.variant_models import F8VariantEntry, F8VariantSourceKind, F8VariantSyncState, F8VariantVisibility, variant_now_iso
 from ..variants.variant_repository import (
     delete_variant,
+    ensure_unique_variant_name,
     export_to_json,
     import_from_json,
     is_variant_name_conflict,
@@ -29,7 +31,7 @@ from ..variants.variant_repository import (
 )
 from ..variants.variant_events import subscribe_variants_changed
 from ..variants.variant_sync import VariantSyncClient
-from ..variants.variant_catalog import variant_entry_is_installed
+from ..variants.variant_catalog import variant_entry_has_cached_content, variant_entry_is_installed
 from ...ui.support.json_text_editor import attach_json_enhancements
 from .asset_cloud_account_menu import build_asset_account_menu, prompt_asset_cloud_sign_in
 from .asset_graph_preview import AssetGraphPreviewPane
@@ -87,6 +89,9 @@ class VariantManagerDialog(QtWidgets.QDialog):
             "community": "",
         }
         self._is_loading_remote_scope = False
+        self._is_handling_selection_change = False
+        self._pending_reload_from_variants_changed = False
+        self._pending_reload_variant_id = ""
         self._variants_changed_unsubscribe: Callable[[], None] | None = subscribe_variants_changed(
             self._on_variants_changed
         )
@@ -142,11 +147,11 @@ class VariantManagerDialog(QtWidgets.QDialog):
 
         btn_add = QtWidgets.QPushButton("Save From Selected Node", self)
         btn_edit = QtWidgets.QPushButton("Edit Metadata", self)
-        btn_delete_local = QtWidgets.QPushButton("Delete Local", self)
+        btn_delete_local = QtWidgets.QPushButton("Delete", self)
         btn_delete_remote = QtWidgets.QPushButton("Delete Remote", self)
-        btn_copy_local = QtWidgets.QPushButton("Save As Local Copy", self)
-        btn_upload = QtWidgets.QPushButton("Upload", self)
-        btn_install = QtWidgets.QPushButton("Download/Install", self)
+        btn_copy_local = QtWidgets.QPushButton("Duplicate", self)
+        btn_upload = QtWidgets.QPushButton("Sync", self)
+        btn_install = QtWidgets.QPushButton("Load", self)
         btn_subscribe = QtWidgets.QPushButton("Subscribe", self)
         btn_refresh = QtWidgets.QPushButton("Refresh", self)
         btn_history = QtWidgets.QPushButton("History", self)
@@ -173,11 +178,11 @@ class VariantManagerDialog(QtWidgets.QDialog):
 
         btn_add.clicked.connect(self._on_add_clicked)  # type: ignore[attr-defined]
         btn_edit.clicked.connect(self._on_edit_clicked)  # type: ignore[attr-defined]
-        btn_delete_local.clicked.connect(self._on_delete_local_clicked)  # type: ignore[attr-defined]
+        btn_delete_local.clicked.connect(self._on_delete_clicked)  # type: ignore[attr-defined]
         btn_delete_remote.clicked.connect(self._on_delete_remote_clicked)  # type: ignore[attr-defined]
-        btn_copy_local.clicked.connect(self._on_copy_local_clicked)  # type: ignore[attr-defined]
-        btn_upload.clicked.connect(self._on_upload_clicked)  # type: ignore[attr-defined]
-        btn_install.clicked.connect(self._on_install_clicked)  # type: ignore[attr-defined]
+        btn_copy_local.clicked.connect(self._on_duplicate_clicked)  # type: ignore[attr-defined]
+        btn_upload.clicked.connect(self._on_sync_or_update_clicked)  # type: ignore[attr-defined]
+        btn_install.clicked.connect(self._on_load_or_offload_clicked)  # type: ignore[attr-defined]
         btn_subscribe.clicked.connect(self._on_subscribe_clicked)  # type: ignore[attr-defined]
         btn_refresh.clicked.connect(self._on_refresh_clicked)  # type: ignore[attr-defined]
         btn_history.clicked.connect(self._on_history_clicked)  # type: ignore[attr-defined]
@@ -186,18 +191,18 @@ class VariantManagerDialog(QtWidgets.QDialog):
         btn_export.clicked.connect(self._on_export_clicked)  # type: ignore[attr-defined]
         btn_create.clicked.connect(self._on_create_clicked)  # type: ignore[attr-defined]
 
-        self._configure_icon_button(btn_upload, "Upload")
-        self._configure_icon_button(btn_install, "Download/Install")
+        self._configure_icon_button(btn_upload, "Sync")
+        self._configure_icon_button(btn_install, "Load")
         self._configure_icon_button(btn_subscribe, "Subscribe / Unsubscribe")
         self._configure_icon_button(btn_refresh, "Refresh current list")
         self._configure_icon_button(btn_history, "History")
         self._configure_icon_button(btn_visibility, "Visibility")
         self._configure_icon_button(btn_import, "Import")
         self._configure_icon_button(btn_export, "Export")
-        self._configure_icon_button(btn_delete_local, "Delete Local")
+        self._configure_icon_button(btn_delete_local, "Delete")
         self._configure_icon_button(btn_delete_remote, "Delete Remote")
         self._configure_icon_button(btn_edit, "Edit Metadata")
-        self._configure_icon_button(btn_copy_local, "Save As Local Copy")
+        self._configure_icon_button(btn_copy_local, "Duplicate")
         self._configure_icon_button(btn_create, "Create On Canvas")
         self._configure_icon_button(btn_add, "Save From Selected Node")
 
@@ -229,9 +234,11 @@ class VariantManagerDialog(QtWidgets.QDialog):
 
         self._list = QtWidgets.QListWidget(self)
         self._list.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
+        self._list.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
         self._list.itemSelectionChanged.connect(self._on_selection_changed)  # type: ignore[attr-defined]
         self._list.itemDoubleClicked.connect(self._on_item_double_clicked)  # type: ignore[attr-defined]
         self._list.verticalScrollBar().valueChanged.connect(self._on_list_scrolled)  # type: ignore[attr-defined]
+        self._list.customContextMenuRequested.connect(self._on_list_context_menu_requested)  # type: ignore[attr-defined]
         self._preview = AssetGraphPreviewPane(parent=self, host_graph=node_graph)
         self._raw = QtWidgets.QPlainTextEdit(self)
         self._raw.setReadOnly(True)
@@ -263,6 +270,9 @@ class VariantManagerDialog(QtWidgets.QDialog):
         self._btn_refresh = btn_refresh
         self._btn_history = btn_history
         self._btn_visibility = btn_visibility
+        self._btn_add = btn_add
+        self._btn_import = btn_import
+        self._btn_export = btn_export
 
         # Initialize node type combo for global mode
         if self._is_global_mode:
@@ -281,8 +291,18 @@ class VariantManagerDialog(QtWidgets.QDialog):
         self._clear_variants_changed_subscription()
 
     def _on_variants_changed(self) -> None:
+        selected_variant_id = self._selected_variant_id()
+        if self._is_handling_selection_change:
+            logger.warning(
+                "Variant manager deferred variants_changed reload while handling selection variant_id=%s",
+                selected_variant_id,
+            )
+            self._pending_reload_from_variants_changed = True
+            if selected_variant_id:
+                self._pending_reload_variant_id = selected_variant_id
+            return
         try:
-            self._reload()
+            self._reload(preserve_variant_id=selected_variant_id)
         except RuntimeError as exc:
             if "already deleted" in str(exc):
                 self._clear_variants_changed_subscription()
@@ -325,7 +345,15 @@ class VariantManagerDialog(QtWidgets.QDialog):
             return True
         return False
 
-    def _reload(self, *_args: Any) -> None:
+    def _reload(self, *_args: Any, preserve_variant_id: str | None = None) -> None:
+        selected_variant_id = str(
+            self._selected_variant_id() if preserve_variant_id is None else preserve_variant_id or ""
+        ).strip()
+        logger.debug(
+            "Variant manager reload requested tab=%s preserve_variant_id=%s",
+            self._scope_tabs.tabText(self._scope_tabs.currentIndex()),
+            selected_variant_id,
+        )
         self._refresh_remote_catalog_if_needed()
         self._row_states_by_variant_id = self._build_row_states()
         self._entries = self._entries_for_current_tab()
@@ -346,16 +374,22 @@ class VariantManagerDialog(QtWidgets.QDialog):
                 for entry in self._entries[:10]
             ],
         )
-        self._list.clear()
-        for entry in self._entries:
-            record = entry.record
-            item = QtWidgets.QListWidgetItem()
-            item.setToolTip(record.description or record.name)
-            item.setData(QtCore.Qt.UserRole, record.variantId)
-            row_widget = self._build_list_row(entry)
-            item.setSizeHint(row_widget.sizeHint())
-            self._list.addItem(item)
-            self._list.setItemWidget(item, row_widget)
+        self._list.blockSignals(True)
+        try:
+            self._list.clear()
+            for entry in self._entries:
+                record = entry.record
+                item = QtWidgets.QListWidgetItem()
+                item.setToolTip(record.description or record.name)
+                item.setData(QtCore.Qt.UserRole, record.variantId)
+                row_widget = self._build_list_row(entry)
+                item.setSizeHint(row_widget.sizeHint())
+                self._list.addItem(item)
+                self._list.setItemWidget(item, row_widget)
+            if selected_variant_id:
+                self._restore_selection(selected_variant_id)
+        finally:
+            self._list.blockSignals(False)
         self._account_button.setToolTip(self._account_button_text())
         self._search_input.blockSignals(True)
         self._search_input.setText(self._current_query())
@@ -364,6 +398,20 @@ class VariantManagerDialog(QtWidgets.QDialog):
         self._refresh_auth_controls()
         self._on_selection_changed()
         self._schedule_auto_load_more_if_needed()
+
+    def _restore_selection(self, variant_id: str) -> None:
+        normalized_variant_id = str(variant_id or "").strip()
+        if not normalized_variant_id:
+            return
+        for index in range(self._list.count()):
+            item = self._list.item(index)
+            if item is None:
+                continue
+            item_variant_id = str(item.data(QtCore.Qt.UserRole) or "").strip()
+            if item_variant_id != normalized_variant_id:
+                continue
+            self._list.setCurrentItem(item)
+            return
 
     def _build_list_row(self, entry: F8VariantEntry) -> QtWidgets.QWidget:
         container = QtWidgets.QWidget(self._list)
@@ -651,69 +699,192 @@ class VariantManagerDialog(QtWidgets.QDialog):
         entry = self._selected_entry()
         return None if entry is None else entry.record
 
-    def _on_selection_changed(self) -> None:
+    def _local_entry_for_variant_id(self, variant_id: str) -> F8VariantEntry | None:
+        normalized_variant_id = str(variant_id or "").strip()
+        if not normalized_variant_id:
+            return None
+        for entry in self._sync_client._catalog_service._local_provider.load_entries():
+            if str(entry.record.variantId or "").strip() == normalized_variant_id:
+                return entry
+        return None
+
+    def _remote_entry_for_variant_id(self, variant_id: str) -> F8VariantEntry | None:
+        normalized_variant_id = str(variant_id or "").strip()
+        if not normalized_variant_id:
+            return None
+        return self._sync_client._catalog_service.remote_entry(normalized_variant_id)
+
+    def _selected_action_entries(self) -> tuple[F8VariantEntry | None, F8VariantEntry | None, F8VariantEntry | None]:
         selected_entry = self._selected_entry()
         if selected_entry is None:
-            self._raw.setPlainText("")
-            self._preview.clear_preview("Select a variant to preview.")
-            self._btn_edit.setEnabled(False)
-            self._btn_delete_local.setEnabled(False)
-            self._btn_delete_remote.setEnabled(False)
-            self._btn_copy_local.setEnabled(False)
-            self._btn_upload.setEnabled(False)
-            self._btn_install.setEnabled(False)
-            self._btn_subscribe.setEnabled(False)
-            self._btn_subscribe.setToolTip("Subscribe")
-            self._btn_create.setEnabled(False)
-            self._btn_history.setEnabled(False)
-            self._btn_visibility.setEnabled(False)
+            return None, None, None
+        variant_id = str(selected_entry.record.variantId or "").strip()
+        return (
+            selected_entry,
+            self._local_entry_for_variant_id(variant_id),
+            self._remote_entry_for_variant_id(variant_id),
+        )
+
+    def _set_button_state(
+        self,
+        button: QtWidgets.QPushButton,
+        *,
+        visible: bool,
+        enabled: bool,
+        tooltip: str,
+        icon_token: StudioIcon,
+    ) -> None:
+        button.setVisible(visible)
+        button.setEnabled(visible and enabled)
+        button.setToolTip(tooltip)
+        button.setIcon(icon_for(button, icon_token))
+
+    def _refresh_action_buttons(self, selected_entry: F8VariantEntry | None) -> None:
+        current_tab = self._scope_tabs.currentIndex()
+        local_entry, remote_entry = (None, None)
+        if selected_entry is not None:
+            local_entry = self._local_entry_for_variant_id(str(selected_entry.record.variantId or ""))
+            remote_entry = self._remote_entry_for_variant_id(str(selected_entry.record.variantId or ""))
+        has_owned_remote = remote_entry is not None and self._is_owned_remote_entry(remote_entry)
+        can_load = remote_entry is not None and not variant_entry_is_installed(remote_entry)
+        can_offload = remote_entry is not None and variant_entry_is_installed(remote_entry)
+        can_sync = current_tab == self._TAB_MINE and local_entry is not None
+        can_update = current_tab == self._TAB_INSTALLED and remote_entry is not None and variant_entry_is_installed(remote_entry)
+        can_duplicate = current_tab == self._TAB_MINE and selected_entry is not None
+        can_fork = current_tab == self._TAB_COMMUNITY and selected_entry is not None
+        can_subscribe = (
+            current_tab == self._TAB_COMMUNITY
+            and selected_entry is not None
+            and selected_entry.source == F8VariantSourceKind.remote_public
+            and not self._is_owned_remote_entry(selected_entry)
+        )
+        can_delete = current_tab == self._TAB_MINE and (
+            local_entry is not None or (remote_entry is not None and has_owned_remote)
+        )
+        can_toggle_visibility = current_tab == self._TAB_MINE and has_owned_remote
+        self._btn_delete_remote.setVisible(False)
+
+        load_tooltip = "Load"
+        if current_tab in {self._TAB_MINE, self._TAB_INSTALLED} and can_offload:
+            load_tooltip = "Offload"
+        self._set_button_state(
+            self._btn_install,
+            visible=current_tab in {self._TAB_MINE, self._TAB_INSTALLED},
+            enabled=can_load or can_offload,
+            tooltip=load_tooltip,
+            icon_token=StudioIcon.CLOUD_DOWN if can_load else StudioIcon.DOWNLOAD,
+        )
+        self._set_button_state(
+            self._btn_delete_local,
+            visible=current_tab == self._TAB_MINE,
+            enabled=can_delete,
+            tooltip="Delete",
+            icon_token=StudioIcon.TRASH,
+        )
+        self._set_button_state(
+            self._btn_copy_local,
+            visible=current_tab in {self._TAB_MINE, self._TAB_COMMUNITY},
+            enabled=can_duplicate or can_fork,
+            tooltip=("Fork" if current_tab == self._TAB_COMMUNITY else "Duplicate"),
+            icon_token=StudioIcon.SAVE,
+        )
+        self._set_button_state(
+            self._btn_upload,
+            visible=current_tab in {self._TAB_MINE, self._TAB_INSTALLED},
+            enabled=can_sync or can_update,
+            tooltip=("Update" if current_tab == self._TAB_INSTALLED else "Sync"),
+            icon_token=StudioIcon.CLOUD_UP if current_tab == self._TAB_MINE else StudioIcon.REFRESH,
+        )
+        subscribe_tooltip = "Subscribe"
+        subscribe_icon = StudioIcon.HEART_ON
+        if selected_entry is not None and selected_entry.subscribed:
+            subscribe_tooltip = "Unsubscribe"
+            subscribe_icon = StudioIcon.HEART_OFF
+        self._set_button_state(
+            self._btn_subscribe,
+            visible=current_tab == self._TAB_COMMUNITY,
+            enabled=can_subscribe,
+            tooltip=subscribe_tooltip,
+            icon_token=subscribe_icon,
+        )
+        visibility_tooltip = "Make Public"
+        if remote_entry is not None and remote_entry.visibility == F8VariantVisibility.public:
+            visibility_tooltip = "Make Private"
+        self._set_button_state(
+            self._btn_visibility,
+            visible=current_tab == self._TAB_MINE,
+            enabled=can_toggle_visibility,
+            tooltip=visibility_tooltip,
+            icon_token=StudioIcon.EYE_STAR,
+        )
+        self._btn_edit.setVisible(current_tab == self._TAB_MINE)
+        self._btn_edit.setEnabled(current_tab == self._TAB_MINE and local_entry is not None)
+        self._btn_create.setEnabled(bool(selected_entry is not None and variant_entry_is_installed(selected_entry)))
+        self._btn_history.setEnabled(bool(selected_entry is not None and has_owned_remote))
+
+    def _on_selection_changed(self) -> None:
+        if self._is_handling_selection_change:
             return
-        if selected_entry.source != F8VariantSourceKind.local and not variant_entry_is_installed(selected_entry):
-            try:
-                selected_entry = self._sync_client.hydrate_variant(str(selected_entry.record.variantId))
-            except Exception as exc:
-                self._raw.setPlainText(
-                    json.dumps(
-                        {
-                            "variantId": str(selected_entry.record.variantId),
-                            "operation": "hydrate_variant",
-                            "error": str(exc),
-                        },
-                        ensure_ascii=False,
-                        indent=2,
-                    )
+        self._is_handling_selection_change = True
+        pending_reload_variant_id = ""
+        selected_entry = self._selected_entry()
+        try:
+            if selected_entry is None:
+                self._raw.setPlainText("")
+                self._preview.clear_preview("Select a variant to preview.")
+                self._refresh_action_buttons(None)
+                return
+            pending_reload_variant_id = str(selected_entry.record.variantId or "").strip()
+            if selected_entry.source != F8VariantSourceKind.local and not variant_entry_has_cached_content(selected_entry):
+                logger.warning(
+                    "Variant manager caching remote selection for preview variant_id=%s source=%s installed=%s",
+                    pending_reload_variant_id,
+                    selected_entry.source.value,
+                    bool(selected_entry.installed),
                 )
-                self._preview.clear_preview(f"Failed to preview variant.\n{exc}")
+                try:
+                    selected_entry = self._sync_client.cache_variant_content(str(selected_entry.record.variantId))
+                except Exception as exc:
+                    logger.exception(
+                        "Variant manager failed to cache selected variant preview variant_id=%s",
+                        pending_reload_variant_id,
+                    )
+                    self._raw.setPlainText(
+                        json.dumps(
+                            {
+                                "variantId": str(selected_entry.record.variantId),
+                                "operation": "cache_variant_content",
+                                "error": str(exc),
+                            },
+                            ensure_ascii=False,
+                            indent=2,
+                        )
+                    )
+                    self._preview.clear_preview(f"Failed to preview variant.\n{exc}")
+                else:
+                    logger.warning(
+                        "Variant manager cached selected variant preview variant_id=%s installed=%s has_cached_content=%s",
+                        str(selected_entry.record.variantId or "").strip(),
+                        bool(selected_entry.installed),
+                        bool(selected_entry.hasCachedContent),
+                    )
+                    self._raw.setPlainText(json.dumps(dump_json(selected_entry, mode="json"), ensure_ascii=False, indent=2, default=str))
+                    self._preview.show_variant_record(selected_entry.record)
             else:
                 self._raw.setPlainText(json.dumps(dump_json(selected_entry, mode="json"), ensure_ascii=False, indent=2, default=str))
                 self._preview.show_variant_record(selected_entry.record)
-        else:
-            self._raw.setPlainText(json.dumps(dump_json(selected_entry, mode="json"), ensure_ascii=False, indent=2, default=str))
-            self._preview.show_variant_record(selected_entry.record)
-        local_entry = self._selected_local_entry()
-        remote_entry = self._selected_remote_entry()
-        is_remote = remote_entry is not None
-        self._btn_edit.setEnabled(local_entry is not None)
-        self._btn_delete_local.setEnabled(local_entry is not None)
-        self._btn_delete_remote.setEnabled(remote_entry is not None and self._is_owned_remote_entry(remote_entry))
-        self._btn_copy_local.setEnabled(local_entry is None and is_remote)
-        self._btn_upload.setEnabled(local_entry is not None or is_remote)
-        self._btn_install.setEnabled(is_remote and not variant_entry_is_installed(selected_entry))
-        is_community_public = (
-            selected_entry.source == F8VariantSourceKind.remote_public
-            and not self._is_owned_remote_entry(selected_entry)
-        )
-        self._btn_subscribe.setEnabled(is_community_public)
-        self._btn_subscribe.setToolTip("Unsubscribe" if selected_entry.subscribed else "Subscribe")
-        self._btn_subscribe.setIcon(
-            icon_for(
-                self._btn_subscribe,
-                StudioIcon.HEART_OFF if selected_entry.subscribed else StudioIcon.HEART_ON,
+            self._refresh_action_buttons(selected_entry)
+        finally:
+            self._is_handling_selection_change = False
+        if self._pending_reload_from_variants_changed:
+            reload_variant_id = str(self._pending_reload_variant_id or pending_reload_variant_id).strip()
+            self._pending_reload_from_variants_changed = False
+            self._pending_reload_variant_id = ""
+            logger.warning(
+                "Variant manager running deferred reload after selection handling variant_id=%s",
+                reload_variant_id,
             )
-        )
-        self._btn_create.setEnabled(bool(variant_entry_is_installed(selected_entry)))
-        self._btn_history.setEnabled(self._is_owned_remote_entry(selected_entry))
-        self._btn_visibility.setEnabled(self._is_owned_remote_entry(selected_entry))
+            self._reload(preserve_variant_id=reload_variant_id)
 
     def _refresh_auth_controls(self) -> None:
         logged_in = self._sync_client.current_user() is not None and bool(self._sync_client.current_access_token())
@@ -755,6 +926,54 @@ class VariantManagerDialog(QtWidgets.QDialog):
 
     def _on_item_double_clicked(self, _item: QtWidgets.QListWidgetItem) -> None:
         self._on_create_clicked()
+
+    def _on_list_context_menu_requested(self, pos: QtCore.QPoint) -> None:
+        item = self._list.itemAt(pos)
+        if item is not None:
+            self._list.setCurrentItem(item)
+        selected_entry, local_entry, remote_entry = self._selected_action_entries()
+        if selected_entry is None:
+            return
+        current_tab = self._scope_tabs.currentIndex()
+        menu = QtWidgets.QMenu(self)
+        if current_tab == self._TAB_MINE:
+            load_action = menu.addAction("Offload" if remote_entry is not None and variant_entry_is_installed(remote_entry) else "Load")
+            load_action.setEnabled(remote_entry is not None)
+            load_action.triggered.connect(self._on_load_or_offload_clicked)  # type: ignore[attr-defined]
+            delete_action = menu.addAction("Delete")
+            delete_action.setEnabled(local_entry is not None or (remote_entry is not None and self._is_owned_remote_entry(remote_entry)))
+            delete_action.triggered.connect(self._on_delete_clicked)  # type: ignore[attr-defined]
+            duplicate_action = menu.addAction("Duplicate")
+            duplicate_action.triggered.connect(self._on_duplicate_clicked)  # type: ignore[attr-defined]
+            sync_action = menu.addAction("Sync")
+            sync_action.setEnabled(local_entry is not None)
+            sync_action.triggered.connect(self._on_sync_or_update_clicked)  # type: ignore[attr-defined]
+            visibility_label = "Make Public"
+            if remote_entry is not None and remote_entry.visibility == F8VariantVisibility.public:
+                visibility_label = "Make Private"
+            visibility_action = menu.addAction(visibility_label)
+            visibility_action.setEnabled(remote_entry is not None and self._is_owned_remote_entry(remote_entry))
+            visibility_action.triggered.connect(self._on_visibility_clicked)  # type: ignore[attr-defined]
+        elif current_tab == self._TAB_COMMUNITY:
+            subscribe_action = menu.addAction("Unsubscribe" if selected_entry.subscribed else "Subscribe")
+            subscribe_action.setEnabled(
+                selected_entry.source == F8VariantSourceKind.remote_public and not self._is_owned_remote_entry(selected_entry)
+            )
+            subscribe_action.triggered.connect(self._on_subscribe_clicked)  # type: ignore[attr-defined]
+            fork_action = menu.addAction("Fork")
+            fork_action.triggered.connect(self._on_duplicate_clicked)  # type: ignore[attr-defined]
+        else:
+            offload_action = menu.addAction("Offload")
+            offload_action.setEnabled(remote_entry is not None and variant_entry_is_installed(remote_entry))
+            offload_action.triggered.connect(self._on_load_or_offload_clicked)  # type: ignore[attr-defined]
+            update_action = menu.addAction("Update")
+            update_action.setEnabled(remote_entry is not None and variant_entry_is_installed(remote_entry))
+            update_action.triggered.connect(self._on_sync_or_update_clicked)  # type: ignore[attr-defined]
+        if variant_entry_is_installed(selected_entry):
+            menu.addSeparator()
+            create_action = menu.addAction("Create On Canvas")
+            create_action.triggered.connect(self._on_create_clicked)  # type: ignore[attr-defined]
+        menu.exec(self._list.viewport().mapToGlobal(pos))
 
     def _find_selected_base_node(self) -> Any | None:
         graph = self._graph
@@ -904,112 +1123,182 @@ class VariantManagerDialog(QtWidgets.QDialog):
             return f"Variant name '{normalized_name}' already exists. Please rename."
         return None
 
-    def _on_delete_local_clicked(self) -> None:
-        selected_entry = self._selected_local_entry()
-        if selected_entry is None:
-            return
-        reply = QtWidgets.QMessageBox.question(self, "Delete local variant", f"Delete local variant '{selected_entry.record.name}'?")
-        if reply != QtWidgets.QMessageBox.Yes:
-            return
-        _ = delete_variant(selected_entry.record.variantId)
-        if self._selected_remote_entry() is not None:
-            _ = self._sync_client._catalog_service.uninstall_remote_entry(str(selected_entry.record.variantId))
-
-    def _on_delete_remote_clicked(self) -> None:
-        selected_entry = self._selected_remote_entry()
-        if selected_entry is None or not self._is_owned_remote_entry(selected_entry):
-            return
-        reply = QtWidgets.QMessageBox.question(self, "Delete remote variant", f"Delete remote variant '{selected_entry.record.name}'?")
-        if reply != QtWidgets.QMessageBox.Yes:
-            return
+    def _load_selected_remote_variant(self) -> F8VariantEntry | None:
+        remote_entry = self._selected_remote_entry()
+        if remote_entry is None:
+            return None
         try:
-            self._sync_client.delete_variant(str(selected_entry.record.variantId))
-        except Exception as exc:
-            show_warning(self, "Delete remote failed", str(exc))
-            return
-
-    def _on_copy_local_clicked(self) -> None:
-        selected_entry = self._selected_remote_entry()
-        if selected_entry is None:
-            return
-        try:
-            selected_entry = self._sync_client.hydrate_variant(str(selected_entry.record.variantId))
+            installed = self._sync_client.install_variant(str(remote_entry.record.variantId))
         except Exception as exc:
             show_warning(self, "Load failed", str(exc))
+            return None
+        self._reload(preserve_variant_id=str(installed.record.variantId))
+        return installed
+
+    def _offload_selected_remote_variant(self) -> F8VariantEntry | None:
+        remote_entry = self._selected_remote_entry()
+        if remote_entry is None:
+            return None
+        unloaded = self._sync_client._catalog_service.uninstall_remote_entry(str(remote_entry.record.variantId))
+        if unloaded is None:
+            return None
+        self._reload(preserve_variant_id=str(remote_entry.record.variantId))
+        return unloaded
+
+    def _on_load_or_offload_clicked(self) -> None:
+        remote_entry = self._selected_remote_entry()
+        if remote_entry is None:
             return
+        if variant_entry_is_installed(remote_entry):
+            _ = self._offload_selected_remote_variant()
+            return
+        loaded = self._load_selected_remote_variant()
+        if loaded is not None:
+            show_info(self, "Loaded", f"Loaded variant:\n{loaded.record.name}")
+
+    def _on_delete_clicked(self) -> None:
+        selected_entry, local_entry, remote_entry = self._selected_action_entries()
+        if selected_entry is None:
+            return
+        has_owned_remote = remote_entry is not None and self._is_owned_remote_entry(remote_entry)
+        if local_entry is None and not has_owned_remote:
+            return
+        title = "Delete variant"
+        prompt = f"Delete variant '{selected_entry.record.name}'?"
+        if local_entry is not None and has_owned_remote:
+            prompt = f"Delete local and remote variant '{selected_entry.record.name}'?"
+        elif has_owned_remote:
+            prompt = f"Delete remote variant '{selected_entry.record.name}'?"
+        elif local_entry is not None:
+            prompt = f"Delete local variant '{selected_entry.record.name}'?"
+        reply = QtWidgets.QMessageBox.question(self, title, prompt)
+        if reply != QtWidgets.QMessageBox.Yes:
+            return
+        try:
+            if local_entry is not None:
+                _ = delete_variant(str(local_entry.record.variantId))
+            if has_owned_remote and remote_entry is not None:
+                self._sync_client.delete_variant(str(remote_entry.record.variantId))
+        except Exception as exc:
+            show_warning(self, "Delete failed", str(exc))
+            return
+        self._reload()
+
+    def _on_delete_local_clicked(self) -> None:
+        self._on_delete_clicked()
+
+    def _on_delete_remote_clicked(self) -> None:
+        self._on_delete_clicked()
+
+    def _duplicate_selected_variant_as_local(self) -> F8VariantEntry | None:
+        selected_entry = self._selected_entry()
+        if selected_entry is None:
+            return None
+        if selected_entry.source != F8VariantSourceKind.local:
+            try:
+                selected_entry = self._sync_client.cache_variant_content(str(selected_entry.record.variantId))
+            except Exception as exc:
+                show_warning(self, "Load failed", str(exc))
+                return None
         record = selected_entry.record
-        copied_entry = copy_model(
-            selected_entry,
-            update={
-                "source": F8VariantSourceKind.local,
-                "record": validate_as(F8VariantRecord, {**dump_json(record, mode="json"), "updatedAt": variant_now_iso()}),
-                "localVersionNumber": selected_entry.remoteVersionNumber,
-                "syncState": F8VariantSyncState.local_only,
+        duplicate_name = ensure_unique_variant_name(
+            str(record.baseNodeType or ""),
+            f"{str(record.name or '').strip() or 'Variant'} Copy",
+            existing_records=[entry.record for entry in self._sync_client._catalog_service._local_provider.load_entries()],
+        )
+        duplicate_record = validate_as(
+            F8VariantRecord,
+            {
+                **dump_json(record, mode="json"),
+                "variantId": new_asset_id(),
+                "name": duplicate_name,
+                "updatedAt": variant_now_iso(),
             },
         )
         try:
-            saved_entry = upsert_variant_entry(copied_entry)
+            saved_record = upsert_variant(duplicate_record)
         except ValueError as exc:
-            show_warning(self, "Save local copy failed", str(exc))
-            return
-        show_info(self, "Saved", f"Saved local copy:\n{saved_entry.record.name}")
+            show_warning(self, "Duplicate failed", str(exc))
+            return None
+        self._reload(preserve_variant_id=str(saved_record.variantId))
+        return self._local_entry_for_variant_id(str(saved_record.variantId))
 
-    def _on_upload_clicked(self) -> None:
+    def _on_duplicate_clicked(self) -> None:
+        duplicated = self._duplicate_selected_variant_as_local()
+        if duplicated is None:
+            return
+        action_name = "Forked" if self._scope_tabs.currentIndex() == self._TAB_COMMUNITY else "Duplicated"
+        show_info(self, action_name, f"{action_name} variant:\n{duplicated.record.name}")
+
+    def _sync_selected_variant(self) -> F8VariantEntry | None:
         local_entry = self._selected_local_entry()
         remote_entry = self._selected_remote_entry()
-        selected_entry = local_entry if local_entry is not None else remote_entry
-        if selected_entry is None:
-            return
+        if local_entry is None:
+            return None
+        if not self._ensure_logged_in():
+            return None
+        entry_to_upload: F8VariantEntry
+        if remote_entry is not None:
+            entry_to_upload = copy_model(
+                local_entry,
+                update={
+                    "source": remote_entry.source,
+                    "visibility": remote_entry.visibility,
+                    "remoteRevision": remote_entry.remoteRevision,
+                    "remoteVersionNumber": remote_entry.remoteVersionNumber,
+                    "installed": True,
+                    "hasCachedContent": True,
+                },
+            )
+        else:
+            visibility = self._choose_visibility()
+            if visibility is None:
+                return None
+            source = F8VariantSourceKind.remote_private if visibility == F8VariantVisibility.private else F8VariantSourceKind.remote_public
+            entry_to_upload = validate_as(
+                F8VariantEntry,
+                {
+                    **dump_json(local_entry, mode="json"),
+                    "source": source.value,
+                    "visibility": visibility.value,
+                    "installed": True,
+                },
+            )
         try:
-            if not self._ensure_logged_in():
-                return
-            entry_to_upload = selected_entry
-            if local_entry is None and remote_entry is not None:
-                entry_to_upload = self._sync_client.hydrate_variant(str(selected_entry.record.variantId))
-            if local_entry is not None and remote_entry is not None:
-                entry_to_upload = copy_model(
-                    local_entry,
-                    update={
-                        "source": remote_entry.source,
-                        "visibility": remote_entry.visibility,
-                        "remoteRevision": remote_entry.remoteRevision,
-                        "remoteVersionNumber": remote_entry.remoteVersionNumber,
-                        "installed": True,
-                        "hasCachedContent": True,
-                    },
-                )
-            if local_entry is not None and remote_entry is None:
-                visibility = self._choose_visibility()
-                if visibility is None:
-                    return
-                source = F8VariantSourceKind.remote_private if visibility == F8VariantVisibility.private else F8VariantSourceKind.remote_public
-                entry_to_upload = validate_as(
-                    F8VariantEntry,
-                    {
-                        **dump_json(local_entry, mode="json"),
-                        "source": source.value,
-                        "visibility": visibility.value,
-                        "installed": True,
-                    },
-                )
             uploaded = self._sync_client.upload_entry(entry_to_upload)
         except Exception as exc:
-            show_warning(self, "Upload failed", str(exc))
+            show_warning(self, "Sync failed", str(exc))
+            return None
+        self._reload(preserve_variant_id=str(uploaded.record.variantId))
+        return uploaded
+
+    def _update_selected_variant(self) -> F8VariantEntry | None:
+        remote_entry = self._selected_remote_entry()
+        if remote_entry is None:
+            return None
+        try:
+            updated = self._sync_client.install_variant(str(remote_entry.record.variantId))
+        except Exception as exc:
+            show_warning(self, "Update failed", str(exc))
+            return None
+        self._reload(preserve_variant_id=str(updated.record.variantId))
+        return updated
+
+    def _on_sync_or_update_clicked(self) -> None:
+        if self._scope_tabs.currentIndex() == self._TAB_INSTALLED:
+            updated = self._update_selected_variant()
+            if updated is not None:
+                show_info(self, "Updated", f"Updated variant:\n{updated.record.name}")
             return
-        show_info(self, "Uploaded", f"Uploaded variant:\n{uploaded.record.name}")
-        self._reload()
+        synced = self._sync_selected_variant()
+        if synced is not None:
+            show_info(self, "Synced", f"Synced variant:\n{synced.record.name}")
+
+    def _on_upload_clicked(self) -> None:
+        self._on_sync_or_update_clicked()
 
     def _on_install_clicked(self) -> None:
-        selected_entry = self._selected_entry()
-        if selected_entry is None:
-            return
-        try:
-            installed = self._sync_client.hydrate_variant(str(selected_entry.record.variantId))
-        except Exception as exc:
-            show_warning(self, "Install failed", str(exc))
-            return
-        show_info(self, "Installed", f"Installed variant:\n{installed.record.name}")
-        self._reload()
+        self._on_load_or_offload_clicked()
 
     def _on_subscribe_clicked(self) -> None:
         selected_entry = self._selected_entry()
@@ -1023,7 +1312,8 @@ class VariantManagerDialog(QtWidgets.QDialog):
                 show_info(self, "Unsubscribed", f"Removed subscription:\n{updated.record.name}")
             else:
                 updated = self._sync_client.subscribe_variant(str(selected_entry.record.variantId))
-                show_info(self, "Subscribed", f"Subscribed to variant:\n{updated.record.name}")
+                loaded = self._sync_client.install_variant(str(updated.record.variantId))
+                show_info(self, "Subscribed", f"Subscribed and loaded variant:\n{loaded.record.name}")
         except Exception as exc:
             show_warning(self, "Subscription failed", str(exc))
             return

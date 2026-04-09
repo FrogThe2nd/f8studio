@@ -306,6 +306,38 @@ def test_variant_sync_client_uses_cookie_sessions_and_marks_conflicts(tmp_path: 
         thread.join(timeout=5)
 
 
+def test_variant_sync_client_can_cache_remote_content_without_installing(tmp_path: Path) -> None:
+    server = _Server(("127.0.0.1", 0))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        settings = QtCore.QSettings(str(tmp_path / "variant-sync-cache.ini"), QtCore.QSettings.IniFormat)
+        db_path = tmp_path / "assets.db"
+        service = VariantCatalogService(
+            local_provider=LocalVariantProvider(db_path=db_path),
+            remote_provider=RemoteCacheProvider(db_path=db_path),
+        )
+        client = VariantSyncClient(settings=settings, catalog_service=service)
+        base_url = f"http://127.0.0.1:{server.server_port}"
+        _ = client.login(base_url=base_url, username="u", password="p", remember=True)
+
+        cached = client.cache_variant_content("public-1")
+        installed_entry = service.entry("public-1", include_uninstalled=False)
+        cached_entry = service.entry("public-1", include_uninstalled=True)
+
+        assert cached.installed is False
+        assert cached.hasCachedContent is True
+        assert installed_entry is None
+        assert cached_entry is not None
+        assert cached_entry.installed is False
+        assert cached_entry.hasCachedContent is True
+        assert cached_entry.record.spec == {"label": "Public One"}
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
 def test_variant_sync_client_drops_legacy_saved_sessions_without_crashing(tmp_path: Path) -> None:
     settings = QtCore.QSettings(str(tmp_path / "variant-sync-legacy.ini"), QtCore.QSettings.IniFormat)
     settings.beginGroup("variants/remote_sync/v1")
@@ -610,6 +642,74 @@ def test_variant_refresh_scope_page_preserves_cached_content_for_matching_revisi
     assert refreshed_entry.downloadedAt == "2026-04-07T00:00:00+00:00"
     assert refreshed_entry.record.spec == {"label": "public-1"}
     assert refreshed_entry.remoteVersionNumber == 2
+
+
+def test_variant_refresh_scope_page_preserves_cached_preview_without_marking_installed(tmp_path: Path, monkeypatch) -> None:
+    settings = QtCore.QSettings(str(tmp_path / "variant-sync-refresh-cached.ini"), QtCore.QSettings.IniFormat)
+    db_path = tmp_path / "assets.db"
+    service = VariantCatalogService(
+        local_provider=LocalVariantProvider(db_path=db_path),
+        remote_provider=RemoteCacheProvider(db_path=db_path),
+    )
+    client = VariantSyncClient(settings=settings, catalog_service=service)
+
+    existing_entry = copy_model(
+        _make_entry(
+            variant_id="public-1",
+            source=F8VariantSourceKind.remote_public,
+            installed=False,
+            remote_revision="r-public",
+        ),
+        update={
+            "downloadedAt": "2026-04-07T00:00:00+00:00",
+            "hasCachedContent": True,
+            "remoteVersionNumber": 1,
+        },
+    )
+    service.replace_remote_entries([existing_entry])
+
+    incoming_entry = copy_model(
+        _make_entry(
+            variant_id="public-1",
+            source=F8VariantSourceKind.remote_public,
+            installed=False,
+            remote_revision="r-public",
+        ),
+        update={
+            "record": copy_model(existing_entry.record, update={"spec": {}}),
+            "visibility": F8VariantVisibility.public,
+            "ownerUserId": "u2",
+            "ownerDisplayName": "Remote User",
+            "librarySlug": "community",
+            "hasCachedContent": False,
+            "downloadedAt": None,
+            "remoteVersionNumber": 2,
+            "syncState": F8VariantSyncState.synced,
+        },
+    )
+
+    def _list_variants(
+        *,
+        scope: str,
+        kind: str = "",
+        base_node_type: str = "",
+        query: str = "",
+        cursor: str = "",
+    ) -> F8VariantRemoteListPage:
+        del scope, kind, base_node_type, query, cursor
+        return F8VariantRemoteListPage(entries=[incoming_entry], nextCursor=None)
+
+    monkeypatch.setattr(client, "list_variants", _list_variants)
+
+    _ = client.refresh_scope_page(scope="community", base_node_type="svc.a.op", append=False)
+
+    refreshed_entry = service.entry("public-1", include_uninstalled=True)
+    assert refreshed_entry is not None
+    assert refreshed_entry.installed is False
+    assert refreshed_entry.hasCachedContent is True
+    assert refreshed_entry.downloadedAt == "2026-04-07T00:00:00+00:00"
+    assert refreshed_entry.record.spec == {"label": "public-1"}
+    assert service.entry("public-1", include_uninstalled=False) is None
 
 
 def test_variant_upload_replays_missing_local_history_versions(tmp_path: Path, monkeypatch) -> None:
