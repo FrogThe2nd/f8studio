@@ -76,8 +76,13 @@ class Win32Event:
         rc = _WaitForSingleObject(self._handle, int(timeout_ms) if timeout_ms >= 0 else _INFINITE)
         return rc == _WAIT_OBJECT_0
 
-    def pulse(self) -> None:
+    def set(self) -> None:
         if os.name != "nt":
             return
         _SetEvent(self._handle)
+
+    def pulse(self) -> None:
+        if os.name != "nt":
+            return
+        self.set()
         _ResetEvent(self._handle)

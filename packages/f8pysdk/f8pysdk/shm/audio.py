@@ -4,6 +4,7 @@ import os
 import struct
 import time
 from dataclasses import dataclass
+from multiprocessing.shared_memory import SharedMemory
 from typing import Optional, Tuple
 
 from .core import open_shared_memory_create, open_shared_memory_readonly
@@ -65,7 +66,7 @@ def read_audio_header(buf: memoryview) -> Optional[AudioShmHeader]:
         return None
     try:
         fields = _AUDIO_HEADER_STRUCT.unpack_from(buf, 0)
-    except Exception:
+    except struct.error:
         return None
     return AudioShmHeader(
         magic=fields[0],
@@ -88,7 +89,7 @@ def read_chunk_header(buf: memoryview, offset: int) -> Optional[AudioShmChunkHea
         return None
     try:
         fields = _CHUNK_HEADER_STRUCT.unpack_from(buf, offset)
-    except Exception:
+    except struct.error:
         return None
     return AudioShmChunkHeader(seq=fields[0], ts_ms=fields[1], frames=fields[2])
 
@@ -192,7 +193,7 @@ class AudioShmWriter:
             if unlink:
                 try:
                     self._shm.unlink()
-                except Exception:
+                except FileNotFoundError:
                     pass
             self._shm = None
 
@@ -223,7 +224,7 @@ class AudioShmWriter:
             0,
         )
 
-    def write_chunk_f32(self, interleaved_f32_bytes: bytes, frames: int) -> None:
+    def write_chunk_f32(self, interleaved_f32_bytes: bytes | bytearray | memoryview, frames: int) -> None:
         if self.fmt != SAMPLE_FORMAT_F32LE:
             return
         if frames <= 0:
@@ -232,9 +233,10 @@ class AudioShmWriter:
         if not hdr:
             return
 
+        payload = memoryview(interleaved_f32_bytes).cast("B")
         frames = int(min(frames, hdr.frames_per_chunk))
         bytes_needed = frames * int(hdr.bytes_per_frame)
-        if len(interleaved_f32_bytes) < bytes_needed:
+        if len(payload) < bytes_needed:
             return
 
         self._write_seq += 1
@@ -242,7 +244,7 @@ class AudioShmWriter:
         idx = seq % int(hdr.chunk_count)
         base = hdr.header_bytes + idx * hdr.chunk_stride_bytes
         payload_off = base + hdr.chunk_header_bytes
-        self.buf[payload_off : payload_off + bytes_needed] = interleaved_f32_bytes[:bytes_needed]
+        self.buf[payload_off : payload_off + bytes_needed] = payload[:bytes_needed]
 
         ts_ms = int(time.time() * 1000)
         _CHUNK_HEADER_STRUCT.pack_into(self.buf, base, int(seq), int(ts_ms), int(frames), 0)
