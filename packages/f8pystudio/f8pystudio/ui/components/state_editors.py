@@ -888,6 +888,9 @@ class F8ValueBarEditor(QtWidgets.QWidget):
         value = self._bar.value()
         return int(value) if self._data_type is int else float(value)
 
+    def set_read_only(self, read_only: bool) -> None:
+        self._bar.set_read_only(bool(read_only))
+
     def _emit(self, value: Any) -> None:
         out = int(value) if self._data_type is int else float(value)
         self.value_changed.emit(self.get_name(), out)

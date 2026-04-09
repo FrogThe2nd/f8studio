@@ -158,6 +158,7 @@ def build_inline_header_button(
     btn.setCheckable(bool(expandable))
     btn.setChecked(bool(expanded) if expandable else False)
     btn.setAutoRaise(True)
+    btn.setProperty("_f8_preview_interaction_exempt", bool(expandable))
     if expandable:
         btn.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
         btn.setArrowType(QtCore.Qt.DownArrow if expanded else QtCore.Qt.RightArrow)
@@ -225,6 +226,10 @@ def set_state_inline_control_read_only(control: QtWidgets.QWidget, *, read_only:
     set_control_read_only(control, read_only=read_only)
 
 
+def _preview_force_read_only(node_item: Any) -> bool:
+    return bool(getattr(node_item, "_f8_preview_read_only", False))
+
+
 def refresh_state_inline_control_read_only(node_item: Any) -> None:
     """
     Refresh readonly state for already-built inline state controls.
@@ -241,7 +246,11 @@ def refresh_state_inline_control_read_only(node_item: Any) -> None:
         if info is None or not info.show_on_node:
             continue
         name = info.name
-        read_only = info.access_str == "ro" or is_state_inline_input_connected(node_item, name)
+        read_only = (
+            _preview_force_read_only(node_item)
+            or info.access_str == "ro"
+            or is_state_inline_input_connected(node_item, name)
+        )
         try:
             binding = node_item._state_inline_bindings.get(name)
         except AttributeError:
@@ -511,7 +520,11 @@ def build_state_inline_control(
             return []
         return resolve_pool_items(value)
 
-    read_only = access_s == "ro" or node_item._is_state_inline_input_connected(name)
+    read_only = (
+        _preview_force_read_only(node_item)
+        or access_s == "ro"
+        or node_item._is_state_inline_input_connected(name)
+    )
     spec = StateControlSpec(
         name=name,
         label=state_field.label or name,

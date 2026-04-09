@@ -80,8 +80,11 @@ def set_control_read_only(widget: QtWidgets.QWidget, *, read_only: bool) -> None
     if isinstance(widget, F8Switch):
         widget.setEnabled(not bool(read_only))
         return
+    if isinstance(widget, F8ValueBarEditor):
+        widget.set_read_only(bool(read_only))
+        return
     if isinstance(widget, F8ValueBar):
-        widget.setEnabled(not bool(read_only))
+        widget.set_read_only(bool(read_only))
         return
     if isinstance(widget, F8Dial):
         widget.set_read_only(bool(read_only))
@@ -512,7 +515,7 @@ def build_inline_control_binding(
         widget.valueChanging.connect(lambda value: value_setter(value, push_undo=False))  # type: ignore[attr-defined]
         widget.valueCommitted.connect(lambda value: value_setter(value, push_undo=True))  # type: ignore[attr-defined]
         _apply_slider_value(value_getter())
-        widget.setEnabled(not bool(read_only))
+        widget.set_read_only(bool(read_only))
         return _binding(widget, apply_value=_apply_slider_value)
 
     if spec.schema_type == "integer" or ui in {"spinbox", "int"}:

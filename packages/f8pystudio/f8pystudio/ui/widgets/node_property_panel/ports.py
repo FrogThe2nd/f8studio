@@ -45,10 +45,17 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
 
     spec_applied = QtCore.Signal()
 
-    def __init__(self, parent=None, node=None, on_apply: Callable[[], None] | None = None):
+    def __init__(
+        self,
+        parent=None,
+        node=None,
+        on_apply: Callable[[], None] | None = None,
+        inspect_mode: bool = False,
+    ):
         super().__init__(parent)
         self._node = node
         self._on_apply = on_apply
+        self._inspect_mode = bool(inspect_mode)
         self._missing_locked = False
         self._exec_in_can_add = False
         self._exec_out_can_add = False
@@ -158,12 +165,12 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
             self._exec_in_can_delete = False
             self._exec_out_can_delete = False
 
-        self._sec_exec_in.set_add_visible(bool(self._exec_in_can_add) and not self._missing_locked)
-        self._sec_exec_out.set_add_visible(bool(self._exec_out_can_add) and not self._missing_locked)
-        self._sec_data_in.set_add_visible(bool(self._data_in_can_add) and not self._missing_locked)
-        self._sec_data_out.set_add_visible(bool(self._data_out_can_add) and not self._missing_locked)
-        self._sec_patch_data.set_add_visible(bool(self._patch_data_can_add) and not self._missing_locked)
-        self._sec_patch_state.set_add_visible(bool(self._state_can_add) and not self._missing_locked)
+        self._sec_exec_in.set_add_visible(bool(self._exec_in_can_add) and not self._missing_locked and not self._inspect_mode)
+        self._sec_exec_out.set_add_visible(bool(self._exec_out_can_add) and not self._missing_locked and not self._inspect_mode)
+        self._sec_data_in.set_add_visible(bool(self._data_in_can_add) and not self._missing_locked and not self._inspect_mode)
+        self._sec_data_out.set_add_visible(bool(self._data_out_can_add) and not self._missing_locked and not self._inspect_mode)
+        self._sec_patch_data.set_add_visible(bool(self._patch_data_can_add) and not self._missing_locked and not self._inspect_mode)
+        self._sec_patch_state.set_add_visible(bool(self._state_can_add) and not self._missing_locked and not self._inspect_mode)
 
         if is_operator:
             try:
@@ -211,7 +218,7 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
             self._sec_patch_data,
             self._sec_patch_state,
         ):
-            section.set_drag_enabled(not self._missing_locked)
+            section.set_drag_enabled(not self._missing_locked and not self._inspect_mode)
 
     def _base_order_for_key(self, key: str, *, spec: F8OperatorSpec | Any | None = None) -> list[str]:
         current_spec = spec
@@ -237,7 +244,7 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
         return []
 
     def _on_rows_reordered(self, key: str, ordered_names: list[str]) -> None:
-        if self._missing_locked or self._node is None:
+        if self._missing_locked or self._inspect_mode or self._node is None:
             return
         _set_list_order_override(
             self._node,
@@ -337,18 +344,19 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
         row.setToolTip(self._data_tooltip(port))
         row.setProperty("_port_dir", "data_in" if is_in else "data_out")
         can_delete = bool(self._data_in_can_delete if is_in else self._data_out_can_delete)
-        can_edit_existing = bool(self._data_in_can_edit_existing if is_in else self._data_out_can_edit_existing)
         try:
             required = bool(port.required)
         except (AttributeError, TypeError, ValueError):
             required = False
-        allow_delete = bool(can_delete and not self._missing_locked and not required)
-        allow_edit = bool(not self._missing_locked)
+        allow_delete = bool(can_delete and not self._missing_locked and not required and not self._inspect_mode)
+        allow_edit = True
         row.set_row_editable(
             allow_rename=False,
             allow_delete=allow_delete,
             allow_edit=allow_edit,
+            allow_show_toggle=bool(not self._missing_locked and not self._inspect_mode),
         )
+        row.set_edit_tooltip("View data port..." if self._inspect_mode else "Edit data port...")
         show = bool(self._node.data_port_show_on_node(str(port.name or ""), is_in=bool(is_in)))  # type: ignore[attr-defined]
         row.set_show_on_node(bool(show))
         return row
@@ -363,10 +371,11 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
         row.name_committed.connect(lambda value: self._rename_patch_data(row, value))
         row.setToolTip(self._data_tooltip(port))
         row.set_row_editable(
-            allow_rename=bool(not self._missing_locked),
-            allow_delete=bool(self._patch_data_can_delete and not self._missing_locked),
-            allow_edit=bool(not self._missing_locked),
+            allow_rename=bool(not self._missing_locked and not self._inspect_mode),
+            allow_delete=bool(self._patch_data_can_delete and not self._missing_locked and not self._inspect_mode),
+            allow_edit=True,
         )
+        row.set_edit_tooltip("View data terminal..." if self._inspect_mode else "Edit data terminal...")
         return row
 
     def _make_patch_state_row(self, field: F8StateSpec) -> _F8SpecNameRow:
@@ -379,14 +388,15 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
         row.name_committed.connect(lambda value: self._rename_patch_state(row, value))
         row.setToolTip(self._state_terminal_tooltip(field))
         row.set_row_editable(
-            allow_rename=bool(not self._missing_locked),
-            allow_delete=bool(self._state_can_delete and not self._missing_locked and not bool(field.required)),
-            allow_edit=bool(not self._missing_locked),
+            allow_rename=bool(not self._missing_locked and not self._inspect_mode),
+            allow_delete=bool(self._state_can_delete and not self._missing_locked and not bool(field.required) and not self._inspect_mode),
+            allow_edit=True,
         )
+        row.set_edit_tooltip("View state terminal..." if self._inspect_mode else "Edit state terminal...")
         return row
 
     def _toggle_data_show_on_node(self, row: _F8SpecNameRow, show_on_node: bool) -> None:
-        if self._missing_locked:
+        if self._missing_locked or self._inspect_mode:
             return
         dir_s = str(row.property("_port_dir") or "")
         is_in = dir_s == "data_in"
@@ -437,7 +447,7 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
             self._data_in_can_edit_existing if dir_s == "data_in" else self._data_out_can_edit_existing
         )
         ui_only = bool(not can_edit_existing)
-        read_only = bool(self._missing_locked)
+        read_only = bool(self._missing_locked or self._inspect_mode)
         port = row.property("_port")
         if not isinstance(port, F8DataPortSpec):
             port = F8DataPortSpec(
@@ -445,7 +455,7 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
             )
         dlg = _F8EditDataPortDialog(
             self,
-            title="Edit data port",
+            title="View data port" if read_only else "Edit data port",
             port=port,
             ui_only=ui_only,
             lock_identity_fields=False,
@@ -467,7 +477,7 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
     def _edit_patch_data(self, row: _F8SpecNameRow) -> None:
         can_edit_existing = bool(self._patch_data_can_edit_existing)
         ui_only = bool(not can_edit_existing)
-        read_only = bool(self._missing_locked)
+        read_only = bool(self._missing_locked or self._inspect_mode)
         port = row.property("_port")
         if not isinstance(port, F8DataPortSpec):
             port = F8DataPortSpec(
@@ -478,7 +488,7 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
             )
         dlg = _F8EditDataPortDialog(
             self,
-            title="Edit data terminal",
+            title="View data terminal" if read_only else "Edit data terminal",
             port=port,
             ui_only=ui_only,
             lock_identity_fields=False,
@@ -507,10 +517,10 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
             )
         dlg = _F8EditStateFieldDialog(
             self,
-            title="Edit state terminal",
+            title=("View state terminal" if (self._missing_locked or self._inspect_mode) else "Edit state terminal"),
             field=field,
             ui_only=False,
-            read_only=bool(self._missing_locked),
+            read_only=bool(self._missing_locked or self._inspect_mode),
         )
         for widget in (dlg._access, dlg._required, dlg._show_on_node, dlg._ui_control, dlg._global_hotkey):  # type: ignore[attr-defined]
             widget.setEnabled(False)
@@ -537,7 +547,7 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
         self._commit()
 
     def _rename_patch_data(self, row: _F8SpecNameRow, name: str) -> None:
-        if self._missing_locked:
+        if self._missing_locked or self._inspect_mode:
             return
         clean_name = str(name or "").strip()
         port = row.property("_port")
@@ -562,7 +572,7 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
         self._commit()
 
     def _rename_patch_state(self, row: _F8SpecNameRow, name: str) -> None:
-        if self._missing_locked:
+        if self._missing_locked or self._inspect_mode:
             return
         clean_name = str(name or "").strip()
         field = row.property("_field")
@@ -590,6 +600,8 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
         self._commit()
 
     def _apply_data_port_ui_override(self, name: str, show_on_node: bool, *, is_in: bool) -> None:
+        if self._inspect_mode:
+            return
         node = self._node
         if node is None:
             return
@@ -604,7 +616,7 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
         )
 
     def _rename_data(self, row: _F8SpecNameRow, name: str) -> None:
-        if self._missing_locked:
+        if self._missing_locked or self._inspect_mode:
             return
         if self._row_is_required_data_port(row):
             return
@@ -621,7 +633,7 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
         self._commit()
 
     def _delete_row(self, row: QtWidgets.QWidget) -> None:
-        if self._missing_locked:
+        if self._missing_locked or self._inspect_mode:
             return
         dir_s = str(row.property("_port_dir") or "")
         if dir_s == "exec_in" and not self._exec_in_can_delete:
@@ -659,7 +671,7 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
         self._commit()
 
     def _add_exec(self, is_in: bool) -> None:
-        if self._missing_locked:
+        if self._missing_locked or self._inspect_mode:
             return
         if not (self._exec_in_can_add if is_in else self._exec_out_can_add):
             return
@@ -668,7 +680,7 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
         row.name_edit.setFocus()
 
     def _add_data(self, is_in: bool) -> None:
-        if self._missing_locked:
+        if self._missing_locked or self._inspect_mode:
             return
         if not (self._data_in_can_add if is_in else self._data_out_can_add):
             return
@@ -684,7 +696,7 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
         self._edit_data(row)
 
     def _add_patch_data(self) -> None:
-        if self._missing_locked or not self._patch_data_can_add:
+        if self._missing_locked or self._inspect_mode or not self._patch_data_can_add:
             return
         port = F8DataPortSpec(
             name="",
@@ -698,7 +710,7 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
         self._edit_patch_data(row)
 
     def _add_patch_state(self) -> None:
-        if self._missing_locked or not self._state_can_add:
+        if self._missing_locked or self._inspect_mode or not self._state_can_add:
             return
         field = F8StateSpec(
             name="",
@@ -712,7 +724,7 @@ class _F8SpecPortEditor(QtWidgets.QWidget):
         self._edit_patch_state(row)
 
     def _commit(self) -> None:
-        if self._missing_locked:
+        if self._missing_locked or self._inspect_mode:
             return
         if self._node is None:
             return

@@ -297,7 +297,7 @@ class _F8EditDataPortDialog(QtWidgets.QDialog):
         self._schema_summary.setStyleSheet("color: #888;")
         self._refresh_schema_summary()
 
-        self._schema_btn = QtWidgets.QPushButton("Edit Schema...")
+        self._schema_btn = QtWidgets.QPushButton("View Schema..." if self._read_only else "Edit Schema...")
         self._schema_btn.clicked.connect(self._edit_schema)
 
         form = QtWidgets.QFormLayout()
@@ -323,7 +323,7 @@ class _F8EditDataPortDialog(QtWidgets.QDialog):
             for w in (self._name, self._required):
                 w.setEnabled(False)
         if self._read_only:
-            for w in (self._name, self._required, self._show_on_node, self._desc, self._schema_btn):
+            for w in (self._name, self._required, self._show_on_node, self._desc):
                 w.setEnabled(False)
             ok_btn = self._buttons.button(QtWidgets.QDialogButtonBox.Ok)
             if ok_btn is not None:
@@ -337,7 +337,7 @@ class _F8EditDataPortDialog(QtWidgets.QDialog):
         dialog_type = SchemaBuilderDialog
         dlg = dialog_type(
             self,
-            title="Edit valueSchema",
+            title="View valueSchema" if self._read_only else "Edit valueSchema",
             schema=self._schema,
             read_only=bool(self._ui_only or self._read_only),
         )
@@ -423,7 +423,7 @@ class _F8EditStateFieldDialog(QtWidgets.QDialog):
         self._schema_summary.setStyleSheet("color: #888;")
         self._refresh_schema_summary()
 
-        self._schema_btn = QtWidgets.QPushButton("Edit Schema...", self)
+        self._schema_btn = QtWidgets.QPushButton("View Schema..." if self._read_only else "Edit Schema...", self)
         self._schema_btn.clicked.connect(self._edit_schema)
 
         form = QtWidgets.QFormLayout()
@@ -463,7 +463,6 @@ class _F8EditStateFieldDialog(QtWidgets.QDialog):
                 self._desc,
                 self._ui_control,
                 self._global_hotkey,
-                self._schema_btn,
             ):
                 w.setEnabled(False)
             ok_btn = self._buttons.button(QtWidgets.QDialogButtonBox.Ok)
@@ -480,7 +479,7 @@ class _F8EditStateFieldDialog(QtWidgets.QDialog):
         dialog_type = SchemaBuilderDialog
         dlg = dialog_type(
             self,
-            title="Edit valueSchema",
+            title="View valueSchema" if self._read_only else "Edit valueSchema",
             schema=self._schema,
             read_only=bool(self._ui_only or self._read_only),
         )

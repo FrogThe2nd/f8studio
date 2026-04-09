@@ -1,12 +1,25 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import cast
 
 from qtpy import QtCore, QtTest, QtWidgets
 
-from f8pysdk.specs import F8DataPortSpec, F8OperatorSpec, F8ServiceSpec, F8VariantKind, F8VariantRecord
+from f8pysdk.specs import (
+    F8Command,
+    F8CommandParam,
+    F8DataPortSpec,
+    F8OperatorSpec,
+    F8ServiceSpec,
+    F8SpecEditPolicy,
+    F8StateAccess,
+    F8StateSpec,
+    F8VariantKind,
+    F8VariantRecord,
+    editable_collection_edit_policy,
+)
 from f8pysdk.codec import copy_model, dump_json
-from f8pysdk.specs import any_schema, number_schema
+from f8pysdk.specs import any_schema, number_schema, string_schema
 
 from f8pystudio.assets.ui.asset_graph_preview import AssetGraphPreviewPane
 from f8pystudio.assets.ui.component_catalog_dialog import ComponentCatalogDialog
@@ -17,6 +30,16 @@ from f8pystudio.nodegraph.node_graph import F8StudioGraph
 from f8pystudio.nodegraph.operator_basenode import F8StudioOperatorBaseNode
 from f8pystudio.nodegraph.service_basenode import F8StudioServiceBaseNode
 from f8pystudio.nodegraph.session_schema import wrap_layout_for_save
+from f8pystudio.ui.components.controls import F8ValueBar
+from f8pystudio.ui.components.state_editors import F8ValueBarEditor
+from f8pystudio.ui.widgets.node_property_panel import (
+    F8StudioNodePropEditorWidget,
+    _F8SpecCommandEditor,
+    _F8SpecPortEditor,
+)
+from f8pystudio.ui.widgets.node_property_panel import commands as node_property_commands
+from f8pystudio.ui.widgets.node_property_panel import editor as node_property_editor
+from f8pystudio.ui.widgets.node_property_panel import ports as node_property_ports
 
 _PREVIEW_BUILD_WAIT_STEP_MS = 10
 _PREVIEW_BUILD_WAIT_LIMIT_MS = 500
@@ -59,6 +82,80 @@ def _make_service_node_class() -> type[F8StudioServiceBaseNode]:
     )
 
 
+def _make_inspectable_service_node_class() -> type[F8StudioServiceBaseNode]:
+    spec = F8ServiceSpec(
+        serviceClass="svc.preview.inspect",
+        label="Inspectable Preview Service",
+        paletteCategory="svc.preview",
+        editPolicy=F8SpecEditPolicy(
+            stateFields=editable_collection_edit_policy(),
+            commands=editable_collection_edit_policy(),
+            dataInPorts=editable_collection_edit_policy(),
+            dataOutPorts=editable_collection_edit_policy(),
+        ),
+        dataInPorts=[F8DataPortSpec(name="modeIn", valueSchema=string_schema(default="idle"), showOnNode=True)],
+        dataOutPorts=[F8DataPortSpec(name="out", valueSchema=any_schema())],
+        stateFields=[
+            F8StateSpec(
+                name="mode",
+                valueSchema=string_schema(default="idle"),
+                access=F8StateAccess.rw,
+                showOnNode=True,
+            )
+        ],
+        commands=[
+            F8Command(
+                name="Run Value",
+                description="Inspect-only preview command.",
+                showOnNode=True,
+                params=[F8CommandParam(name="mode", required=True, valueSchema=string_schema(default="idle"))],
+            )
+        ],
+    )
+    return cast(
+        type[F8StudioServiceBaseNode],
+        type(
+            "InspectablePreviewServiceNode",
+            (F8StudioServiceBaseNode,),
+            {
+                "__identifier__": "svc.preview",
+                "NODE_NAME": "Inspectable Preview Service",
+                "SPEC_TEMPLATE": spec,
+            },
+        ),
+    )
+
+
+def _make_slider_preview_node_class() -> type[F8StudioServiceBaseNode]:
+    spec = F8ServiceSpec(
+        serviceClass="svc.preview.slider",
+        label="Preview Slider Service",
+        paletteCategory="svc.preview",
+        stateFields=[
+            F8StateSpec(
+                name="gain",
+                valueSchema=number_schema(default=0.2, minimum=0.0, maximum=1.0),
+                access=F8StateAccess.rw,
+                showOnNode=True,
+                uiControl="slider",
+            )
+        ],
+        dataOutPorts=[F8DataPortSpec(name="out", valueSchema=any_schema())],
+    )
+    return cast(
+        type[F8StudioServiceBaseNode],
+        type(
+            "PreviewSliderServiceNode",
+            (F8StudioServiceBaseNode,),
+            {
+                "__identifier__": "svc.preview",
+                "NODE_NAME": "Preview Slider Service",
+                "SPEC_TEMPLATE": spec,
+            },
+        ),
+    )
+
+
 def _make_operator_node_class() -> type[F8StudioOperatorBaseNode]:
     spec = F8OperatorSpec(
         serviceClass="svc.preview.service",
@@ -87,6 +184,25 @@ def _build_host_graph(*node_classes: type[object]) -> F8StudioGraph:
     for node_cls in node_classes:
         graph.node_factory.register_node(node_cls)
     return graph
+
+
+def _single_node_component_payload_for_node(node_cls: type[F8StudioServiceBaseNode]) -> dict[str, object]:
+    node_type = str(node_cls.type_)
+    spec_payload = dump_json(node_cls.SPEC_TEMPLATE, mode="json")
+    return wrap_layout_for_save(
+        {
+            "nodes": {
+                "node_a": {
+                    "id": "node_a",
+                    "type_": node_type,
+                    "name": "Node A",
+                    "pos": [0.0, 0.0],
+                    "f8_spec": spec_payload,
+                }
+            },
+            "connections": [],
+        }
+    )
 
 
 def _component_payload_for_node(node_cls: type[F8StudioServiceBaseNode]) -> dict[str, object]:
@@ -118,6 +234,30 @@ def _component_payload_for_node(node_cls: type[F8StudioServiceBaseNode]) -> dict
             ],
         }
     )
+
+
+def _inspector_editor(pane: AssetGraphPreviewPane) -> F8StudioNodePropEditorWidget | None:
+    editor = getattr(pane._inspector, "_editor", None)  # type: ignore[attr-defined]
+    if isinstance(editor, F8StudioNodePropEditorWidget):
+        return editor
+    return None
+
+
+def _tab_names(editor: F8StudioNodePropEditorWidget) -> list[str]:
+    tab_widget = editor.get_tab_widget()
+    return [str(tab_widget.tabText(index) or "") for index in range(tab_widget.count())]
+
+
+def _viewport_pos_for_scene_item(viewer: QtWidgets.QGraphicsView, item: object) -> QtCore.QPoint:
+    scene_item = cast(QtWidgets.QGraphicsItem, item)
+    return viewer.mapFromScene(scene_item.sceneBoundingRect().center())
+
+
+def _find_tool_button(widget: QtWidgets.QWidget, tooltip_prefix: str) -> QtWidgets.QToolButton:
+    for child in widget.findChildren(QtWidgets.QToolButton):
+        if str(child.toolTip() or "").startswith(tooltip_prefix):
+            return child
+    raise AssertionError(f"Unable to find tool button with tooltip prefix {tooltip_prefix!r}")
 
 
 def test_asset_graph_preview_renders_component_payload() -> None:
@@ -193,7 +333,7 @@ def test_asset_graph_preview_clears_graph_and_shows_error_for_invalid_component_
     host_graph.widget.close()
 
 
-def test_preview_viewer_ignores_left_click_selection_and_disables_edit_shortcuts() -> None:
+def test_preview_viewer_allows_selection_but_blocks_edit_shortcuts_and_live_connections() -> None:
     _ensure_app()
     service_node_cls = _make_service_node_class()
     host_graph = _build_host_graph(service_node_cls)
@@ -207,15 +347,274 @@ def test_preview_viewer_ignores_left_click_selection_and_disables_edit_shortcuts
     internal_viewer = cast(object, viewer)
     assert internal_viewer._shortcut_search.isEnabled() is False  # type: ignore[attr-defined]
     assert internal_viewer._shortcut_delete.isEnabled() is False  # type: ignore[attr-defined]
-    QtTest.QTest.mouseClick(
-        viewer.viewport(),
+    assert internal_viewer._shortcut_backspace.isEnabled() is False  # type: ignore[attr-defined]
+    nodes = list(pane.preview_graph.all_nodes() or [])
+    node_a = nodes[0]
+    node_b = nodes[1]
+
+    QtTest.QTest.mouseClick(viewer.viewport(), QtCore.Qt.MouseButton.LeftButton, pos=_viewport_pos_for_scene_item(viewer, node_a.view))
+    QtWidgets.QApplication.processEvents()
+
+    assert [node.id for node in list(pane.preview_graph.selected_nodes() or [])] == ["node_a"]
+
+    out_port = node_a.view.outputs[0]
+    port_pos = _viewport_pos_for_scene_item(viewer, out_port)
+    QtTest.QTest.mousePress(viewer.viewport(), QtCore.Qt.MouseButton.LeftButton, pos=port_pos)
+    QtWidgets.QApplication.processEvents()
+    assert internal_viewer._LIVE_PIPE.isVisible() is False  # type: ignore[attr-defined]
+    QtTest.QTest.mouseMove(viewer.viewport(), port_pos + QtCore.QPoint(40, 0), delay=10)
+    QtWidgets.QApplication.processEvents()
+    assert internal_viewer._LIVE_PIPE.isVisible() is False  # type: ignore[attr-defined]
+    QtTest.QTest.mouseRelease(viewer.viewport(), QtCore.Qt.MouseButton.LeftButton, pos=port_pos + QtCore.QPoint(40, 0))
+    QtWidgets.QApplication.processEvents()
+
+    assert [node.id for node in list(pane.preview_graph.selected_nodes() or [])] == ["node_a"]
+    assert node_b.input_ports()[0].connected_ports() != []
+
+    pane.close()
+    host_graph.widget.close()
+
+
+def test_single_node_preview_auto_populates_inspector_and_keeps_inline_state_browsable() -> None:
+    _ensure_app()
+    service_node_cls = _make_inspectable_service_node_class()
+    host_graph = _build_host_graph(service_node_cls)
+    pane = AssetGraphPreviewPane(parent=None, host_graph=host_graph)
+    pane.resize(1000, 700)
+    pane.show()
+
+    pane.show_component_payload(_single_node_component_payload_for_node(service_node_cls))
+    _wait_for_preview_completion(pane)
+
+    assert [node.id for node in list(pane.preview_graph.selected_nodes() or [])] == ["node_a"]
+    inspector_editor = _inspector_editor(pane)
+    assert inspector_editor is not None
+    assert _tab_names(inspector_editor) == ["State", "Command", "Port", "Node"]
+
+    node = list(pane.preview_graph.all_nodes() or [])[0]
+    toggle = node.view._state_inline_toggles["mode"]  # type: ignore[attr-defined]
+    body = node.view._state_inline_bodies["mode"]  # type: ignore[attr-defined]
+    inline_editor = cast(QtWidgets.QLineEdit | None, body.findChild(QtWidgets.QLineEdit))
+    assert inline_editor is not None
+    assert inline_editor.isReadOnly() is True
+    assert inline_editor.isEnabled() is True
+    assert toggle.isEnabled() is True
+    assert body.isVisible() is False
+
+    QtTest.QTest.mouseClick(toggle, QtCore.Qt.MouseButton.LeftButton)
+    QtWidgets.QApplication.processEvents()
+    assert body.isVisible() is True
+
+    QtTest.QTest.mouseClick(toggle, QtCore.Qt.MouseButton.LeftButton)
+    QtWidgets.QApplication.processEvents()
+    assert body.isVisible() is False
+
+    pane.close()
+    host_graph.widget.close()
+
+
+def test_preview_split_defaults_to_graph_favoring_layout() -> None:
+    _ensure_app()
+    service_node_cls = _make_inspectable_service_node_class()
+    host_graph = _build_host_graph(service_node_cls)
+    pane = AssetGraphPreviewPane(parent=None, host_graph=host_graph)
+    pane.resize(1000, 700)
+    pane.show()
+    pane.show_component_payload(_single_node_component_payload_for_node(service_node_cls))
+    _wait_for_preview_completion(pane)
+
+    split_sizes = pane._preview_split.sizes()  # type: ignore[attr-defined]
+    total = sum(split_sizes)
+
+    assert total > 0
+    assert split_sizes[0] > split_sizes[1]
+    assert split_sizes[1] <= int(total * 0.4)
+
+    pane.close()
+    host_graph.widget.close()
+
+
+def test_preview_slider_controls_are_read_only_inline_and_in_inspector() -> None:
+    _ensure_app()
+    service_node_cls = _make_slider_preview_node_class()
+    host_graph = _build_host_graph(service_node_cls)
+    pane = AssetGraphPreviewPane(parent=None, host_graph=host_graph)
+    pane.resize(1200, 700)
+    pane.show()
+
+    pane.show_component_payload(_single_node_component_payload_for_node(service_node_cls))
+    _wait_for_preview_completion(pane)
+
+    node = list(pane.preview_graph.all_nodes() or [])[0]
+    initial_value = float(node.get_property("gain"))
+    inline_slider = cast(F8ValueBar, node.view._state_inline_controls["gain"])  # type: ignore[attr-defined]
+    inline_center = inline_slider.rect().center()
+    QtTest.QTest.mousePress(inline_slider, QtCore.Qt.MouseButton.LeftButton, pos=inline_center)
+    QtTest.QTest.mouseMove(inline_slider, inline_center + QtCore.QPoint(40, 0), delay=10)
+    QtTest.QTest.mouseRelease(
+        inline_slider,
         QtCore.Qt.MouseButton.LeftButton,
-        QtCore.Qt.KeyboardModifier.NoModifier,
-        viewer.viewport().rect().center(),
+        pos=inline_center + QtCore.QPoint(40, 0),
     )
     QtWidgets.QApplication.processEvents()
 
-    assert pane.preview_graph.selected_nodes() == []
+    assert float(inline_slider.value()) == initial_value
+    assert float(node.get_property("gain")) == initial_value
+
+    inspector_editor = _inspector_editor(pane)
+    assert inspector_editor is not None
+    inspector_slider_editor = cast(F8ValueBarEditor, inspector_editor.get_widget("gain"))
+    inspector_slider = cast(F8ValueBar, inspector_slider_editor.findChild(F8ValueBar))
+    inspector_center = inspector_slider.rect().center()
+    QtTest.QTest.mousePress(inspector_slider, QtCore.Qt.MouseButton.LeftButton, pos=inspector_center)
+    QtTest.QTest.mouseMove(inspector_slider, inspector_center + QtCore.QPoint(40, 0), delay=10)
+    QtTest.QTest.mouseRelease(
+        inspector_slider,
+        QtCore.Qt.MouseButton.LeftButton,
+        pos=inspector_center + QtCore.QPoint(40, 0),
+    )
+    QtWidgets.QApplication.processEvents()
+
+    assert float(inspector_slider.value()) == initial_value
+    assert float(node.get_property("gain")) == initial_value
+
+    pane.close()
+    host_graph.widget.close()
+
+
+def test_multi_node_preview_selection_updates_inspector_and_dragging_is_ephemeral() -> None:
+    _ensure_app()
+    service_node_cls = _make_service_node_class()
+    host_graph = _build_host_graph(service_node_cls)
+    pane = AssetGraphPreviewPane(parent=None, host_graph=host_graph)
+    pane.resize(1000, 700)
+    pane.show()
+    payload = _component_payload_for_node(service_node_cls)
+
+    pane.show_component_payload(payload)
+    _wait_for_preview_completion(pane)
+
+    viewer = cast(QtWidgets.QGraphicsView, pane.preview_graph.viewer())
+    nodes = list(pane.preview_graph.all_nodes() or [])
+    node_a = nodes[0]
+    node_b = nodes[1]
+
+    assert _inspector_editor(pane) is None
+
+    QtTest.QTest.mouseClick(viewer.viewport(), QtCore.Qt.MouseButton.LeftButton, pos=_viewport_pos_for_scene_item(viewer, node_a.view))
+    QtWidgets.QApplication.processEvents()
+    assert getattr(pane._inspector, "_node_id", None) == "node_a"  # type: ignore[attr-defined]
+
+    QtTest.QTest.mouseClick(viewer.viewport(), QtCore.Qt.MouseButton.LeftButton, pos=_viewport_pos_for_scene_item(viewer, node_b.view))
+    QtWidgets.QApplication.processEvents()
+    assert getattr(pane._inspector, "_node_id", None) == "node_b"  # type: ignore[attr-defined]
+
+    start_pos = tuple(float(v) for v in list(node_b.pos()))
+    drag_start = _viewport_pos_for_scene_item(viewer, node_b.view)
+    drag_end = drag_start + QtCore.QPoint(90, 50)
+    QtTest.QTest.mousePress(viewer.viewport(), QtCore.Qt.MouseButton.LeftButton, pos=drag_start)
+    QtTest.QTest.mouseMove(viewer.viewport(), drag_end, delay=10)
+    QtTest.QTest.mouseRelease(viewer.viewport(), QtCore.Qt.MouseButton.LeftButton, pos=drag_end)
+    QtWidgets.QApplication.processEvents()
+
+    dragged_pos = tuple(float(v) for v in list(node_b.pos()))
+    assert dragged_pos != start_pos
+
+    pane.show_component_payload(payload)
+    _wait_for_preview_completion(pane)
+    reloaded_nodes = list(pane.preview_graph.all_nodes() or [])
+    reloaded_node_b = next(node for node in reloaded_nodes if str(node.id or "") == "node_b")
+    assert tuple(float(v) for v in list(reloaded_node_b.pos())) == start_pos
+
+    pane.close()
+    host_graph.widget.close()
+
+
+def test_preview_inspector_is_read_only_but_view_details_remain_available(monkeypatch) -> None:
+    _ensure_app()
+    service_node_cls = _make_inspectable_service_node_class()
+    host_graph = _build_host_graph(service_node_cls)
+    pane = AssetGraphPreviewPane(parent=None, host_graph=host_graph)
+    pane.resize(1000, 700)
+    pane.show()
+
+    pane.show_component_payload(_single_node_component_payload_for_node(service_node_cls))
+    _wait_for_preview_completion(pane)
+
+    inspector_editor = _inspector_editor(pane)
+    assert inspector_editor is not None
+    node = list(pane.preview_graph.all_nodes() or [])[0]
+    spec_before = dump_json(copy_model(node.spec, deep=True), mode="json")
+
+    state_container = inspector_editor._F8StudioNodePropEditorWidget__tab_windows["State"]  # type: ignore[attr-defined]
+    state_row = state_container._sec.rows()[0]  # type: ignore[attr-defined]
+    state_edit_btn = _find_tool_button(state_row, "View state field...")
+    state_eye_btn = _find_tool_button(state_row, "Show on node")
+    assert state_edit_btn.isEnabled() is True
+    assert state_eye_btn.isEnabled() is False
+
+    command_editor = inspector_editor.findChild(_F8SpecCommandEditor)
+    port_editor = inspector_editor.findChild(_F8SpecPortEditor)
+    assert command_editor is not None
+    assert port_editor is not None
+
+    command_row = command_editor._cmd_rows["Run Value"]  # type: ignore[attr-defined]
+    assert command_editor._sec._add_btn.isVisible() is False  # type: ignore[attr-defined]
+    assert command_editor._sec._list.drag_enabled() is False  # type: ignore[attr-defined]
+    assert command_row._btn_invoke.isEnabled() is False  # type: ignore[attr-defined]
+    assert "Preview inspector is read-only" in str(command_row._btn_invoke.toolTip() or "")  # type: ignore[attr-defined]
+    assert command_row._btn_edit.isEnabled() is True  # type: ignore[attr-defined]
+    assert command_row._eye_btn.isEnabled() is False  # type: ignore[attr-defined]
+    assert command_row._btn_del.isVisible() is False  # type: ignore[attr-defined]
+
+    port_row = port_editor._sec_data_in.rows()[0]  # type: ignore[attr-defined]
+    assert port_editor._sec_data_in._add_btn.isVisible() is False  # type: ignore[attr-defined]
+    assert port_editor._sec_data_in._list.drag_enabled() is False  # type: ignore[attr-defined]
+    assert port_row.edit_btn.isEnabled() is True
+    assert str(port_row.edit_btn.toolTip() or "").startswith("View data port...")
+    assert port_row.eye_btn.isEnabled() is False
+    assert port_row.del_btn.isVisible() is False
+
+    captured_state: list[dict[str, object]] = []
+    captured_command: list[dict[str, object]] = []
+    captured_port: list[dict[str, object]] = []
+
+    class _FakeStateDialog:
+        def __init__(self, _parent=None, **kwargs: object) -> None:
+            captured_state.append(dict(kwargs))
+
+        def exec_(self) -> int:
+            return int(QtWidgets.QDialog.Rejected)
+
+    class _FakeCommandDialog:
+        def __init__(self, _parent=None, **kwargs: object) -> None:
+            captured_command.append(dict(kwargs))
+
+        def exec_(self) -> int:
+            return int(QtWidgets.QDialog.Rejected)
+
+    class _FakeDataDialog:
+        def __init__(self, _parent=None, **kwargs: object) -> None:
+            captured_port.append(dict(kwargs))
+
+        def exec_(self) -> int:
+            return int(QtWidgets.QDialog.Rejected)
+
+    monkeypatch.setattr(node_property_editor, "_F8EditStateFieldDialog", _FakeStateDialog)
+    monkeypatch.setattr(node_property_commands, "_F8EditCommandDialog", _FakeCommandDialog)
+    monkeypatch.setattr(node_property_ports, "_F8EditDataPortDialog", _FakeDataDialog)
+
+    inspector_editor.open_state_field_editor("mode")
+    command_editor._edit_command("Run Value")  # type: ignore[attr-defined]
+    port_editor._edit_data(port_row)  # type: ignore[attr-defined]
+
+    assert captured_state[0]["read_only"] is True
+    assert captured_state[0]["title"] == "View state field"
+    assert captured_command[0]["read_only"] is True
+    assert captured_command[0]["title"] == "View command"
+    assert captured_port[0]["read_only"] is True
+    assert captured_port[0]["title"] == "View data port"
+    assert dump_json(copy_model(node.spec, deep=True), mode="json") == spec_before
 
     pane.close()
     host_graph.widget.close()
@@ -379,7 +778,8 @@ def test_component_catalog_dialog_defers_initial_remote_refresh(monkeypatch, tmp
     dialog = ComponentCatalogDialog(parent=None, node_graph=None)
 
     assert refresh_calls == []
-    assert len(scheduled_callbacks) == 1
+    refresh_callbacks = [callback for callback in scheduled_callbacks if getattr(callback, "__name__", "") == "_run_initial_remote_refresh"]
+    assert len(refresh_callbacks) == 1
 
     dialog.close()
 

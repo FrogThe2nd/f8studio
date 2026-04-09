@@ -582,6 +582,23 @@ class F8ValueBar(QtWidgets.QWidget):
         self._integer = bool(integer)
         self._value: float | int = float(value) if value is not None else float(self._min)
         self._dragging = False
+        self._read_only = False
+
+    def set_read_only(self, read_only: bool) -> None:
+        self._read_only = bool(read_only)
+        self.setCursor(
+            QtCore.Qt.ArrowCursor if self._read_only or not self.isEnabled() else QtCore.Qt.PointingHandCursor
+        )
+        self.update()
+
+    def is_read_only(self) -> bool:
+        return bool(self._read_only)
+
+    def setEnabled(self, enabled: bool) -> None:  # type: ignore[override]
+        super().setEnabled(bool(enabled))
+        self.setCursor(
+            QtCore.Qt.ArrowCursor if self._read_only or not self.isEnabled() else QtCore.Qt.PointingHandCursor
+        )
 
     def set_range(self, minimum: float | int | None, maximum: float | int | None) -> None:
         lo = float(0.0 if minimum is None else minimum)
@@ -600,7 +617,7 @@ class F8ValueBar(QtWidgets.QWidget):
         return self._value
 
     def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:  # type: ignore[override]
-        if event.button() == QtCore.Qt.LeftButton and self.isEnabled():
+        if event.button() == QtCore.Qt.LeftButton and self.isEnabled() and not self._read_only:
             self._dragging = True
             self._set_from_pos(event.position().x(), commit=False)
             event.accept()
@@ -608,18 +625,20 @@ class F8ValueBar(QtWidgets.QWidget):
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QtGui.QMouseEvent) -> None:  # type: ignore[override]
-        if self._dragging and self.isEnabled():
+        if self._dragging and self.isEnabled() and not self._read_only:
             self._set_from_pos(event.position().x(), commit=False)
             event.accept()
             return
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event: QtGui.QMouseEvent) -> None:  # type: ignore[override]
-        if self._dragging and event.button() == QtCore.Qt.LeftButton and self.isEnabled():
+        if self._dragging and event.button() == QtCore.Qt.LeftButton and self.isEnabled() and not self._read_only:
             self._dragging = False
             self._set_from_pos(event.position().x(), commit=True)
             event.accept()
             return
+        if event.button() == QtCore.Qt.LeftButton:
+            self._dragging = False
         super().mouseReleaseEvent(event)
 
     def paintEvent(self, event: QtGui.QPaintEvent) -> None:  # type: ignore[override]
@@ -629,9 +648,10 @@ class F8ValueBar(QtWidgets.QWidget):
         rect = QtCore.QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
         radius = 4.0
 
-        border = QtGui.QColor(255, 255, 255, 55 if self.isEnabled() else 25)
+        interactive = self.isEnabled() and not self._read_only
+        border = QtGui.QColor(255, 255, 255, 55 if interactive else 25)
         bg = QtGui.QColor(0, 0, 0, 45)
-        fill = QtGui.QColor(120, 200, 255, 70 if self.isEnabled() else 30)
+        fill = QtGui.QColor(120, 200, 255, 70 if interactive else 30)
 
         p.setPen(QtGui.QPen(border, 1.0))
         p.setBrush(bg)
@@ -646,7 +666,7 @@ class F8ValueBar(QtWidgets.QWidget):
             p.drawRoundedRect(fill_rect, radius, radius)
 
         text = self._format_value(self._value)
-        p.setPen(QtGui.QColor(235, 235, 235, 255 if self.isEnabled() else 120))
+        p.setPen(QtGui.QColor(235, 235, 235, 255 if interactive else 120))
         p.drawText(rect, QtCore.Qt.AlignCenter, text)
 
     def _fraction(self) -> float:

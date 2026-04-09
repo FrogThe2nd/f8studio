@@ -177,6 +177,9 @@ class _F8StateStackContainer(QtWidgets.QWidget):
         *,
         allow_delete: bool = False,
         show_on_node: bool = True,
+        allow_edit: bool = True,
+        allow_show_on_node_toggle: bool = True,
+        edit_tooltip: str = "Edit stateField...",
     ):
         label = label or name
         row = _F8StateFieldRow(
@@ -188,6 +191,9 @@ class _F8StateStackContainer(QtWidgets.QWidget):
             tooltip=str(tooltip or ""),
             allow_delete=bool(allow_delete),
             show_on_node=bool(show_on_node),
+            allow_edit=bool(allow_edit),
+            allow_show_on_node_toggle=bool(allow_show_on_node_toggle),
+            edit_tooltip=str(edit_tooltip or "Edit stateField..."),
         )
         row.edit_clicked.connect(self.edit_state_field_requested)
         row.delete_clicked.connect(self.delete_state_field_requested)
@@ -553,6 +559,9 @@ class _F8StateFieldRow(QtWidgets.QWidget):
         tooltip: str,
         allow_delete: bool,
         show_on_node: bool,
+        allow_edit: bool = True,
+        allow_show_on_node_toggle: bool = True,
+        edit_tooltip: str = "Edit stateField...",
     ) -> None:
         super().__init__(parent)
         field_name = str(name or "").strip()
@@ -570,9 +579,11 @@ class _F8StateFieldRow(QtWidgets.QWidget):
 
         edit_btn = QtWidgets.QToolButton(header)
         edit_btn.setAutoRaise(True)
-        edit_btn.setToolTip("Edit stateField...")
+        edit_btn.setToolTip(str(edit_tooltip or "Edit stateField..."))
         edit_btn.setIcon(_icon_from_style(edit_btn, QtWidgets.QStyle.SP_FileDialogDetailedView, "document-edit"))
         edit_btn.clicked.connect(lambda _checked=False, _name=field_name: self.edit_clicked.emit(_name))
+        edit_btn.setVisible(bool(allow_edit))
+        edit_btn.setEnabled(bool(allow_edit))
 
         eye_btn = QtWidgets.QToolButton(header)
         eye_btn.setAutoRaise(True)
@@ -584,6 +595,7 @@ class _F8StateFieldRow(QtWidgets.QWidget):
         eye_btn.toggled.connect(
             lambda checked, _btn=eye_btn, _name=field_name: self._emit_eye_changed(_btn, _name, bool(checked))
         )  # type: ignore[attr-defined]
+        eye_btn.setEnabled(bool(allow_show_on_node_toggle))
 
         del_btn = QtWidgets.QToolButton(header)
         del_btn.setAutoRaise(True)
@@ -601,7 +613,7 @@ class _F8StateFieldRow(QtWidgets.QWidget):
         if tooltip:
             full_tip = f"{field_name}\n{tooltip}"
             label_widget.setToolTip(full_tip)
-            edit_btn.setToolTip("Edit stateField...\n" + full_tip)
+            edit_btn.setToolTip(str(edit_tooltip or "Edit stateField...") + "\n" + full_tip)
             del_btn.setToolTip("Delete stateField\n" + full_tip)
             widget.setToolTip(full_tip)
         else:
@@ -697,6 +709,7 @@ class _F8SpecNameRow(QtWidgets.QWidget):
     def __init__(self, parent=None, *, name: str, placeholder: str, show_eye: bool = False):
         super().__init__(parent)
         self.set_order_key(str(name or ""))
+        self._show_eye = bool(show_eye)
 
         self.name_edit = QtWidgets.QLineEdit(name, self)
         self.name_edit.setPlaceholderText(placeholder)
@@ -738,11 +751,23 @@ class _F8SpecNameRow(QtWidgets.QWidget):
     def set_order_key(self, name: str) -> None:
         self.setProperty("_order_key", str(name or "").strip())
 
-    def set_row_editable(self, *, allow_rename: bool, allow_delete: bool, allow_edit: bool = True) -> None:
+    def set_row_editable(
+        self,
+        *,
+        allow_rename: bool,
+        allow_delete: bool,
+        allow_edit: bool = True,
+        allow_show_toggle: bool = True,
+    ) -> None:
         self.name_edit.setReadOnly(not bool(allow_rename))
         self.del_btn.setVisible(bool(allow_delete))
         self.edit_btn.setVisible(bool(allow_edit))
         self.edit_btn.setEnabled(bool(allow_edit))
+        self.eye_btn.setVisible(bool(self._show_eye))
+        self.eye_btn.setEnabled(bool(self._show_eye and allow_show_toggle))
+
+    def set_edit_tooltip(self, tooltip: str) -> None:
+        self.edit_btn.setToolTip(str(tooltip or "Edit"))
 
     def set_show_on_node(self, show: bool) -> None:
         with QtCore.QSignalBlocker(self.eye_btn):
@@ -759,4 +784,3 @@ class _F8SpecNameRow(QtWidgets.QWidget):
 
     def _emit_commit(self) -> None:
         self.name_committed.emit(str(self.name_edit.text() or "").strip())
-

@@ -134,9 +134,10 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
     property_changing = QtCore.Signal(str, str, object)
     property_closed = QtCore.Signal(str)
 
-    def __init__(self, parent=None, node=None):
+    def __init__(self, parent=None, node=None, *, inspect_mode: bool = False):
         super(F8StudioNodePropEditorWidget, self).__init__(parent)
         self._node = node
+        self._inspect_mode = bool(inspect_mode)
         self.__node_id = node.id
         self.__tab_windows = {}
         self.__tab = QtWidgets.QTabWidget(self)
@@ -163,6 +164,7 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
             "QPushButton { border: 0; border-radius: 4px; padding: 0; background: rgba(255,255,255,0.04); }"
             "QPushButton:hover { background: rgba(255,255,255,0.08); }"
         )
+        close_btn.setVisible(not self._inspect_mode)
 
         pixmap = QtGui.QPixmap()
         if node.icon():
@@ -256,6 +258,8 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
             name (str): property name.
             value (object): new value.
         """
+        if self._inspect_mode:
+            return
         self.property_changed.emit(self.__node_id, name, value)
         self.refresh_option_pool(str(name or ""))
 
@@ -267,6 +271,8 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
             name (str): property name.
             value (object): new value (preview).
         """
+        if self._inspect_mode:
+            return
         self.property_changing.emit(self.__node_id, name, value)
         self.refresh_option_pool(str(name or ""))
 
@@ -290,6 +296,7 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
         Open the edit dialog for a state field and apply changes.
         """
         missing_locked, _missing_type = node_missing_lock_info(self._node)
+        inspect_mode = bool(getattr(self, "_inspect_mode", False))
         name = str(field_name or "").strip()
         if not name:
             return
@@ -323,9 +330,10 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
 
         # If UI-only, we still want to allow editing UI fields (showOnNode/uiControl/etc).
         hotkey_controller = _node_hotkey_controller(node)
+        read_only = bool(missing_locked or inspect_mode)
         dlg = _F8EditStateFieldDialog(
             self,
-            title="Edit state field",
+            title="View state field" if read_only else "Edit state field",
             field=current,
             global_hotkey=_state_field_global_hotkey(node, name),
             current_binding_id=f"{str(node.id or '').strip()}:{name}",
@@ -336,7 +344,7 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
             hotkey_capture_finished=(hotkey_controller.resume_hotkeys if hotkey_controller is not None else None),
             ui_only=ui_only,
             lock_identity_fields=bool(can_edit_existing),
-            read_only=bool(missing_locked),
+            read_only=read_only,
         )
         if dlg.exec_() != QtWidgets.QDialog.Accepted:
             return
@@ -353,7 +361,8 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
 
     def add_state_field(self) -> None:
         missing_locked, _missing_type = node_missing_lock_info(self._node)
-        if missing_locked:
+        inspect_mode = bool(getattr(self, "_inspect_mode", False))
+        if missing_locked or inspect_mode:
             return
         node = self._node
         if node is None:
@@ -390,7 +399,8 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
 
     def delete_state_field(self, field_name: str) -> None:
         missing_locked, _missing_type = node_missing_lock_info(self._node)
-        if missing_locked:
+        inspect_mode = bool(getattr(self, "_inspect_mode", False))
+        if missing_locked or inspect_mode:
             return
         name = str(field_name or "").strip()
         if not name:
@@ -501,7 +511,8 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
 
     def _toggle_state_field_show_on_node(self, field_name: str, show_on_node: bool) -> None:
         missing_locked, _missing_type = node_missing_lock_info(self._node)
-        if missing_locked:
+        inspect_mode = bool(getattr(self, "_inspect_mode", False))
+        if missing_locked or inspect_mode:
             return
         node = self._node
         if node is None:
@@ -533,7 +544,8 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
         if node is None:
             return
         missing_locked, _missing_type = node_missing_lock_info(node)
-        if missing_locked:
+        inspect_mode = bool(getattr(self, "_inspect_mode", False))
+        if missing_locked or inspect_mode:
             return
         _set_list_order_override(
             node,
@@ -565,6 +577,7 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
         model = node.model
         graph_model = node.graph.model
         missing_locked, _missing_type = node_missing_lock_info(node)
+        inspect_mode = bool(self._inspect_mode)
 
         common_props = graph_model.get_node_common_properties(node.type_) or {}
         spec = get_node_spec(node)
@@ -632,8 +645,8 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
                 else:
                     can_add_state = _policy_can_add(spec, "stateFields")
                     can_delete_state = _policy_can_delete(spec, "stateFields")
-                prop_window.set_add_visible(bool(can_add_state) and not missing_locked)
-                prop_window.set_drag_enabled(not missing_locked)
+                prop_window.set_add_visible(bool(can_add_state) and not missing_locked and not inspect_mode)
+                prop_window.set_drag_enabled(not missing_locked and not inspect_mode)
                 # Map property values.
                 values = dict(model.custom_properties)
                 # Order by effective state fields (applies UI overrides).
@@ -670,10 +683,10 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
                     if name in common_props.keys() and "tooltip" in common_props[name].keys():
                         tooltip = common_props[name]["tooltip"]
                     access = _state_field_access(node, name)
-                    read_only = access == F8StateAccess.ro or state_input_is_connected(node, name) or missing_locked
+                    read_only = access == F8StateAccess.ro or state_input_is_connected(node, name) or missing_locked or inspect_mode
                     _set_read_only_widget(widget, read_only=bool(read_only))
                     required = bool(f.required)
-                    allow_delete = bool(can_delete_state and not required)
+                    allow_delete = bool(can_delete_state and not required and not inspect_mode)
                     label_txt = str(f.label or "").strip()
                     desc_txt = str(f.description or "").strip()
                     show_on_node = bool(f.showOnNode)
@@ -685,12 +698,16 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
                         tooltip=desc_txt or tooltip,
                         allow_delete=allow_delete,
                         show_on_node=bool(show_on_node),
+                        allow_edit=True,
+                        allow_show_on_node_toggle=bool(not missing_locked and not inspect_mode),
+                        edit_tooltip="View state field..." if inspect_mode else "Edit state field...",
                     )
-                    widget.value_changed.connect(self._on_property_changed)
-                    try:
-                        widget.value_changing.connect(self._on_property_changing)
-                    except (AttributeError, RuntimeError, TypeError):
-                        pass
+                    if not inspect_mode:
+                        widget.value_changed.connect(self._on_property_changed)
+                        try:
+                            widget.value_changing.connect(self._on_property_changing)
+                        except (AttributeError, RuntimeError, TypeError):
+                            pass
                 continue
             for prop_name, value in tab_mapping[tab]:
                 wid_type = _widget_type_for_property(str(prop_name))
@@ -797,7 +814,7 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
                 except Exception:
                     logger.exception("Failed to build code editor widget for property '%s'", prop_name)
                 access = _state_field_access(node, prop_name)
-                if access == F8StateAccess.ro or missing_locked:
+                if access == F8StateAccess.ro or missing_locked or inspect_mode:
                     _apply_read_only_widget(widget)
                 # Enrich tooltips for option/switch editors.
                 if isinstance(widget, (F8OptionComboEditor, F8MultiSelectEditor, F8BoolSwitchEditor)):
@@ -817,7 +834,7 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
                 prop_window.add_widget(
                     name=prop_name, widget=widget, value=value, label=prop_name.replace("_", " "), tooltip=tooltip
                 )
-                if not isinstance(widget, _F8CodeButtonEditor):
+                if not inspect_mode and not isinstance(widget, _F8CodeButtonEditor):
                     widget.value_changed.connect(self._on_property_changed)
                     try:
                         widget.value_changing.connect(self._on_property_changing)
@@ -847,12 +864,14 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
                 label=prop_name.replace("_", " "),
                 tooltip=tooltip,
             )
-
-            widget.value_changed.connect(self._on_property_changed)
-            try:
-                widget.value_changing.connect(self._on_property_changing)
-            except (AttributeError, RuntimeError, TypeError):
-                pass
+            if inspect_mode:
+                _apply_read_only_widget(widget)
+            else:
+                widget.value_changed.connect(self._on_property_changed)
+                try:
+                    widget.value_changing.connect(self._on_property_changing)
+                except (AttributeError, RuntimeError, TypeError):
+                    pass
 
         spec = get_node_spec(node)
         if isinstance(spec, F8OperatorSpec):
@@ -878,7 +897,9 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
                 label="Layers",
                 tooltip="Display-only graph layers for this node. A node can belong to multiple layers.",
             )
-            layer_widget.value_changed.connect(self._on_property_changed)
+            layer_widget.setEnabled(bool(not inspect_mode and not missing_locked))
+            if not inspect_mode:
+                layer_widget.value_changed.connect(self._on_property_changed)
 
         purpose_widget = _F8InlineCodeEditor(self, language="plaintext")
         purpose_widget.set_name("nodePurpose")
@@ -890,16 +911,19 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
             label="Purpose",
             tooltip="Instance-specific purpose for this node in the current graph. Used by AI/collaboration context.",
         )
-        purpose_widget.value_changed.connect(self._on_property_changed)
+        if inspect_mode:
+            _apply_read_only_widget(purpose_widget)
+        else:
+            purpose_widget.value_changed.connect(self._on_property_changed)
 
         self.type_wgt.setText(model.get_property("type_") or "")
 
         # built-in spec editors (if node has F8 spec).
         if isinstance(spec, (F8OperatorSpec, F8ServiceSpec)):
             if _should_show_commands_tab(spec):
-                cmd_editor = _F8SpecCommandEditor(self, node=node, on_apply=self._on_spec_applied)
+                cmd_editor = _F8SpecCommandEditor(self, node=node, on_apply=self._on_spec_applied, inspect_mode=inspect_mode)
                 self.__tab.addTab(cmd_editor, "Command")
-            spec_ports = _F8SpecPortEditor(self, node=node, on_apply=self._on_spec_applied)
+            spec_ports = _F8SpecPortEditor(self, node=node, on_apply=self._on_spec_applied, inspect_mode=inspect_mode)
             self.__tab.addTab(spec_ports, "Port")
 
         # hide/remove empty tabs with no property widgets.
@@ -1078,11 +1102,12 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
             self.add_tab(tab)
         window = self.__tab_windows[tab]
         window.add_widget(name, widget)
-        widget.value_changed.connect(self._on_property_changed)
-        try:
-            widget.value_changing.connect(self._on_property_changing)
-        except (AttributeError, RuntimeError, TypeError):
-            pass
+        if not self._inspect_mode:
+            widget.value_changed.connect(self._on_property_changed)
+            try:
+                widget.value_changing.connect(self._on_property_changing)
+            except (AttributeError, RuntimeError, TypeError):
+                pass
 
     def add_tab(self, name):
         """
@@ -1106,10 +1131,11 @@ class F8StudioNodePropEditorWidget(QtWidgets.QWidget):
         if name == "State":
             assert isinstance(window, _F8StateStackContainer)
             window.edit_state_field_requested.connect(self.open_state_field_editor)
-            window.delete_state_field_requested.connect(self.delete_state_field)
-            window.add_state_field_requested.connect(self.add_state_field)
-            window.toggle_state_field_show_on_node_requested.connect(self._toggle_state_field_show_on_node)
-            window.state_field_order_changed.connect(self._reorder_state_fields)
+            if not self._inspect_mode:
+                window.delete_state_field_requested.connect(self.delete_state_field)
+                window.add_state_field_requested.connect(self.add_state_field)
+                window.toggle_state_field_show_on_node_requested.connect(self._toggle_state_field_show_on_node)
+                window.state_field_order_changed.connect(self._reorder_state_fields)
         self.__tab.addTab(_wrap_tab_page(window), name)
         return window
 
@@ -1192,9 +1218,17 @@ class F8StudioSingleNodePropertiesWidget(QtWidgets.QWidget):
     we present a single `F8StudioNodePropEditorWidget` inside a QScrollArea.
     """
 
-    def __init__(self, parent: QtWidgets.QWidget | None = None, *, node_graph: F8StudioGraph) -> None:
+    def __init__(
+        self,
+        parent: QtWidgets.QWidget | None = None,
+        *,
+        node_graph: F8StudioGraph,
+        inspect_mode: bool = False,
+        empty_message: str = "Select a node to view properties.",
+    ) -> None:
         super().__init__(parent)
         self._node_graph = node_graph
+        self._inspect_mode = bool(inspect_mode)
         self._node_id: str | None = None
         self._editor: F8StudioNodePropEditorWidget | None = None
         self._block_signal = False
@@ -1215,7 +1249,7 @@ class F8StudioSingleNodePropertiesWidget(QtWidgets.QWidget):
         self._container_layout.setContentsMargins(0, 0, 0, 0)
         self._container_layout.setSpacing(0)
 
-        self._empty = QtWidgets.QLabel("Select a node to view properties.", self._container)
+        self._empty = QtWidgets.QLabel(str(empty_message or "Select a node to view properties."), self._container)
         self._empty.setAlignment(QtCore.Qt.AlignCenter)
         self._empty.setStyleSheet("color: rgba(235,235,235,140); padding: 14px;")
         self._container_layout.addWidget(self._empty, 1)
@@ -1266,6 +1300,8 @@ class F8StudioSingleNodePropertiesWidget(QtWidgets.QWidget):
         """
         Toggle read-only state for State-tab widgets when state-edge bindings change.
         """
+        if self._inspect_mode:
+            return
         try:
             in_name = str(_in_port.name() or "")
             out_name = str(_out_port.name() or "")
@@ -1333,11 +1369,13 @@ class F8StudioSingleNodePropertiesWidget(QtWidgets.QWidget):
         self._container_layout.addWidget(editor, 0)
         self._sync_container_width()
         try:
-            editor.property_changed.connect(self._on_editor_property_changed)  # type: ignore[attr-defined]
+            if not self._inspect_mode:
+                editor.property_changed.connect(self._on_editor_property_changed)  # type: ignore[attr-defined]
         except (AttributeError, RuntimeError, TypeError):
             logger.exception("Failed to connect editor.property_changed")
         try:
-            editor.property_changing.connect(self._on_editor_property_changing)  # type: ignore[attr-defined]
+            if not self._inspect_mode:
+                editor.property_changing.connect(self._on_editor_property_changing)  # type: ignore[attr-defined]
         except (AttributeError, RuntimeError, TypeError):
             logger.exception("Failed to connect editor.property_changing")
         try:
@@ -1372,7 +1410,7 @@ class F8StudioSingleNodePropertiesWidget(QtWidgets.QWidget):
         except (AttributeError, RuntimeError, TypeError, ValueError):
             previous_outer_scroll = 0
         self._node_id = node_id
-        editor = F8StudioNodePropEditorWidget(self._container, node=node)
+        editor = F8StudioNodePropEditorWidget(self._container, node=node, inspect_mode=self._inspect_mode)
         self._set_editor(editor)
         restored_same_tab = editor.restore_view_state(previous_view_state)
         if restored_same_tab:
@@ -1425,7 +1463,7 @@ class F8StudioSingleNodePropertiesWidget(QtWidgets.QWidget):
         return
 
     def _on_editor_property_changed(self, node_id: str, prop_name: str, prop_value: Any) -> None:
-        if self._block_signal:
+        if self._inspect_mode or self._block_signal:
             return
         nid = str(node_id or "").strip()
         if not nid:
@@ -1439,7 +1477,7 @@ class F8StudioSingleNodePropertiesWidget(QtWidgets.QWidget):
             logger.exception("set_property failed nodeId=%s prop=%s", nid, prop_name)
 
     def _on_editor_property_changing(self, node_id: str, prop_name: str, prop_value: Any) -> None:
-        if self._block_signal:
+        if self._inspect_mode or self._block_signal:
             return
         nid = str(node_id or "").strip()
         if not nid:

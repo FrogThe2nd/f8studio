@@ -84,7 +84,7 @@ class _F8EditCommandParamDialog(QtWidgets.QDialog):
         self._schema_summary.setStyleSheet("color: #888;")
         self._refresh_schema_summary()
 
-        self._schema_btn = QtWidgets.QPushButton("Edit Schema...", self)
+        self._schema_btn = QtWidgets.QPushButton("View Schema..." if self._read_only else "Edit Schema...", self)
         self._schema_btn.clicked.connect(self._edit_schema)
 
         form = QtWidgets.QFormLayout()
@@ -110,7 +110,7 @@ class _F8EditCommandParamDialog(QtWidgets.QDialog):
             for w in (self._name, self._required):
                 w.setEnabled(False)
         if self._read_only:
-            for w in (self._name, self._required, self._desc, self._ui_control, self._schema_btn):
+            for w in (self._name, self._required, self._desc, self._ui_control):
                 w.setEnabled(False)
             ok_btn = self._buttons.button(QtWidgets.QDialogButtonBox.Ok)
             if ok_btn is not None:
@@ -123,7 +123,7 @@ class _F8EditCommandParamDialog(QtWidgets.QDialog):
     def _edit_schema(self) -> None:
         dlg = SchemaBuilderDialog(
             self,
-            title="Edit valueSchema",
+            title="View valueSchema" if self._read_only else "Edit valueSchema",
             schema=self._schema,
             read_only=bool(self._ui_only or self._read_only),
         )
@@ -228,11 +228,11 @@ class _F8EditCommandDialog(QtWidgets.QDialog):
                 self._show_on_node,
                 self._desc,
                 self._btn_add,
-                self._btn_edit,
                 self._btn_del,
-                self._params_list,
             ):
                 w.setEnabled(False)
+            self._params_list.setEnabled(True)
+            self._btn_edit.setEnabled(True)
             ok_btn = self._buttons.button(QtWidgets.QDialogButtonBox.Ok)
             if ok_btn is not None:
                 ok_btn.setEnabled(False)
@@ -319,6 +319,8 @@ class _F8CommandRow(QtWidgets.QWidget):
         allow_edit: bool,
         allow_delete: bool,
         show_on_node: bool,
+        allow_show_on_node_toggle: bool = True,
+        edit_tooltip: str = "Edit command...",
     ):
         super().__init__(parent)
         self._name = str(name or "")
@@ -334,10 +336,11 @@ class _F8CommandRow(QtWidgets.QWidget):
         self._eye_btn.setCheckable(True)
         self._eye_btn.setToolTip("Show on node")
         self._eye_btn.toggled.connect(self._on_eye_toggled)  # type: ignore[attr-defined]
+        self._eye_btn.setEnabled(bool(allow_show_on_node_toggle))
 
         self._btn_edit = QtWidgets.QToolButton(self)
         self._btn_edit.setAutoRaise(True)
-        self._btn_edit.setToolTip("Edit command...")
+        self._btn_edit.setToolTip(str(edit_tooltip or "Edit command..."))
         self._btn_edit.setIcon(
             _icon_from_style(self._btn_edit, QtWidgets.QStyle.SP_FileDialogDetailedView, "document-edit")
         )
@@ -363,7 +366,7 @@ class _F8CommandRow(QtWidgets.QWidget):
 
         if self._base_tooltip:
             self._btn_invoke.setToolTip(self._base_tooltip)
-            self._btn_edit.setToolTip("Edit command...\n" + self._base_tooltip)
+            self._btn_edit.setToolTip(str(edit_tooltip or "Edit command...") + "\n" + self._base_tooltip)
 
         self.set_show_on_node(bool(show_on_node))
 
@@ -415,10 +418,18 @@ class _F8CommandRow(QtWidgets.QWidget):
 
 
 class _F8SpecCommandEditor(QtWidgets.QWidget):
-    def __init__(self, parent=None, *, node: Any, on_apply: Callable[[], None] | None):
+    def __init__(
+        self,
+        parent=None,
+        *,
+        node: Any,
+        on_apply: Callable[[], None] | None,
+        inspect_mode: bool = False,
+    ):
         super().__init__(parent)
         self._node = node
         self._on_apply = on_apply
+        self._inspect_mode = bool(inspect_mode)
         self._missing_locked = False
         self._bridge_proc_hooked = False
         self._cmd_rows: dict[str, _F8CommandRow] = {}
@@ -498,8 +509,11 @@ class _F8SpecCommandEditor(QtWidgets.QWidget):
         self._apply_running_state(bool(running))
 
     def _apply_running_state(self, running: bool) -> None:
-        enabled = bool(running) and not self._missing_locked
-        reason = "Missing dependency" if self._missing_locked else "Service not running"
+        enabled = bool(running) and not self._missing_locked and not self._inspect_mode
+        if self._inspect_mode:
+            reason = "Preview inspector is read-only"
+        else:
+            reason = "Missing dependency" if self._missing_locked else "Service not running"
         for row in list(self._cmd_rows.values()):
             row.set_invoke_enabled(enabled, disabled_reason=reason)
 
@@ -518,8 +532,8 @@ class _F8SpecCommandEditor(QtWidgets.QWidget):
         can_add = _policy_can_add(spec, "commands")
         can_delete = _policy_can_delete(spec, "commands")
         can_edit_existing = _policy_can_edit_existing(spec, "commands")
-        self._sec.set_add_visible(bool(can_add) and not self._missing_locked)
-        self._sec.set_drag_enabled(not self._missing_locked)
+        self._sec.set_add_visible(bool(can_add) and not self._missing_locked and not self._inspect_mode)
+        self._sec.set_drag_enabled(not self._missing_locked and not self._inspect_mode)
 
         running = self._is_service_running()
         try:
@@ -548,9 +562,11 @@ class _F8SpecCommandEditor(QtWidgets.QWidget):
             row = _F8CommandRow(
                 name=name,
                 description=desc,
-                allow_edit=bool(not self._missing_locked),
-                allow_delete=bool(can_delete) and not self._missing_locked and not required,
+                allow_edit=True,
+                allow_delete=bool(can_delete) and not self._missing_locked and not required and not self._inspect_mode,
                 show_on_node=bool(show_on_node),
+                allow_show_on_node_toggle=bool(not self._missing_locked and not self._inspect_mode),
+                edit_tooltip="View command..." if self._inspect_mode else "Edit command...",
             )
             row.invoke_clicked.connect(self._invoke_command)
             row.edit_clicked.connect(self._edit_command)
@@ -558,7 +574,8 @@ class _F8SpecCommandEditor(QtWidgets.QWidget):
             row.show_on_node_changed.connect(lambda v, _n=str(name): self._toggle_command_show_on_node(_n, bool(v)))  # type: ignore[attr-defined]
             try:
                 row.set_invoke_enabled(
-                    bool(running) and not self._missing_locked, disabled_reason="Missing dependency"
+                    bool(running) and not self._missing_locked and not self._inspect_mode,
+                    disabled_reason=("Preview inspector is read-only" if self._inspect_mode else "Missing dependency"),
                 )
             except (AttributeError, RuntimeError, TypeError):
                 logger.exception("Failed to apply running-state to command row command=%s", name)
@@ -582,7 +599,7 @@ class _F8SpecCommandEditor(QtWidgets.QWidget):
         return ordered
 
     def _on_rows_reordered(self, ordered_names: list[str]) -> None:
-        if self._missing_locked:
+        if self._missing_locked or self._inspect_mode:
             return
         _set_list_order_override(
             self._node,
@@ -593,7 +610,7 @@ class _F8SpecCommandEditor(QtWidgets.QWidget):
         )
 
     def _toggle_command_show_on_node(self, name: str, show_on_node: bool) -> None:
-        if self._missing_locked:
+        if self._missing_locked or self._inspect_mode:
             return
         n = str(name or "").strip()
         if not n:
@@ -708,7 +725,7 @@ class _F8SpecCommandEditor(QtWidgets.QWidget):
             return args
 
     def _invoke_command(self, name: str) -> None:
-        if self._missing_locked:
+        if self._missing_locked or self._inspect_mode:
             return
         try:
             spec = self._node.spec
@@ -774,7 +791,7 @@ class _F8SpecCommandEditor(QtWidgets.QWidget):
             show_warning(self, "Command failed", str(e))
 
     def _add_command(self) -> None:
-        if self._missing_locked:
+        if self._missing_locked or self._inspect_mode:
             return
         try:
             spec = self._node.spec
@@ -811,7 +828,7 @@ class _F8SpecCommandEditor(QtWidgets.QWidget):
             spec = None
         if not isinstance(spec, (F8ServiceSpec, F8OperatorSpec)):
             return
-        read_only = bool(self._missing_locked)
+        read_only = bool(self._missing_locked or self._inspect_mode)
         can_edit_existing = _policy_can_edit_existing(spec, "commands")
         cmds = list(spec.commands or [])
         idx = -1
@@ -841,7 +858,7 @@ class _F8SpecCommandEditor(QtWidgets.QWidget):
                 logger.exception("Failed to read effective commands for non-editable command dialog")
         dlg = _F8EditCommandDialog(
             self,
-            title="Edit command",
+            title="View command" if read_only else "Edit command",
             cmd=init_cmd,
             ui_only=not can_edit_existing,
             lock_identity_fields=bool(can_edit_existing),
@@ -896,7 +913,7 @@ class _F8SpecCommandEditor(QtWidgets.QWidget):
         return False
 
     def _delete_command(self, name: str) -> None:
-        if self._missing_locked:
+        if self._missing_locked or self._inspect_mode:
             return
         try:
             spec = self._node.spec

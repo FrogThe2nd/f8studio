@@ -4,6 +4,9 @@ import logging
 from typing import Callable, cast
 
 from NodeGraphQt.errors import NodeCreationError
+from NodeGraphQt.qgraphics.node_abstract import AbstractNodeItem
+from NodeGraphQt.qgraphics.pipe import PipeItem
+from NodeGraphQt.qgraphics.port import PortItem
 from NodeGraphQt.nodes.base_node import NodeBaseWidget
 from qtpy import QtCore, QtGui, QtWidgets
 
@@ -13,6 +16,8 @@ from f8pysdk.codec import dump_json
 from ...assets.common import JsonObject, json_object_from_value
 from ...nodegraph.node_graph import F8StudioGraph
 from ...nodegraph.viewer import F8StudioNodeViewer
+from ...ui.support.state_builders import set_control_read_only
+from ...ui.widgets.node_property_panel import F8StudioSingleNodePropertiesWidget
 from ..variants.variant_ids import build_variant_node_type
 
 logger = logging.getLogger(__name__)
@@ -21,6 +26,9 @@ _DEFAULT_EMPTY_MESSAGE = "Select an asset to preview."
 _PREVIEW_BUILD_DELAY_MS = 24
 _PREVIEW_FIT_RETRY_DELAYS_MS = (24, 80, 160)
 _LOADING_MESSAGE = "Building preview..."
+_PREVIEW_INSPECTOR_MIN_WIDTH = 260
+_PREVIEW_INSPECTOR_MAX_WIDTH = 360
+_PREVIEW_INSPECTOR_FRACTION = 0.3
 
 
 class _AssetPreviewViewer(F8StudioNodeViewer):
@@ -48,34 +56,64 @@ class _AssetPreviewViewer(F8StudioNodeViewer):
         event.accept()
 
     def sceneMousePressEvent(self, event) -> None:  # type: ignore[override]
-        button = event.button()
-        if button in (
-            QtCore.Qt.MouseButton.LeftButton,
-            QtCore.Qt.MouseButton.RightButton,
-        ):
+        if self._LIVE_PIPE.isVisible():
+            self.end_live_connection()
+            event.accept()
+            return
+        hit_target = self._preview_hit_target(event.scenePos())
+        if hit_target in {"port", "pipe"}:
             event.accept()
             return
         super().sceneMousePressEvent(event)
 
     def mousePressEvent(self, event) -> None:  # type: ignore[override]
         button = event.button()
-        if button in (
-            QtCore.Qt.MouseButton.LeftButton,
-            QtCore.Qt.MouseButton.RightButton,
+        if button == QtCore.Qt.MouseButton.RightButton:
+            event.accept()
+            return
+        if (
+            button == QtCore.Qt.MouseButton.LeftButton
+            and bool(event.modifiers() & QtCore.Qt.KeyboardModifier.AltModifier)
+            and bool(event.modifiers() & QtCore.Qt.KeyboardModifier.ShiftModifier)
         ):
             event.accept()
             return
+        if button == QtCore.Qt.MouseButton.LeftButton:
+            hit_target = self._preview_hit_target(self.mapToScene(event.pos()))
+            if hit_target in {"port", "pipe"}:
+                if self._LIVE_PIPE.isVisible():
+                    self.end_live_connection()
+                event.accept()
+                return
         super().mousePressEvent(event)
 
+    def mouseMoveEvent(self, event) -> None:  # type: ignore[override]
+        if self._LIVE_PIPE.isVisible():
+            self.end_live_connection()
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
     def mouseReleaseEvent(self, event) -> None:  # type: ignore[override]
-        button = event.button()
-        if button in (
-            QtCore.Qt.MouseButton.LeftButton,
-            QtCore.Qt.MouseButton.RightButton,
-        ):
+        if self._LIVE_PIPE.isVisible():
+            self.end_live_connection()
             event.accept()
             return
         super().mouseReleaseEvent(event)
+
+    def _preview_hit_target(self, scene_pos: QtCore.QPointF) -> str | None:
+        items = self._items_near(scene_pos, None, 5, 5)
+        saw_node = False
+        for item in items:
+            if isinstance(item, PortItem):
+                return "port"
+            if isinstance(item, PipeItem):
+                return "pipe"
+            if isinstance(item, AbstractNodeItem):
+                saw_node = True
+        if saw_node:
+            return "node"
+        return None
 
 
 class AssetGraphPreviewPane(QtWidgets.QWidget):
@@ -90,6 +128,23 @@ class AssetGraphPreviewPane(QtWidgets.QWidget):
         self._viewer = _AssetPreviewViewer(self)
         self._preview_graph = F8StudioGraph(parent=self, viewer=self._viewer)
         self._preview_graph._skip_post_load_viewer_refresh = True  # pyright: ignore[reportAttributeAccessIssue]
+        self._inspector = F8StudioSingleNodePropertiesWidget(
+            self,
+            node_graph=self._preview_graph,
+            inspect_mode=True,
+            empty_message="Select a node to inspect.",
+        )
+        self._inspector.setMinimumWidth(_PREVIEW_INSPECTOR_MIN_WIDTH)
+        self._preview_split = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal, self)
+        self._preview_split.setChildrenCollapsible(False)
+        self._preview_split.addWidget(self._preview_graph.widget)
+        self._preview_split.addWidget(self._inspector)
+        self._preview_split.setStretchFactor(0, 7)
+        self._preview_split.setStretchFactor(1, 3)
+        self._preview_page = QtWidgets.QWidget(self)
+        preview_layout = QtWidgets.QVBoxLayout(self._preview_page)
+        preview_layout.setContentsMargins(0, 0, 0, 0)
+        preview_layout.addWidget(self._preview_split, 1)
         self._status = QtWidgets.QLabel(self)
         self._status.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         self._status.setWordWrap(True)
@@ -115,7 +170,7 @@ class AssetGraphPreviewPane(QtWidgets.QWidget):
         loading_layout.addWidget(self._loading_label, 0)
         loading_layout.addStretch(1)
         self._stack = QtWidgets.QStackedLayout()
-        self._stack.addWidget(self._preview_graph.widget)
+        self._stack.addWidget(self._preview_page)
         self._stack.addWidget(self._loading_page)
         self._stack.addWidget(self._status)
         self._preview_request_timer = QtCore.QTimer(self)
@@ -127,12 +182,24 @@ class AssetGraphPreviewPane(QtWidgets.QWidget):
         self._pending_request_id = 0
         self._current_request_id = 0
         self._node_factory_signature: tuple[tuple[str, int], ...] = ()
+        self._preview_split_initialized = False
+        self._preview_split_user_resized = False
+        self._preview_split_syncing = False
+        self._preview_split.splitterMoved.connect(self._on_preview_splitter_moved)  # type: ignore[attr-defined]
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addLayout(self._stack)
 
         self.clear_preview()
+
+    def showEvent(self, event: QtGui.QShowEvent) -> None:  # type: ignore[override]
+        super().showEvent(event)
+        self._ensure_default_preview_split_sizes()
+
+    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:  # type: ignore[override]
+        super().resizeEvent(event)
+        self._ensure_default_preview_split_sizes()
 
     @property
     def preview_graph(self) -> F8StudioGraph:
@@ -236,6 +303,7 @@ class AssetGraphPreviewPane(QtWidgets.QWidget):
         except Exception:
             logger.exception("Failed to clear preview graph.")
         self._preview_graph._undo_stack.clear()
+        self._inspector.set_node(None, force_clear=True)
 
     def _show_status(self, message: str) -> None:
         self._status.setText(str(message or _DEFAULT_EMPTY_MESSAGE))
@@ -246,7 +314,8 @@ class AssetGraphPreviewPane(QtWidgets.QWidget):
         self._stack.setCurrentWidget(self._loading_page)
 
     def _show_graph(self) -> None:
-        self._stack.setCurrentWidget(self._preview_graph.widget)
+        self._stack.setCurrentWidget(self._preview_page)
+        QtCore.QTimer.singleShot(0, self._sync_preview_split_sizes_after_show)
 
     def _run_with_preview_updates_frozen(self, callback: Callable[[], None]) -> None:
         widgets_to_freeze: list[QtWidgets.QWidget] = []
@@ -277,8 +346,10 @@ class AssetGraphPreviewPane(QtWidgets.QWidget):
     def _finalize_loaded_preview(self, *, request_id: int) -> None:
         if request_id != self._current_request_id:
             return
+        self._apply_preview_interaction_mode()
         self._lock_preview_content()
         self._clear_selected_nodes()
+        self._sync_inspector_selection()
         self._show_graph()
         self._schedule_focus_loaded_nodes(request_id=request_id)
 
@@ -349,6 +420,18 @@ class AssetGraphPreviewPane(QtWidgets.QWidget):
             except (AttributeError, RuntimeError, TypeError):
                 continue
 
+    def _sync_inspector_selection(self) -> None:
+        nodes = list(self._preview_graph.all_nodes() or [])
+        if len(nodes) != 1:
+            self._inspector.set_node(None, force_clear=True)
+            return
+        selected_node = nodes[0]
+        try:
+            selected_node.set_property("selected", True, push_undo=False)
+        except (AttributeError, RuntimeError, TypeError):
+            pass
+        self._inspector.set_node(selected_node)
+
     def _focus_loaded_nodes(self) -> None:
         viewer = self._preview_graph.viewer()
         if not isinstance(viewer, QtWidgets.QGraphicsView):
@@ -383,6 +466,54 @@ class AssetGraphPreviewPane(QtWidgets.QWidget):
             viewer.fitInView(padded_rect, QtCore.Qt.AspectRatioMode.KeepAspectRatio)
             viewer.centerOn(padded_rect.center())
             viewer.viewport().update()
+
+    def _on_preview_splitter_moved(self, _pos: int, _index: int) -> None:
+        if self._preview_split_syncing:
+            return
+        self._preview_split_initialized = True
+        self._preview_split_user_resized = True
+
+    def _sync_preview_split_sizes_after_show(self) -> None:
+        self._ensure_default_preview_split_sizes(force=bool(not self._preview_split_user_resized))
+
+    def _ensure_default_preview_split_sizes(self, *, force: bool = False) -> None:
+        if self._stack.currentWidget() is not self._preview_page:
+            return
+        if self._preview_split_user_resized:
+            return
+        if self._preview_split_initialized and not force:
+            return
+        total_width = int(self._preview_page.width() or self._preview_split.size().width() or self.width() or 0)
+        if total_width <= 0:
+            return
+        inspector_width = int(total_width * _PREVIEW_INSPECTOR_FRACTION)
+        inspector_width = max(_PREVIEW_INSPECTOR_MIN_WIDTH, inspector_width)
+        inspector_width = min(_PREVIEW_INSPECTOR_MAX_WIDTH, inspector_width)
+        if inspector_width >= total_width:
+            inspector_width = max(1, total_width // 3)
+        graph_width = max(1, total_width - inspector_width)
+        self._preview_split_syncing = True
+        try:
+            self._preview_split.setSizes([graph_width, inspector_width])
+            self._preview_split_initialized = True
+        finally:
+            self._preview_split_syncing = False
+
+    def _apply_preview_interaction_mode(self) -> None:
+        for node in list(self._preview_graph.all_nodes() or []):
+            view = getattr(node, "view", None)
+            if view is None:
+                continue
+            try:
+                setattr(view, "_f8_preview_read_only", True)
+            except (AttributeError, RuntimeError, TypeError):
+                continue
+            refresh = getattr(view, "refresh_state_inline_control_read_only", None)
+            if callable(refresh):
+                try:
+                    refresh()
+                except (AttributeError, RuntimeError, TypeError):
+                    continue
 
     @staticmethod
     def _item_scene_rect(item: QtWidgets.QGraphicsItem) -> QtCore.QRectF:
@@ -430,29 +561,34 @@ class AssetGraphPreviewPane(QtWidgets.QWidget):
 
     @staticmethod
     def _apply_read_only_to_widget(widget: QtWidgets.QWidget) -> None:
+        if bool(widget.property("_f8_preview_interaction_exempt")):
+            return
         widget.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
         widget.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.NoContextMenu)
-        if isinstance(widget, QtWidgets.QLineEdit):
-            widget.setReadOnly(True)
-            return
-        if isinstance(widget, QtWidgets.QPlainTextEdit):
-            widget.setReadOnly(True)
-            return
-        if isinstance(widget, QtWidgets.QTextEdit):
-            widget.setReadOnly(True)
-            widget.setTextInteractionFlags(
-                QtCore.Qt.TextInteractionFlag.TextSelectableByMouse
-                | QtCore.Qt.TextInteractionFlag.TextSelectableByKeyboard
-            )
-            return
-        if isinstance(widget, QtWidgets.QAbstractSpinBox):
-            widget.setReadOnly(True)
-            widget.setButtonSymbols(QtWidgets.QAbstractSpinBox.ButtonSymbols.NoButtons)
-            return
         if isinstance(widget, NodeBaseWidget):
             group_widget = widget.widget()
             if isinstance(group_widget, QtWidgets.QWidget):
                 group_widget.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
+            return
+        if isinstance(
+            widget,
+            (
+                QtWidgets.QLineEdit,
+                QtWidgets.QPlainTextEdit,
+                QtWidgets.QTextEdit,
+                QtWidgets.QAbstractSpinBox,
+                QtWidgets.QAbstractButton,
+                QtWidgets.QComboBox,
+                QtWidgets.QAbstractSlider,
+                QtWidgets.QAbstractItemView,
+            ),
+        ) or hasattr(widget, "set_read_only") or hasattr(widget, "set_disabled"):
+            set_control_read_only(widget, read_only=True)
+        if isinstance(widget, QtWidgets.QTextEdit):
+            widget.setTextInteractionFlags(
+                QtCore.Qt.TextInteractionFlag.TextSelectableByMouse
+                | QtCore.Qt.TextInteractionFlag.TextSelectableByKeyboard
+            )
 
 
 __all__ = ["AssetGraphPreviewPane"]
