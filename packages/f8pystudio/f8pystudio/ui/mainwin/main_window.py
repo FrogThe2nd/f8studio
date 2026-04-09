@@ -37,8 +37,12 @@ from .main_window_toolbar import (
     set_edge_visibility_action_icon as set_toolbar_edge_visibility_action_icon,
 )
 from .main_window_menus import (
-    MainWindowGraphMenuSections,
-    build_graph_menu,
+    MainWindowFileMenuSections,
+    MainWindowDeployMenuSections,
+    MainWindowToolsMenuSections,
+    build_file_menu,
+    build_deploy_menu,
+    build_tools_menu,
     build_log_level_menu,
     build_view_menu,
 )
@@ -237,8 +241,6 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         self._capture_default_dock_layout_state()
         self._restore_saved_window_layout()
         self._restore_saved_log_level()
-        self._setup_view_menu()
-        self._setup_log_level_menu()
         self._shortcut_escape_cancel = QtGui.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key_Escape), self)
         self._shortcut_escape_cancel.setContext(QtCore.Qt.ShortcutContext.WindowShortcut)
         self._shortcut_escape_cancel.activated.connect(self._on_escape_cancel_placement)  # type: ignore[attr-defined]
@@ -444,59 +446,74 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         )
 
     def _setup_menu(self) -> None:
-        _ = build_graph_menu(
+        # File menu: project management, components, import/export
+        _ = build_file_menu(
             self,
-            sections=MainWindowGraphMenuSections(
-                recent_actions=[
-                    self._quickload_project_action,
-                    self._quicksave_project_action,
-                    self._auto_save_action,
-                ],
+            sections=MainWindowFileMenuSections(
                 project_actions=[
                     self._open_project_action,
+                    self._quicksave_project_action,
                     self._save_project_as_action,
-                    self._import_project_json_action,
-                    self._export_project_json_action,
+                    self._auto_save_action,
                     self._project_history_action,
-                    self._save_component_action,
-                    self._manage_components_action,
+                ],
+                component_actions=[
                     self._insert_component_action,
+                    self._save_component_action,
                 ],
                 import_export_actions=[
-                    self._import_graph_action,
+                    self._import_project_json_action,
+                    self._export_project_json_action,
                     self._export_published_session_action,
-                    self._clear_all_nodes_action,
                 ],
-                runtime_actions=[
+            ),
+        )
+
+        # Deploy menu: runtime operations
+        _ = build_deploy_menu(
+            self,
+            sections=MainWindowDeployMenuSections(
+                deploy_actions=[
                     self._deploy_action,
                     self._stop_all_services_action,
                     self._auto_deploy_action,
                 ],
-                utility_actions=[self._global_hotkeys_action],
             ),
         )
 
-    def _setup_view_menu(self) -> None:
-        menu_bundle = build_view_menu(
+        # View menu: dock widgets and view toggles
+        view_menu_bundle = build_view_menu(
             self,
             dock_widgets=self._dock_widgets,
             auto_proxy_action=self._auto_proxy_action,
             performance_overlay_action=self._performance_overlay_action,
             on_reset_layout=self._on_reset_layout_action,
         )
-        self._view_menu = menu_bundle.view_menu
-        self._reset_layout_action = menu_bundle.reset_layout_action
+        self._view_menu = view_menu_bundle.view_menu
+        self._reset_layout_action = view_menu_bundle.reset_layout_action
 
-    def _setup_log_level_menu(self) -> None:
-        menu_bundle = build_log_level_menu(
+        # Log level menu (will be added to Tools menu)
+        log_menu_bundle = build_log_level_menu(
             self,
             choices=self._LOG_LEVEL_CHOICES,
             current_level=self._normalize_supported_log_level(logging.getLogger().getEffectiveLevel()),
             on_level_toggled=self._on_log_level_toggled,
         )
-        self._log_level_menu = menu_bundle.log_level_menu
-        self._log_level_action_group = menu_bundle.log_level_action_group
-        self._log_level_actions = menu_bundle.log_level_actions
+        self._log_level_menu = log_menu_bundle.log_level_menu
+        self._log_level_action_group = log_menu_bundle.log_level_action_group
+        self._log_level_actions = log_menu_bundle.log_level_actions
+
+        # Tools menu: catalogs and configuration
+        _ = build_tools_menu(
+            self,
+            sections=MainWindowToolsMenuSections(
+                catalog_actions=[
+                    self._manage_components_action,
+                    self._global_hotkeys_action,
+                ],
+                log_level_menu=self._log_level_menu,
+            ),
+        )
 
     def _layout_settings(self) -> QtCore.QSettings:
         return QtCore.QSettings()
@@ -1088,7 +1105,9 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         except (AttributeError, RuntimeError, TypeError):
             return
 
-    def _on_runtime_state_updated(self, service_id: str, node_id: str, field: str, value: object, ts_ms: object) -> None:
+    def _on_runtime_state_updated(
+        self, service_id: str, node_id: str, field: str, value: object, ts_ms: object
+    ) -> None:
         self._runtime_state_sync.on_runtime_state_updated(service_id, node_id, field, value, ts_ms)
 
     def _on_ui_command(self, cmd: UiCommand) -> None:
@@ -1131,10 +1150,10 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         settings = self._layout_settings()
         settings.beginGroup(self._AUTOMATION_SETTINGS_GROUP)
         try:
-            raw = settings.value(self._AUTO_SAVE_ENABLED_SETTINGS_KEY, True)
+            raw = settings.value(self._AUTO_SAVE_ENABLED_SETTINGS_KEY, False)
         finally:
             settings.endGroup()
-        return self._coerce_bool_setting(raw, default=True)
+        return self._coerce_bool_setting(raw, default=False)
 
     def _write_saved_auto_save_enabled(self, *, enabled: bool) -> None:
         settings = self._layout_settings()
@@ -1225,9 +1244,7 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         )
 
     def _mark_session_saved(self) -> None:
-        self._last_saved_undo_index = automation_ops.mark_session_saved(
-            current_undo_index=self._current_undo_index()
-        )
+        self._last_saved_undo_index = automation_ops.mark_session_saved(current_undo_index=self._current_undo_index())
 
     def _mark_auto_deploy_observed(self) -> None:
         self._last_auto_deploy_observed_undo_index = automation_ops.mark_auto_deploy_observed(

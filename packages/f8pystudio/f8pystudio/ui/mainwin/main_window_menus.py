@@ -7,17 +7,36 @@ from qtpy import QtGui, QtWidgets
 
 
 @dataclass(frozen=True)
-class MainWindowGraphMenuSections:
-    recent_actions: Sequence[QtGui.QAction]
+class MainWindowFileMenuSections:
     project_actions: Sequence[QtGui.QAction]
+    component_actions: Sequence[QtGui.QAction]
     import_export_actions: Sequence[QtGui.QAction]
-    runtime_actions: Sequence[QtGui.QAction]
-    utility_actions: Sequence[QtGui.QAction]
 
 
 @dataclass(frozen=True)
-class MainWindowGraphMenuBundle:
-    graph_menu: QtWidgets.QMenu
+class MainWindowFileMenuBundle:
+    file_menu: QtWidgets.QMenu
+
+
+@dataclass(frozen=True)
+class MainWindowDeployMenuSections:
+    deploy_actions: Sequence[QtGui.QAction]
+
+
+@dataclass(frozen=True)
+class MainWindowDeployMenuBundle:
+    deploy_menu: QtWidgets.QMenu
+
+
+@dataclass(frozen=True)
+class MainWindowToolsMenuSections:
+    catalog_actions: Sequence[QtGui.QAction]
+    log_level_menu: QtWidgets.QMenu
+
+
+@dataclass(frozen=True)
+class MainWindowToolsMenuBundle:
+    tools_menu: QtWidgets.QMenu
 
 
 @dataclass(frozen=True)
@@ -33,18 +52,39 @@ class MainWindowLogMenuBundle:
     log_level_actions: dict[int, QtGui.QAction]
 
 
-def build_graph_menu(
+def build_file_menu(
     parent: QtWidgets.QMainWindow,
     *,
-    sections: MainWindowGraphMenuSections,
-) -> MainWindowGraphMenuBundle:
-    graph_menu = parent.menuBar().addMenu("Graph")
-    _add_menu_section(graph_menu, sections.recent_actions)
-    _add_menu_section(graph_menu, sections.project_actions)
-    _add_menu_section(graph_menu, sections.import_export_actions)
-    _add_menu_section(graph_menu, sections.runtime_actions)
-    _add_menu_section(graph_menu, sections.utility_actions)
-    return MainWindowGraphMenuBundle(graph_menu=graph_menu)
+    sections: MainWindowFileMenuSections,
+) -> MainWindowFileMenuBundle:
+    file_menu = parent.menuBar().addMenu("File")
+    _add_menu_section(file_menu, sections.project_actions)
+    _add_menu_section(file_menu, sections.component_actions)
+    _add_menu_section(file_menu, sections.import_export_actions)
+    return MainWindowFileMenuBundle(file_menu=file_menu)
+
+
+def build_deploy_menu(
+    parent: QtWidgets.QMainWindow,
+    *,
+    sections: MainWindowDeployMenuSections,
+) -> MainWindowDeployMenuBundle:
+    deploy_menu = parent.menuBar().addMenu("Deploy")
+    _add_menu_section(deploy_menu, sections.deploy_actions)
+    return MainWindowDeployMenuBundle(deploy_menu=deploy_menu)
+
+
+def build_tools_menu(
+    parent: QtWidgets.QMainWindow,
+    *,
+    sections: MainWindowToolsMenuSections,
+) -> MainWindowToolsMenuBundle:
+    tools_menu = parent.menuBar().addMenu("Tools")
+    _add_menu_section(tools_menu, sections.catalog_actions)
+    if sections.log_level_menu is not None:
+        tools_menu.addSeparator()
+        tools_menu.addMenu(sections.log_level_menu)
+    return MainWindowToolsMenuBundle(tools_menu=tools_menu)
 
 
 def _add_menu_section(menu: QtWidgets.QMenu, actions: Sequence[QtGui.QAction]) -> None:
@@ -91,7 +131,7 @@ def build_log_level_menu(
     current_level: int,
     on_level_toggled: Callable[[bool, int], None],
 ) -> MainWindowLogMenuBundle:
-    log_level_menu = parent.menuBar().addMenu("Logs")
+    log_level_menu = QtWidgets.QMenu("Log Level", parent)
     log_level_action_group = QtGui.QActionGroup(parent)
     log_level_action_group.setExclusive(True)
     log_level_actions: dict[int, QtGui.QAction] = {}

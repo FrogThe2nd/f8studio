@@ -62,23 +62,22 @@ def build_main_window_actions(
 ) -> MainWindowActionBundle:
     return MainWindowActionBundle(
         quickload_project_action=create_action(
-            "Open Recent Project",
+            "Load Last Project",
             handler=on_quickload_project_action,
-            shortcut="Ctrl+O",
             icon=StudioIcon.FOLDER_OPEN,
-            tool_tip="Open the most recent local project",
+            tool_tip="Load the most recent project",
         ),
         quicksave_project_action=create_action(
             "Save Project",
             handler=on_quicksave_project_action,
             shortcut="Ctrl+S",
             icon=StudioIcon.SAVE,
-            tool_tip="Save the current graph into the local project store",
+            tool_tip="Save the current graph to the current project",
         ),
         open_project_action=create_action(
             "Open Project…",
             handler=on_open_project_action,
-            shortcut="Ctrl+Shift+O",
+            shortcut="Ctrl+O",
             icon=StudioIcon.FOLDER_OPEN,
             tool_tip="Open a project from the local project catalog",
         ),
