@@ -47,7 +47,7 @@ class VizVideoRuntimeNode(OperatorNode):
         paletteCategory=SERVICE_CLASS,
         operatorClass=OPERATOR_CLASS,
         version="0.0.1",
-        label="VideoViz",
+        label="Video Viz",
         description="Display frames from a VideoSHM region (BGRA32).",
         tags=["ui", "shm", "video", "viewer"],
         dataInPorts=[],

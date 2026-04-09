@@ -124,7 +124,7 @@ def register_operator(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
             paletteCategory=SERVICE_CLASS,
             operatorClass=OPERATOR_CLASS,
             version="0.0.1",
-            label="TextViz",
+            label="Text Viz",
             description="Operator that displays incoming data in the editor (preview).",
             tags=["print", "console"],
             dataInPorts=[

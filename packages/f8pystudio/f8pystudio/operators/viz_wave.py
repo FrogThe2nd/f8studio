@@ -294,7 +294,7 @@ def register_operator(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
             paletteCategory=SERVICE_CLASS,
             operatorClass=OPERATOR_CLASS,
             version="0.0.1",
-            label="WaveViz",
+            label="Wave Viz",
             description="Plot numeric values over time (UI-only).",
             tags=["plot", "timeseries", "ui"],
             dataInPorts=[

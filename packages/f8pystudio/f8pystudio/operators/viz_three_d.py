@@ -695,7 +695,7 @@ def register_operator(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
             paletteCategory=SERVICE_CLASS,
             operatorClass=OPERATOR_CLASS,
             version="0.0.1",
-            label="3DViz",
+            label="3D Viz",
             description="3D viewer for multi-person skeleton streams (Studio UI-only).",
             tags=["viz", "3d", "skeleton", "ui"],
             dataInPorts=[

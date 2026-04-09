@@ -8,7 +8,7 @@
 
 - **Multi-Analysis Branch**: Feed the same Audio SHM from `f8.audiocap` into both `core` and `rhythm` services to get a complete picture of the sound.
 - **Beat-Triggered Logic**: Use the `onset` or `beat` outputs as triggers for `Tick`, `Envelope`, or state machines in `f8.pyengine`.
-- **Visualization**: Output rhythm cues to `TextViz` or custom visual overlays to verify detection accuracy against the live audio.
+- **Visualization**: Output rhythm cues to `Text Viz` or custom visual overlays to verify detection accuracy against the live audio.
 
 ## Pitfalls / Gotchas
 

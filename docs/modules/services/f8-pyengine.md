@@ -1012,7 +1012,7 @@ Receives UDP packets, keeps latest skeleton per model key, and emits exec trigge
 #### Common Wiring Patterns
 
 - **Live Body Ingest**: Feed the `skeleton` output into a `Bone Selector` to pick a joint, or directly into `f8-viz-three-d` to verify coordinate alignment.
-- **Monitoring Branch**: Keep a `Print` or `TextViz` node attached to the incoming stream to monitor the packet rate and verify the protocol schema.
+- **Monitoring Branch**: Keep a `Print` or `Text Viz` node attached to the incoming stream to monitor the packet rate and verify the protocol schema.
 - **Coordinate Calibration**: Use the `offset` and `scale` properties (if available) to align the external skeleton with your graph's internal world-space expectations.
 
 #### Pitfalls / Gotchas
@@ -1627,7 +1627,7 @@ Event-driven input node that mocks the Lovense Local API, publishes received com
 #### Common Wiring Patterns
 
 - **Validation Branch**: Keep the mock server active on a side branch. Use it to confirm that your `Lovense Out` or `Lovense Program Adapter` nodes are sending the expected intensity values.
-- **Protocol Sniffing**: Inspect the emitted event state and execution triggers using `Print` or `TextViz` nodes to see exactly how the "virtual device" is responding to your graph.
+- **Protocol Sniffing**: Inspect the emitted event state and execution triggers using `Print` or `Text Viz` nodes to see exactly how the "virtual device" is responding to your graph.
 - **Automated Testing**: Use it in automated scenario tests to verify that a logic chain produces the correct device commands without needing human interaction.
 
 #### Pitfalls / Gotchas
@@ -1840,7 +1840,7 @@ Outputs A by default; when A is silent for a while, crossfades to B as filler.
 #### Common Wiring Patterns
 
 - **Safe Blending**: Combine multiple upstream branches before final scaling or mapping nodes. This allows you to inspect one combined, high-level signal instead of managing dozens of individual branches.
-- **Fall-Through Monitoring**: Keep a `WaveViz` immediately after the mixer to observe how different signals are being prioritized or added together in real-time.
+- **Fall-Through Monitoring**: Keep a `Wave Viz` immediately after the mixer to observe how different signals are being prioritized or added together in real-time.
 - **Default State Engine**: Use the mixer to provide a "Default" or "Base" set of values that are only overridden when higher-priority signals become active.
 
 #### Pitfalls / Gotchas
@@ -1911,7 +1911,7 @@ Extrapolates IMPlayer playback position between sparse playback state updates.
 #### Common Wiring Patterns
 
 - **Master Clock Lock**: Pair it with an `IM Player` or `Sequence Player` source. Feed the resulting progress into downstream operators to ensure they stay perfectly in sync with the media content.
-- **UI Progress Monitoring**: Route the progress and duration outputs to `TextViz` or a custom dashboard to give the user a visual indication of the current scenario timeline.
+- **UI Progress Monitoring**: Route the progress and duration outputs to `Text Viz` or a custom dashboard to give the user a visual indication of the current scenario timeline.
 - **Conditional Scripting**: Use the `active` or `looping` status to enable/disable specific parts of your graph based on whether media is currently playing.
 
 #### Pitfalls / Gotchas

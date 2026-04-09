@@ -19,7 +19,7 @@ Use `IM Player + CVKit Template Match + CVKit Tracking` to keep a target locked 
 3. Ensure `CVKit Template Match.shmName` and `CVKit Tracking.shmName` are identical.
 4. Keep the control link `CVKit Tracking.isNotTracking -> CVKit Template Match.active` to avoid repeated re-init.
 5. Verify numeric flow through `Tracking -> XY` and `Envelope -> 1EUR Filter -> Range Map -> Rate Limiter`.
-6. Configure serial settings and enable `Serial Out`; use `TrackViz` and `WaveViz` for monitoring.
+6. Configure serial settings and enable `Serial Out`; use `Track Viz` and `Wave Viz` for monitoring.
 
 ## Key Parameters
 
@@ -31,8 +31,8 @@ Use `IM Player + CVKit Template Match + CVKit Tracking` to keep a target locked 
 ## Validation
 
 - `CVKit Tracking` continuously emits `tracking`.
-- `WaveViz` is smooth, without major spikes.
-- `TCode` and `Serial Out` stream continuously; `TrackViz` matches expected tracking behavior.
+- `Wave Viz` is smooth, without major spikes.
+- `TCode` and `Serial Out` stream continuously; `Track Viz` matches expected tracking behavior.
 
 ## Image Placeholders
 

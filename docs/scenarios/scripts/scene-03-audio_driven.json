@@ -933,7 +933,7 @@
       "yDqn": {
         "type_": "f8.pystudio.f8.viz.audio",
         "icon": null,
-        "name": "AudioViz",
+        "name": "Audio Viz",
         "color": [
           13,
           18,
@@ -969,7 +969,7 @@
           "serviceClass": "f8.pystudio",
           "rendererClass": "viz_audio",
           "version": "0.0.1",
-          "label": "AudioViz",
+          "label": "Audio Viz",
           "description": "Display waveform from an AudioSHM region.",
           "tags": [
             "ui",
@@ -1141,7 +1141,7 @@
       "e3wL": {
         "type_": "f8.pystudio.f8.viz.text",
         "icon": null,
-        "name": "TextViz 1",
+        "name": "Text Viz 1",
         "color": [
           13,
           18,
@@ -1177,7 +1177,7 @@
           "serviceClass": "f8.pystudio",
           "rendererClass": "viz_text",
           "version": "0.0.1",
-          "label": "TextViz",
+          "label": "Text Viz",
           "description": "Operator that displays incoming data in the editor (preview).",
           "tags": [
             "print",
@@ -1340,7 +1340,7 @@
       "LaTE": {
         "type_": "f8.pystudio.f8.viz.wave",
         "icon": null,
-        "name": "WaveViz",
+        "name": "Wave Viz",
         "color": [
           13,
           18,
@@ -1376,7 +1376,7 @@
           "serviceClass": "f8.pystudio",
           "rendererClass": "viz_wave",
           "version": "0.0.1",
-          "label": "WaveViz",
+          "label": "Wave Viz",
           "description": "Plot numeric values over time (UI-only).",
           "tags": [
             "plot",
@@ -1713,7 +1713,7 @@
       "5BGy": {
         "type_": "f8.pystudio.f8.viz.text",
         "icon": null,
-        "name": "TextViz 2",
+        "name": "Text Viz 2",
         "color": [
           13,
           18,
@@ -1749,7 +1749,7 @@
           "serviceClass": "f8.pystudio",
           "rendererClass": "viz_text",
           "version": "0.0.1",
-          "label": "TextViz",
+          "label": "Text Viz",
           "description": "Operator that displays incoming data in the editor (preview).",
           "tags": [
             "print",
@@ -4116,7 +4116,7 @@
       "8Sew": {
         "type_": "f8.pystudio.f8.viz.wave",
         "icon": null,
-        "name": "WaveViz 1",
+        "name": "Wave Viz 1",
         "color": [
           13,
           18,
@@ -4152,7 +4152,7 @@
           "serviceClass": "f8.pystudio",
           "rendererClass": "viz_wave",
           "version": "0.0.1",
-          "label": "WaveViz",
+          "label": "Wave Viz",
           "description": "Plot numeric values over time (UI-only).",
           "tags": [
             "plot",
@@ -4497,7 +4497,7 @@
       "EtyK": {
         "type_": "f8.pystudio.f8.viz.wave",
         "icon": null,
-        "name": "WaveViz 2",
+        "name": "Wave Viz 2",
         "color": [
           13,
           18,
@@ -4533,7 +4533,7 @@
           "serviceClass": "f8.pystudio",
           "rendererClass": "viz_wave",
           "version": "0.0.1",
-          "label": "WaveViz",
+          "label": "Wave Viz",
           "description": "Plot numeric values over time (UI-only).",
           "tags": [
             "plot",

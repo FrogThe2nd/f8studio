@@ -620,7 +620,7 @@ def register_operator(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
             paletteCategory=SERVICE_CLASS,
             operatorClass=OPERATOR_CLASS,
             version="0.0.1",
-            label="TrackViz",
+            label="Track Viz",
             description="Visualize tracking boxes/poses from a data port (history + fading trail).",
             tags=["viz", "tracking", "pose", "ui"],
             dataInPorts=[
@@ -636,7 +636,7 @@ def register_operator(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
                 F8StateSpec(
                     name="uiUpdate",
                     label="UI Update",
-                    description="Pause/resume embedded TrackViz updates in the editor.",
+                    description="Pause/resume embedded Track Viz updates in the editor.",
                     valueSchema=boolean_schema(default=True),
                     access=F8StateAccess.rw,
                     required=True,
@@ -672,7 +672,7 @@ def register_operator(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
                 F8StateSpec(
                     name="videoShmName",
                     label="Video SHM Name",
-                    description="Optional BGRA Video SHM mapping name used as TrackViz background.",
+                    description="Optional BGRA Video SHM mapping name used as Track Viz background.",
                     valueSchema=string_schema(default=""),
                     access=F8StateAccess.rw,
                     required=True,

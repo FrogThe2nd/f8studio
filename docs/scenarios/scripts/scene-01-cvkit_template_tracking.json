@@ -3319,7 +3319,7 @@
       "ZCPk": {
         "type_": "f8.pystudio.f8.viz.track",
         "icon": null,
-        "name": "TrackViz",
+        "name": "Track Viz",
         "color": [
           13,
           18,
@@ -3355,7 +3355,7 @@
           "serviceClass": "f8.pystudio",
           "rendererClass": "viz_track",
           "version": "0.0.1",
-          "label": "TrackViz",
+          "label": "Track Viz",
           "description": "Visualize tracking boxes/poses from a data port (history + fading trail).",
           "tags": [
             "viz",
@@ -3367,7 +3367,7 @@
             {
               "name": "uiUpdate",
               "label": "UI Update",
-              "description": "Pause/resume embedded TrackViz updates in the editor.",
+              "description": "Pause/resume embedded Track Viz updates in the editor.",
               "valueSchema": {
                 "title": null,
                 "description": null,
@@ -3459,7 +3459,7 @@
             {
               "name": "videoShmName",
               "label": "Video SHM Name",
-              "description": "Optional BGRA Video SHM mapping name used as TrackViz background.",
+              "description": "Optional BGRA Video SHM mapping name used as Track Viz background.",
               "valueSchema": {
                 "title": null,
                 "description": null,
@@ -3654,7 +3654,7 @@
       "38Rp": {
         "type_": "f8.pystudio.f8.viz.wave",
         "icon": null,
-        "name": "WaveViz",
+        "name": "Wave Viz",
         "color": [
           13,
           18,
@@ -3690,7 +3690,7 @@
           "serviceClass": "f8.pystudio",
           "rendererClass": "viz_wave",
           "version": "0.0.1",
-          "label": "WaveViz",
+          "label": "Wave Viz",
           "description": "Plot numeric values over time (UI-only).",
           "tags": [
             "plot",

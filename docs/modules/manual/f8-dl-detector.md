@@ -6,7 +6,7 @@
 
 ## Common Wiring Patterns
 
-- Feed it from a video producer (e.g., `f8.implayer`), then inspect detections via `TextViz`, overlays, or handoff into `f8.pyengine` logic for business rules.
+- Feed it from a video producer (e.g., `f8.implayer`), then inspect detections via `Text Viz`, overlays, or handoff into `f8.pyengine` logic for business rules.
 - Keep the raw video source available in parallel for side-by-side validation during confidence threshold tuning.
 
 ## Pitfalls / Gotchas
