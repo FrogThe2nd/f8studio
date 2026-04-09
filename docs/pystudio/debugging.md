@@ -1,6 +1,6 @@
-# Debugging and Runner
+# Debugging
 
-Release readiness comes from being able to diagnose the same graph both inside Studio and headless.
+Release readiness comes from being able to diagnose the same graph reliably inside Studio and the runtime services it deploys.
 
 ## Fast Debug Checklist
 
@@ -24,16 +24,6 @@ Canvas navigation:
 2. `W/A/S/D` or arrow keys: pan
 3. `Q/E` or `PageUp/PageDown`: zoom
 
-## Headless Runner
-
-Use the runner when you want to execute a saved graph without the GUI:
-
-```bash
-python -m f8pysdk.headless_runner --session path/to/session.json
-```
-
-Use headless runs to verify deployability, repeatable startup, and environment assumptions before shipping a session.
-
 ## Typical Failure Modes
 
 - Ports refuse to connect because edge types differ
@@ -45,5 +35,3 @@ Use headless runs to verify deployability, repeatable startup, and environment a
 
 - [Scenarios](../scenarios/index.md)
 - [Node Atlas](../node-atlas/index.md)
-- [Runner (Headless)](../getting-started/runner.md)
-

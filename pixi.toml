@@ -43,7 +43,6 @@ f8pydl_bench = "python scripts/bench_dl_baseline.py"
 f8pysdk = { path = "packages/f8pysdk", editable = true }
 
 [feature.sdk.tasks]
-runner = "python -m f8pysdk.headless_runner"
 update_describes = "python scripts/update_static_describes.py"
 protocol_codegen_py = "python scripts/protocol_codegen_msgspec.py --protocol schemas/protocol.yml --output packages/f8pysdk/f8pysdk/generated/__init__.py"
 protocol_codegen_cpp = "python scripts/gen_cpp_protocol_models.py --protocol schemas/protocol.yml --out packages/f8cppsdk/include/f8cppsdk/generated/protocol_models.h"
