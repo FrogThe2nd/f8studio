@@ -16,6 +16,16 @@ from qtpy import QtCore, QtGui, QtWidgets
 
 from f8pysdk.specs import schema_type
 
+from ...ui.components.controls import F8Dial, F8MultiSelect, F8OptionCombo
+from ...ui.components.state_editors import (
+    F8BoolSwitchEditor,
+    F8CodeButtonEditor,
+    F8DialEditor,
+    F8IncrementButtonEditor,
+    F8MultiSelectEditor,
+    F8OptionComboEditor,
+    F8ValueBarEditor,
+)
 from ...ui.components.controls import parse_multiselect_pool, parse_select_pool
 from ...ui.support.ui_control import parse_ui_control
 from ...ui.support.state_builders import (
@@ -172,6 +182,41 @@ def build_inline_header_button(
 
     header_lay.addWidget(btn, 1)
     return header, btn
+
+
+def _refresh_state_inline_control_metadata(node_item: Any, control: QtWidgets.QWidget, info: StateFieldInfo) -> None:
+    name = info.name
+    label = info.label or name
+    field_tooltip = info.tooltip if info.tooltip != name else ""
+
+    if isinstance(control, F8IncrementButtonEditor):
+        control.set_button_text(label)
+        control.set_context_tooltip(field_tooltip)
+        return
+
+    if isinstance(control, F8CodeButtonEditor):
+        control.set_title(f"{node_item.name} - {label}")
+        control.setToolTip(field_tooltip)
+        return
+
+    if isinstance(
+        control,
+        (
+            F8OptionComboEditor,
+            F8MultiSelectEditor,
+            F8BoolSwitchEditor,
+            F8ValueBarEditor,
+            F8DialEditor,
+        ),
+    ):
+        control.set_context_tooltip(field_tooltip)
+        return
+
+    if isinstance(control, (F8OptionCombo, F8MultiSelect, F8Dial)):
+        control.set_context_tooltip(field_tooltip)
+        return
+
+    control.setToolTip(field_tooltip)
 
 
 def _editor_assist_context(
@@ -702,6 +747,12 @@ def ensure_state_inline_controls(node_item: Any) -> None:
                 pass
             try:
                 btn_existing.setToolTip(tip)
+            except RuntimeError:
+                pass
+        control_existing = node_item._state_inline_controls.get(name)
+        if control_existing is not None:
+            try:
+                _refresh_state_inline_control_metadata(node_item, control_existing, info)
             except RuntimeError:
                 pass
 

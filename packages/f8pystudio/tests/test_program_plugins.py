@@ -5,9 +5,12 @@ from typing import Any
 
 from NodeGraphQt import BaseNode
 from f8pysdk.registry import create_runtime_node_registry
+from f8pysdk.service_runtime_tools.inventory.catalog import ServiceCatalog
+from f8pysdk.specs import F8OperatorSchemaVersion, F8OperatorSpec
 
 from f8pystudio.plugins.api import PluginOperatorRegistration, PluginRendererRegistration, StudioPluginManifest
 from f8pystudio.app.program import PyStudioProgram
+from f8pystudio.studio_specs.registry import SERVICE_CLASS, create_pystudio_registry
 from f8pystudio.render_nodes.registry import RenderNodeRegistry
 
 
@@ -90,3 +93,40 @@ def test_program_applies_plugin_operator_registration() -> None:
     manifest = _manifest("plugin_ops", "renderer.ops", operator_reg=PluginOperatorRegistration(register=_register))
     PyStudioProgram._apply_plugin_manifests_to_runtime_registry([manifest], registry=registry)
     assert called["count"] == 1
+
+
+def test_program_injects_plugin_operator_specs_into_catalog() -> None:
+    catalog = ServiceCatalog.instance()
+    catalog.clear()
+    registry = create_pystudio_registry()
+
+    def _register(received_registry: object) -> object:
+        assert received_registry is registry
+        registry.register_operator_spec(
+            F8OperatorSpec(
+                schemaVersion=F8OperatorSchemaVersion.f8operator_1,
+                serviceClass=SERVICE_CLASS,
+                operatorClass="f8.viz.plugin_test",
+                version="1.0.0",
+                label="Plugin Test Viz",
+                rendererClass="plugin_test_renderer",
+            ),
+            overwrite=True,
+        )
+        return received_registry
+
+    manifest = _manifest(
+        "plugin_ops_catalog",
+        "plugin_test_renderer",
+        operator_reg=PluginOperatorRegistration(register=_register),
+    )
+
+    try:
+        PyStudioProgram._apply_plugin_manifests_to_runtime_registry([manifest], registry=registry)
+        injected_service_class = PyStudioProgram._inject_pystudio_specs_from_registry(catalog, registry=registry)
+        operator_classes = {str(op.operatorClass) for op in catalog.operators.all() if op.serviceClass == SERVICE_CLASS}
+
+        assert injected_service_class == SERVICE_CLASS
+        assert "f8.viz.plugin_test" in operator_classes
+    finally:
+        catalog.clear()
