@@ -21,7 +21,7 @@ from f8pysdk.specs import any_schema, number_schema
 
 from f8pystudio.nodegraph.operator_basenode import F8StudioOperatorBaseNode
 from f8pystudio.nodegraph.service_basenode import F8StudioServiceBaseNode
-from f8pystudio.nodegraph.runtime_compiler import AUTO_PULL_OPERATOR_CLASS, compile_global_runtime_graph
+from f8pystudio.nodegraph.runtime_compiler import compile_global_runtime_graph
 from f8pystudio.operators.patch_hub import PatchHubRuntimeNode
 from f8pystudio.nodegraph.service_spec_sync import build_command_port
 from f8pystudio.studio_specs.registry import SERVICE_CLASS as STUDIO_SERVICE_CLASS
@@ -302,7 +302,7 @@ def test_runtime_compiler_maps_operator_command_ports_to_hidden_state_edges() ->
     assert str(edge.toPort) == command_input_state_field("Run Value")
 
 
-def test_runtime_compiler_skips_non_pyengine_auto_pull_injection_without_warning() -> None:
+def test_runtime_compiler_skips_non_pyengine_auto_sampling_requests_without_warning() -> None:
     src = _FakeServiceNode(
         id="tracker",
         spec=F8ServiceSpec(
@@ -343,10 +343,11 @@ def test_runtime_compiler_skips_non_pyengine_auto_pull_injection_without_warning
     graph = compile_global_runtime_graph(services=[], operators=[dst], service_nodes=[src], compile_warnings=warnings)
 
     assert warnings == []
-    assert all(str(node.operatorClass or "") != AUTO_PULL_OPERATOR_CLASS for node in list(graph.nodes or []))
+    tracker_service = next(service for service in list(graph.services or []) if str(service.serviceId) == "tracker")
+    assert list(tracker_service.autoSampleRequests or []) == []
 
 
-def test_runtime_compiler_injects_pyengine_auto_pull_as_cross_service_relay() -> None:
+def test_runtime_compiler_attaches_pyengine_auto_sample_request_to_source_service() -> None:
     service = _FakeServiceNode(
         id="svc_engine",
         spec=F8ServiceSpec(
@@ -394,14 +395,15 @@ def test_runtime_compiler_injects_pyengine_auto_pull_as_cross_service_relay() ->
 
     graph = compile_global_runtime_graph(services=[service], operators=[src, dst], service_nodes=[])
 
-    pull_node = next(node for node in list(graph.nodes or []) if str(node.operatorClass or "") == AUTO_PULL_OPERATOR_CLASS)
-    assert dict(pull_node.stateValues or {}) == {
-        "autoTriggerEnabled": True,
-        "autoTriggerIntervalMs": 25,
-        "publishCrossServiceOnly": True,
-        "publishSourceNodeId": "op_src",
-        "publishSourcePort": "out",
-    }
+    runtime_service = next(service for service in list(graph.services or []) if str(service.serviceId) == "svc_engine")
+    requests = list(runtime_service.autoSampleRequests or [])
+    assert len(requests) == 1
+    request = requests[0]
+    assert str(request.sourceNodeId) == "op_src"
+    assert str(request.sourcePort) == "out"
+    assert int(request.intervalMs) == 25
+    assert bool(request.deliverLocal) is False
+    assert bool(request.publishCrossService) is True
 
 
 def test_runtime_compiler_lowers_patch_hub_data_fanout() -> None:

@@ -1471,6 +1471,33 @@ components:
       required: [nodeId, serviceId, serviceClass]
       additionalProperties: false
 
+    F8AutoSampleRequest:
+      title: F8AutoSampleRequest
+      type: object
+      description: Service-level periodic sampling request for a source output.
+      properties:
+        sourceNodeId:
+          type: string
+          description: Source runtime node id to sample.
+        sourcePort:
+          type: string
+          description: Source output port to sample.
+        intervalMs:
+          type: integer
+          minimum: 8
+          maximum: 5000
+          description: Periodic sampling interval in milliseconds.
+        deliverLocal:
+          type: boolean
+          default: false
+          description: Whether sampled values should fan out to local routed consumers.
+        publishCrossService:
+          type: boolean
+          default: true
+          description: Whether sampled values should publish onto cross-service data subjects.
+      required: [sourceNodeId, sourcePort, intervalMs]
+      additionalProperties: false
+
     F8RuntimeService:
       title: F8RuntimeService
       type: object
@@ -1491,6 +1518,11 @@ components:
           description: Optional service instance metadata.
           additionalProperties:
             $ref: "#/components/schemas/F8JsonValue"
+        autoSampleRequests:
+          type: array
+          description: Optional service-level periodic sampling requests.
+          items:
+            $ref: "#/components/schemas/F8AutoSampleRequest"
       required: [serviceId, serviceClass]
       additionalProperties: false
 

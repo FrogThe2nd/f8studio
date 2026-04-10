@@ -14,12 +14,12 @@ if SDK_ROOT not in sys.path:
 from f8pysdk.specs import F8DataPortSpec, F8RuntimeGraph, F8RuntimeNode, F8StateAccess, F8StateSpec, any_schema, integer_schema  # noqa: E402
 from f8pysdk.specs import F8Edge, F8EdgeKindEnum, F8EdgeStrategyEnum  # noqa: E402
 from f8pysdk.registry import create_runtime_node_registry  # noqa: E402
+from f8pysdk.nodes import OperatorNode  # noqa: E402
 from f8pysdk.host import ServiceHost, ServiceHostConfig  # noqa: E402
 from f8pysdk.testing import buffer_input  # noqa: E402
 from f8pysdk.testing import ServiceBusHarness  # noqa: E402
 
 from f8pyengine.constants import SERVICE_CLASS  # noqa: E402
-from f8pyengine.operators.pull import PullRuntimeNode  # noqa: E402
 from f8pyengine.operators.recorder import RecorderRuntimeNode  # noqa: E402
 from f8pyengine.operators.replayer import ReplayerRuntimeNode  # noqa: E402
 from f8pyengine.pyengine_node_registry import register_pyengine_specs  # noqa: E402
@@ -31,6 +31,27 @@ from f8pyengine.recording import (  # noqa: E402
     TIME_MODE_OFFSET_FROM_PLAY,
     TIME_MODE_RECORDED_EPOCH,
 )
+
+
+_PASSIVE_SINK_OPERATOR_CLASS = "f8.test.passive_sink"
+
+
+class _PassiveSinkRuntimeNode(OperatorNode):
+    def __init__(self, *, node_id: str, node: F8RuntimeNode, initial_state: dict[str, object] | None = None) -> None:
+        del initial_state
+        super().__init__(
+            node_id=node_id,
+            data_in_ports=[p.name for p in (node.dataInPorts or [])],
+            data_out_ports=[p.name for p in (node.dataOutPorts or [])],
+            state_fields=[s.name for s in (node.stateFields or [])],
+            exec_in_ports=list(node.execInPorts or []),
+            exec_out_ports=list(node.execOutPorts or []),
+        )
+
+    async def on_exec(self, exec_id: str | int, in_port: str | None = None) -> list[str]:
+        _ = exec_id
+        _ = in_port
+        return []
 
 
 def _data_edge(*, edge_id: str, from_node: str, from_port: str, to_node: str, to_port: str) -> F8Edge:
@@ -58,6 +79,16 @@ class RecorderReplayerTests(unittest.IsolatedAsyncioTestCase):
         bus = harness.create_bus("svcA")
         reg = create_runtime_node_registry()
         register_pyengine_specs(reg)
+        reg.register_operator_factory(
+            SERVICE_CLASS,
+            _PASSIVE_SINK_OPERATOR_CLASS,
+            lambda node_id, node, initial_state: _PassiveSinkRuntimeNode(
+                node_id=node_id,
+                node=node,
+                initial_state=initial_state,
+            ),
+            overwrite=True,
+        )
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
         graph = F8RuntimeGraph(graphId="g_recording", revision="r1", nodes=list(nodes), edges=list(edges or []))
         await bus.set_rungraph(graph)
@@ -122,9 +153,8 @@ class RecorderReplayerTests(unittest.IsolatedAsyncioTestCase):
             nodeId=node_id,
             serviceId="svcA",
             serviceClass=SERVICE_CLASS,
-            operatorClass=PullRuntimeNode.SPEC.operatorClass,
-            stateFields=list(PullRuntimeNode.SPEC.stateFields or []),
-            stateValues={"autoTriggerEnabled": False},
+            operatorClass=_PASSIVE_SINK_OPERATOR_CLASS,
+            stateFields=[],
             dataInPorts=[
                 F8DataPortSpec(name="outA", description="", valueSchema=any_schema(), required=False),
                 F8DataPortSpec(name="positionMs", description="", valueSchema=any_schema(), required=False),
@@ -140,21 +170,23 @@ class RecorderReplayerTests(unittest.IsolatedAsyncioTestCase):
             _, bus = await self._build_runtime(nodes=[self._recorder_node(path=path)])
             node = bus.get_node("rec1")
             self.assertIsInstance(node, RecorderRuntimeNode)
+            try:
+                buffer_input(bus, "rec1", "a", 11, ts_ms=1000, edge=None, ctx_id=None)
+                buffer_input(bus, "rec1", "b", {"x": 2}, ts_ms=1000, edge=None, ctx_id=None)
+                await node.on_exec(1000, "record")
+                await bus.publish_state_runtime("rec1", "alpha", 7, ts_ms=1010)
 
-            buffer_input(bus, "rec1", "a", 11, ts_ms=1000, edge=None, ctx_id=None)
-            buffer_input(bus, "rec1", "b", {"x": 2}, ts_ms=1000, edge=None, ctx_id=None)
-            await node.on_exec(1000, "record")
-            await bus.publish_state_runtime("rec1", "alpha", 7, ts_ms=1010)
-
-            reader = RecordingReader(path)
-            events = list(reader.iter_events())
-            self.assertEqual(events[0].type, "header")
-            self.assertEqual(events[1].type, "data_sample")
-            self.assertEqual(events[2].type, "state_change")
-            self.assertEqual(events[1].data["a"], 11)
-            self.assertEqual(events[1].data["b"], {"x": 2})
-            self.assertEqual(events[2].field, "alpha")
-            self.assertEqual(events[2].value, 7)
+                reader = RecordingReader(path)
+                events = list(reader.iter_events())
+                self.assertEqual(events[0].type, "header")
+                self.assertEqual(events[1].type, "data_sample")
+                self.assertEqual(events[2].type, "state_change")
+                self.assertEqual(events[1].data["a"], 11)
+                self.assertEqual(events[1].data["b"], {"x": 2})
+                self.assertEqual(events[2].field, "alpha")
+                self.assertEqual(events[2].value, 7)
+            finally:
+                await node.close()
 
     async def test_recorder_append_mode_allows_compatible_and_rejects_incompatible_headers(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -162,27 +194,36 @@ class RecorderReplayerTests(unittest.IsolatedAsyncioTestCase):
             _, bus = await self._build_runtime(nodes=[self._recorder_node(path=path, node_id="rec1", data_ports=["a"])])
             node = bus.get_node("rec1")
             self.assertIsInstance(node, RecorderRuntimeNode)
-            buffer_input(bus, "rec1", "a", 1, ts_ms=1000, edge=None, ctx_id=None)
-            await node.on_exec(1000, "record")
+            try:
+                buffer_input(bus, "rec1", "a", 1, ts_ms=1000, edge=None, ctx_id=None)
+                await node.on_exec(1000, "record")
 
-            _, bus2 = await self._build_runtime(nodes=[self._recorder_node(path=path, node_id="rec2", data_ports=["a"])])
-            node2 = bus2.get_node("rec2")
-            self.assertIsInstance(node2, RecorderRuntimeNode)
-            buffer_input(bus2, "rec2", "a", 2, ts_ms=1010, edge=None, ctx_id=None)
-            await node2.on_exec(1010, "record")
+                _, bus2 = await self._build_runtime(nodes=[self._recorder_node(path=path, node_id="rec2", data_ports=["a"])])
+                node2 = bus2.get_node("rec2")
+                self.assertIsInstance(node2, RecorderRuntimeNode)
+                try:
+                    buffer_input(bus2, "rec2", "a", 2, ts_ms=1010, edge=None, ctx_id=None)
+                    await node2.on_exec(1010, "record")
 
-            info = RecordingReader(path).read_info()
-            self.assertEqual(info.header.data_ports, ("a",))
-            self.assertEqual(info.event_count, 3)
+                    info = RecordingReader(path).read_info()
+                    self.assertEqual(info.header.data_ports, ("a",))
+                    self.assertEqual(info.event_count, 3)
 
-            _, bus3 = await self._build_runtime(nodes=[self._recorder_node(path=path, node_id="rec3", data_ports=["a", "b"])])
-            node3 = bus3.get_node("rec3")
-            self.assertIsInstance(node3, RecorderRuntimeNode)
-            buffer_input(bus3, "rec3", "a", 3, ts_ms=1020, edge=None, ctx_id=None)
-            buffer_input(bus3, "rec3", "b", 4, ts_ms=1020, edge=None, ctx_id=None)
-            await node3.on_exec(1020, "record")
-            last_error = (await bus3.get_state("rec3", "lastError")).value
-            self.assertIn("header mismatch", str(last_error))
+                    _, bus3 = await self._build_runtime(nodes=[self._recorder_node(path=path, node_id="rec3", data_ports=["a", "b"])])
+                    node3 = bus3.get_node("rec3")
+                    self.assertIsInstance(node3, RecorderRuntimeNode)
+                    try:
+                        buffer_input(bus3, "rec3", "a", 3, ts_ms=1020, edge=None, ctx_id=None)
+                        buffer_input(bus3, "rec3", "b", 4, ts_ms=1020, edge=None, ctx_id=None)
+                        await node3.on_exec(1020, "record")
+                        last_error = (await bus3.get_state("rec3", "lastError")).value
+                        self.assertIn("header mismatch", str(last_error))
+                    finally:
+                        await node3.close()
+                finally:
+                    await node2.close()
+            finally:
+                await node.close()
 
     async def test_replayer_replays_data_state_and_position_offset_mode(self) -> None:
         fd, path = tempfile.mkstemp(suffix=".f8rec")
