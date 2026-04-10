@@ -4,7 +4,7 @@ from f8pysdk.codec import coerce_flag, coerce_int, dump_json
 import asyncio
 import logging
 import time
-from typing import Any
+from typing import Any, cast
 
 from f8pysdk.specs import (
     F8OperatorSchemaVersion,
@@ -16,11 +16,14 @@ from f8pysdk.specs import (
     boolean_schema,
     editable_collection_edit_policy,
     integer_schema,
+    string_schema,
 )
 from f8pysdk.capabilities import NodeBus
 from f8pysdk.nats_naming import ensure_token
 from f8pysdk.nodes import OperatorNode
 from f8pysdk.registry import RuntimeNodeRegistry
+from f8pysdk.service_bus.data.emit import DataEmitOptions
+from f8pysdk.service_bus.data.flow import emit_data as emit_data_with_options
 
 from ..constants import SERVICE_CLASS
 
@@ -55,6 +58,12 @@ class PullRuntimeNode(OperatorNode):
             minimum=8,
             maximum=5000,
         )
+        self._publish_cross_service_only = coerce_flag(
+            self._initial_state.get("publishCrossServiceOnly"),
+            default=False,
+        )
+        self._publish_source_node_id = str(self._initial_state.get("publishSourceNodeId") or "").strip()
+        self._publish_source_port = str(self._initial_state.get("publishSourcePort") or "").strip()
 
     def _should_log(self, sig: str, *, now_ms: int, interval_ms: int = 2000) -> bool:
         last_ms = int(self._last_log_ms_by_sig.get(sig, 0))
@@ -129,6 +138,42 @@ class PullRuntimeNode(OperatorNode):
                 sig = f"{type(result).__name__}:{result}:port={port}"
                 if self._should_log(sig, now_ms=now_ms):
                     logger.exception("[%s:pull] pull failed (port=%s)", self.node_id, port)
+                continue
+            await self._publish_sample_if_configured(input_port=port, value=result)
+
+    async def _publish_sample_if_configured(self, *, input_port: str, value: Any) -> None:
+        if not self._publish_cross_service_only:
+            return
+        if value is None:
+            return
+        bus = self._bus if isinstance(self._bus, NodeBus) else None
+        if bus is None:
+            return
+
+        publish_node_id = str(self._publish_source_node_id or "").strip()
+        publish_port = str(self._publish_source_port or "").strip() or str(input_port or "").strip()
+        if not publish_node_id or not publish_port:
+            return
+
+        ts_ms = int(time.time() * 1000.0)
+        try:
+            await emit_data_with_options(
+                cast(Any, bus),
+                publish_node_id,
+                publish_port,
+                value,
+                ts_ms=ts_ms,
+                options=DataEmitOptions(deliver_local=False, publish_cross_service=True),
+            )
+        except Exception as exc:
+            sig = f"{type(exc).__name__}:{exc}:publish={publish_node_id}.{publish_port}"
+            if self._should_log(sig, now_ms=ts_ms):
+                logger.exception(
+                    "[%s:pull] cross-service relay failed (source=%s.%s)",
+                    self.node_id,
+                    publish_node_id,
+                    publish_port,
+                )
 
     async def on_exec(self, _exec_id: str | int, _in_port: str | None = None) -> list[str]:
         # This node is timer-driven; exec input is intentionally unsupported.
@@ -143,6 +188,15 @@ class PullRuntimeNode(OperatorNode):
         if name == "autoTriggerIntervalMs":
             self._auto_trigger_interval_ms = coerce_int(value, default=100, minimum=8, maximum=5000)
             return
+        if name == "publishCrossServiceOnly":
+            self._publish_cross_service_only = coerce_flag(value, default=False)
+            return
+        if name == "publishSourceNodeId":
+            self._publish_source_node_id = str(value or "").strip()
+            return
+        if name == "publishSourcePort":
+            self._publish_source_port = str(value or "").strip()
+            return
 
     async def validate_state(self, field: str, value: Any, *, ts_ms: int, meta: dict[str, Any]) -> Any:
         del ts_ms, meta
@@ -151,6 +205,12 @@ class PullRuntimeNode(OperatorNode):
             return coerce_flag(value, default=False)
         if name == "autoTriggerIntervalMs":
             return coerce_int(value, default=100, minimum=8, maximum=5000)
+        if name == "publishCrossServiceOnly":
+            return coerce_flag(value, default=False)
+        if name == "publishSourceNodeId":
+            return str(value or "").strip()
+        if name == "publishSourcePort":
+            return str(value or "").strip()
         return value
 
 
@@ -200,6 +260,33 @@ PullRuntimeNode.SPEC = F8OperatorSpec(
             access=F8StateAccess.rw,
             required=True,
             showOnNode=True,
+        ),
+        F8StateSpec(
+            name="publishCrossServiceOnly",
+            label="Publish Cross-Service Only",
+            description="Internal: relay sampled values onto cross-service data subjects without local fanout.",
+            valueSchema=boolean_schema(default=False),
+            access=F8StateAccess.rw,
+            required=False,
+            showOnNode=False,
+        ),
+        F8StateSpec(
+            name="publishSourceNodeId",
+            label="Publish Source Node Id",
+            description="Internal: source node id to publish sampled values under.",
+            valueSchema=string_schema(default=""),
+            access=F8StateAccess.rw,
+            required=False,
+            showOnNode=False,
+        ),
+        F8StateSpec(
+            name="publishSourcePort",
+            label="Publish Source Port",
+            description="Internal: source port to publish sampled values under.",
+            valueSchema=string_schema(default=""),
+            access=F8StateAccess.rw,
+            required=False,
+            showOnNode=False,
         ),
     ],
 )

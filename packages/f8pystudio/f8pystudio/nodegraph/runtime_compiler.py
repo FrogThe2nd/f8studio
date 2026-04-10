@@ -43,6 +43,7 @@ from f8pysdk.rungraph_validation import (
 from f8pysdk.specs import boolean_schema
 from f8pysdk.specs import integer_schema
 from f8pysdk.specs import any_schema
+from f8pysdk.specs import string_schema
 from f8pysdk.nats_naming import ensure_token
 
 from f8pystudio.studio_specs.registry import SERVICE_CLASS as STUDIO_SERVICE_CLASS
@@ -236,11 +237,9 @@ def _inject_studio_auto_pull_triggers(graph: F8RuntimeGraph) -> tuple[F8RuntimeG
         service = services_by_id.get(from_service_id)
         service_class = str(service.serviceClass) if service is not None else ""
         if service_class != PYENGINE_SERVICE_CLASS:
-            consumers_sorted = ", ".join(sorted(str(x) for x in group["consumers"]))
-            warnings.append(
-                f"auto sampling skipped for {from_service_id}.{from_node_id}.{from_port}: "
-                f"source serviceClass={service_class or 'unknown'} (consumers={consumers_sorted})"
-            )
+            # Auto-pull injection is a pyengine-only facility. Other services either
+            # push data proactively or own their own scheduling semantics, so leave
+            # the original cross-service edge untouched without surfacing a warning.
             continue
 
         pull_node_id = _stable_id("auto_pull", from_service_id, from_node_id, from_port)
@@ -281,10 +280,37 @@ def _inject_studio_auto_pull_triggers(graph: F8RuntimeGraph) -> tuple[F8RuntimeG
                         access=F8StateAccess.rw,
                         showOnNode=False,
                     ),
+                    F8StateSpec(
+                        name="publishCrossServiceOnly",
+                        label="Publish Cross-Service Only",
+                        description="Internal: relay sampled values onto cross-service data subjects only.",
+                        valueSchema=boolean_schema(default=False),
+                        access=F8StateAccess.rw,
+                        showOnNode=False,
+                    ),
+                    F8StateSpec(
+                        name="publishSourceNodeId",
+                        label="Publish Source Node Id",
+                        description="Internal: original source node id for sampled cross-service publication.",
+                        valueSchema=string_schema(default=""),
+                        access=F8StateAccess.rw,
+                        showOnNode=False,
+                    ),
+                    F8StateSpec(
+                        name="publishSourcePort",
+                        label="Publish Source Port",
+                        description="Internal: original source port for sampled cross-service publication.",
+                        valueSchema=string_schema(default=""),
+                        access=F8StateAccess.rw,
+                        showOnNode=False,
+                    ),
                 ],
                 stateValues={
                     "autoTriggerEnabled": True,
                     "autoTriggerIntervalMs": sample_interval_ms,
+                    "publishCrossServiceOnly": True,
+                    "publishSourceNodeId": from_node_id,
+                    "publishSourcePort": from_port,
                 },
             )
             new_nodes.append(pull_node)

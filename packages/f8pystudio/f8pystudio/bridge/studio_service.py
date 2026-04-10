@@ -77,7 +77,9 @@ class PyStudioService:
             service_class=SERVICE_CLASS,
             nats_url=str(self._cfg.nats_url),
             cross_publish_policy="routed",
-            data_delivery="callback",
+            # Studio hosts both callback-driven viz nodes and pull-driven previews
+            # like Text Viz, so cross-service inputs must stay buffered too.
+            data_delivery="both",
         )
         self.runtime = ServiceRuntime(cfg, registry=self._registry)
 
