@@ -31,6 +31,20 @@ class PyEngineSignalOperatorRegistryTests(unittest.TestCase):
         self.assertIn("f8.periodicity_detector", operator_classes)
         self.assertIn("f8.udp_in", operator_classes)
 
+    def test_operator_palette_categories_are_grouped_by_function(self) -> None:
+        reg = create_runtime_node_registry()
+        register_pyengine_specs(reg)
+        desc = reg.describe(SERVICE_CLASS)
+        operators = {str(spec.operatorClass or ""): spec for spec in list(desc.operators or [])}
+
+        self.assertEqual(str(operators["f8.udp_in"].paletteCategory or ""), "f8.pyengine.input")
+        self.assertEqual(str(operators["f8.udp_out"].paletteCategory or ""), "f8.pyengine.output")
+        self.assertEqual(str(operators["f8.exec_sequence"].paletteCategory or ""), "f8.pyengine.execution")
+        self.assertEqual(str(operators["f8.lowpass_filter"].paletteCategory or ""), "f8.pyengine.signal")
+        self.assertEqual(str(operators["f8.python_script"].paletteCategory or ""), "f8.pyengine.expr")
+        self.assertEqual(str(operators["f8.bone_filter"].paletteCategory or ""), "f8.pyengine.motion")
+        self.assertEqual(str(operators["f8.print"].paletteCategory or ""), "f8.pyengine.debug")
+
 
 if __name__ == "__main__":
     unittest.main()
