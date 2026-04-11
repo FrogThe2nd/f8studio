@@ -87,3 +87,5 @@ services/**/linux
 services/**/win
 services/**/macos
 services/**/describe.json
+.codex
+package-lock.json

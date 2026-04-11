@@ -35,6 +35,7 @@ from ..variants.variant_catalog import variant_entry_has_cached_content, variant
 from ...ui.support.json_text_editor import attach_json_enhancements
 from .asset_cloud_account_menu import build_asset_account_menu, prompt_asset_cloud_sign_in
 from .asset_graph_preview import AssetGraphPreviewPane
+from .asset_sync_resolution import AssetSyncDirection, determine_asset_sync_direction
 from .catalog_status import AssetCatalogRowState, build_asset_catalog_row_state
 from .project_asset_dialogs import AssetOverwriteChoice, AssetOverwriteMetaDialog
 
@@ -749,7 +750,7 @@ class VariantManagerDialog(QtWidgets.QDialog):
         can_load = remote_entry is not None and not variant_entry_is_installed(remote_entry)
         can_offload = remote_entry is not None and variant_entry_is_installed(remote_entry)
         can_sync = current_tab == self._TAB_MINE and local_entry is not None
-        can_update = current_tab == self._TAB_INSTALLED and remote_entry is not None and variant_entry_is_installed(remote_entry)
+        can_pull = current_tab == self._TAB_INSTALLED and remote_entry is not None and variant_entry_is_installed(remote_entry)
         can_duplicate = current_tab == self._TAB_MINE and selected_entry is not None
         can_fork = current_tab == self._TAB_COMMUNITY and selected_entry is not None
         can_subscribe = (
@@ -791,8 +792,8 @@ class VariantManagerDialog(QtWidgets.QDialog):
         self._set_button_state(
             self._btn_upload,
             visible=current_tab in {self._TAB_MINE, self._TAB_INSTALLED},
-            enabled=can_sync or can_update,
-            tooltip=("Update" if current_tab == self._TAB_INSTALLED else "Sync"),
+            enabled=can_sync or can_pull,
+            tooltip=("Pull" if current_tab == self._TAB_INSTALLED else "Sync"),
             icon_token=StudioIcon.CLOUD_UP if current_tab == self._TAB_MINE else StudioIcon.REFRESH,
         )
         subscribe_tooltip = "Subscribe"
@@ -966,9 +967,9 @@ class VariantManagerDialog(QtWidgets.QDialog):
             offload_action = menu.addAction("Offload")
             offload_action.setEnabled(remote_entry is not None and variant_entry_is_installed(remote_entry))
             offload_action.triggered.connect(self._on_load_or_offload_clicked)  # type: ignore[attr-defined]
-            update_action = menu.addAction("Update")
-            update_action.setEnabled(remote_entry is not None and variant_entry_is_installed(remote_entry))
-            update_action.triggered.connect(self._on_sync_or_update_clicked)  # type: ignore[attr-defined]
+            pull_action = menu.addAction("Pull")
+            pull_action.setEnabled(remote_entry is not None and variant_entry_is_installed(remote_entry))
+            pull_action.triggered.connect(self._on_sync_or_update_clicked)  # type: ignore[attr-defined]
         if variant_entry_is_installed(selected_entry):
             menu.addSeparator()
             create_action = menu.addAction("Create On Canvas")
@@ -1230,12 +1231,97 @@ class VariantManagerDialog(QtWidgets.QDialog):
         action_name = "Forked" if self._scope_tabs.currentIndex() == self._TAB_COMMUNITY else "Duplicated"
         show_info(self, action_name, f"{action_name} variant:\n{duplicated.record.name}")
 
+    def _variant_sync_decision(
+        self,
+        *,
+        local_entry: F8VariantEntry | None,
+        remote_entry: F8VariantEntry | None,
+    ) -> AssetSyncDirection:
+        decision = determine_asset_sync_direction(
+            has_local_entry=local_entry is not None,
+            has_remote_entry=remote_entry is not None,
+            local_version_number=None if local_entry is None else local_entry.localVersionNumber,
+            remote_version_number=None if remote_entry is None else remote_entry.remoteVersionNumber,
+            sync_base_remote_revision=None if local_entry is None else local_entry.syncBaseRemoteRevision,
+            sync_base_remote_version_number=None if local_entry is None else local_entry.syncBaseRemoteVersionNumber,
+            sync_base_local_version_number=None if local_entry is None else local_entry.syncBaseLocalVersionNumber,
+            current_remote_revision=None if remote_entry is None else remote_entry.remoteRevision,
+        )
+        return decision.direction
+
+    def _prompt_variant_conflict_resolution(self, *, include_push: bool) -> str:
+        box = QtWidgets.QMessageBox(self)
+        box.setWindowTitle("Sync conflict")
+        box.setIcon(QtWidgets.QMessageBox.Warning)
+        box.setText("Local and remote both changed from different revisions.")
+        box.setInformativeText("Choose how to resolve this conflict.")
+        push_button = None
+        if include_push:
+            push_button = box.addButton("Push local as new revision", QtWidgets.QMessageBox.AcceptRole)
+        replace_button = box.addButton("Replace local with remote", QtWidgets.QMessageBox.DestructiveRole)
+        fork_button = box.addButton("Fork local copy and pull remote", QtWidgets.QMessageBox.ActionRole)
+        cancel_button = box.addButton(QtWidgets.QMessageBox.Cancel)
+        box.setDefaultButton(cancel_button)
+        box.exec()
+        clicked = box.clickedButton()
+        if include_push and clicked is push_button:
+            return "push"
+        if clicked is replace_button:
+            return "replace"
+        if clicked is fork_button:
+            return "fork_pull"
+        return "cancel"
+
+    def _duplicate_local_variant_for_conflict(self, local_entry: F8VariantEntry | None) -> bool:
+        if local_entry is None:
+            return False
+        duplicate_record = copy_model(
+            local_entry.record,
+            update={
+                "variantId": new_asset_id(),
+                "name": ensure_unique_variant_name(
+                    local_entry.record.baseNodeType,
+                    f"{str(local_entry.record.name or '').strip()} (Fork)",
+                    existing_records=[entry.record for entry in self._sync_client._catalog_service._local_provider.load_entries()],
+                ),
+                "updatedAt": variant_now_iso(),
+            },
+        )
+        _ = self._sync_client._catalog_service.upsert_local_entry(
+            F8VariantEntry(record=duplicate_record, source=F8VariantSourceKind.local)
+        )
+        return True
+
     def _sync_selected_variant(self) -> F8VariantEntry | None:
         local_entry = self._selected_local_entry()
         remote_entry = self._selected_remote_entry()
-        if local_entry is None:
-            return None
         if not self._ensure_logged_in():
+            return None
+        direction = self._variant_sync_decision(local_entry=local_entry, remote_entry=remote_entry)
+        if direction == AssetSyncDirection.pull:
+            return self._pull_selected_variant()
+        if direction == AssetSyncDirection.conflict:
+            resolution = self._prompt_variant_conflict_resolution(include_push=True)
+            if resolution == "push":
+                return self._push_selected_variant(local_entry=local_entry, remote_entry=remote_entry)
+            if resolution == "replace":
+                return self._pull_selected_variant(force_replace_local=True)
+            if resolution == "fork_pull":
+                if not self._duplicate_local_variant_for_conflict(local_entry):
+                    return None
+                return self._pull_selected_variant(force_replace_local=True)
+            return None
+        if direction == AssetSyncDirection.noop:
+            return None
+        return self._push_selected_variant(local_entry=local_entry, remote_entry=remote_entry)
+
+    def _push_selected_variant(
+        self,
+        *,
+        local_entry: F8VariantEntry | None,
+        remote_entry: F8VariantEntry | None,
+    ) -> F8VariantEntry | None:
+        if local_entry is None:
             return None
         entry_to_upload: F8VariantEntry
         if remote_entry is not None:
@@ -1246,6 +1332,8 @@ class VariantManagerDialog(QtWidgets.QDialog):
                     "visibility": remote_entry.visibility,
                     "remoteRevision": remote_entry.remoteRevision,
                     "remoteVersionNumber": remote_entry.remoteVersionNumber,
+                    "syncBaseRemoteRevision": remote_entry.remoteRevision,
+                    "syncBaseRemoteVersionNumber": remote_entry.remoteVersionNumber,
                     "installed": True,
                     "hasCachedContent": True,
                 },
@@ -1269,26 +1357,63 @@ class VariantManagerDialog(QtWidgets.QDialog):
         except Exception as exc:
             show_warning(self, "Sync failed", str(exc))
             return None
+        saved_local_entry = copy_model(
+            local_entry,
+            update={
+                "syncBaseRemoteRevision": uploaded.remoteRevision,
+                "syncBaseRemoteVersionNumber": uploaded.remoteVersionNumber,
+                "syncBaseLocalVersionNumber": local_entry.localVersionNumber,
+                "remoteRevision": uploaded.remoteRevision,
+                "remoteVersionNumber": uploaded.remoteVersionNumber,
+                "syncState": F8VariantSyncState.synced,
+            },
+        )
+        _ = self._sync_client._catalog_service.upsert_local_entry(saved_local_entry)
         self._reload(preserve_variant_id=str(uploaded.record.variantId))
         return uploaded
 
-    def _update_selected_variant(self) -> F8VariantEntry | None:
+    def _pull_selected_variant(self, *, force_replace_local: bool = False) -> F8VariantEntry | None:
+        local_entry = self._selected_local_entry()
         remote_entry = self._selected_remote_entry()
         if remote_entry is None:
             return None
+        if local_entry is not None and not force_replace_local:
+            direction = self._variant_sync_decision(local_entry=local_entry, remote_entry=remote_entry)
+            if direction == AssetSyncDirection.conflict:
+                resolution = self._prompt_variant_conflict_resolution(include_push=False)
+                if resolution == "replace":
+                    return self._pull_selected_variant(force_replace_local=True)
+                if resolution == "fork_pull":
+                    if not self._duplicate_local_variant_for_conflict(local_entry):
+                        return None
+                    return self._pull_selected_variant(force_replace_local=True)
+                return None
         try:
             updated = self._sync_client.install_variant(str(remote_entry.record.variantId))
         except Exception as exc:
-            show_warning(self, "Update failed", str(exc))
+            show_warning(self, "Pull failed", str(exc))
             return None
+        if local_entry is not None:
+            replacement_entry = copy_model(
+                local_entry,
+                update={
+                    "record": updated.record,
+                    "remoteRevision": updated.remoteRevision,
+                    "remoteVersionNumber": updated.remoteVersionNumber,
+                    "syncBaseRemoteRevision": updated.remoteRevision,
+                    "syncBaseRemoteVersionNumber": updated.remoteVersionNumber,
+                    "syncState": updated.syncState,
+                },
+            )
+            _ = self._sync_client._catalog_service.upsert_local_entry(replacement_entry)
         self._reload(preserve_variant_id=str(updated.record.variantId))
         return updated
 
     def _on_sync_or_update_clicked(self) -> None:
         if self._scope_tabs.currentIndex() == self._TAB_INSTALLED:
-            updated = self._update_selected_variant()
+            updated = self._pull_selected_variant()
             if updated is not None:
-                show_info(self, "Updated", f"Updated variant:\n{updated.record.name}")
+                show_info(self, "Pulled", f"Pulled variant:\n{updated.record.name}")
             return
         synced = self._sync_selected_variant()
         if synced is not None:
@@ -1775,19 +1900,28 @@ def variant_row_state_for_entries(
     local_sync_state = None if local_entry is None else local_entry.syncState.value
     local_version_number = None if local_entry is None else local_entry.localVersionNumber
     if local_entry is not None and remote_entry is not None:
-        if local_entry.syncState == F8VariantSyncState.conflict or remote_entry.syncState == F8VariantSyncState.conflict:
+        sync_direction = determine_asset_sync_direction(
+            has_local_entry=True,
+            has_remote_entry=True,
+            local_version_number=local_entry.localVersionNumber,
+            remote_version_number=remote_entry.remoteVersionNumber,
+            sync_base_remote_revision=local_entry.syncBaseRemoteRevision,
+            sync_base_remote_version_number=local_entry.syncBaseRemoteVersionNumber,
+            sync_base_local_version_number=local_entry.syncBaseLocalVersionNumber,
+            current_remote_revision=remote_entry.remoteRevision,
+        ).direction
+        if sync_direction == AssetSyncDirection.conflict:
             local_sync_state = F8VariantSyncState.conflict.value
             remote_sync_state = F8VariantSyncState.conflict.value
-        elif local_version_number is not None and remote_version_number is not None:
-            if int(local_version_number) > int(remote_version_number):
-                local_sync_state = F8VariantSyncState.modified_local.value
-                remote_sync_state = F8VariantSyncState.synced.value
-            elif int(local_version_number) < int(remote_version_number):
-                local_sync_state = F8VariantSyncState.stale_remote.value
-                remote_sync_state = F8VariantSyncState.synced.value
-            else:
-                local_sync_state = F8VariantSyncState.synced.value
-                remote_sync_state = F8VariantSyncState.synced.value
+        elif sync_direction == AssetSyncDirection.push:
+            local_sync_state = F8VariantSyncState.modified_local.value
+            remote_sync_state = F8VariantSyncState.synced.value
+        elif sync_direction == AssetSyncDirection.pull:
+            local_sync_state = F8VariantSyncState.stale_remote.value
+            remote_sync_state = F8VariantSyncState.synced.value
+        else:
+            local_sync_state = F8VariantSyncState.synced.value
+            remote_sync_state = F8VariantSyncState.synced.value
     return build_asset_catalog_row_state(
         asset_id=variant_id,
         has_local_head=local_entry is not None,

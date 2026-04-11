@@ -9,6 +9,7 @@ from f8pysdk.codec import dump_json, validate_as
 from f8pysdk.specs import F8VariantLibrary, F8VariantRecord
 
 from .variant_catalog import (
+    local_entry_from_record,
     VariantCatalogService,
     _records_name_conflict,
     ensure_unique_variant_name as _catalog_ensure_unique_variant_name,
@@ -19,7 +20,7 @@ from .variant_catalog import (
     variants_file_path,
 )
 from .variant_events import emit_variants_changed
-from .variant_models import F8VariantEntry
+from .variant_models import F8VariantEntry, F8VariantSourceKind, F8VariantSyncState
 
 
 def _service() -> VariantCatalogService:
@@ -138,8 +139,13 @@ def import_from_json(path: str, mode: Literal["merge", "replace"] = "merge") -> 
     if not in_path.is_file():
         raise FileNotFoundError(f"Variants file not found: {in_path}")
     raw = json.loads(in_path.read_text(encoding="utf-8"))
-    imported = validate_as(F8VariantLibrary, raw)
-    return _service().import_local_library(imported, mode=mode)
+    if not isinstance(raw, dict):
+        raise ValueError("Variant library payload must be an object.")
+    schema_version = str(raw.get("schemaVersion") or "").strip()
+    if schema_version != "f8variantlib/1":
+        raise ValueError(f"Unsupported variant library schemaVersion: {schema_version!r}")
+    entries = _variant_entries_from_library_payload(raw)
+    return _service().import_local_entries(entries, mode=mode)
 
 
 def export_to_json(path: str) -> Path:
@@ -149,12 +155,67 @@ def export_to_json(path: str) -> Path:
     if out_path.suffix.lower() != ".json":
         out_path = out_path.with_suffix(".json")
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    lib = load_library()
+    entries = [entry for entry in _service()._local_provider.load_entries() if entry.source == F8VariantSourceKind.local]
+    payload = _variant_library_payload(entries)
     out_path.write_text(
-        json.dumps(dump_json(lib, mode="json"), ensure_ascii=False, indent=2, default=str),
+        json.dumps(payload, ensure_ascii=False, indent=2, default=str),
         encoding="utf-8",
     )
     return out_path
+
+
+def _variant_library_payload(entries: list[F8VariantEntry]) -> dict[str, object]:
+    return {
+        "schemaVersion": "f8variantlib/1",
+        "entries": [
+            {
+                "record": dump_json(entry.record, mode="json"),
+                "localVersionNumber": entry.localVersionNumber,
+                "syncBaseRemoteRevision": entry.syncBaseRemoteRevision,
+                "syncBaseRemoteVersionNumber": entry.syncBaseRemoteVersionNumber,
+                "syncBaseLocalVersionNumber": entry.syncBaseLocalVersionNumber,
+            }
+            for entry in entries
+        ],
+    }
+
+
+def _variant_entries_from_library_payload(payload: dict[str, object]) -> list[F8VariantEntry]:
+    raw_entries = payload.get("entries")
+    if not isinstance(raw_entries, list):
+        raise ValueError("Variant library missing `entries` array.")
+    entries: list[F8VariantEntry] = []
+    for raw_entry in raw_entries:
+        if not isinstance(raw_entry, dict):
+            raise ValueError("Variant library entry must be an object.")
+        record = validate_as(F8VariantRecord, raw_entry.get("record"))
+        entry = local_entry_from_record(record)
+        entries.append(
+            F8VariantEntry(
+                record=entry.record,
+                source=F8VariantSourceKind.local,
+                syncState=F8VariantSyncState.local_only,
+                installed=True,
+                hasCachedContent=True,
+                localVersionNumber=_optional_int(raw_entry.get("localVersionNumber")),
+                syncBaseRemoteRevision=_optional_str(raw_entry.get("syncBaseRemoteRevision")),
+                syncBaseRemoteVersionNumber=_optional_int(raw_entry.get("syncBaseRemoteVersionNumber")),
+                syncBaseLocalVersionNumber=_optional_int(raw_entry.get("syncBaseLocalVersionNumber")),
+            )
+        )
+    return entries
+
+
+def _optional_int(value: object) -> int | None:
+    if value is None:
+        return None
+    return int(value)
+
+
+def _optional_str(value: object) -> str | None:
+    if value is None:
+        return None
+    return str(value)
 
 
 __all__ = [

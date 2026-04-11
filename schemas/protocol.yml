@@ -112,10 +112,23 @@ components:
           enum:
             - f8variantlib/1
           default: f8variantlib/1
-        variants:
+        entries:
           type: array
           items:
-            $ref: "#/components/schemas/F8VariantRecord"
+            type: object
+            properties:
+              record:
+                $ref: "#/components/schemas/F8VariantRecord"
+              localVersionNumber:
+                type: integer
+              syncBaseRemoteRevision:
+                type: string
+              syncBaseRemoteVersionNumber:
+                type: integer
+              syncBaseLocalVersionNumber:
+                type: integer
+            required:
+              - record
           default: []
       additionalProperties: false
     F8NodeUiOverridePatch:

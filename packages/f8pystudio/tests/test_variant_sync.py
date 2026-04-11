@@ -8,7 +8,7 @@ import threading
 import zlib
 
 import pytest
-from qtpy import QtCore
+from qtpy import QtCore, QtWidgets
 from sqlalchemy import insert, select
 from f8pysdk.codec import copy_model
 
@@ -26,7 +26,7 @@ from f8pystudio.assets.variants.variant_models import (
 )
 from f8pystudio.assets.variants.variant_sync import VariantSyncClient
 from f8pystudio.assets.db import variant_remote_cache_table
-from f8pystudio.assets.ui.variant_manager_dialog import variant_row_state_for_entries
+from f8pystudio.assets.ui.variant_manager_dialog import VariantManagerDialog, variant_row_state_for_entries
 from f8pysdk.specs import F8VariantRecord
 
 
@@ -937,3 +937,76 @@ def test_variant_row_state_badges_cover_remote_both_and_conflict() -> None:
     assert remote_state.badge_texts() == ["remote", "public", "R2"]
     assert synced_state.badge_texts() == ["both", "public", "synced", "L6", "R6"]
     assert local_changes_state.badge_texts() == ["both", "public", "local changes", "L7", "R6"]
+
+
+def test_variant_sync_persists_local_sync_base_and_second_sync_is_noop(monkeypatch, tmp_path: Path) -> None:
+    app = QtWidgets.QApplication.instance()
+    if app is None:
+        app = QtWidgets.QApplication([])
+    settings = QtCore.QSettings(str(tmp_path / "variant-sync-noop.ini"), QtCore.QSettings.IniFormat)
+    db_path = tmp_path / "assets.db"
+    service = VariantCatalogService(
+        local_provider=LocalVariantProvider(db_path=db_path),
+        remote_provider=RemoteCacheProvider(db_path=db_path),
+    )
+    local_entry = service.upsert_local_entry(_make_entry(variant_id="sync-1", source=F8VariantSourceKind.local))
+    remote_entry = copy_model(
+        _make_entry(
+            variant_id="sync-1",
+            source=F8VariantSourceKind.remote_private,
+            installed=True,
+            remote_revision="r1",
+        ),
+        update={
+            "visibility": F8VariantVisibility.private,
+            "remoteVersionNumber": 1,
+            "ownerUserId": "u1",
+            "ownerDisplayName": "User One",
+        },
+    )
+    service.replace_remote_entries([remote_entry])
+
+    dialog = VariantManagerDialog(
+        parent=None,
+        base_node_type="svc.a.op",
+        base_node_name="Variant",
+        node_graph=None,
+    )
+    dialog._sync_client = VariantSyncClient(settings=settings, catalog_service=service)
+    monkeypatch.setattr(dialog, "_reload", lambda *args, **kwargs: None)
+    monkeypatch.setattr(dialog, "_ensure_logged_in", lambda: True)
+
+    upload_calls: list[F8VariantEntry] = []
+
+    def _upload_entry(entry: F8VariantEntry) -> F8VariantEntry:
+        upload_calls.append(entry)
+        return copy_model(
+            remote_entry,
+            update={
+                "remoteRevision": "r1",
+                "remoteVersionNumber": 1,
+                "syncState": F8VariantSyncState.synced,
+            },
+        )
+
+    monkeypatch.setattr(dialog._sync_client, "upload_entry", _upload_entry)
+
+    uploaded = dialog._push_selected_variant(local_entry=local_entry, remote_entry=remote_entry)
+
+    assert uploaded is not None
+    assert len(upload_calls) == 1
+    saved_local = service.entry("sync-1", include_uninstalled=True)
+    assert saved_local is not None
+    assert saved_local.syncBaseRemoteRevision == "r1"
+    assert saved_local.syncBaseRemoteVersionNumber == 1
+    assert saved_local.syncBaseLocalVersionNumber == 1
+
+    monkeypatch.setattr(dialog, "_selected_local_entry", lambda: service.entry("sync-1", include_uninstalled=True))
+    monkeypatch.setattr(dialog, "_selected_remote_entry", lambda: remote_entry)
+
+    synced = dialog._sync_selected_variant()
+
+    assert synced is None
+    assert len(upload_calls) == 1
+
+    dialog.close()

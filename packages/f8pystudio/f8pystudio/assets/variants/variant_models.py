@@ -37,6 +37,7 @@ class F8VariantEntry(Struct, kw_only=True):
     ownerDisplayName: str | None = None
     librarySlug: str | None = None
     remoteRevision: str | None = None
+    syncBaseRemoteRevision: str | None = None
     syncState: F8VariantSyncState = F8VariantSyncState.local_only
     downloadedAt: str | None = None
     installed: bool = True
@@ -44,6 +45,8 @@ class F8VariantEntry(Struct, kw_only=True):
     subscribed: bool = False
     localVersionNumber: int | None = None
     remoteVersionNumber: int | None = None
+    syncBaseRemoteVersionNumber: int | None = None
+    syncBaseLocalVersionNumber: int | None = None
 
 
 class F8VariantCatalogSnapshot(Struct, kw_only=True):

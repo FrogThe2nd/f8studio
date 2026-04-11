@@ -169,9 +169,23 @@ class AssetGraphPreviewPane(QtWidgets.QWidget):
         loading_layout.addStretch(1)
         loading_layout.addWidget(self._loading_label, 0)
         loading_layout.addStretch(1)
+        self._deferred_page = QtWidgets.QWidget(self)
+        self._deferred_label = QtWidgets.QLabel(self._deferred_page)
+        self._deferred_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        self._deferred_label.setWordWrap(True)
+        self._deferred_label.setMargin(16)
+        self._deferred_button = QtWidgets.QPushButton("Load preview manually", self._deferred_page)
+        self._deferred_button.clicked.connect(self._load_deferred_preview)  # type: ignore[attr-defined]
+        deferred_layout = QtWidgets.QVBoxLayout(self._deferred_page)
+        deferred_layout.setContentsMargins(24, 24, 24, 24)
+        deferred_layout.addStretch(1)
+        deferred_layout.addWidget(self._deferred_label, 0, QtCore.Qt.AlignmentFlag.AlignHCenter)
+        deferred_layout.addWidget(self._deferred_button, 0, QtCore.Qt.AlignmentFlag.AlignHCenter)
+        deferred_layout.addStretch(1)
         self._stack = QtWidgets.QStackedLayout()
         self._stack.addWidget(self._preview_page)
         self._stack.addWidget(self._loading_page)
+        self._stack.addWidget(self._deferred_page)
         self._stack.addWidget(self._status)
         self._preview_request_timer = QtCore.QTimer(self)
         self._preview_request_timer.setSingleShot(True)
@@ -181,6 +195,7 @@ class AssetGraphPreviewPane(QtWidgets.QWidget):
         self._pending_request_kind: str | None = None
         self._pending_request_id = 0
         self._current_request_id = 0
+        self._deferred_component_payload: JsonObject | None = None
         self._node_factory_signature: tuple[tuple[str, int], ...] = ()
         self._preview_split_initialized = False
         self._preview_split_user_resized = False
@@ -208,6 +223,8 @@ class AssetGraphPreviewPane(QtWidgets.QWidget):
     def current_status_text(self) -> str:
         if self._stack.currentWidget() is self._loading_page:
             return str(self._loading_label.text() or "")
+        if self._stack.currentWidget() is self._deferred_page:
+            return str(self._deferred_label.text() or "")
         return str(self._status.text() or "")
 
     def clear_preview(self, message: str = _DEFAULT_EMPTY_MESSAGE) -> None:
@@ -216,6 +233,7 @@ class AssetGraphPreviewPane(QtWidgets.QWidget):
         self._show_status(message)
 
     def show_component_payload(self, payload: JsonObject) -> None:
+        self._deferred_component_payload = None
         request_id = self._next_request_id()
         self._pending_component_payload = payload
         self._pending_variant_record = None
@@ -225,6 +243,7 @@ class AssetGraphPreviewPane(QtWidgets.QWidget):
         self._preview_request_timer.start(_PREVIEW_BUILD_DELAY_MS)
 
     def show_variant_record(self, record: F8VariantRecord) -> None:
+        self._deferred_component_payload = None
         request_id = self._next_request_id()
         self._pending_component_payload = None
         self._pending_variant_record = record
@@ -340,8 +359,29 @@ class AssetGraphPreviewPane(QtWidgets.QWidget):
         self._pending_component_payload = None
         self._pending_variant_record = None
         self._pending_request_id = 0
+        self._deferred_component_payload = None
         if self._preview_request_timer.isActive():
             self._preview_request_timer.stop()
+
+    def show_deferred_component_payload(
+        self,
+        payload: JsonObject,
+        *,
+        message: str,
+        button_text: str = "Load preview manually",
+    ) -> None:
+        self._cancel_pending_preview_request()
+        self._clear_graph()
+        self._deferred_component_payload = payload
+        self._deferred_label.setText(str(message or "Preview loading deferred."))
+        self._deferred_button.setText(str(button_text or "Load preview manually"))
+        self._stack.setCurrentWidget(self._deferred_page)
+
+    def _load_deferred_preview(self) -> None:
+        payload = self._deferred_component_payload
+        if payload is None:
+            return
+        self.show_component_payload(payload)
 
     def _finalize_loaded_preview(self, *, request_id: int) -> None:
         if request_id != self._current_request_id:

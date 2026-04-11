@@ -31,6 +31,7 @@ from ..components.component_sync import ComponentSyncClient
 from ..components.component_catalog import component_entry_can_hydrate, component_entry_has_cached_content, component_entry_is_installed
 from ...ui.support.ui_icons import StudioIcon, icon_for
 from ...ui.support.ui_notifications import show_info, show_warning
+from ...nodegraph.session_schema import extract_layout
 from .project_asset_dialogs import (
     AssetVersionBrowserAction,
     AssetVersionBrowserDialog,
@@ -38,11 +39,14 @@ from .project_asset_dialogs import (
     ProjectAssetMetaDialog,
 )
 from .asset_graph_preview import AssetGraphPreviewPane
+from .asset_sync_resolution import AssetSyncDirection, determine_asset_sync_direction
 from .catalog_status import AssetCatalogRowState, build_asset_catalog_row_state
 from ...ui.support.json_text_editor import attach_json_enhancements
 from .asset_cloud_account_menu import build_asset_account_menu, prompt_asset_cloud_sign_in
 
 logger = logging.getLogger(__name__)
+
+_AUTO_PREVIEW_NODE_THRESHOLD = 10
 
 
 class ComponentCatalogDialog(QtWidgets.QDialog):
@@ -190,9 +194,11 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
 
         self._list = QtWidgets.QListWidget(self)
         self._list.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
+        self._list.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
         self._list.itemSelectionChanged.connect(self._on_selection_changed)  # type: ignore[attr-defined]
         self._list.itemDoubleClicked.connect(self._on_item_double_clicked)  # type: ignore[attr-defined]
         self._list.verticalScrollBar().valueChanged.connect(self._on_list_scrolled)  # type: ignore[attr-defined]
+        self._list.customContextMenuRequested.connect(self._on_list_context_menu_requested)  # type: ignore[attr-defined]
         self._preview = AssetGraphPreviewPane(parent=self, host_graph=node_graph)
         self._raw = QtWidgets.QPlainTextEdit(self)
         self._raw.setReadOnly(True)
@@ -563,18 +569,36 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
             self._preview.clear_preview(f"Failed to preview component.\n{hydration_error}")
         else:
             self._raw.setPlainText(json.dumps(dump_json(selected_entry, mode="json"), ensure_ascii=False, indent=2, default=str))
-            self._preview.show_component_payload(selected_entry.record.content)
-        is_local = selected_entry.source == F8ComponentSourceKind.local
-        is_remote = selected_entry.source in {
-            F8ComponentSourceKind.remote_official,
-            F8ComponentSourceKind.remote_public,
-            F8ComponentSourceKind.remote_private,
-        }
+            preview_node_count = self._component_preview_node_count(selected_entry.record.content)
+            if preview_node_count > _AUTO_PREVIEW_NODE_THRESHOLD:
+                self._preview.show_deferred_component_payload(
+                    selected_entry.record.content,
+                    message=(
+                        f"This component has {preview_node_count} nodes.\n"
+                        "Automatic preview is paused to keep browsing fast."
+                    ),
+                    button_text="Load preview manually",
+                )
+            else:
+                self._preview.show_component_payload(selected_entry.record.content)
+        current_tab = self._scope_tabs.currentIndex()
+        _selected_entry, local_entry, remote_entry = self._selected_action_entries()
+        is_local = local_entry is not None
+        is_remote = remote_entry is not None
+        can_load = remote_entry is not None and not component_entry_is_installed(remote_entry)
+        can_offload = local_entry is not None or (remote_entry is not None and component_entry_is_installed(remote_entry))
+        can_sync = current_tab == self._TAB_MINE and (local_entry is not None or remote_entry is not None)
+        can_pull = current_tab == self._TAB_INSTALLED and remote_entry is not None
         self._btn_edit.setEnabled(is_local)
         self._btn_delete.setEnabled(is_local)
-        self._btn_copy_local.setEnabled(not is_local)
-        self._btn_upload.setEnabled(is_local or self._is_owned_remote_entry(selected_entry))
-        self._btn_install.setEnabled(is_remote and not component_entry_is_installed(selected_entry))
+        self._btn_copy_local.setEnabled(selected_entry is not None)
+        self._btn_copy_local.setToolTip("Fork")
+        self._btn_upload.setEnabled(can_sync or can_pull)
+        self._btn_upload.setToolTip("Pull" if can_pull else "Sync")
+        self._btn_upload.setIcon(icon_for(self._btn_upload, StudioIcon.REFRESH if can_pull else StudioIcon.CLOUD_UP))
+        self._btn_install.setEnabled(can_load or can_offload)
+        self._btn_install.setToolTip("Offload" if can_offload and not can_load else "Load")
+        self._btn_install.setIcon(icon_for(self._btn_install, StudioIcon.DOWNLOAD if can_offload and not can_load else StudioIcon.CLOUD_DOWN))
         is_community_public = self._is_community_entry(selected_entry)
         self._btn_subscribe.setEnabled(is_community_public)
         self._btn_subscribe.setIcon(
@@ -584,6 +608,19 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
         self._btn_history.setEnabled(is_local or is_remote)
         self._btn_visibility.setEnabled(self._is_owned_remote_entry(selected_entry))
         self._btn_insert.setEnabled(component_entry_is_installed(selected_entry))
+
+    @staticmethod
+    def _component_preview_node_count(payload: Any) -> int:
+        if not isinstance(payload, dict):
+            return 0
+        try:
+            layout = extract_layout(payload)
+        except ValueError:
+            return 0
+        nodes = layout.get("nodes")
+        if not isinstance(nodes, dict):
+            return 0
+        return len(nodes)
 
     def _refresh_auth_controls(self) -> None:
         logged_in = self._sync_client.current_user() is not None and bool(self._sync_client.current_access_token())
@@ -618,6 +655,68 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
 
     def _on_item_double_clicked(self, _item: QtWidgets.QListWidgetItem) -> None:
         self._on_insert_clicked()
+
+    def _on_list_context_menu_requested(self, pos: QtCore.QPoint) -> None:
+        item = self._list.itemAt(pos)
+        if item is not None:
+            self._list.setCurrentItem(item)
+        selected_entry, local_entry, remote_entry = self._selected_action_entries()
+        if selected_entry is None:
+            return
+        current_tab = self._scope_tabs.currentIndex()
+        menu = self._build_list_context_menu(
+            current_tab=current_tab,
+            selected_entry=selected_entry,
+            local_entry=local_entry,
+            remote_entry=remote_entry,
+        )
+        menu.exec(self._list.viewport().mapToGlobal(pos))
+
+    def _build_list_context_menu(
+        self,
+        *,
+        current_tab: int,
+        selected_entry: F8ComponentEntry,
+        local_entry: F8ComponentEntry | None,
+        remote_entry: F8ComponentEntry | None,
+    ) -> QtWidgets.QMenu:
+        menu = QtWidgets.QMenu(self)
+        if current_tab == self._TAB_MINE:
+            can_offload = local_entry is not None or (remote_entry is not None and component_entry_is_installed(remote_entry))
+            load_action = menu.addAction("Offload" if can_offload else "Load")
+            load_action.setEnabled((remote_entry is not None and not component_entry_is_installed(remote_entry)) or can_offload)
+            load_action.triggered.connect(self._on_install_clicked)  # type: ignore[attr-defined]
+            fork_action = menu.addAction("Fork")
+            fork_action.triggered.connect(self._on_copy_local_clicked)  # type: ignore[attr-defined]
+            sync_action = menu.addAction("Sync")
+            sync_action.setEnabled(local_entry is not None or remote_entry is not None)
+            sync_action.triggered.connect(self._on_upload_clicked)  # type: ignore[attr-defined]
+            visibility_label = "Make Public"
+            if remote_entry is not None and remote_entry.visibility == F8ComponentVisibility.public:
+                visibility_label = "Make Private"
+            visibility_action = menu.addAction(visibility_label)
+            visibility_action.setEnabled(remote_entry is not None and self._is_owned_remote_entry(remote_entry))
+            visibility_action.triggered.connect(self._on_visibility_clicked)  # type: ignore[attr-defined]
+        elif current_tab == self._TAB_COMMUNITY:
+            subscribe_action = menu.addAction("Unsubscribe" if selected_entry.subscribed else "Subscribe")
+            subscribe_action.setEnabled(
+                selected_entry.source == F8ComponentSourceKind.remote_public and not self._is_owned_remote_entry(selected_entry)
+            )
+            subscribe_action.triggered.connect(self._on_subscribe_clicked)  # type: ignore[attr-defined]
+            fork_action = menu.addAction("Fork")
+            fork_action.triggered.connect(self._on_copy_local_clicked)  # type: ignore[attr-defined]
+        else:
+            offload_action = menu.addAction("Offload")
+            offload_action.setEnabled(local_entry is not None or (remote_entry is not None and component_entry_is_installed(remote_entry)))
+            offload_action.triggered.connect(self._on_install_clicked)  # type: ignore[attr-defined]
+            pull_action = menu.addAction("Pull")
+            pull_action.setEnabled(remote_entry is not None)
+            pull_action.triggered.connect(self._on_upload_clicked)  # type: ignore[attr-defined]
+        if component_entry_is_installed(selected_entry):
+            menu.addSeparator()
+            insert_action = menu.addAction("Insert Into Graph")
+            insert_action.triggered.connect(self._on_insert_clicked)  # type: ignore[attr-defined]
+        return menu
 
     def _on_add_clicked(self) -> None:
         graph = self._graph
@@ -698,46 +797,33 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
         show_info(self, "Saved", f"Saved local copy:\n{copied.name}")
 
     def _on_upload_clicked(self) -> None:
-        selected_entry = self._selected_entry()
-        if selected_entry is None:
+        current_tab = self._scope_tabs.currentIndex()
+        if current_tab == self._TAB_INSTALLED:
+            pulled = self._pull_selected_component()
+            if pulled is not None:
+                show_info(self, "Pulled", f"Pulled component:\n{pulled.record.name}")
             return
-        if not self._ensure_logged_in():
-            return
-        entry_to_upload = self._ensure_component_hydrated(selected_entry, operation_name="Load component")
-        if entry_to_upload is None:
-            return
-        if selected_entry.source == F8ComponentSourceKind.local:
-            visibility = self._choose_visibility()
-            if visibility is None:
-                return
-            source = F8ComponentSourceKind.remote_private if visibility == F8ComponentVisibility.private else F8ComponentSourceKind.remote_public
-            entry_to_upload = validate_as(
-                F8ComponentEntry,
-                {
-                    **dump_json(selected_entry, mode="json"),
-                    "source": source.value,
-                    "visibility": visibility.value,
-                    "installed": True,
-                },
-            )
-        try:
-            uploaded = self._sync_client.upload_entry(entry_to_upload)
-        except Exception as exc:
-            show_warning(self, "Upload failed", str(exc))
-            return
-        show_info(self, "Uploaded", f"Uploaded component:\n{uploaded.record.name}")
-        self._reload()
+        synced = self._sync_selected_component()
+        if synced is not None:
+            show_info(self, "Synced", f"Synced component:\n{synced.record.name}")
 
     def _on_install_clicked(self) -> None:
-        selected_entry = self._selected_entry()
+        selected_entry, local_entry, remote_entry = self._selected_action_entries()
         if selected_entry is None:
             return
-        try:
-            installed = self._sync_client.hydrate_component(str(selected_entry.record.componentId))
-        except Exception as exc:
-            show_warning(self, "Install failed", str(exc))
+        if local_entry is not None or (remote_entry is not None and component_entry_is_installed(remote_entry)):
+            offloaded_name = str(selected_entry.record.name or "")
+            if self._offload_selected_component(local_entry=local_entry, remote_entry=remote_entry):
+                show_info(self, "Offloaded", f"Offloaded component:\n{offloaded_name}")
             return
-        show_info(self, "Installed", f"Installed component:\n{installed.record.name}")
+        if remote_entry is None:
+            return
+        try:
+            installed = self._sync_client.hydrate_component(str(remote_entry.record.componentId))
+        except Exception as exc:
+            show_warning(self, "Load failed", str(exc))
+            return
+        show_info(self, "Loaded", f"Loaded component:\n{installed.record.name}")
         self._reload()
 
     def _on_subscribe_clicked(self) -> None:
@@ -797,6 +883,204 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
             show_warning(self, "Visibility update failed", str(exc))
             return
         self._reload()
+
+    def _offload_selected_component(
+        self,
+        *,
+        local_entry: F8ComponentEntry | None,
+        remote_entry: F8ComponentEntry | None,
+    ) -> bool:
+        changed = False
+        if local_entry is not None:
+            changed = self._sync_client._catalog_service.delete_local_entry(str(local_entry.record.componentId)) or changed
+        if remote_entry is not None and component_entry_is_installed(remote_entry):
+            changed = self._sync_client._catalog_service.uninstall_remote_entry(str(remote_entry.record.componentId)) is not None or changed
+        if changed:
+            self._reload()
+        return changed
+
+    def _component_sync_decision(
+        self,
+        *,
+        local_entry: F8ComponentEntry | None,
+        remote_entry: F8ComponentEntry | None,
+    ) -> AssetSyncDirection:
+        decision = determine_asset_sync_direction(
+            has_local_entry=local_entry is not None,
+            has_remote_entry=remote_entry is not None,
+            local_version_number=None if local_entry is None else local_entry.localVersionNumber,
+            remote_version_number=None if remote_entry is None else remote_entry.remoteVersionNumber,
+            sync_base_remote_revision=None if local_entry is None else local_entry.syncBaseRemoteRevision,
+            sync_base_remote_version_number=None if local_entry is None else local_entry.syncBaseRemoteVersionNumber,
+            sync_base_local_version_number=None if local_entry is None else local_entry.syncBaseLocalVersionNumber,
+            current_remote_revision=None if remote_entry is None else remote_entry.remoteRevision,
+        )
+        return decision.direction
+
+    def _sync_selected_component(self) -> F8ComponentEntry | None:
+        selected_entry, local_entry, remote_entry = self._selected_action_entries()
+        if selected_entry is None:
+            return None
+        if not self._ensure_logged_in():
+            return None
+        direction = self._component_sync_decision(local_entry=local_entry, remote_entry=remote_entry)
+        if direction == AssetSyncDirection.pull:
+            return self._pull_selected_component()
+        if direction == AssetSyncDirection.conflict:
+            resolution = self._prompt_component_conflict_resolution(include_push=True)
+            if resolution == "push":
+                return self._push_selected_component(local_entry=local_entry, remote_entry=remote_entry)
+            if resolution == "replace":
+                return self._pull_selected_component(force_replace_local=True)
+            if resolution == "fork_pull":
+                if not self._fork_local_component_conflict_copy(local_entry):
+                    return None
+                return self._pull_selected_component(force_replace_local=True)
+            return None
+        if direction == AssetSyncDirection.noop:
+            return None
+        return self._push_selected_component(local_entry=local_entry, remote_entry=remote_entry)
+
+    def _push_selected_component(
+        self,
+        *,
+        local_entry: F8ComponentEntry | None,
+        remote_entry: F8ComponentEntry | None,
+    ) -> F8ComponentEntry | None:
+        if local_entry is None:
+            return None
+        entry_to_upload = self._ensure_component_hydrated(local_entry, operation_name="Load component")
+        if entry_to_upload is None:
+            return None
+        if remote_entry is not None:
+            entry_to_upload = copy_model(
+                entry_to_upload,
+                update={
+                    "source": remote_entry.source,
+                    "visibility": remote_entry.visibility,
+                    "remoteRevision": remote_entry.remoteRevision,
+                    "remoteVersionNumber": remote_entry.remoteVersionNumber,
+                    "syncBaseRemoteRevision": remote_entry.remoteRevision,
+                    "syncBaseRemoteVersionNumber": remote_entry.remoteVersionNumber,
+                    "installed": True,
+                    "hasCachedContent": True,
+                },
+            )
+        else:
+            visibility = self._choose_visibility()
+            if visibility is None:
+                return None
+            source = F8ComponentSourceKind.remote_private if visibility == F8ComponentVisibility.private else F8ComponentSourceKind.remote_public
+            entry_to_upload = validate_as(
+                F8ComponentEntry,
+                {
+                    **dump_json(entry_to_upload, mode="json"),
+                    "source": source.value,
+                    "visibility": visibility.value,
+                    "installed": True,
+                },
+            )
+        try:
+            uploaded = self._sync_client.upload_entry(entry_to_upload)
+        except Exception as exc:
+            show_warning(self, "Sync failed", str(exc))
+            return None
+        saved_local_entry = copy_model(
+            local_entry,
+            update={
+                "syncBaseRemoteRevision": uploaded.remoteRevision,
+                "syncBaseRemoteVersionNumber": uploaded.remoteVersionNumber,
+                "syncBaseLocalVersionNumber": local_entry.localVersionNumber,
+                "remoteRevision": uploaded.remoteRevision,
+                "remoteVersionNumber": uploaded.remoteVersionNumber,
+                "syncState": uploaded.syncState,
+            },
+        )
+        _ = self._sync_client._catalog_service.upsert_local_entry(saved_local_entry)
+        self._reload()
+        return uploaded
+
+    def _pull_selected_component(self, *, force_replace_local: bool = False) -> F8ComponentEntry | None:
+        selected_entry, local_entry, remote_entry = self._selected_action_entries()
+        if selected_entry is None or remote_entry is None:
+            return None
+        if local_entry is not None and not force_replace_local:
+            direction = self._component_sync_decision(local_entry=local_entry, remote_entry=remote_entry)
+            if direction == AssetSyncDirection.conflict:
+                resolution = self._prompt_component_conflict_resolution(include_push=False)
+                if resolution == "replace":
+                    return self._pull_selected_component(force_replace_local=True)
+                if resolution == "fork_pull":
+                    if not self._fork_local_component_conflict_copy(local_entry):
+                        return None
+                    return self._pull_selected_component(force_replace_local=True)
+                return None
+        try:
+            pulled = self._sync_client.hydrate_component(str(remote_entry.record.componentId))
+        except Exception as exc:
+            show_warning(self, "Pull failed", str(exc))
+            return None
+        if local_entry is not None:
+            replacement_entry = F8ComponentEntry(
+                record=pulled.record,
+                source=F8ComponentSourceKind.local,
+                visibility=local_entry.visibility,
+                ownerUserId=local_entry.ownerUserId,
+                ownerDisplayName=local_entry.ownerDisplayName,
+                librarySlug=local_entry.librarySlug,
+                remoteRevision=pulled.remoteRevision,
+                syncBaseRemoteRevision=pulled.remoteRevision,
+                syncState=pulled.syncState,
+                downloadedAt=pulled.downloadedAt,
+                installed=True,
+                hasCachedContent=True,
+                subscribed=local_entry.subscribed,
+                remoteVersionNumber=pulled.remoteVersionNumber,
+                syncBaseRemoteVersionNumber=pulled.remoteVersionNumber,
+            )
+            _ = self._sync_client._catalog_service.upsert_local_entry(replacement_entry)
+        self._reload()
+        return pulled
+
+    def _fork_local_component_conflict_copy(self, local_entry: F8ComponentEntry | None) -> bool:
+        if local_entry is None:
+            return False
+        forked_record = validate_as(
+            F8ComponentRecord,
+            {
+                **dump_json(local_entry.record, mode="json"),
+                "componentId": new_asset_id(),
+                "name": f"{str(local_entry.record.name or '').strip()} (Fork)",
+                "updatedAt": component_now_iso(),
+            },
+        )
+        _ = self._sync_client._catalog_service.upsert_local_entry(
+            F8ComponentEntry(record=forked_record, source=F8ComponentSourceKind.local)
+        )
+        return True
+
+    def _prompt_component_conflict_resolution(self, *, include_push: bool) -> str:
+        box = QtWidgets.QMessageBox(self)
+        box.setWindowTitle("Sync conflict")
+        box.setIcon(QtWidgets.QMessageBox.Warning)
+        box.setText("Local and remote both changed from different revisions.")
+        box.setInformativeText("Choose how to resolve this conflict.")
+        push_button = None
+        if include_push:
+            push_button = box.addButton("Push local as new revision", QtWidgets.QMessageBox.AcceptRole)
+        replace_button = box.addButton("Replace local with remote", QtWidgets.QMessageBox.DestructiveRole)
+        fork_button = box.addButton("Fork local copy and pull remote", QtWidgets.QMessageBox.ActionRole)
+        cancel_button = box.addButton(QtWidgets.QMessageBox.Cancel)
+        box.setDefaultButton(cancel_button)
+        box.exec()
+        clicked = box.clickedButton()
+        if include_push and clicked is push_button:
+            return "push"
+        if clicked is replace_button:
+            return "replace"
+        if clicked is fork_button:
+            return "fork_pull"
+        return "cancel"
 
     def _on_insert_clicked(self) -> None:
         selected_entry = self._selected_entry()
@@ -859,6 +1143,35 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
             show_warning(self, "Export failed", str(exc))
             return
         show_info(self, "Exported", f"Saved:\n{out_path}")
+
+    def _local_entry_for_component_id(self, component_id: str) -> F8ComponentEntry | None:
+        normalized_component_id = str(component_id or "").strip()
+        if not normalized_component_id:
+            return None
+        for entry in self._sync_client._catalog_service._local_provider.load_entries():
+            if str(entry.record.componentId or "").strip() == normalized_component_id:
+                return entry
+        return None
+
+    def _remote_entry_for_component_id(self, component_id: str) -> F8ComponentEntry | None:
+        normalized_component_id = str(component_id or "").strip()
+        if not normalized_component_id:
+            return None
+        for entry in self._sync_client._catalog_service._remote_provider.load_entries():
+            if str(entry.record.componentId or "").strip() == normalized_component_id:
+                return entry
+        return None
+
+    def _selected_action_entries(self) -> tuple[F8ComponentEntry | None, F8ComponentEntry | None, F8ComponentEntry | None]:
+        selected_entry = self._selected_entry()
+        if selected_entry is None:
+            return None, None, None
+        component_id = str(selected_entry.record.componentId or "").strip()
+        return (
+            selected_entry,
+            self._local_entry_for_component_id(component_id),
+            self._remote_entry_for_component_id(component_id),
+        )
 
     def _on_accounts_clicked(self) -> None:
         menu = build_asset_account_menu(parent=self, sync_client=self._sync_client, on_changed=self._on_account_state_changed)
@@ -1263,6 +1576,29 @@ def component_row_state_for_entries(
         remote_version_number = remote_entry.remoteVersionNumber
     local_sync_state = None if local_entry is None else local_entry.syncState.value
     local_version_number = None if local_entry is None else local_entry.localVersionNumber
+    if local_entry is not None and remote_entry is not None:
+        sync_direction = determine_asset_sync_direction(
+            has_local_entry=True,
+            has_remote_entry=True,
+            local_version_number=local_entry.localVersionNumber,
+            remote_version_number=remote_entry.remoteVersionNumber,
+            sync_base_remote_revision=local_entry.syncBaseRemoteRevision,
+            sync_base_remote_version_number=local_entry.syncBaseRemoteVersionNumber,
+            sync_base_local_version_number=local_entry.syncBaseLocalVersionNumber,
+            current_remote_revision=remote_entry.remoteRevision,
+        ).direction
+        if sync_direction == AssetSyncDirection.conflict:
+            local_sync_state = "conflict"
+            remote_sync_state = "conflict"
+        elif sync_direction == AssetSyncDirection.push:
+            local_sync_state = "modified_local"
+            remote_sync_state = "synced"
+        elif sync_direction == AssetSyncDirection.pull:
+            local_sync_state = "stale_remote"
+            remote_sync_state = "synced"
+        else:
+            local_sync_state = "synced"
+            remote_sync_state = "synced"
     return build_asset_catalog_row_state(
         asset_id=component_id,
         has_local_head=local_entry is not None,

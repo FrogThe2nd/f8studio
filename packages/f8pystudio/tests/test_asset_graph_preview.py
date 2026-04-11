@@ -236,6 +236,41 @@ def _component_payload_for_node(node_cls: type[F8StudioServiceBaseNode]) -> dict
     )
 
 
+def _large_component_payload_for_node(
+    node_cls: type[F8StudioServiceBaseNode],
+    *,
+    node_count: int = 11,
+) -> dict[str, object]:
+    node_type = str(node_cls.type_)
+    spec_payload = dump_json(node_cls.SPEC_TEMPLATE, mode="json")
+    nodes: dict[str, object] = {}
+    connections: list[dict[str, object]] = []
+    for index in range(node_count):
+        node_id = f"node_{index}"
+        nodes[node_id] = {
+            "id": node_id,
+            "type_": node_type,
+            "name": f"Node {index}",
+            "pos": [float(index * 180), 0.0],
+            "f8_spec": spec_payload,
+        }
+        if index == 0:
+            continue
+        previous_node_id = f"node_{index - 1}"
+        connections.append(
+            {
+                "out": [previous_node_id, "out[D]"],
+                "in": [node_id, "[D]in"],
+            }
+        )
+    return wrap_layout_for_save(
+        {
+            "nodes": nodes,
+            "connections": connections,
+        }
+    )
+
+
 def _inspector_editor(pane: AssetGraphPreviewPane) -> F8StudioNodePropEditorWidget | None:
     editor = getattr(pane._inspector, "_editor", None)  # type: ignore[attr-defined]
     if isinstance(editor, F8StudioNodePropEditorWidget):
@@ -754,7 +789,117 @@ def test_component_catalog_selection_updates_preview_and_raw(monkeypatch) -> Non
     assert len(list(dialog._preview.preview_graph.all_nodes() or [])) == 2
 
     dialog.close()
-    host_graph.widget.close()
+
+
+def test_component_catalog_large_selection_defers_preview_until_requested(monkeypatch) -> None:
+    _ensure_app()
+    service_node_cls = _make_service_node_class()
+    host_graph = _build_host_graph(service_node_cls)
+    payload = _large_component_payload_for_node(service_node_cls, node_count=11)
+    entry = F8ComponentEntry(
+        record=F8ComponentRecord(
+            componentId="component-large-preview",
+            name="Large Preview Component",
+            content=payload,
+        ),
+        source=F8ComponentSourceKind.local,
+        installed=True,
+    )
+    monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_dialog.subscribe_components_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(ComponentCatalogDialog, "_reload", lambda self, *_args: None)
+    dialog = ComponentCatalogDialog(parent=None, node_graph=host_graph)
+    dialog._entries = [entry]
+    item = QtWidgets.QListWidgetItem()
+    item.setData(QtCore.Qt.ItemDataRole.UserRole, "component-large-preview")
+    dialog._list.addItem(item)
+
+    dialog._list.setCurrentRow(0)
+    QtWidgets.QApplication.processEvents()
+
+    assert "11 nodes" in dialog._preview.current_status_text()
+    assert len(list(dialog._preview.preview_graph.all_nodes() or [])) == 0
+    load_button = dialog._preview._deferred_button  # type: ignore[attr-defined]
+    assert load_button.text() == "Load preview manually"
+
+    dialog._preview._load_deferred_preview()  # type: ignore[attr-defined]
+    _wait_for_preview_completion(dialog._preview)
+
+    assert len(list(dialog._preview.preview_graph.all_nodes() or [])) == 11
+
+    dialog.close()
+
+
+def test_component_catalog_context_menu_matches_variant_style_for_community(monkeypatch) -> None:
+    _ensure_app()
+    monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_dialog.subscribe_components_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(ComponentCatalogDialog, "_reload", lambda self, *_args: None)
+    dialog = ComponentCatalogDialog(parent=None, node_graph=None)
+    entry = F8ComponentEntry(
+        record=F8ComponentRecord(
+            componentId="component-community",
+            name="Community Component",
+            content=_component_payload_for_node(_make_service_node_class()),
+        ),
+        source=F8ComponentSourceKind.remote_public,
+        installed=False,
+        subscribed=False,
+    )
+    dialog._entries = [entry]
+    dialog._sync_client._catalog_service._remote_provider.save_entries([entry])
+    item = QtWidgets.QListWidgetItem()
+    item.setData(QtCore.Qt.ItemDataRole.UserRole, "component-community")
+    dialog._list.addItem(item)
+
+    dialog._scope_tabs.setCurrentIndex(dialog._TAB_COMMUNITY)
+    dialog._list.setCurrentRow(0)
+    QtWidgets.QApplication.processEvents()
+
+    menu = dialog._build_list_context_menu(
+        current_tab=dialog._TAB_COMMUNITY,
+        selected_entry=entry,
+        local_entry=None,
+        remote_entry=entry,
+    )
+
+    assert [action.text() for action in menu.actions()] == ["Subscribe", "Fork"]
+
+    dialog.close()
+
+
+def test_component_catalog_context_menu_shows_mine_actions_and_insert(monkeypatch) -> None:
+    _ensure_app()
+    monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_dialog.subscribe_components_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(ComponentCatalogDialog, "_reload", lambda self, *_args: None)
+    dialog = ComponentCatalogDialog(parent=None, node_graph=None)
+    entry = F8ComponentEntry(
+        record=F8ComponentRecord(
+            componentId="component-mine-local",
+            name="Mine Local Component",
+            content=_component_payload_for_node(_make_service_node_class()),
+        ),
+        source=F8ComponentSourceKind.local,
+        installed=True,
+    )
+    dialog._entries = [entry]
+    dialog._sync_client._catalog_service._local_provider.save_entry(entry)
+    item = QtWidgets.QListWidgetItem()
+    item.setData(QtCore.Qt.ItemDataRole.UserRole, "component-mine-local")
+    dialog._list.addItem(item)
+
+    dialog._scope_tabs.setCurrentIndex(dialog._TAB_MINE)
+    dialog._list.setCurrentRow(0)
+    QtWidgets.QApplication.processEvents()
+
+    menu = dialog._build_list_context_menu(
+        current_tab=dialog._TAB_MINE,
+        selected_entry=entry,
+        local_entry=entry,
+        remote_entry=None,
+    )
+
+    assert [action.text() for action in menu.actions()] == ["Offload", "Fork", "Sync", "Make Public", "", "Insert Into Graph"]
+
+    dialog.close()
 
 
 def test_component_catalog_dialog_defers_initial_remote_refresh(monkeypatch, tmp_path: Path) -> None:

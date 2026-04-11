@@ -49,6 +49,9 @@ component_heads_local_table = Table(
     Column("content", LargeBinary, nullable=False),
     Column("created_at", Text, nullable=False),
     Column("updated_at", Text, nullable=False),
+    Column("sync_base_remote_revision", Text, nullable=True),
+    Column("sync_base_remote_version_number", Integer, nullable=True),
+    Column("sync_base_local_version_number", Integer, nullable=True),
 )
 
 
@@ -69,11 +72,14 @@ component_remote_cache_table = Table(
     Column("owner_display_name", Text, nullable=True),
     Column("library_slug", Text, nullable=True),
     Column("remote_revision", Text, nullable=True),
+    Column("sync_base_remote_revision", Text, nullable=True),
     Column("sync_state", Text, nullable=False),
     Column("downloaded_at", Text, nullable=True),
     Column("installed", Integer, nullable=False),
     Column("has_cached_content", Integer, nullable=False),
     Column("subscribed", Integer, nullable=False),
+    Column("sync_base_remote_version_number", Integer, nullable=True),
+    Column("sync_base_local_version_number", Integer, nullable=True),
     Column("content", LargeBinary, nullable=False),
 )
 
@@ -94,6 +100,9 @@ variant_heads_local_table = Table(
     Column("content", LargeBinary, nullable=False),
     Column("created_at", Text, nullable=False),
     Column("updated_at", Text, nullable=False),
+    Column("sync_base_remote_revision", Text, nullable=True),
+    Column("sync_base_remote_version_number", Integer, nullable=True),
+    Column("sync_base_local_version_number", Integer, nullable=True),
 )
 
 variant_versions_local_table = Table(
@@ -125,11 +134,14 @@ variant_remote_cache_table = Table(
     Column("owner_display_name", Text, nullable=True),
     Column("library_slug", Text, nullable=True),
     Column("remote_revision", Text, nullable=True),
+    Column("sync_base_remote_revision", Text, nullable=True),
     Column("sync_state", Text, nullable=False),
     Column("downloaded_at", Text, nullable=True),
     Column("installed", Integer, nullable=False),
     Column("has_cached_content", Integer, nullable=False),
     Column("subscribed", Integer, nullable=False),
+    Column("sync_base_remote_version_number", Integer, nullable=True),
+    Column("sync_base_local_version_number", Integer, nullable=True),
     Column("content", LargeBinary, nullable=False),
 )
 
@@ -230,6 +242,24 @@ class AssetsDatabase:
             column_name="latest_version_number",
             default_value=1,
         )
+        for table_name, column_name in [
+            ("component_heads_local", "sync_base_remote_revision"),
+            ("component_remote_cache", "sync_base_remote_revision"),
+            ("variant_heads_local", "sync_base_remote_revision"),
+            ("variant_remote_cache", "sync_base_remote_revision"),
+        ]:
+            self._ensure_nullable_text_column(engine, inspector=inspector, table_name=table_name, column_name=column_name)
+        for table_name, column_name in [
+            ("component_heads_local", "sync_base_remote_version_number"),
+            ("component_remote_cache", "sync_base_remote_version_number"),
+            ("variant_heads_local", "sync_base_remote_version_number"),
+            ("variant_remote_cache", "sync_base_remote_version_number"),
+            ("component_heads_local", "sync_base_local_version_number"),
+            ("component_remote_cache", "sync_base_local_version_number"),
+            ("variant_heads_local", "sync_base_local_version_number"),
+            ("variant_remote_cache", "sync_base_local_version_number"),
+        ]:
+            self._ensure_nullable_integer_column(engine, inspector=inspector, table_name=table_name, column_name=column_name)
 
     def _ensure_nullable_text_column(self, engine: Engine, *, inspector: Inspector, table_name: str, column_name: str) -> None:
         if table_name not in set(inspector.get_table_names()):
@@ -258,6 +288,14 @@ class AssetsDatabase:
                     f"ALTER TABLE {table_name} ADD COLUMN {column_name} INTEGER NOT NULL DEFAULT {int(default_value)}"
                 )
             )
+
+    def _ensure_nullable_integer_column(self, engine: Engine, *, inspector: Inspector, table_name: str, column_name: str) -> None:
+        if table_name not in set(inspector.get_table_names()):
+            return
+        if column_name in {str(column["name"]) for column in inspector.get_columns(table_name)}:
+            return
+        with engine.begin() as connection:
+            connection.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {column_name} INTEGER"))
 
 
 __all__ = [

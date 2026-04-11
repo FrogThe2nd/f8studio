@@ -58,6 +58,9 @@ class LocalComponentProvider:
                 component_heads_local_table.c.content,
                 component_heads_local_table.c.created_at,
                 component_heads_local_table.c.updated_at,
+                component_heads_local_table.c.sync_base_remote_revision,
+                component_heads_local_table.c.sync_base_remote_version_number,
+                component_heads_local_table.c.sync_base_local_version_number,
             )
             .order_by(func.lower(component_heads_local_table.c.name), component_heads_local_table.c.component_id)
         )
@@ -73,6 +76,13 @@ class LocalComponentProvider:
                     source=F8ComponentSourceKind.local,
                     hasCachedContent=True,
                     localVersionNumber=mapping_int(row_mapping, "latest_version_number"),
+                    syncBaseRemoteRevision=mapping_optional_str(row_mapping, "sync_base_remote_revision"),
+                    syncBaseRemoteVersionNumber=mapping_int(row_mapping, "sync_base_remote_version_number")
+                    if row_mapping.get("sync_base_remote_version_number") is not None
+                    else None,
+                    syncBaseLocalVersionNumber=mapping_int(row_mapping, "sync_base_local_version_number")
+                    if row_mapping.get("sync_base_local_version_number") is not None
+                    else None,
                 )
             )
         return out
@@ -101,6 +111,9 @@ class LocalComponentProvider:
                         content=_compress_content(stable_json_dumps(record.content)),
                         created_at=created_at,
                         updated_at=version_timestamp,
+                        sync_base_remote_revision=entry.syncBaseRemoteRevision,
+                        sync_base_remote_version_number=entry.syncBaseRemoteVersionNumber,
+                        sync_base_local_version_number=entry.syncBaseLocalVersionNumber,
                     )
                 )
             else:
@@ -118,6 +131,9 @@ class LocalComponentProvider:
                         latest_version_number=version_number,
                         content=_compress_content(stable_json_dumps(record.content)),
                         updated_at=version_timestamp,
+                        sync_base_remote_revision=entry.syncBaseRemoteRevision,
+                        sync_base_remote_version_number=entry.syncBaseRemoteVersionNumber,
+                        sync_base_local_version_number=entry.syncBaseLocalVersionNumber,
                     )
                 )
         
@@ -132,6 +148,11 @@ class LocalComponentProvider:
             updatedAt=version_timestamp,
         )
         return F8ComponentEntry(
+            syncBaseLocalVersionNumber=(
+                entry.syncBaseLocalVersionNumber
+                if entry.syncBaseLocalVersionNumber is not None
+                else (version_number if entry.syncBaseRemoteRevision is not None else None)
+            ),
             record=saved_record,
             source=entry.source,
             visibility=entry.visibility,
@@ -139,6 +160,7 @@ class LocalComponentProvider:
             ownerDisplayName=entry.ownerDisplayName,
             librarySlug=entry.librarySlug,
             remoteRevision=entry.remoteRevision,
+            syncBaseRemoteRevision=entry.syncBaseRemoteRevision,
             syncState=entry.syncState,
             downloadedAt=entry.downloadedAt,
             installed=entry.installed,
@@ -146,6 +168,7 @@ class LocalComponentProvider:
             subscribed=entry.subscribed,
             localVersionNumber=version_number,
             remoteVersionNumber=entry.remoteVersionNumber,
+            syncBaseRemoteVersionNumber=entry.syncBaseRemoteVersionNumber,
         )
 
     def delete_entry(self, component_id: str) -> bool:
@@ -183,11 +206,14 @@ class RemoteComponentCacheProvider:
                 component_remote_cache_table.c.owner_display_name,
                 component_remote_cache_table.c.library_slug,
                 component_remote_cache_table.c.remote_revision,
+                component_remote_cache_table.c.sync_base_remote_revision,
                 component_remote_cache_table.c.sync_state,
                 component_remote_cache_table.c.downloaded_at,
                 component_remote_cache_table.c.installed,
                 component_remote_cache_table.c.has_cached_content,
                 component_remote_cache_table.c.subscribed,
+                component_remote_cache_table.c.sync_base_remote_version_number,
+                component_remote_cache_table.c.sync_base_local_version_number,
             )
             .order_by(component_remote_cache_table.c.component_id)
         )
@@ -249,11 +275,14 @@ class RemoteComponentCacheProvider:
                         owner_display_name=metadata.owner_display_name,
                         library_slug=metadata.library_slug,
                         remote_revision=metadata.remote_revision,
+                        sync_base_remote_revision=entry.syncBaseRemoteRevision,
                         sync_state=metadata.sync_state,
                         downloaded_at=metadata.downloaded_at,
                         installed=1 if metadata.installed else 0,
                         has_cached_content=1 if component_entry_has_cached_content(entry) else 0,
                         subscribed=1 if metadata.subscribed else 0,
+                        sync_base_remote_version_number=entry.syncBaseRemoteVersionNumber,
+                        sync_base_local_version_number=entry.syncBaseLocalVersionNumber,
                         content=_compress_content(
                             stable_json_dumps(
                                 entry.record.content if component_entry_has_cached_content(entry) else {}
@@ -351,6 +380,15 @@ class ComponentCatalogService:
     def load_remote_entries(self) -> list[F8ComponentEntry]:
         return self._remote_provider.load_entries()
 
+    def remote_entry(self, component_id: str) -> F8ComponentEntry | None:
+        normalized_component_id = str(component_id or "").strip()
+        if not normalized_component_id:
+            return None
+        for entry in self._remote_provider.load_entries():
+            if str(entry.record.componentId or "").strip() == normalized_component_id:
+                return entry
+        return None
+
     def install_remote_entry(self, entry: F8ComponentEntry) -> F8ComponentEntry:
         installed_entry = copy_model(
             entry,
@@ -374,6 +412,31 @@ class ComponentCatalogService:
         self._remote_provider.save_entries(out)
         emit_components_changed()
         return installed_entry
+
+    def uninstall_remote_entry(self, component_id: str) -> F8ComponentEntry | None:
+        current = self._remote_provider.load_entries()
+        out: list[F8ComponentEntry] = []
+        target: F8ComponentEntry | None = None
+        normalized_component_id = str(component_id or "").strip()
+        for entry in current:
+            if str(entry.record.componentId or "").strip() != normalized_component_id:
+                out.append(entry)
+                continue
+            target = copy_model(
+                entry,
+                update={
+                    "record": copy_model(entry.record, update={"content": {}}),
+                    "installed": False,
+                    "hasCachedContent": False,
+                    "downloadedAt": None,
+                },
+            )
+            out.append(target)
+        if target is None:
+            return None
+        self._remote_provider.save_entries(out)
+        emit_components_changed()
+        return target
 
     def mark_conflict(self, component_id: str, *, remote_revision: str | None) -> F8ComponentEntry | None:
         current = self._remote_provider.load_entries()
@@ -444,12 +507,19 @@ def _component_entry_from_remote_cache_row(row: Mapping[object, object], metadat
         ownerDisplayName=metadata.owner_display_name,
         librarySlug=metadata.library_slug,
         remoteRevision=metadata.remote_revision,
+        syncBaseRemoteRevision=mapping_optional_str(row, "sync_base_remote_revision"),
         syncState=F8ComponentSyncState(metadata.sync_state),
         downloadedAt=metadata.downloaded_at,
         installed=metadata.installed,
         hasCachedContent=has_cached_content,
         subscribed=metadata.subscribed,
         remoteVersionNumber=mapping_int(row, "remote_version_number") if row.get("remote_version_number") is not None else None,
+        syncBaseRemoteVersionNumber=mapping_int(row, "sync_base_remote_version_number")
+        if row.get("sync_base_remote_version_number") is not None
+        else None,
+        syncBaseLocalVersionNumber=mapping_int(row, "sync_base_local_version_number")
+        if row.get("sync_base_local_version_number") is not None
+        else None,
     )
 
 

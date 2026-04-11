@@ -64,6 +64,9 @@ class LocalVariantProvider:
                 variant_heads_local_table.c.latest_version_number,
                 variant_heads_local_table.c.created_at,
                 variant_heads_local_table.c.updated_at,
+                variant_heads_local_table.c.sync_base_remote_revision,
+                variant_heads_local_table.c.sync_base_remote_version_number,
+                variant_heads_local_table.c.sync_base_local_version_number,
                 variant_heads_local_table.c.content,
             )
             .order_by(func.lower(variant_heads_local_table.c.name), variant_heads_local_table.c.variant_id)
@@ -87,6 +90,9 @@ class LocalVariantProvider:
             variant_heads_local_table.c.latest_version_number,
             variant_heads_local_table.c.created_at,
             variant_heads_local_table.c.updated_at,
+            variant_heads_local_table.c.sync_base_remote_revision,
+            variant_heads_local_table.c.sync_base_remote_version_number,
+            variant_heads_local_table.c.sync_base_local_version_number,
             variant_heads_local_table.c.content,
         ).where(variant_heads_local_table.c.variant_id == str(record.variantId))
 
@@ -109,6 +115,9 @@ class LocalVariantProvider:
                         content=_compress_content(stable_json_dumps(cast(JsonObject, record.spec))),
                         created_at=created_at,
                         updated_at=version_timestamp,
+                        sync_base_remote_revision=entry.syncBaseRemoteRevision,
+                        sync_base_remote_version_number=entry.syncBaseRemoteVersionNumber,
+                        sync_base_local_version_number=entry.syncBaseLocalVersionNumber,
                     )
                 )
                 self._insert_local_version_snapshot(
@@ -141,6 +150,9 @@ class LocalVariantProvider:
                         latest_version_number=version_number,
                         content=_compress_content(stable_json_dumps(cast(JsonObject, record.spec))),
                         updated_at=version_timestamp,
+                        sync_base_remote_revision=entry.syncBaseRemoteRevision,
+                        sync_base_remote_version_number=entry.syncBaseRemoteVersionNumber,
+                        sync_base_local_version_number=entry.syncBaseLocalVersionNumber,
                     )
                 )
                 if version_changed:
@@ -161,6 +173,11 @@ class LocalVariantProvider:
                 "installed": True,
                 "hasCachedContent": True,
                 "localVersionNumber": version_number,
+                "syncBaseLocalVersionNumber": (
+                    entry.syncBaseLocalVersionNumber
+                    if entry.syncBaseLocalVersionNumber is not None
+                    else (version_number if entry.syncBaseRemoteRevision is not None else None)
+                ),
             },
         )
 
@@ -191,6 +208,9 @@ class LocalVariantProvider:
         if not normalized_variant_id:
             return False
         with self._db.begin_sqla() as conn:
+            _ = conn.execute(
+                delete(variant_versions_local_table).where(variant_versions_local_table.c.variant_id == normalized_variant_id)
+            )
             head_cursor = conn.execute(
                 delete(variant_heads_local_table).where(variant_heads_local_table.c.variant_id == normalized_variant_id)
             )
@@ -269,6 +289,9 @@ class LocalVariantProvider:
                     variant_heads_local_table.c.latest_version_number,
                     variant_heads_local_table.c.created_at,
                     variant_heads_local_table.c.updated_at,
+                    variant_heads_local_table.c.sync_base_remote_revision,
+                    variant_heads_local_table.c.sync_base_remote_version_number,
+                    variant_heads_local_table.c.sync_base_local_version_number,
                     variant_heads_local_table.c.content,
                 ).where(variant_heads_local_table.c.variant_id == normalized_variant_id)
             ).mappings().first()
@@ -327,11 +350,14 @@ class RemoteCacheProvider:
                 variant_remote_cache_table.c.owner_display_name,
                 variant_remote_cache_table.c.library_slug,
                 variant_remote_cache_table.c.remote_revision,
+                variant_remote_cache_table.c.sync_base_remote_revision,
                 variant_remote_cache_table.c.sync_state,
                 variant_remote_cache_table.c.downloaded_at,
                 variant_remote_cache_table.c.installed,
                 variant_remote_cache_table.c.has_cached_content,
                 variant_remote_cache_table.c.subscribed,
+                variant_remote_cache_table.c.sync_base_remote_version_number,
+                variant_remote_cache_table.c.sync_base_local_version_number,
             )
             .order_by(variant_remote_cache_table.c.variant_id)
         )
@@ -560,11 +586,17 @@ class VariantCatalogService:
         return entries_to_library(self._local_provider.load_entries())
 
     def import_local_library(self, library: F8VariantLibrary, *, mode: str) -> F8VariantLibrary:
+        return self.import_local_entries(
+            [local_entry_from_record(variant) for variant in ([] if isinstance(library.variants, msgspec.UnsetType) else list(library.variants or []))],
+            mode=mode,
+        )
+
+    def import_local_entries(self, entries: list[F8VariantEntry], *, mode: str) -> F8VariantLibrary:
         current_entries = [] if mode == "replace" else self._local_provider.load_entries()
         current_records = [entry.record for entry in current_entries]
         imported_entries = list(current_entries)
-        library_variants = [] if isinstance(library.variants, msgspec.UnsetType) else list(library.variants or [])
-        for variant in library_variants:
+        for entry in entries:
+            variant = entry.record
             variant_id = str(variant.variantId or "").strip()
             imported_entries = [entry for entry in imported_entries if str(entry.record.variantId or "").strip() != variant_id]
             unique_name = ensure_unique_variant_name(
@@ -574,7 +606,8 @@ class VariantCatalogService:
             )
             if unique_name != variant.name:
                 variant = copy_model(variant, update={"name": unique_name})
-            imported_entries.append(local_entry_from_record(variant))
+                entry = copy_model(entry, update={"record": variant})
+            imported_entries.append(entry)
             current_records = [entry.record for entry in imported_entries]
         self._local_provider.save_entries(imported_entries)
         emit_variants_changed()
@@ -746,6 +779,13 @@ def _variant_entry_from_local_row(row: object) -> F8VariantEntry:
         installed=True,
         hasCachedContent=True,
         localVersionNumber=int(str(row_mapping.get("latest_version_number") or 1)),
+        syncBaseRemoteRevision=mapping_optional_str(row_mapping, "sync_base_remote_revision"),
+        syncBaseRemoteVersionNumber=int(str(row_mapping.get("sync_base_remote_version_number")))
+        if row_mapping.get("sync_base_remote_version_number") is not None
+        else None,
+        syncBaseLocalVersionNumber=int(str(row_mapping.get("sync_base_local_version_number")))
+        if row_mapping.get("sync_base_local_version_number") is not None
+        else None,
     )
 
 
@@ -762,12 +802,19 @@ def _variant_entry_from_remote_row(row: object) -> F8VariantEntry:
         ownerDisplayName=metadata.owner_display_name,
         librarySlug=metadata.library_slug,
         remoteRevision=metadata.remote_revision,
+        syncBaseRemoteRevision=mapping_optional_str(row_mapping, "sync_base_remote_revision"),
         syncState=F8VariantSyncState(metadata.sync_state),
         downloadedAt=metadata.downloaded_at,
         installed=bool(metadata.installed),
         hasCachedContent=_sqlite_row_bool(row_mapping, "has_cached_content"),
         subscribed=metadata.subscribed,
         remoteVersionNumber=int(str(row_mapping.get("remote_version_number"))) if row_mapping.get("remote_version_number") is not None else None,
+        syncBaseRemoteVersionNumber=int(str(row_mapping.get("sync_base_remote_version_number")))
+        if row_mapping.get("sync_base_remote_version_number") is not None
+        else None,
+        syncBaseLocalVersionNumber=int(str(row_mapping.get("sync_base_local_version_number")))
+        if row_mapping.get("sync_base_local_version_number") is not None
+        else None,
     )
 
 
@@ -787,6 +834,9 @@ def _insert_local_variant_entry(conn: SqlAlchemyConnection, entry: F8VariantEntr
             content=_compress_content(stable_json_dumps(cast(JsonObject, record.spec))),
             created_at=str(record.createdAt),
             updated_at=str(record.updatedAt),
+            sync_base_remote_revision=entry.syncBaseRemoteRevision,
+            sync_base_remote_version_number=entry.syncBaseRemoteVersionNumber,
+            sync_base_local_version_number=entry.syncBaseLocalVersionNumber,
         )
     )
 
@@ -827,11 +877,14 @@ def _insert_remote_variant_entry(conn: SqlAlchemyConnection, entry: F8VariantEnt
             owner_display_name=metadata.owner_display_name,
             library_slug=metadata.library_slug,
             remote_revision=metadata.remote_revision,
+            sync_base_remote_revision=entry.syncBaseRemoteRevision,
             sync_state=metadata.sync_state,
             downloaded_at=metadata.downloaded_at,
             installed=1 if metadata.installed else 0,
             has_cached_content=1 if variant_entry_has_cached_content(entry) else 0,
             subscribed=1 if metadata.subscribed else 0,
+            sync_base_remote_version_number=entry.syncBaseRemoteVersionNumber,
+            sync_base_local_version_number=entry.syncBaseLocalVersionNumber,
             content=_compress_content(
                 stable_json_dumps(cast(JsonObject, entry.record.spec if variant_entry_has_cached_content(entry) else {}))
             ),
