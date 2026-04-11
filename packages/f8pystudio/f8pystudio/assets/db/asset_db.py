@@ -52,6 +52,10 @@ component_heads_local_table = Table(
     Column("sync_base_remote_revision", Text, nullable=True),
     Column("sync_base_remote_version_number", Integer, nullable=True),
     Column("sync_base_local_version_number", Integer, nullable=True),
+    Column("is_local_draft", Integer, nullable=False, default=0),
+    Column("draft_origin_kind", Text, nullable=True),
+    Column("draft_origin_asset_id", Text, nullable=True),
+    Column("draft_origin_revision", Text, nullable=True),
 )
 
 
@@ -103,6 +107,10 @@ variant_heads_local_table = Table(
     Column("sync_base_remote_revision", Text, nullable=True),
     Column("sync_base_remote_version_number", Integer, nullable=True),
     Column("sync_base_local_version_number", Integer, nullable=True),
+    Column("is_local_draft", Integer, nullable=False, default=0),
+    Column("draft_origin_kind", Text, nullable=True),
+    Column("draft_origin_asset_id", Text, nullable=True),
+    Column("draft_origin_revision", Text, nullable=True),
 )
 
 variant_versions_local_table = Table(
@@ -243,15 +251,23 @@ class AssetsDatabase:
             default_value=1,
         )
         for table_name, column_name in [
+            ("component_heads_local", "draft_origin_kind"),
+            ("component_heads_local", "draft_origin_asset_id"),
+            ("component_heads_local", "draft_origin_revision"),
             ("component_heads_local", "sync_base_remote_revision"),
             ("component_remote_cache", "sync_base_remote_revision"),
+            ("variant_heads_local", "draft_origin_kind"),
+            ("variant_heads_local", "draft_origin_asset_id"),
+            ("variant_heads_local", "draft_origin_revision"),
             ("variant_heads_local", "sync_base_remote_revision"),
             ("variant_remote_cache", "sync_base_remote_revision"),
         ]:
             self._ensure_nullable_text_column(engine, inspector=inspector, table_name=table_name, column_name=column_name)
         for table_name, column_name in [
+            ("component_heads_local", "is_local_draft"),
             ("component_heads_local", "sync_base_remote_version_number"),
             ("component_remote_cache", "sync_base_remote_version_number"),
+            ("variant_heads_local", "is_local_draft"),
             ("variant_heads_local", "sync_base_remote_version_number"),
             ("variant_remote_cache", "sync_base_remote_version_number"),
             ("component_heads_local", "sync_base_local_version_number"),

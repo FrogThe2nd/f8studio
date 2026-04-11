@@ -29,6 +29,12 @@ class F8VariantSyncState(Enum):
     conflict = "conflict"
 
 
+class F8VariantDraftOriginKind(Enum):
+    new = "new"
+    copy_local = "copy_local"
+    copy_remote = "copy_remote"
+
+
 class F8VariantEntry(Struct, kw_only=True):
     record: F8VariantRecord
     source: F8VariantSourceKind
@@ -47,6 +53,10 @@ class F8VariantEntry(Struct, kw_only=True):
     remoteVersionNumber: int | None = None
     syncBaseRemoteVersionNumber: int | None = None
     syncBaseLocalVersionNumber: int | None = None
+    isLocalDraft: bool = False
+    draftOriginKind: F8VariantDraftOriginKind | None = None
+    draftOriginAssetId: str | None = None
+    draftOriginRevision: str | None = None
 
 
 class F8VariantCatalogSnapshot(Struct, kw_only=True):
@@ -126,6 +136,7 @@ __all__ = [
     "F8VariantSourceKind",
     "F8VariantVisibility",
     "F8VariantSyncState",
+    "F8VariantDraftOriginKind",
     "F8VariantEntry",
     "F8VariantCatalogSnapshot",
     "F8VariantLocalVersionSummary",

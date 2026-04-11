@@ -861,7 +861,7 @@ def test_component_catalog_context_menu_matches_variant_style_for_community(monk
         remote_entry=entry,
     )
 
-    assert [action.text() for action in menu.actions()] == ["Subscribe", "Fork"]
+    assert [action.text() for action in menu.actions()] == ["Subscribe", "Copy to Draft"]
 
     dialog.close()
 
@@ -897,7 +897,7 @@ def test_component_catalog_context_menu_shows_mine_actions_and_insert(monkeypatc
         remote_entry=None,
     )
 
-    assert [action.text() for action in menu.actions()] == ["Offload", "Fork", "Sync", "Make Public", "", "Insert Into Graph"]
+    assert [action.text() for action in menu.actions()] == ["Offload", "Copy to Draft", "Sync", "Make Public", "", "Insert Into Graph"]
 
     dialog.close()
 
@@ -1167,7 +1167,7 @@ def test_variant_dialog_community_actions_hide_load_and_show_fork(monkeypatch) -
     assert dialog._btn_subscribe.isHidden() is False
     assert dialog._btn_subscribe.toolTip() == "Subscribe"
     assert dialog._btn_copy_local.isHidden() is False
-    assert dialog._btn_copy_local.toolTip() == "Fork"
+    assert dialog._btn_copy_local.toolTip() == "Copy to Draft"
     assert dialog._btn_install.isHidden() is True
     assert dialog._btn_upload.isHidden() is True
 

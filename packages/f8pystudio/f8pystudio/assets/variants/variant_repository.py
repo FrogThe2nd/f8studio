@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from typing import Literal
 
+from f8pysdk.codec import copy_model
 from f8pysdk.codec import dump_json, validate_as
 
 from f8pysdk.specs import F8VariantLibrary, F8VariantRecord
@@ -20,7 +21,7 @@ from .variant_catalog import (
     variants_file_path,
 )
 from .variant_events import emit_variants_changed
-from .variant_models import F8VariantEntry, F8VariantSourceKind, F8VariantSyncState
+from .variant_models import F8VariantDraftOriginKind, F8VariantEntry, F8VariantSourceKind, F8VariantSyncState
 
 
 def _service() -> VariantCatalogService:
@@ -119,12 +120,16 @@ def upsert_variant_entry(entry: F8VariantEntry) -> F8VariantEntry:
 
 
 def upsert_variant(record: F8VariantRecord) -> F8VariantRecord:
-    from .variant_models import F8VariantSourceKind
-
+    existing_local_entry = _service().entry(str(record.variantId), include_uninstalled=True)
+    if existing_local_entry is not None and existing_local_entry.source == F8VariantSourceKind.local:
+        saved = _service().upsert_local_entry(copy_model(existing_local_entry, update={"record": record}))
+        return saved.record
     saved = _service().upsert_local_entry(
         F8VariantEntry(
             record=record,
             source=F8VariantSourceKind.local,
+            isLocalDraft=True,
+            draftOriginKind=F8VariantDraftOriginKind.new,
         )
     )
     return saved.record
@@ -174,6 +179,10 @@ def _variant_library_payload(entries: list[F8VariantEntry]) -> dict[str, object]
                 "syncBaseRemoteRevision": entry.syncBaseRemoteRevision,
                 "syncBaseRemoteVersionNumber": entry.syncBaseRemoteVersionNumber,
                 "syncBaseLocalVersionNumber": entry.syncBaseLocalVersionNumber,
+                "isLocalDraft": entry.isLocalDraft,
+                "draftOriginKind": None if entry.draftOriginKind is None else entry.draftOriginKind.value,
+                "draftOriginAssetId": entry.draftOriginAssetId,
+                "draftOriginRevision": entry.draftOriginRevision,
             }
             for entry in entries
         ],
@@ -201,6 +210,10 @@ def _variant_entries_from_library_payload(payload: dict[str, object]) -> list[F8
                 syncBaseRemoteRevision=_optional_str(raw_entry.get("syncBaseRemoteRevision")),
                 syncBaseRemoteVersionNumber=_optional_int(raw_entry.get("syncBaseRemoteVersionNumber")),
                 syncBaseLocalVersionNumber=_optional_int(raw_entry.get("syncBaseLocalVersionNumber")),
+                isLocalDraft=_optional_bool(raw_entry.get("isLocalDraft"), default=True),
+                draftOriginKind=_optional_draft_origin_kind(raw_entry.get("draftOriginKind")),
+                draftOriginAssetId=_optional_str(raw_entry.get("draftOriginAssetId")),
+                draftOriginRevision=_optional_str(raw_entry.get("draftOriginRevision")),
             )
         )
     return entries
@@ -216,6 +229,19 @@ def _optional_str(value: object) -> str | None:
     if value is None:
         return None
     return str(value)
+
+
+def _optional_bool(value: object, *, default: bool) -> bool:
+    if value is None:
+        return default
+    return bool(value)
+
+
+def _optional_draft_origin_kind(value: object) -> F8VariantDraftOriginKind | None:
+    raw_value = _optional_str(value)
+    if raw_value is None:
+        return None
+    return F8VariantDraftOriginKind(raw_value)
 
 
 __all__ = [

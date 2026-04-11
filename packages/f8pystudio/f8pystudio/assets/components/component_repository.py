@@ -3,9 +3,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from f8pysdk.codec import copy_model
 from f8pystudio.nodegraph.session_schema import SESSION_SCHEMA_VERSION, extract_layout
 from .component_catalog import ComponentCatalogService
-from .component_models import F8ComponentEntry, F8ComponentRecord, F8ComponentSourceKind
+from .component_models import F8ComponentDraftOriginKind, F8ComponentEntry, F8ComponentRecord, F8ComponentSourceKind
 from ..common import JsonObject, json_object_loads, json_string_list_loads
 
 
@@ -22,8 +23,19 @@ def component_entry(component_id: str, *, include_uninstalled: bool = True) -> F
 
 
 def upsert_component(record: F8ComponentRecord) -> F8ComponentRecord:
-    _ = _service().upsert_local_entry(F8ComponentEntry(record=record, source=F8ComponentSourceKind.local))
-    return record
+    existing_local_entry = _service().entry(str(record.componentId), include_uninstalled=True)
+    if existing_local_entry is not None and existing_local_entry.source == F8ComponentSourceKind.local:
+        saved = _service().upsert_local_entry(copy_model(existing_local_entry, update={"record": record}))
+        return saved.record
+    saved = _service().upsert_local_entry(
+        F8ComponentEntry(
+            record=record,
+            source=F8ComponentSourceKind.local,
+            isLocalDraft=True,
+            draftOriginKind=F8ComponentDraftOriginKind.new,
+        )
+    )
+    return saved.record
 
 
 def delete_component(component_id: str) -> bool:

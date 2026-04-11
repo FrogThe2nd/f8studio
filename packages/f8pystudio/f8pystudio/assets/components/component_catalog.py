@@ -24,6 +24,7 @@ from ..common import (
 )
 from .component_events import emit_components_changed
 from .component_models import (
+    F8ComponentDraftOriginKind,
     F8ComponentEntry,
     F8ComponentLocalVersionSummary,
     F8ComponentRecord,
@@ -61,6 +62,10 @@ class LocalComponentProvider:
                 component_heads_local_table.c.sync_base_remote_revision,
                 component_heads_local_table.c.sync_base_remote_version_number,
                 component_heads_local_table.c.sync_base_local_version_number,
+                component_heads_local_table.c.is_local_draft,
+                component_heads_local_table.c.draft_origin_kind,
+                component_heads_local_table.c.draft_origin_asset_id,
+                component_heads_local_table.c.draft_origin_revision,
             )
             .order_by(func.lower(component_heads_local_table.c.name), component_heads_local_table.c.component_id)
         )
@@ -83,6 +88,10 @@ class LocalComponentProvider:
                     syncBaseLocalVersionNumber=mapping_int(row_mapping, "sync_base_local_version_number")
                     if row_mapping.get("sync_base_local_version_number") is not None
                     else None,
+                    isLocalDraft=_sqlite_row_optional_bool(row_mapping, "is_local_draft"),
+                    draftOriginKind=_component_draft_origin_kind_from_row(row_mapping, "draft_origin_kind"),
+                    draftOriginAssetId=mapping_optional_str(row_mapping, "draft_origin_asset_id"),
+                    draftOriginRevision=mapping_optional_str(row_mapping, "draft_origin_revision"),
                 )
             )
         return out
@@ -99,7 +108,7 @@ class LocalComponentProvider:
             existing = conn.execute(existing_statement).mappings().first()
             if existing is None:
                 created_at = str(record.createdAt or version_timestamp)
-                version_number = 1
+                version_number = _initial_local_version_number(entry)
                 _ = conn.execute(
                     insert(component_heads_local_table).values(
                         component_id=str(record.componentId),
@@ -114,6 +123,10 @@ class LocalComponentProvider:
                         sync_base_remote_revision=entry.syncBaseRemoteRevision,
                         sync_base_remote_version_number=entry.syncBaseRemoteVersionNumber,
                         sync_base_local_version_number=entry.syncBaseLocalVersionNumber,
+                        is_local_draft=1 if entry.isLocalDraft else 0,
+                        draft_origin_kind=None if entry.draftOriginKind is None else entry.draftOriginKind.value,
+                        draft_origin_asset_id=entry.draftOriginAssetId,
+                        draft_origin_revision=entry.draftOriginRevision,
                     )
                 )
             else:
@@ -134,6 +147,10 @@ class LocalComponentProvider:
                         sync_base_remote_revision=entry.syncBaseRemoteRevision,
                         sync_base_remote_version_number=entry.syncBaseRemoteVersionNumber,
                         sync_base_local_version_number=entry.syncBaseLocalVersionNumber,
+                        is_local_draft=1 if entry.isLocalDraft else 0,
+                        draft_origin_kind=None if entry.draftOriginKind is None else entry.draftOriginKind.value,
+                        draft_origin_asset_id=entry.draftOriginAssetId,
+                        draft_origin_revision=entry.draftOriginRevision,
                     )
                 )
         
@@ -169,6 +186,10 @@ class LocalComponentProvider:
             localVersionNumber=version_number,
             remoteVersionNumber=entry.remoteVersionNumber,
             syncBaseRemoteVersionNumber=entry.syncBaseRemoteVersionNumber,
+            isLocalDraft=entry.isLocalDraft,
+            draftOriginKind=entry.draftOriginKind,
+            draftOriginAssetId=entry.draftOriginAssetId,
+            draftOriginRevision=entry.draftOriginRevision,
         )
 
     def delete_entry(self, component_id: str) -> bool:
@@ -537,8 +558,33 @@ def _component_content_is_hydrated(content: Mapping[str, object]) -> bool:
     return isinstance(layout_value, dict) and isinstance(schema_version_value, str) and bool(schema_version_value.strip())
 
 
+def _initial_local_version_number(entry: F8ComponentEntry) -> int:
+    if entry.localVersionNumber is not None:
+        return max(1, int(entry.localVersionNumber))
+    if entry.remoteVersionNumber is not None:
+        return max(1, int(entry.remoteVersionNumber))
+    return 1
+
+
 def _sqlite_row_bool(row: Mapping[object, object], key: str) -> bool:
     return bool(int(str(row[key])))
+
+
+def _sqlite_row_optional_bool(row: Mapping[object, object], key: str) -> bool:
+    value = row.get(key)
+    if value is None:
+        return False
+    return bool(int(str(value)))
+
+
+def _component_draft_origin_kind_from_row(
+    row: Mapping[object, object],
+    key: str,
+) -> F8ComponentDraftOriginKind | None:
+    raw_value = mapping_optional_str(row, key)
+    if raw_value is None:
+        return None
+    return F8ComponentDraftOriginKind(raw_value)
 
 
 def component_entry_is_installed(entry: F8ComponentEntry) -> bool:

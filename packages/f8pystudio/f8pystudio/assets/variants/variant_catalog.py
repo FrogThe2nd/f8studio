@@ -12,6 +12,7 @@ from sqlalchemy import and_, delete, func, insert, select, update
 from sqlalchemy.engine import Connection as SqlAlchemyConnection
 from f8pysdk.codec import copy_model, dump_json, validate_as
 
+from f8pysdk.specs import Entry as F8VariantLibraryEntry
 from f8pysdk.specs import F8JsonValue, F8VariantKind, F8VariantLibrary, F8VariantRecord
 
 from ..db import AssetsDatabase, variant_heads_local_table, variant_remote_cache_table, variant_versions_local_table
@@ -29,6 +30,7 @@ from ..common.remote_cache_common import (
 )
 from .variant_events import emit_variants_changed
 from .variant_models import (
+    F8VariantDraftOriginKind,
     F8VariantEntry,
     F8VariantLocalVersionSummary,
     F8VariantSourceKind,
@@ -67,6 +69,10 @@ class LocalVariantProvider:
                 variant_heads_local_table.c.sync_base_remote_revision,
                 variant_heads_local_table.c.sync_base_remote_version_number,
                 variant_heads_local_table.c.sync_base_local_version_number,
+                variant_heads_local_table.c.is_local_draft,
+                variant_heads_local_table.c.draft_origin_kind,
+                variant_heads_local_table.c.draft_origin_asset_id,
+                variant_heads_local_table.c.draft_origin_revision,
                 variant_heads_local_table.c.content,
             )
             .order_by(func.lower(variant_heads_local_table.c.name), variant_heads_local_table.c.variant_id)
@@ -93,6 +99,10 @@ class LocalVariantProvider:
             variant_heads_local_table.c.sync_base_remote_revision,
             variant_heads_local_table.c.sync_base_remote_version_number,
             variant_heads_local_table.c.sync_base_local_version_number,
+            variant_heads_local_table.c.is_local_draft,
+            variant_heads_local_table.c.draft_origin_kind,
+            variant_heads_local_table.c.draft_origin_asset_id,
+            variant_heads_local_table.c.draft_origin_revision,
             variant_heads_local_table.c.content,
         ).where(variant_heads_local_table.c.variant_id == str(record.variantId))
 
@@ -118,6 +128,10 @@ class LocalVariantProvider:
                         sync_base_remote_revision=entry.syncBaseRemoteRevision,
                         sync_base_remote_version_number=entry.syncBaseRemoteVersionNumber,
                         sync_base_local_version_number=entry.syncBaseLocalVersionNumber,
+                        is_local_draft=1 if entry.isLocalDraft else 0,
+                        draft_origin_kind=None if entry.draftOriginKind is None else entry.draftOriginKind.value,
+                        draft_origin_asset_id=entry.draftOriginAssetId,
+                        draft_origin_revision=entry.draftOriginRevision,
                     )
                 )
                 self._insert_local_version_snapshot(
@@ -153,6 +167,10 @@ class LocalVariantProvider:
                         sync_base_remote_revision=entry.syncBaseRemoteRevision,
                         sync_base_remote_version_number=entry.syncBaseRemoteVersionNumber,
                         sync_base_local_version_number=entry.syncBaseLocalVersionNumber,
+                        is_local_draft=1 if entry.isLocalDraft else 0,
+                        draft_origin_kind=None if entry.draftOriginKind is None else entry.draftOriginKind.value,
+                        draft_origin_asset_id=entry.draftOriginAssetId,
+                        draft_origin_revision=entry.draftOriginRevision,
                     )
                 )
                 if version_changed:
@@ -178,6 +196,10 @@ class LocalVariantProvider:
                     if entry.syncBaseLocalVersionNumber is not None
                     else (version_number if entry.syncBaseRemoteRevision is not None else None)
                 ),
+                "isLocalDraft": entry.isLocalDraft,
+                "draftOriginKind": entry.draftOriginKind,
+                "draftOriginAssetId": entry.draftOriginAssetId,
+                "draftOriginRevision": entry.draftOriginRevision,
             },
         )
 
@@ -292,6 +314,10 @@ class LocalVariantProvider:
                     variant_heads_local_table.c.sync_base_remote_revision,
                     variant_heads_local_table.c.sync_base_remote_version_number,
                     variant_heads_local_table.c.sync_base_local_version_number,
+                    variant_heads_local_table.c.is_local_draft,
+                    variant_heads_local_table.c.draft_origin_kind,
+                    variant_heads_local_table.c.draft_origin_asset_id,
+                    variant_heads_local_table.c.draft_origin_revision,
                     variant_heads_local_table.c.content,
                 ).where(variant_heads_local_table.c.variant_id == normalized_variant_id)
             ).mappings().first()
@@ -586,8 +612,29 @@ class VariantCatalogService:
         return entries_to_library(self._local_provider.load_entries())
 
     def import_local_library(self, library: F8VariantLibrary, *, mode: str) -> F8VariantLibrary:
+        raw_entries = library.entries
         return self.import_local_entries(
-            [local_entry_from_record(variant) for variant in ([] if isinstance(library.variants, msgspec.UnsetType) else list(library.variants or []))],
+            [
+                F8VariantEntry(
+                    record=entry.record,
+                    source=F8VariantSourceKind.local,
+                    localVersionNumber=None if isinstance(entry.localVersionNumber, msgspec.UnsetType) else int(entry.localVersionNumber),
+                    syncBaseRemoteRevision=(
+                        None if isinstance(entry.syncBaseRemoteRevision, msgspec.UnsetType) else str(entry.syncBaseRemoteRevision)
+                    ),
+                    syncBaseRemoteVersionNumber=(
+                        None
+                        if isinstance(entry.syncBaseRemoteVersionNumber, msgspec.UnsetType)
+                        else int(entry.syncBaseRemoteVersionNumber)
+                    ),
+                    syncBaseLocalVersionNumber=(
+                        None if isinstance(entry.syncBaseLocalVersionNumber, msgspec.UnsetType) else int(entry.syncBaseLocalVersionNumber)
+                    ),
+                    isLocalDraft=True,
+                    draftOriginKind=F8VariantDraftOriginKind.new,
+                )
+                for entry in ([] if isinstance(raw_entries, msgspec.UnsetType) else list(raw_entries or []))
+            ],
             mode=mode,
         )
 
@@ -698,11 +745,31 @@ def ensure_unique_variant_name(
 
 
 def local_entry_from_record(record: F8VariantRecord) -> F8VariantEntry:
-    return F8VariantEntry(record=record, source=F8VariantSourceKind.local, syncState=F8VariantSyncState.local_only)
+    return F8VariantEntry(
+        record=record,
+        source=F8VariantSourceKind.local,
+        syncState=F8VariantSyncState.local_only,
+        isLocalDraft=True,
+        draftOriginKind=F8VariantDraftOriginKind.new,
+    )
 
 
 def entries_to_library(entries: list[F8VariantEntry]) -> F8VariantLibrary:
-    return F8VariantLibrary(variants=[entry.record for entry in entries if entry.source == F8VariantSourceKind.local])
+    return F8VariantLibrary(
+        entries=[
+            F8VariantLibraryEntry(
+                record=entry.record,
+                localVersionNumber=entry.localVersionNumber if entry.localVersionNumber is not None else msgspec.UNSET,
+                syncBaseRemoteRevision=entry.syncBaseRemoteRevision if entry.syncBaseRemoteRevision is not None else msgspec.UNSET,
+                syncBaseRemoteVersionNumber=(
+                    entry.syncBaseRemoteVersionNumber if entry.syncBaseRemoteVersionNumber is not None else msgspec.UNSET
+                ),
+                syncBaseLocalVersionNumber=entry.syncBaseLocalVersionNumber if entry.syncBaseLocalVersionNumber is not None else msgspec.UNSET,
+            )
+            for entry in entries
+            if entry.source == F8VariantSourceKind.local
+        ]
+    )
 
 
 def is_entry_usable(entry: F8VariantEntry) -> bool:
@@ -786,6 +853,10 @@ def _variant_entry_from_local_row(row: object) -> F8VariantEntry:
         syncBaseLocalVersionNumber=int(str(row_mapping.get("sync_base_local_version_number")))
         if row_mapping.get("sync_base_local_version_number") is not None
         else None,
+        isLocalDraft=_sqlite_row_optional_bool(row_mapping, "is_local_draft"),
+        draftOriginKind=_variant_draft_origin_kind_from_row(row_mapping, "draft_origin_kind"),
+        draftOriginAssetId=mapping_optional_str(row_mapping, "draft_origin_asset_id"),
+        draftOriginRevision=mapping_optional_str(row_mapping, "draft_origin_revision"),
     )
 
 
@@ -837,6 +908,10 @@ def _insert_local_variant_entry(conn: SqlAlchemyConnection, entry: F8VariantEntr
             sync_base_remote_revision=entry.syncBaseRemoteRevision,
             sync_base_remote_version_number=entry.syncBaseRemoteVersionNumber,
             sync_base_local_version_number=entry.syncBaseLocalVersionNumber,
+            is_local_draft=1 if entry.isLocalDraft else 0,
+            draft_origin_kind=None if entry.draftOriginKind is None else entry.draftOriginKind.value,
+            draft_origin_asset_id=entry.draftOriginAssetId,
+            draft_origin_revision=entry.draftOriginRevision,
         )
     )
 
@@ -967,6 +1042,23 @@ def _json_value_dict_from_object(value: object) -> dict[str, F8JsonValue]:
 
 def _sqlite_row_bool(row: Mapping[object, object], key: str) -> bool:
     return bool(int(str(row[key])))
+
+
+def _sqlite_row_optional_bool(row: Mapping[object, object], key: str) -> bool:
+    value = row.get(key)
+    if value is None:
+        return False
+    return bool(int(str(value)))
+
+
+def _variant_draft_origin_kind_from_row(
+    row: Mapping[object, object],
+    key: str,
+) -> F8VariantDraftOriginKind | None:
+    raw_value = mapping_optional_str(row, key)
+    if raw_value is None:
+        return None
+    return F8VariantDraftOriginKind(raw_value)
 
 
 def _local_variant_records() -> list[F8VariantRecord]:

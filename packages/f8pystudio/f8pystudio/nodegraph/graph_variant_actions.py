@@ -7,6 +7,7 @@ from typing import Protocol, cast
 import msgspec
 from NodeGraphQt import BaseNode
 from qtpy import QtWidgets
+from f8pysdk.codec import copy_model
 
 from f8pysdk.specs import F8OperatorSpec, F8ServiceSpec, F8StateAccess, F8VariantRecord
 from f8pysdk.specs import coerce_spec_payload
@@ -18,13 +19,15 @@ from ..assets.variants.variant_compose import _VariantNode as _ComposeVariantNod
 from ..assets.variants.variant_compose import build_variant_record_from_node
 from ..assets.variants.variant_ids import build_variant_node_type
 from ..assets.variants.variant_metadata import variant_ref_from_record, variant_ref_to_json
+from ..assets.variants.variant_models import F8VariantDraftOriginKind, F8VariantEntry, F8VariantSourceKind
 from ..assets.variants.variant_repository import (
-    local_variant_entry_by_name,
     list_entries_for_base,
     normalize_variant_name,
     upsert_variant,
+    upsert_variant_entry,
     variant_record,
 )
+from ..assets.variants.variant_sync import VariantSyncClient
 from .node_base import F8StudioBaseNode
 from .node_model import F8StudioNodeModel
 
@@ -125,6 +128,82 @@ class GraphVariantActionsMixin:
                 out.append(entry_object)
         return out
 
+    @staticmethod
+    def _current_variant_user_id() -> str:
+        user = VariantSyncClient().current_user()
+        if user is None:
+            return ""
+        return str(user.userId or "").strip()
+
+    @staticmethod
+    def _is_owned_remote_variant_entry(entry: F8VariantEntry, *, current_user_id: str) -> bool:
+        if entry.source == F8VariantSourceKind.remote_private:
+            return True
+        if entry.source != F8VariantSourceKind.remote_public:
+            return False
+        if not current_user_id:
+            return False
+        return str(entry.ownerUserId or "").strip() == current_user_id
+
+    @classmethod
+    def _mine_variant_entries_for_base(cls, node_type: str) -> list[F8VariantEntry]:
+        current_user_id = cls._current_variant_user_id()
+        entries: list[F8VariantEntry] = []
+        for entry in list_entries_for_base(node_type, include_uninstalled=True):
+            if entry.source == F8VariantSourceKind.local or cls._is_owned_remote_variant_entry(entry, current_user_id=current_user_id):
+                entries.append(entry)
+        return entries
+
+    @classmethod
+    def _mine_variant_entry_by_name(
+        cls,
+        *,
+        node_type: str,
+        name: str,
+        exclude_variant_id: str | None = None,
+    ) -> F8VariantEntry | None:
+        normalized_name = normalize_variant_name(name)
+        excluded_variant_id = str(exclude_variant_id or "").strip()
+        if not normalized_name:
+            return None
+        for entry in cls._mine_variant_entries_for_base(node_type):
+            variant_id = str(entry.record.variantId or "").strip()
+            if excluded_variant_id and variant_id == excluded_variant_id:
+                continue
+            if normalize_variant_name(entry.record.name) == normalized_name:
+                return entry
+        return None
+
+    @staticmethod
+    def _local_seed_from_remote_variant_entry(
+        remote_entry: F8VariantEntry,
+        *,
+        record: F8VariantRecord,
+        mark_modified: bool,
+    ) -> F8VariantEntry:
+        remote_version_number = None if remote_entry.remoteVersionNumber is None else int(remote_entry.remoteVersionNumber)
+        local_version_number: int | None = remote_version_number
+        sync_base_local_version_number: int | None = remote_version_number
+        if mark_modified:
+            local_version_number = 1 if remote_version_number is None else remote_version_number + 1
+        return copy_model(
+            remote_entry,
+            update={
+                "record": record,
+                "source": F8VariantSourceKind.local,
+                "installed": True,
+                "hasCachedContent": True,
+                "localVersionNumber": local_version_number,
+                "syncBaseRemoteRevision": remote_entry.remoteRevision,
+                "syncBaseRemoteVersionNumber": remote_version_number,
+                "syncBaseLocalVersionNumber": sync_base_local_version_number,
+                "isLocalDraft": False,
+                "draftOriginKind": None,
+                "draftOriginAssetId": None,
+                "draftOriginRevision": None,
+            },
+        )
+
     def _prompt_variant_metadata(
         self,
         *,
@@ -167,18 +246,27 @@ class GraphVariantActionsMixin:
                 description=str(entry.record.description),
                 tags=[str(tag) for tag in list(entry.record.tags or []) if str(tag).strip()],
             )
-            for entry in list_entries_for_base(node_type, include_uninstalled=True)
-            if str(entry.source.value) == "local"
+            for entry in self._mine_variant_entries_for_base(node_type)
         ]
 
         def _validate_variant_name(candidate: str, overwrite_variant_id: str | None) -> str | None:
             normalized_name = normalize_variant_name(candidate)
-            existing_local_entry = local_variant_entry_by_name(node_type, normalized_name)
+            overwrite_entry = None
             if overwrite_variant_id:
-                if existing_local_entry is not None and str(existing_local_entry.record.variantId) != str(overwrite_variant_id):
-                    return f"Variant name '{normalized_name}' already exists. Please choose the existing variant to overwrite."
-                return None
-            if existing_local_entry is not None:
+                overwrite_entry = next(
+                    (
+                        entry
+                        for entry in self._mine_variant_entries_for_base(node_type)
+                        if str(entry.record.variantId or "").strip() == str(overwrite_variant_id).strip()
+                    ),
+                    None,
+                )
+            exclude_variant_id = None if overwrite_entry is None else str(overwrite_entry.record.variantId)
+            if self._mine_variant_entry_by_name(
+                node_type=node_type,
+                name=normalized_name,
+                exclude_variant_id=exclude_variant_id,
+            ) is not None:
                 return f"Variant name '{normalized_name}' already exists. Please choose the existing variant to overwrite."
             return None
 
@@ -193,29 +281,53 @@ class GraphVariantActionsMixin:
             return
         name, description, tags, overwrite_variant_id = values
         normalized_name = normalize_variant_name(name)
-        existing_local_entry = (
+        overwrite_entry = (
             None
             if overwrite_variant_id is None
             else next(
-                (entry for entry in list_entries_for_base(node_type, include_uninstalled=True) if str(entry.record.variantId) == str(overwrite_variant_id)),
+                (entry for entry in self._mine_variant_entries_for_base(node_type) if str(entry.record.variantId) == str(overwrite_variant_id)),
                 None,
             )
         )
-        if existing_local_entry is None:
-            existing_local_entry = local_variant_entry_by_name(node_type, normalized_name)
+        if overwrite_entry is None:
+            overwrite_entry = self._mine_variant_entry_by_name(node_type=node_type, name=normalized_name)
         record = build_variant_record_from_node(
             node=cast(_ComposeVariantNode, cast(object, variant_node)),
             name=name,
             description=description,
             tags=tags,
-            variant_id=(None if existing_local_entry is None else str(existing_local_entry.record.variantId)),
+            variant_id=(None if overwrite_entry is None else str(overwrite_entry.record.variantId)),
         )
         try:
-            saved_record = upsert_variant(record)
+            if overwrite_entry is None:
+                saved_record = upsert_variant(record)
+            elif overwrite_entry.source == F8VariantSourceKind.local:
+                saved_record = upsert_variant_entry(
+                    copy_model(
+                        overwrite_entry,
+                        update={
+                            "record": record,
+                            "isLocalDraft": True,
+                            "draftOriginKind": (
+                                overwrite_entry.draftOriginKind
+                                if overwrite_entry.draftOriginKind is not None
+                                else F8VariantDraftOriginKind.new
+                            ),
+                        },
+                    )
+                ).record
+            else:
+                saved_record = upsert_variant_entry(
+                    self._local_seed_from_remote_variant_entry(
+                        overwrite_entry,
+                        record=record,
+                        mark_modified=True,
+                    )
+                ).record
         except ValueError as exc:
             show_warning(host._notification_parent(), "Invalid name", str(exc))
             return
-        title = "Variant Updated" if existing_local_entry is not None else "Variant Saved"
+        title = "Variant Updated" if overwrite_entry is not None else "Variant Saved"
         show_info(host._notification_parent(), title, f"Saved variant:\n{saved_record.name}")
 
     def _on_save_variant_menu_action(self, graph: object, node: BaseNode | None) -> None:

@@ -12,6 +12,7 @@ from f8pysdk.codec import copy_model, dump_json, validate_as
 from ..common import new_asset_id
 from ..components.component_events import subscribe_components_changed
 from ..components.component_models import (
+    F8ComponentDraftOriginKind,
     F8ComponentEntry,
     F8ComponentLocalVersionSummary,
     component_now_iso,
@@ -47,6 +48,8 @@ from .asset_cloud_account_menu import build_asset_account_menu, prompt_asset_clo
 logger = logging.getLogger(__name__)
 
 _AUTO_PREVIEW_NODE_THRESHOLD = 10
+_LOCAL_DRAFT_LABEL = "Local Draft"
+_LOCAL_DRAFT_LOAD_TOOLTIP = "Not available for Local Draft"
 
 
 class ComponentCatalogDialog(QtWidgets.QDialog):
@@ -136,7 +139,7 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
             (btn_add, StudioIcon.CIRCLE_PLUS, "Save As Component"),
             (btn_edit, StudioIcon.EDIT, "Edit Metadata"),
             (btn_delete, StudioIcon.TRASH, "Delete"),
-            (btn_copy_local, StudioIcon.SAVE, "Save As Local Copy"),
+            (btn_copy_local, StudioIcon.SAVE, "Copy to Draft"),
             (btn_upload, StudioIcon.CLOUD_UP, "Upload"),
             (btn_install, StudioIcon.CLOUD_DOWN, "Download/Install"),
             (btn_subscribe, StudioIcon.HEART_ON, "Subscribe / Unsubscribe"),
@@ -417,8 +420,9 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
         name_label.setFont(font)
         name_label.setStyleSheet("color: palette(window-text);")
         title_row.addWidget(name_label, 1)
-        if row_state.owner_display_name:
-            owner_label = QtWidgets.QLabel(f"by {row_state.owner_display_name}", container)
+        owner_label_text = self._owner_label_text(row_state.owner_display_name)
+        if owner_label_text is not None:
+            owner_label = QtWidgets.QLabel(owner_label_text, container)
             owner_label.setStyleSheet("color: palette(window-text);")
             title_row.addWidget(owner_label, 0)
         root.addLayout(title_row)
@@ -585,19 +589,18 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
         _selected_entry, local_entry, remote_entry = self._selected_action_entries()
         is_local = local_entry is not None
         is_remote = remote_entry is not None
-        can_load = remote_entry is not None and not component_entry_is_installed(remote_entry)
-        can_offload = local_entry is not None or (remote_entry is not None and component_entry_is_installed(remote_entry))
+        can_load, can_offload = self._load_action_availability(local_entry=local_entry, remote_entry=remote_entry)
         can_sync = current_tab == self._TAB_MINE and (local_entry is not None or remote_entry is not None)
         can_pull = current_tab == self._TAB_INSTALLED and remote_entry is not None
         self._btn_edit.setEnabled(is_local)
         self._btn_delete.setEnabled(is_local)
         self._btn_copy_local.setEnabled(selected_entry is not None)
-        self._btn_copy_local.setToolTip("Fork")
+        self._btn_copy_local.setToolTip("Copy to Draft")
         self._btn_upload.setEnabled(can_sync or can_pull)
         self._btn_upload.setToolTip("Pull" if can_pull else "Sync")
         self._btn_upload.setIcon(icon_for(self._btn_upload, StudioIcon.REFRESH if can_pull else StudioIcon.CLOUD_UP))
         self._btn_install.setEnabled(can_load or can_offload)
-        self._btn_install.setToolTip("Offload" if can_offload and not can_load else "Load")
+        self._btn_install.setToolTip(self._load_action_tooltip(can_offload=can_offload, local_entry=local_entry))
         self._btn_install.setIcon(icon_for(self._btn_install, StudioIcon.DOWNLOAD if can_offload and not can_load else StudioIcon.CLOUD_DOWN))
         is_community_public = self._is_community_entry(selected_entry)
         self._btn_subscribe.setEnabled(is_community_public)
@@ -682,11 +685,11 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
     ) -> QtWidgets.QMenu:
         menu = QtWidgets.QMenu(self)
         if current_tab == self._TAB_MINE:
-            can_offload = local_entry is not None or (remote_entry is not None and component_entry_is_installed(remote_entry))
+            can_load, can_offload = self._load_action_availability(local_entry=local_entry, remote_entry=remote_entry)
             load_action = menu.addAction("Offload" if can_offload else "Load")
-            load_action.setEnabled((remote_entry is not None and not component_entry_is_installed(remote_entry)) or can_offload)
+            load_action.setEnabled(can_load or can_offload)
             load_action.triggered.connect(self._on_install_clicked)  # type: ignore[attr-defined]
-            fork_action = menu.addAction("Fork")
+            fork_action = menu.addAction("Copy to Draft")
             fork_action.triggered.connect(self._on_copy_local_clicked)  # type: ignore[attr-defined]
             sync_action = menu.addAction("Sync")
             sync_action.setEnabled(local_entry is not None or remote_entry is not None)
@@ -703,7 +706,7 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
                 selected_entry.source == F8ComponentSourceKind.remote_public and not self._is_owned_remote_entry(selected_entry)
             )
             subscribe_action.triggered.connect(self._on_subscribe_clicked)  # type: ignore[attr-defined]
-            fork_action = menu.addAction("Fork")
+            fork_action = menu.addAction("Copy to Draft")
             fork_action.triggered.connect(self._on_copy_local_clicked)  # type: ignore[attr-defined]
         else:
             offload_action = menu.addAction("Offload")
@@ -741,6 +744,42 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
         )
         upsert_component(record)
         show_info(self, "Saved", f"Saved component:\n{record.name}")
+
+    @staticmethod
+    def _is_local_draft_entry(entry: F8ComponentEntry | None) -> bool:
+        return entry is not None and entry.isLocalDraft
+
+    @classmethod
+    def _load_action_availability(
+        cls,
+        *,
+        local_entry: F8ComponentEntry | None,
+        remote_entry: F8ComponentEntry | None,
+    ) -> tuple[bool, bool]:
+        if cls._is_local_draft_entry(local_entry):
+            return False, False
+        can_load = remote_entry is not None and not component_entry_is_installed(remote_entry)
+        can_offload = local_entry is not None or (remote_entry is not None and component_entry_is_installed(remote_entry))
+        return can_load, can_offload
+
+    @staticmethod
+    def _load_action_tooltip(*, can_offload: bool, local_entry: F8ComponentEntry | None) -> str:
+        if local_entry is not None and local_entry.isLocalDraft:
+            return _LOCAL_DRAFT_LOAD_TOOLTIP
+        if can_offload:
+            return "Offload"
+        return "Load"
+
+    @staticmethod
+    def _owner_label_text(owner_display_name: str | None) -> str | None:
+        if owner_display_name is None:
+            return None
+        owner_text = str(owner_display_name).strip()
+        if not owner_text:
+            return None
+        if owner_text.casefold() == _LOCAL_DRAFT_LABEL.casefold():
+            return _LOCAL_DRAFT_LABEL
+        return f"by {owner_text}"
 
     def _on_edit_clicked(self) -> None:
         selected_entry = self._selected_entry()
@@ -793,8 +832,21 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
                 "updatedAt": component_now_iso(),
             },
         )
-        upsert_component(copied)
-        show_info(self, "Saved", f"Saved local copy:\n{copied.name}")
+        _ = self._sync_client._catalog_service.upsert_local_entry(
+            F8ComponentEntry(
+                record=copied,
+                source=F8ComponentSourceKind.local,
+                isLocalDraft=True,
+                draftOriginKind=(
+                    F8ComponentDraftOriginKind.copy_local
+                    if selected_entry.source == F8ComponentSourceKind.local
+                    else F8ComponentDraftOriginKind.copy_remote
+                ),
+                draftOriginAssetId=str(selected_entry.record.componentId),
+                draftOriginRevision=selected_entry.remoteRevision,
+            )
+        )
+        show_info(self, "Draft Created", f"Created local draft:\n{copied.name}")
 
     def _on_upload_clicked(self) -> None:
         current_tab = self._scope_tabs.currentIndex()
@@ -811,6 +863,8 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
         selected_entry, local_entry, remote_entry = self._selected_action_entries()
         if selected_entry is None:
             return
+        if self._is_local_draft_entry(local_entry):
+            return
         if local_entry is not None or (remote_entry is not None and component_entry_is_installed(remote_entry)):
             offloaded_name = str(selected_entry.record.name or "")
             if self._offload_selected_component(local_entry=local_entry, remote_entry=remote_entry):
@@ -820,6 +874,11 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
             return
         try:
             installed = self._sync_client.hydrate_component(str(remote_entry.record.componentId))
+        except Exception as exc:
+            show_warning(self, "Load failed", str(exc))
+            return
+        try:
+            installed = self._ensure_owned_remote_component_has_local_head(installed)
         except Exception as exc:
             show_warning(self, "Load failed", str(exc))
             return
@@ -899,6 +958,12 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
             self._reload()
         return changed
 
+    def _replace_local_component_head(self, entry: F8ComponentEntry) -> F8ComponentEntry:
+        component_id = str(entry.record.componentId or "").strip()
+        if component_id:
+            _ = self._sync_client._catalog_service.delete_local_entry(component_id)
+        return self._sync_client._catalog_service.upsert_local_entry(entry)
+
     def _component_sync_decision(
         self,
         *,
@@ -916,6 +981,49 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
             current_remote_revision=None if remote_entry is None else remote_entry.remoteRevision,
         )
         return decision.direction
+
+    @staticmethod
+    def _local_working_copy_from_remote_entry(
+        remote_entry: F8ComponentEntry,
+        *,
+        record: F8ComponentRecord | None = None,
+        mark_modified: bool,
+    ) -> F8ComponentEntry:
+        remote_version_number = None if remote_entry.remoteVersionNumber is None else int(remote_entry.remoteVersionNumber)
+        local_version_number: int | None = remote_version_number
+        sync_base_local_version_number: int | None = remote_version_number
+        if mark_modified:
+            local_version_number = 1 if remote_version_number is None else remote_version_number + 1
+        return copy_model(
+            remote_entry,
+            update={
+                "record": remote_entry.record if record is None else record,
+                "source": F8ComponentSourceKind.local,
+                "installed": True,
+                "hasCachedContent": True,
+                "localVersionNumber": local_version_number,
+                "syncBaseRemoteRevision": remote_entry.remoteRevision,
+                "syncBaseRemoteVersionNumber": remote_version_number,
+                "syncBaseLocalVersionNumber": sync_base_local_version_number,
+                "isLocalDraft": False,
+                "draftOriginKind": None,
+                "draftOriginAssetId": None,
+                "draftOriginRevision": None,
+            },
+        )
+
+    def _ensure_owned_remote_component_has_local_head(self, entry: F8ComponentEntry) -> F8ComponentEntry:
+        if not self._is_owned_remote_entry(entry):
+            return entry
+        existing_local_entry = self._local_entry_for_component_id(str(entry.record.componentId))
+        if existing_local_entry is not None:
+            return existing_local_entry
+        return self._sync_client._catalog_service.upsert_local_entry(
+            self._local_working_copy_from_remote_entry(
+                entry,
+                mark_modified=False,
+            )
+        )
 
     def _sync_selected_component(self) -> F8ComponentEntry | None:
         selected_entry, local_entry, remote_entry = self._selected_action_entries()
@@ -1021,24 +1129,14 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
             show_warning(self, "Pull failed", str(exc))
             return None
         if local_entry is not None:
-            replacement_entry = F8ComponentEntry(
+            replacement_entry = self._local_working_copy_from_remote_entry(
+                pulled,
                 record=pulled.record,
-                source=F8ComponentSourceKind.local,
-                visibility=local_entry.visibility,
-                ownerUserId=local_entry.ownerUserId,
-                ownerDisplayName=local_entry.ownerDisplayName,
-                librarySlug=local_entry.librarySlug,
-                remoteRevision=pulled.remoteRevision,
-                syncBaseRemoteRevision=pulled.remoteRevision,
-                syncState=pulled.syncState,
-                downloadedAt=pulled.downloadedAt,
-                installed=True,
-                hasCachedContent=True,
-                subscribed=local_entry.subscribed,
-                remoteVersionNumber=pulled.remoteVersionNumber,
-                syncBaseRemoteVersionNumber=pulled.remoteVersionNumber,
+                mark_modified=False,
             )
-            _ = self._sync_client._catalog_service.upsert_local_entry(replacement_entry)
+            _ = self._replace_local_component_head(replacement_entry)
+        else:
+            pulled = self._ensure_owned_remote_component_has_local_head(pulled)
         self._reload()
         return pulled
 
@@ -1050,12 +1148,19 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
             {
                 **dump_json(local_entry.record, mode="json"),
                 "componentId": new_asset_id(),
-                "name": f"{str(local_entry.record.name or '').strip()} (Fork)",
+                "name": f"{str(local_entry.record.name or '').strip()} (Draft Copy)",
                 "updatedAt": component_now_iso(),
             },
         )
         _ = self._sync_client._catalog_service.upsert_local_entry(
-            F8ComponentEntry(record=forked_record, source=F8ComponentSourceKind.local)
+            F8ComponentEntry(
+                record=forked_record,
+                source=F8ComponentSourceKind.local,
+                isLocalDraft=True,
+                draftOriginKind=F8ComponentDraftOriginKind.copy_local,
+                draftOriginAssetId=str(local_entry.record.componentId),
+                draftOriginRevision=local_entry.remoteRevision,
+            )
         )
         return True
 
@@ -1069,7 +1174,7 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
         if include_push:
             push_button = box.addButton("Push local as new revision", QtWidgets.QMessageBox.AcceptRole)
         replace_button = box.addButton("Replace local with remote", QtWidgets.QMessageBox.DestructiveRole)
-        fork_button = box.addButton("Fork local copy and pull remote", QtWidgets.QMessageBox.ActionRole)
+        fork_button = box.addButton("Copy current work to draft and pull remote", QtWidgets.QMessageBox.ActionRole)
         cancel_button = box.addButton(QtWidgets.QMessageBox.Cancel)
         box.setDefaultButton(cancel_button)
         box.exec()
@@ -1599,6 +1704,8 @@ def component_row_state_for_entries(
         else:
             local_sync_state = "synced"
             remote_sync_state = "synced"
+    if local_entry is not None and local_entry.isLocalDraft:
+        owner_display_name = _LOCAL_DRAFT_LABEL
     return build_asset_catalog_row_state(
         asset_id=component_id,
         has_local_head=local_entry is not None,

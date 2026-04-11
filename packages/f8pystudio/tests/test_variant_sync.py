@@ -19,6 +19,7 @@ from f8pystudio.assets.variants.variant_models import (
     F8VariantRemoteRequestError,
     F8VariantRemoteConflictError,
     F8VariantRemoteListPage,
+    F8VariantRemoteUser,
     F8VariantSourceKind,
     F8VariantSyncState,
     F8VariantVisibility,
@@ -26,7 +27,9 @@ from f8pystudio.assets.variants.variant_models import (
 )
 from f8pystudio.assets.variants.variant_sync import VariantSyncClient
 from f8pystudio.assets.db import variant_remote_cache_table
+from f8pystudio.assets.ui.asset_sync_resolution import AssetSyncDirection
 from f8pystudio.assets.ui.variant_manager_dialog import VariantManagerDialog, variant_row_state_for_entries
+from f8pystudio.nodegraph.graph_variant_actions import GraphVariantActionsMixin
 from f8pysdk.specs import F8VariantRecord
 
 
@@ -53,6 +56,13 @@ def _make_entry(*, variant_id: str, source: F8VariantSourceKind, installed: bool
         syncState=F8VariantSyncState.synced if remote_revision else F8VariantSyncState.local_only,
         installed=installed,
     )
+
+
+def _ensure_app() -> QtWidgets.QApplication:
+    app = QtWidgets.QApplication.instance()
+    if app is None:
+        app = QtWidgets.QApplication([])
+    return app
 
 
 class _VariantApiHandler(BaseHTTPRequestHandler):
@@ -1010,3 +1020,511 @@ def test_variant_sync_persists_local_sync_base_and_second_sync_is_noop(monkeypat
     assert len(upload_calls) == 1
 
     dialog.close()
+
+
+def test_variant_manager_load_owned_remote_creates_local_head(monkeypatch, tmp_path: Path) -> None:
+    _ = _ensure_app()
+    settings = QtCore.QSettings(str(tmp_path / "variant-load.ini"), QtCore.QSettings.IniFormat)
+    db_path = tmp_path / "assets.db"
+    service = VariantCatalogService(
+        local_provider=LocalVariantProvider(db_path=db_path),
+        remote_provider=RemoteCacheProvider(db_path=db_path),
+    )
+    remote_entry = copy_model(
+        _make_entry(
+            variant_id="owned-remote",
+            source=F8VariantSourceKind.remote_private,
+            installed=False,
+            remote_revision="r1",
+        ),
+        update={
+            "visibility": F8VariantVisibility.private,
+            "remoteVersionNumber": 1,
+            "ownerUserId": "u1",
+            "ownerDisplayName": "User One",
+        },
+    )
+    service.replace_remote_entries([remote_entry])
+
+    dialog = VariantManagerDialog(
+        parent=None,
+        base_node_type="svc.a.op",
+        base_node_name="Variant",
+        node_graph=None,
+    )
+    dialog._sync_client = VariantSyncClient(settings=settings, catalog_service=service)
+    monkeypatch.setattr(dialog, "_reload", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        dialog._sync_client,
+        "current_user",
+        lambda: F8VariantRemoteUser(userId="u1", displayName="User One", username="user-one"),
+    )
+
+    def _install_variant(_variant_id: str) -> F8VariantEntry:
+        return service.install_remote_entry(
+            copy_model(
+                remote_entry,
+                update={
+                    "installed": True,
+                    "hasCachedContent": True,
+                },
+            )
+        )
+
+    monkeypatch.setattr(dialog._sync_client, "install_variant", _install_variant)
+    monkeypatch.setattr(dialog, "_selected_remote_entry", lambda: service.remote_entry("owned-remote"))
+
+    loaded = dialog._load_selected_remote_variant()
+
+    assert loaded is not None
+    local_entry = service._local_provider.load_entries()[0]
+    remote_after = service.remote_entry("owned-remote")
+    assert local_entry.record.variantId == "owned-remote"
+    assert local_entry.localVersionNumber == 1
+    assert local_entry.isLocalDraft is False
+    assert local_entry.syncBaseRemoteRevision == "r1"
+    assert local_entry.syncBaseRemoteVersionNumber == 1
+    assert local_entry.syncBaseLocalVersionNumber == 1
+    assert remote_after is not None
+    assert remote_after.installed is True
+    assert remote_after.hasCachedContent is True
+
+    dialog.close()
+
+
+def test_variant_manager_copy_to_draft_creates_disconnected_local_draft(monkeypatch, tmp_path: Path) -> None:
+    _ = _ensure_app()
+    settings = QtCore.QSettings(str(tmp_path / "variant-copy-draft.ini"), QtCore.QSettings.IniFormat)
+    db_path = tmp_path / "assets.db"
+    service = VariantCatalogService(
+        local_provider=LocalVariantProvider(db_path=db_path),
+        remote_provider=RemoteCacheProvider(db_path=db_path),
+    )
+    remote_entry = copy_model(
+        _make_entry(
+            variant_id="remote-draft-source",
+            source=F8VariantSourceKind.remote_public,
+            installed=False,
+            remote_revision="r7",
+        ),
+        update={
+            "remoteVersionNumber": 7,
+            "visibility": F8VariantVisibility.public,
+            "ownerUserId": "u2",
+            "ownerDisplayName": "Remote User",
+        },
+    )
+    service.replace_remote_entries([remote_entry])
+
+    dialog = VariantManagerDialog(
+        parent=None,
+        base_node_type="svc.a.op",
+        base_node_name="Variant",
+        node_graph=None,
+    )
+    dialog._sync_client = VariantSyncClient(settings=settings, catalog_service=service)
+    monkeypatch.setattr(dialog, "_reload", lambda *args, **kwargs: None)
+    monkeypatch.setattr(dialog, "_selected_entry", lambda: remote_entry)
+    monkeypatch.setattr(dialog._sync_client, "cache_variant_content", lambda _variant_id: remote_entry)
+
+    duplicated = dialog._duplicate_selected_variant_as_local()
+
+    assert duplicated is not None
+    assert duplicated.record.variantId != "remote-draft-source"
+    assert duplicated.isLocalDraft is True
+    assert duplicated.draftOriginAssetId == "remote-draft-source"
+    assert duplicated.draftOriginRevision == "r7"
+    assert duplicated.syncBaseRemoteRevision is None
+    assert duplicated.syncBaseRemoteVersionNumber is None
+    assert duplicated.syncBaseLocalVersionNumber is None
+    assert duplicated.remoteVersionNumber is None
+
+    dialog.close()
+
+
+def test_variant_row_state_uses_local_draft_owner_label() -> None:
+    local_entry = copy_model(
+        _make_entry(variant_id="draft-owner", source=F8VariantSourceKind.local),
+        update={"isLocalDraft": True},
+    )
+
+    row_state = variant_row_state_for_entries(
+        variant_id="draft-owner",
+        local_entry=local_entry,
+        remote_entry=None,
+    )
+
+    assert row_state.owner_display_name == "Local Draft"
+
+
+def test_variant_manager_save_over_remote_offload_seeds_remote_sync_base(monkeypatch, tmp_path: Path) -> None:
+    _ = _ensure_app()
+    settings = QtCore.QSettings(str(tmp_path / "variant-save-overwrite.ini"), QtCore.QSettings.IniFormat)
+    db_path = tmp_path / "assets.db"
+    service = VariantCatalogService(
+        local_provider=LocalVariantProvider(db_path=db_path),
+        remote_provider=RemoteCacheProvider(db_path=db_path),
+    )
+    remote_entry = copy_model(
+        _make_entry(
+            variant_id="owned-overwrite",
+            source=F8VariantSourceKind.remote_private,
+            installed=False,
+            remote_revision="r4",
+        ),
+        update={
+            "visibility": F8VariantVisibility.private,
+            "remoteVersionNumber": 4,
+            "ownerUserId": "u1",
+            "ownerDisplayName": "User One",
+        },
+    )
+    service.replace_remote_entries([remote_entry])
+    modified_record = copy_model(
+        remote_entry.record,
+        update={
+            "spec": {"label": "owned-overwrite", "changed": True},
+            "updatedAt": variant_now_iso(),
+        },
+    )
+
+    dialog = VariantManagerDialog(
+        parent=None,
+        base_node_type="svc.a.op",
+        base_node_name="Variant",
+        node_graph=None,
+    )
+    dialog._sync_client = VariantSyncClient(settings=settings, catalog_service=service)
+    monkeypatch.setattr(
+        dialog._sync_client,
+        "current_user",
+        lambda: F8VariantRemoteUser(userId="u1", displayName="User One", username="user-one"),
+    )
+
+    saved_entry = dialog._save_variant_record(record=modified_record, overwrite_entry=remote_entry)
+
+    assert saved_entry.localVersionNumber == 5
+    assert saved_entry.remoteVersionNumber == 4
+    assert saved_entry.syncBaseRemoteRevision == "r4"
+    assert saved_entry.syncBaseRemoteVersionNumber == 4
+    assert saved_entry.syncBaseLocalVersionNumber == 4
+    assert dialog._variant_sync_decision(local_entry=saved_entry, remote_entry=remote_entry) == AssetSyncDirection.push
+
+    upload_calls: list[F8VariantEntry] = []
+
+    def _upload_entry(entry: F8VariantEntry) -> F8VariantEntry:
+        upload_calls.append(entry)
+        return copy_model(
+            remote_entry,
+            update={
+                "record": entry.record,
+                "remoteRevision": "r5",
+                "remoteVersionNumber": 5,
+                "installed": True,
+                "hasCachedContent": True,
+            },
+        )
+
+    monkeypatch.setattr(dialog, "_ensure_logged_in", lambda: True)
+    monkeypatch.setattr(dialog, "_selected_local_entry", lambda: service._local_provider.load_entries()[0])
+    monkeypatch.setattr(dialog, "_selected_remote_entry", lambda: service.remote_entry("owned-overwrite"))
+    monkeypatch.setattr(dialog, "_reload", lambda *args, **kwargs: None)
+    monkeypatch.setattr(dialog._sync_client, "upload_entry", _upload_entry)
+
+    synced = dialog._sync_selected_variant()
+
+    assert synced is not None
+    assert len(upload_calls) == 1
+    saved_local = service._local_provider.load_entries()[0]
+    assert saved_local.localVersionNumber == 5
+    assert saved_local.syncBaseRemoteRevision == "r5"
+    assert saved_local.syncBaseRemoteVersionNumber == 5
+    assert saved_local.syncBaseLocalVersionNumber == 5
+
+    dialog.close()
+
+
+def test_variant_manager_offload_removes_local_head_and_remote_cache(tmp_path: Path) -> None:
+    _ = _ensure_app()
+    settings = QtCore.QSettings(str(tmp_path / "variant-offload.ini"), QtCore.QSettings.IniFormat)
+    db_path = tmp_path / "assets.db"
+    service = VariantCatalogService(
+        local_provider=LocalVariantProvider(db_path=db_path),
+        remote_provider=RemoteCacheProvider(db_path=db_path),
+    )
+    remote_entry = copy_model(
+        _make_entry(
+            variant_id="owned-offload",
+            source=F8VariantSourceKind.remote_private,
+            installed=True,
+            remote_revision="r2",
+        ),
+        update={
+            "visibility": F8VariantVisibility.private,
+            "remoteVersionNumber": 2,
+            "ownerUserId": "u1",
+            "ownerDisplayName": "User One",
+            "hasCachedContent": True,
+        },
+    )
+    service.replace_remote_entries([remote_entry])
+    local_entry = service.upsert_local_entry(
+        copy_model(
+            remote_entry,
+            update={
+                "source": F8VariantSourceKind.local,
+                "localVersionNumber": 2,
+                "syncBaseRemoteRevision": "r2",
+                "syncBaseRemoteVersionNumber": 2,
+                "syncBaseLocalVersionNumber": 2,
+            },
+        )
+    )
+
+    dialog = VariantManagerDialog(
+        parent=None,
+        base_node_type="svc.a.op",
+        base_node_name="Variant",
+        node_graph=None,
+    )
+    dialog._sync_client = VariantSyncClient(settings=settings, catalog_service=service)
+    changed = dialog._offload_selected_variant(local_entry=local_entry, remote_entry=remote_entry)
+
+    assert changed is True
+    assert service._local_provider.load_entries() == []
+    remote_after = service.remote_entry("owned-offload")
+    assert remote_after is not None
+    assert remote_after.installed is False
+    assert remote_after.hasCachedContent is False
+
+    dialog.close()
+
+
+def test_variant_manager_pull_replace_aligns_local_version_with_remote(monkeypatch, tmp_path: Path) -> None:
+    _ = _ensure_app()
+    settings = QtCore.QSettings(str(tmp_path / "variant-pull-replace.ini"), QtCore.QSettings.IniFormat)
+    db_path = tmp_path / "assets.db"
+    service = VariantCatalogService(
+        local_provider=LocalVariantProvider(db_path=db_path),
+        remote_provider=RemoteCacheProvider(db_path=db_path),
+    )
+    local_entry = service.upsert_local_entry(
+        F8VariantEntry(
+            record=_make_entry(variant_id="replace-me", source=F8VariantSourceKind.local).record,
+            source=F8VariantSourceKind.local,
+        )
+    )
+    remote_entry = copy_model(
+        _make_entry(
+            variant_id="replace-me",
+            source=F8VariantSourceKind.remote_private,
+            installed=True,
+            remote_revision="r4",
+        ),
+        update={
+            "visibility": F8VariantVisibility.private,
+            "remoteVersionNumber": 4,
+            "ownerUserId": "u1",
+            "ownerDisplayName": "User One",
+            "hasCachedContent": True,
+        },
+    )
+    service.replace_remote_entries([remote_entry])
+
+    dialog = VariantManagerDialog(
+        parent=None,
+        base_node_type="svc.a.op",
+        base_node_name="Variant",
+        node_graph=None,
+    )
+    dialog._sync_client = VariantSyncClient(settings=settings, catalog_service=service)
+    monkeypatch.setattr(dialog, "_selected_local_entry", lambda: local_entry)
+    monkeypatch.setattr(dialog, "_selected_remote_entry", lambda: remote_entry)
+    monkeypatch.setattr(dialog, "_reload", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        dialog._sync_client,
+        "install_variant",
+        lambda _variant_id: copy_model(remote_entry, update={"installed": True, "hasCachedContent": True}),
+    )
+
+    pulled = dialog._pull_selected_variant(force_replace_local=True)
+
+    assert pulled is not None
+    saved_local = service._local_provider.load_entries()[0]
+    assert saved_local.localVersionNumber == 4
+    assert saved_local.syncBaseRemoteRevision == "r4"
+    assert saved_local.syncBaseRemoteVersionNumber == 4
+    assert saved_local.syncBaseLocalVersionNumber == 4
+
+    dialog.close()
+
+
+def test_variant_manager_mine_buttons_enable_sync_for_owned_remote_without_local(monkeypatch, tmp_path: Path) -> None:
+    _ = _ensure_app()
+    settings = QtCore.QSettings(str(tmp_path / "variant-buttons.ini"), QtCore.QSettings.IniFormat)
+    db_path = tmp_path / "assets.db"
+    service = VariantCatalogService(
+        local_provider=LocalVariantProvider(db_path=db_path),
+        remote_provider=RemoteCacheProvider(db_path=db_path),
+    )
+    remote_entry = copy_model(
+        _make_entry(
+            variant_id="owned-sync",
+            source=F8VariantSourceKind.remote_private,
+            installed=False,
+            remote_revision="r3",
+        ),
+        update={
+            "visibility": F8VariantVisibility.private,
+            "remoteVersionNumber": 3,
+            "ownerUserId": "u1",
+            "ownerDisplayName": "User One",
+        },
+    )
+    service.replace_remote_entries([remote_entry])
+
+    dialog = VariantManagerDialog(
+        parent=None,
+        base_node_type="svc.a.op",
+        base_node_name="Variant",
+        node_graph=None,
+    )
+    dialog._sync_client = VariantSyncClient(settings=settings, catalog_service=service)
+    monkeypatch.setattr(
+        dialog._sync_client,
+        "current_user",
+        lambda: F8VariantRemoteUser(userId="u1", displayName="User One", username="user-one"),
+    )
+
+    dialog._scope_tabs.setCurrentIndex(dialog._TAB_MINE)
+    dialog._refresh_action_buttons(remote_entry)
+
+    assert dialog._btn_upload.isEnabled() is True
+
+    dialog.close()
+
+
+def test_variant_manager_resolve_overwrite_target_includes_owned_remote(monkeypatch, tmp_path: Path) -> None:
+    _ = _ensure_app()
+    settings = QtCore.QSettings(str(tmp_path / "variant-overwrite.ini"), QtCore.QSettings.IniFormat)
+    db_path = tmp_path / "assets.db"
+    service = VariantCatalogService(
+        local_provider=LocalVariantProvider(db_path=db_path),
+        remote_provider=RemoteCacheProvider(db_path=db_path),
+    )
+    remote_entry = copy_model(
+        _make_entry(
+            variant_id="owned-name",
+            source=F8VariantSourceKind.remote_private,
+            installed=False,
+            remote_revision="r1",
+        ),
+        update={
+            "record": copy_model(_make_entry(variant_id="owned-name", source=F8VariantSourceKind.remote_private).record, update={"name": "Same Name"}),
+            "visibility": F8VariantVisibility.private,
+            "remoteVersionNumber": 1,
+            "ownerUserId": "u1",
+            "ownerDisplayName": "User One",
+        },
+    )
+    service.replace_remote_entries([remote_entry])
+
+    dialog = VariantManagerDialog(
+        parent=None,
+        base_node_type="svc.a.op",
+        base_node_name="Variant",
+        node_graph=None,
+    )
+    dialog._sync_client = VariantSyncClient(settings=settings, catalog_service=service)
+    monkeypatch.setattr(
+        dialog._sync_client,
+        "current_user",
+        lambda: F8VariantRemoteUser(userId="u1", displayName="User One", username="user-one"),
+    )
+
+    target = dialog._resolve_overwrite_target(name="Same Name", overwrite_variant_id=None)
+    choices = dialog._overwrite_choices_for_base()
+
+    assert target is not None
+    assert target.record.variantId == "owned-name"
+    assert [choice.asset_id for choice in choices] == ["owned-name"]
+
+    dialog.close()
+
+
+def test_variant_manager_disables_load_offload_for_local_draft(monkeypatch, tmp_path: Path) -> None:
+    _ = _ensure_app()
+    settings = QtCore.QSettings(str(tmp_path / "variant-draft-actions.ini"), QtCore.QSettings.IniFormat)
+    db_path = tmp_path / "assets.db"
+    service = VariantCatalogService(
+        local_provider=LocalVariantProvider(db_path=db_path),
+        remote_provider=RemoteCacheProvider(db_path=db_path),
+    )
+    draft_entry = service.upsert_local_entry(
+        F8VariantEntry(
+            record=_make_entry(variant_id="draft-disable", source=F8VariantSourceKind.local).record,
+            source=F8VariantSourceKind.local,
+            isLocalDraft=True,
+        )
+    )
+
+    dialog = VariantManagerDialog(
+        parent=None,
+        base_node_type="svc.a.op",
+        base_node_name="Variant",
+        node_graph=None,
+    )
+    dialog._sync_client = VariantSyncClient(settings=settings, catalog_service=service)
+    dialog._scope_tabs.setCurrentIndex(dialog._TAB_MINE)
+
+    dialog._refresh_action_buttons(draft_entry)
+
+    assert dialog._btn_install.isEnabled() is False
+    assert dialog._btn_install.toolTip() == "Not available for Local Draft"
+
+    delete_calls: list[str] = []
+    monkeypatch.setattr(service, "delete_local_entry", lambda variant_id: delete_calls.append(str(variant_id)) or True)
+    monkeypatch.setattr(dialog, "_selected_action_entries", lambda: (draft_entry, draft_entry, None))
+
+    dialog._on_load_or_offload_clicked()
+
+    assert delete_calls == []
+
+    dialog.close()
+
+
+def test_graph_variant_actions_include_owned_remote_name_conflicts(monkeypatch, tmp_path: Path) -> None:
+    db_path = tmp_path / "assets.db"
+    service = VariantCatalogService(
+        local_provider=LocalVariantProvider(db_path=db_path),
+        remote_provider=RemoteCacheProvider(db_path=db_path),
+    )
+    remote_entry = copy_model(
+        _make_entry(
+            variant_id="graph-owned",
+            source=F8VariantSourceKind.remote_private,
+            installed=False,
+            remote_revision="r1",
+        ),
+        update={
+            "record": copy_model(_make_entry(variant_id="graph-owned", source=F8VariantSourceKind.remote_private).record, update={"name": "Graph Name"}),
+            "visibility": F8VariantVisibility.private,
+            "remoteVersionNumber": 1,
+            "ownerUserId": "u1",
+            "ownerDisplayName": "User One",
+        },
+    )
+    service.replace_remote_entries([remote_entry])
+    monkeypatch.setattr("f8pystudio.assets.variants.variant_repository._service", lambda: service)
+    monkeypatch.setattr(
+        "f8pystudio.nodegraph.graph_variant_actions.VariantSyncClient.current_user",
+        lambda self: F8VariantRemoteUser(userId="u1", displayName="User One", username="user-one"),
+    )
+
+    target = GraphVariantActionsMixin._mine_variant_entry_by_name(
+        node_type="svc.a.op",
+        name="Graph Name",
+    )
+
+    assert target is not None
+    assert target.record.variantId == "graph-owned"

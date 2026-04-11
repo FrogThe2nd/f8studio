@@ -6,7 +6,13 @@ from pathlib import Path
 import pytest
 
 from f8pysdk.codec import copy_model, dump_json
-from f8pystudio.assets.variants.variant_models import F8VariantEntry, F8VariantKind, F8VariantSourceKind, variant_now_iso
+from f8pystudio.assets.variants.variant_models import (
+    F8VariantDraftOriginKind,
+    F8VariantEntry,
+    F8VariantKind,
+    F8VariantSourceKind,
+    variant_now_iso,
+)
 from f8pysdk.specs import F8VariantRecord
 from f8pystudio.assets.variants.variant_catalog import VariantCatalogService
 from f8pystudio.assets.variants.variant_repository import (
@@ -135,6 +141,10 @@ def test_export_import_library_v1_entries_preserves_current_version_and_sync_bas
         syncBaseRemoteRevision="r7",
         syncBaseRemoteVersionNumber=7,
         syncBaseLocalVersionNumber=5,
+        isLocalDraft=True,
+        draftOriginKind=F8VariantDraftOriginKind.copy_remote,
+        draftOriginAssetId="remote-sync",
+        draftOriginRevision="r7",
     )
     _ = service.upsert_local_entry(entry)
 
@@ -147,6 +157,10 @@ def test_export_import_library_v1_entries_preserves_current_version_and_sync_bas
     assert exported["entries"][0]["syncBaseRemoteRevision"] == "r7"
     assert exported["entries"][0]["syncBaseRemoteVersionNumber"] == 7
     assert exported["entries"][0]["syncBaseLocalVersionNumber"] == 5
+    assert exported["entries"][0]["isLocalDraft"] is True
+    assert exported["entries"][0]["draftOriginKind"] == "copy_remote"
+    assert exported["entries"][0]["draftOriginAssetId"] == "remote-sync"
+    assert exported["entries"][0]["draftOriginRevision"] == "r7"
 
     replaced_service = VariantCatalogService(db_path=tmp_path / "imported-assets.db")
     monkeypatch.setattr("f8pystudio.assets.variants.variant_repository._service", lambda: replaced_service)
@@ -158,3 +172,7 @@ def test_export_import_library_v1_entries_preserves_current_version_and_sync_bas
     assert imported.syncBaseRemoteRevision == "r7"
     assert imported.syncBaseRemoteVersionNumber == 7
     assert imported.syncBaseLocalVersionNumber == 5
+    assert imported.isLocalDraft is True
+    assert imported.draftOriginKind == F8VariantDraftOriginKind.copy_remote
+    assert imported.draftOriginAssetId == "remote-sync"
+    assert imported.draftOriginRevision == "r7"

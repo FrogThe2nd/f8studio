@@ -27,6 +27,12 @@ class F8ComponentSyncState(Enum):
     conflict = "conflict"
 
 
+class F8ComponentDraftOriginKind(Enum):
+    new = "new"
+    copy_local = "copy_local"
+    copy_remote = "copy_remote"
+
+
 class F8ComponentRecord(Struct, kw_only=True):
     componentId: str
     name: str
@@ -56,6 +62,10 @@ class F8ComponentEntry(Struct, kw_only=True):
     remoteVersionNumber: int | None = None
     syncBaseRemoteVersionNumber: int | None = None
     syncBaseLocalVersionNumber: int | None = None
+    isLocalDraft: bool = False
+    draftOriginKind: F8ComponentDraftOriginKind | None = None
+    draftOriginAssetId: str | None = None
+    draftOriginRevision: str | None = None
 
 
 class F8ComponentCatalogSnapshot(Struct, kw_only=True):
@@ -132,6 +142,7 @@ __all__ = [
     "F8ComponentSourceKind",
     "F8ComponentVisibility",
     "F8ComponentSyncState",
+    "F8ComponentDraftOriginKind",
     "F8ComponentRecord",
     "F8ComponentEntry",
     "F8ComponentCatalogSnapshot",
