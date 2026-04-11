@@ -19,7 +19,6 @@ from .operators.udp_out import register_operator as register_udp_out_operator
 from .operators.exec_sequence import register_operator as register_exec_sequence_operator
 from .operators.signal import register_operator as register_signal_operator
 from .operators.print import register_operator as register_print_operator
-from .operators.pull import register_operator as register_pull_operator
 from .operators.program_wave import register_operator as register_program_wave_operator
 from .operators.tick import register_operator as register_tick_operator
 from .operators.envelope import register_operator as register_envelope_operator
@@ -97,7 +96,6 @@ def register_pyengine_specs(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistr
     register_exec_sequence_operator(registry)
     register_signal_operator(registry)
     register_print_operator(registry)
-    register_pull_operator(registry)
     register_program_wave_operator(registry)
     register_envelope_operator(registry)
     register_smooth_filter_operator(registry)

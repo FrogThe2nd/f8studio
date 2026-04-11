@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from f8pysdk.codec import dump_json
+from f8pysdk.registry import RuntimeNodeRegistry
 from f8pysdk.specs import palette_category_from_spec
 from f8pysdk.service_runtime_tools.inventory.catalog import ServiceCatalog
 from f8pysdk.service_runtime_tools.inventory.describe import (
@@ -77,8 +78,11 @@ class PyStudioProgram:
         return dump_json(registry.describe(SERVICE_CLASS), mode="json")
 
     @staticmethod
-    def _inject_builtin_pystudio_specs(catalog: ServiceCatalog) -> str | None:
-        registry = create_pystudio_registry()
+    def _inject_pystudio_specs_from_registry(
+        catalog: ServiceCatalog,
+        *,
+        registry: RuntimeNodeRegistry,
+    ) -> str | None:
         service_spec = registry.service_spec(SERVICE_CLASS)
         if service_spec is None:
             return None
@@ -86,6 +90,10 @@ class PyStudioProgram:
         for operator_spec in registry.operator_specs(SERVICE_CLASS):
             catalog.register_operator(operator_spec)
         return str(service_spec.serviceClass)
+
+    @staticmethod
+    def _inject_builtin_pystudio_specs(catalog: ServiceCatalog) -> str | None:
+        return PyStudioProgram._inject_pystudio_specs_from_registry(catalog, registry=create_pystudio_registry())
 
     @staticmethod
     def _load_plugin_manifests() -> list[StudioPluginManifest]:
@@ -208,11 +216,14 @@ class PyStudioProgram:
         from f8pystudio.ui.mainwin.main_window import F8StudioMainWin
 
         manifests = self._load_plugin_manifests()
-        self._apply_plugin_manifests_to_runtime_registry(manifests, registry=shared_pystudio_registry())
+        studio_registry = shared_pystudio_registry()
+        self._apply_plugin_manifests_to_runtime_registry(manifests, registry=studio_registry)
 
         load_discovery_into_catalog(
             catalog=ServiceCatalog.instance(),
-            builtin_injectors=(self._inject_builtin_pystudio_specs,),
+            builtin_injectors=(
+                lambda catalog: self._inject_pystudio_specs_from_registry(catalog, registry=studio_registry),
+            ),
         )
         self._apply_plugin_manifests_to_renderers(manifests)
 

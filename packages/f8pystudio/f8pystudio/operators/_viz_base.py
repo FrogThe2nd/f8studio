@@ -19,7 +19,10 @@ def viz_sampling_state_fields(*, show_on_node: bool = False) -> list[F8StateSpec
         F8StateSpec(
             name="upstreamSamplingMode",
             label="Upstream Sampling",
-            description="passive: no auto sampling injection; auto: request upstream auto sampler injection.",
+            description=(
+                "passive: no upstream auto-sampler request; auto: request upstream periodic sampling when the "
+                "source runtime supports it."
+            ),
             valueSchema=string_schema(default=UPSTREAM_SAMPLING_MODE_PASSIVE, enum=list(UPSTREAM_SAMPLING_MODE_VALUES)),
             access=F8StateAccess.rw,
             required=True,

@@ -6,6 +6,7 @@ from typing import Any
 from qtpy import QtCore, QtGui, QtWidgets
 from NodeGraphQt.custom_widgets.properties_bin.node_property_factory import NodePropertyWidgetFactory
 
+from f8pysdk.codec import copy_model
 from f8pysdk.specs import F8StateAccess, F8StateSpec, integer_schema, number_schema, string_schema
 from f8pystudio.nodegraph.items.state_inline_controls import (
     build_state_inline_control,
@@ -233,21 +234,29 @@ class _FakePropertyNode:
 
 
 class _EnsureStateBackendNode:
-    def __init__(self, fields: list[F8StateSpec]) -> None:
+    def __init__(self, fields: list[F8StateSpec], props: dict[str, Any] | None = None) -> None:
         self._fields = list(fields)
+        self._props = dict(props or {})
         self.spec = None
         self.id = "nodeA"
 
     def effective_state_fields(self) -> list[F8StateSpec]:
         return list(self._fields)
 
+    def get_property(self, name: str) -> Any:
+        return self._props.get(str(name), None)
+
+    def set_property(self, name: str, value: Any, *, push_undo: bool = True) -> None:
+        del push_undo
+        self._props[str(name)] = value
+
 
 class _EnsureStateNodeItem(QtWidgets.QGraphicsRectItem):
-    def __init__(self, fields: list[F8StateSpec]) -> None:
+    def __init__(self, fields: list[F8StateSpec], *, props: dict[str, Any] | None = None) -> None:
         super().__init__(0.0, 0.0, 10.0, 10.0)
         self.id = "nodeA"
         self.name = "nodeA"
-        self._backend = _EnsureStateBackendNode(fields)
+        self._backend = _EnsureStateBackendNode(fields, props=props)
         self._state_inline_proxies: dict[str, QtWidgets.QGraphicsProxyWidget] = {}
         self._state_inline_controls: dict[str, QtWidgets.QWidget] = {}
         self._state_inline_bindings: dict[str, Any] = {}
@@ -274,6 +283,10 @@ class _EnsureStateNodeItem(QtWidgets.QGraphicsRectItem):
         del schema
         return None, None
 
+    def _is_state_inline_input_connected(self, field_name: str) -> bool:
+        del field_name
+        return False
+
     def _build_state_inline_control(
         self,
         info: StateFieldInfo,
@@ -298,6 +311,16 @@ class _EnsureStateNodeItem(QtWidgets.QGraphicsRectItem):
     def sync_proxy_mode(self, *, force: bool = False) -> None:
         del force
         return
+
+
+class _EnsureRealStateNodeItem(_EnsureStateNodeItem):
+    def _build_state_inline_control(
+        self,
+        info: StateFieldInfo,
+        *,
+        widget_parent: QtWidgets.QWidget | None = None,
+    ) -> QtWidgets.QWidget:
+        return build_state_inline_control(self, info, widget_parent=widget_parent)
 
 
 def _mouse_event(
@@ -695,6 +718,44 @@ def test_ensure_state_inline_controls_reorders_renamed_field_to_match_spec_order
     ensure_state_inline_controls(node_item)
 
     assert list(node_item._state_inline_proxies.keys()) == ["renamed", "second"]
+
+
+def test_ensure_state_inline_controls_refreshes_existing_button_label_and_tooltip() -> None:
+    _ensure_app()
+    field = F8StateSpec(
+        name="playTrigger",
+        label="Play",
+        description="Increment to trigger playback.",
+        access=F8StateAccess.rw,
+        uiControl="button",
+        showOnNode=True,
+        valueSchema=integer_schema(),
+    )
+    node_item = _EnsureRealStateNodeItem([field], props={"playTrigger": 0})
+
+    ensure_state_inline_controls(node_item)
+
+    control = node_item._state_inline_controls["playTrigger"]
+    assert isinstance(control, F8IncrementButtonEditor)
+    assert control.text() == "Play"
+    assert "Increment to trigger playback." in str(control.toolTip() or "")
+
+    updated_field = copy_model(
+        field,
+        update={
+            "label": "Start",
+            "description": "Increment to start playback.",
+        },
+    )
+    node_item._backend._fields = [updated_field]
+
+    ensure_state_inline_controls(node_item)
+
+    updated_control = node_item._state_inline_controls["playTrigger"]
+    assert updated_control is control
+    assert isinstance(updated_control, F8IncrementButtonEditor)
+    assert updated_control.text() == "Start"
+    assert "Increment to start playback." in str(updated_control.toolTip() or "")
 
 
 def test_state_inline_control_serial_changes_when_numeric_range_changes() -> None:

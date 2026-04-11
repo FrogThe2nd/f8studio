@@ -11,6 +11,7 @@ from uuid import uuid4
 import msgspec
 
 from f8pysdk.specs import (
+    F8AutoSampleRequest,
     F8DataPortSpec,
     F8Edge,
     F8EdgeDirection,
@@ -40,9 +41,6 @@ from f8pysdk.rungraph_validation import (
     validate_state_edge_targets_writable_or_raise,
     validate_state_edges_or_raise,
 )
-from f8pysdk.specs import boolean_schema
-from f8pysdk.specs import integer_schema
-from f8pysdk.specs import any_schema
 from f8pysdk.nats_naming import ensure_token
 
 from f8pystudio.studio_specs.registry import SERVICE_CLASS as STUDIO_SERVICE_CLASS
@@ -52,7 +50,6 @@ from ..operators.patch_hub import OPERATOR_CLASS as PATCH_HUB_OPERATOR_CLASS
 
 logger = logging.getLogger(__name__)
 PYENGINE_SERVICE_CLASS = "f8.pyengine"
-AUTO_PULL_OPERATOR_CLASS = "f8.pull"
 
 
 def _port_kind(name: str) -> F8EdgeKindEnum | None:
@@ -160,13 +157,13 @@ def _coerce_state_payload_value(value: Any) -> tuple[bool, Any]:
     return _coerce_state_payload_value(dumped)
 
 
-def _inject_studio_auto_pull_triggers(graph: F8RuntimeGraph) -> tuple[F8RuntimeGraph, list[str]]:
+def _attach_studio_auto_sample_requests(graph: F8RuntimeGraph) -> tuple[F8RuntimeGraph, list[str]]:
     """
-    Inject hidden pull trigger nodes for eligible Studio auto-sampling consumers.
+    Attach service-level auto-sampling requests for eligible Studio consumers.
 
-    Trigger-only mode:
+    The compiler expresses intent only:
     - Keep original source->studio cross edges unchanged.
-    - Add source->f8.pull data edges inside the source pyengine service.
+    - Add per-service periodic sampling requests for runtimes that support them.
     """
     warnings: list[str] = []
     services_by_id: dict[str, F8RuntimeService] = {str(s.serviceId): s for s in list(graph.services or [])}
@@ -184,10 +181,6 @@ def _inject_studio_auto_pull_triggers(graph: F8RuntimeGraph) -> tuple[F8RuntimeG
         if to_service_id != STUDIO_SERVICE_ID:
             continue
         if edge.fromOperatorId is None or edge.toOperatorId is None:
-            continue
-        src_node_id = str(edge.fromOperatorId)
-        src_node = nodes_by_id.get(src_node_id)
-        if src_node is not None and str(src_node.operatorClass or "") == AUTO_PULL_OPERATOR_CLASS:
             continue
 
         dst_node_id = str(edge.toOperatorId)
@@ -226,96 +219,47 @@ def _inject_studio_auto_pull_triggers(graph: F8RuntimeGraph) -> tuple[F8RuntimeG
     if not by_source:
         return graph, warnings
 
-    new_nodes = list(graph.nodes or [])
-    new_edges = list(graph.edges or [])
-
-    injected_edges: list[F8Edge] = []
+    updated_services = dict(services_by_id)
+    changed = False
 
     for src_key, group in by_source.items():
         from_service_id, from_node_id, from_port = src_key
         service = services_by_id.get(from_service_id)
         service_class = str(service.serviceClass) if service is not None else ""
         if service_class != PYENGINE_SERVICE_CLASS:
-            consumers_sorted = ", ".join(sorted(str(x) for x in group["consumers"]))
-            warnings.append(
-                f"auto sampling skipped for {from_service_id}.{from_node_id}.{from_port}: "
-                f"source serviceClass={service_class or 'unknown'} (consumers={consumers_sorted})"
-            )
+            # Studio auto sampling is a pyengine-only facility here. Other services either
+            # push data proactively or own their own scheduling semantics, so leave
+            # the original cross-service edge untouched without surfacing a warning.
             continue
 
-        pull_node_id = _stable_id("auto_pull", from_service_id, from_node_id, from_port)
-        sample_interval_ms = int(group["sample_interval_ms"])
-        trigger_port = "value"
+        existing_service = updated_services.get(from_service_id)
+        if existing_service is None:
+            continue
 
-        if pull_node_id not in nodes_by_id:
-            pull_node = F8RuntimeNode(
-                nodeId=pull_node_id,
-                serviceId=from_service_id,
-                serviceClass=PYENGINE_SERVICE_CLASS,
-                operatorClass=AUTO_PULL_OPERATOR_CLASS,
-                dataInPorts=[
-                    F8DataPortSpec(
-                        name=trigger_port,
-                        description="auto trigger pull input",
-                        valueSchema=any_schema(),
-                        required=False,
-                    ),
-                ],
-                dataOutPorts=[],
-                execInPorts=[],
-                execOutPorts=[],
-                stateFields=[
-                    F8StateSpec(
-                        name="autoTriggerEnabled",
-                        label="Auto Trigger",
-                        description="Periodically pull all data inputs without exec.",
-                        valueSchema=boolean_schema(default=False),
-                        access=F8StateAccess.rw,
-                        showOnNode=False,
-                    ),
-                    F8StateSpec(
-                        name="autoTriggerIntervalMs",
-                        label="Auto Trigger Interval (ms)",
-                        description="Periodic pull interval in milliseconds.",
-                        valueSchema=integer_schema(default=100, minimum=8, maximum=5000),
-                        access=F8StateAccess.rw,
-                        showOnNode=False,
-                    ),
-                ],
-                stateValues={
-                    "autoTriggerEnabled": True,
-                    "autoTriggerIntervalMs": sample_interval_ms,
-                },
-            )
-            new_nodes.append(pull_node)
-            nodes_by_id[pull_node_id] = pull_node
-
-        source_to_pull_edge_id = _stable_id("edge_auto_pull_src", from_service_id, from_node_id, from_port)
-        injected_edges.append(
-            F8Edge(
-                edgeId=source_to_pull_edge_id,
-                fromServiceId=from_service_id,
-                fromOperatorId=from_node_id,
-                fromPort=from_port,
-                toServiceId=from_service_id,
-                toOperatorId=pull_node_id,
-                toPort=trigger_port,
-                kind=F8EdgeKindEnum.data,
-                strategy=F8EdgeStrategyEnum.latest,
-                timeoutMs=msgspec.UNSET,
-                direction=msgspec.UNSET,
+        existing_requests = list(existing_service.autoSampleRequests or [])
+        existing_requests.append(
+            F8AutoSampleRequest(
+                sourceNodeId=from_node_id,
+                sourcePort=from_port,
+                intervalMs=int(group["sample_interval_ms"]),
+                deliverLocal=False,
+                publishCrossService=True,
             )
         )
+        updated_services[from_service_id] = copy_model(
+            existing_service,
+            deep=True,
+            update={"autoSampleRequests": existing_requests},
+        )
+        changed = True
 
-    if not injected_edges and not warnings:
+    if not changed and not warnings:
         return graph, warnings
 
-    # Deduplicate by edgeId to make reinjection idempotent.
-    dedup_edges: dict[str, F8Edge] = {}
-    for edge in list(new_edges) + injected_edges:
-        dedup_edges[str(edge.edgeId)] = edge
-
-    patched = copy_model(graph, update={"nodes": new_nodes, "edges": list(dedup_edges.values())})
+    patched = copy_model(
+        graph,
+        update={"services": [updated_services.get(str(s.serviceId), s) for s in list(graph.services or [])]},
+    )
     return patched, warnings
 
 
@@ -701,7 +645,7 @@ def compile_global_runtime_graph(
             compile_warnings.extend(patch_hub_warnings)
         for warning in patch_hub_warnings:
             logger.warning("%s", warning)
-    graph, warnings = _inject_studio_auto_pull_triggers(graph)
+    graph, warnings = _attach_studio_auto_sample_requests(graph)
     if warnings:
         if compile_warnings is not None:
             compile_warnings.extend(warnings)

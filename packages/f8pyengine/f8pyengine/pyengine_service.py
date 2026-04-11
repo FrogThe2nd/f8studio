@@ -12,6 +12,7 @@ from f8pysdk.registry import Registry
 from f8pysdk.runtime import ServiceRuntime
 from f8pysdk.specs import F8RuntimeGraph
 
+from .auto_sampler import AutoSamplerManager
 from .constants import SERVICE_CLASS
 from .pyengine_node_registry import register_pyengine_specs
 
@@ -32,17 +33,21 @@ class PyEngineService(ServiceHookBase):
         self._executor: ExecFlowExecutor | None = None
         self._exec_node_ids: set[str] = set()
         self._runtime: ServiceRuntime | None = None
+        self._auto_sampler: AutoSamplerManager | None = None
 
     async def setup(self, runtime: ServiceRuntime) -> None:
         runtime.bus.set_data_delivery("pull", source="service")
         executor = ExecFlowExecutor(runtime.bus)
+        auto_sampler = AutoSamplerManager(runtime.bus)
         self._executor = executor
         self._runtime = runtime
+        self._auto_sampler = auto_sampler
         runtime.bus.register_rungraph_hook(self)
         runtime.bus.register_service_hook(self)
 
     async def teardown(self, runtime: ServiceRuntime) -> None:
         executor = self._executor
+        auto_sampler = self._auto_sampler
         try:
             runtime.bus.unregister_rungraph_hook(self)
         except Exception:
@@ -52,6 +57,12 @@ class PyEngineService(ServiceHookBase):
         except Exception:
             logger.exception("unregister_service_hook failed")
         self._runtime = None
+        self._auto_sampler = None
+        if auto_sampler is not None:
+            try:
+                await auto_sampler.close()
+            except Exception:
+                logger.exception("auto sampler close failed during teardown")
         if executor is None:
             return
         try:
@@ -110,6 +121,9 @@ class PyEngineService(ServiceHookBase):
             return
         await self._sync_exec_nodes(runtime, graph)
         await executor.apply_rungraph(graph)
+        auto_sampler = self._auto_sampler
+        if auto_sampler is not None:
+            await auto_sampler.sync_rungraph(graph)
 
     async def validate_rungraph(self, graph: F8RuntimeGraph) -> None:
         runtime = self._runtime
@@ -118,12 +132,18 @@ class PyEngineService(ServiceHookBase):
         validate_exec_topology_or_raise(graph, service_id=runtime.bus.service_id)
 
     async def on_activate(self, _bus: Any, _meta: dict[str, Any]) -> None:
+        auto_sampler = self._auto_sampler
+        if auto_sampler is not None:
+            await auto_sampler.set_active(True)
         executor = self._executor
         if executor is None:
             return
         await executor.set_active(True)
 
     async def on_deactivate(self, _bus: Any, _meta: dict[str, Any]) -> None:
+        auto_sampler = self._auto_sampler
+        if auto_sampler is not None:
+            await auto_sampler.set_active(False)
         executor = self._executor
         if executor is None:
             return

@@ -71,6 +71,9 @@ class F8CodeButtonEditor(QtWidgets.QWidget):
     def set_read_only(self, read_only: bool) -> None:
         self._btn.setEnabled(not bool(read_only))
 
+    def set_title(self, title: str) -> None:
+        self._title = str(title or "Edit Code")
+
     def set_persisted_value_getter(self, getter: Callable[[], str] | None) -> None:
         self._persisted_value_getter = getter
 
