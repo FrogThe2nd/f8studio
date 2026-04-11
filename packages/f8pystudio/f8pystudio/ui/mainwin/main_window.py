@@ -69,6 +69,16 @@ logger = logging.getLogger(__name__)
 
 ActionHandler: TypeAlias = Callable[[], None] | Callable[[bool], None]
 
+_PYENGINE_NODE_LIBRARY_CATEGORY_LABELS: dict[str, str] = {
+    "f8.pyengine.input": "PyEngine / Input",
+    "f8.pyengine.output": "PyEngine / Output",
+    "f8.pyengine.execution": "PyEngine / Execution",
+    "f8.pyengine.signal": "PyEngine / Signal",
+    "f8.pyengine.expr": "PyEngine / Expr",
+    "f8.pyengine.motion": "PyEngine / Motion",
+    "f8.pyengine.debug": "PyEngine / Debug",
+}
+
 
 class _ProjectAutoLoadWorker(QtCore.QObject):
     loaded = QtCore.Signal(object)  # F8ProjectRecord | None
@@ -381,6 +391,8 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         if self._node_library_widget is not None:
             return
         widget = F8StudioNodeLibraryWidget(node_graph=self.studio_graph)
+        for category, label in _PYENGINE_NODE_LIBRARY_CATEGORY_LABELS.items():
+            widget.set_category_label(category, label)
         self._node_library_widget = widget
         self._replace_dock_widget(self._node_library_dock, widget)
 
