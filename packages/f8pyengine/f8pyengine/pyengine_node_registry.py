@@ -15,6 +15,7 @@ from f8pysdk.registry import create_runtime_node_registry, RuntimeNodeRegistry, 
 
 from .constants import SERVICE_CLASS
 from .operators.serial_out import register_operator as register_serial_out_operator
+from .operators.udp_in import register_operator as register_udp_in_operator
 from .operators.udp_out import register_operator as register_udp_out_operator
 from .operators.exec_sequence import register_operator as register_exec_sequence_operator
 from .operators.signal import register_operator as register_signal_operator
@@ -103,6 +104,7 @@ def register_pyengine_specs(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistr
     register_rate_limiter_operator(registry)
     register_udp_skeleton_operator(registry)
     register_serial_out_operator(registry)
+    register_udp_in_operator(registry)
     register_udp_out_operator(registry)
     register_tcode_operator(registry)
     register_python_script_operator(registry)

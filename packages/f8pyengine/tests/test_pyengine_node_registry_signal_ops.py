@@ -29,6 +29,7 @@ class PyEngineSignalOperatorRegistryTests(unittest.TestCase):
         self.assertIn("f8.highpass_filter", operator_classes)
         self.assertIn("f8.bandpass_filter", operator_classes)
         self.assertIn("f8.periodicity_detector", operator_classes)
+        self.assertIn("f8.udp_in", operator_classes)
 
 
 if __name__ == "__main__":
