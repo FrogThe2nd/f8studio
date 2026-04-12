@@ -153,7 +153,7 @@ def test_app_debug_launchers_import() -> None:
     module_names = [
         "f8pystudio.app.debug_component_catalog",
         "f8pystudio.app.debug_monaco_editor",
-        "f8pystudio.app.debug_variant_manager",
+        "f8pystudio.app.debug_variant_catalog",
     ]
     for module_name in module_names:
         assert importlib.import_module(module_name) is not None

@@ -24,7 +24,7 @@ from f8pysdk.specs import any_schema, number_schema, string_schema
 
 from f8pystudio.assets.ui.asset_graph_preview import AssetGraphPreviewPane
 from f8pystudio.assets.ui.component_catalog_dialog import ComponentCatalogDialog
-from f8pystudio.assets.ui.variant_manager_dialog import VariantManagerDialog
+from f8pystudio.assets.ui.variant_catalog_dialog import VariantCatalogDialog
 from f8pystudio.assets.components.component_models import F8ComponentEntry, F8ComponentRecord, F8ComponentSourceKind
 from f8pystudio.assets.variants.variant_models import F8VariantEntry, F8VariantSourceKind, variant_now_iso
 from f8pystudio.nodegraph.node_graph import F8StudioGraph
@@ -1153,9 +1153,9 @@ def test_component_catalog_dialog_defers_initial_remote_refresh(monkeypatch, tmp
 
 def test_variant_dialog_hydration_failure_updates_raw_and_preview(monkeypatch) -> None:
     _ensure_app()
-    monkeypatch.setattr("f8pystudio.assets.ui.variant_manager_dialog.subscribe_variants_changed", lambda _cb: (lambda: None))
-    monkeypatch.setattr(VariantManagerDialog, "_reload", lambda self, *_args, **_kwargs: None)
-    dialog = VariantManagerDialog(
+    monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_dialog.subscribe_variants_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(VariantCatalogDialog, "_reload", lambda self, *_args, **_kwargs: None)
+    dialog = VariantCatalogDialog(
         parent=None,
         base_node_type="svc.preview.variant",
         base_node_name="Preview Variant",
@@ -1195,10 +1195,10 @@ def test_variant_dialog_hydration_failure_updates_raw_and_preview(monkeypatch) -
 
 def test_variant_dialog_install_allows_anonymous_public_variant(monkeypatch) -> None:
     _ensure_app()
-    monkeypatch.setattr("f8pystudio.assets.ui.variant_manager_dialog.subscribe_variants_changed", lambda _cb: (lambda: None))
-    monkeypatch.setattr(VariantManagerDialog, "_reload", lambda self, *_args, **_kwargs: None)
-    monkeypatch.setattr("f8pystudio.assets.ui.variant_manager_dialog.show_info", lambda *_args, **_kwargs: None)
-    dialog = VariantManagerDialog(
+    monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_dialog.subscribe_variants_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(VariantCatalogDialog, "_reload", lambda self, *_args, **_kwargs: None)
+    monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_dialog.show_info", lambda *_args, **_kwargs: None)
+    dialog = VariantCatalogDialog(
         parent=None,
         base_node_type="svc.preview.variant",
         base_node_name="Preview Variant",
@@ -1243,8 +1243,8 @@ def test_variant_dialog_defers_reload_during_selection_cache(monkeypatch) -> Non
         callbacks.append(callback)
         return lambda: callbacks.remove(callback)
 
-    monkeypatch.setattr("f8pystudio.assets.ui.variant_manager_dialog.subscribe_variants_changed", _subscribe)
-    dialog = VariantManagerDialog(
+    monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_dialog.subscribe_variants_changed", _subscribe)
+    dialog = VariantCatalogDialog(
         parent=None,
         base_node_type="svc.preview.variant",
         base_node_name="Preview Variant",
@@ -1305,10 +1305,10 @@ def test_variant_dialog_defers_reload_during_selection_cache(monkeypatch) -> Non
 
 def test_variant_dialog_subscribe_also_loads_public_variant(monkeypatch) -> None:
     _ensure_app()
-    monkeypatch.setattr("f8pystudio.assets.ui.variant_manager_dialog.subscribe_variants_changed", lambda _cb: (lambda: None))
-    monkeypatch.setattr(VariantManagerDialog, "_reload", lambda self, *_args, **_kwargs: None)
-    monkeypatch.setattr("f8pystudio.assets.ui.variant_manager_dialog.show_info", lambda *_args, **_kwargs: None)
-    dialog = VariantManagerDialog(
+    monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_dialog.subscribe_variants_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(VariantCatalogDialog, "_reload", lambda self, *_args, **_kwargs: None)
+    monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_dialog.show_info", lambda *_args, **_kwargs: None)
+    dialog = VariantCatalogDialog(
         parent=None,
         base_node_type="svc.preview.variant",
         base_node_name="Preview Variant",
@@ -1350,9 +1350,9 @@ def test_variant_dialog_subscribe_also_loads_public_variant(monkeypatch) -> None
 
 def test_variant_dialog_community_actions_hide_load_and_show_fork(monkeypatch) -> None:
     _ensure_app()
-    monkeypatch.setattr("f8pystudio.assets.ui.variant_manager_dialog.subscribe_variants_changed", lambda _cb: (lambda: None))
-    monkeypatch.setattr(VariantManagerDialog, "_reload", lambda self, *_args, **_kwargs: None)
-    dialog = VariantManagerDialog(
+    monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_dialog.subscribe_variants_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(VariantCatalogDialog, "_reload", lambda self, *_args, **_kwargs: None)
+    dialog = VariantCatalogDialog(
         parent=None,
         base_node_type="svc.preview.variant",
         base_node_name="Preview Variant",
@@ -1398,9 +1398,9 @@ def test_variant_dialog_community_actions_hide_load_and_show_fork(monkeypatch) -
 
 def test_variant_dialog_cached_remote_preview_does_not_refetch_content(monkeypatch) -> None:
     _ensure_app()
-    monkeypatch.setattr("f8pystudio.assets.ui.variant_manager_dialog.subscribe_variants_changed", lambda _cb: (lambda: None))
-    monkeypatch.setattr(VariantManagerDialog, "_reload", lambda self, *_args, **_kwargs: None)
-    dialog = VariantManagerDialog(
+    monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_dialog.subscribe_variants_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(VariantCatalogDialog, "_reload", lambda self, *_args, **_kwargs: None)
+    dialog = VariantCatalogDialog(
         parent=None,
         base_node_type="svc.preview.variant",
         base_node_name="Preview Variant",
@@ -1443,9 +1443,9 @@ def test_variant_dialog_cached_remote_preview_does_not_refetch_content(monkeypat
 
 def test_variant_dialog_enables_history_for_local_entry(monkeypatch) -> None:
     _ensure_app()
-    monkeypatch.setattr("f8pystudio.assets.ui.variant_manager_dialog.subscribe_variants_changed", lambda _cb: (lambda: None))
-    monkeypatch.setattr(VariantManagerDialog, "_reload", lambda self, *_args, **_kwargs: None)
-    dialog = VariantManagerDialog(
+    monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_dialog.subscribe_variants_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(VariantCatalogDialog, "_reload", lambda self, *_args, **_kwargs: None)
+    dialog = VariantCatalogDialog(
         parent=None,
         base_node_type="svc.preview.variant",
         base_node_name="Preview Variant",

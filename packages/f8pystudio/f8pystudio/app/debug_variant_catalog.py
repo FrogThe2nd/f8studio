@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from qtpy import QtWidgets
 
-from f8pystudio.assets.ui.variant_manager_dialog import VariantManagerDialog
+from f8pystudio.assets.ui.variant_catalog_dialog import VariantCatalogDialog
 from f8pystudio.diagnostics.logging import configure_root_logging_from_env
 
 logger = logging.getLogger(__name__)
@@ -35,7 +35,7 @@ class _StubGraph:
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Standalone Variant Manager dialog launcher")
+    parser = argparse.ArgumentParser(description="Standalone Variant Catalog dialog launcher")
     parser.add_argument(
         "--base-node-type",
         default="f8.python_script",
@@ -73,7 +73,7 @@ def main(argv: list[str] | None = None) -> int:
         app.setOrganizationName("Feel8")
         app.setApplicationName("F8PyStudio")
 
-    dialog = VariantManagerDialog(
+    dialog = VariantCatalogDialog(
         parent=None,
         base_node_type=base_node_type,
         base_node_name=base_node_name,

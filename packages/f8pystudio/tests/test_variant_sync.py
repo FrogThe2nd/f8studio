@@ -30,7 +30,7 @@ from f8pystudio.assets.variants.variant_models import (
 from f8pystudio.assets.variants.variant_sync import VariantSyncClient
 from f8pystudio.assets.db import variant_remote_cache_table
 from f8pystudio.assets.ui.asset_sync_resolution import AssetSyncDirection
-from f8pystudio.assets.ui.variant_manager_dialog import VariantManagerDialog, variant_row_state_for_entries
+from f8pystudio.assets.ui.variant_catalog_dialog import VariantCatalogDialog, variant_row_state_for_entries
 from f8pystudio.nodegraph.graph_variant_actions import GraphVariantActionsMixin
 from f8pysdk.specs import F8VariantRecord
 
@@ -993,7 +993,7 @@ def test_variant_sync_persists_local_sync_base_and_second_sync_is_noop(monkeypat
     )
     service.replace_remote_entries([remote_entry])
 
-    dialog = VariantManagerDialog(
+    dialog = VariantCatalogDialog(
         parent=None,
         base_node_type="svc.a.op",
         base_node_name="Variant",
@@ -1063,7 +1063,7 @@ def test_variant_manager_load_owned_remote_creates_local_head(monkeypatch, tmp_p
     )
     service.replace_remote_entries([remote_entry])
 
-    dialog = VariantManagerDialog(
+    dialog = VariantCatalogDialog(
         parent=None,
         base_node_type="svc.a.op",
         base_node_name="Variant",
@@ -1133,7 +1133,7 @@ def test_variant_manager_copy_to_draft_creates_disconnected_local_draft(monkeypa
     )
     service.replace_remote_entries([remote_entry])
 
-    dialog = VariantManagerDialog(
+    dialog = VariantCatalogDialog(
         parent=None,
         base_node_type="svc.a.op",
         base_node_name="Variant",
@@ -1205,7 +1205,7 @@ def test_variant_manager_save_over_remote_offload_seeds_remote_sync_base(monkeyp
         },
     )
 
-    dialog = VariantManagerDialog(
+    dialog = VariantCatalogDialog(
         parent=None,
         base_node_type="svc.a.op",
         base_node_name="Variant",
@@ -1298,7 +1298,7 @@ def test_variant_manager_offload_removes_local_head_and_remote_cache(tmp_path: P
         )
     )
 
-    dialog = VariantManagerDialog(
+    dialog = VariantCatalogDialog(
         parent=None,
         base_node_type="svc.a.op",
         base_node_name="Variant",
@@ -1348,7 +1348,7 @@ def test_variant_manager_pull_replace_aligns_local_version_with_remote(monkeypat
     )
     service.replace_remote_entries([remote_entry])
 
-    dialog = VariantManagerDialog(
+    dialog = VariantCatalogDialog(
         parent=None,
         base_node_type="svc.a.op",
         base_node_name="Variant",
@@ -1400,7 +1400,7 @@ def test_variant_manager_mine_buttons_enable_sync_for_owned_remote_without_local
     )
     service.replace_remote_entries([remote_entry])
 
-    dialog = VariantManagerDialog(
+    dialog = VariantCatalogDialog(
         parent=None,
         base_node_type="svc.a.op",
         base_node_name="Variant",
@@ -1446,7 +1446,7 @@ def test_variant_manager_resolve_overwrite_target_includes_owned_remote(monkeypa
     )
     service.replace_remote_entries([remote_entry])
 
-    dialog = VariantManagerDialog(
+    dialog = VariantCatalogDialog(
         parent=None,
         base_node_type="svc.a.op",
         base_node_name="Variant",
@@ -1485,7 +1485,7 @@ def test_variant_manager_disables_load_offload_for_local_draft(monkeypatch, tmp_
         )
     )
 
-    dialog = VariantManagerDialog(
+    dialog = VariantCatalogDialog(
         parent=None,
         base_node_type="svc.a.op",
         base_node_name="Variant",
@@ -1562,12 +1562,12 @@ def test_variant_manager_history_uses_local_version_browser(monkeypatch, tmp_pat
         )
     )
 
-    dialog = VariantManagerDialog(parent=None, base_node_type="svc.a.op", base_node_name="Variant", node_graph=None)
+    dialog = VariantCatalogDialog(parent=None, base_node_type="svc.a.op", base_node_name="Variant", node_graph=None)
     dialog._sync_client = VariantSyncClient(settings=settings, catalog_service=service)
     _FakeVersionBrowserDialog.seen_titles = []
     _FakeVersionBrowserDialog.seen_item_counts = []
 
-    monkeypatch.setattr("f8pystudio.assets.ui.variant_manager_dialog.AssetVersionBrowserDialog", _FakeVersionBrowserDialog)
+    monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_dialog.AssetVersionBrowserDialog", _FakeVersionBrowserDialog)
     monkeypatch.setattr(dialog, "_selected_entry", lambda: local_entry)
 
     dialog._on_history_clicked()
@@ -1593,12 +1593,12 @@ def test_variant_manager_history_uses_remote_version_browser(monkeypatch, tmp_pa
         ),
         update={"remoteVersionNumber": 2},
     )
-    dialog = VariantManagerDialog(parent=None, base_node_type="svc.a.op", base_node_name="Variant", node_graph=None)
+    dialog = VariantCatalogDialog(parent=None, base_node_type="svc.a.op", base_node_name="Variant", node_graph=None)
     dialog._sync_client = VariantSyncClient(settings=settings, catalog_service=service)
     _FakeVersionBrowserDialog.seen_titles = []
     _FakeVersionBrowserDialog.seen_item_counts = []
 
-    monkeypatch.setattr("f8pystudio.assets.ui.variant_manager_dialog.AssetVersionBrowserDialog", _FakeVersionBrowserDialog)
+    monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_dialog.AssetVersionBrowserDialog", _FakeVersionBrowserDialog)
     monkeypatch.setattr(dialog, "_selected_entry", lambda: remote_entry)
     monkeypatch.setattr(
         dialog._sync_client,

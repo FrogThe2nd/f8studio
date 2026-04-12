@@ -13,7 +13,7 @@ from f8pystudio.ui.support.json_text_editor import (
 )
 from f8pystudio.ui.components.state_editors import F8JsonValueEditor
 from f8pystudio.ui.mainwin.node_library_widget import _F8StudioNodesTreeWidget
-from f8pystudio.assets.ui.variant_manager_dialog import VariantManagerDialog
+from f8pystudio.assets.ui.variant_catalog_dialog import VariantCatalogDialog
 
 
 def _ensure_app() -> QtWidgets.QApplication:
@@ -117,12 +117,12 @@ def test_node_info_dialog_raw_json_attaches_json_enhancements(monkeypatch) -> No
 
 def test_node_variant_manager_raw_json_attaches_json_enhancements(monkeypatch) -> None:
     _ensure_app()
-    monkeypatch.setattr("f8pystudio.assets.ui.variant_manager_dialog.list_entries_for_base", lambda _base: [])
+    monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_dialog.list_entries_for_base", lambda _base: [])
     monkeypatch.setattr(
-        "f8pystudio.assets.ui.variant_manager_dialog.subscribe_variants_changed",
+        "f8pystudio.assets.ui.variant_catalog_dialog.subscribe_variants_changed",
         lambda _cb: (lambda: None),
     )
-    dlg = VariantManagerDialog(
+    dlg = VariantCatalogDialog(
         parent=None,
         base_node_type="svc.test.operator",
         base_node_name="Test",

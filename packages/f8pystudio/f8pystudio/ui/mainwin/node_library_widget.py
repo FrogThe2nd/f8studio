@@ -36,9 +36,9 @@ class _F8StudioNodesTreeWidget(NodesTreeWidget):
     def __init__(self, parent: QtWidgets.QWidget | None = None, node_graph: Any | None = None) -> None:
         self._search_text = ""
         self._search_variants_enabled = False
-        self._on_open_variant_manager: Any | None = None
+        self._on_open_variant_catalog: Any | None = None
         self._node_graph = node_graph
-        self._variant_manager_dialogs: list[QtWidgets.QDialog] = []
+        self._variant_catalog_dialogs: list[QtWidgets.QDialog] = []
         self._tree_build_activated = False
         self._tree_build_generation = 0
         self._tree_build_rows: list[tuple[str, str, str, str, list[Any]]] = []
@@ -85,8 +85,8 @@ class _F8StudioNodesTreeWidget(NodesTreeWidget):
         self._search_variants_enabled = val
         self.update()
 
-    def set_open_variant_manager_callback(self, callback: Any | None) -> None:
-        self._on_open_variant_manager = callback
+    def set_open_variant_catalog_callback(self, callback: Any | None) -> None:
+        self._on_open_variant_catalog = callback
 
     def _build_search_blob(self, *, node_cls: Any, node_name: str, node_id: str) -> str:
         parts: list[str] = [str(node_name), str(node_id)]
@@ -158,31 +158,31 @@ class _F8StudioNodesTreeWidget(NodesTreeWidget):
             return
         show_node_docs_dialog(parent=self, spec=spec, node_id=node_id, node_name=node_name)
 
-    def _open_variant_manager(self, *, base_node_type: str, base_node_name: str) -> None:
-        callback = self._on_open_variant_manager
+    def _open_variant_catalog(self, *, base_node_type: str, base_node_name: str) -> None:
+        callback = self._on_open_variant_catalog
         if callable(callback):
             callback(base_node_type=base_node_type, base_node_name=base_node_name)
             return
         try:
-            from ...assets.ui.variant_manager_dialog import VariantManagerDialog
+            from ...assets.ui.variant_catalog_dialog import VariantCatalogDialog
 
-            dlg = VariantManagerDialog(
+            dlg = VariantCatalogDialog(
                 parent=self.window(),
                 base_node_type=base_node_type,
                 base_node_name=base_node_name,
                 node_graph=self._node_graph,
             )
             dlg.setAttribute(QtCore.Qt.WA_DeleteOnClose, True)
-            dlg.destroyed.connect(self._on_variant_manager_destroyed)  # type: ignore[attr-defined]
-            self._variant_manager_dialogs.append(dlg)
+            dlg.destroyed.connect(self._on_variant_catalog_destroyed)  # type: ignore[attr-defined]
+            self._variant_catalog_dialogs.append(dlg)
             dlg.show()
             dlg.raise_()
             dlg.activateWindow()
         except Exception as exc:
-            show_warning(self, "Open variant manager failed", str(exc))
+            show_warning(self, "Open Variant Catalog Failed", str(exc))
 
-    def _on_variant_manager_destroyed(self, obj: Any) -> None:
-        self._variant_manager_dialogs = [dialog for dialog in self._variant_manager_dialogs if dialog is not obj]
+    def _on_variant_catalog_destroyed(self, obj: Any) -> None:
+        self._variant_catalog_dialogs = [dialog for dialog in self._variant_catalog_dialogs if dialog is not obj]
 
     def _on_item_clicked(self, item: QtWidgets.QTreeWidgetItem, column: int) -> None:
         if item.type() != TYPE_NODE:
@@ -219,7 +219,7 @@ class _F8StudioNodesTreeWidget(NodesTreeWidget):
         variant_name = str(item.data(0, self._ROLE_VARIANT_NAME) or "").strip()
 
         action_info = menu.addAction("Show Details")
-        action_manage = menu.addAction("Manage Variants...")
+        action_manage = menu.addAction("Open Variant Catalog...")
         action_delete_variant = None
         if is_variant_item and variant_id:
             menu.addSeparator()
@@ -240,7 +240,7 @@ class _F8StudioNodesTreeWidget(NodesTreeWidget):
             self._show_spec_dialog(node_id=base_node_id, node_name=base_node_name)
             return
         if chosen == action_manage:
-            self._open_variant_manager(base_node_type=base_node_id, base_node_name=base_node_name)
+            self._open_variant_catalog(base_node_type=base_node_id, base_node_name=base_node_name)
             return
         if action_delete_variant is not None and chosen == action_delete_variant:
             reply = QtWidgets.QMessageBox.question(self, "Delete variant", f"Delete variant '{variant_name}'?")
@@ -514,8 +514,8 @@ class F8StudioNodeLibraryWidget(QtWidgets.QWidget):
     def set_category_label(self, category: str, label: str) -> None:
         self._tree.set_category_label(category, label)
 
-    def set_open_variant_manager_callback(self, callback: Any | None) -> None:
-        self._tree.set_open_variant_manager_callback(callback)
+    def set_open_variant_catalog_callback(self, callback: Any | None) -> None:
+        self._tree.set_open_variant_catalog_callback(callback)
 
     def update(self) -> None:
         self._tree.update()

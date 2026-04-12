@@ -1078,9 +1078,9 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
 
     @QtCore.Slot()
     def _on_variant_catalog_action(self) -> None:
-        from ...assets.ui.variant_manager_dialog import VariantManagerDialog
+        from ...assets.ui.variant_catalog_dialog import VariantCatalogDialog
 
-        dialog = VariantManagerDialog(
+        dialog = VariantCatalogDialog(
             parent=self,
             base_node_type=None,  # Global mode
             base_node_name=None,

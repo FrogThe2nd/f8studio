@@ -54,7 +54,7 @@ _LOCAL_DRAFT_LABEL = "Local Draft"
 _LOCAL_DRAFT_LOAD_TOOLTIP = "Not available for Local Draft"
 
 
-class VariantManagerDialog(QtWidgets.QDialog):
+class VariantCatalogDialog(QtWidgets.QDialog):
     _TAB_MINE = 0
     _TAB_COMMUNITY = 1
     _TAB_INSTALLED = 2
