@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from qtpy import QtWidgets
+from NodeGraphQt.constants import NodeEnum
 
 from f8pysdk.specs import F8OperatorSpec, F8SpecEditPolicy, editable_collection_edit_policy
 from f8pysdk.registry import RuntimeNodeRegistry
@@ -202,6 +203,23 @@ def test_patch_hub_terminal_labels_are_visible_on_input_side() -> None:
     assert input_texts["[S]state"].isVisible()
     assert not output_texts["data[D]"].isVisible()
     assert not output_texts["state[S]"].isVisible()
+
+
+def test_patch_hub_renderer_uses_compact_width_and_tighter_terminal_spacing() -> None:
+    _ensure_app()
+    node = PatchHubRenderNode()
+    node.view.draw_node()
+
+    data_in_port = node.inputs()["[D]data"]
+    state_in_port = node.inputs()["[S]state"]
+    row_delta = float(state_in_port.view.y()) - float(data_in_port.view.y())
+    state_bottom = float(state_in_port.view.y()) + float(state_in_port.view.boundingRect().height())
+    bottom_blank = float(node.view._height) - state_bottom
+
+    assert float(node.view._width) <= 72.0
+    assert float(node.view._width) < float(NodeEnum.WIDTH.value)
+    assert abs(row_delta - 16.0) < 0.1
+    assert bottom_blank <= 8.0
 
 
 def test_patch_hub_port_editor_renames_mirrored_terminals() -> None:
