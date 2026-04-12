@@ -215,6 +215,33 @@ class UdpInTests(unittest.IsolatedAsyncioTestCase):
             if isinstance(node, UdpInRuntimeNode):
                 await node.close()
 
+    async def test_packet_output_tracks_exec_context_snapshot(self) -> None:
+        port = _free_udp_port()
+        bus, node, ctx = await self._setup_runtime(port=port, output_mode="text")
+        try:
+            _send_udp(port=port, payload=b"first-packet")
+            _send_udp(port=port, payload=b"second-packet")
+            await self._wait_exec_calls(ctx, at_least=2, timeout_s=1.5)
+
+            first_exec_id = ctx.calls[0][1]
+            second_exec_id = ctx.calls[1][1]
+            first_packet = await node.compute_output("packet", ctx_id=first_exec_id)
+            second_packet = await node.compute_output("packet", ctx_id=second_exec_id)
+
+            self.assertIsInstance(first_packet, dict)
+            self.assertIsInstance(second_packet, dict)
+            assert isinstance(first_packet, dict)
+            assert isinstance(second_packet, dict)
+            self.assertEqual(first_packet["text"], "first-packet")
+            self.assertEqual(second_packet["text"], "second-packet")
+
+            latest_packet = await self._compute_output(node, "packet")
+            self.assertIsInstance(latest_packet, dict)
+            assert isinstance(latest_packet, dict)
+            self.assertEqual(latest_packet["text"], "second-packet")
+        finally:
+            await self._teardown_runtime(node)
+
 
 if __name__ == "__main__":
     unittest.main()

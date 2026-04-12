@@ -6,6 +6,7 @@ import json
 import logging
 import socket
 from dataclasses import dataclass
+from collections import deque
 from typing import Any
 
 from f8pysdk.codec import coerce_flag
@@ -18,6 +19,7 @@ from f8pysdk.specs import (
     F8StateSpec,
     any_schema,
     boolean_schema,
+    complex_object_schema,
     integer_schema,
     string_schema,
 )
@@ -37,6 +39,7 @@ _OUTPUT_MODE_TEXT = "text"
 _OUTPUT_MODE_JSON = "json"
 _OUTPUT_MODE_BYTEARRAY = "bytearray"
 _OUTPUT_MODE_ENUM = [_OUTPUT_MODE_TEXT, _OUTPUT_MODE_JSON, _OUTPUT_MODE_BYTEARRAY]
+_EXEC_PACKET_CACHE_MIN = 256
 
 
 @dataclass(frozen=True)
@@ -57,6 +60,22 @@ class _PacketRecord:
     json_value: Any | None
     json_valid: bool
     json_error: str
+
+
+def _packet_payload_schema():
+    return complex_object_schema(
+        properties={
+            "timestampMs": integer_schema(),
+            "remoteAddress": string_schema(),
+            "remotePort": integer_schema(),
+            "byteLength": integer_schema(),
+            "raw": any_schema(),
+            "text": string_schema(),
+            "json": any_schema(),
+            "jsonValid": boolean_schema(),
+            "value": any_schema(),
+        }
+    )
 
 
 class _UdpProtocol(asyncio.DatagramProtocol):
@@ -130,6 +149,9 @@ class UdpInRuntimeNode(OperatorNode, EntrypointNode):
         self._packet_count = 0
         self._last_error = ""
         self._latest_packet: _PacketRecord | None = None
+        self._packet_by_ctx_id: dict[str, _PacketRecord] = {}
+        self._packet_ctx_order: deque[str] = deque()
+        self._packet_snapshot_limit = _EXEC_PACKET_CACHE_MIN
         self._output_version = 0
         self._entrypoint_ctx: EntrypointContext | None = None
         self._pending_exec_id: str | int | None = None
@@ -172,7 +194,6 @@ class UdpInRuntimeNode(OperatorNode, EntrypointNode):
         return bool(bus.active)
 
     async def compute_output(self, port: str, ctx_id: str | int | None = None) -> Any:
-        del ctx_id
         if not self._bus_active():
             await self._stop_receiver()
             return None
@@ -183,7 +204,7 @@ class UdpInRuntimeNode(OperatorNode, EntrypointNode):
 
         await self._ensure_receiver()
         async with self._packet_lock:
-            packet = self._latest_packet
+            packet = self._packet_for_ctx_locked(ctx_id)
             output_mode = self._output_mode
 
         if packet is None:
@@ -323,6 +344,7 @@ class UdpInRuntimeNode(OperatorNode, EntrypointNode):
         self._cfg = cfg
         self._queue = queue
         self._dropped_ref[0] = 0
+        self._packet_snapshot_limit = max(_EXEC_PACKET_CACHE_MIN, int(cfg.max_queue) * 2)
 
         sock: socket.socket | None = None
         try:
@@ -375,6 +397,9 @@ class UdpInRuntimeNode(OperatorNode, EntrypointNode):
 
         self._queue = None
         self._cfg = None
+        async with self._packet_lock:
+            self._packet_by_ctx_id.clear()
+            self._packet_ctx_order.clear()
         await self._publish_runtime_state()
 
     async def _drain_loop(self) -> None:
@@ -388,12 +413,14 @@ class UdpInRuntimeNode(OperatorNode, EntrypointNode):
                     continue
                 packet = self._decode_packet(rx_ts_ms=rx_ts_ms, raw=raw, addr=addr)
                 self._packet_count += 1
+                self._emit_seq += 1
+                exec_id = int(self._emit_seq)
                 async with self._packet_lock:
                     self._latest_packet = packet
+                    self._store_packet_snapshot_locked(exec_id=exec_id, packet=packet)
                     self._bump_output_version()
                 await self._publish_packet_state(packet)
-                self._emit_seq += 1
-                self._request_exec_emit(exec_id=int(self._emit_seq))
+                self._request_exec_emit(exec_id=exec_id)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -436,11 +463,34 @@ class UdpInRuntimeNode(OperatorNode, EntrypointNode):
             "remoteAddress": packet.remote_address,
             "remotePort": int(packet.remote_port),
             "byteLength": len(packet.raw),
+            "raw": bytearray(packet.raw),
             "text": packet.text,
             "json": packet.json_value if packet.json_valid else None,
             "jsonValid": bool(packet.json_valid),
             "value": self._value_for_mode(packet, output_mode=output_mode),
         }
+
+    @staticmethod
+    def _ctx_key(ctx_id: str | int | None) -> str:
+        return str(ctx_id) if ctx_id is not None else ""
+
+    def _packet_for_ctx_locked(self, ctx_id: str | int | None) -> _PacketRecord | None:
+        if ctx_id is not None:
+            packet = self._packet_by_ctx_id.get(self._ctx_key(ctx_id))
+            if packet is not None:
+                return packet
+        return self._latest_packet
+
+    def _store_packet_snapshot_locked(self, *, exec_id: str | int, packet: _PacketRecord) -> None:
+        ctx_key = self._ctx_key(exec_id)
+        if not ctx_key:
+            return
+        if ctx_key not in self._packet_by_ctx_id:
+            self._packet_ctx_order.append(ctx_key)
+        self._packet_by_ctx_id[ctx_key] = packet
+        while len(self._packet_ctx_order) > self._packet_snapshot_limit:
+            oldest_key = self._packet_ctx_order.popleft()
+            self._packet_by_ctx_id.pop(oldest_key, None)
 
     async def _publish_runtime_state(self) -> None:
         await self.set_state("listening", bool(self._transport is not None))
@@ -548,7 +598,7 @@ UdpInRuntimeNode.SPEC = F8OperatorSpec(
         F8DataPortSpec(
             name="packet",
             description="Latest packet metadata plus text/json/value views.",
-            valueSchema=any_schema(),
+            valueSchema=_packet_payload_schema(),
         ),
     ],
     stateFields=[

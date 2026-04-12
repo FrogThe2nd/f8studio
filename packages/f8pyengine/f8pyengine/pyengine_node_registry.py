@@ -17,6 +17,7 @@ from .constants import SERVICE_CLASS
 from .operators.serial_out import register_operator as register_serial_out_operator
 from .operators.udp_in import register_operator as register_udp_in_operator
 from .operators.udp_out import register_operator as register_udp_out_operator
+from .operators.skeleton_decoder import register_operator as register_skeleton_decoder_operator
 from .operators.exec_sequence import register_operator as register_exec_sequence_operator
 from .operators.signal import register_operator as register_signal_operator
 from .operators.print import register_operator as register_print_operator
@@ -26,7 +27,6 @@ from .operators.envelope import register_operator as register_envelope_operator
 from .operators.smooth_filter import register_operator as register_smooth_filter_operator
 from .operators.range_map import register_operator as register_range_map_operator
 from .operators.rate_limiter import register_operator as register_rate_limiter_operator
-from .operators.udp_skeleton import register_operator as register_udp_skeleton_operator
 from .operators.tcode import register_operator as register_tcode_operator
 from .operators.python_script import register_operator as register_python_script_operator
 from .operators.data_expr import register_operator as register_data_expr_operator
@@ -42,7 +42,7 @@ from .operators.state_trigger import register_operator as register_state_trigger
 from .operators.state_expr import register_operator as register_state_expr_operator
 from .operators.bone_filter import register_operator as register_bone_filter_operator
 from .operators.quat_to_euler import register_operator as register_quat_to_euler_operator
-from .operators.udp_vmc import register_operator as register_udp_vmc_operator
+from .operators.vmc_decoder import register_operator as register_vmc_decoder_operator
 from .operators.bone_selector import register_operator as register_bone_selector_operator
 from .operators.wave_expr import register_operator as register_wave_expr_operator
 from .operators.wave_pattern import register_operator as register_wave_pattern_operator
@@ -102,9 +102,9 @@ def register_pyengine_specs(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistr
     register_smooth_filter_operator(registry)
     register_range_map_operator(registry)
     register_rate_limiter_operator(registry)
-    register_udp_skeleton_operator(registry)
     register_serial_out_operator(registry)
     register_udp_in_operator(registry)
+    register_skeleton_decoder_operator(registry)
     register_udp_out_operator(registry)
     register_tcode_operator(registry)
     register_python_script_operator(registry)
@@ -121,7 +121,7 @@ def register_pyengine_specs(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistr
     register_state_expr_operator(registry)
     register_bone_filter_operator(registry)
     register_quat_to_euler_operator(registry)
-    register_udp_vmc_operator(registry)
+    register_vmc_decoder_operator(registry)
     register_bone_selector_operator(registry)
     register_wave_expr_operator(registry)
     register_wave_pattern_operator(registry)

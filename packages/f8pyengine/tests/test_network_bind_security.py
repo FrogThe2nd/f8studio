@@ -19,10 +19,7 @@ from f8pyengine.operators.lovense_mock_server import (  # noqa: E402
     LovenseMockServerRuntimeNode,
     register_operator as register_lovense_mock_server,
 )
-from f8pyengine.operators.udp_skeleton import (  # noqa: E402
-    UdpSkeletonRuntimeNode,
-    register_operator as register_udp_skeleton,
-)
+from f8pyengine.operators.udp_in import UdpInRuntimeNode, register_operator as register_udp_in  # noqa: E402
 
 
 class NetworkBindSecurityTests(unittest.IsolatedAsyncioTestCase):
@@ -53,20 +50,20 @@ class NetworkBindSecurityTests(unittest.IsolatedAsyncioTestCase):
             if isinstance(node, LovenseMockServerRuntimeNode):
                 await node.close()
 
-    async def test_udp_skeleton_rejects_non_loopback_by_default(self) -> None:
+    async def test_udp_in_rejects_non_loopback_by_default(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
         reg = create_runtime_node_registry()
-        register_udp_skeleton(reg)
+        register_udp_in(reg)
         _ = ServiceHost(bus, config=ServiceHostConfig(service_class=SERVICE_CLASS), registry=reg)
 
         op = F8RuntimeNode(
             nodeId="udp1",
             serviceId="svcA",
             serviceClass=SERVICE_CLASS,
-            operatorClass=UdpSkeletonRuntimeNode.SPEC.operatorClass,
-            stateFields=list(UdpSkeletonRuntimeNode.SPEC.stateFields or []),
-            stateValues={"bindAddress": "127.0.0.1", "port": 39540},
+            operatorClass=UdpInRuntimeNode.SPEC.operatorClass,
+            stateFields=list(UdpInRuntimeNode.SPEC.stateFields or []),
+            stateValues={"bindAddress": "127.0.0.1", "port": 39541},
         )
         await bus.set_rungraph(F8RuntimeGraph(graphId="g2", revision="r1", nodes=[op], edges=[]))
         try:
@@ -77,7 +74,7 @@ class NetworkBindSecurityTests(unittest.IsolatedAsyncioTestCase):
             await bus.publish_state_external("udp1", "bindAddress", "0.0.0.0", source="test")
         finally:
             node = bus.get_node("udp1")
-            if isinstance(node, UdpSkeletonRuntimeNode):
+            if isinstance(node, UdpInRuntimeNode):
                 await node.close()
 
 

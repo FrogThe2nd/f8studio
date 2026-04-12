@@ -184,7 +184,7 @@ BoneSelectorRuntimeNode.SPEC = F8OperatorSpec(
     dataInPorts=[
         F8DataPortSpec(
             name="skeleton",
-            description="Single skeleton payload (e.g. udp_vmc.selectedSkeleton).",
+            description="Single skeleton payload (e.g. skeleton_decoder.selectedSkeleton or vmc_decoder.selectedSkeleton).",
             valueSchema=_skeleton_schema(),
         )
     ],

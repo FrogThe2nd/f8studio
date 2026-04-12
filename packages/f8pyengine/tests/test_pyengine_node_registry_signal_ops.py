@@ -30,6 +30,8 @@ class PyEngineSignalOperatorRegistryTests(unittest.TestCase):
         self.assertIn("f8.bandpass_filter", operator_classes)
         self.assertIn("f8.periodicity_detector", operator_classes)
         self.assertIn("f8.udp_in", operator_classes)
+        self.assertIn("f8.skeleton_decoder", operator_classes)
+        self.assertIn("f8.vmc_decoder", operator_classes)
 
     def test_operator_palette_categories_are_grouped_by_function(self) -> None:
         reg = create_runtime_node_registry()
@@ -43,6 +45,8 @@ class PyEngineSignalOperatorRegistryTests(unittest.TestCase):
         self.assertEqual(str(operators["f8.lowpass_filter"].paletteCategory or ""), "f8.pyengine.signal")
         self.assertEqual(str(operators["f8.python_script"].paletteCategory or ""), "f8.pyengine.expr")
         self.assertEqual(str(operators["f8.bone_filter"].paletteCategory or ""), "f8.pyengine.motion")
+        self.assertEqual(str(operators["f8.skeleton_decoder"].paletteCategory or ""), "f8.pyengine.motion")
+        self.assertEqual(str(operators["f8.vmc_decoder"].paletteCategory or ""), "f8.pyengine.motion")
         self.assertEqual(str(operators["f8.print"].paletteCategory or ""), "f8.pyengine.debug")
 
 
