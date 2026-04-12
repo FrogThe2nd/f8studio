@@ -98,6 +98,36 @@ class _FakeProjectAssetMetaDialog:
         )
 
 
+class _FakeComponentCatalogDialog:
+    last_instance: _FakeComponentCatalogDialog | None = None
+
+    def __init__(self, *, parent: QtWidgets.QWidget | None, node_graph: object) -> None:
+        self.parent = parent
+        self.node_graph = node_graph
+        self.delete_on_close = False
+        self.modal = True
+        self.shown = False
+        self.raised = False
+        self.activated = False
+        type(self).last_instance = self
+
+    def setAttribute(self, attribute: QtCore.Qt.WidgetAttribute, on: bool = True) -> None:
+        if attribute == QtCore.Qt.WA_DeleteOnClose:
+            self.delete_on_close = bool(on)
+
+    def setModal(self, modal: bool) -> None:
+        self.modal = bool(modal)
+
+    def show(self) -> None:
+        self.shown = True
+
+    def raise_(self) -> None:
+        self.raised = True
+
+    def activateWindow(self) -> None:
+        self.activated = True
+
+
 @dataclass
 class _DialogPlan:
     result: int
@@ -233,3 +263,24 @@ def test_save_component_as_dialog_seeds_metadata_from_current_project(monkeypatc
     assert saved_record.tags == ["alpha", "beta"]
     assert saved_record.content == _session_payload("unused")
     assert info_messages == [("Component saved", "Saved component:\nSeed Project")]
+
+
+def test_open_component_catalog_dialog_is_modeless(monkeypatch) -> None:
+    _ensure_app()
+    parent = QtWidgets.QWidget()
+    graph = _FakeGraph()
+    _FakeComponentCatalogDialog.last_instance = None
+
+    monkeypatch.setattr(project_asset_actions, "ComponentCatalogDialog", _FakeComponentCatalogDialog)
+
+    project_asset_actions.open_component_catalog_dialog(parent=parent, studio_graph=graph)
+
+    dialog = _FakeComponentCatalogDialog.last_instance
+    assert dialog is not None
+    assert dialog.parent is parent
+    assert dialog.node_graph is graph
+    assert dialog.delete_on_close is True
+    assert dialog.modal is False
+    assert dialog.shown is True
+    assert dialog.raised is True
+    assert dialog.activated is True

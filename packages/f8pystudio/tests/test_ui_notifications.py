@@ -105,7 +105,7 @@ def test_studio_toast_auto_closes_after_duration() -> None:
     QtWidgets.QApplication.processEvents()
 
     assert closed_toasts == [toast]
-    assert not any(widget.objectName() == "studio-toast" for widget in QtWidgets.QApplication.topLevelWidgets())
+    assert toast not in _ACTIVE_TOASTS
 
     parent.close()
     QtWidgets.QApplication.processEvents()
@@ -153,9 +153,9 @@ def test_studio_toast_reflows_without_overlap_after_bottom_toast_closes() -> Non
     QtTest.QTest.qWait(260)
     QtWidgets.QApplication.processEvents()
 
-    visible_toasts = [widget for widget in QtWidgets.QApplication.topLevelWidgets() if widget.objectName() == "studio-toast"]
-
-    assert len(visible_toasts) == 2
+    assert toast_bottom not in _ACTIVE_TOASTS
+    assert toast_middle in _ACTIVE_TOASTS
+    assert toast_top in _ACTIVE_TOASTS
     assert toast_middle.y() > toast_top.y()
     assert toast_middle.y() >= toast_top.y() + toast_top.height() + _TOAST_SPACING
 

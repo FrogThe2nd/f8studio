@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 from f8pysdk.codec import copy_model
-from f8pystudio.nodegraph.session_schema import SESSION_SCHEMA_VERSION, extract_layout
+from f8pystudio.nodegraph.session_schema import extract_layout
 from .component_catalog import ComponentCatalogService
 from .component_models import F8ComponentDraftOriginKind, F8ComponentEntry, F8ComponentRecord, F8ComponentSourceKind
 from ..common import JsonObject, json_object_loads, json_string_list_loads
@@ -85,10 +85,7 @@ def _metadata_tags(metadata: dict[str, object]) -> list[str]:
 
 
 def _content_schema_version(content: JsonObject) -> str:
-    raw_schema_version = content.get("schemaVersion")
-    if raw_schema_version is None:
-        return SESSION_SCHEMA_VERSION
-    return str(raw_schema_version)
+    return str(content["schemaVersion"])
 
 
 __all__ = [

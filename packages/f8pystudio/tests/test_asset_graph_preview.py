@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from dataclasses import dataclass
 from typing import cast
 
 from qtpy import QtCore, QtTest, QtWidgets
@@ -58,6 +59,23 @@ def _wait_for_preview_completion(pane: AssetGraphPreviewPane) -> None:
         QtTest.QTest.qWait(_PREVIEW_BUILD_WAIT_STEP_MS)
         elapsed_ms += _PREVIEW_BUILD_WAIT_STEP_MS
     QtWidgets.QApplication.processEvents()
+
+
+@dataclass
+class _FakeComponentSaveSelectedNode:
+    id: str
+
+
+class _FakeComponentSaveGraph:
+    def __init__(self, *, payload: dict[str, object], selected_nodes: list[_FakeComponentSaveSelectedNode]) -> None:
+        self._payload = dump_json(payload, mode="json")
+        self._selected_nodes = list(selected_nodes)
+
+    def selected_nodes(self) -> list[object]:
+        return list(self._selected_nodes)
+
+    def serialize_publish_session(self) -> dict[str, object]:
+        return dump_json(self._payload, mode="json")
 
 
 def _make_service_node_class() -> type[F8StudioServiceBaseNode]:
@@ -897,7 +915,211 @@ def test_component_catalog_context_menu_shows_mine_actions_and_insert(monkeypatc
         remote_entry=None,
     )
 
-    assert [action.text() for action in menu.actions()] == ["Offload", "Copy to Draft", "Sync", "Make Public", "", "Insert Into Graph"]
+    assert [action.text() for action in menu.actions()] == ["Offload", "Delete", "Copy to Draft", "Sync", "Make Public", "", "Create on canvas"]
+
+    dialog.close()
+
+
+def test_component_dialog_toolbar_matches_variant_style_for_community(monkeypatch) -> None:
+    _ensure_app()
+    monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_dialog.subscribe_components_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(ComponentCatalogDialog, "_reload", lambda self, *_args: None)
+    dialog = ComponentCatalogDialog(parent=None, node_graph=None)
+    entry = F8ComponentEntry(
+        record=F8ComponentRecord(
+            componentId="component-community-toolbar",
+            name="Community Toolbar Component",
+            content=_component_payload_for_node(_make_service_node_class()),
+        ),
+        source=F8ComponentSourceKind.remote_public,
+        installed=False,
+        subscribed=False,
+    )
+    dialog._entries = [entry]
+    dialog._sync_client._catalog_service._remote_provider.save_entries([entry])
+    item = QtWidgets.QListWidgetItem()
+    item.setData(QtCore.Qt.ItemDataRole.UserRole, "component-community-toolbar")
+    dialog._list.addItem(item)
+
+    dialog._scope_tabs.setCurrentIndex(dialog._TAB_COMMUNITY)
+    dialog._list.setCurrentRow(0)
+    QtWidgets.QApplication.processEvents()
+
+    assert dialog._btn_subscribe.isHidden() is False
+    assert dialog._btn_subscribe.toolTip() == "Subscribe"
+    assert dialog._btn_copy_local.isHidden() is False
+    assert dialog._btn_copy_local.toolTip() == "Copy to Draft"
+    assert dialog._btn_install.isHidden() is True
+    assert dialog._btn_upload.isHidden() is True
+    assert dialog._btn_delete.isHidden() is True
+    assert dialog._btn_edit.isHidden() is True
+    assert dialog._btn_visibility.isHidden() is True
+
+    dialog.close()
+
+
+def test_component_catalog_create_on_canvas_keeps_dialog_open(monkeypatch) -> None:
+    _ensure_app()
+
+    class _FakeInsertRequest:
+        node_count = 2
+
+    class _FakeGraph:
+        def __init__(self) -> None:
+            self.prepare_calls: list[tuple[object, str]] = []
+            self.placement_calls: list[tuple[object, str]] = []
+
+        def prepare_insert_graph_from_component(self, payload: object, *, component_name: str) -> _FakeInsertRequest:
+            self.prepare_calls.append((payload, component_name))
+            return _FakeInsertRequest()
+
+        def begin_graph_placement(self, request: object, *, label: str = "") -> None:
+            self.placement_calls.append((request, str(label)))
+
+    monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_dialog.subscribe_components_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(ComponentCatalogDialog, "_reload", lambda self, *_args: None)
+    dialog = ComponentCatalogDialog(parent=None, node_graph=_FakeGraph())
+    entry = F8ComponentEntry(
+        record=F8ComponentRecord(
+            componentId="component-create",
+            name="Create Component",
+            content=_component_payload_for_node(_make_service_node_class()),
+        ),
+        source=F8ComponentSourceKind.local,
+        installed=True,
+    )
+    accept_calls: list[str] = []
+
+    monkeypatch.setattr(dialog, "_selected_entry", lambda: entry)
+    monkeypatch.setattr(dialog, "_ensure_component_hydrated", lambda selected_entry, operation_name: selected_entry)
+    monkeypatch.setattr(dialog, "accept", lambda: accept_calls.append("accept"))
+
+    fake_graph = dialog._graph
+    assert fake_graph is not None
+
+    dialog._on_insert_clicked()
+
+    assert accept_calls == []
+    assert fake_graph.prepare_calls == [(entry.record.content, "Create Component")]
+    assert len(fake_graph.placement_calls) == 1
+    assert fake_graph.placement_calls[0][1] == "Component: Create Component\n2 nodes"
+
+    dialog.close()
+
+
+def test_component_catalog_save_as_component_uses_selected_subgraph(monkeypatch) -> None:
+    _ensure_app()
+    payload = wrap_layout_for_save(
+        {
+            "nodes": {
+                "node_a": {"id": "node_a", "name": "Node A"},
+                "node_b": {"id": "node_b", "name": "Node B"},
+                "node_c": {"id": "node_c", "name": "Node C"},
+            },
+            "connections": [
+                {"out": ["node_a", "out"], "in": ["node_b", "in"]},
+                {"out": ["node_b", "out"], "in": ["node_c", "in"]},
+            ],
+        }
+    )
+    graph = _FakeComponentSaveGraph(
+        payload=payload,
+        selected_nodes=[_FakeComponentSaveSelectedNode("node_a"), _FakeComponentSaveSelectedNode("node_b")],
+    )
+    saved_records: list[object] = []
+    info_messages: list[tuple[str, str]] = []
+
+    class _FakeMetaDialog:
+        def __init__(
+            self,
+            *,
+            parent: QtWidgets.QWidget | None,
+            title: str,
+            name: str,
+            description: str,
+            tags: list[str],
+        ) -> None:
+            del parent, title
+            self._name = name
+            self._description = description
+            self._tags = list(tags)
+
+        def exec(self) -> int:
+            return QtWidgets.QDialog.Accepted
+
+        def values(self) -> tuple[str, str, list[str]]:
+            return (self._name, self._description, list(self._tags))
+
+    monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_dialog.subscribe_components_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(ComponentCatalogDialog, "_reload", lambda self, *_args: None)
+    monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_dialog.ProjectAssetMetaDialog", _FakeMetaDialog)
+    monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_dialog.upsert_component", lambda record: saved_records.append(record))
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.component_catalog_dialog.show_info",
+        lambda _parent, title, message: info_messages.append((str(title), str(message))),
+    )
+    dialog = ComponentCatalogDialog(parent=None, node_graph=graph)
+
+    dialog._on_add_clicked()
+
+    assert len(saved_records) == 1
+    saved_record = saved_records[0]
+    assert saved_record.name == "Untitled Component"
+    assert set(saved_record.content["layout"]["nodes"].keys()) == {"node_a", "node_b"}
+    assert saved_record.content["layout"]["connections"] == [{"out": ["node_a", "out"], "in": ["node_b", "in"]}]
+    assert info_messages == [("Saved", "Saved component:\nUntitled Component")]
+
+    dialog.close()
+
+
+def test_component_catalog_save_as_component_uses_full_graph_without_selection(monkeypatch) -> None:
+    _ensure_app()
+    payload = wrap_layout_for_save(
+        {
+            "nodes": {
+                "node_a": {"id": "node_a", "name": "Node A"},
+                "node_b": {"id": "node_b", "name": "Node B"},
+            },
+            "connections": [
+                {"out": ["node_a", "out"], "in": ["node_b", "in"]},
+            ],
+        }
+    )
+    graph = _FakeComponentSaveGraph(payload=payload, selected_nodes=[])
+    saved_records: list[object] = []
+
+    class _FakeMetaDialog:
+        def __init__(
+            self,
+            *,
+            parent: QtWidgets.QWidget | None,
+            title: str,
+            name: str,
+            description: str,
+            tags: list[str],
+        ) -> None:
+            del parent, title
+            self._name = name
+            self._description = description
+            self._tags = list(tags)
+
+        def exec(self) -> int:
+            return QtWidgets.QDialog.Accepted
+
+        def values(self) -> tuple[str, str, list[str]]:
+            return (self._name, self._description, list(self._tags))
+
+    monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_dialog.subscribe_components_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(ComponentCatalogDialog, "_reload", lambda self, *_args: None)
+    monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_dialog.ProjectAssetMetaDialog", _FakeMetaDialog)
+    monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_dialog.upsert_component", lambda record: saved_records.append(record))
+    monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_dialog.show_info", lambda *_args: None)
+    dialog = ComponentCatalogDialog(parent=None, node_graph=graph)
+
+    dialog._on_add_clicked()
+
+    assert len(saved_records) == 1
+    assert saved_records[0].content == payload
 
     dialog.close()
 
@@ -1215,5 +1437,48 @@ def test_variant_dialog_cached_remote_preview_does_not_refetch_content(monkeypat
 
     assert cache_calls == []
     assert "variant-cached" in dialog._raw.toPlainText()
+
+    dialog.close()
+
+
+def test_variant_dialog_enables_history_for_local_entry(monkeypatch) -> None:
+    _ensure_app()
+    monkeypatch.setattr("f8pystudio.assets.ui.variant_manager_dialog.subscribe_variants_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(VariantManagerDialog, "_reload", lambda self, *_args, **_kwargs: None)
+    dialog = VariantManagerDialog(
+        parent=None,
+        base_node_type="svc.preview.variant",
+        base_node_name="Preview Variant",
+        node_graph=None,
+    )
+    entry = F8VariantEntry(
+        record=F8VariantRecord(
+            variantId="variant-local-history",
+            kind=F8VariantKind.service,
+            baseNodeType="svc.preview.service",
+            serviceClass="svc.preview.service",
+            operatorClass=None,
+            name="Local History Variant",
+            description="",
+            tags=[],
+            spec={"label": "Local History Variant"},
+            createdAt=variant_now_iso(),
+            updatedAt=variant_now_iso(),
+        ),
+        source=F8VariantSourceKind.local,
+        installed=True,
+    )
+    dialog._entries = [entry]
+    dialog._local_entry_for_variant_id = lambda _variant_id: entry  # type: ignore[method-assign]
+    dialog._remote_entry_for_variant_id = lambda _variant_id: None  # type: ignore[method-assign]
+    item = QtWidgets.QListWidgetItem()
+    item.setData(QtCore.Qt.ItemDataRole.UserRole, "variant-local-history")
+    dialog._list.addItem(item)
+
+    dialog._scope_tabs.setCurrentIndex(dialog._TAB_MINE)
+    dialog._list.setCurrentRow(0)
+    QtWidgets.QApplication.processEvents()
+
+    assert dialog._btn_history.isEnabled() is True
 
     dialog.close()

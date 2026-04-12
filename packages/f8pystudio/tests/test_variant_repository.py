@@ -15,6 +15,7 @@ from f8pystudio.assets.variants.variant_models import (
 )
 from f8pysdk.specs import F8VariantRecord
 from f8pystudio.assets.variants.variant_catalog import VariantCatalogService
+from f8pystudio.assets.variants.variant_ids import build_variant_node_type, parse_variant_node_type
 from f8pystudio.assets.variants.variant_repository import (
     delete_variant,
     export_to_json,
@@ -86,9 +87,13 @@ def test_import_auto_renames_duplicates(monkeypatch: pytest.MonkeyPatch, tmp_pat
         "entries": [
             {
                 "record": dump_json(_make_variant_record(variant_id="v2", base_node_type="svc.a.op", name="name"), mode="json"),
+                "isLocalDraft": False,
+                "draftOriginKind": None,
             },
             {
                 "record": dump_json(_make_variant_record(variant_id="v3", base_node_type="svc.a.op", name=" name "), mode="json"),
+                "isLocalDraft": False,
+                "draftOriginKind": None,
             },
         ],
     }
@@ -176,3 +181,35 @@ def test_export_import_library_v1_entries_preserves_current_version_and_sync_bas
     assert imported.draftOriginKind == F8VariantDraftOriginKind.copy_remote
     assert imported.draftOriginAssetId == "remote-sync"
     assert imported.draftOriginRevision == "r7"
+
+
+def test_import_rejects_variant_library_without_draft_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _patch_variants_file(monkeypatch, tmp_path)
+    import_path = tmp_path / "legacy-variants.json"
+    payload = {
+        "schemaVersion": "f8variantlib/1",
+        "entries": [
+            {
+                "record": dump_json(_make_variant_record(variant_id="v-legacy", base_node_type="svc.a.op", name="legacy"), mode="json"),
+            }
+        ],
+    }
+    import_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="isLocalDraft"):
+        import_from_json(str(import_path), mode="merge")
+
+
+def test_variant_node_type_round_trips_real_variant_id() -> None:
+    variant_id = "0c04f579-13de-4fa6-be5a-096960ebf8f2"
+
+    node_type = build_variant_node_type(variant_id)
+
+    assert parse_variant_node_type(node_type) == variant_id
+
+
+def test_variant_node_type_rejects_legacy_prefix() -> None:
+    assert parse_variant_node_type("__variant__:legacy-id") is None

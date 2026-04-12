@@ -117,7 +117,7 @@ def test_node_info_dialog_raw_json_attaches_json_enhancements(monkeypatch) -> No
 
 def test_node_variant_manager_raw_json_attaches_json_enhancements(monkeypatch) -> None:
     _ensure_app()
-    monkeypatch.setattr("f8pystudio.assets.ui.variant_manager_dialog.list_variants_for_base", lambda _base: [])
+    monkeypatch.setattr("f8pystudio.assets.ui.variant_manager_dialog.list_entries_for_base", lambda _base: [])
     monkeypatch.setattr(
         "f8pystudio.assets.ui.variant_manager_dialog.subscribe_variants_changed",
         lambda _cb: (lambda: None),

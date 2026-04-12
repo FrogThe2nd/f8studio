@@ -853,7 +853,7 @@ def _variant_entry_from_local_row(row: object) -> F8VariantEntry:
         syncBaseLocalVersionNumber=int(str(row_mapping.get("sync_base_local_version_number")))
         if row_mapping.get("sync_base_local_version_number") is not None
         else None,
-        isLocalDraft=_sqlite_row_optional_bool(row_mapping, "is_local_draft"),
+        isLocalDraft=_sqlite_row_bool(row_mapping, "is_local_draft"),
         draftOriginKind=_variant_draft_origin_kind_from_row(row_mapping, "draft_origin_kind"),
         draftOriginAssetId=mapping_optional_str(row_mapping, "draft_origin_asset_id"),
         draftOriginRevision=mapping_optional_str(row_mapping, "draft_origin_revision"),
@@ -998,11 +998,8 @@ def _decompress_content(data: bytes | None) -> str:
         return "{}"
     try:
         return zlib.decompress(data, wbits=31).decode("utf-8")
-    except Exception:
-        # Fallback for unexpected corruption or if somehow a string leaked in
-        if isinstance(data, str):
-            return data
-        return data.decode("utf-8", errors="replace")
+    except zlib.error as exc:
+        raise ValueError("Invalid compressed variant content.") from exc
 
 
 def _row_mapping(row: object) -> Mapping[object, object]:
@@ -1042,13 +1039,6 @@ def _json_value_dict_from_object(value: object) -> dict[str, F8JsonValue]:
 
 def _sqlite_row_bool(row: Mapping[object, object], key: str) -> bool:
     return bool(int(str(row[key])))
-
-
-def _sqlite_row_optional_bool(row: Mapping[object, object], key: str) -> bool:
-    value = row.get(key)
-    if value is None:
-        return False
-    return bool(int(str(value)))
 
 
 def _variant_draft_origin_kind_from_row(

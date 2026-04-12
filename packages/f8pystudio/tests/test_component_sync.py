@@ -212,6 +212,12 @@ class _ComponentApiHandler(BaseHTTPRequestHandler):
         self._write_json(404, {"message": "missing"})
 
     def do_DELETE(self) -> None:  # noqa: N802
+        if self.path == "/v1/components/private-1":
+            if not self._check_auth():
+                return
+            self.server.deleted_component_ids.append("private-1")
+            self._write_json(200, {"ok": True})
+            return
         if self.path == "/v1/components/public-1/subscribe":
             if not self._check_auth():
                 return
@@ -232,6 +238,7 @@ class _Server(ThreadingHTTPServer):
         self.public_asset_summary = self.asset_summary_payload(self.public_record, visibility="public")
         self.private_asset_summary = self.asset_summary_payload(self.private_record, visibility="private")
         self.last_create_payload: dict[str, object] = {}
+        self.deleted_component_ids: list[str] = []
 
     @staticmethod
     def asset_payload(
@@ -374,7 +381,7 @@ def test_component_sync_client_supports_anonymous_public_install_and_cookie_sess
         thread.join(timeout=5)
 
 
-def test_component_sync_client_drops_legacy_saved_sessions_without_crashing(tmp_path: Path) -> None:
+def test_component_sync_client_rejects_legacy_saved_sessions(tmp_path: Path) -> None:
     settings = QtCore.QSettings(str(tmp_path / "component-sync-legacy.ini"), QtCore.QSettings.IniFormat)
     settings.beginGroup("variants/remote_sync/v1")
     settings.setValue(
@@ -399,8 +406,10 @@ def test_component_sync_client_drops_legacy_saved_sessions_without_crashing(tmp_
 
     client = ComponentSyncClient(settings=settings, catalog_service=ComponentCatalogService(db_path=tmp_path / "assets.db"))
 
-    assert client.saved_sessions() == []
-    assert client.current_session() is None
+    with pytest.raises(ValueError, match="sessionCookie"):
+        client.saved_sessions()
+    with pytest.raises(ValueError, match="sessionCookie"):
+        client.current_session()
 
 
 def test_component_sync_client_uses_env_base_url_when_settings_are_empty(tmp_path: Path, monkeypatch) -> None:
@@ -798,10 +807,93 @@ def test_component_catalog_copy_to_draft_creates_disconnected_local_draft(monkey
     dialog.close()
 
 
+def test_component_sync_client_delete_component_removes_remote_cache(tmp_path: Path) -> None:
+    server = _Server(("127.0.0.1", 0))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        settings = QtCore.QSettings(str(tmp_path / "component-delete.ini"), QtCore.QSettings.IniFormat)
+        service = ComponentCatalogService(db_path=tmp_path / "assets.db")
+        client = ComponentSyncClient(settings=settings, catalog_service=service)
+        base_url = f"http://127.0.0.1:{server.server_port}"
+        _ = client.login(base_url=base_url, username="u", password="p", remember=True)
+        _ = client.refresh_scope_page(scope="mine", query="", cursor="", append=False)
+
+        assert service.entry("private-1", include_uninstalled=True) is not None
+
+        client.delete_component("private-1")
+
+        assert server.deleted_component_ids == ["private-1"]
+        assert service.entry("private-1", include_uninstalled=True) is None
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_component_catalog_delete_removes_local_and_owned_remote(monkeypatch, tmp_path: Path) -> None:
+    _ = _ensure_app()
+    settings = QtCore.QSettings(str(tmp_path / "component-delete-dialog.ini"), QtCore.QSettings.IniFormat)
+    service = ComponentCatalogService(db_path=tmp_path / "assets.db")
+    local_entry = service.upsert_local_entry(
+        F8ComponentEntry(
+            record=F8ComponentRecord(
+                componentId="owned-delete",
+                name="Owned Delete",
+                schemaVersion="f8studio-session/1",
+                content={"schemaVersion": "f8studio-session/1", "layout": {"nodes": {}, "connections": []}},
+            ),
+            source=F8ComponentSourceKind.local,
+        )
+    )
+    remote_entry = F8ComponentEntry(
+        record=copy_model(local_entry.record, update={"content": {}}),
+        source=F8ComponentSourceKind.remote_private,
+        visibility=F8ComponentVisibility.private,
+        ownerUserId="u1",
+        ownerDisplayName="User One",
+        remoteRevision="r7",
+        remoteVersionNumber=7,
+        installed=True,
+        hasCachedContent=False,
+    )
+    service.replace_remote_entries([remote_entry])
+
+    dialog = ComponentCatalogDialog(parent=None, node_graph=None)
+    dialog._sync_client = ComponentSyncClient(settings=settings, catalog_service=service)
+    reload_calls: list[str] = []
+    remote_delete_calls: list[str] = []
+    monkeypatch.setattr(
+        QtWidgets.QMessageBox,
+        "question",
+        lambda *args, **kwargs: QtWidgets.QMessageBox.Yes,
+    )
+    monkeypatch.setattr(dialog, "_reload", lambda *args, **kwargs: reload_calls.append("reload"))
+    monkeypatch.setattr(dialog, "_selected_action_entries", lambda: (local_entry, local_entry, remote_entry))
+    monkeypatch.setattr(
+        dialog._sync_client,
+        "current_user",
+        lambda: F8ComponentRemoteUser(userId="u1", displayName="User One", username="user-one"),
+    )
+    monkeypatch.setattr(
+        dialog._sync_client,
+        "delete_component",
+        lambda component_id: remote_delete_calls.append(str(component_id)),
+    )
+
+    dialog._on_delete_clicked()
+
+    assert remote_delete_calls == ["owned-delete"]
+    assert reload_calls
+    assert service._local_provider.load_entries() == []
+    dialog.close()
+
+
 def test_component_catalog_disables_load_offload_for_local_draft(monkeypatch, tmp_path: Path) -> None:
     _ = _ensure_app()
     settings = QtCore.QSettings(str(tmp_path / "component-draft-actions.ini"), QtCore.QSettings.IniFormat)
     service = ComponentCatalogService(db_path=tmp_path / "assets.db")
+    monkeypatch.setattr(ComponentCatalogDialog, "_refresh_remote_catalog_if_needed", lambda self: None)
     draft_entry = service.upsert_local_entry(
         F8ComponentEntry(
             record=F8ComponentRecord(
@@ -818,11 +910,14 @@ def test_component_catalog_disables_load_offload_for_local_draft(monkeypatch, tm
     dialog = ComponentCatalogDialog(parent=None, node_graph=None)
     dialog._sync_client = ComponentSyncClient(settings=settings, catalog_service=service)
     dialog._entries = [draft_entry]
+    monkeypatch.setattr(dialog, "_selected_entry", lambda: draft_entry)
+    monkeypatch.setattr(dialog, "_selected_action_entries", lambda: (draft_entry, draft_entry, None))
     item = QtWidgets.QListWidgetItem()
     item.setData(QtCore.Qt.ItemDataRole.UserRole, "draft-component-disable")
     dialog._list.addItem(item)
     dialog._scope_tabs.setCurrentIndex(dialog._TAB_MINE)
     dialog._list.setCurrentRow(0)
+    dialog._on_selection_changed()
     QtWidgets.QApplication.processEvents()
 
     assert dialog._btn_install.isEnabled() is False

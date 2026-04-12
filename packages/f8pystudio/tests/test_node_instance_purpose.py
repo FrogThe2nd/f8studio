@@ -47,9 +47,10 @@ class _FakeEditor(QtWidgets.QWidget):
     property_changing = QtCore.Signal(str, str, object)
     property_closed = QtCore.Signal(str)
 
-    def __init__(self, parent=None, *, node=None):
+    def __init__(self, parent=None, *, node=None, inspect_mode: bool = False):
         super().__init__(parent)
         self.node = node
+        self.inspect_mode = bool(inspect_mode)
         self.restored_state: _NodePropEditorViewState | None = None
         self.snapshot_state = _NodePropEditorViewState(
             current_tab=getattr(node, "current_tab", None),

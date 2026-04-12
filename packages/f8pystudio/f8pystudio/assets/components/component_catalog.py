@@ -88,7 +88,7 @@ class LocalComponentProvider:
                     syncBaseLocalVersionNumber=mapping_int(row_mapping, "sync_base_local_version_number")
                     if row_mapping.get("sync_base_local_version_number") is not None
                     else None,
-                    isLocalDraft=_sqlite_row_optional_bool(row_mapping, "is_local_draft"),
+                    isLocalDraft=_sqlite_row_bool(row_mapping, "is_local_draft"),
                     draftOriginKind=_component_draft_origin_kind_from_row(row_mapping, "draft_origin_kind"),
                     draftOriginAssetId=mapping_optional_str(row_mapping, "draft_origin_asset_id"),
                     draftOriginRevision=mapping_optional_str(row_mapping, "draft_origin_revision"),
@@ -459,6 +459,16 @@ class ComponentCatalogService:
         emit_components_changed()
         return target
 
+    def delete_remote_entry(self, component_id: str) -> bool:
+        current = self._remote_provider.load_entries()
+        normalized_component_id = str(component_id or "").strip()
+        out = [entry for entry in current if str(entry.record.componentId or "").strip() != normalized_component_id]
+        if len(out) == len(current):
+            return False
+        self._remote_provider.save_entries(out)
+        emit_components_changed()
+        return True
+
     def mark_conflict(self, component_id: str, *, remote_revision: str | None) -> F8ComponentEntry | None:
         current = self._remote_provider.load_entries()
         out: list[F8ComponentEntry] = []
@@ -568,13 +578,6 @@ def _initial_local_version_number(entry: F8ComponentEntry) -> int:
 
 def _sqlite_row_bool(row: Mapping[object, object], key: str) -> bool:
     return bool(int(str(row[key])))
-
-
-def _sqlite_row_optional_bool(row: Mapping[object, object], key: str) -> bool:
-    value = row.get(key)
-    if value is None:
-        return False
-    return bool(int(str(value)))
 
 
 def _component_draft_origin_kind_from_row(

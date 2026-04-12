@@ -22,7 +22,6 @@ from ..components.component_models import (
     F8ComponentVisibility,
 )
 from ..components.component_repository import (
-    delete_component,
     export_component_to_json,
     import_component_from_json,
     list_component_entries,
@@ -30,6 +29,10 @@ from ..components.component_repository import (
 )
 from ..components.component_sync import ComponentSyncClient
 from ..components.component_catalog import component_entry_can_hydrate, component_entry_has_cached_content, component_entry_is_installed
+from ...nodegraph.component_publish_payload import (
+    collect_component_selected_node_ids,
+    trim_component_publish_payload_to_selected_nodes,
+)
 from ...ui.support.ui_icons import StudioIcon, icon_for
 from ...ui.support.ui_notifications import show_info, show_warning
 from ...nodegraph.session_schema import extract_layout
@@ -146,7 +149,7 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
             (btn_refresh, StudioIcon.REFRESH, "Refresh current list"),
             (btn_history, StudioIcon.ARTICLE, "History"),
             (btn_visibility, StudioIcon.EYE_STAR, "Visibility"),
-            (btn_insert, StudioIcon.PACKAGE_IMPORT, "Insert Into Graph"),
+            (btn_insert, StudioIcon.PACKAGE_IMPORT, "Create on canvas"),
             (btn_import, StudioIcon.PACKAGE_IMPORT, "Import JSON"),
             (btn_export, StudioIcon.PACKAGE_EXPORT, "Export JSON"),
         ]
@@ -233,6 +236,20 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
         self._btn_insert = btn_insert
         self.destroyed.connect(self._on_destroyed)  # type: ignore[attr-defined]
         self._reload()
+
+    @staticmethod
+    def _set_button_state(
+        button: QtWidgets.QPushButton,
+        *,
+        visible: bool,
+        enabled: bool,
+        tooltip: str,
+        icon_token: StudioIcon,
+    ) -> None:
+        button.setVisible(visible)
+        button.setEnabled(enabled)
+        button.setToolTip(tooltip)
+        button.setIcon(icon_for(button, icon_token))
 
     def _clear_components_changed_subscription(self) -> None:
         unsubscribe = self._components_changed_unsubscribe
@@ -537,20 +554,92 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
                 return entry
         return None
 
+    def _refresh_action_buttons(self, selected_entry: F8ComponentEntry | None) -> None:
+        current_tab = self._scope_tabs.currentIndex()
+        local_entry: F8ComponentEntry | None = None
+        remote_entry: F8ComponentEntry | None = None
+        if selected_entry is not None:
+            component_id = str(selected_entry.record.componentId or "").strip()
+            local_entry = self._local_entry_for_component_id(component_id)
+            remote_entry = self._remote_entry_for_component_id(component_id)
+        has_owned_remote = remote_entry is not None and self._is_owned_remote_entry(remote_entry)
+        can_load, can_offload = self._load_action_availability(local_entry=local_entry, remote_entry=remote_entry)
+        can_sync = current_tab == self._TAB_MINE and (local_entry is not None or has_owned_remote)
+        can_pull = current_tab == self._TAB_INSTALLED and remote_entry is not None and component_entry_is_installed(remote_entry)
+        can_copy = current_tab in {self._TAB_MINE, self._TAB_COMMUNITY} and selected_entry is not None
+        can_subscribe = (
+            current_tab == self._TAB_COMMUNITY
+            and selected_entry is not None
+            and selected_entry.source == F8ComponentSourceKind.remote_public
+            and not self._is_owned_remote_entry(selected_entry)
+        )
+        can_delete = current_tab == self._TAB_MINE and (local_entry is not None or has_owned_remote)
+        can_toggle_visibility = current_tab == self._TAB_MINE and has_owned_remote
+        can_history = bool(selected_entry is not None and (local_entry is not None or remote_entry is not None))
+        can_insert = bool(selected_entry is not None and component_entry_is_installed(selected_entry))
+
+        load_tooltip = self._load_action_tooltip(can_offload=can_offload, local_entry=local_entry)
+        self._set_button_state(
+            self._btn_install,
+            visible=current_tab in {self._TAB_MINE, self._TAB_INSTALLED},
+            enabled=can_load or can_offload,
+            tooltip=load_tooltip,
+            icon_token=StudioIcon.DOWNLOAD if can_offload else StudioIcon.CLOUD_DOWN,
+        )
+        self._set_button_state(
+            self._btn_delete,
+            visible=current_tab == self._TAB_MINE,
+            enabled=can_delete,
+            tooltip="Delete",
+            icon_token=StudioIcon.TRASH,
+        )
+        self._set_button_state(
+            self._btn_copy_local,
+            visible=current_tab in {self._TAB_MINE, self._TAB_COMMUNITY},
+            enabled=can_copy,
+            tooltip="Copy to Draft",
+            icon_token=StudioIcon.SAVE,
+        )
+        self._set_button_state(
+            self._btn_upload,
+            visible=current_tab in {self._TAB_MINE, self._TAB_INSTALLED},
+            enabled=can_sync or can_pull,
+            tooltip=("Pull" if current_tab == self._TAB_INSTALLED else "Sync"),
+            icon_token=StudioIcon.CLOUD_UP if current_tab == self._TAB_MINE else StudioIcon.REFRESH,
+        )
+        subscribe_tooltip = "Subscribe"
+        subscribe_icon = StudioIcon.HEART_ON
+        if selected_entry is not None and selected_entry.subscribed:
+            subscribe_tooltip = "Unsubscribe"
+            subscribe_icon = StudioIcon.HEART_OFF
+        self._set_button_state(
+            self._btn_subscribe,
+            visible=current_tab == self._TAB_COMMUNITY,
+            enabled=can_subscribe,
+            tooltip=subscribe_tooltip,
+            icon_token=subscribe_icon,
+        )
+        visibility_tooltip = "Make Public"
+        if remote_entry is not None and remote_entry.visibility == F8ComponentVisibility.public:
+            visibility_tooltip = "Make Private"
+        self._set_button_state(
+            self._btn_visibility,
+            visible=current_tab == self._TAB_MINE,
+            enabled=can_toggle_visibility,
+            tooltip=visibility_tooltip,
+            icon_token=StudioIcon.EYE_STAR,
+        )
+        self._btn_edit.setVisible(current_tab == self._TAB_MINE)
+        self._btn_edit.setEnabled(current_tab == self._TAB_MINE and local_entry is not None)
+        self._btn_history.setEnabled(can_history)
+        self._btn_insert.setEnabled(can_insert)
+
     def _on_selection_changed(self) -> None:
         selected_entry = self._selected_entry()
         if selected_entry is None:
             self._raw.setPlainText("")
             self._preview.clear_preview("Select a component to preview.")
-            self._btn_edit.setEnabled(False)
-            self._btn_delete.setEnabled(False)
-            self._btn_copy_local.setEnabled(False)
-            self._btn_upload.setEnabled(False)
-            self._btn_install.setEnabled(False)
-            self._btn_subscribe.setEnabled(False)
-            self._btn_history.setEnabled(False)
-            self._btn_visibility.setEnabled(False)
-            self._btn_insert.setEnabled(False)
+            self._refresh_action_buttons(None)
             return
         hydration_error = ""
         if component_entry_can_hydrate(selected_entry) and not component_entry_has_cached_content(selected_entry):
@@ -585,32 +674,7 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
                 )
             else:
                 self._preview.show_component_payload(selected_entry.record.content)
-        current_tab = self._scope_tabs.currentIndex()
-        _selected_entry, local_entry, remote_entry = self._selected_action_entries()
-        is_local = local_entry is not None
-        is_remote = remote_entry is not None
-        can_load, can_offload = self._load_action_availability(local_entry=local_entry, remote_entry=remote_entry)
-        can_sync = current_tab == self._TAB_MINE and (local_entry is not None or remote_entry is not None)
-        can_pull = current_tab == self._TAB_INSTALLED and remote_entry is not None
-        self._btn_edit.setEnabled(is_local)
-        self._btn_delete.setEnabled(is_local)
-        self._btn_copy_local.setEnabled(selected_entry is not None)
-        self._btn_copy_local.setToolTip("Copy to Draft")
-        self._btn_upload.setEnabled(can_sync or can_pull)
-        self._btn_upload.setToolTip("Pull" if can_pull else "Sync")
-        self._btn_upload.setIcon(icon_for(self._btn_upload, StudioIcon.REFRESH if can_pull else StudioIcon.CLOUD_UP))
-        self._btn_install.setEnabled(can_load or can_offload)
-        self._btn_install.setToolTip(self._load_action_tooltip(can_offload=can_offload, local_entry=local_entry))
-        self._btn_install.setIcon(icon_for(self._btn_install, StudioIcon.DOWNLOAD if can_offload and not can_load else StudioIcon.CLOUD_DOWN))
-        is_community_public = self._is_community_entry(selected_entry)
-        self._btn_subscribe.setEnabled(is_community_public)
-        self._btn_subscribe.setIcon(
-            icon_for(self._btn_subscribe, StudioIcon.HEART_OFF if selected_entry.subscribed else StudioIcon.HEART_ON)
-        )
-        self._btn_subscribe.setToolTip("Unsubscribe" if selected_entry.subscribed else "Subscribe")
-        self._btn_history.setEnabled(is_local or is_remote)
-        self._btn_visibility.setEnabled(self._is_owned_remote_entry(selected_entry))
-        self._btn_insert.setEnabled(component_entry_is_installed(selected_entry))
+        self._refresh_action_buttons(selected_entry)
 
     @staticmethod
     def _component_preview_node_count(payload: Any) -> int:
@@ -689,10 +753,13 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
             load_action = menu.addAction("Offload" if can_offload else "Load")
             load_action.setEnabled(can_load or can_offload)
             load_action.triggered.connect(self._on_install_clicked)  # type: ignore[attr-defined]
+            delete_action = menu.addAction("Delete")
+            delete_action.setEnabled(local_entry is not None or (remote_entry is not None and self._is_owned_remote_entry(remote_entry)))
+            delete_action.triggered.connect(self._on_delete_clicked)  # type: ignore[attr-defined]
             fork_action = menu.addAction("Copy to Draft")
             fork_action.triggered.connect(self._on_copy_local_clicked)  # type: ignore[attr-defined]
             sync_action = menu.addAction("Sync")
-            sync_action.setEnabled(local_entry is not None or remote_entry is not None)
+            sync_action.setEnabled(local_entry is not None or (remote_entry is not None and self._is_owned_remote_entry(remote_entry)))
             sync_action.triggered.connect(self._on_upload_clicked)  # type: ignore[attr-defined]
             visibility_label = "Make Public"
             if remote_entry is not None and remote_entry.visibility == F8ComponentVisibility.public:
@@ -713,11 +780,11 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
             offload_action.setEnabled(local_entry is not None or (remote_entry is not None and component_entry_is_installed(remote_entry)))
             offload_action.triggered.connect(self._on_install_clicked)  # type: ignore[attr-defined]
             pull_action = menu.addAction("Pull")
-            pull_action.setEnabled(remote_entry is not None)
+            pull_action.setEnabled(remote_entry is not None and component_entry_is_installed(remote_entry))
             pull_action.triggered.connect(self._on_upload_clicked)  # type: ignore[attr-defined]
         if component_entry_is_installed(selected_entry):
             menu.addSeparator()
-            insert_action = menu.addAction("Insert Into Graph")
+            insert_action = menu.addAction("Create on canvas")
             insert_action.triggered.connect(self._on_insert_clicked)  # type: ignore[attr-defined]
         return menu
 
@@ -734,15 +801,31 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
         )
         if dialog.exec() != QtWidgets.QDialog.Accepted:
             return
-        name, description, tags = dialog.values()
-        record = F8ComponentRecord(
-            componentId=new_asset_id(),
-            name=name,
-            description=description,
-            tags=tags,
-            content=graph.serialize_publish_session(),
-        )
-        upsert_component(record)
+        try:
+            selected_nodes = list(graph.selected_nodes() or [])
+            selected_node_ids = collect_component_selected_node_ids(selected_nodes)
+            if selected_nodes and not selected_node_ids:
+                show_warning(self, "Save component failed", "Selected nodes are missing stable ids.")
+                return
+            payload = graph.serialize_publish_session()
+            if selected_node_ids:
+                payload = trim_component_publish_payload_to_selected_nodes(
+                    payload=payload,
+                    selected_node_ids=selected_node_ids,
+                )
+            name, description, tags = dialog.values()
+            record = F8ComponentRecord(
+                componentId=new_asset_id(),
+                name=name,
+                description=description,
+                tags=tags,
+                content=payload,
+            )
+            upsert_component(record)
+        except Exception as exc:
+            logger.exception("Component catalog save component failed")
+            show_warning(self, "Save component failed", f"Failed to save component.\n\n{exc}")
+            return
         show_info(self, "Saved", f"Saved component:\n{record.name}")
 
     @staticmethod
@@ -809,13 +892,32 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
         upsert_component(updated_record)
 
     def _on_delete_clicked(self) -> None:
-        selected_entry = self._selected_entry()
-        if selected_entry is None or selected_entry.source != F8ComponentSourceKind.local:
+        selected_entry, local_entry, remote_entry = self._selected_action_entries()
+        if selected_entry is None:
             return
-        answer = QtWidgets.QMessageBox.question(self, "Delete component", f"Delete component '{selected_entry.record.name}'?")
+        has_owned_remote = remote_entry is not None and self._is_owned_remote_entry(remote_entry)
+        if local_entry is None and not has_owned_remote:
+            return
+        title = "Delete component"
+        prompt = f"Delete component '{selected_entry.record.name}'?"
+        if local_entry is not None and has_owned_remote:
+            prompt = f"Delete local and remote component '{selected_entry.record.name}'?"
+        elif has_owned_remote:
+            prompt = f"Delete remote component '{selected_entry.record.name}'?"
+        elif local_entry is not None:
+            prompt = f"Delete local component '{selected_entry.record.name}'?"
+        answer = QtWidgets.QMessageBox.question(self, title, prompt)
         if answer != QtWidgets.QMessageBox.Yes:
             return
-        delete_component(selected_entry.record.componentId)
+        try:
+            if local_entry is not None:
+                _ = self._sync_client._catalog_service.delete_local_entry(str(local_entry.record.componentId))
+            if has_owned_remote and remote_entry is not None:
+                self._sync_client.delete_component(str(remote_entry.record.componentId))
+        except Exception as exc:
+            show_warning(self, "Delete failed", str(exc))
+            return
+        self._reload()
 
     def _on_copy_local_clicked(self) -> None:
         selected_entry = self._selected_entry()
@@ -1200,10 +1302,9 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
         try:
             request = graph.prepare_insert_graph_from_component(selected_entry.record.content, component_name=selected_entry.record.name)
         except Exception as exc:
-            show_warning(self, "Insert failed", str(exc))
+            show_warning(self, "Create on canvas failed", str(exc))
             return
         graph.begin_graph_placement(request, label=f"Component: {selected_entry.record.name}\n{request.node_count} nodes")
-        self.accept()
 
     def _on_import_clicked(self) -> None:
         path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Import Component JSON", "", "JSON (*.json);;All Files (*)")

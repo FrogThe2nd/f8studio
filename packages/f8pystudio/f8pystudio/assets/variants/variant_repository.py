@@ -210,8 +210,8 @@ def _variant_entries_from_library_payload(payload: dict[str, object]) -> list[F8
                 syncBaseRemoteRevision=_optional_str(raw_entry.get("syncBaseRemoteRevision")),
                 syncBaseRemoteVersionNumber=_optional_int(raw_entry.get("syncBaseRemoteVersionNumber")),
                 syncBaseLocalVersionNumber=_optional_int(raw_entry.get("syncBaseLocalVersionNumber")),
-                isLocalDraft=_optional_bool(raw_entry.get("isLocalDraft"), default=True),
-                draftOriginKind=_optional_draft_origin_kind(raw_entry.get("draftOriginKind")),
+                isLocalDraft=_required_bool(raw_entry, "isLocalDraft"),
+                draftOriginKind=_required_draft_origin_kind(raw_entry, "draftOriginKind"),
                 draftOriginAssetId=_optional_str(raw_entry.get("draftOriginAssetId")),
                 draftOriginRevision=_optional_str(raw_entry.get("draftOriginRevision")),
             )
@@ -231,17 +231,24 @@ def _optional_str(value: object) -> str | None:
     return str(value)
 
 
-def _optional_bool(value: object, *, default: bool) -> bool:
+def _required_bool(payload: dict[str, object], key: str) -> bool:
+    if key not in payload:
+        raise ValueError(f"Variant library entry missing `{key}`.")
+    value = payload[key]
+    if not isinstance(value, bool):
+        raise ValueError(f"Variant library entry `{key}` must be a boolean.")
+    return value
+
+
+def _required_draft_origin_kind(payload: dict[str, object], key: str) -> F8VariantDraftOriginKind | None:
+    if key not in payload:
+        raise ValueError(f"Variant library entry missing `{key}`.")
+    value = payload[key]
     if value is None:
-        return default
-    return bool(value)
-
-
-def _optional_draft_origin_kind(value: object) -> F8VariantDraftOriginKind | None:
-    raw_value = _optional_str(value)
-    if raw_value is None:
         return None
-    return F8VariantDraftOriginKind(raw_value)
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"Variant library entry `{key}` must be a non-empty string or null.")
+    return F8VariantDraftOriginKind(value)
 
 
 __all__ = [

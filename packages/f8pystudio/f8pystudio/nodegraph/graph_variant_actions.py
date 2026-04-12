@@ -45,6 +45,8 @@ class _GraphVariantHost(Protocol):
 
     def context_nodes_menu(self) -> _ContextNodesMenuProtocol | None: ...
 
+    def selected_nodes(self) -> list[object]: ...
+
     def create_node(
         self,
         node_type: str,
@@ -332,7 +334,18 @@ class GraphVariantActionsMixin:
 
     def _on_save_variant_menu_action(self, graph: object, node: BaseNode | None) -> None:
         _ = graph
-        self._save_node_as_variant(node)
+        host = cast(_GraphVariantHost, cast(object, self))
+        selected_nodes = list(host.selected_nodes() or [])
+        if len(selected_nodes) != 1:
+            show_warning(
+                host._notification_parent(),
+                "Save variant failed",
+                "Select exactly one node before saving a variant.",
+            )
+            return
+        selected_node = selected_nodes[0]
+        node_to_save = selected_node if isinstance(selected_node, BaseNode) else node
+        self._save_node_as_variant(node_to_save)
 
     def install_variant_context_menu_for_nodes(self, node_classes: list[type[_NodeClassProtocol]]) -> None:
         host = cast(_GraphVariantHost, cast(object, self))

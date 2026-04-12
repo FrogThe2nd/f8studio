@@ -19,6 +19,8 @@ from f8pysdk.specs import F8VariantRecord
 from ..variants.variant_models import (
     F8VariantDraftOriginKind,
     F8VariantEntry,
+    F8VariantLocalVersionSummary,
+    F8VariantRemoteVersionEntry,
     F8VariantSourceKind,
     F8VariantSyncState,
     F8VariantVisibility,
@@ -40,14 +42,16 @@ from .asset_cloud_account_menu import build_asset_account_menu, prompt_asset_clo
 from .asset_graph_preview import AssetGraphPreviewPane
 from .asset_sync_resolution import AssetSyncDirection, determine_asset_sync_direction
 from .catalog_status import AssetCatalogRowState, build_asset_catalog_row_state
-from .project_asset_dialogs import AssetOverwriteChoice, AssetOverwriteMetaDialog
+from .project_asset_dialogs import (
+    AssetOverwriteChoice,
+    AssetOverwriteMetaDialog,
+    AssetVersionBrowserDialog,
+    AssetVersionBrowserItem,
+)
 
 logger = logging.getLogger(__name__)
 _LOCAL_DRAFT_LABEL = "Local Draft"
 _LOCAL_DRAFT_LOAD_TOOLTIP = "Not available for Local Draft"
-
-# Compatibility alias used by older tests/callers that patched the dialog module directly.
-list_variants_for_base = list_entries_for_base
 
 
 class VariantManagerDialog(QtWidgets.QDialog):
@@ -164,7 +168,7 @@ class VariantManagerDialog(QtWidgets.QDialog):
         btn_visibility = QtWidgets.QPushButton("Visibility", self)
         btn_import = QtWidgets.QPushButton("Import...", self)
         btn_export = QtWidgets.QPushButton("Export...", self)
-        btn_create = QtWidgets.QPushButton("Create On Canvas", self)
+        btn_create = QtWidgets.QPushButton("Create on canvas", self)
 
         btn_refresh.setIcon(icon_for(btn_refresh, StudioIcon.REFRESH))
         btn_add.setIcon(icon_for(btn_add, StudioIcon.CIRCLE_PLUS))
@@ -209,7 +213,7 @@ class VariantManagerDialog(QtWidgets.QDialog):
         self._configure_icon_button(btn_delete_remote, "Delete Remote")
         self._configure_icon_button(btn_edit, "Edit Metadata")
         self._configure_icon_button(btn_copy_local, "Copy to Draft")
-        self._configure_icon_button(btn_create, "Create On Canvas")
+        self._configure_icon_button(btn_create, "Create on canvas")
         self._configure_icon_button(btn_add, "Save From Selected Node")
 
         self._toolbar.addSeparator()
@@ -879,7 +883,7 @@ class VariantManagerDialog(QtWidgets.QDialog):
                 )
             )
         )
-        self._btn_history.setEnabled(bool(selected_entry is not None and has_owned_remote))
+        self._btn_history.setEnabled(bool(selected_entry is not None and (local_entry is not None or remote_entry is not None)))
 
     def _on_selection_changed(self) -> None:
         if self._is_handling_selection_change:
@@ -1036,7 +1040,7 @@ class VariantManagerDialog(QtWidgets.QDialog):
             pull_action.triggered.connect(self._on_sync_or_update_clicked)  # type: ignore[attr-defined]
         if variant_entry_is_installed(selected_entry):
             menu.addSeparator()
-            create_action = menu.addAction("Create On Canvas")
+            create_action = menu.addAction("Create on canvas")
             create_action.triggered.connect(self._on_create_clicked)  # type: ignore[attr-defined]
         menu.exec(self._list.viewport().mapToGlobal(pos))
 
@@ -1762,20 +1766,67 @@ class VariantManagerDialog(QtWidgets.QDialog):
 
     def _on_history_clicked(self) -> None:
         selected_entry = self._selected_entry()
-        if selected_entry is None or not self._is_owned_remote_entry(selected_entry):
+        if selected_entry is None:
             return
+        if selected_entry.source == F8VariantSourceKind.local:
+            self._show_local_history(selected_entry)
+            return
+        self._show_remote_history(selected_entry)
+
+    def _show_local_history(self, entry: F8VariantEntry) -> None:
+        versions = self._sync_client._catalog_service.list_local_versions(str(entry.record.variantId))
+        if not versions:
+            show_info(self, "Variant History", "No local history found.")
+            return
+        dialog = AssetVersionBrowserDialog(
+            parent=self,
+            title=f"Variant History - {entry.record.name}",
+            items=[self._local_version_item(version) for version in versions],
+            load_payload=lambda version_number: dump_json(
+                self._require_local_version_payload(str(entry.record.variantId), int(version_number)),
+                mode="json",
+            ),
+        )
+        dialog.exec()
+
+    def _show_remote_history(self, entry: F8VariantEntry) -> None:
         try:
-            history = self._sync_client.list_variant_versions(str(selected_entry.record.variantId))
+            history = self._sync_client.list_variant_versions(str(entry.record.variantId))
         except Exception as exc:
             show_warning(self, "History failed", str(exc))
             return
-        lines = [
-            f"v{version.versionNumber}  {version.createdAt}  {version.revision}"
-            + (f"  - {version.changeSummary}" if version.changeSummary else "")
-            for version in history.versions
-        ]
-        message = "\n".join(lines) if lines else "No history found."
-        show_info(self, "Variant History", message)
+        if not history.versions:
+            show_info(self, "Variant History", "No history found.")
+            return
+        dialog = AssetVersionBrowserDialog(
+            parent=self,
+            title=f"Variant History - {entry.record.name}",
+            items=[self._remote_version_item(version) for version in history.versions],
+            load_payload=lambda version_number: dump_json(
+                self._sync_client.get_variant_version(str(entry.record.variantId), int(version_number)),
+                mode="json",
+            ),
+        )
+        dialog.exec()
+
+    @staticmethod
+    def _local_version_item(version: F8VariantLocalVersionSummary) -> AssetVersionBrowserItem:
+        return AssetVersionBrowserItem(version_number=int(version.versionNumber), created_at=str(version.createdAt))
+
+    @staticmethod
+    def _remote_version_item(version: F8VariantRemoteVersionEntry) -> AssetVersionBrowserItem:
+        return AssetVersionBrowserItem(
+            version_number=int(version.versionNumber),
+            created_at=str(version.createdAt),
+            revision=str(version.revision),
+            change_summary="" if version.changeSummary is None else str(version.changeSummary),
+        )
+
+    def _require_local_version_payload(self, variant_id: str, version_number: int) -> F8VariantRecord:
+        record = self._sync_client._catalog_service.local_version_record(str(variant_id), int(version_number))
+        if record is None:
+            raise FileNotFoundError(f"Variant version not found: {variant_id} v{version_number}")
+        return record
 
     def _on_visibility_clicked(self) -> None:
         selected_entry = self._selected_entry()

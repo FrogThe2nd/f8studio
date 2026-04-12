@@ -77,24 +77,12 @@ class VariantSyncClient:
         return self._value_str("username")
 
     def saved_sessions(self) -> list[F8VariantRemoteSession]:
-        try:
-            raw = self._value_list(self._SAVED_SESSIONS_KEY)
-        except Exception:
-            logger.exception("Failed to load saved variant cloud sessions; clearing incompatible settings.")
-            self._set_value(self._SAVED_SESSIONS_KEY, [])
-            return []
+        raw = self._value_list(self._SAVED_SESSIONS_KEY)
         if not raw:
             return []
         out: list[F8VariantRemoteSession] = []
-        changed = False
         for item in raw:
-            try:
-                out.append(_remote_session_from_payload(json_object_from_value(item)))
-            except Exception:
-                changed = True
-                logger.warning("Dropping incompatible saved variant cloud session; please sign in again.")
-        if changed:
-            self._set_value(self._SAVED_SESSIONS_KEY, [_remote_session_payload(session) for session in out])
+            out.append(_remote_session_from_payload(json_object_from_value(item)))
         return out
 
     def current_account_id(self) -> str:
@@ -104,13 +92,9 @@ class VariantSyncClient:
         account_id = self.current_account_id()
         if not account_id:
             return None
-        try:
-            for session in self.saved_sessions():
-                if session.accountId == account_id:
-                    return session
-        except Exception:
-            logger.exception("Failed to resolve current variant cloud session; clearing incompatible settings.")
-            self._set_value(self._SAVED_SESSIONS_KEY, [])
+        for session in self.saved_sessions():
+            if session.accountId == account_id:
+                return session
         self._clear_current_auth_state()
         return None
 
@@ -1077,10 +1061,9 @@ def _remote_session_payload(session: F8VariantRemoteSession) -> JsonObject:
 
 
 def _saved_session_cookie_from_payload(payload: JsonObject) -> str:
-    for key in ("sessionCookie", "session_cookie", "cookie"):
-        value = payload.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
+    value = payload.get("sessionCookie")
+    if isinstance(value, str) and value.strip():
+        return value.strip()
     return ""
 
 

@@ -19,6 +19,8 @@ from f8pystudio.assets.variants.variant_models import (
     F8VariantRemoteRequestError,
     F8VariantRemoteConflictError,
     F8VariantRemoteListPage,
+    F8VariantRemoteVersionEntry,
+    F8VariantRemoteVersionList,
     F8VariantRemoteUser,
     F8VariantSourceKind,
     F8VariantSyncState,
@@ -246,6 +248,19 @@ class _Server(ThreadingHTTPServer):
         }
 
 
+class _FakeVersionBrowserDialog:
+    seen_titles: list[str] = []
+    seen_item_counts: list[int] = []
+
+    def __init__(self, *args: object, title: str, items: list[object], load_payload: object, **kwargs: object) -> None:
+        del args, load_payload, kwargs
+        type(self).seen_titles.append(str(title))
+        type(self).seen_item_counts.append(len(items))
+
+    def exec(self) -> int:
+        return QtWidgets.QDialog.Accepted
+
+
 def test_variant_sync_client_uses_cookie_sessions_and_marks_conflicts(tmp_path: Path) -> None:
     server = _Server(("127.0.0.1", 0))
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -348,7 +363,7 @@ def test_variant_sync_client_can_cache_remote_content_without_installing(tmp_pat
         thread.join(timeout=5)
 
 
-def test_variant_sync_client_drops_legacy_saved_sessions_without_crashing(tmp_path: Path) -> None:
+def test_variant_sync_client_rejects_legacy_saved_sessions(tmp_path: Path) -> None:
     settings = QtCore.QSettings(str(tmp_path / "variant-sync-legacy.ini"), QtCore.QSettings.IniFormat)
     settings.beginGroup("variants/remote_sync/v1")
     settings.setValue(
@@ -377,8 +392,10 @@ def test_variant_sync_client_drops_legacy_saved_sessions_without_crashing(tmp_pa
     )
     client = VariantSyncClient(settings=settings, catalog_service=service)
 
-    assert client.saved_sessions() == []
-    assert client.current_session() is None
+    with pytest.raises(ValueError, match="sessionCookie"):
+        client.saved_sessions()
+    with pytest.raises(ValueError, match="sessionCookie"):
+        client.current_session()
 
 
 def test_variant_sync_client_uses_env_base_url_when_settings_are_empty(tmp_path: Path, monkeypatch) -> None:
@@ -1528,3 +1545,95 @@ def test_graph_variant_actions_include_owned_remote_name_conflicts(monkeypatch, 
 
     assert target is not None
     assert target.record.variantId == "graph-owned"
+
+
+def test_variant_manager_history_uses_local_version_browser(monkeypatch, tmp_path: Path) -> None:
+    _ensure_app()
+    settings = QtCore.QSettings(str(tmp_path / "variant-history-local.ini"), QtCore.QSettings.IniFormat)
+    service = VariantCatalogService(
+        local_provider=LocalVariantProvider(db_path=tmp_path / "assets.db"),
+        remote_provider=RemoteCacheProvider(db_path=tmp_path / "assets.db"),
+    )
+    local_entry = service.upsert_local_entry(
+        F8VariantEntry(
+            record=_make_entry(variant_id="local-history", source=F8VariantSourceKind.local).record,
+            source=F8VariantSourceKind.local,
+            syncState=F8VariantSyncState.local_only,
+        )
+    )
+
+    dialog = VariantManagerDialog(parent=None, base_node_type="svc.a.op", base_node_name="Variant", node_graph=None)
+    dialog._sync_client = VariantSyncClient(settings=settings, catalog_service=service)
+    _FakeVersionBrowserDialog.seen_titles = []
+    _FakeVersionBrowserDialog.seen_item_counts = []
+
+    monkeypatch.setattr("f8pystudio.assets.ui.variant_manager_dialog.AssetVersionBrowserDialog", _FakeVersionBrowserDialog)
+    monkeypatch.setattr(dialog, "_selected_entry", lambda: local_entry)
+
+    dialog._on_history_clicked()
+
+    assert _FakeVersionBrowserDialog.seen_titles == [f"Variant History - {local_entry.record.name}"]
+    assert _FakeVersionBrowserDialog.seen_item_counts == [1]
+    dialog.close()
+
+
+def test_variant_manager_history_uses_remote_version_browser(monkeypatch, tmp_path: Path) -> None:
+    _ensure_app()
+    settings = QtCore.QSettings(str(tmp_path / "variant-history-remote.ini"), QtCore.QSettings.IniFormat)
+    service = VariantCatalogService(
+        local_provider=LocalVariantProvider(db_path=tmp_path / "assets.db"),
+        remote_provider=RemoteCacheProvider(db_path=tmp_path / "assets.db"),
+    )
+    remote_entry = copy_model(
+        _make_entry(
+            variant_id="remote-history",
+            source=F8VariantSourceKind.remote_private,
+            installed=False,
+            remote_revision="r1",
+        ),
+        update={"remoteVersionNumber": 2},
+    )
+    dialog = VariantManagerDialog(parent=None, base_node_type="svc.a.op", base_node_name="Variant", node_graph=None)
+    dialog._sync_client = VariantSyncClient(settings=settings, catalog_service=service)
+    _FakeVersionBrowserDialog.seen_titles = []
+    _FakeVersionBrowserDialog.seen_item_counts = []
+
+    monkeypatch.setattr("f8pystudio.assets.ui.variant_manager_dialog.AssetVersionBrowserDialog", _FakeVersionBrowserDialog)
+    monkeypatch.setattr(dialog, "_selected_entry", lambda: remote_entry)
+    monkeypatch.setattr(
+        dialog._sync_client,
+        "list_variant_versions",
+        lambda variant_id: F8VariantRemoteVersionList(
+                versions=[
+                    F8VariantRemoteVersionEntry(
+                        variantId="remote-history",
+                        assetType="variant",
+                        versionNumber=1,
+                        createdAt=variant_now_iso(),
+                        revision="r1",
+                        createdByUserId="u1",
+                        changeSummary="first",
+                    ),
+                    F8VariantRemoteVersionEntry(
+                        variantId="remote-history",
+                        assetType="variant",
+                        versionNumber=2,
+                        createdAt=variant_now_iso(),
+                        revision="r2",
+                        createdByUserId="u1",
+                        changeSummary="second",
+                    ),
+                ]
+            ),
+    )
+    monkeypatch.setattr(
+        dialog._sync_client,
+        "get_variant_version",
+        lambda variant_id, version_number: remote_entry,
+    )
+
+    dialog._on_history_clicked()
+
+    assert _FakeVersionBrowserDialog.seen_titles == [f"Variant History - {remote_entry.record.name}"]
+    assert _FakeVersionBrowserDialog.seen_item_counts == [2]
+    dialog.close()

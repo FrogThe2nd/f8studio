@@ -168,9 +168,11 @@ def test_sidebar_supports_multi_select_subgraph_context_and_reset_clears_pin(mon
     QtWidgets.QApplication.processEvents()
 
     assert widget._pin_context_btn.isEnabled()
-    assert "2 selected nodes" in widget._selected_node_label.text()
+    assert widget._selected_node_label.text().startswith("Sel:")
+    assert "Selected nodes: 2" in widget._selected_node_label.toolTip()
     widget._pin_selected_context()
-    assert "2 selected nodes" in widget._pinned_node_label.text()
+    assert widget._pinned_node_label.text().startswith("Pin:")
+    assert "Selected nodes: 2" in widget._pinned_node_label.toolTip()
     assert widget._clear_context_btn.isEnabled()
 
     widget._ai_bridge.reset_chat_history()

@@ -5,7 +5,7 @@ import logging
 from pathlib import Path
 from typing import Callable, Protocol
 
-from qtpy import QtWidgets
+from qtpy import QtCore, QtWidgets
 
 from f8pysdk.codec import dump_json
 
@@ -345,7 +345,11 @@ def save_component_as_dialog(
 
 def open_component_catalog_dialog(*, parent: QtWidgets.QWidget, studio_graph: ProjectAssetGraphLike) -> None:
     dialog = ComponentCatalogDialog(parent=parent, node_graph=studio_graph)
-    dialog.exec()
+    dialog.setAttribute(QtCore.Qt.WA_DeleteOnClose, True)
+    dialog.setModal(False)
+    dialog.show()
+    dialog.raise_()
+    dialog.activateWindow()
 
 
 def open_component_insert_dialog(
