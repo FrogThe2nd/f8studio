@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+import logging
 from typing import Any
 
 from qtpy import QtCore, QtWidgets, QtGui
@@ -8,6 +9,7 @@ from NodeGraphQt import NodesTreeWidget
 from NodeGraphQt.custom_widgets.nodes_tree import _BaseNodeTreeItem, TYPE_CATEGORY, TYPE_NODE
 
 from f8pysdk.codec import coerce_bool
+from ...assets.common.common import json_string_list_loads, stable_json_dumps
 from ...nodegraph.spec_visibility import is_hidden_spec_node_class, typed_spec_template_or_none
 from f8pysdk.specs import F8OperatorSpec, F8ServiceSpec
 from f8pysdk.specs import palette_category_from_spec
@@ -22,6 +24,8 @@ from ...assets.variants.variant_repository import (
 )
 from ...assets.variants.variant_events import subscribe_variants_changed
 from ..dialogs.node_docs_dialog import show_node_docs_dialog
+
+logger = logging.getLogger(__name__)
 
 
 class _F8StudioNodesTreeWidget(NodesTreeWidget):
@@ -45,6 +49,12 @@ class _F8StudioNodesTreeWidget(NodesTreeWidget):
         self._tree_build_rows: list[tuple[str, str, str, str, list[Any]]] = []
         self._tree_build_index = 0
         self._tree_build_pending_refresh = False
+        self._saved_expanded_categories: set[str] = set()
+        self._saved_expanded_base_nodes: set[str] = set()
+        self._saved_category_state_initialized = False
+        self._restoring_expanded_state = False
+        self._suppress_expansion_persistence = False
+        self._on_expansion_state_changed: Any | None = None
         super().__init__(parent=parent, node_graph=node_graph)
         self.setColumnCount(1)
         self.setHeaderHidden(True)
@@ -65,6 +75,8 @@ class _F8StudioNodesTreeWidget(NodesTreeWidget):
         )
         self.customContextMenuRequested.connect(self._on_context_menu_requested)  # type: ignore[attr-defined]
         self.itemClicked.connect(self._on_item_clicked)  # type: ignore[attr-defined]
+        self.itemExpanded.connect(self._on_item_expanded)  # type: ignore[attr-defined]
+        self.itemCollapsed.connect(self._on_item_collapsed)  # type: ignore[attr-defined]
 
     def activate_tree_build(self) -> None:
         if self._tree_build_activated:
@@ -88,6 +100,24 @@ class _F8StudioNodesTreeWidget(NodesTreeWidget):
 
     def set_open_variant_catalog_callback(self, callback: Any | None) -> None:
         self._on_open_variant_catalog = callback
+
+    def set_saved_expansion_state(
+        self,
+        *,
+        expanded_categories: list[str] | set[str] | tuple[str, ...],
+        expanded_base_nodes: list[str] | set[str] | tuple[str, ...],
+        categories_initialized: bool,
+    ) -> None:
+        self._saved_expanded_categories = {
+            item for item in (str(value).strip() for value in expanded_categories) if item
+        }
+        self._saved_expanded_base_nodes = {
+            item for item in (str(value).strip() for value in expanded_base_nodes) if item
+        }
+        self._saved_category_state_initialized = bool(categories_initialized)
+
+    def set_expansion_state_changed_callback(self, callback: Any | None) -> None:
+        self._on_expansion_state_changed = callback
 
     def _build_search_blob(self, *, node_cls: Any, node_name: str, node_id: str) -> str:
         parts: list[str] = [str(node_name), str(node_id)]
@@ -259,26 +289,74 @@ class _F8StudioNodesTreeWidget(NodesTreeWidget):
                 placement_label = f"{base_node_name}\n - {variant_name}"
             graph.begin_node_placement(variant_node_type, placement_label)
 
-    def _capture_expanded_state(self) -> tuple[set[str], set[str]]:
-        expanded_categories: set[str] = set()
-        expanded_base_nodes: set[str] = set()
-        for index in range(self.topLevelItemCount()):
-            top = self.topLevelItem(index)
-            if top is None:
-                continue
-            category_id = str(top.data(0, self._ROLE_CATEGORY_ID) or "").strip()
-            if category_id and top.isExpanded():
-                expanded_categories.add(category_id)
-            for row in range(top.childCount()):
-                child = top.child(row)
-                if child is None:
+    def _emit_expansion_state_changed(self) -> None:
+        callback = self._on_expansion_state_changed
+        if not callable(callback):
+            return
+        callback(
+            set(self._saved_expanded_categories),
+            set(self._saved_expanded_base_nodes),
+            bool(self._saved_category_state_initialized),
+        )
+
+    def _set_item_expanded_from_memory(self, item: QtWidgets.QTreeWidgetItem, *, expanded: bool) -> None:
+        self._restoring_expanded_state = True
+        try:
+            item.setExpanded(bool(expanded))
+        finally:
+            self._restoring_expanded_state = False
+
+    def _all_known_category_ids(self) -> set[str]:
+        categories: set[str] = set()
+        if self._factory is None:
+            return categories
+        for node_ids in self._factory.names.values():
+            for node_id_any in list(node_ids or []):
+                node_id = str(node_id_any)
+                node_cls = self._factory.nodes.get(node_id)
+                if node_cls is None:
                     continue
-                if bool(child.data(0, self._ROLE_IS_VARIANT)):
+                if is_hidden_spec_node_class(node_cls):
                     continue
-                base_node_id = str(child.data(0, self._ROLE_NODE_ID) or "").strip()
-                if base_node_id and child.isExpanded():
-                    expanded_base_nodes.add(base_node_id)
-        return expanded_categories, expanded_base_nodes
+                category = "uncategorized"
+                spec = typed_spec_template_or_none(node_cls)
+                if spec is not None:
+                    category = palette_category_from_spec(spec)
+                categories.add(category)
+        return categories
+
+    def _remember_item_expanded_state(self, item: QtWidgets.QTreeWidgetItem, *, expanded: bool) -> None:
+        if self._restoring_expanded_state or self._suppress_expansion_persistence:
+            return
+        category_id = str(item.data(0, self._ROLE_CATEGORY_ID) or "").strip()
+        if category_id:
+            if not self._saved_category_state_initialized:
+                self._saved_expanded_categories = self._all_known_category_ids()
+                self._saved_category_state_initialized = True
+            if expanded:
+                self._saved_expanded_categories.add(category_id)
+            else:
+                self._saved_expanded_categories.discard(category_id)
+            self._emit_expansion_state_changed()
+            return
+        if item.type() != TYPE_NODE:
+            return
+        if bool(item.data(0, self._ROLE_IS_VARIANT)):
+            return
+        base_node_id = str(item.data(0, self._ROLE_NODE_ID) or "").strip()
+        if not base_node_id:
+            return
+        if expanded:
+            self._saved_expanded_base_nodes.add(base_node_id)
+        else:
+            self._saved_expanded_base_nodes.discard(base_node_id)
+        self._emit_expansion_state_changed()
+
+    def _on_item_expanded(self, item: QtWidgets.QTreeWidgetItem) -> None:
+        self._remember_item_expanded_state(item, expanded=True)
+
+    def _on_item_collapsed(self, item: QtWidgets.QTreeWidgetItem) -> None:
+        self._remember_item_expanded_state(item, expanded=False)
 
     def _show_status_message(self, message: str) -> None:
         self.clear()
@@ -291,9 +369,13 @@ class _F8StudioNodesTreeWidget(NodesTreeWidget):
     def _start_tree_build(self) -> None:
         self._tree_build_generation += 1
         generation = self._tree_build_generation
-        expanded_categories, expanded_base_nodes = self._capture_expanded_state()
+        expanded_categories = set(self._saved_expanded_categories)
+        expanded_base_nodes = set(self._saved_expanded_base_nodes)
+        categories_initialized = bool(self._saved_category_state_initialized)
+        self._suppress_expansion_persistence = True
         self.clear()
         if self._factory is None:
+            self._suppress_expansion_persistence = False
             return
 
         show_variant_children = self._search_variants_enabled
@@ -344,10 +426,6 @@ class _F8StudioNodesTreeWidget(NodesTreeWidget):
             cat_item.setSizeHint(0, QtCore.QSize(100, 22))
             cat_item.setData(0, self._ROLE_CATEGORY_ID, category)
             self.addTopLevelItem(cat_item)
-            if category in expanded_categories:
-                cat_item.setExpanded(True)
-            elif not expanded_categories:
-                cat_item.setExpanded(True)
             self._category_items[category] = cat_item
 
         self._tree_build_rows = []
@@ -356,9 +434,21 @@ class _F8StudioNodesTreeWidget(NodesTreeWidget):
                 self._tree_build_rows.append((category, node_id, node_name, spec_description, matched_variants))
         self._tree_build_index = 0
         self._tree_build_pending_refresh = False
-        self._append_tree_build_batch(generation=generation, expanded_base_nodes=expanded_base_nodes)
+        self._append_tree_build_batch(
+            generation=generation,
+            expanded_base_nodes=expanded_base_nodes,
+            categories_initialized=categories_initialized,
+            expanded_categories=expanded_categories,
+        )
 
-    def _append_tree_build_batch(self, *, generation: int, expanded_base_nodes: set[str]) -> None:
+    def _append_tree_build_batch(
+        self,
+        *,
+        generation: int,
+        expanded_base_nodes: set[str],
+        categories_initialized: bool,
+        expanded_categories: set[str],
+    ) -> None:
         if generation != self._tree_build_generation:
             return
         if self._factory is None:
@@ -377,7 +467,6 @@ class _F8StudioNodesTreeWidget(NodesTreeWidget):
             item.setData(0, self._ROLE_BASE_NODE_ID, node_id)
             item.setData(0, self._ROLE_NODE_NAME, node_name)
             item.setData(0, self._ROLE_IS_VARIANT, False)
-            item.setExpanded(node_id in expanded_base_nodes)
             category_item.addChild(item)
 
             if spec_description:
@@ -396,6 +485,7 @@ class _F8StudioNodesTreeWidget(NodesTreeWidget):
                 variant_item.setData(0, self._ROLE_IS_VARIANT, True)
                 variant_item.setData(0, self._ROLE_VARIANT_NAME, str(variant.name or ""))
                 item.addChild(variant_item)
+            self._set_item_expanded_from_memory(item, expanded=node_id in expanded_base_nodes)
 
         if self._tree_build_index < len(self._tree_build_rows):
             QtCore.QTimer.singleShot(
@@ -403,9 +493,21 @@ class _F8StudioNodesTreeWidget(NodesTreeWidget):
                 lambda: self._append_tree_build_batch(
                     generation=generation,
                     expanded_base_nodes=expanded_base_nodes,
+                    categories_initialized=categories_initialized,
+                    expanded_categories=expanded_categories,
                 ),
             )
             return
+        for index in range(self.topLevelItemCount()):
+            category_item = self.topLevelItem(index)
+            if category_item is None:
+                continue
+            category_id = str(category_item.data(0, self._ROLE_CATEGORY_ID) or "").strip()
+            category_expanded = True
+            if categories_initialized:
+                category_expanded = category_id in expanded_categories
+            self._set_item_expanded_from_memory(category_item, expanded=category_expanded)
+        self._suppress_expansion_persistence = False
         if self._tree_build_pending_refresh:
             self._start_tree_build()
 
@@ -426,18 +528,32 @@ class F8StudioNodeLibraryWidget(QtWidgets.QWidget):
     _SETTINGS_APPLICATION = "F8PyStudio"
     _SETTINGS_GROUP = "node_library/preferences/v1"
     _SEARCH_VARIANTS_ENABLED_KEY = "search_variants_enabled"
+    _CATEGORY_EXPANSION_INITIALIZED_KEY = "category_expansion_initialized"
+    _EXPANDED_CATEGORIES_KEY = "expanded_categories"
+    _EXPANDED_BASE_NODES_KEY = "expanded_base_nodes"
 
     def __init__(self, parent: QtWidgets.QWidget | None = None, node_graph: Any | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Node Library")
         self._node_graph = node_graph
         self._unsubscribe_variants_changed: Any | None = subscribe_variants_changed(self._on_variants_changed)
+        (
+            saved_expanded_categories,
+            saved_expanded_base_nodes,
+            saved_category_state_initialized,
+        ) = self._read_saved_tree_expansion_state()
 
         self._search = QtWidgets.QLineEdit(self)
         self._search.setPlaceholderText("Search nodes (name, tags, description)")
         self._search_variants = QtWidgets.QCheckBox("Search Variants", self)
         self._search_variants.setChecked(self._read_saved_search_variants_enabled())
         self._tree = _F8StudioNodesTreeWidget(self, node_graph=node_graph)
+        self._tree.set_saved_expansion_state(
+            expanded_categories=saved_expanded_categories,
+            expanded_base_nodes=saved_expanded_base_nodes,
+            categories_initialized=saved_category_state_initialized,
+        )
+        self._tree.set_expansion_state_changed_callback(self._on_tree_expansion_state_changed)
         self._tree.set_search_variants_enabled(self._search_variants.isChecked())
 
         search_row = QtWidgets.QHBoxLayout()
@@ -476,6 +592,18 @@ class F8StudioNodeLibraryWidget(QtWidgets.QWidget):
             return
         self._tree.clearSelection()
         self._tree.setCurrentItem(None)
+
+    def _on_tree_expansion_state_changed(
+        self,
+        expanded_categories: set[str],
+        expanded_base_nodes: set[str],
+        categories_initialized: bool,
+    ) -> None:
+        self._write_saved_tree_expansion_state(
+            expanded_categories=expanded_categories,
+            expanded_base_nodes=expanded_base_nodes,
+            categories_initialized=categories_initialized,
+        )
 
     def _on_variants_changed(self) -> None:
         self._tree.update()
@@ -542,6 +670,54 @@ class F8StudioNodeLibraryWidget(QtWidgets.QWidget):
         settings.beginGroup(self._SETTINGS_GROUP)
         try:
             settings.setValue(self._SEARCH_VARIANTS_ENABLED_KEY, bool(enabled))
+            settings.sync()
+        finally:
+            settings.endGroup()
+
+    def _read_saved_tree_expansion_state(self) -> tuple[set[str], set[str], bool]:
+        settings = self._settings()
+        settings.beginGroup(self._SETTINGS_GROUP)
+        try:
+            raw_categories_initialized = settings.value(self._CATEGORY_EXPANSION_INITIALIZED_KEY, False)
+            raw_expanded_categories = settings.value(self._EXPANDED_CATEGORIES_KEY, "[]")
+            raw_expanded_base_nodes = settings.value(self._EXPANDED_BASE_NODES_KEY, "[]")
+        finally:
+            settings.endGroup()
+        expanded_categories = self._read_saved_string_set(
+            raw_value=raw_expanded_categories,
+            key=self._EXPANDED_CATEGORIES_KEY,
+        )
+        expanded_base_nodes = self._read_saved_string_set(
+            raw_value=raw_expanded_base_nodes,
+            key=self._EXPANDED_BASE_NODES_KEY,
+        )
+        return (
+            expanded_categories,
+            expanded_base_nodes,
+            coerce_bool(raw_categories_initialized, default=False),
+        )
+
+    def _read_saved_string_set(self, *, raw_value: object, key: str) -> set[str]:
+        try:
+            values = json_string_list_loads(raw_value)
+        except ValueError:
+            logger.exception("Failed to parse node library preference key=%s", key)
+            return set()
+        return {item for item in (str(value).strip() for value in values) if item}
+
+    def _write_saved_tree_expansion_state(
+        self,
+        *,
+        expanded_categories: set[str],
+        expanded_base_nodes: set[str],
+        categories_initialized: bool,
+    ) -> None:
+        settings = self._settings()
+        settings.beginGroup(self._SETTINGS_GROUP)
+        try:
+            settings.setValue(self._CATEGORY_EXPANSION_INITIALIZED_KEY, bool(categories_initialized))
+            settings.setValue(self._EXPANDED_CATEGORIES_KEY, stable_json_dumps(sorted(expanded_categories)))
+            settings.setValue(self._EXPANDED_BASE_NODES_KEY, stable_json_dumps(sorted(expanded_base_nodes)))
             settings.sync()
         finally:
             settings.endGroup()
