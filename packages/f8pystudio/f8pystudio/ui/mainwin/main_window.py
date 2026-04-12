@@ -198,6 +198,7 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
             self.studio_graph.node_factory.register_node(cls)
         self.studio_graph.install_node_docs_context_menu_for_nodes(list(node_classes))
         self.studio_graph.install_component_context_menu_for_nodes(list(node_classes))
+        self.studio_graph.install_backdrop_context_menu_for_nodes(list(node_classes))
         self.studio_graph.install_variant_context_menu_for_nodes(list(node_classes))
         self.studio_graph.install_identity_context_menu_for_nodes(list(node_classes))
         self.studio_graph.install_duplicate_context_menu_for_nodes(list(node_classes))

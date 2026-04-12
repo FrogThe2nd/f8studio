@@ -11,6 +11,7 @@ from NodeGraphQt.base.commands import NodeMovedCmd
 from .graph_connection_rules import GraphConnectionRulesMixin
 from .graph_container_binding import GraphContainerBindingMixin
 from .graph_component_actions import GraphComponentActionsMixin
+from .graph_backdrop_actions import GraphBackdropActionsMixin
 from .graph_duplicate_actions import GraphDuplicateActionsMixin
 from .graph_factory_flow import GraphFactoryFlowMixin
 from .graph_identity_actions import GraphIdentityActionsMixin
@@ -34,6 +35,7 @@ MISSING_OPERATOR_NODE_TYPE = "svc.f8.missing.operator"
 
 class F8StudioGraph(
     GraphComponentActionsMixin,
+    GraphBackdropActionsMixin,
     GraphVariantActionsMixin,
     GraphIdentityActionsMixin,
     GraphDuplicateActionsMixin,
@@ -76,6 +78,9 @@ class F8StudioGraph(
         self._tab_search_node_type_aliases: dict[str, str] = {}
         self._tab_search_component_ids: dict[str, str] = {}
         self._component_menu_node_types: set[str] = set()
+        self._backdrop_create_menu_node_types: set[str] = set()
+        self._backdrop_wrap_menu_node_types: set[str] = set()
+        self._backdrop_registered_node_type: str | None = None
         self._variant_menu_node_types: set[str] = set()
         self._identity_menu_node_types: set[str] = set()
         self._duplicate_menu_node_types: set[str] = set()

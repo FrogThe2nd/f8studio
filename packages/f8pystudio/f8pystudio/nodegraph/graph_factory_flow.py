@@ -68,7 +68,18 @@ class GraphFactoryFlowMixin:
                 node.set_property("svcId", str(new_nid), push_undo=False)
         return node
 
-    def create_node(self, node_type, name=None, selected=True, color=None, text_color=None, pos=None, push_undo=True):
+    def create_node(
+        self,
+        node_type,
+        name=None,
+        selected=True,
+        color=None,
+        text_color=None,
+        pos=None,
+        push_undo=True,
+        *,
+        begin_undo_macro: bool = True,
+    ):
         """
         Create a new node in the node graph.
 
@@ -109,6 +120,7 @@ class GraphFactoryFlowMixin:
                 text_color=text_color,
                 pos=pos,
                 push_undo=push_undo,
+                begin_undo_macro=begin_undo_macro,
             )
             if node is None:
                 return None
@@ -204,13 +216,17 @@ class GraphFactoryFlowMixin:
                     return None
 
             undo_cmd = NodeAddedCmd(self, node, pos=node.model.pos, emit_signal=True)
-            if push_undo:
+            if push_undo and begin_undo_macro:
                 undo_label = 'create node: "{}"'.format(node.NODE_NAME)
                 self._undo_stack.beginMacro(undo_label)
                 for n in self.selected_nodes():
                     n.set_property("selected", False, push_undo=True)
                 self._undo_stack.push(undo_cmd)
                 self._undo_stack.endMacro()
+            elif push_undo:
+                for n in self.selected_nodes():
+                    n.set_property("selected", False, push_undo=True)
+                self._undo_stack.push(undo_cmd)
             else:
                 for n in self.selected_nodes():
                     n.set_property("selected", False, push_undo=False)

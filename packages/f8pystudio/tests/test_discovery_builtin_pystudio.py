@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from qtpy import QtWidgets
+from qtpy import QtCore, QtWidgets
 from NodeGraphQt.constants import NodeEnum
 
 from f8pysdk.specs import F8OperatorSpec, F8SpecEditPolicy, editable_collection_edit_policy
@@ -8,12 +8,14 @@ from f8pysdk.registry import RuntimeNodeRegistry
 from f8pystudio.studio_specs.identifiers import SERVICE_CLASS as STUDIO_SERVICE_CLASS
 from f8pystudio.nodegraph.operator_basenode import F8StudioOperatorBaseNode
 from f8pystudio.nodegraph.service_basenode import F8StudioServiceBaseNode
+from f8pystudio.operators.backdrop import OPERATOR_CLASS as BACKDROP_OPERATOR_CLASS
 from f8pystudio.operators.data_expr import OPERATOR_CLASS as DATA_EXPR_OPERATOR_CLASS
 from f8pystudio.operators.note import OPERATOR_CLASS as NOTE_OPERATOR_CLASS
 from f8pystudio.operators.patch_hub import OPERATOR_CLASS as PATCH_HUB_OPERATOR_CLASS
 from f8pystudio.operators.state_expr import OPERATOR_CLASS as STATE_EXPR_OPERATOR_CLASS
 from f8pystudio.operators.value_stepper import OPERATOR_CLASS as VALUE_STEPPER_OPERATOR_CLASS
 from f8pystudio.studio_specs.registry import create_pystudio_registry, shared_pystudio_registry
+from f8pystudio.render_nodes.backdrop import BackdropRenderNode
 from f8pystudio.render_nodes.note import NoteRenderNode
 from f8pystudio.render_nodes.patch_hub import PatchHubRenderNode
 from f8pystudio.render_nodes.registry import RenderNodeRegistry
@@ -138,6 +140,29 @@ def test_renderer_registry_resolves_note_renderer() -> None:
     assert renderer is NoteRenderNode
 
 
+def test_discovery_registers_backdrop_operator_spec() -> None:
+    catalog = _reset_service_catalog()
+    load_discovery_into_catalog(
+        roots=[],
+        catalog=catalog,
+        builtin_injectors=(_inject_builtin_pystudio_specs,),
+    )
+
+    backdrop = next((op for op in catalog.operators.all() if op.operatorClass == BACKDROP_OPERATOR_CLASS), None)
+    assert backdrop is not None
+    assert backdrop.rendererClass == "backdrop"
+    assert list(backdrop.dataInPorts or []) == []
+    assert list(backdrop.dataOutPorts or []) == []
+    assert list(backdrop.execInPorts or []) == []
+    assert list(backdrop.execOutPorts or []) == []
+
+
+def test_renderer_registry_resolves_backdrop_renderer() -> None:
+    reg = RenderNodeRegistry()
+    renderer = reg.get("backdrop", node_kind="operator")
+    assert renderer is BackdropRenderNode
+
+
 def test_discovery_registers_patch_hub_operator_spec() -> None:
     catalog = _reset_service_catalog()
     load_discovery_into_catalog(
@@ -220,6 +245,26 @@ def test_patch_hub_renderer_uses_compact_width_and_tighter_terminal_spacing() ->
     assert float(node.view._width) < float(NodeEnum.WIDTH.value)
     assert abs(row_delta - 16.0) < 0.1
     assert bottom_blank <= 8.0
+
+
+def test_backdrop_renderer_uses_dashed_outline_and_low_fill_alpha() -> None:
+    _ensure_app()
+    node = BackdropRenderNode()
+
+    assert node.view._BORDER_STYLE == QtCore.Qt.DashLine
+    assert node.view._FILL_ALPHA == 26
+    assert abs(float(node.view._FILL_ALPHA) / 255.0 - 0.1) < 0.01
+
+
+def test_backdrop_title_can_be_changed_programmatically() -> None:
+    _ensure_app()
+    node = BackdropRenderNode()
+
+    node.set_title("Camera Cluster")
+
+    assert node.title() == "Camera Cluster"
+    assert node.name() == "Camera Cluster"
+    assert node.view.name == "Camera Cluster"
 
 
 def test_patch_hub_port_editor_renames_mirrored_terminals() -> None:
