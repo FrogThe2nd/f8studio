@@ -6,7 +6,7 @@ from typing import Any
 from NodeGraphQt import BaseNode
 from f8pysdk.registry import create_runtime_node_registry
 from f8pysdk.service_runtime_tools.inventory.catalog import ServiceCatalog
-from f8pysdk.specs import F8OperatorSchemaVersion, F8OperatorSpec
+from f8pysdk.specs import F8OperatorSchemaVersion, F8OperatorSpec, F8ServiceSchemaVersion, F8ServiceSpec
 
 from f8pystudio.plugins.api import PluginOperatorRegistration, PluginRendererRegistration, StudioPluginManifest
 from f8pystudio.app.program import PyStudioProgram
@@ -128,5 +128,40 @@ def test_program_injects_plugin_operator_specs_into_catalog() -> None:
 
         assert injected_service_class == SERVICE_CLASS
         assert "f8.viz.plugin_test" in operator_classes
+    finally:
+        catalog.clear()
+
+
+def test_build_node_classes_use_canonical_type_ids_not_palette_categories() -> None:
+    catalog = ServiceCatalog.instance()
+    catalog.clear()
+
+    try:
+        catalog.register_service(
+            F8ServiceSpec(
+                schemaVersion=F8ServiceSchemaVersion.f8service_1,
+                serviceClass="f8.pyengine",
+                version="1.0.0",
+                label="PyEngine",
+                paletteCategory="f8.pyengine.services",
+            )
+        )
+        catalog.register_operator(
+            F8OperatorSpec(
+                schemaVersion=F8OperatorSchemaVersion.f8operator_1,
+                serviceClass="f8.pyengine",
+                operatorClass="f8.tick",
+                version="1.0.0",
+                label="Tick",
+                paletteCategory="f8.pyengine.execution",
+            )
+        )
+
+        node_types = {str(node_cls.type_) for node_cls in PyStudioProgram.build_node_classes()}
+
+        assert "svc.f8.pyengine" in node_types
+        assert "f8.pyengine.f8.tick" in node_types
+        assert "f8.pyengine.services.f8.pyengine" not in node_types
+        assert "f8.pyengine.execution.f8.tick" not in node_types
     finally:
         catalog.clear()

@@ -3,7 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any
 
-from f8pysdk.specs import F8VariantRecord
+from f8pysdk.specs import F8OperatorSchemaVersion, F8OperatorSpec, F8VariantRecord
 from f8pystudio.assets.components.component_models import F8ComponentEntry, F8ComponentRecord, F8ComponentSourceKind
 from f8pystudio.assets.variants.variant_models import F8VariantKind, variant_now_iso
 from f8pystudio.assets.variants.variant_ids import build_variant_node_type
@@ -143,3 +143,39 @@ def test_toggle_node_search_batches_variant_catalog_lookup(monkeypatch) -> None:
     assert "Base Node | Fast Search Variant" in captured_nodes
     alias_id = captured_nodes["Base Node | Fast Search Variant"][0]
     assert graph._tab_search_node_type_aliases[alias_id] == build_variant_node_type("variant-1")
+
+
+def test_toggle_node_search_uses_readable_category_aliases_for_pyengine_nodes(monkeypatch) -> None:
+    class _FakePyEngineTickNode:
+        NODE_NAME = "Tick"
+        SPEC_TEMPLATE = F8OperatorSpec(
+            schemaVersion=F8OperatorSchemaVersion.f8operator_1,
+            serviceClass="f8.pyengine",
+            operatorClass="f8.tick",
+            version="1.0.0",
+            label="Tick",
+            paletteCategory="f8.pyengine.execution",
+        )
+
+    captured_nodes: dict[str, list[str]] = {}
+
+    graph = F8StudioGraph.__new__(F8StudioGraph)
+    graph._node_factory = SimpleNamespace(
+        names={"Tick": ["f8.pyengine.f8.tick"]},
+        nodes={"f8.pyengine.f8.tick": _FakePyEngineTickNode},
+    )
+    graph._viewer = SimpleNamespace(
+        tab_search_set_nodes=lambda nodes: captured_nodes.update(nodes),
+        tab_search_toggle=lambda: None,
+    )
+    graph._tab_search_node_type_aliases = {}
+    graph._tab_search_component_ids = {}
+
+    monkeypatch.setattr("f8pystudio.nodegraph.graph_search_actions.list_variants_grouped_by_base", lambda include_uninstalled=False: {})
+    monkeypatch.setattr("f8pystudio.nodegraph.graph_search_actions.list_component_entries", lambda include_uninstalled=False: [])
+
+    graph.toggle_node_search()
+
+    alias_id = captured_nodes["Tick"][0]
+    assert alias_id.startswith("PyEngine / Execution.")
+    assert not alias_id.startswith("f8.pyengine.execution.")

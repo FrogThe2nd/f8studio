@@ -8,7 +8,6 @@ from typing import Any
 
 from f8pysdk.codec import dump_json
 from f8pysdk.registry import RuntimeNodeRegistry
-from f8pysdk.specs import palette_category_from_spec
 from f8pysdk.service_runtime_tools.inventory.catalog import ServiceCatalog
 from f8pysdk.service_runtime_tools.inventory.describe import (
     last_discovery_error_lines,
@@ -26,6 +25,7 @@ from f8pystudio.studio_specs.registry import (
     SERVICE_CLASS,
     shared_pystudio_registry,
 )
+from f8pystudio.nodegraph.node_type_ids import SERVICE_NODE_IDENTIFIER
 from f8pystudio.bridge.studio_bridge import STARTUP_GATE_TIMEOUT_S, PyStudioServiceBridge, PyStudioServiceBridgeConfig
 from f8pystudio.ui.support.ui_resources import studio_logo_path
 
@@ -170,7 +170,7 @@ class PyStudioProgram:
                 svc.serviceClass,
                 (base_cls,),
                 {
-                    "__identifier__": palette_category_from_spec(svc),
+                    "__identifier__": SERVICE_NODE_IDENTIFIER,
                     "NODE_NAME": svc.label,
                     "SPEC_TEMPLATE": svc,
                 },
@@ -183,7 +183,7 @@ class PyStudioProgram:
                 op.operatorClass,
                 (base_cls,),
                 {
-                    "__identifier__": palette_category_from_spec(op),
+                    "__identifier__": str(op.serviceClass),
                     "NODE_NAME": op.label,
                     "SPEC_TEMPLATE": op,
                 },

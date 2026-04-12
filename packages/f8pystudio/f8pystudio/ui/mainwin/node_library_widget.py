@@ -11,6 +11,7 @@ from f8pysdk.codec import coerce_bool
 from ...nodegraph.spec_visibility import is_hidden_spec_node_class, typed_spec_template_or_none
 from f8pysdk.specs import F8OperatorSpec, F8ServiceSpec
 from f8pysdk.specs import palette_category_from_spec
+from ...ui.support.node_category_labels import display_node_category_label
 from ...ui.support.ui_notifications import show_warning
 from ...assets.variants.variant_ids import build_variant_node_type, is_variant_node_type, parse_variant_node_type
 from ...assets.variants.variant_repository import (
@@ -336,7 +337,7 @@ class _F8StudioNodesTreeWidget(NodesTreeWidget):
 
         self._category_items = {}
         for category in sorted(node_types_by_category.keys()):
-            label = str(self._custom_labels.get(category, category))
+            label = str(self._custom_labels.get(category, display_node_category_label(category)))
             cat_item = _BaseNodeTreeItem(self, [label], type=TYPE_CATEGORY)
             cat_item.setFirstColumnSpanned(True)
             cat_item.setFlags(QtCore.Qt.ItemIsEnabled)

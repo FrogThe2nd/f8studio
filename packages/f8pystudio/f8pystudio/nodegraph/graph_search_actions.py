@@ -13,6 +13,7 @@ from f8pysdk.specs import palette_category_from_spec
 from ..assets.common import JsonObject
 from ..assets.components.component_repository import component_entry, list_component_entries
 from ..assets.projects.project_storage import ProjectStorageService
+from ..ui.support.node_category_labels import display_node_category_label
 from ..ui.support.ui_notifications import show_warning
 from ..assets.variants.variant_ids import build_variant_node_type
 from ..assets.variants.variant_repository import list_variants_grouped_by_base
@@ -239,7 +240,7 @@ class GraphSearchActionsMixin:
         spec = typed_spec_template_or_none(node_cls)
         if spec is None:
             return "uncategorized"
-        return palette_category_from_spec(spec)
+        return display_node_category_label(palette_category_from_spec(spec))
 
     def _on_search_triggered(self, node_type: str, pos: tuple[float, float]) -> None:
         """

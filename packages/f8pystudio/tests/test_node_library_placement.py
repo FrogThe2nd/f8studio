@@ -13,6 +13,7 @@ if ROOT not in sys.path:
 from f8pystudio.assets.variants.variant_ids import build_variant_node_type  # noqa: E402
 from f8pystudio.ui.mainwin.main_window import F8StudioMainWin  # noqa: E402
 from f8pystudio.ui.mainwin.node_library_widget import F8StudioNodeLibraryWidget  # noqa: E402
+from f8pystudio.ui.support.node_category_labels import display_node_category_label  # noqa: E402
 
 
 def _ensure_app() -> QtWidgets.QApplication:
@@ -85,6 +86,11 @@ def test_library_search_variants_checkbox_persists_user_choice(monkeypatch, tmp_
 
     widget2 = F8StudioNodeLibraryWidget(node_graph=None)
     assert widget2._search_variants.isChecked() is True
+
+
+def test_display_node_category_label_uses_readable_pyengine_alias() -> None:
+    assert display_node_category_label("f8.pyengine.execution") == "PyEngine / Execution"
+    assert display_node_category_label("custom.category") == "custom.category"
 
 
 class _FakeViewer:
