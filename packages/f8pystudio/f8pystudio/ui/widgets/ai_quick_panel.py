@@ -6,7 +6,7 @@ The panel provides:
   - Provider selector for chat/edit/plan model
   - Model combo (filtered by provider) + small refresh button
   - Reasoning level combo (shown only when selected model supports it)
-  - "Open Full Config…" button that opens AiProviderConfigDialog
+  - "Open Full Config" button that opens AiProviderConfigDialog
 """
 from __future__ import annotations
 
@@ -137,7 +137,7 @@ class AiQuickPanel(QtWidgets.QWidget):
 
         layout.addStretch()
 
-        self._full_config_btn = QtWidgets.QPushButton("Open Full Config…")
+        self._full_config_btn = QtWidgets.QPushButton("Open Full Config")
         self._full_config_btn.setFlat(True)
         self._full_config_btn.setStyleSheet("color: #569cd6; text-decoration: underline; text-align: left;")
         self._full_config_btn.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)

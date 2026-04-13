@@ -157,6 +157,7 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
     _log_level_action_group: QtGui.QActionGroup
     _log_level_actions: dict[int, QtGui.QAction]
     _dock_widgets: list[QtWidgets.QDockWidget]
+    _service_manager_dock: QtWidgets.QDockWidget
     _default_dock_layout_state: QtCore.QByteArray
     _periodic_auto_save_timer: QtCore.QTimer
     _auto_deploy_timer: QtCore.QTimer
@@ -228,10 +229,6 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
 
         self._setup_docks()
         self._create_graph_actions()
-        self._apply_auto_proxy_enabled(enabled=self._auto_proxy_enabled, persist=False)
-        self._apply_performance_overlay_enabled(enabled=self._performance_overlay_enabled, persist=False)
-        self._setup_menu()
-        self._setup_toolbar()
         self._service_manager: ServiceManagerWidget | None = None
 
         self._bridge = bridge or PyStudioServiceBridge(PyStudioServiceBridgeConfig(), parent=self)
@@ -242,6 +239,10 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         self._bridge.service_process_state.connect(self._on_service_process_state)  # type: ignore[attr-defined]
         self._bridge.log.connect(lambda s: self._log_dock.append("studio", str(s) + "\n"))  # type: ignore[attr-defined]
         self._setup_service_manager_dock()
+        self._apply_auto_proxy_enabled(enabled=self._auto_proxy_enabled, persist=False)
+        self._apply_performance_overlay_enabled(enabled=self._performance_overlay_enabled, persist=False)
+        self._setup_menu()
+        self._setup_toolbar()
         self._capture_default_dock_layout_state()
         self._restore_saved_window_layout()
         self._restore_saved_log_level()
@@ -443,6 +444,16 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         )
         self._dock_widgets.append(self._service_manager_dock)
 
+    def _dock_toggle_actions(self) -> list[QtGui.QAction]:
+        return [
+            self._properties_dock.toggleViewAction(),
+            self._node_library_dock.toggleViewAction(),
+            self._layers_dock.toggleViewAction(),
+            self._ai_assist_dock.toggleViewAction(),
+            self._log_dock.toggleViewAction(),
+            self._service_manager_dock.toggleViewAction(),
+        ]
+
     def _declared_graph_services(self) -> dict[str, str]:
         return collect_declared_services(
             nodes=list(self.studio_graph.all_nodes() or []),
@@ -450,7 +461,7 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         )
 
     def _setup_menu(self) -> None:
-        # File menu: project management, components, import/export
+        # File menu: project management and import/export
         _ = build_file_menu(
             self,
             sections=MainWindowFileMenuSections(
@@ -458,13 +469,11 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
                     self._open_project_action,
                     self._quicksave_project_action,
                     self._save_project_as_action,
+                    self._clear_all_nodes_action,
                     self._auto_save_action,
                     self._project_history_action,
                 ],
-                component_actions=[
-                    self._insert_component_action,
-                    self._save_component_action,
-                ],
+                component_actions=[],
                 import_export_actions=[
                     self._import_project_json_action,
                     self._export_project_json_action,
@@ -488,7 +497,7 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         # View menu: dock widgets and view toggles
         view_menu_bundle = build_view_menu(
             self,
-            dock_widgets=self._dock_widgets,
+            dock_widgets=self._ordered_view_docks(),
             auto_proxy_action=self._auto_proxy_action,
             performance_overlay_action=self._performance_overlay_action,
             on_reset_layout=self._on_reset_layout_action,
@@ -705,21 +714,17 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
                 self._open_project_action,
                 self._quicksave_project_action,
                 self._save_project_as_action,
-                self._project_history_action,
-                self._save_component_action,
-                self._manage_components_action,
-                self._insert_component_action,
-                self._import_graph_action,
-                self._export_project_json_action,
-                self._export_published_session_action,
                 self._clear_all_nodes_action,
+                self._project_history_action,
+                self._manage_components_action,
+                self._variant_catalog_action,
             ],
             deploy_actions=[
                 self._deploy_action,
                 self._stop_all_services_action,
                 self._auto_deploy_action,
             ],
-            layers_view_action=self._layers_dock.toggleViewAction(),
+            dock_actions=self._dock_toggle_actions(),
             account_clicked=self._on_asset_cloud_account_clicked,
             exec_toggled=self._on_exec_lines_toggled,
             data_toggled=self._on_data_lines_toggled,
@@ -729,7 +734,17 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
         self._exec_lines_action = toolbar_bundle.exec_lines_action
         self._data_lines_action = toolbar_bundle.data_lines_action
         self._state_lines_action = toolbar_bundle.state_lines_action
-        self._refresh_asset_cloud_account_button(load_client=False)
+        self._refresh_asset_cloud_account_button(load_client=True)
+
+    def _ordered_view_docks(self) -> list[QtWidgets.QDockWidget]:
+        return [
+            self._properties_dock,
+            self._node_library_dock,
+            self._layers_dock,
+            self._ai_assist_dock,
+            self._log_dock,
+            self._service_manager_dock,
+        ]
 
     def _set_action_text_beside_icon(
         self, toolbar: QtWidgets.QToolBar, action: QtGui.QAction, italic: bool = False

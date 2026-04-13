@@ -4,6 +4,8 @@ from dataclasses import dataclass
 
 from qtpy import QtCore, QtWidgets
 
+from ...ui.support.ui_icons import StudioIcon, icon_for
+
 
 @dataclass(frozen=True)
 class MainWindowDockBundle:
@@ -31,12 +33,29 @@ def add_dock_widget(
     object_name: str,
     widget: QtWidgets.QWidget,
     area: QtCore.Qt.DockWidgetArea,
+    icon: StudioIcon,
 ) -> QtWidgets.QDockWidget:
     dock = QtWidgets.QDockWidget(title, parent)
     dock.setObjectName(object_name)
     dock.setWidget(widget)
+    _configure_dock_toggle_action(parent, dock=dock, title=title, icon=icon)
     parent.addDockWidget(area, dock)
     return dock
+
+
+def _configure_dock_toggle_action(
+    parent: QtWidgets.QWidget,
+    *,
+    dock: QtWidgets.QDockWidget,
+    title: str,
+    icon: StudioIcon,
+) -> None:
+    dock_icon = icon_for(parent, icon)
+    dock.setWindowTitle(title)
+    dock.setWindowIcon(dock_icon)
+    toggle_action = dock.toggleViewAction()
+    toggle_action.setText(title)
+    toggle_action.setIcon(dock_icon)
 
 
 def build_main_window_docks(
@@ -54,7 +73,9 @@ def build_main_window_docks(
         object_name="PropertiesDock",
         widget=properties_widget,
         area=QtCore.Qt.DockWidgetArea.LeftDockWidgetArea,
+        icon=StudioIcon.PROPERTY,
     )
+    _configure_dock_toggle_action(parent, dock=log_dock, title="Service Logs", icon=StudioIcon.SERVICE_LOG)
     parent.addDockWidget(QtCore.Qt.DockWidgetArea.BottomDockWidgetArea, log_dock)
 
     node_library_dock = add_dock_widget(
@@ -63,6 +84,7 @@ def build_main_window_docks(
         object_name="NodeLibraryDock",
         widget=node_library_widget,
         area=QtCore.Qt.DockWidgetArea.RightDockWidgetArea,
+        icon=StudioIcon.NODELIBRARY,
     )
     layers_dock = add_dock_widget(
         parent,
@@ -70,6 +92,7 @@ def build_main_window_docks(
         object_name="LayersDock",
         widget=layers_widget,
         area=QtCore.Qt.DockWidgetArea.RightDockWidgetArea,
+        icon=StudioIcon.STACK_MIDDLE,
     )
     parent.tabifyDockWidget(node_library_dock, layers_dock)
 
@@ -79,6 +102,7 @@ def build_main_window_docks(
         object_name="AiAssistDock",
         widget=ai_assist_widget,
         area=QtCore.Qt.DockWidgetArea.RightDockWidgetArea,
+        icon=StudioIcon.AI,
     )
     parent.tabifyDockWidget(node_library_dock, ai_assist_dock)
 
@@ -99,10 +123,11 @@ def build_service_manager_dock(
 ) -> QtWidgets.QDockWidget:
     service_manager_dock = add_dock_widget(
         parent,
-        title="Service Manager",
+        title="Service Monitor",
         object_name="ServiceManagerDock",
         widget=manager_widget,
         area=QtCore.Qt.DockWidgetArea.BottomDockWidgetArea,
+        icon=StudioIcon.SERVICE_MONITOR,
     )
     parent.tabifyDockWidget(log_dock, service_manager_dock)
     return service_manager_dock

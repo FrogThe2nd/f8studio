@@ -971,7 +971,7 @@ class _F8ImageB64Dialog(QtWidgets.QDialog):
         self._label.setMinimumSize(480, 270)
         self._label.setStyleSheet("border: 1px solid rgba(255,255,255,35); border-radius: 4px;")
 
-        self._btn_load = QtWidgets.QPushButton("Load File…")
+        self._btn_load = QtWidgets.QPushButton("Load File")
         self._btn_load.clicked.connect(self._load_file)  # type: ignore[attr-defined]
 
         self._btn_clear = QtWidgets.QPushButton("Clear")
@@ -1053,7 +1053,7 @@ class F8ImageB64Editor(QtWidgets.QWidget):
         super().__init__(parent)
         self._b64 = ""
 
-        self._btn = QtWidgets.QPushButton("View Image…")
+        self._btn = QtWidgets.QPushButton("View Image")
         self._btn.setMinimumHeight(22)
         self._btn.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
         self._btn.clicked.connect(self._open)  # type: ignore[attr-defined]
@@ -1064,7 +1064,7 @@ class F8ImageB64Editor(QtWidgets.QWidget):
 
     def set_value(self, b64: str) -> None:
         self._b64 = str(b64 or "")
-        self._btn.setText("View/Replace Image…" if self._b64 else "Select Image…")
+        self._btn.setText("View/Replace Image" if self._b64 else "Select Image")
 
     def value(self) -> str:
         return self._b64

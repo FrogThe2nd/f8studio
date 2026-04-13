@@ -403,7 +403,7 @@ def build_ai_assist_html(*, prism_asset_html: str = "") -> str:
       <div id="f8-ai-attachments"></div>
       <div id="f8-ai-input-area">
         <div class="f8-input-wrapper">
-          <textarea id="f8-ai-input" placeholder="Ask AI…" rows="1"></textarea>
+          <textarea id="f8-ai-input" placeholder="Ask AI" rows="1"></textarea>
           <div class="f8-input-toolbar">
             <div class="f8-toolbar-left">
               <button id="f8-ai-attach-btn" title="Attach Images">

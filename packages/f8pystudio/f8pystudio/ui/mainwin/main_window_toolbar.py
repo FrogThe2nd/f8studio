@@ -11,7 +11,9 @@ from ...ui.support.ui_icons import StudioIcon, icon_for
 @dataclass(frozen=True)
 class MainWindowToolbarBundle:
     run_toolbar: QtWidgets.QToolBar
+    dock_toolbar: QtWidgets.QToolBar
     edge_toolbar: QtWidgets.QToolBar
+    account_toolbar: QtWidgets.QToolBar
     account_button: QtWidgets.QToolButton
     exec_lines_action: QtGui.QAction
     data_lines_action: QtGui.QAction
@@ -55,7 +57,7 @@ def build_main_window_toolbars(
     *,
     graph_actions: Sequence[QtGui.QAction],
     deploy_actions: Sequence[QtGui.QAction],
-    layers_view_action: QtGui.QAction,
+    dock_actions: Sequence[QtGui.QAction],
     account_clicked: Callable[[], None],
     exec_toggled: Callable[[bool], None],
     data_toggled: Callable[[bool], None],
@@ -73,14 +75,20 @@ def build_main_window_toolbars(
     for action in deploy_actions:
         run_toolbar.addAction(action)
 
-    edge_toolbar = QtWidgets.QToolBar("Layer & Link Visibility", parent)
+    dock_toolbar = QtWidgets.QToolBar("Dock Widgets", parent)
+    dock_toolbar.setObjectName("DockWidgetsToolBar")
+    dock_toolbar.setMovable(False)
+    dock_toolbar.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonIconOnly)
+    parent.addToolBar(QtCore.Qt.ToolBarArea.TopToolBarArea, dock_toolbar)
+
+    for action in dock_actions:
+        dock_toolbar.addAction(action)
+
+    edge_toolbar = QtWidgets.QToolBar("Link Visibility", parent)
     edge_toolbar.setObjectName("PipeVisibilityToolBar")
     edge_toolbar.setMovable(False)
     edge_toolbar.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
     parent.addToolBar(QtCore.Qt.ToolBarArea.TopToolBarArea, edge_toolbar)
-
-    edge_toolbar.addWidget(QtWidgets.QLabel("Layer & Link Visibility:", edge_toolbar))
-    edge_toolbar.addSeparator()
 
     exec_lines_action = QtGui.QAction("EXEC", parent)
     exec_lines_action.setCheckable(True)
@@ -106,10 +114,10 @@ def build_main_window_toolbars(
     edge_toolbar.addAction(state_lines_action)
     set_action_text_beside_icon(edge_toolbar, state_lines_action, italic=True)
 
-    edge_toolbar.addSeparator()
-    edge_toolbar.addAction(layers_view_action)
-    set_action_text_beside_icon(edge_toolbar, layers_view_action)
-
+    spacer_toolbar = QtWidgets.QToolBar("ToolbarSpacer", parent)
+    spacer_toolbar.setObjectName("ToolbarSpacerToolBar")
+    spacer_toolbar.setMovable(False)
+    parent.addToolBar(QtCore.Qt.ToolBarArea.TopToolBarArea, spacer_toolbar)
     _add_expanding_spacer(edge_toolbar)
 
     account_toolbar = QtWidgets.QToolBar("Account", parent)
@@ -118,6 +126,9 @@ def build_main_window_toolbars(
     account_toolbar.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonIconOnly)
     parent.addToolBar(QtCore.Qt.ToolBarArea.TopToolBarArea, account_toolbar)
 
+    _add_expanding_spacer(spacer_toolbar)
+    _add_expanding_spacer(account_toolbar)
+
     account_button = QtWidgets.QToolButton(account_toolbar)
     account_button.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonIconOnly)
     account_button.clicked.connect(account_clicked)  # type: ignore[attr-defined]
@@ -125,7 +136,9 @@ def build_main_window_toolbars(
 
     return MainWindowToolbarBundle(
         run_toolbar=run_toolbar,
+        dock_toolbar=dock_toolbar,
         edge_toolbar=edge_toolbar,
+        account_toolbar=account_toolbar,
         account_button=account_button,
         exec_lines_action=exec_lines_action,
         data_lines_action=data_lines_action,

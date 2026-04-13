@@ -12,6 +12,7 @@ class StudioIcon(Enum):
     FOLDER_OPEN = "folder-open.svg"
     FOLDER_PLUS = "folder-plus.svg"
     SAVE = "save.svg"
+    SAVE_AS = "save-as.svg"
     EDIT = "edit.svg"
     TRASH = "trash.svg"
     SEND = "send.svg"
@@ -69,6 +70,13 @@ class StudioIcon(Enum):
     STACK_BACKWARD = "stack-backward.svg"
     BOOKMARK_ON = "bookmark-on.svg"
     BOOKMARK_OFF = "bookmark-off.svg"
+    CUBE_UNFOLDED = "cube-unfolded.svg"
+    CUBE= "cube.svg"
+    AI = "ai.svg"
+    PROPERTY = "chart-candle.svg"
+    NODELIBRARY = "chart-dots-3.svg"
+    SERVICE_LOG = "device-desktop-analytics.svg"
+    SERVICE_MONITOR = "device-heart-monitor.svg"
 
 
 def icon_for(widget: QtWidgets.QWidget, token: StudioIcon) -> QtGui.QIcon:
