@@ -72,6 +72,7 @@ class ReplayerRuntimeNode(OperatorNode):
         self._first_event_ts_ms = 0
         self._task: asyncio.Task[object] | None = None
         self._stop = asyncio.Event()
+        self._emit_seq: int = 0
         self._self_state_writes: dict[str, Any] = {}
         self._user_state_names = tuple(
             name for name in self.state_fields if str(name).strip() and str(name) not in _CONTROL_STATE_NAMES
@@ -89,13 +90,12 @@ class ReplayerRuntimeNode(OperatorNode):
         await self._stop_loop()
 
     async def on_exec(self, exec_id: str | int, in_port: str | None = None) -> list[str]:
-        _ = exec_id
         name = str(in_port or "").strip()
         if name == "play":
-            await self._set_playing(True)
-            return ["started"]
+            await self._set_playing(True, emit_started_event=False)
+            return ["started"] if self._playing else []
         if name == "pause":
-            await self._set_playing(False)
+            await self._set_playing(False, emit_started_event=False)
             return ["stopped"]
         if name == "stop":
             await self._stop_playback(reset_position=True)
@@ -119,7 +119,8 @@ class ReplayerRuntimeNode(OperatorNode):
             self._time_mode = _coerce_time_mode(value, default=self._time_mode)
             return
         if name == "playing":
-            await self._set_playing(coerce_flag(value, default=self._playing))
+            next_playing = coerce_flag(value, default=self._playing)
+            await self._set_playing(next_playing, emit_started_event=next_playing)
             return
 
     async def validate_state(self, field: str, value: Any, *, ts_ms: int, meta: dict[str, Any]) -> Any:
@@ -135,7 +136,7 @@ class ReplayerRuntimeNode(OperatorNode):
             return coerce_flag(value, default=False)
         return value
 
-    async def _set_playing(self, playing: bool) -> None:
+    async def _set_playing(self, playing: bool, *, emit_started_event: bool) -> None:
         next_playing = bool(playing)
         if next_playing == self._playing and ((self._task is not None) == next_playing):
             return
@@ -149,25 +150,28 @@ class ReplayerRuntimeNode(OperatorNode):
             self._playing = False
             await self._safe_set_state("playing", False)
             return
-        self._start_loop()
+        loop_started = self._start_loop()
+        if loop_started and emit_started_event:
+            await self._safe_emit_exec("started", exec_id=self._next_emit_exec_id())
 
     async def _startup_load(self) -> None:
         if self._path:
             await self._load_recording()
         if self._playing:
-            await self._set_playing(True)
+            await self._set_playing(True, emit_started_event=True)
 
-    def _start_loop(self) -> None:
+    def _start_loop(self) -> bool:
         task = self._task
         if task is not None and not task.done():
-            return
+            return False
         self._stop.clear()
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             logger.exception("[%s:replayer] no running event loop", self.node_id)
-            return
+            return False
         self._task = loop.create_task(self._run_playback(), name=f"replayer:{self.node_id}")
+        return True
 
     async def _stop_loop(self) -> None:
         self._stop.set()
@@ -229,16 +233,15 @@ class ReplayerRuntimeNode(OperatorNode):
     async def _run_playback(self) -> None:
         try:
             while self._playing and not self._stop.is_set():
-                await self._safe_emit_exec("started")
                 await self._play_once()
                 if not self._playing or self._stop.is_set():
                     break
                 if not self._loop_enabled:
                     self._playing = False
                     await self._safe_set_state("playing", False)
-                    await self._safe_emit_exec("done")
+                    await self._safe_emit_exec("done", exec_id=self._next_emit_exec_id())
                     break
-                await self._safe_emit_exec("looped")
+                await self._safe_emit_exec("looped", exec_id=self._next_emit_exec_id())
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -284,20 +287,26 @@ class ReplayerRuntimeNode(OperatorNode):
 
     async def _dispatch_event(self, event: Any) -> None:
         if event.type == "data_sample":
+            exec_id = self._next_emit_exec_id()
             allowed_ports = {
                 str(name) for name in self.data_out_ports if str(name).strip() and str(name) != _POSITION_PORT
             }
             for port, value in dict(event.data).items():
                 if port in allowed_ports:
-                    await self._safe_emit(str(port), value)
+                    await self._safe_emit(str(port), value, ctx_id=exec_id)
+            await self._safe_emit_exec("sample", exec_id=exec_id)
             return
         if event.type == "state_change":
             if str(event.field) in self._user_state_names:
                 await self._safe_set_state(str(event.field), event.value)
 
-    async def _safe_emit(self, port: str, value: Any) -> None:
+    def _next_emit_exec_id(self) -> int:
+        self._emit_seq += 1
+        return int(self._emit_seq)
+
+    async def _safe_emit(self, port: str, value: Any, *, ctx_id: str | int | None = None) -> None:
         try:
-            await self.emit(str(port), value)
+            await self.emit(str(port), value, ctx_id=ctx_id)
         except Exception:
             logger.exception("[%s:replayer] failed to emit port: %s", self.node_id, port)
 
@@ -309,8 +318,11 @@ class ReplayerRuntimeNode(OperatorNode):
             self._self_state_writes.pop(str(field), None)
             logger.exception("[%s:replayer] failed to publish state: %s", self.node_id, field)
 
-    async def _safe_emit_exec(self, port: str) -> None:
-        _ = port
+    async def _safe_emit_exec(self, port: str, *, exec_id: str | int) -> None:
+        try:
+            await self.emit_exec(str(port), exec_id=exec_id)
+        except Exception:
+            logger.exception("[%s:replayer] failed to emit exec port: %s", self.node_id, port)
 
 
 def _event_ts_ms(event: Any) -> int:
@@ -336,7 +348,7 @@ ReplayerRuntimeNode.SPEC = F8OperatorSpec(
     description="Playback recorded data and sparse state changes for debugging.",
     tags=["record", "replay", "debug", "playback"],
     execInPorts=["play", "pause", "stop"],
-    execOutPorts=["started", "stopped", "looped", "done"],
+    execOutPorts=["sample", "started", "stopped", "looped", "done"],
     dataInPorts=[],
     dataOutPorts=[
         F8DataPortSpec(

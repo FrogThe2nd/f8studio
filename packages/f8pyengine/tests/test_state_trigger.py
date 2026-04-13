@@ -268,8 +268,8 @@ class StateTriggerTests(unittest.IsolatedAsyncioTestCase):
                 operatorClass=ReplayerRuntimeNode.SPEC.operatorClass,
                 stateFields=list(ReplayerRuntimeNode.SPEC.stateFields or []),
                 stateValues={"path": path, "loop": False, "timeMode": TIME_MODE_OFFSET_FROM_PLAY, "playing": False},
-                execInPorts=["play", "pause", "stop"],
-                execOutPorts=["started", "stopped", "looped", "done"],
+                execInPorts=list(ReplayerRuntimeNode.SPEC.execInPorts or []),
+                execOutPorts=list(ReplayerRuntimeNode.SPEC.execOutPorts or []),
                 dataInPorts=[],
                 dataOutPorts=list(ReplayerRuntimeNode.SPEC.dataOutPorts or []),
             )

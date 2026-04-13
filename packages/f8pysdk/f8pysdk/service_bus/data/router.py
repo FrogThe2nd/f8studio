@@ -159,6 +159,7 @@ class DataRouter:
         value: Any,
         *,
         ts_ms: int | None = None,
+        ctx_id: str | int | None = None,
         options: DataEmitOptions | None = None,
     ) -> None:
         bus = self._bus
@@ -172,7 +173,7 @@ class DataRouter:
             from_port=str(port),
             value=value,
             ts_ms=ts,
-            ctx_id=None,
+            ctx_id=ctx_id,
             options=emit_options,
         )
 

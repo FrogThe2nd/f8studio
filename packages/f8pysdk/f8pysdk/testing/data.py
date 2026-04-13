@@ -8,8 +8,16 @@ if TYPE_CHECKING:
     from ..bus import ServiceBus
 
 
-async def emit_data(bus: "ServiceBus", node_id: str, port: str, value: Any, *, ts_ms: int | None = None) -> None:
-    await bus.emit_data(node_id, port, value, ts_ms=ts_ms)
+async def emit_data(
+    bus: "ServiceBus",
+    node_id: str,
+    port: str,
+    value: Any,
+    *,
+    ts_ms: int | None = None,
+    ctx_id: str | int | None = None,
+) -> None:
+    await bus.emit_data(node_id, port, value, ts_ms=ts_ms, ctx_id=ctx_id)
 
 
 async def pull_data(bus: "ServiceBus", node_id: str, port: str, *, ctx_id: str | int | None = None) -> Any:

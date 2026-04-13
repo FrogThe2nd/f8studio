@@ -67,10 +67,22 @@ class RuntimeNode(BusAttachableNode, StatefulNode, DataReceivableNode, Computabl
         _ = ctx_id
         return None
 
-    async def emit(self, port: str, value: Any, *, ts_ms: int | None = None) -> None:
+    async def emit(
+        self,
+        port: str,
+        value: Any,
+        *,
+        ts_ms: int | None = None,
+        ctx_id: str | int | None = None,
+    ) -> None:
         if self._bus is None:
             return
-        await self._bus.emit_data(self.node_id, port, value, ts_ms=ts_ms)
+        await self._bus.emit_data(self.node_id, port, value, ts_ms=ts_ms, ctx_id=ctx_id)
+
+    async def emit_exec(self, port: str, *, exec_id: str | int) -> None:
+        if self._bus is None:
+            return
+        await self._bus.emit_exec(self.node_id, port, exec_id=exec_id)
 
     async def pull(self, port: str, *, ctx_id: str | int | None = None) -> Any:
         if self._bus is None:

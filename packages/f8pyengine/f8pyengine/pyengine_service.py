@@ -42,6 +42,7 @@ class PyEngineService(ServiceHookBase):
         self._executor = executor
         self._runtime = runtime
         self._auto_sampler = auto_sampler
+        runtime.bus.set_exec_emitter(executor.trigger_exec_nowait)
         runtime.bus.register_rungraph_hook(self)
         runtime.bus.register_service_hook(self)
 
@@ -56,6 +57,7 @@ class PyEngineService(ServiceHookBase):
             runtime.bus.unregister_service_hook(self)
         except Exception:
             logger.exception("unregister_service_hook failed")
+        runtime.bus.set_exec_emitter(None)
         self._runtime = None
         self._auto_sampler = None
         if auto_sampler is not None:

@@ -43,6 +43,7 @@ _CONTROL_STATE_NAMES = {
     OPERATOR_ID_FIELD_NAME,
 }
 
+
 class RecorderRuntimeNode(OperatorNode):
     def __init__(self, *, node_id: str, node: F8RuntimeNode, initial_state: dict[str, Any] | None = None) -> None:
         super().__init__(
@@ -70,8 +71,8 @@ class RecorderRuntimeNode(OperatorNode):
         self._close_writer()
 
     async def on_exec(self, exec_id: str | int, _in_port: str | None = None) -> list[str]:
-        ts_ms = _coerce_ts_ms(exec_id)
-        await self._record_tick(ts_ms=ts_ms)
+        event_ts_ms = now_ms()
+        await self._record_tick(exec_id=exec_id, event_ts_ms=event_ts_ms)
         return []
 
     async def on_state(self, field: str, value: Any, *, ts_ms: int | None = None) -> None:
@@ -94,7 +95,7 @@ class RecorderRuntimeNode(OperatorNode):
             return
         if not self._enabled:
             return
-        event_ts_ms = int(ts_ms if ts_ms is not None else now_ms())
+        event_ts_ms = now_ms()
         try:
             writer = self._ensure_writer(start_ts_ms=event_ts_ms)
             relative_offset_ms = max(0, int(event_ts_ms - self._session_start_ts_ms_or_now(event_ts_ms)))
@@ -157,17 +158,20 @@ class RecorderRuntimeNode(OperatorNode):
         self._writer_path = path
         return writer
 
-    async def _record_tick(self, *, ts_ms: int) -> None:
+    async def _record_tick(self, *, exec_id: str | int, event_ts_ms: int) -> None:
         if not self._enabled:
             return
         try:
-            writer = self._ensure_writer(start_ts_ms=ts_ms)
+            writer = self._ensure_writer(start_ts_ms=event_ts_ms)
             data: dict[str, Any] = {}
             for port in self.data_in_ports:
-                data[str(port)] = await self.pull(str(port), ctx_id=ts_ms)
-            relative_offset_ms = max(0, int(ts_ms - self._session_start_ts_ms_or_now(ts_ms)))
+                data[str(port)] = await self.pull(str(port), ctx_id=exec_id)
+            relative_offset_ms = max(
+                0,
+                int(event_ts_ms - self._session_start_ts_ms_or_now(event_ts_ms)),
+            )
             writer.write_data_sample(
-                tick_ts_ms=ts_ms,
+                tick_ts_ms=event_ts_ms,
                 relative_offset_ms=relative_offset_ms,
                 data=data,
             )
@@ -178,8 +182,11 @@ class RecorderRuntimeNode(OperatorNode):
             await self._set_last_error(str(exc))
 
     async def _publish_counters(self) -> None:
+        session_start_ts_ms = self._session_start_ts_ms
+        if session_start_ts_ms is None:
+            session_start_ts_ms = now_ms()
         await self._safe_set_state("recording", self._writer is not None)
-        await self._safe_set_state("sessionStartTsMs", int(self._session_start_ts_ms_or_now(now_ms())))
+        await self._safe_set_state("sessionStartTsMs", int(session_start_ts_ms))
         await self._safe_set_state("sampleCount", int(self._sample_count))
         await self._safe_set_state("stateEventCount", int(self._state_event_count))
         await self._safe_set_state("lastError", "")
@@ -207,14 +214,6 @@ class RecorderRuntimeNode(OperatorNode):
         if writer is not None:
             writer.close()
 
-def _coerce_ts_ms(exec_id: str | int) -> int:
-    if isinstance(exec_id, int):
-        return int(exec_id)
-    text = str(exec_id or "").strip()
-    try:
-        return int(text)
-    except ValueError:
-        return now_ms()
 
 def now_ms() -> int:
     return int(time.time() * 1000.0)

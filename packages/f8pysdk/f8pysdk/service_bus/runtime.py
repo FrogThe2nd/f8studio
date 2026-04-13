@@ -258,6 +258,7 @@ class ServiceBus:
                 gpu_enabled=bool(config.monitor_gpu_enabled),
             ),
         )
+        self._exec_emitter: Callable[[str, str, str | int], Awaitable[None]] | None = None
         if self._monitor_collector.enabled:
             self._monitor_record_emit = self._record_emit_metrics_enabled
             self._monitor_record_wait = self._record_wait_metrics_enabled
@@ -601,7 +602,15 @@ class ServiceBus:
         """Subscribe to a subject."""
         return await self._transport.subscribe(str(subject), queue=queue, cb=cb)
 
-    async def emit_data(self, node_id: str, port: str, value: Any, *, ts_ms: int | None = None) -> None:
+    async def emit_data(
+        self,
+        node_id: str,
+        port: str,
+        value: Any,
+        *,
+        ts_ms: int | None = None,
+        ctx_id: str | int | None = None,
+    ) -> None:
         """
         Emit one output sample from a local node port.
 
@@ -616,7 +625,18 @@ class ServiceBus:
         """
         node_id_s = ensure_token(node_id, label="node_id")
         port_s = ensure_token(port, label="port_id")
-        await self._data_router.emit_data(node_id_s, port_s, value, ts_ms=ts_ms)
+        await self._data_router.emit_data(node_id_s, port_s, value, ts_ms=ts_ms, ctx_id=ctx_id)
+
+    def set_exec_emitter(self, emitter: Callable[[str, str, str | int], Awaitable[None]] | None) -> None:
+        self._exec_emitter = emitter
+
+    async def emit_exec(self, node_id: str, port: str, *, exec_id: str | int) -> None:
+        emitter = self._exec_emitter
+        if emitter is None:
+            return
+        node_id_s = ensure_token(node_id, label="node_id")
+        port_s = ensure_token(port, label="port_id")
+        await emitter(node_id_s, port_s, exec_id=exec_id)
 
     async def pull_data(self, node_id: str, port: str, *, ctx_id: str | int | None = None) -> Any:
         """
