@@ -18,6 +18,7 @@ from .viz_track import VizTrackRenderNode
 from .viz_three_d import VizThreeDRenderNode
 from .note import NoteRenderNode
 from .patch_hub import PatchHubRenderNode
+from .backdrop import BackdropRenderNode
 
 
 class RenderNodeRegistry:
@@ -46,6 +47,7 @@ class RenderNodeRegistry:
         self._renderers["viz_three_d"] = VizThreeDRenderNode
         self._renderers["note_markdown"] = NoteRenderNode
         self._renderers["patch_hub"] = PatchHubRenderNode
+        self._renderers["backdrop"] = BackdropRenderNode
 
     def register(self, renderer_key: str, renderer: type[NodeObject]) -> None:
         if renderer_key in self._renderers:

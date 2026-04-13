@@ -31,7 +31,6 @@ REMOVED_THIN_FACADES = [
     "f8pysdk.service_runtime_tools.nats_bootstrap",
     "f8pysdk.service_runtime_tools.error_reporting",
     "f8pysdk.service_bus.monitor_collector",
-    "f8pysdk.service_bus.api",
     "f8pysdk.service_bus.api.bus",
     "f8pysdk.service_bus.api.config",
     "f8pysdk.service_bus.api.types",
@@ -47,6 +46,9 @@ REMOVED_THIN_FACADES = [
 
 class RemovedThinFacadeTests(unittest.TestCase):
     def test_removed_thin_facades_are_not_importable(self) -> None:
+        # `f8pysdk.service_bus.api` remains as a namespace package directory in the
+        # current layout, so importing the package name itself may succeed even
+        # though the removed thin facade modules under it no longer exist.
         for module_name in REMOVED_THIN_FACADES:
             with self.subTest(module_name=module_name):
                 with self.assertRaises((ImportError, ModuleNotFoundError)):

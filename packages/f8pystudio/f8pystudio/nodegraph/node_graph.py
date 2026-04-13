@@ -9,8 +9,10 @@ from NodeGraphQt import NodeGraph
 from NodeGraphQt.base.commands import NodeMovedCmd
 
 from .graph_connection_rules import GraphConnectionRulesMixin
+from .container_basenode import F8StudioContainerBaseNode
 from .graph_container_binding import GraphContainerBindingMixin
 from .graph_component_actions import GraphComponentActionsMixin
+from .graph_backdrop_actions import GraphBackdropActionsMixin
 from .graph_duplicate_actions import GraphDuplicateActionsMixin
 from .graph_factory_flow import GraphFactoryFlowMixin
 from .graph_identity_actions import GraphIdentityActionsMixin
@@ -25,6 +27,7 @@ from .layers import normalize_layer_defs
 from .service_bridge_protocol import ServiceBridge
 from .session_layout_codec import SessionLayoutCodecMixin
 from .viewer import F8StudioNodeViewer
+from ..render_nodes.backdrop import BackdropRenderNode
 from ..ui.support.ui_notifications import show_warning
 from ..ui.dialogs.node_docs_dialog import SpecTemplate
 
@@ -34,6 +37,7 @@ MISSING_OPERATOR_NODE_TYPE = "svc.f8.missing.operator"
 
 class F8StudioGraph(
     GraphComponentActionsMixin,
+    GraphBackdropActionsMixin,
     GraphVariantActionsMixin,
     GraphIdentityActionsMixin,
     GraphDuplicateActionsMixin,
@@ -76,6 +80,9 @@ class F8StudioGraph(
         self._tab_search_node_type_aliases: dict[str, str] = {}
         self._tab_search_component_ids: dict[str, str] = {}
         self._component_menu_node_types: set[str] = set()
+        self._backdrop_create_menu_node_types: set[str] = set()
+        self._backdrop_wrap_menu_node_types: set[str] = set()
+        self._backdrop_registered_node_type: str | None = None
         self._variant_menu_node_types: set[str] = set()
         self._identity_menu_node_types: set[str] = set()
         self._duplicate_menu_node_types: set[str] = set()
@@ -94,6 +101,7 @@ class F8StudioGraph(
 
         self.nodes_deleted.connect(self._on_nodes_deleted)  # type: ignore[attr-defined]
         self.nodes_deleted.connect(self.on_layering_nodes_deleted)  # type: ignore[attr-defined]
+        self.nodes_deleted.connect(self._refresh_view_after_nodes_deleted)  # type: ignore[attr-defined]
         self.port_connected.connect(self._on_port_connected)  # type: ignore[attr-defined]
         self.port_disconnected.connect(self._on_port_disconnected)  # type: ignore[attr-defined]
         self._install_graph_context_menu_commands()
@@ -202,9 +210,29 @@ class F8StudioGraph(
         _ = (node, name, value)
         return
 
+    def _on_node_backdrop_updated(self, node_id: str, update_property: str, value: Any) -> None:
+        node = self.get_node_by_id(str(node_id or ""))
+        if isinstance(node, (BackdropRenderNode, F8StudioContainerBaseNode)):
+            node.on_backdrop_updated(str(update_property or ""), value)
+            return
+        super()._on_node_backdrop_updated(node_id, update_property, value)
+
     def _on_nodes_moving(self, node_data: Any) -> None:
         _ = node_data
         return
+
+    def _refresh_view_after_nodes_deleted(self, _node_ids: list[str]) -> None:
+        viewer = self.viewer()
+        if viewer is None:
+            return
+        scene = viewer.scene()
+        if scene is not None:
+            scene.invalidate(scene.sceneRect(), QtWidgets.QGraphicsScene.AllLayers)
+            scene.update()
+        viewer.resetCachedContent()
+        viewport = viewer.viewport()
+        if viewport is not None:
+            viewport.update()
 
     @staticmethod
     def _container_parent_view(node_view: Any) -> Any | None:

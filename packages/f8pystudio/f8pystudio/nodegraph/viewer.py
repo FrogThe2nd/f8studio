@@ -6,6 +6,7 @@ from typing import Any
 
 from Qt import QtCore, QtGui, QtWidgets
 from NodeGraphQt.constants import PortTypeEnum
+from NodeGraphQt.qgraphics.node_abstract import AbstractNodeItem
 from NodeGraphQt.qgraphics.port import PortItem
 from NodeGraphQt.widgets.viewer import NodeViewer
 
@@ -817,7 +818,22 @@ class F8StudioNodeViewer(NodeViewer):
         graph = self._f8_graph
         if graph is None:
             return
-        nodes = graph.selected_nodes()
+        nodes = list(graph.selected_nodes() or [])
+        node_ids = {str(node.id or "") for node in nodes}
+        for item in list(self.scene().selectedItems() or []):
+            parent = item.parentItem()
+            while parent is not None and not isinstance(parent, AbstractNodeItem):
+                parent = parent.parentItem()
+            if not isinstance(parent, AbstractNodeItem):
+                continue
+            node_id = str(parent.id or "")
+            if not node_id or node_id in node_ids:
+                continue
+            node = graph.get_node_by_id(node_id)
+            if node is None:
+                continue
+            nodes.append(node)
+            node_ids.add(node_id)
         if nodes:
             graph.delete_nodes(nodes)
 
