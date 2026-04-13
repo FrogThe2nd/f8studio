@@ -125,31 +125,13 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
         self._toolbar.addSeparator()
 
         btn_add = QtWidgets.QPushButton(self)
-        btn_edit = QtWidgets.QPushButton(self)
-        btn_delete = QtWidgets.QPushButton(self)
-        btn_copy_local = QtWidgets.QPushButton(self)
-        btn_upload = QtWidgets.QPushButton(self)
-        btn_install = QtWidgets.QPushButton(self)
-        btn_subscribe = QtWidgets.QPushButton(self)
         btn_refresh = QtWidgets.QPushButton(self)
-        btn_history = QtWidgets.QPushButton(self)
-        btn_visibility = QtWidgets.QPushButton(self)
-        btn_insert = QtWidgets.QPushButton(self)
         btn_import = QtWidgets.QPushButton(self)
         btn_export = QtWidgets.QPushButton(self)
 
         button_specs = [
             (btn_add, StudioIcon.CIRCLE_PLUS, "Save As Component"),
-            (btn_edit, StudioIcon.EDIT, "Edit Metadata"),
-            (btn_delete, StudioIcon.TRASH, "Delete"),
-            (btn_copy_local, StudioIcon.SAVE, "Copy to Draft"),
-            (btn_upload, StudioIcon.CLOUD_UP, "Upload"),
-            (btn_install, StudioIcon.CLOUD_DOWN, "Download/Install"),
-            (btn_subscribe, StudioIcon.HEART_ON, "Subscribe / Unsubscribe"),
             (btn_refresh, StudioIcon.REFRESH, "Refresh current list"),
-            (btn_history, StudioIcon.ARTICLE, "History"),
-            (btn_visibility, StudioIcon.EYE_STAR, "Visibility"),
-            (btn_insert, StudioIcon.PACKAGE_IMPORT, "Create on canvas"),
             (btn_import, StudioIcon.PACKAGE_IMPORT, "Import JSON"),
             (btn_export, StudioIcon.PACKAGE_EXPORT, "Export JSON"),
         ]
@@ -160,19 +142,13 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
             button.setFixedWidth(30)
 
         btn_add.clicked.connect(self._on_add_clicked)  # type: ignore[attr-defined]
-        btn_edit.clicked.connect(self._on_edit_clicked)  # type: ignore[attr-defined]
-        btn_delete.clicked.connect(self._on_delete_clicked)  # type: ignore[attr-defined]
-        btn_copy_local.clicked.connect(self._on_copy_local_clicked)  # type: ignore[attr-defined]
-        btn_upload.clicked.connect(self._on_upload_clicked)  # type: ignore[attr-defined]
-        btn_install.clicked.connect(self._on_install_clicked)  # type: ignore[attr-defined]
-        btn_subscribe.clicked.connect(self._on_subscribe_clicked)  # type: ignore[attr-defined]
         btn_refresh.clicked.connect(self._on_refresh_clicked)  # type: ignore[attr-defined]
-        btn_history.clicked.connect(self._on_history_clicked)  # type: ignore[attr-defined]
-        btn_visibility.clicked.connect(self._on_visibility_clicked)  # type: ignore[attr-defined]
-        btn_insert.clicked.connect(self._on_insert_clicked)  # type: ignore[attr-defined]
         btn_import.clicked.connect(self._on_import_clicked)  # type: ignore[attr-defined]
         btn_export.clicked.connect(self._on_export_clicked)  # type: ignore[attr-defined]
 
+        self._toolbar.addWidget(btn_add)
+        self._toolbar.addWidget(btn_import)
+        self._toolbar.addWidget(btn_export)
         self._toolbar.addSeparator()
         self._toolbar.addWidget(btn_refresh)
         toolbar_row = QtWidgets.QHBoxLayout()
@@ -180,26 +156,10 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
         toolbar_row.addStretch(1)
         toolbar_row.addWidget(self._account_button)
 
-        btn_row = QtWidgets.QHBoxLayout()
-        for button in [
-            btn_add,
-            btn_edit,
-            btn_delete,
-            btn_copy_local,
-            btn_upload,
-            btn_install,
-            btn_subscribe,
-            btn_history,
-            btn_visibility,
-            btn_insert,
-            btn_import,
-            btn_export,
-        ]:
-            btn_row.addWidget(button)
-        btn_row.addStretch(1)
-
         self._list = QtWidgets.QListWidget(self)
         self._list.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
+        self._list.setSpacing(3)
+        self._list.setStyleSheet("QListWidget::item { border: 0; padding: 0; }")
         self._list.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
         self._list.itemSelectionChanged.connect(self._on_selection_changed)  # type: ignore[attr-defined]
         self._list.itemDoubleClicked.connect(self._on_item_double_clicked)  # type: ignore[attr-defined]
@@ -222,18 +182,7 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.addLayout(toolbar_row)
-        layout.addLayout(btn_row)
         layout.addWidget(split, 1)
-
-        self._btn_edit = btn_edit
-        self._btn_delete = btn_delete
-        self._btn_copy_local = btn_copy_local
-        self._btn_upload = btn_upload
-        self._btn_install = btn_install
-        self._btn_subscribe = btn_subscribe
-        self._btn_history = btn_history
-        self._btn_visibility = btn_visibility
-        self._btn_insert = btn_insert
         self.destroyed.connect(self._on_destroyed)  # type: ignore[attr-defined]
         self._reload()
 
@@ -419,17 +368,26 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
 
     def _build_list_row(self, entry: F8ComponentEntry) -> QtWidgets.QWidget:
         container = QtWidgets.QWidget(self._list)
+        container.setObjectName("catalogRowCard")
+        container.setStyleSheet(
+            "QWidget#catalogRowCard {"
+            " border: 1px solid #4b5563;"
+            " border-radius: 10px;"
+            " background: #20252c;"
+            "}"
+        )
         root = QtWidgets.QVBoxLayout(container)
-        root.setContentsMargins(8, 6, 8, 6)
-        root.setSpacing(4)
+        root.setContentsMargins(10, 8, 10, 8)
+        root.setSpacing(6)
 
         title_row = QtWidgets.QHBoxLayout()
         title_row.setContentsMargins(0, 0, 0, 0)
-        title_row.setSpacing(6)
+        title_row.setSpacing(8)
         row_state = self._row_state_for_entry(entry)
         if row_state.subscribed:
             icon_label = QtWidgets.QLabel(container)
             icon_label.setPixmap(icon_for(container, StudioIcon.HEART_ON).pixmap(14, 14))
+            icon_label.setToolTip("Subscribed")
             title_row.addWidget(icon_label)
         name_label = QtWidgets.QLabel(str(entry.record.name or ""), container)
         font = name_label.font()
@@ -447,24 +405,129 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
         meta_row = QtWidgets.QHBoxLayout()
         meta_row.setContentsMargins(0, 0, 0, 0)
         meta_row.setSpacing(6)
-        for badge_text in self._badge_texts_for_entry(entry):
-            badge = QtWidgets.QLabel(badge_text, container)
-            badge.setStyleSheet(
-                "QLabel { border: 1px solid palette(mid); border-radius: 4px; padding: 1px 6px; color: palette(window-text); background: palette(base); }"
-            )
-            meta_row.addWidget(badge, 0)
+        visibility_badge = self._build_visibility_badge(container, row_state)
+        if visibility_badge is not None:
+            meta_row.addWidget(visibility_badge, 0)
+        sync_badge = self._build_sync_badge(container, row_state)
+        if sync_badge is not None:
+            meta_row.addWidget(sync_badge, 0)
+        version_badge = self._build_version_badge(container, row_state)
+        if version_badge is not None:
+            meta_row.addWidget(version_badge, 0)
         meta_row.addStretch(1)
         root.addLayout(meta_row)
 
         if entry.record.description:
             description_label = QtWidgets.QLabel(str(entry.record.description or ""), container)
             description_label.setWordWrap(True)
-            description_label.setStyleSheet("color: palette(window-text);")
+            description_label.setStyleSheet("color: palette(mid);")
             root.addWidget(description_label)
         return container
 
-    def _badge_texts_for_entry(self, entry: F8ComponentEntry) -> list[str]:
-        return self._row_state_for_entry(entry).badge_texts()
+    @staticmethod
+    def _build_text_badge(parent: QtWidgets.QWidget, text: str) -> QtWidgets.QLabel:
+        badge = QtWidgets.QLabel(str(text), parent)
+        badge.setStyleSheet(
+            "QLabel {"
+            " border: 1px solid #596273;"
+            " border-radius: 9px;"
+            " padding: 1px 6px;"
+            " color: #d7dde7;"
+            " background: #2a3038;"
+            "}"
+        )
+        return badge
+
+    def _build_version_badge(
+        self,
+        parent: QtWidgets.QWidget,
+        row_state: AssetCatalogRowState,
+    ) -> QtWidgets.QLabel | None:
+        version_text = row_state.compact_version_badge()
+        if version_text is None:
+            return None
+        sync_key = row_state.sync_indicator_key()
+        local_color = "#cbd5e1"
+        remote_color = "#cbd5e1"
+        if sync_key == "push":
+            local_color = "#86efac"
+            remote_color = "#94a3b8"
+        elif sync_key == "pull":
+            local_color = "#94a3b8"
+            remote_color = "#93c5fd"
+        elif sync_key == "conflict":
+            local_color = "#fca5a5"
+            remote_color = "#fdba74"
+        badge = self._build_text_badge(parent, "")
+        badge.setTextFormat(QtCore.Qt.TextFormat.RichText)
+        parts: list[str] = []
+        if row_state.local_version_number is not None:
+            parts.append(f"<span style='color:{local_color};font-weight:600;'>L{int(row_state.local_version_number)}</span>")
+        if row_state.remote_version_number is not None:
+            parts.append(f"<span style='color:{remote_color};font-weight:600;'>R{int(row_state.remote_version_number)}</span>")
+        badge.setText(" <span style='color:#64748b;'>|</span> ".join(parts))
+        if sync_key == "push":
+            badge.setToolTip("Local version is ahead of remote")
+        elif sync_key == "pull":
+            badge.setToolTip("Remote version is ahead of local")
+        elif sync_key == "conflict":
+            badge.setToolTip("Local and remote versions diverged")
+        else:
+            badge.setToolTip(version_text)
+        return badge
+
+    @staticmethod
+    def _sync_badge_token(row_state: AssetCatalogRowState) -> StudioIcon | None:
+        sync_key = row_state.sync_indicator_key()
+        if sync_key == "synced":
+            return StudioIcon.CHECK
+        if sync_key == "push":
+            return StudioIcon.CLOUD_UP
+        if sync_key == "pull":
+            return StudioIcon.CLOUD_DOWN
+        if sync_key == "conflict":
+            return StudioIcon.X
+        return None
+
+    def _build_sync_badge(
+        self,
+        parent: QtWidgets.QWidget,
+        row_state: AssetCatalogRowState,
+    ) -> QtWidgets.QLabel | None:
+        token = self._sync_badge_token(row_state)
+        if token is None:
+            return None
+        badge = self._build_text_badge(parent, "")
+        badge.setPixmap(icon_for(parent, token).pixmap(12, 12))
+        sync_key = row_state.sync_indicator_key()
+        if sync_key == "synced":
+            badge.setToolTip("Local and remote are in sync")
+        elif sync_key == "push":
+            badge.setToolTip("Local is ahead of remote")
+        elif sync_key == "pull":
+            badge.setToolTip("Remote is ahead of local")
+        elif sync_key == "conflict":
+            badge.setToolTip("Local and remote changed differently")
+        return badge
+
+    def _build_visibility_badge(
+        self,
+        parent: QtWidgets.QWidget,
+        row_state: AssetCatalogRowState,
+    ) -> QtWidgets.QLabel | None:
+        visibility_key = row_state.visibility_icon_key()
+        if visibility_key == "public":
+            token = StudioIcon.PUBLIC
+            tooltip = "Public"
+        elif visibility_key == "private":
+            token = StudioIcon.PRIVATE
+            tooltip = "Private"
+        else:
+            return None
+        badge = self._build_text_badge(parent, "")
+        badge.setPixmap(icon_for(parent, token).pixmap(12, 12))
+        badge.setToolTip(tooltip)
+        return badge
 
     def _build_row_states(self) -> dict[str, AssetCatalogRowState]:
         service = self._sync_client._catalog_service
@@ -555,84 +618,7 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
         return None
 
     def _refresh_action_buttons(self, selected_entry: F8ComponentEntry | None) -> None:
-        current_tab = self._scope_tabs.currentIndex()
-        local_entry: F8ComponentEntry | None = None
-        remote_entry: F8ComponentEntry | None = None
-        if selected_entry is not None:
-            component_id = str(selected_entry.record.componentId or "").strip()
-            local_entry = self._local_entry_for_component_id(component_id)
-            remote_entry = self._remote_entry_for_component_id(component_id)
-        has_owned_remote = remote_entry is not None and self._is_owned_remote_entry(remote_entry)
-        can_load, can_offload = self._load_action_availability(local_entry=local_entry, remote_entry=remote_entry)
-        can_sync = current_tab == self._TAB_MINE and (local_entry is not None or has_owned_remote)
-        can_pull = current_tab == self._TAB_INSTALLED and remote_entry is not None and component_entry_is_installed(remote_entry)
-        can_copy = current_tab in {self._TAB_MINE, self._TAB_COMMUNITY} and selected_entry is not None
-        can_subscribe = (
-            current_tab == self._TAB_COMMUNITY
-            and selected_entry is not None
-            and selected_entry.source == F8ComponentSourceKind.remote_public
-            and not self._is_owned_remote_entry(selected_entry)
-        )
-        can_delete = current_tab == self._TAB_MINE and (local_entry is not None or has_owned_remote)
-        can_toggle_visibility = current_tab == self._TAB_MINE and has_owned_remote
-        can_history = bool(selected_entry is not None and (local_entry is not None or remote_entry is not None))
-        can_insert = bool(selected_entry is not None and component_entry_is_installed(selected_entry))
-
-        load_tooltip = self._load_action_tooltip(can_offload=can_offload, local_entry=local_entry)
-        self._set_button_state(
-            self._btn_install,
-            visible=current_tab in {self._TAB_MINE, self._TAB_INSTALLED},
-            enabled=can_load or can_offload,
-            tooltip=load_tooltip,
-            icon_token=StudioIcon.DOWNLOAD if can_offload else StudioIcon.CLOUD_DOWN,
-        )
-        self._set_button_state(
-            self._btn_delete,
-            visible=current_tab == self._TAB_MINE,
-            enabled=can_delete,
-            tooltip="Delete",
-            icon_token=StudioIcon.TRASH,
-        )
-        self._set_button_state(
-            self._btn_copy_local,
-            visible=current_tab in {self._TAB_MINE, self._TAB_COMMUNITY},
-            enabled=can_copy,
-            tooltip="Copy to Draft",
-            icon_token=StudioIcon.SAVE,
-        )
-        self._set_button_state(
-            self._btn_upload,
-            visible=current_tab in {self._TAB_MINE, self._TAB_INSTALLED},
-            enabled=can_sync or can_pull,
-            tooltip=("Pull" if current_tab == self._TAB_INSTALLED else "Sync"),
-            icon_token=StudioIcon.CLOUD_UP if current_tab == self._TAB_MINE else StudioIcon.REFRESH,
-        )
-        subscribe_tooltip = "Subscribe"
-        subscribe_icon = StudioIcon.HEART_ON
-        if selected_entry is not None and selected_entry.subscribed:
-            subscribe_tooltip = "Unsubscribe"
-            subscribe_icon = StudioIcon.HEART_OFF
-        self._set_button_state(
-            self._btn_subscribe,
-            visible=current_tab == self._TAB_COMMUNITY,
-            enabled=can_subscribe,
-            tooltip=subscribe_tooltip,
-            icon_token=subscribe_icon,
-        )
-        visibility_tooltip = "Make Public"
-        if remote_entry is not None and remote_entry.visibility == F8ComponentVisibility.public:
-            visibility_tooltip = "Make Private"
-        self._set_button_state(
-            self._btn_visibility,
-            visible=current_tab == self._TAB_MINE,
-            enabled=can_toggle_visibility,
-            tooltip=visibility_tooltip,
-            icon_token=StudioIcon.EYE_STAR,
-        )
-        self._btn_edit.setVisible(current_tab == self._TAB_MINE)
-        self._btn_edit.setEnabled(current_tab == self._TAB_MINE and local_entry is not None)
-        self._btn_history.setEnabled(can_history)
-        self._btn_insert.setEnabled(can_insert)
+        _ = selected_entry
 
     def _on_selection_changed(self) -> None:
         selected_entry = self._selected_entry()
@@ -750,6 +736,9 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
         menu = QtWidgets.QMenu(self)
         if current_tab == self._TAB_MINE:
             can_load, can_offload = self._load_action_availability(local_entry=local_entry, remote_entry=remote_entry)
+            edit_action = menu.addAction("Edit Metadata")
+            edit_action.setEnabled(local_entry is not None)
+            edit_action.triggered.connect(self._on_edit_clicked)  # type: ignore[attr-defined]
             load_action = menu.addAction("Offload" if can_offload else "Load")
             load_action.setEnabled(can_load or can_offload)
             load_action.triggered.connect(self._on_install_clicked)  # type: ignore[attr-defined]
@@ -767,6 +756,9 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
             visibility_action = menu.addAction(visibility_label)
             visibility_action.setEnabled(remote_entry is not None and self._is_owned_remote_entry(remote_entry))
             visibility_action.triggered.connect(self._on_visibility_clicked)  # type: ignore[attr-defined]
+            history_action = menu.addAction("History")
+            history_action.setEnabled(local_entry is not None or remote_entry is not None)
+            history_action.triggered.connect(self._on_history_clicked)  # type: ignore[attr-defined]
         elif current_tab == self._TAB_COMMUNITY:
             subscribe_action = menu.addAction("Unsubscribe" if selected_entry.subscribed else "Subscribe")
             subscribe_action.setEnabled(
@@ -775,6 +767,9 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
             subscribe_action.triggered.connect(self._on_subscribe_clicked)  # type: ignore[attr-defined]
             fork_action = menu.addAction("Copy to Draft")
             fork_action.triggered.connect(self._on_copy_local_clicked)  # type: ignore[attr-defined]
+            history_action = menu.addAction("History")
+            history_action.setEnabled(local_entry is not None or remote_entry is not None)
+            history_action.triggered.connect(self._on_history_clicked)  # type: ignore[attr-defined]
         else:
             offload_action = menu.addAction("Offload")
             offload_action.setEnabled(local_entry is not None or (remote_entry is not None and component_entry_is_installed(remote_entry)))
@@ -782,6 +777,9 @@ class ComponentCatalogDialog(QtWidgets.QDialog):
             pull_action = menu.addAction("Pull")
             pull_action.setEnabled(remote_entry is not None and component_entry_is_installed(remote_entry))
             pull_action.triggered.connect(self._on_upload_clicked)  # type: ignore[attr-defined]
+            history_action = menu.addAction("History")
+            history_action.setEnabled(local_entry is not None or remote_entry is not None)
+            history_action.triggered.connect(self._on_history_clicked)  # type: ignore[attr-defined]
         if component_entry_is_installed(selected_entry):
             menu.addSeparator()
             insert_action = menu.addAction("Create on canvas")

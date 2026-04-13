@@ -63,6 +63,8 @@ class StudioIcon(Enum):
     USER_MINUS = "user-minus.svg"
     USER_CANCEL = "user-cancel.svg"
     USER_X = "user-x.svg"
+    PUBLIC = "lock-open-2.svg"
+    PRIVATE = "lock.svg"
     STACK_BACK = "stack-back.svg"
     STACK_FRONT = "stack-front.svg"
     STACK_MIDDLE = "stack-middle.svg"

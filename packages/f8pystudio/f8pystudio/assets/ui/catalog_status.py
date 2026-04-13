@@ -35,17 +35,36 @@ class AssetCatalogRowState:
     def has_local_presence(self) -> bool:
         return self.has_local_head or self.has_cached_remote_content
 
-    def badge_texts(self) -> list[str]:
-        badges = [self.presence.value]
-        if self.has_remote_head and self.visibility:
-            badges.append(self.visibility)
-        if self.sync_health is not None:
-            badges.append(self.sync_health.value)
+    def compact_version_badge(self) -> str | None:
+        parts: list[str] = []
         if self.local_version_number is not None:
-            badges.append(f"L{int(self.local_version_number)}")
+            parts.append(f"L{int(self.local_version_number)}")
         if self.remote_version_number is not None:
-            badges.append(f"R{int(self.remote_version_number)}")
-        return badges
+            parts.append(f"R{int(self.remote_version_number)}")
+        if not parts:
+            return None
+        return " | ".join(parts)
+
+    def visibility_icon_key(self) -> str | None:
+        if not self.has_remote_head or not self.visibility:
+            return None
+        visibility = str(self.visibility).strip().lower()
+        if visibility == "public":
+            return "public"
+        if visibility == "private":
+            return "private"
+        return None
+
+    def sync_indicator_key(self) -> str | None:
+        if self.sync_health == AssetCatalogSyncHealth.conflict:
+            return "conflict"
+        if self.sync_health == AssetCatalogSyncHealth.local_changes:
+            return "push"
+        if self.sync_health == AssetCatalogSyncHealth.remote_newer:
+            return "pull"
+        if self.sync_health == AssetCatalogSyncHealth.synced:
+            return "synced"
+        return None
 
 
 def build_asset_catalog_row_state(
