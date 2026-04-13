@@ -1371,6 +1371,10 @@ bool ImPlayerService::on_command(const std::string& call, const nlohmann::json& 
     ok = cmd_pause(err);
   else if (call == "stop")
     ok = cmd_stop(err);
+  else if (call == "next")
+    ok = cmd_next(err);
+  else if (call == "previous")
+    ok = cmd_previous(err);
   else if (call == "seek")
     ok = cmd_seek(args, err);
   else if (call == "setVolume")
@@ -1759,6 +1763,24 @@ bool ImPlayerService::cmd_stop(std::string& err) {
   return true;
 }
 
+bool ImPlayerService::cmd_next(std::string& err) {
+  if (!player_) {
+    err = "player not initialized";
+    return false;
+  }
+  playlist_next();
+  return true;
+}
+
+bool ImPlayerService::cmd_previous(std::string& err) {
+  if (!player_) {
+    err = "player not initialized";
+    return false;
+  }
+  playlist_prev();
+  return true;
+}
+
 bool ImPlayerService::cmd_seek(const nlohmann::json& args, std::string& err) {
   if (!player_) {
     err = "player not initialized";
@@ -2073,6 +2095,14 @@ json ImPlayerService::describe() {
       json{{"name", "play"}, {"description", "Start playback"}, {"required", true}, {"showOnNode", true}},
       json{{"name", "pause"}, {"description", "Pause playback"}, {"required", true}, {"showOnNode", true}},
       json{{"name", "stop"}, {"description", "Stop playback"}, {"required", true}, {"showOnNode", true}},
+      json{{"name", "next"},
+           {"description", "Advance to the next playlist item"},
+           {"required", true},
+           {"showOnNode", true}},
+      json{{"name", "previous"},
+           {"description", "Return to the previous playlist item"},
+           {"required", true},
+           {"showOnNode", true}},
       json{{"name", "seek"},
            {"description", "Seek"},
            {"required", true},

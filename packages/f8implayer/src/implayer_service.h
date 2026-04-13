@@ -109,6 +109,8 @@ class ImPlayerService final : public f8::cppsdk::LifecycleNode,
   bool cmd_play(std::string& err);
   bool cmd_pause(std::string& err);
   bool cmd_stop(std::string& err);
+  bool cmd_next(std::string& err);
+  bool cmd_previous(std::string& err);
   bool cmd_seek(const nlohmann::json& args, std::string& err);
   bool cmd_set_volume(const nlohmann::json& args, std::string& err);
   void mark_vr_manual_override();

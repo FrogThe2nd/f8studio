@@ -658,15 +658,19 @@ void ImPlayerGui::renderOverlay(const MpvPlayer& player, const Callbacks& cb, co
       }
 
       ImGui::Separator();
-      for (int i = 0; i < static_cast<int>(playlist.size()); ++i) {
-        const bool selected = (i == playlist_index);
-        std::string label = selected ? ("> " + playlist[i]) : playlist[i];
-        if (ImGui::Selectable(label.c_str(), selected)) {
-          if (cb.playlist_select)
-            cb.playlist_select(i);
-          dirty_ = true;
+      if (ImGui::BeginChild("##playlist_items", ImVec2(0.0f, 0.0f), ImGuiChildFlags_None,
+                            ImGuiWindowFlags_HorizontalScrollbar)) {
+        for (int i = 0; i < static_cast<int>(playlist.size()); ++i) {
+          const bool selected = (i == playlist_index);
+          std::string label = selected ? ("> " + playlist[i]) : playlist[i];
+          if (ImGui::Selectable(label.c_str(), selected)) {
+            if (cb.playlist_select)
+              cb.playlist_select(i);
+            dirty_ = true;
+          }
         }
       }
+      ImGui::EndChild();
     }
     ImGui::End();
   }

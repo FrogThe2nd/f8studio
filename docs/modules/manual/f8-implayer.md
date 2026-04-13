@@ -9,7 +9,7 @@
 
 - **Standard Consumption**: Feed its SHM output (defaulting to the service instance id or `videoShmName`) into CVKit, DL, or visualization consumers (`f8.viz.video`).
 - **Media Master**: Keep one `implayer` node as the canonical media producer for a scenario and branch the SHM signal to multiple analysis pipelines in parallel.
-- **Dynamic Control**: Use `f8.pyengine` or scripts to send `open`, `play`, `pause`, or `seek` commands based on application logic or UI events.
+- **Dynamic Control**: Use `f8.pyengine` or scripts to send `open`, `play`, `pause`, `next`, `previous`, or `seek` commands based on application logic or UI events.
 
 ### Cookie/Auth Notes
 

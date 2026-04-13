@@ -19,7 +19,7 @@ C++ MPV-based player service with shared-memory video output.
 
 - **Standard Consumption**: Feed its SHM output (defaulting to the service instance id or `videoShmName`) into CVKit, DL, or visualization consumers (`f8.viz.video`).
 - **Media Master**: Keep one `implayer` node as the canonical media producer for a scenario and branch the SHM signal to multiple analysis pipelines in parallel.
-- **Dynamic Control**: Use `f8.pyengine` or scripts to send `open`, `play`, `pause`, or `seek` commands based on application logic or UI events.
+- **Dynamic Control**: Use `f8.pyengine` or scripts to send `open`, `play`, `pause`, `next`, `previous`, or `seek` commands based on application logic or UI events.
 
 ### Cookie/Auth Notes
 
@@ -47,7 +47,7 @@ win/f8implayer_service.exe
 
 - Data inputs: none
 - Data outputs: `playback`, `monitor`
-- Commands: `open`, `play`, `pause`, `stop`, `seek`, `setVolume`
+- Commands: `open`, `play`, `pause`, `stop`, `next`, `previous`, `seek`, `setVolume`
 
 ### Service State Fields
 
@@ -114,6 +114,18 @@ Pause playback
 
 ### `stop`
 Stop playback
+
+- Show on node: `true`
+- Params: none
+
+### `next`
+Advance to the next playlist item
+
+- Show on node: `true`
+- Params: none
+
+### `previous`
+Return to the previous playlist item
 
 - Show on node: `true`
 - Params: none
