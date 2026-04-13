@@ -7,6 +7,7 @@ from typing import Callable, Iterable, TypeAlias
 from qtpy import QtCore, QtGui, QtWidgets
 
 from f8pysdk.codec import coerce_bool
+from ...diagnostics.logging import apply_root_log_level
 from ...assets.projects.project_models import F8ProjectRecord
 from ...assets.projects.project_storage import ProjectStorageService
 from ...nodegraph.edge_rules import EDGE_KIND_DATA, EDGE_KIND_EXEC, EDGE_KIND_STATE
@@ -570,7 +571,7 @@ class F8StudioMainWin(QtWidgets.QMainWindow):
 
     def _apply_log_level(self, *, level: int, persist: bool) -> None:
         normalized_level = self._normalize_supported_log_level(level)
-        logging.getLogger().setLevel(normalized_level)
+        apply_root_log_level(normalized_level)
         if persist:
             self._write_saved_log_level_name(level_name=self._log_level_name_for_value(normalized_level))
 

@@ -216,7 +216,7 @@ def register_operator(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
             paletteCategory=SERVICE_CLASS,
             operatorClass=OPERATOR_CLASS,
             version="0.0.1",
-            label="TCodeViz",
+            label="TCode Viz",
             description="Detached OSR emulator viewer for TCode string streams.",
             tags=["viz", "tcode", "osr", "ui"],
             dataInPorts=[
