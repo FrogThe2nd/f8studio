@@ -10,7 +10,7 @@ set(F8_IMPLAYER_LIBMPV_WIN_SHA256 "e75982d90a1fa3620b194204420386f590b4e96f03dc9
 set(F8_IMPLAYER_YTDLP_WIN_URL "https://github.com/yt-dlp/yt-dlp/releases/download/2025.11.12/yt-dlp.exe")
 set(F8_IMPLAYER_YTDLP_WIN_SHA256 "9f8b03a37125854895a7eebf50a605e34e7ec3bd2444931eff377f3ccec50e96")
 
-add_executable(f8implayer_service
+set(F8_IMPLAYER_SOURCES
   src/main.cpp
   src/implayer_service.cpp
   src/implayer_gui.cpp
@@ -21,6 +21,12 @@ add_executable(f8implayer_service
   src/imgui_backends/imgui_impl_sdl3.cpp
   src/imgui_backends/imgui_impl_opengl3.cpp
 )
+
+if(WIN32)
+  list(APPEND F8_IMPLAYER_SOURCES src/implayer.rc)
+endif()
+
+add_executable(f8implayer_service ${F8_IMPLAYER_SOURCES})
 
 target_compile_features(f8implayer_service PRIVATE cxx_std_17)
 
@@ -38,6 +44,9 @@ find_package(glad REQUIRED)
 find_package(opengl_system REQUIRED)
 find_package(imgui REQUIRED)
 find_package(iconfontcppheaders REQUIRED CONFIG)
+if(NOT WIN32)
+  find_package(PNG REQUIRED)
+endif()
 
 if(WIN32)
   set(_implayer_mpv_root "${CMAKE_CURRENT_BINARY_DIR}/third_party/mpv-dev")
@@ -100,10 +109,14 @@ target_link_libraries(f8implayer_service
     iconfontcppheaders::iconfontcppheaders
 )
 
+if(NOT WIN32)
+  target_link_libraries(f8implayer_service PRIVATE PNG::PNG)
+endif()
+
 target_compile_definitions(f8implayer_service PRIVATE IMGUI_IMPL_OPENGL_LOADER_GLAD NOMINMAX WIN32_LEAN_AND_MEAN)
 
-# Copy font assets next to the executable for local runs, and into the deployed
-# services directory for packaged/runtime use.
+# Copy runtime assets next to the executable for local runs, and into the
+# deployed services directory for packaged/runtime use.
 if(WIN32)
   set(_implayer_platform_dir "win")
 elseif(APPLE)
@@ -119,8 +132,12 @@ add_custom_command(
   COMMAND "${CMAKE_COMMAND}" -E copy_directory
           "${CMAKE_CURRENT_SOURCE_DIR}/font"
           "$<TARGET_FILE_DIR:f8implayer_service>/font"
+  COMMAND "${CMAKE_COMMAND}" -E make_directory "$<TARGET_FILE_DIR:f8implayer_service>/resources"
+  COMMAND "${CMAKE_COMMAND}" -E copy_directory
+          "${CMAKE_CURRENT_SOURCE_DIR}/resources"
+          "$<TARGET_FILE_DIR:f8implayer_service>/resources"
   VERBATIM
-  COMMENT "Copy f8implayer font assets to build output"
+  COMMENT "Copy f8implayer runtime assets to build output"
 )
 
 if(WIN32)
@@ -142,8 +159,12 @@ add_custom_command(
   COMMAND "${CMAKE_COMMAND}" -E copy_directory
           "${CMAKE_CURRENT_SOURCE_DIR}/font"
           "${F8_SERVICES_ROOT}/f8/implayer/${_implayer_platform_dir}/font"
+  COMMAND "${CMAKE_COMMAND}" -E make_directory "${F8_SERVICES_ROOT}/f8/implayer/${_implayer_platform_dir}/resources"
+  COMMAND "${CMAKE_COMMAND}" -E copy_directory
+          "${CMAKE_CURRENT_SOURCE_DIR}/resources"
+          "${F8_SERVICES_ROOT}/f8/implayer/${_implayer_platform_dir}/resources"
   VERBATIM
-  COMMENT "Copy f8implayer font assets to services deploy dir"
+  COMMENT "Copy f8implayer runtime assets to services deploy dir"
 )
 
 if(WIN32)
