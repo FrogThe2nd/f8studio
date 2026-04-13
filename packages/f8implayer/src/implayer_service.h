@@ -113,7 +113,6 @@ class ImPlayerService final : public f8::cppsdk::LifecycleNode,
   bool cmd_previous(std::string& err);
   bool cmd_seek(const nlohmann::json& args, std::string& err);
   bool cmd_set_volume(const nlohmann::json& args, std::string& err);
-  void mark_vr_manual_override();
 
   Config cfg_;
 
@@ -188,12 +187,6 @@ class ImPlayerService final : public f8::cppsdk::LifecycleNode,
   float vr_drag_anchor_y_ = 0.0f;
   float vr_drag_start_yaw_deg_ = 0.0f;
   float vr_drag_start_pitch_deg_ = 0.0f;
-
-  SdlVideoWindow::ProjectionMode vr_auto_detect_mode_ = SdlVideoWindow::ProjectionMode::Flat2D;
-  bool vr_auto_detect_valid_ = false;
-  bool vr_auto_pending_ratio_ = false;
-  bool vr_manual_override_ = false;
-  std::string vr_auto_video_id_;
 
   std::mutex render_mu_;
 };

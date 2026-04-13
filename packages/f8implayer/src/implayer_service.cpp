@@ -215,36 +215,6 @@ float normalize_yaw_deg(float yaw_deg) {
   return v;
 }
 
-SdlVideoWindow::ProjectionMode detect_projection_from_name(const std::string& url) {
-  const std::string lower = lowercase_ascii(url);
-  const bool has_360 = (lower.find("360") != std::string::npos) || (lower.find("vr") != std::string::npos) ||
-                       (lower.find("equirect") != std::string::npos);
-  if (!has_360) {
-    return SdlVideoWindow::ProjectionMode::Flat2D;
-  }
-  const bool has_sbs = (lower.find("sbs") != std::string::npos) || (lower.find("sidebyside") != std::string::npos) ||
-                       (lower.find("side-by-side") != std::string::npos) || (lower.find("_lr") != std::string::npos) ||
-                       (lower.find("-lr") != std::string::npos);
-  if (has_sbs) {
-    return SdlVideoWindow::ProjectionMode::EquirectSbs;
-  }
-  return SdlVideoWindow::ProjectionMode::EquirectMono;
-}
-
-SdlVideoWindow::ProjectionMode detect_projection_from_ratio(unsigned width, unsigned height) {
-  if (width == 0 || height == 0) {
-    return SdlVideoWindow::ProjectionMode::Flat2D;
-  }
-  const double ratio = static_cast<double>(width) / static_cast<double>(height);
-  if (std::abs(ratio - 1.0) <= 0.08) {
-    return SdlVideoWindow::ProjectionMode::EquirectSbs;
-  }
-  if (std::abs(ratio - 2.0) <= 0.12) {
-    return SdlVideoWindow::ProjectionMode::EquirectMono;
-  }
-  return SdlVideoWindow::ProjectionMode::Flat2D;
-}
-
 MpvPlayer::ShmViewMode shm_view_mode_for_vr(SdlVideoWindow::ProjectionMode mode, int sbs_eye) {
   if (mode == SdlVideoWindow::ProjectionMode::EquirectSbs) {
     return sbs_eye == 0 ? MpvPlayer::ShmViewMode::SbsLeft : MpvPlayer::ShmViewMode::SbsRight;
@@ -522,16 +492,6 @@ void ImPlayerService::tick() {
         view_pan_y_ = 0.0f;
         view_panning_ = false;
       }
-      if (vw != 0 && vh != 0 && vr_auto_pending_ratio_ && !vr_manual_override_) {
-        const auto ratio_mode = detect_projection_from_ratio(vw, vh);
-        if (ratio_mode != SdlVideoWindow::ProjectionMode::Flat2D || !vr_auto_detect_valid_) {
-          vr_auto_detect_mode_ = ratio_mode;
-          vr_auto_detect_valid_ = true;
-          vr_mode_ = ratio_mode;
-        }
-        vr_auto_pending_ratio_ = false;
-      }
-
       player_->setShmViewMode(shm_view_mode_for_vr(vr_mode_, vr_sbs_eye_));
       const bool updated = player_->renderVideoFrame();
 
@@ -599,7 +559,6 @@ void ImPlayerService::tick() {
           } else {
             vr_mode_ = SdlVideoWindow::ProjectionMode::Flat2D;
           }
-          mark_vr_manual_override();
         }
         if (xr_events.play_pause_pressed) {
           std::string err;
@@ -709,7 +668,6 @@ void ImPlayerService::tick() {
         };
         cb.set_vr_mode = [this](SdlVideoWindow::ProjectionMode mode) {
           vr_mode_ = mode;
-          mark_vr_manual_override();
         };
         cb.set_vr_eye = [this](int eye) {
           vr_sbs_eye_ = (eye == 0) ? 0 : 1;
@@ -1640,13 +1598,6 @@ bool ImPlayerService::open_media_internal(const std::string& url, bool keep_play
       playlist_index_ = 0;
     }
 
-    vr_auto_video_id_ = video_id_;
-    vr_manual_override_ = false;
-    const auto detected_from_name = detect_projection_from_name(u);
-    vr_auto_detect_mode_ = detected_from_name;
-    vr_auto_detect_valid_ = true;
-    vr_auto_pending_ratio_ = true;
-    vr_mode_ = detected_from_name;
     vr_sbs_eye_ = 0;
     vr_yaw_deg_ = 0.0f;
     vr_pitch_deg_ = 0.0f;
@@ -1877,11 +1828,6 @@ bool ImPlayerService::cmd_set_volume(const nlohmann::json& args, std::string& er
   if (player_)
     player_->setVolume(vol);
   return true;
-}
-
-void ImPlayerService::mark_vr_manual_override() {
-  vr_manual_override_ = true;
-  vr_auto_pending_ratio_ = false;
 }
 
 bool ImPlayerService::apply_auth_options_locked(std::string& err) {
