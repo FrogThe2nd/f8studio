@@ -33,14 +33,14 @@ class F8LayerDef:
 def base_layer_def(
     *,
     label: str = "Base",
-    description: str = "Default compatibility layer for unassigned nodes.",
+    description: str = "Default base layer for unassigned nodes.",
     color: str = DEFAULT_LAYER_COLOR,
     default_visible: bool = True,
 ) -> F8LayerDef:
     return F8LayerDef(
         id=BASE_LAYER_ID,
         label=str(label or "Base").strip() or "Base",
-        description=str(description or "").strip() or "Default compatibility layer for unassigned nodes.",
+        description=str(description or "").strip() or "Default base layer for unassigned nodes.",
         color=_normalize_color(color),
         default_visible=bool(default_visible),
         is_base=True,

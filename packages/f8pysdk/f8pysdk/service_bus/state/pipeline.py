@@ -208,11 +208,8 @@ def _resolve_publish_options(
     *, meta: dict[str, Any] | None, options: StatePublishOptions | None
 ) -> tuple[StatePublishOptions, dict[str, Any]]:
     meta_dict = dict(meta or {})
-    legacy_no_fanout = bool(meta_dict.pop("_noStateFanout", False))
     if options is not None:
         return options, meta_dict
-    if legacy_no_fanout:
-        return StatePublishOptions(fanout_intra_state_edges=False), meta_dict
     return StatePublishOptions(), meta_dict
 
 

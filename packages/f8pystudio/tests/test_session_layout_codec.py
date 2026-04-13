@@ -135,7 +135,7 @@ def test_serialize_session_includes_f8_layers_top_level() -> None:
         {
             "id": "base",
             "label": "Base",
-            "description": "Default compatibility layer for unassigned nodes.",
+            "description": "Default base layer for unassigned nodes.",
             "color": "#64748B",
             "defaultVisible": True,
             "isBase": True,
@@ -168,7 +168,7 @@ def test_serialize_session_preserves_base_default_visible_false() -> None:
         {
             "id": "base",
             "label": "Base",
-            "description": "Default compatibility layer for unassigned nodes.",
+            "description": "Default base layer for unassigned nodes.",
             "color": "#64748B",
             "defaultVisible": False,
             "isBase": True,

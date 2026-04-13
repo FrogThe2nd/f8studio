@@ -275,7 +275,7 @@ class StateWriteTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse((await bus.get_state("opB", "input")).found)
         self.assertEqual(sink.state_calls, [])
 
-    async def test_legacy_no_state_fanout_meta_uses_compat_bridge_only(self) -> None:
+    async def test_no_state_fanout_meta_is_preserved_as_plain_meta(self) -> None:
         cluster = InMemoryCluster()
         transport = InMemoryTransport(cluster=cluster, kv_bucket="kv.svc")
         bus = ServiceBus(ServiceBusConfig(service_id="svc"), transport=transport)
@@ -296,7 +296,7 @@ class StateWriteTests(unittest.IsolatedAsyncioTestCase):
         raw = await transport.kv_get(key)
         payload = decode_obj(raw) if raw else {}
         self.assertEqual(payload.get("tag"), "x")
-        self.assertNotIn("_noStateFanout", payload)
+        self.assertTrue(bool(payload.get("_noStateFanout")))
 
     async def test_publish_state_persists_even_if_local_callback_fails(self) -> None:
         cluster = InMemoryCluster()

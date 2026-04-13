@@ -702,16 +702,7 @@ bool ServiceBus::start() {
         }
 
         main_thread_.post([this, node_id, field, value, ts_ms, meta]() {
-          bool allow_fanout = true;
-          try {
-            if (meta.is_object() && meta.contains("_noStateFanout") && meta["_noStateFanout"].is_boolean() &&
-                meta["_noStateFanout"].get<bool>()) {
-              allow_fanout = false;
-            }
-          } catch (...) {
-            allow_fanout = true;
-          }
-          deliver_state_local(node_id, field, value, ts_ms, meta, allow_fanout);
+          deliver_state_local(node_id, field, value, ts_ms, meta, true);
         });
       },
       true);
@@ -1769,7 +1760,7 @@ void ServiceBus::apply_rungraph_local(const json& graph_obj, std::string& error_
         }
       }
       publish_state_local(node_id, field, v, rungraph_ts > 0 ? rungraph_ts : now_ms(), "rungraph",
-                          json{{"via", "rungraph"}, {"rungraphReconcile", true}, {"_noStateFanout", true}}, "rungraph",
+                          json{{"via", "rungraph"}, {"rungraphReconcile", true}}, "rungraph",
                           true, false);
     }
   }
@@ -1907,11 +1898,11 @@ void ServiceBus::apply_rungraph_local(const json& graph_obj, std::string& error_
     }
     if (has_svc_id) {
       publish_state_local(node_id, "svcId", n.serviceId.empty() ? sid : n.serviceId, rungraph_ts > 0 ? rungraph_ts : now_ms(),
-                          "system", json{{"builtin", true}, {"_noStateFanout", true}}, "system", false, false);
+                          "system", json{{"builtin", true}}, "system", false, false);
     }
     if (has_operator_id) {
       publish_state_local(node_id, "operatorId", n.nodeId, rungraph_ts > 0 ? rungraph_ts : now_ms(), "system",
-                          json{{"builtin", true}, {"_noStateFanout", true}}, "system", false, false);
+                          json{{"builtin", true}}, "system", false, false);
     }
   }
 }

@@ -38,7 +38,3 @@ class F8StudioOperatorMissingNode(F8StudioOperatorBaseNode):
 
     def __init__(self, qgraphics_item: type[QtWidgets.QGraphicsItem] | None = None):
         super().__init__(qgraphics_item=qgraphics_item or F8StudioMissingOperatorNodeItem)
-
-
-# Compatibility alias.
-F8StudioMissingOperatorBaseNode = F8StudioOperatorMissingNode

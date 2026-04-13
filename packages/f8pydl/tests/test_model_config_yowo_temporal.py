@@ -53,28 +53,14 @@ class ModelConfigYowoTemporalTests(unittest.TestCase):
         self.assertEqual(spec.temporal_resize_mode, "direct_resize")
         self.assertEqual(spec.temporal_normalization, "imagenet")
 
-    def test_legacy_yowov3_temporal_alias_parses(self) -> None:
+    def test_rejects_legacy_yowov3_temporal_alias(self) -> None:
         path = self._write_yaml(
             """
             type: yowov3_temporal
-            name: legacy_yowo_demo
-            model_path: legacy_yowo_demo.onnx
-            input_width: 320
-            input_height: 320
-            clip_length: 16
-            sampling_rate: 1
-            max_det: 300
-            classes:
-              - insertive_actor
-              - receptive_actor
             """
         )
-        spec = load_model_spec(path)
-        self.assertEqual(spec.task, "yowo_temporal_det")
-        self.assertEqual(spec.model_id, "legacy_yowo_demo")
-        self.assertEqual(spec.temporal_clip_length, 16)
-        self.assertEqual(spec.temporal_sampling_rate, 1)
-        self.assertEqual(spec.temporal_max_det, 300)
+        with self.assertRaises(ValueError):
+            _ = load_model_spec(path)
 
     def test_temporal_defaults_are_applied_when_block_is_omitted(self) -> None:
         path = self._write_yaml(

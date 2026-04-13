@@ -735,7 +735,6 @@ class SessionLayoutCodecMixin:
             "missingLocked",
             "missingType",
             "missingReason",
-            "missingRendererFallback",
             "missingSpec",
             "missingOriginalName",
         )
@@ -776,10 +775,10 @@ class SessionLayoutCodecMixin:
                 f8_sys = dict(f8_sys_obj)
             else:
                 f8_sys = {}
+            f8_sys.pop("missingRendererFallback", None)
             f8_sys["missingLocked"] = True
             f8_sys["missingType"] = raw_type
             f8_sys["missingReason"] = f"unregistered node type '{raw_type}'"
-            f8_sys["missingRendererFallback"] = bool(f8_sys.get("missingRendererFallback", False))
             f8_sys["missingSpec"] = dict(spec_payload)
             raw_name = str(node_data.get("name") or "").strip()
             if raw_name and not raw_name.endswith("[Missing]"):

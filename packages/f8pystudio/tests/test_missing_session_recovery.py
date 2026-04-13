@@ -136,7 +136,6 @@ def test_serialize_session_restores_original_type_and_strips_missing_flags() -> 
                     "missingLocked": True,
                     "missingType": "svc.f8.cvkit.denseoptflow",
                     "missingReason": "unregistered node type",
-                    "missingRendererFallback": True,
                     "missingSpec": _service_spec_payload("f8.cvkit.denseoptflow"),
                     "missingOriginalName": "DenseFlow",
                 },

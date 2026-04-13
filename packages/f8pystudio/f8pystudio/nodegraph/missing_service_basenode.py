@@ -36,7 +36,3 @@ class F8StudioServiceMissingNode(F8StudioServiceBaseNode):
 
     def __init__(self, qgraphics_item: type[QtWidgets.QGraphicsItem] | None = None):
         super().__init__(qgraphics_item=qgraphics_item or F8StudioMissingServiceNodeItem)
-
-
-# Compatibility alias.
-F8StudioMissingServiceBaseNode = F8StudioServiceMissingNode

@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 
 
 MONITOR_PORT_NAME = "monitor"
-LEGACY_TELEMETRY_PORT_NAME = "telemetry"
+_FORBIDDEN_TELEMETRY_PORT_NAME = "telemetry"
 MONITOR_SNAPSHOT_SCHEMA_VERSION = "f8monitor/1"
 MONITOR_REPORT_SCHEMA_VERSION = "f8monitorReport/1"
 
@@ -174,7 +174,7 @@ def validate_describe_monitor_contract(payload: dict[str, Any]) -> None:
         if name == MONITOR_PORT_NAME:
             monitor_port = item
             continue
-        if name == LEGACY_TELEMETRY_PORT_NAME:
+        if name == _FORBIDDEN_TELEMETRY_PORT_NAME:
             telemetry_ports.append(item)
 
     if monitor_port is None:
@@ -627,7 +627,6 @@ class MonitorCollector:
 
 
 __all__ = [
-    "LEGACY_TELEMETRY_PORT_NAME",
     "MONITOR_PORT_NAME",
     "MONITOR_REPORT_SCHEMA_VERSION",
     "MONITOR_SNAPSHOT_SCHEMA_VERSION",

@@ -46,7 +46,7 @@ class ModelConfigOptflowTests(unittest.TestCase):
             schemaVersion: f8onnxModel/1
             model:
               id: nf
-              task: optflow
+              task: optflow_neuflowv2
               onnxPath: nf.onnx
             input:
               width: 640
@@ -80,7 +80,7 @@ class ModelConfigOptflowTests(unittest.TestCase):
         self.assertEqual(spec.onnx_url, "https://example.com/nf.onnx")
         self.assertEqual(spec.onnx_sha256, "a" * 64)
 
-    def test_f8onnx_model_parses_legacy_model_url_and_sha_alias(self) -> None:
+    def test_rejects_legacy_model_url_and_sha_alias(self) -> None:
         p = self._write_yaml(
             """
             schemaVersion: f8onnxModel/1
@@ -95,25 +95,17 @@ class ModelConfigOptflowTests(unittest.TestCase):
               height: 640
             """
         )
-        spec = load_model_spec(p)
-        self.assertEqual(spec.onnx_url, "https://example.com/nf.onnx")
-        self.assertEqual(spec.onnx_sha256, "c" * 64)
+        self.assertEqual(load_model_spec(p).onnx_url, "")
+        self.assertEqual(load_model_spec(p).onnx_sha256, "")
 
-    def test_legacy_parses_url_alias(self) -> None:
+    def test_rejects_legacy_schema(self) -> None:
         p = self._write_yaml(
             """
             name: nf
-            task: optflow_neuflowv2
-            model_path: nf.onnx
-            url: https://example.com/nf.onnx
-            onnxSHA256: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
-            input_width: 768
-            input_height: 432
             """
         )
-        spec = load_model_spec(p)
-        self.assertEqual(spec.onnx_url, "https://example.com/nf.onnx")
-        self.assertEqual(spec.onnx_sha256, "b" * 64)
+        with self.assertRaises(ValueError):
+            _ = load_model_spec(p)
 
     def test_rejects_invalid_onnx_sha256(self) -> None:
         p = self._write_yaml(
@@ -156,7 +148,7 @@ class ModelConfigOptflowTests(unittest.TestCase):
             schemaVersion: f8onnxModel/1
             model:
               id: nf
-              task: optical_flow
+              task: optflow_neuflowv2
               onnxPath: nf.onnx
             input:
               width: 640
@@ -168,14 +160,10 @@ class ModelConfigOptflowTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             _ = load_model_spec(p)
 
-    def test_optflow_rejects_non_onnx_path(self) -> None:
+    def test_optflow_rejects_legacy_non_onnx_path(self) -> None:
         p = self._write_yaml(
             """
             name: nf
-            task: optflow_neuflowv2
-            model_path: nf.engine
-            input_width: 640
-            input_height: 640
             """
         )
         with self.assertRaises(ValueError):

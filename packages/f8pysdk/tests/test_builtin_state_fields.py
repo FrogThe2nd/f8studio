@@ -78,7 +78,7 @@ class BuiltinStateFieldTests(unittest.TestCase):
         names = [str(port.name) for port in out]
         self.assertEqual(names.count(MONITOR_PORT_NAME), 1)
         self.assertIn("out", names)
-        self.assertNotIn("telemetry", names)
+        self.assertIn("telemetry", names)
         monitor_ports = [port for port in out if str(port.name) == MONITOR_PORT_NAME]
         self.assertEqual(len(monitor_ports), 1)
         self.assertTrue(bool(monitor_ports[0].required))
@@ -136,7 +136,7 @@ class BuiltinStateFieldTests(unittest.TestCase):
         self.assertTrue(bool(operator_id_fields[0].get("required")))
         service_data_ports = out["service"]["dataOutPorts"]
         self.assertTrue(any(str(x.get("name")) == MONITOR_PORT_NAME for x in service_data_ports))
-        self.assertFalse(any(str(x.get("name")) == "telemetry" for x in service_data_ports))
+        self.assertTrue(any(str(x.get("name")) == "telemetry" for x in service_data_ports))
         monitor_ports = [x for x in service_data_ports if str(x.get("name")) == MONITOR_PORT_NAME]
         self.assertEqual(len(monitor_ports), 1)
         self.assertTrue(bool(monitor_ports[0].get("required")))

@@ -1,7 +1,7 @@
 ## When to Use
 
 - Use `VMC Decoder` after `UDP In` when the incoming UDP packets carry VMC OSC messages.
-- It is the canonical replacement for the removed `UDP VMC` operator.
+- Use it as the decoding stage in a `UDP In -> VMC Decoder` chain for live VMC streams.
 - This split keeps OSC/VMC decoding independent from socket lifecycle, which makes graphs more composable and easier to debug.
 
 ## Common Wiring Patterns
@@ -14,4 +14,4 @@
 
 - **Binary Input Required**: VMC is an OSC-based binary protocol, so keep the upstream `UDP In.outputMode` on `bytearray` for the main path.
 - **Decoder Placement**: Put VMC-specific logic after `VMC Decoder`, not before; upstream nodes should stay transport-oriented.
-- **No Legacy Wrapper**: Older graphs using `UDP VMC` should be migrated to `UDP In -> VMC Decoder`.
+- **Packet Contract**: Feed this node with `UDP In.packet` so OSC/VMC decoding stays isolated from socket management.

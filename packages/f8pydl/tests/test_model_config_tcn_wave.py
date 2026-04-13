@@ -61,22 +61,14 @@ class ModelConfigTcnWaveTests(unittest.TestCase):
         spec = load_model_spec(path)
         self.assertEqual(spec.task, "tcn_wave")
 
-    def test_legacy_temporal_fields_are_ignored(self) -> None:
+    def test_rejects_legacy_schema(self) -> None:
         path = self._write_yaml(
             """
             name: tcn_demo
-            task: tcn_wave
-            model_path: tcn_demo.onnx
-            input_width: 224
-            input_height: 224
-            temporal_output_scale: 7.0
-            temporal_output_bias: 2.0
-            temporal_aggregation: invalid
             """
         )
-        spec = load_model_spec(path)
-        self.assertEqual(spec.task, "tcn_wave")
-        self.assertEqual(spec.model_id, "tcn_demo")
+        with self.assertRaises(ValueError):
+            _ = load_model_spec(path)
 
 
 if __name__ == "__main__":

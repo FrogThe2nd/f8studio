@@ -410,23 +410,14 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
 
     @staticmethod
     def _collect_readable_state_names(node: F8RuntimeNode) -> tuple[str, ...]:
-        raw_states = getattr(node, "stateFields", None)
-        if not isinstance(raw_states, list):
-            raw_states = getattr(node, "state_fields", None)
-        if not isinstance(raw_states, list):
-            return ()
         out: list[str] = []
         seen: set[str] = set()
-        for state in raw_states:
-            if isinstance(state, dict):
-                name = str(state.get("name") or "").strip()
-                access_raw = state.get("access")
-            else:
-                name = str(getattr(state, "name", "") or "").strip()
-                access_raw = getattr(state, "access", None)
+        for state in list(node.stateFields or []):
+            name = str(state.name or "").strip()
+            access_raw = state.access
             if not name or name in seen:
                 continue
-            access = str(getattr(access_raw, "value", access_raw) or "").strip().lower()
+            access = str(access_raw.value if hasattr(access_raw, "value") else access_raw or "").strip().lower()
             if access not in ("rw", "ro", "wo"):
                 continue
             seen.add(name)

@@ -249,18 +249,6 @@ class F8StudioNodeModel(NodeModel):
         self.f8_sys["missingReason"] = str(value or "").strip()
 
     @property
-    def missingRendererFallback(self) -> bool:
-        if not isinstance(self.f8_sys, dict):
-            self.f8_sys = {}
-        return bool(self.f8_sys.get("missingRendererFallback"))
-
-    @missingRendererFallback.setter
-    def missingRendererFallback(self, value: bool) -> None:
-        if not isinstance(self.f8_sys, dict):
-            self.f8_sys = {}
-        self.f8_sys["missingRendererFallback"] = bool(value)
-
-    @property
     def nodePurpose(self) -> str:
         if not isinstance(self.f8_sys, dict):
             self.f8_sys = {}

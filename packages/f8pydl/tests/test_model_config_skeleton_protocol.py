@@ -39,42 +39,35 @@ class ModelConfigSkeletonProtocolTests(unittest.TestCase):
         spec = load_model_spec(p)
         self.assertEqual(spec.skeleton_protocol, "coco17")
 
-    def test_legacy_reads_camel_case_field(self) -> None:
+    def test_rejects_legacy_schema_with_camel_case_field(self) -> None:
         p = self._write_yaml(
             """
             name: demo
-            task: yolo_pose
-            model_path: demo.onnx
-            input_width: 640
-            input_height: 640
-            skeletonProtocol: human36m_17
             """
         )
-        spec = load_model_spec(p)
-        self.assertEqual(spec.skeleton_protocol, "human36m_17")
+        with self.assertRaises(ValueError):
+            _ = load_model_spec(p)
 
-    def test_legacy_reads_snake_case_field(self) -> None:
+    def test_rejects_legacy_schema_with_snake_case_field(self) -> None:
         p = self._write_yaml(
             """
             name: demo
-            task: yolo_pose
-            model_path: demo.onnx
-            input_width: 640
-            input_height: 640
-            skeleton_protocol: my_custom_19
             """
         )
-        spec = load_model_spec(p)
-        self.assertEqual(spec.skeleton_protocol, "my_custom_19")
+        with self.assertRaises(ValueError):
+            _ = load_model_spec(p)
 
     def test_defaults_to_none_when_missing(self) -> None:
         p = self._write_yaml(
             """
-            name: demo
-            task: yolo_det
-            model_path: demo.onnx
-            input_width: 640
-            input_height: 640
+            schemaVersion: f8onnxModel/1
+            model:
+              id: demo
+              task: yolo_det
+              onnxPath: demo.onnx
+            input:
+              width: 640
+              height: 640
             """
         )
         spec = load_model_spec(p)

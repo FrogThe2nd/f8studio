@@ -13,16 +13,13 @@ def extract_layout(payload: Any) -> dict[str, Any]:
         raise ValueError("session payload must be a JSON object")
 
     schema_version = str(payload.get("schemaVersion") or "").strip()
-    if schema_version == SESSION_SCHEMA_VERSION:
-        layout = payload.get("layout")
-        if not isinstance(layout, dict):
-            raise ValueError("v2 session payload missing `layout` object")
-        return layout
+    if schema_version != SESSION_SCHEMA_VERSION:
+        raise ValueError(f"unsupported session schemaVersion: {schema_version!r}")
 
-    if "nodes" in payload and isinstance(payload.get("nodes"), dict):
-        return payload
-
-    raise ValueError("unsupported session payload format")
+    layout = payload.get("layout")
+    if not isinstance(layout, dict):
+        raise ValueError("v2 session payload missing `layout` object")
+    return layout
 
 
 def load_session_layout(path: str | Path) -> dict[str, Any]:

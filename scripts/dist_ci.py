@@ -15,7 +15,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PIXI_TOML_PATH = REPO_ROOT / "pixi.toml"
 CPP_PRESET_PATH = REPO_ROOT / "build" / "Release" / "generators" / "CMakePresets.json"
-CPP_PRESET_FALLBACK_PATH = REPO_ROOT / "build" / "generators" / "CMakePresets.json"
+CPP_BUILD_PRESET_NAME = "conan-release"
 PACKAGE_PATH_PREFIX = "packages/"
 # C++ runtime deploy targets are owned by CMake's f8_deploy_all_runtime aggregator.
 CPP_DEPLOY_ALL_TARGET = "f8_deploy_all_runtime"
@@ -447,35 +447,27 @@ def _bundle_studio_launcher(dist_dir: Path) -> None:
 
 
 def _build_cpp_runtime() -> None:
-    def _resolve_conan_build_preset_name() -> str:
-        for presets_path in (CPP_PRESET_PATH, CPP_PRESET_FALLBACK_PATH):
-            if not presets_path.is_file():
-                continue
-            presets = json.loads(presets_path.read_text(encoding="utf-8"))
-            build_presets = presets.get("buildPresets", [])
-            configure_presets = presets.get("configurePresets", [])
-            build_preset_names = {
-                preset.get("name") for preset in build_presets if isinstance(preset.get("name"), str)
-            }
-            configure_preset_names = {
-                preset.get("name") for preset in configure_presets if isinstance(preset.get("name"), str)
-            }
+    def _require_conan_release_build_preset() -> None:
+        if not CPP_PRESET_PATH.is_file():
+            raise FileNotFoundError(
+                "Expected Conan-generated preset file is missing: build/Release/generators/CMakePresets.json"
+            )
 
-            if "conan-release" in build_preset_names:
-                return "conan-release"
-            if "conan-default" in build_preset_names:
-                return "conan-default"
-            # Backward compatibility for generators that only emit configure preset names.
-            if "conan-release" in configure_preset_names:
-                return "conan-release"
-            if "conan-default" in configure_preset_names:
-                return "conan-default"
-        raise FileNotFoundError("Unable to resolve Conan CMake build preset name from generated CMakePresets.json")
+        presets = json.loads(CPP_PRESET_PATH.read_text(encoding="utf-8"))
+        build_presets = presets.get("buildPresets", [])
+        build_preset_names = {
+            preset.get("name") for preset in build_presets if isinstance(preset, dict) and isinstance(preset.get("name"), str)
+        }
+        if CPP_BUILD_PRESET_NAME not in build_preset_names:
+            raise FileNotFoundError(
+                "Generated Conan presets must define the canonical release build preset. "
+                f"buildPresets={sorted(build_preset_names)}"
+            )
 
-    if not CPP_PRESET_PATH.is_file() and not CPP_PRESET_FALLBACK_PATH.is_file():
+    if not CPP_PRESET_PATH.is_file():
         _run(["pixi", "run", "--frozen", "-e", "cpp", "cpp_bootstrap"])
 
-    preset_name = _resolve_conan_build_preset_name()
+    _require_conan_release_build_preset()
     _run(["pixi", "run", "--frozen", "-e", "cpp", "cpp_configure_release"])
     deploy_build_command = [
         "pixi",
@@ -486,7 +478,7 @@ def _build_cpp_runtime() -> None:
         "cmake",
         "--build",
         "--preset",
-        preset_name,
+        CPP_BUILD_PRESET_NAME,
         "--target",
         CPP_DEPLOY_ALL_TARGET,
         "--parallel",

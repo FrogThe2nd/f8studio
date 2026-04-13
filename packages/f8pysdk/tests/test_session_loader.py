@@ -21,10 +21,10 @@ class SessionLoaderTests(unittest.TestCase):
         layout = extract_layout(payload)
         self.assertIn("nodes", layout)
 
-    def test_extract_layout_legacy(self) -> None:
+    def test_extract_layout_rejects_legacy(self) -> None:
         payload = {"nodes": {}, "connections": []}
-        layout = extract_layout(payload)
-        self.assertIn("nodes", layout)
+        with self.assertRaises(ValueError):
+            _ = extract_layout(payload)
 
     def test_load_session_layout_from_file(self) -> None:
         payload = {"schemaVersion": SESSION_SCHEMA_VERSION, "layout": {"nodes": {"n1": {}}, "connections": []}}

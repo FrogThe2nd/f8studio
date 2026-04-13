@@ -1008,7 +1008,7 @@ Decodes udp_in packet payloads into skeleton streams with chunk reassembly.
 
 - Use `Skeleton Decoder` after `UDP In` when the incoming packets contain Feel8 skeleton payloads or chunked skeleton frames.
 - It keeps the transport layer separate from payload decoding, which makes the graph easier to test and easier to swap to other packet sources later.
-- It is the canonical replacement for the removed `UDP Skeleton` operator.
+- Use it as the payload decoder in a `UDP In -> Skeleton Decoder` chain for skeleton streams.
 
 #### Common Wiring Patterns
 
@@ -1020,7 +1020,7 @@ Decodes udp_in packet payloads into skeleton streams with chunk reassembly.
 
 - **Transport Assumption**: This node expects a packet object from `UDP In.packet`; it is not meant to parse arbitrary text or JSON payloads directly.
 - **Selection Confusion**: `selectedKey` only works when the incoming model key exists in `availableKeys`; inspect that list first when nothing appears downstream.
-- **No Legacy Wrapper**: Older graphs using `UDP Skeleton` should be migrated to `UDP In -> Skeleton Decoder` rather than relying on compatibility aliases.
+- **Packet Contract**: Keep the upstream node on `UDP In.packet`; this decoder expects the packet object rather than ad-hoc payload fragments.
 
 #### Operator Reference
 
@@ -2350,7 +2350,7 @@ Decodes udp_in packet payloads carrying VMC OSC messages into skeleton streams.
 #### When to Use
 
 - Use `VMC Decoder` after `UDP In` when the incoming UDP packets carry VMC OSC messages.
-- It is the canonical replacement for the removed `UDP VMC` operator.
+- Use it as the decoding stage in a `UDP In -> VMC Decoder` chain for live VMC streams.
 - This split keeps OSC/VMC decoding independent from socket lifecycle, which makes graphs more composable and easier to debug.
 
 #### Common Wiring Patterns
@@ -2363,7 +2363,7 @@ Decodes udp_in packet payloads carrying VMC OSC messages into skeleton streams.
 
 - **Binary Input Required**: VMC is an OSC-based binary protocol, so keep the upstream `UDP In.outputMode` on `bytearray` for the main path.
 - **Decoder Placement**: Put VMC-specific logic after `VMC Decoder`, not before; upstream nodes should stay transport-oriented.
-- **No Legacy Wrapper**: Older graphs using `UDP VMC` should be migrated to `UDP In -> VMC Decoder`.
+- **Packet Contract**: Feed this node with `UDP In.packet` so OSC/VMC decoding stays isolated from socket management.
 
 #### Operator Reference
 

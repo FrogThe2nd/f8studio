@@ -4,7 +4,6 @@ from typing import Any
 
 from ..generated import F8DataPortSpec, F8OperatorSpec, F8ServiceSpec, F8StateAccess, F8StateSpec
 from ..monitoring import (
-    LEGACY_TELEMETRY_PORT_NAME,
     MONITOR_PORT_NAME,
     monitor_snapshot_data_port,
     monitor_snapshot_schema_dict,
@@ -90,7 +89,7 @@ def service_state_fields_with_builtins(state_fields: list[F8StateSpec] | None) -
 def service_data_out_ports_with_builtins(data_out_ports: list[F8DataPortSpec] | None) -> list[F8DataPortSpec]:
     ports = _copy_data_port_specs_without_names(
         data_out_ports,
-        names_to_remove={MONITOR_PORT_NAME, LEGACY_TELEMETRY_PORT_NAME},
+        names_to_remove={MONITOR_PORT_NAME},
     )
     ports.append(monitor_snapshot_data_port())
     return ports
@@ -214,7 +213,7 @@ def normalize_describe_payload_dict(payload: dict[str, Any]) -> dict[str, Any]:
         )
         service_spec["dataOutPorts"] = _data_port_dicts_with_builtins(
             service_spec.get("dataOutPorts"),
-            names_to_remove={MONITOR_PORT_NAME, LEGACY_TELEMETRY_PORT_NAME},
+            names_to_remove={MONITOR_PORT_NAME},
             builtin_ports=[_monitor_port_dict()],
         )
         out["service"] = service_spec
@@ -245,7 +244,7 @@ def normalize_describe_payload_dict(payload: dict[str, Any]) -> dict[str, Any]:
         )
         out["dataOutPorts"] = _data_port_dicts_with_builtins(
             out.get("dataOutPorts"),
-            names_to_remove={MONITOR_PORT_NAME, LEGACY_TELEMETRY_PORT_NAME},
+            names_to_remove={MONITOR_PORT_NAME},
             builtin_ports=[_monitor_port_dict()],
         )
         return out
