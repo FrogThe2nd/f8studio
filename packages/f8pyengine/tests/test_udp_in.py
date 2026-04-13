@@ -220,11 +220,13 @@ class UdpInTests(unittest.IsolatedAsyncioTestCase):
         bus, node, ctx = await self._setup_runtime(port=port, output_mode="text")
         try:
             _send_udp(port=port, payload=b"first-packet")
+            await self._wait_exec_calls(ctx, at_least=1, timeout_s=1.5)
+            first_exec_id = ctx.calls[0][1]
+
             _send_udp(port=port, payload=b"second-packet")
             await self._wait_exec_calls(ctx, at_least=2, timeout_s=1.5)
-
-            first_exec_id = ctx.calls[0][1]
             second_exec_id = ctx.calls[1][1]
+
             first_packet = await node.compute_output("packet", ctx_id=first_exec_id)
             second_packet = await node.compute_output("packet", ctx_id=second_exec_id)
 

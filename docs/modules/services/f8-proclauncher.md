@@ -31,7 +31,7 @@ Launches an external OS process (optionally detached).
 ### How to Run
 
 ```bash
-pixi run f8proclauncher
+pixi run -e default f8proclauncher
 ```
 
 - Workdir: `../../../`
@@ -47,7 +47,7 @@ pixi run f8proclauncher
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `programPath` | `rw` | `true` | `true` | `string / default=` | Executable path or command line (quoted if it contains spaces). Empty means no launch. |
+| `programPath` | `rw` | `true` | `true` | `string / default=` | Executable path or command line (quoted if it contains spaces). Cleared when exporting publish JSON. |
 | `singleton` | `rw` | `true` | `false` | `boolean / default=True` | If true, do not start if a previous launch for the same command is still running. |
 | `detached` | `rw` | `true` | `false` | `boolean / default=True` | If true, do not stop the launched process when this service stops. |
 | `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
@@ -55,7 +55,7 @@ pixi run f8proclauncher
 
 ### Key Fields That Matter
 
-- `programPath` (Program Path, `rw`): Executable path or command line (quoted if it contains spaces). Empty means no launch. Schema: `string / default=`.
+- `programPath` (Program Path, `rw`): Executable path or command line (quoted if it contains spaces). Cleared when exporting publish JSON. Schema: `string / default=`.
 - `singleton` (Singleton, `rw`): If true, do not start if a previous launch for the same command is still running. Schema: `boolean / default=True`.
 - `detached` (Detached, `rw`): If true, do not stop the launched process when this service stops. Schema: `boolean / default=True`.
 - `active` (Active, `rw`): Service lifecycle state (activate/deactivate). Schema: `boolean / default=True`.

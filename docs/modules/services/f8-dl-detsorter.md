@@ -30,7 +30,7 @@ Sort detection payloads by a score-map SHM metric.
 ### How to Run
 
 ```bash
-pixi run f8pydl_detsorter
+pixi run -e onnx f8pydl_detsorter
 ```
 
 - Workdir: `../../../../`
@@ -46,7 +46,7 @@ pixi run f8pydl_detsorter
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `clsWeights` | `rw` | `true` | `false` | `string / default={}` | JSON map of detection cls -> weight multiplier applied to score-map metric. Keys without a prefix are exact cls matches. Keys with 're:' prefix are Python regex patterns matched via fullmatch(). Unspecified classes default to weight 1.0. Example: {"person": 2.0, "car": 0.7, "re:^dog_.*$": 1.3} |
+| `clsWeights` | `rw` | `true` | `false` | `string / default={}` | JSON map of detection cls -> weight multiplier applied to score-map metric. Keys without a prefix are exact cls matches. Keys with 're:' prefix are Python regex patterns matched via fullmatch(). All matching rules are multiplied together. Unspecified classes default to weight 1.0. Example: {"person": 2.0, "car": 0.7, "re:^dog_.*$": 1.3} |
 | `scoreShmName` | `rw` | `true` | `true` | `string / default=` | Score-map SHM name (supports scalar1_f32 and flow2_f16). |
 | `sortDirection` | `rw` | `true` | `true` | `string / enum[desc, asc] / default=desc` | Prefer larger scores first (desc) or smaller scores first (asc). |
 | `scoreAggregation` | `rw` | `true` | `true` | `string / enum[mean, max, sum, median] / default=mean` | ROI reduction mode used to rank each bbox. |
@@ -56,7 +56,7 @@ pixi run f8pydl_detsorter
 
 ### Key Fields That Matter
 
-- `clsWeights` (Class Weights, `rw`): JSON map of detection cls -> weight multiplier applied to score-map metric. Keys without a prefix are exact cls matches. Keys with 're:' prefix are Python regex patterns matched via fullmatch(). Unspecified classes default to weight 1.0. Example: {"person": 2.0, "car": 0.7, "re:^dog_.*$": 1.3} Schema: `string / default={}`.
+- `clsWeights` (Class Weights, `rw`): JSON map of detection cls -> weight multiplier applied to score-map metric. Keys without a prefix are exact cls matches. Keys with 're:' prefix are Python regex patterns matched via fullmatch(). All matching rules are multiplied together. Unspecified classes default to weight 1.0. Example: {"person": 2.0, "car": 0.7, "re:^dog_.*$": 1.3} Schema: `string / default={}`.
 - `scoreShmName` (Score SHM, `rw`): Score-map SHM name (supports scalar1_f32 and flow2_f16). Schema: `string / default=`.
 - `sortDirection` (Sort Direction, `rw`): Prefer larger scores first (desc) or smaller scores first (asc). Schema: `string / enum[desc, asc] / default=desc`.
 - `scoreAggregation` (Score Aggregation, `rw`): ROI reduction mode used to rank each bbox. Schema: `string / enum[mean, max, sum, median] / default=mean`.

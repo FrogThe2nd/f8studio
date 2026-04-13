@@ -23,11 +23,19 @@ from f8pydl.detection_sorter_service_node import (
 class _BusStub:
     def __init__(self, initial_state: dict[str, Any] | None = None) -> None:
         self.state: dict[str, Any] = dict(initial_state or {})
-        self.emitted: list[tuple[str, str, Any, int | None]] = []
+        self.emitted: list[tuple[str, str, Any, int | None, str | int | None]] = []
         self.published_state: list[tuple[str, str, Any, int | None]] = []
 
-    async def emit_data(self, node_id: str, port: str, value: Any, *, ts_ms: int | None = None) -> None:
-        self.emitted.append((node_id, port, value, ts_ms))
+    async def emit_data(
+        self,
+        node_id: str,
+        port: str,
+        value: Any,
+        *,
+        ts_ms: int | None = None,
+        ctx_id: str | int | None = None,
+    ) -> None:
+        self.emitted.append((node_id, port, value, ts_ms, ctx_id))
 
     async def publish_state_runtime(self, node_id: str, field: str, value: Any, *, ts_ms: int | None = None) -> None:
         self.state[field] = value

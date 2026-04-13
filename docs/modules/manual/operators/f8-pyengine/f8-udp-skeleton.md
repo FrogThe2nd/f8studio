@@ -1,17 +1,17 @@
 ## When to Use
 
-- Use `UDP Skeleton` to ingest 3D skeleton payloads arriving over a UDP port from external body-tracking software (e.g., custom AI detectors, VR trackers, or proprietary vision systems).
-- It is a lightweight, low-latency entry point for getting external body-tracking data into your Feel8 graph.
-- Best for scenarios where the vision processing is handled by a separate process or a remote machine.
+- `UDP Skeleton` is legacy documentation only. New graphs should not use this operator.
+- Replace it with `UDP In -> Skeleton Decoder`.
+- The transport/decode split is now the supported architecture for skeleton ingest in PyEngine.
 
 ## Common Wiring Patterns
 
-- **Live Body Ingest**: Feed the `skeleton` output into a `Bone Selector` to pick a joint, or directly into `f8-viz-three-d` to verify coordinate alignment.
-- **Monitoring Branch**: Keep a `Print` or `Text Viz` node attached to the incoming stream to monitor the packet rate and verify the protocol schema.
-- **Coordinate Calibration**: Use the `offset` and `scale` properties (if available) to align the external skeleton with your graph's internal world-space expectations.
+- **Migration Path**: Move socket settings such as `bindAddress`, `port`, and `reuseAddress` onto `UDP In`.
+- **Decoder State**: Move skeleton-specific settings such as `cleanupAfterMs` and `selectedKey` onto `Skeleton Decoder`.
+- **Downstream Wiring**: Reconnect existing `skeletons` or `selectedSkeleton` consumers to `Skeleton Decoder`.
 
 ## Pitfalls / Gotchas
 
-- **Network Blocking**: Ensure the target UDP port is open in your OS firewall and not already bound by another process.
-- **Convention Clashes**: External sources often use different coordinate systems (e.g., Left-handed vs. Right-handed, Y-up vs. Z-up). If your 3D skeleton looks "inverted" or "laying down," you must apply a transformation early in your graph.
-- **Diagnostic Hygiene**: Never attempt to tune your motion logic until you have visually confirmed that the incoming 3D skeleton is stable and correctly oriented in space.
+- **No Legacy Support**: Do not keep both styles in the same repo or graph; migrate fully to the split pipeline.
+- **Binary Input Mode**: `UDP In` should typically use `bytearray` for skeleton packet decoding.
+- **Doc Drift**: If you still see `UDP Skeleton` in older examples, treat those examples as outdated and update them to the split chain.

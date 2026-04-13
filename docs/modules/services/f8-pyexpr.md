@@ -31,7 +31,7 @@ Standalone expression runtime service for simplified data-flow transforms.
 ### How to Run
 
 ```bash
-pixi run f8pyexpr
+pixi run -e default f8pyexpr
 ```
 
 - Workdir: `../../../`

@@ -29,7 +29,7 @@ ONNXRuntime NeuFlowV2 dense optical flow service (flow SHM output).
 ### How to Run
 
 ```bash
-pixi run f8pydl_optflow
+pixi run -e onnx f8pydl_optflow
 ```
 
 - Workdir: `../../../../`
@@ -47,9 +47,9 @@ pixi run f8pydl_optflow
 | --- | --- | --- | --- | --- | --- |
 | `inputShmName` | `rw` | `true` | `true` | `string / default=` | Input SHM name (e.g. shm.xxx.video). |
 | `computeEveryNFrames` | `rw` | `true` | `false` | `integer / default=2` | Compute optical flow once per N new frames. |
-| `weightsDir` | `rw` | `true` | `false` | `string / default=services/f8/dl/weights` | Directory containing *.yaml + *.onnx model files. |
+| `weightsDir` | `rw` | `true` | `false` | `string / default=services/f8/dl/weights` | Directory containing *.yaml + *.onnx model files. Reset to the default relative path when exporting publish JSON. |
 | `modelId` | `rw` | `true` | `false` | `string / default=` | Model id selected from weightsDir (ignored if modelYamlPath is set). |
-| `modelYamlPath` | `rw` | `true` | `false` | `string / default=` | Optional explicit model yaml path (overrides modelId). |
+| `modelYamlPath` | `rw` | `true` | `false` | `string / default=` | Optional explicit model yaml path (overrides modelId). Cleared when exporting publish JSON. |
 | `ortProvider` | `rw` | `true` | `false` | `string / enum[auto, cuda, cpu] / default=auto` | auto prefers CUDAExecutionProvider when available. |
 | `autoDownloadWeights` | `rw` | `true` | `false` | `boolean / default=True` | When model file is missing, download from onnxUrl in model yaml. |
 | `availableModels` | `ro` | `true` | `false` | `array[string]` | List of model ids discovered from weightsDir. |
@@ -65,9 +65,9 @@ pixi run f8pydl_optflow
 
 - `inputShmName` (Input Video SHM, `rw`): Input SHM name (e.g. shm.xxx.video). Schema: `string / default=`.
 - `computeEveryNFrames` (Compute Every N Frames, `rw`): Compute optical flow once per N new frames. Schema: `integer / default=2`.
-- `weightsDir` (Weights Dir, `rw`): Directory containing *.yaml + *.onnx model files. Schema: `string / default=services/f8/dl/weights`.
+- `weightsDir` (Weights Dir, `rw`): Directory containing *.yaml + *.onnx model files. Reset to the default relative path when exporting publish JSON. Schema: `string / default=services/f8/dl/weights`.
 - `modelId` (Model Id, `rw`): Model id selected from weightsDir (ignored if modelYamlPath is set). Schema: `string / default=`.
-- `modelYamlPath` (Model YAML Path, `rw`): Optional explicit model yaml path (overrides modelId). Schema: `string / default=`.
+- `modelYamlPath` (Model YAML Path, `rw`): Optional explicit model yaml path (overrides modelId). Cleared when exporting publish JSON. Schema: `string / default=`.
 - `ortProvider` (ONNX Runtime Provider, `rw`): auto prefers CUDAExecutionProvider when available. Schema: `string / enum[auto, cuda, cpu] / default=auto`.
 - `autoDownloadWeights` (Auto Download Weights, `rw`): When model file is missing, download from onnxUrl in model yaml. Schema: `boolean / default=True`.
 - `availableModels` (Available Models, `ro`): List of model ids discovered from weightsDir. Schema: `array[string]`.

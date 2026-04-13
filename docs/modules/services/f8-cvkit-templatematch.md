@@ -47,7 +47,7 @@ No description.
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `templateImagePngB64` | `rw` | `true` | `false` | `string` | PNG bytes encoded as base64. |
+| `templateImagePngB64` | `rw` | `true` | `false` | `string` | PNG bytes encoded as base64. Local-only payload; cleared when exporting publish JSON. |
 | `matchThreshold` | `rw` | `true` | `true` | `number / default=0.5` | 0..1 score threshold used to emit detections. |
 | `matchingIntervalMs` | `rw` | `true` | `false` | `integer / default=200` | Minimum milliseconds between template matching passes. |
 | `shmName` | `rw` | `true` | `true` | `string` | Optional SHM name override (e.g. shm.xxx.video). |
@@ -57,7 +57,7 @@ No description.
 
 ### Key Fields That Matter
 
-- `templateImagePngB64` (Template PNG (Base64), `rw`): PNG bytes encoded as base64. Schema: `string`.
+- `templateImagePngB64` (Template PNG (Base64), `rw`): PNG bytes encoded as base64. Local-only payload; cleared when exporting publish JSON. Schema: `string`.
 - `matchThreshold` (Match Threshold, `rw`): 0..1 score threshold used to emit detections. Schema: `number / default=0.5`.
 - `matchingIntervalMs` (Matching Interval (ms), `rw`): Minimum milliseconds between template matching passes. Schema: `integer / default=200`.
 - `shmName` (Video SHM, `rw`): Optional SHM name override (e.g. shm.xxx.video). Schema: `string`.

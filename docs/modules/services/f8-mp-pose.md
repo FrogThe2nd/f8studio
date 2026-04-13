@@ -31,7 +31,7 @@ MediaPipe single-person pose extraction service (33 landmarks).
 ### How to Run
 
 ```bash
-pixi run f8pymppose
+pixi run -e mediapipe f8pymppose
 ```
 
 - Workdir: `../../../../`
@@ -54,6 +54,7 @@ pixi run f8pymppose
 | `minTrackingConfidence` | `rw` | `true` | `false` | `number / default=0.5` | Minimum confidence threshold for pose tracking. |
 | `visibilityThreshold` | `rw` | `true` | `false` | `number / default=0.5` | Landmark visibility threshold (below threshold => hidden point). |
 | `lastError` | `ro` | `true` | `false` | `string / default=` | Last runtime error string (best-effort). |
+| `skeletonSource` | `rw` | `true` | `false` | `string / enum[camera, world] / default=camera` | Skeleton data source (camera-relative vs world-relative). |
 | `active` | `rw` | `true` | `false` | `boolean / default=True` | Service lifecycle state (activate/deactivate). |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 
@@ -66,7 +67,7 @@ pixi run f8pymppose
 - `minTrackingConfidence` (Min Tracking Confidence, `rw`): Minimum confidence threshold for pose tracking. Schema: `number / default=0.5`.
 - `visibilityThreshold` (Visibility Threshold, `rw`): Landmark visibility threshold (below threshold => hidden point). Schema: `number / default=0.5`.
 - `lastError` (Last Error, `ro`): Last runtime error string (best-effort). Schema: `string / default=`.
-- `active` (Active, `rw`): Service lifecycle state (activate/deactivate). Schema: `boolean / default=True`.
+- `skeletonSource` (Skeleton Source, `rw`): Skeleton data source (camera-relative vs world-relative). Schema: `string / enum[camera, world] / default=camera`.
 
 ### Service Commands
 

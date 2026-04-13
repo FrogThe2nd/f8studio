@@ -6,7 +6,7 @@
 
 ## Common Wiring Patterns
 
-- **Joint Isolation**: Feed it from a `UDP Skeleton`, `UDP VMC`, or MediaPipe source. Pass the resulting single-bone payload into a `Bone Filter` or `Quat To Euler` operator.
+- **Joint Isolation**: Feed it from `Skeleton Decoder`, `VMC Decoder`, or a MediaPipe source. Pass the resulting single-bone payload into a `Bone Filter` or `Quat To Euler` operator.
 - **Multi-Bone Processing**: Use multiple `Bone Selector` nodes in parallel to extract different joints (e.g., both hands) for a coordinated interaction scenario.
 - **Dynamic Selection**: Use the `availableBones` output list in conjunction with a `Control Panel` to interactively switch which joint your graph is following during a tuning session.
 

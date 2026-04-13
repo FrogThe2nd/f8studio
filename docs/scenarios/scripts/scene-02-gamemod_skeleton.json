@@ -155,9 +155,9 @@
         }
       },
       "iAzb": {
-        "type_": "f8.pyengine.f8.udp_skeleton",
+        "type_": "f8.pyengine.f8.skeleton_decoder",
         "icon": null,
-        "name": "UDP Skeleton",
+        "name": "Skeleton Decoder",
         "color": [
           13,
           18,
@@ -180,7 +180,7 @@
         "selected": false,
         "visible": true,
         "width": 160.0,
-        "height": 191.8,
+        "height": 167.0,
         "pos": [
           225.69345211616246,
           171.741111593855
@@ -188,273 +188,180 @@
         "layout_direction": 0,
         "subgraph_session": {},
         "f8_spec": {
-          "schemaVersion": "f8operator/1",
-          "operatorClass": "f8.udp_skeleton",
+          "operatorClass": "f8.skeleton_decoder",
           "serviceClass": "f8.pyengine",
+          "label": "Skeleton Decoder",
+          "specKind": "operator",
+          "schemaVersion": "f8operator/1",
           "rendererClass": "default_op",
           "version": "0.0.1",
-          "label": "UDP Skeleton",
-          "description": "Receives UDP packets and keeps latest skeleton per model key, with TTL cleanup and selection.",
+          "description": "Decodes udp_in packet payloads into skeleton streams with chunk reassembly.",
           "tags": [
-            "io",
-            "udp",
-            "network",
+            "decode",
             "skeleton",
-            "mocap"
+            "mocap",
+            "udp"
           ],
+          "paletteCategory": "f8.pyengine.motion",
+          "hiddenInPalette": false,
           "stateFields": [
             {
-              "name": "bindAddress",
-              "label": "Bind Address",
-              "description": "Local address to bind (loopback by default).",
-              "valueSchema": {
-                "title": null,
-                "description": null,
-                "default": "127.0.0.1",
-                "examples": null,
-                "field_comment": null,
-                "type": "string",
-                "enum": null,
-                "minimum": null,
-                "maximum": null,
-                "exclusiveMinimum": null,
-                "exclusiveMaximum": null,
-                "multipleOf": null
-              },
-              "access": "rw",
-              "required": false,
-              "uiControl": null,
-              "showOnNode": false
-            },
-            {
-              "name": "allowNonLoopbackBind",
-              "label": "Allow Non-loopback Bind",
-              "description": "When true, allow bindAddress values other than loopback.",
-              "valueSchema": {
-                "title": null,
-                "description": null,
-                "default": false,
-                "examples": null,
-                "field_comment": null,
-                "type": "boolean",
-                "enum": null,
-                "minimum": null,
-                "maximum": null,
-                "exclusiveMinimum": null,
-                "exclusiveMaximum": null,
-                "multipleOf": null
-              },
-              "access": "rw",
-              "required": false,
-              "uiControl": null,
-              "showOnNode": false
-            },
-            {
-              "name": "port",
-              "label": "Port",
-              "description": "UDP listen port.",
-              "valueSchema": {
-                "title": null,
-                "description": null,
-                "default": 39540,
-                "examples": null,
-                "field_comment": null,
-                "type": "integer",
-                "enum": null,
-                "minimum": 1.0,
-                "maximum": 65535.0,
-                "exclusiveMinimum": null,
-                "exclusiveMaximum": null,
-                "multipleOf": null
-              },
-              "access": "rw",
-              "required": false,
-              "uiControl": null,
-              "showOnNode": true
-            },
-            {
-              "name": "maxQueue",
-              "label": "Max Queue",
-              "description": "Max queued packets before dropping (1..4096).",
-              "valueSchema": {
-                "title": null,
-                "description": null,
-                "default": 512,
-                "examples": null,
-                "field_comment": null,
-                "type": "integer",
-                "enum": null,
-                "minimum": 1.0,
-                "maximum": 4096.0,
-                "exclusiveMinimum": null,
-                "exclusiveMaximum": null,
-                "multipleOf": null
-              },
-              "access": "rw",
-              "required": false,
-              "uiControl": null,
-              "showOnNode": false
-            },
-            {
-              "name": "reuseAddress",
-              "label": "Reuse Address",
-              "description": "Best-effort: allow multiple listeners on same (address, port) if OS supports.",
-              "valueSchema": {
-                "title": null,
-                "description": null,
-                "default": false,
-                "examples": null,
-                "field_comment": null,
-                "type": "boolean",
-                "enum": null,
-                "minimum": null,
-                "maximum": null,
-                "exclusiveMinimum": null,
-                "exclusiveMaximum": null,
-                "multipleOf": null
-              },
-              "access": "rw",
-              "required": false,
-              "uiControl": null,
-              "showOnNode": false
-            },
-            {
               "name": "cleanupAfterMs",
+              "valueSchema": {
+                "type": "integer",
+                "default": 10000,
+                "minimum": 0,
+                "maximum": 60000000
+              },
+              "access": "rw",
               "label": "Cleanup After (ms)",
               "description": "Remove models that haven't updated for this many ms (<=0 disables cleanup).",
-              "valueSchema": {
-                "title": null,
-                "description": null,
-                "default": 10000,
-                "examples": null,
-                "field_comment": null,
-                "type": "integer",
-                "enum": null,
-                "minimum": 0.0,
-                "maximum": 60000000.0,
-                "exclusiveMinimum": null,
-                "exclusiveMaximum": null,
-                "multipleOf": null
-              },
-              "access": "wo",
-              "required": false,
-              "uiControl": null,
-              "showOnNode": false
+              "required": true,
+              "showOnNode": false,
+              "redactOnPublish": false
             },
             {
               "name": "selectedKey",
-              "label": "Selected Key",
-              "description": "If set and matches an available key, outputs `selectedSkeleton`; otherwise None.",
               "valueSchema": {
-                "title": null,
-                "description": null,
-                "default": "",
-                "examples": null,
-                "field_comment": null,
                 "type": "string",
-                "enum": null,
-                "minimum": null,
-                "maximum": null,
-                "exclusiveMinimum": null,
-                "exclusiveMaximum": null,
-                "multipleOf": null
+                "default": ""
               },
               "access": "rw",
-              "required": false,
+              "label": "Selected Key",
+              "description": "If set and matches an available key, outputs `selectedSkeleton`; otherwise None.",
+              "required": true,
               "uiControl": "select[availableKeys]",
-              "showOnNode": true
+              "showOnNode": true,
+              "redactOnPublish": false
             },
             {
               "name": "availableKeys",
-              "label": "Available Keys",
-              "description": "Read-only list of current keys (updated only on changes).",
               "valueSchema": {
-                "title": null,
-                "description": null,
-                "default": null,
-                "examples": null,
-                "field_comment": null,
                 "type": "array",
                 "items": {
-                  "title": null,
-                  "description": null,
-                  "default": null,
-                  "examples": null,
-                  "field_comment": null,
-                  "type": "string",
-                  "enum": null,
-                  "minimum": null,
-                  "maximum": null,
-                  "exclusiveMinimum": null,
-                  "exclusiveMaximum": null,
-                  "multipleOf": null
+                  "type": "string"
                 }
               },
               "access": "ro",
-              "required": false,
-              "uiControl": null,
-              "showOnNode": true
-            },
-            {
-              "name": "svcId",
-              "label": "Service Id",
-              "description": "Readonly: current service instance id (svcId).",
-              "valueSchema": {
-                "title": null,
-                "description": null,
-                "default": null,
-                "examples": null,
-                "field_comment": null,
-                "type": "string",
-                "enum": null,
-                "minimum": null,
-                "maximum": null,
-                "exclusiveMinimum": null,
-                "exclusiveMaximum": null,
-                "multipleOf": null
-              },
-              "access": "ro",
-              "required": false,
-              "uiControl": null,
-              "showOnNode": false
-            },
-            {
-              "name": "operatorId",
-              "label": "Operator Id",
-              "description": "Readonly: current operator/node id (operatorId).",
-              "valueSchema": {
-                "title": null,
-                "description": null,
-                "default": null,
-                "examples": null,
-                "field_comment": null,
-                "type": "string",
-                "enum": null,
-                "minimum": null,
-                "maximum": null,
-                "exclusiveMinimum": null,
-                "exclusiveMaximum": null,
-                "multipleOf": null
-              },
-              "access": "ro",
-              "required": false,
-              "uiControl": null,
-              "showOnNode": false
+              "label": "Available Keys",
+              "description": "Read-only list of current keys (updated only on changes).",
+              "required": true,
+              "showOnNode": true,
+              "redactOnPublish": false
             }
           ],
-          "execInPorts": [],
-          "execOutPorts": [],
-          "dataInPorts": [],
+          "commands": [],
+          "execInPorts": [
+            "packet"
+          ],
+          "execOutPorts": [
+            "packet"
+          ],
+          "dataInPorts": [
+            {
+              "name": "packet",
+              "valueSchema": {
+                "type": "any"
+              },
+              "description": "Packet payload from udp_in.packet.",
+              "required": true,
+              "showOnNode": true
+            }
+          ],
           "dataOutPorts": [
             {
               "name": "skeletons",
               "valueSchema": {
-                "title": null,
-                "description": null,
-                "default": null,
-                "examples": null,
-                "field_comment": null,
-                "type": "any"
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string"
+                    },
+                    "modelName": {
+                      "type": "string"
+                    },
+                    "timestampMs": {
+                      "type": "integer"
+                    },
+                    "schema": {
+                      "type": "string"
+                    },
+                    "boneCount": {
+                      "type": "integer"
+                    },
+                    "bones": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "pos": {
+                            "type": "array",
+                            "items": {
+                              "type": "number"
+                            }
+                          },
+                          "rot": {
+                            "type": "array",
+                            "items": {
+                              "type": "number"
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "trailer": {
+                      "type": "object",
+                      "properties": {
+                        "magic": {
+                          "type": "string"
+                        },
+                        "extVersion": {
+                          "type": "integer"
+                        },
+                        "frameId": {
+                          "type": "integer"
+                        },
+                        "chunkIndex": {
+                          "type": "integer"
+                        },
+                        "chunkCount": {
+                          "type": "integer"
+                        },
+                        "totalBoneCount": {
+                          "type": "integer"
+                        },
+                        "characterId": {
+                          "type": "integer"
+                        },
+                        "assembledChunkCount": {
+                          "type": "integer"
+                        },
+                        "anim": {
+                          "type": "object",
+                          "properties": {
+                            "normalizedTime": {
+                              "type": "number"
+                            },
+                            "layerIndex": {
+                              "type": "integer"
+                            },
+                            "clipName": {
+                              "type": "string"
+                            },
+                            "poseKey": {
+                              "type": "string"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
               },
               "description": "List of latest payloads (ordered by key).",
               "required": true,
@@ -463,35 +370,103 @@
             {
               "name": "selectedSkeleton",
               "valueSchema": {
-                "title": null,
-                "description": null,
-                "default": null,
-                "examples": null,
-                "field_comment": null,
-                "type": "any"
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string"
+                  },
+                  "modelName": {
+                    "type": "string"
+                  },
+                  "timestampMs": {
+                    "type": "integer"
+                  },
+                  "schema": {
+                    "type": "string"
+                  },
+                  "boneCount": {
+                    "type": "integer"
+                  },
+                  "bones": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string"
+                        },
+                        "pos": {
+                          "type": "array",
+                          "items": {
+                            "type": "number"
+                          }
+                        },
+                        "rot": {
+                          "type": "array",
+                          "items": {
+                            "type": "number"
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "trailer": {
+                    "type": "object",
+                    "properties": {
+                      "magic": {
+                        "type": "string"
+                      },
+                      "extVersion": {
+                        "type": "integer"
+                      },
+                      "frameId": {
+                        "type": "integer"
+                      },
+                      "chunkIndex": {
+                        "type": "integer"
+                      },
+                      "chunkCount": {
+                        "type": "integer"
+                      },
+                      "totalBoneCount": {
+                        "type": "integer"
+                      },
+                      "characterId": {
+                        "type": "integer"
+                      },
+                      "assembledChunkCount": {
+                        "type": "integer"
+                      },
+                      "anim": {
+                        "type": "object",
+                        "properties": {
+                          "normalizedTime": {
+                            "type": "number"
+                          },
+                          "layerIndex": {
+                            "type": "integer"
+                          },
+                          "clipName": {
+                            "type": "string"
+                          },
+                          "poseKey": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
               },
               "description": "Latest payload matching `selectedKey` (or None).",
               "required": true,
               "showOnNode": true
             }
-          ],
-          "specKind": "operator",
-          "paletteCategory": "f8.pyengine"
+          ]
         },
-        "f8_sys": {
-          "svcId": "a4sQ"
-        },
-        "f8_ui_state": {
-          "stateInlineExpanded": {
-            "port": true
-          }
-        },
+        "f8_sys": {},
+        "f8_ui_overrides": {},
         "custom": {
-          "bindAddress": "127.0.0.1",
-          "allowNonLoopbackBind": false,
-          "port": 39540,
-          "maxQueue": 512,
-          "reuseAddress": true,
           "cleanupAfterMs": 10000,
           "selectedKey": "6714|female:PLAYER Main",
           "availableKeys": [
@@ -4279,9 +4254,375 @@
           "upstreamSamplingMode": "passive",
           "upstreamSampleHz": 10
         }
+      },
+      "uDPI": {
+        "type_": "f8.pyengine.f8.udp_in",
+        "icon": null,
+        "name": "UDP In",
+        "color": [
+          13,
+          18,
+          23,
+          255
+        ],
+        "border_color": [
+          74,
+          84,
+          85,
+          255
+        ],
+        "text_color": [
+          255,
+          255,
+          255,
+          180
+        ],
+        "disabled": false,
+        "selected": false,
+        "visible": true,
+        "width": 160.0,
+        "height": 228.0,
+        "pos": [
+          40.69345211616246,
+          171.741111593855
+        ],
+        "layout_direction": 0,
+        "subgraph_session": {},
+        "f8_spec": {
+          "operatorClass": "f8.udp_in",
+          "serviceClass": "f8.pyengine",
+          "label": "UDP In",
+          "specKind": "operator",
+          "schemaVersion": "f8operator/1",
+          "rendererClass": "default_op",
+          "version": "0.0.1",
+          "description": "Receives UDP packets with weak format assumptions and exposes text/json/bytearray views.",
+          "tags": [
+            "io",
+            "udp",
+            "network",
+            "input",
+            "json",
+            "bytes",
+            "bytearray"
+          ],
+          "paletteCategory": "f8.pyengine.input",
+          "hiddenInPalette": false,
+          "stateFields": [
+            {
+              "name": "bindAddress",
+              "valueSchema": {
+                "type": "string",
+                "default": "127.0.0.1"
+              },
+              "access": "rw",
+              "label": "Bind Address",
+              "description": "Local address to bind (loopback by default).",
+              "required": true,
+              "showOnNode": false,
+              "redactOnPublish": false
+            },
+            {
+              "name": "allowNonLoopbackBind",
+              "valueSchema": {
+                "type": "boolean",
+                "default": false
+              },
+              "access": "rw",
+              "label": "Allow Non-loopback Bind",
+              "description": "When true, allow bindAddress values other than loopback.",
+              "required": true,
+              "showOnNode": false,
+              "redactOnPublish": false
+            },
+            {
+              "name": "port",
+              "valueSchema": {
+                "type": "integer",
+                "default": 39541,
+                "minimum": 1,
+                "maximum": 65535
+              },
+              "access": "rw",
+              "label": "Port",
+              "description": "UDP listen port.",
+              "required": true,
+              "showOnNode": true,
+              "redactOnPublish": false
+            },
+            {
+              "name": "maxQueue",
+              "valueSchema": {
+                "type": "integer",
+                "default": 512,
+                "minimum": 1,
+                "maximum": 4096
+              },
+              "access": "rw",
+              "label": "Max Queue",
+              "description": "Max queued packets before dropping (1..4096).",
+              "required": true,
+              "showOnNode": false,
+              "redactOnPublish": false
+            },
+            {
+              "name": "reuseAddress",
+              "valueSchema": {
+                "type": "boolean",
+                "default": false
+              },
+              "access": "rw",
+              "label": "Reuse Address",
+              "description": "Best-effort: allow multiple listeners on the same bind tuple if the OS supports it.",
+              "required": true,
+              "showOnNode": false,
+              "redactOnPublish": false
+            },
+            {
+              "name": "outputMode",
+              "valueSchema": {
+                "type": "string",
+                "default": "text",
+                "enum": [
+                  "text",
+                  "json",
+                  "bytearray"
+                ]
+              },
+              "access": "rw",
+              "label": "Output Mode",
+              "description": "Controls the `value` output: text, json, or bytearray.",
+              "required": true,
+              "showOnNode": true,
+              "redactOnPublish": false
+            },
+            {
+              "name": "listening",
+              "valueSchema": {
+                "type": "boolean",
+                "default": false
+              },
+              "access": "ro",
+              "label": "Listening",
+              "description": "Readonly flag telling whether the UDP socket is active.",
+              "required": true,
+              "showOnNode": true,
+              "redactOnPublish": false
+            },
+            {
+              "name": "packetCount",
+              "valueSchema": {
+                "type": "integer",
+                "default": 0,
+                "minimum": 0
+              },
+              "access": "ro",
+              "label": "Packet Count",
+              "description": "Readonly number of received UDP packets.",
+              "required": true,
+              "showOnNode": true,
+              "redactOnPublish": false
+            },
+            {
+              "name": "droppedPackets",
+              "valueSchema": {
+                "type": "integer",
+                "default": 0,
+                "minimum": 0
+              },
+              "access": "ro",
+              "label": "Dropped Packets",
+              "description": "Readonly number of packets dropped because the queue was full.",
+              "required": true,
+              "showOnNode": false,
+              "redactOnPublish": false
+            },
+            {
+              "name": "lastRemoteAddress",
+              "valueSchema": {
+                "type": "string",
+                "default": ""
+              },
+              "access": "ro",
+              "label": "Last Remote Address",
+              "description": "Readonly source IP of the latest packet.",
+              "required": true,
+              "showOnNode": false,
+              "redactOnPublish": false
+            },
+            {
+              "name": "lastRemotePort",
+              "valueSchema": {
+                "type": "integer",
+                "default": 0,
+                "minimum": 0,
+                "maximum": 65535
+              },
+              "access": "ro",
+              "label": "Last Remote Port",
+              "description": "Readonly source port of the latest packet.",
+              "required": true,
+              "showOnNode": false,
+              "redactOnPublish": false
+            },
+            {
+              "name": "lastByteLength",
+              "valueSchema": {
+                "type": "integer",
+                "default": 0,
+                "minimum": 0
+              },
+              "access": "ro",
+              "label": "Last Byte Length",
+              "description": "Readonly byte size of the latest packet.",
+              "required": true,
+              "showOnNode": false,
+              "redactOnPublish": false
+            },
+            {
+              "name": "lastParseError",
+              "valueSchema": {
+                "type": "string",
+                "default": ""
+              },
+              "access": "ro",
+              "label": "Last Parse Error",
+              "description": "Readonly JSON parse error for the latest packet, if any.",
+              "required": true,
+              "showOnNode": false,
+              "redactOnPublish": false
+            },
+            {
+              "name": "lastError",
+              "valueSchema": {
+                "type": "string",
+                "default": ""
+              },
+              "access": "ro",
+              "label": "Last Error",
+              "description": "Readonly receiver/socket error, if any.",
+              "required": true,
+              "showOnNode": true,
+              "redactOnPublish": false
+            }
+          ],
+          "commands": [],
+          "execInPorts": [],
+          "execOutPorts": [
+            "packet"
+          ],
+          "dataInPorts": [],
+          "dataOutPorts": [
+            {
+              "name": "value",
+              "valueSchema": {
+                "type": "any"
+              },
+              "description": "Latest packet value, selected by `outputMode`.",
+              "required": true,
+              "showOnNode": true
+            },
+            {
+              "name": "text",
+              "valueSchema": {
+                "type": "string",
+                "default": ""
+              },
+              "description": "Latest packet decoded as UTF-8 text with replacement for invalid bytes.",
+              "required": true,
+              "showOnNode": true
+            },
+            {
+              "name": "raw",
+              "valueSchema": {
+                "type": "any"
+              },
+              "description": "Latest packet as bytearray, preserving non-ASCII bytes.",
+              "required": true,
+              "showOnNode": true
+            },
+            {
+              "name": "json",
+              "valueSchema": {
+                "type": "any"
+              },
+              "description": "Latest packet parsed as JSON when valid; otherwise None.",
+              "required": true,
+              "showOnNode": true
+            },
+            {
+              "name": "packet",
+              "valueSchema": {
+                "type": "object",
+                "properties": {
+                  "timestampMs": {
+                    "type": "integer"
+                  },
+                  "remoteAddress": {
+                    "type": "string"
+                  },
+                  "remotePort": {
+                    "type": "integer"
+                  },
+                  "byteLength": {
+                    "type": "integer"
+                  },
+                  "raw": {
+                    "type": "any"
+                  },
+                  "text": {
+                    "type": "string"
+                  },
+                  "json": {
+                    "type": "any"
+                  },
+                  "jsonValid": {
+                    "type": "boolean"
+                  },
+                  "value": {
+                    "type": "any"
+                  }
+                }
+              },
+              "description": "Latest packet metadata plus text/json/value views.",
+              "required": true,
+              "showOnNode": true
+            }
+          ]
+        },
+        "f8_sys": {},
+        "f8_ui_overrides": {},
+        "custom": {
+          "bindAddress": "127.0.0.1",
+          "allowNonLoopbackBind": false,
+          "port": 39540,
+          "maxQueue": 512,
+          "reuseAddress": true,
+          "outputMode": "bytearray",
+          "listening": false,
+          "packetCount": 0,
+          "droppedPackets": 0,
+          "lastRemoteAddress": "",
+          "lastRemotePort": 0,
+          "lastByteLength": 0,
+          "lastParseError": "",
+          "lastError": "",
+          "svcId": "a4sQ",
+          "operatorId": "uDPI"
+        }
       }
     },
     "connections": [
+      {
+        "out": [
+          "uDPI",
+          "packet[D]"
+        ],
+        "in": [
+          "iAzb",
+          "[D]packet"
+        ]
+      },
       {
         "out": [
           "iAzb",
@@ -4445,4 +4786,3 @@
     ]
   }
 }
-

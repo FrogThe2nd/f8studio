@@ -31,7 +31,7 @@ Audio SHM core feature extraction service (rms, onset, centroid).
 ### How to Run
 
 ```bash
-pixi run f8pyaudiofeat_core
+pixi run -e default f8pyaudiofeat_core
 ```
 
 - Workdir: `../../../../`

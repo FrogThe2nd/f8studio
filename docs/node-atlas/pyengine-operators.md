@@ -6,20 +6,20 @@
 | Operator | Label | Main Role | Canonical Doc |
 | --- | --- | --- | --- |
 | `f8.tick` | Tick | Source operator that generates periodic exec ticks. | [Open](../modules/services/f8-pyengine.md#operator-f8-tick) |
-| `f8.exec_sequence` | Exec Sequence | Exec flow splitter: triggers its exec outputs in order (requires DFS scheduling). | [Open](../modules/services/f8-pyengine.md#operator-f8-sequence) |
+| `f8.exec_sequence` | Sequence | Exec flow splitter: triggers its exec outputs in order (requires DFS scheduling). | [Open](../modules/services/f8-pyengine.md#operator-f8-exec-sequence) |
 | `f8.cosine` | Cosine | Cosine phase transform. | [Open](../modules/services/f8-pyengine.md#operator-f8-cosine) |
 | `f8.tempest` | Tempest | Tempest phase transform (phase-modulated cosine). | [Open](../modules/services/f8-pyengine.md#operator-f8-tempest) |
 | `f8.phase` | Phase | Phase accumulator. | [Open](../modules/services/f8-pyengine.md#operator-f8-phase) |
 | `f8.print` | Print | Exec-driven printer (pulls `value` and prints). | [Open](../modules/services/f8-pyengine.md#operator-f8-print) |
-| `f8.pull` | Pull | Hidden internal sink that periodically pulls all data inputs to trigger upstream computation. | [Open](../modules/services/f8-pyengine.md#operator-f8-pull) |
 | `f8.program_wave` | Program Wave | Generate a program-controlled phase/gate waveform from a dict state payload. | [Open](../modules/services/f8-pyengine.md#operator-f8-program-wave) |
 | `f8.envelope` | Envelope | Track a signal envelope and normalize it into a stable 0. | [Open](../modules/services/f8-pyengine.md#operator-f8-envelope) |
-| `f8.axis_envelope` | Axis Envelope | Estimate normalized amplitudes along major/minor axes from 2D input. | [Open](../modules/services/f8-pyengine.md#operator-f8-axis-envelope) |
 | `f8.smooth_filter` | Smooth Filter | Smooths scalar or vector inputs with EMA/DEMA/One Euro filtering. | [Open](../modules/services/f8-pyengine.md#operator-f8-smooth-filter) |
 | `f8.range_map` | Range Map | Clip input to [inMin,inMax] then remap to [outMin,outMax] with a curve. | [Open](../modules/services/f8-pyengine.md#operator-f8-range-map) |
 | `f8.rate_limiter` | Rate Limiter | Limits the rate of change (and optionally acceleration) of an input signal. | [Open](../modules/services/f8-pyengine.md#operator-f8-rate-limiter) |
-| `f8.udp_skeleton` | UDP Skeleton | Receives UDP packets, keeps latest skeleton per model key, and emits exec triggers per committed packet/frame. | [Open](../modules/services/f8-pyengine.md#operator-f8-udp-skeleton) |
 | `f8.serial_out` | Serial Out | Writes incoming values to a serial port (pyserial). | [Open](../modules/services/f8-pyengine.md#operator-f8-serial-out) |
+| `f8.udp_in` | UDP In | Receives UDP packets with weak format assumptions and exposes text/json/bytearray views. | [Open](../modules/services/f8-pyengine.md#operator-f8-udp-in) |
+| `f8.skeleton_decoder` | Skeleton Decoder | Decodes udp_in packet payloads into skeleton streams with chunk reassembly. | [Open](../modules/services/f8-pyengine.md#operator-f8-skeleton-decoder) |
+| `f8.udp_out` | UDP Out | Sends incoming values to a UDP host/port. | [Open](../modules/services/f8-pyengine.md#operator-f8-udp-out) |
 | `f8.tcode` | TCode | Generates TCode v0. | [Open](../modules/services/f8-pyengine.md#operator-f8-tcode) |
 | `f8.python_script` | Python Script | Execute Python code with onStart/onState/onMsg/onExec/onStop hooks. | [Open](../modules/services/f8-pyengine.md#operator-f8-python-script) |
 | `f8.data_expr` | Data Expr | Evaluate a small Python expression using input values. | [Open](../modules/services/f8-pyengine.md#operator-f8-data-expr) |
@@ -31,12 +31,19 @@
 | `f8.mix_silence_fill` | Mix (Silence Fill) | Outputs A by default; when A is silent for a while, crossfades to B as filler. | [Open](../modules/services/f8-pyengine.md#operator-f8-mix-silence-fill) |
 | `f8.playback_sync` | Playback Sync | Extrapolates IMPlayer playback position between sparse playback state updates. | [Open](../modules/services/f8-pyengine.md#operator-f8-playback-sync) |
 | `f8.handy_out` | Handy Out | Drive The Handy via HDSP using normalized 0. | [Open](../modules/services/f8-pyengine.md#operator-f8-handy-out) |
-| `f8.state_trigger` | State Trigger | Triggers exec on `changed` when state `value` changes and node is enabled. | [Open](../modules/services/f8-pyengine.md#operator-f8-state-trigger) |
+| `f8.state_trigger` | State Trigger | Triggers exec on `changed` when state `value` changes; ideal for wiring button-like state changes into exec graphs. | [Open](../modules/services/f8-pyengine.md#operator-f8-state-trigger) |
 | `f8.state_expr` | State Expr | Evaluate a small Python expression using state fields as symbols. | [Open](../modules/services/f8-pyengine.md#operator-f8-state-expr) |
 | `f8.bone_filter` | Bone Filter | Smooths a single bone pose and outputs filtered + local relative pose. | [Open](../modules/services/f8-pyengine.md#operator-f8-bone-filter) |
 | `f8.quat_to_euler` | Quat To Euler | Converts quaternion [w,x,y,z] to Euler angles with configurable order. | [Open](../modules/services/f8-pyengine.md#operator-f8-quat-to-euler) |
-| `f8.udp_vmc` | UDP VMC | Receives VMC OSC packets, converts to skeleton payloads, and emits packet exec triggers. | [Open](../modules/services/f8-pyengine.md#operator-f8-udp-vmc) |
+| `f8.vmc_decoder` | VMC Decoder | Decodes udp_in packet payloads carrying VMC OSC messages into skeleton streams. | [Open](../modules/services/f8-pyengine.md#operator-f8-vmc-decoder) |
 | `f8.bone_selector` | Bone Selector | Selects one bone from a skeleton by `target` and outputs `{name,pos,rot}`. | [Open](../modules/services/f8-pyengine.md#operator-f8-bone-selector) |
 | `f8.wave_expr` | Wave Expr | Template-based waveform expression node. | [Open](../modules/services/f8-pyengine.md#operator-f8-wave-expr) |
 | `f8.wave_pattern` | Wave Pattern | Interactive periodic waveform node. | [Open](../modules/services/f8-pyengine.md#operator-f8-wave-pattern) |
 | `f8.wave_funscript` | Wave Funscript | Load a. | [Open](../modules/services/f8-pyengine.md#operator-f8-wave-funscript) |
+| `f8.detrend` | Detrend | Removes slow baseline or linear trend from scalar or vector inputs. | [Open](../modules/services/f8-pyengine.md#operator-f8-detrend) |
+| `f8.lowpass_filter` | Lowpass Filter | Butterworth IIR low-pass filter for scalar or vector inputs. | [Open](../modules/services/f8-pyengine.md#operator-f8-lowpass-filter) |
+| `f8.highpass_filter` | Highpass Filter | Butterworth IIR high-pass filter for scalar or vector inputs. | [Open](../modules/services/f8-pyengine.md#operator-f8-highpass-filter) |
+| `f8.bandpass_filter` | Bandpass Filter | Butterworth IIR band-pass filter for scalar or vector inputs. | [Open](../modules/services/f8-pyengine.md#operator-f8-bandpass-filter) |
+| `f8.periodicity_detector` | Periodicity Detector | Detects whether a scalar signal is periodic using short-time autocorrelation peaks. | [Open](../modules/services/f8-pyengine.md#operator-f8-periodicity-detector) |
+| `f8.recorder` | Recorder | Tick-driven debug recorder that captures data samples and sparse state changes. | [Open](../modules/services/f8-pyengine.md#operator-f8-recorder) |
+| `f8.replayer` | Replayer | Playback recorded data and sparse state changes for debugging. | [Open](../modules/services/f8-pyengine.md#operator-f8-replayer) |

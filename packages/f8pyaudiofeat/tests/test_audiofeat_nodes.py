@@ -38,10 +38,18 @@ class _NodeStub:
 class _FakeBus:
     def __init__(self) -> None:
         self.state_values: dict[str, Any] = {}
-        self.emits: list[tuple[str, str, Any, int | None]] = []
+        self.emits: list[tuple[str, str, Any, int | None, str | int | None]] = []
 
-    async def emit_data(self, node_id: str, port: str, value: Any, *, ts_ms: int | None = None) -> None:
-        self.emits.append((node_id, port, value, ts_ms))
+    async def emit_data(
+        self,
+        node_id: str,
+        port: str,
+        value: Any,
+        *,
+        ts_ms: int | None = None,
+        ctx_id: str | int | None = None,
+    ) -> None:
+        self.emits.append((node_id, port, value, ts_ms, ctx_id))
 
     async def publish_state_runtime(self, node_id: str, field: str, value: Any, *, ts_ms: int | None = None) -> None:
         del node_id

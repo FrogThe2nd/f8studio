@@ -54,7 +54,9 @@ win/f8implayer_service.exe
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
 | `loop` | `rw` | `true` | `false` | `boolean` | Repeat playlist when reaching EOF. |
-| `mediaUrl` | `rw` | `true` | `true` | `string` | URI or file path to open. |
+| `mediaUrl` | `rw` | `true` | `true` | `string` | URI or local file path to open. Cleared when exporting publish JSON. |
+| `openxrMode` | `rw` | `true` | `true` | `string / enum[off, on, auto]` | PCVR output: off\|on\|auto (auto retries when headset/runtime becomes available). |
+| `openxrMirrorWindow` | `rw` | `true` | `true` | `boolean` | When OpenXR is active, also present to the SDL mirror window. |
 | `volume` | `rw` | `true` | `true` | `number / default=1.0` | Volume |
 | `playing` | `ro` | `true` | `false` | `boolean` | Playback state. |
 | `duration` | `ro` | `true` | `true` | `number` | Duration (seconds). |
@@ -66,8 +68,8 @@ win/f8implayer_service.exe
 | `videoShmMaxFps` | `rw` | `true` | `false` | `number` | Copy rate limit (0 = unlimited). |
 | `authMode` | `rw` | `true` | `false` | `string / enum[none, browser, cookiesFile]` | Cookie auth mode: none\|browser\|cookiesFile (default: none). |
 | `authBrowser` | `rw` | `true` | `false` | `string / enum[chrome, chromium, edge, firefox, safari]` | Browser name for authMode=browser: chrome\|chromium\|edge\|firefox\|safari. |
-| `authBrowserProfile` | `rw` | `true` | `false` | `string` | Optional browser profile for authMode=browser. Sensitive: runtime-only; not persisted. |
-| `authCookiesFile` | `rw` | `true` | `false` | `string` | cookies.txt path for authMode=cookiesFile. Sensitive: runtime-only; not persisted. |
+| `authBrowserProfile` | `rw` | `true` | `false` | `string` | Optional browser profile for authMode=browser. Local-only path-like metadata; cleared when exporting publish JSON. |
+| `authCookiesFile` | `rw` | `true` | `false` | `string` | cookies.txt path for authMode=cookiesFile. Local-only file path; cleared when exporting publish JSON. |
 | `decodedWidth` | `ro` | `true` | `false` | `integer` | Decoded/source video width (on-screen uses this). |
 | `decodedHeight` | `ro` | `true` | `false` | `integer` | Decoded/source video height (on-screen uses this). |
 | `videoWidth` | `ro` | `true` | `false` | `integer` | Width of the video frame. |
@@ -79,13 +81,13 @@ win/f8implayer_service.exe
 ### Key Fields That Matter
 
 - `loop` (Loop, `rw`): Repeat playlist when reaching EOF. Schema: `boolean`.
-- `mediaUrl` (Media URL, `rw`): URI or file path to open. Schema: `string`.
+- `mediaUrl` (Media URL, `rw`): URI or local file path to open. Cleared when exporting publish JSON. Schema: `string`.
+- `openxrMode` (OpenXR Mode, `rw`): PCVR output: off|on|auto (auto retries when headset/runtime becomes available). Schema: `string / enum[off, on, auto]`.
+- `openxrMirrorWindow` (OpenXR Mirror, `rw`): When OpenXR is active, also present to the SDL mirror window. Schema: `boolean`.
 - `volume` (Volume, `rw`): Volume Schema: `number / default=1.0`.
 - `playing` (Playing, `ro`): Playback state. Schema: `boolean`.
 - `duration` (Duration, `ro`): Duration (seconds). Schema: `number`.
 - `lastError` (Last Error, `ro`): Last error message. Schema: `string`.
-- `videoShmName` (Video SHM, `ro`): Shared memory region name. Schema: `string`.
-- `videoShmEvent` (Video Event, `ro`): Optional named event to signal new frames. Schema: `string`.
 
 ### Service Commands
 

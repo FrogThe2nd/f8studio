@@ -31,7 +31,7 @@ Standalone python script runtime service with lifecycle/tick/command hooks.
 ### How to Run
 
 ```bash
-pixi run f8pyscript
+pixi run -e default f8pyscript
 ```
 
 - Workdir: `../../../`

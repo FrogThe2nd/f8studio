@@ -6,17 +6,17 @@
 
 ## Goal
 
-Receive skeleton streams from `UDP Skeleton`, extract a distance feature in `Python Script`, map it to `TCode`, and send it through serial output with real-time visualization.
+Receive UDP skeleton packets through `UDP In`, decode them with `Skeleton Decoder`, extract a distance feature in `Python Script`, map it to `TCode`, and send it through serial output with real-time visualization.
 
 ## Main Pipeline
 
-`UDP Skeleton -> Python Script -> Envelope -> Range Map -> Rate Limiter -> TCode -> Serial Out`
+`UDP In -> Skeleton Decoder -> Python Script -> Envelope -> Range Map -> Rate Limiter -> TCode -> Serial Out`
 
 ## Steps
 
 1. Import the script and start `PyEngine`.
-2. Confirm `UDP Skeleton.port` matches your sender (`39540` in this script).
-3. Select the target stream via `UDP Skeleton.selectedKey`.
+2. Confirm `UDP In.port` matches your sender (`39540` in this script) and keep `UDP In.outputMode` on `bytearray`.
+3. Select the target stream via `Skeleton Decoder.selectedKey`.
 4. Confirm timing links: `Tick 1.exec -> Python Script.exec` and `Tick 1.tickMs -> TCode 1.intervalMs`.
 5. Validate value flow in `Python Script.out`, `Envelope 1.normalized`, and `Range Map 1.value`.
 6. Set `Serial Out 1.port` and enable serial output.
