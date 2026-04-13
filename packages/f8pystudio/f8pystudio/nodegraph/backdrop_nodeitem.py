@@ -9,22 +9,39 @@ from NodeGraphQt.qgraphics.node_text_item import NodeTextItem
 
 
 class F8StudioBackdropNodeItem(BackdropNodeItem):
-    _FILL_ALPHA = 26
+    _FILL_ALPHA = 20
     _HEADER_ALPHA = 42
-    _SELECTED_FILL_ALPHA = 18
+    _SELECTED_FILL_ALPHA = 10
     _TITLE_BAR_HEIGHT = 26.0
     _BORDER_WIDTH = 1.0
     _BORDER_STYLE = QtCore.Qt.DashLine
+    _text_item: NodeTextItem | None = None
 
     def __init__(self, name: str = "backdrop", text: str = "", parent=None):
         super().__init__(name=name, text=text, parent=parent)
         self._text_item = NodeTextItem(self.name, self)
-        self._sync_title_text_item()
+        self._sync_title_text_item_text()
+        self._sync_title_text_item_style()
+        self._sync_title_text_item_geometry()
 
-    def _sync_title_text_item(self) -> None:
+    def _sync_title_text_item_text(self) -> None:
         text_item = self._text_item
-        text_item.setPlainText(str(self.name or ""))
+        if text_item is None:
+            return
+        name = str(self.name or "")
+        if name != text_item.toPlainText():
+            text_item.setPlainText(name)
+
+    def _sync_title_text_item_style(self) -> None:
+        text_item = self._text_item
+        if text_item is None:
+            return
         text_item.setDefaultTextColor(QtGui.QColor(*self.text_color))
+
+    def _sync_title_text_item_geometry(self) -> None:
+        text_item = self._text_item
+        if text_item is None:
+            return
         text_rect = text_item.boundingRect()
         rect = self.boundingRect()
         x = rect.center().x() - (text_rect.width() / 2.0)
@@ -76,11 +93,27 @@ class F8StudioBackdropNodeItem(BackdropNodeItem):
         painter.setPen(border_pen)
         painter.drawRoundedRect(rect, radius, radius)
         painter.restore()
-        self._sync_title_text_item()
+        self._sync_title_text_item_geometry()
+
+    def mouseDoubleClickEvent(self, event):  # type: ignore[override]
+        if event.button() == QtCore.Qt.LeftButton and not self.disabled:
+            scene = self.scene()
+            text_item = self._text_item
+            if scene is not None and text_item is not None and text_item in scene.items(event.scenePos()):
+                text_item.set_editable(True)
+                text_item.setFocus()
+                event.ignore()
+                return
+        viewer = self.viewer()
+        if viewer:
+            viewer.node_double_clicked.emit(self.id)
+        super().mouseDoubleClickEvent(event)
 
     def from_dict(self, node_dict):  # type: ignore[override]
         super().from_dict(node_dict)
-        self._sync_title_text_item()
+        self._sync_title_text_item_text()
+        self._sync_title_text_item_style()
+        self._sync_title_text_item_geometry()
         self.update(self.boundingRect())
 
     @property
@@ -90,7 +123,11 @@ class F8StudioBackdropNodeItem(BackdropNodeItem):
     @name.setter
     def name(self, name=""):
         AbstractNodeItem.name.fset(self, name)
-        self._sync_title_text_item()
+        if self._text_item is None:
+            return
+        self._sync_title_text_item_text()
+        self._sync_title_text_item_geometry()
+        self.update()
 
     @property
     def text_color(self):
@@ -99,4 +136,13 @@ class F8StudioBackdropNodeItem(BackdropNodeItem):
     @text_color.setter
     def text_color(self, color=(100, 100, 100, 255)):
         AbstractNodeItem.text_color.fset(self, color)
-        self._sync_title_text_item()
+        if self._text_item is None:
+            return
+        self._sync_title_text_item_style()
+        self.update()
+
+    @property
+    def text_item(self) -> NodeTextItem:
+        text_item = self._text_item
+        assert text_item is not None
+        return text_item

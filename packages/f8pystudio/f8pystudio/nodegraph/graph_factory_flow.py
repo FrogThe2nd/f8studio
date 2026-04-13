@@ -308,14 +308,10 @@ class GraphFactoryFlowMixin:
 
         # NodeGraphQt's `delete_nodes([single])` calls back into `self.delete_node(...)`,
         # which we override. Avoid recursion by using `delete_node` directly for the
-        # single-node case, and manually emitting `nodes_deleted` to keep our cleanup
-        # hooks consistent with multi-node delete behavior.
+        # single-node case.
         if len(nodes) == 1:
             node = nodes[0]
-            node_id = str(node.id or "")
             r = super().delete_node(node, push_undo=push_undo)
-            if node_id:
-                self.nodes_deleted.emit([node_id])  # type: ignore[attr-defined]
         else:
             r = super().delete_nodes(nodes, push_undo=push_undo)
 

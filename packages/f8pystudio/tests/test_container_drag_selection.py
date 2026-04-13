@@ -3,8 +3,33 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any
 
+from qtpy import QtCore, QtWidgets
+
+from f8pystudio.nodegraph.backdrop_nodeitem import F8StudioBackdropNodeItem
 from f8pystudio.nodegraph.container_basenode import F8StudioContainerNodeItem
 from f8pystudio.nodegraph.node_graph import F8StudioGraph
+
+
+def _ensure_app() -> QtWidgets.QApplication:
+    app = QtWidgets.QApplication.instance()
+    if app is not None:
+        return app
+    return QtWidgets.QApplication([])
+
+
+class _FakeDoubleClickEvent:
+    def __init__(self, scene_pos: QtCore.QPointF) -> None:
+        self._scene_pos = scene_pos
+        self.ignored = False
+
+    def button(self) -> QtCore.Qt.MouseButton:
+        return QtCore.Qt.LeftButton
+
+    def scenePos(self) -> QtCore.QPointF:
+        return self._scene_pos
+
+    def ignore(self) -> None:
+        self.ignored = True
 
 
 class _FakeView:
@@ -89,3 +114,31 @@ def test_child_views_to_translate_during_drag_skips_selected_children() -> None:
     result = F8StudioContainerNodeItem._child_views_to_translate_during_drag(container_item)
 
     assert result == [unselected_child]
+
+
+def test_container_title_double_click_enters_inline_rename() -> None:
+    _ensure_app()
+    scene = QtWidgets.QGraphicsScene()
+    item = F8StudioContainerNodeItem(name="Service Container")
+    scene.addItem(item)
+    scene_pos = item.text_item.sceneBoundingRect().center()
+    event = _FakeDoubleClickEvent(scene_pos)
+
+    item.mouseDoubleClickEvent(event)
+
+    assert event.ignored is True
+    assert item.text_item.textInteractionFlags() != QtCore.Qt.NoTextInteraction
+
+
+def test_backdrop_title_double_click_enters_inline_rename() -> None:
+    _ensure_app()
+    scene = QtWidgets.QGraphicsScene()
+    item = F8StudioBackdropNodeItem(name="Region")
+    scene.addItem(item)
+    scene_pos = item.text_item.sceneBoundingRect().center()
+    event = _FakeDoubleClickEvent(scene_pos)
+
+    item.mouseDoubleClickEvent(event)
+
+    assert event.ignored is True
+    assert item.text_item.textInteractionFlags() != QtCore.Qt.NoTextInteraction

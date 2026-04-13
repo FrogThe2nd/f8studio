@@ -10,6 +10,7 @@ from f8pystudio.nodegraph.graph_component_actions import GraphComponentActionsMi
 from f8pystudio.nodegraph.node_graph import F8StudioGraph
 from f8pystudio.nodegraph.graph_variant_actions import GraphVariantActionsMixin
 from f8pystudio.render_nodes.backdrop import BackdropRenderNode
+from f8pystudio.render_nodes.patch_hub import PatchHubRenderNode
 from f8pystudio.studio_specs.identifiers import SERVICE_CLASS as STUDIO_SERVICE_CLASS
 
 BACKDROP_OPERATOR_CLASS = "f8.backdrop"
@@ -383,6 +384,168 @@ def test_create_backdrop_from_selection_adds_single_real_undo_command() -> None:
 
     assert graph.get_node_by_id(str(created.id or "")) is not None
     assert int(graph._undo_stack.index()) == baseline_index + 1
+
+
+def test_wrap_selected_nodes_on_existing_backdrop_adds_real_undo_command() -> None:
+    _ensure_app()
+    graph = F8StudioGraph()
+    graph.node_factory.clear_registered_nodes()
+    graph.node_factory.register_node(BackdropRenderNode)
+
+    node_type = str(BackdropRenderNode.type_ or "")
+    backdrop = graph.create_node(node_type, name="Region", selected=False, push_undo=False, pos=(0.0, 0.0))
+    target = graph.create_node(node_type, name="Target", selected=False, push_undo=False, pos=(300.0, 300.0))
+    assert isinstance(backdrop, BackdropRenderNode)
+    assert isinstance(target, BackdropRenderNode)
+    backdrop.set_property("selected", True, push_undo=False)
+    target.set_property("selected", True, push_undo=False)
+    before_pos = list(backdrop.pos())
+    before_size = backdrop.size()
+
+    baseline_count = int(graph._undo_stack.count())
+    baseline_index = int(graph._undo_stack.index())
+
+    graph._on_wrap_selected_nodes_menu_action(graph, backdrop)
+
+    wrapped_pos = list(backdrop.pos())
+    wrapped_size = backdrop.size()
+    assert int(graph._undo_stack.count()) == baseline_count + 1
+    assert int(graph._undo_stack.index()) == baseline_index + 1
+    assert str(graph._undo_stack.undoText() or "") == '"Region" wrap nodes'
+    assert wrapped_pos != before_pos
+    assert wrapped_size != before_size
+
+    graph._undo_stack.undo()
+
+    assert list(backdrop.pos()) == before_pos
+    assert backdrop.size() == before_size
+    assert int(graph._undo_stack.index()) == baseline_index
+
+    graph._undo_stack.redo()
+
+    assert list(backdrop.pos()) == wrapped_pos
+    assert backdrop.size() == wrapped_size
+    assert int(graph._undo_stack.index()) == baseline_index + 1
+
+
+def test_backdrop_resize_updates_from_graph_signal_add_real_undo_commands() -> None:
+    _ensure_app()
+    updates = [
+        ("sizer_mouse_release", 'resized "Region"', {"pos": [40.0, 50.0], "width": 220.0, "height": 160.0}),
+        ("sizer_double_clicked", '"Region" auto resize', {"pos": [70.0, 80.0], "width": 260.0, "height": 190.0}),
+    ]
+    for update_property, expected_undo_text, value in updates:
+        graph = F8StudioGraph()
+        graph.node_factory.clear_registered_nodes()
+        graph.node_factory.register_node(BackdropRenderNode)
+
+        node_type = str(BackdropRenderNode.type_ or "")
+        backdrop = graph.create_node(node_type, name="Region", selected=False, push_undo=False, pos=(0.0, 0.0))
+        assert isinstance(backdrop, BackdropRenderNode)
+        before_pos = list(backdrop.pos())
+        before_size = backdrop.size()
+
+        baseline_count = int(graph._undo_stack.count())
+        baseline_index = int(graph._undo_stack.index())
+
+        graph._on_node_backdrop_updated(str(backdrop.id or ""), update_property, value)
+
+        resized_pos = list(backdrop.pos())
+        resized_size = backdrop.size()
+        assert int(graph._undo_stack.count()) == baseline_count + 1
+        assert int(graph._undo_stack.index()) == baseline_index + 1
+        assert str(graph._undo_stack.undoText() or "") == expected_undo_text
+        assert resized_pos == value["pos"]
+        assert resized_size == (value["width"], value["height"])
+
+        graph._undo_stack.undo()
+
+        assert list(backdrop.pos()) == before_pos
+        assert backdrop.size() == before_size
+        assert int(graph._undo_stack.index()) == baseline_index
+
+        graph._undo_stack.redo()
+
+        assert list(backdrop.pos()) == resized_pos
+        assert backdrop.size() == resized_size
+        assert int(graph._undo_stack.index()) == baseline_index + 1
+
+
+def test_delete_shortcut_removes_backdrop_when_resize_handle_is_selected() -> None:
+    _ensure_app()
+    graph = F8StudioGraph()
+    graph.node_factory.clear_registered_nodes()
+    graph.node_factory.register_node(BackdropRenderNode)
+
+    node_type = str(BackdropRenderNode.type_ or "")
+    backdrop = graph.create_node(node_type, name="Region", selected=False, push_undo=False, pos=(0.0, 0.0))
+    assert isinstance(backdrop, BackdropRenderNode)
+    backdrop.view._sizer.setSelected(True)
+    assert graph.selected_nodes() == []
+
+    graph.viewer()._delete_selected_nodes()
+
+    assert graph.get_node_by_id(str(backdrop.id or "")) is None
+    assert backdrop.view.scene() is None
+
+
+def test_backdrop_nodes_list_clears_after_backdrop_moves_away_from_wrapped_nodes() -> None:
+    _ensure_app()
+    graph = F8StudioGraph()
+    graph.node_factory.clear_registered_nodes()
+    graph.node_factory.register_node(BackdropRenderNode)
+    graph.node_factory.register_node(PatchHubRenderNode)
+
+    backdrop = graph.create_node(
+        str(BackdropRenderNode.type_ or ""),
+        name="Region",
+        selected=False,
+        push_undo=False,
+        pos=(0.0, 0.0),
+    )
+    target = graph.create_node(
+        str(PatchHubRenderNode.type_ or ""),
+        name="Hub",
+        selected=False,
+        push_undo=False,
+        pos=(220.0, 140.0),
+    )
+
+    assert isinstance(backdrop, BackdropRenderNode)
+    assert target is not None
+
+    backdrop.wrap_nodes([target], push_undo=False)
+    assert backdrop.nodes() == [target]
+
+    backdrop.set_property("pos", [600.0, 420.0], push_undo=False)
+    backdrop.set_property("width", 120.0, push_undo=False)
+    backdrop.set_property("height", 100.0, push_undo=False)
+
+    assert backdrop.nodes() == []
+
+
+def test_single_node_delete_emits_nodes_deleted_once() -> None:
+    _ensure_app()
+    graph = F8StudioGraph()
+    graph.node_factory.clear_registered_nodes()
+    graph.node_factory.register_node(BackdropRenderNode)
+
+    backdrop = graph.create_node(
+        str(BackdropRenderNode.type_ or ""),
+        name="Region",
+        selected=False,
+        push_undo=False,
+        pos=(0.0, 0.0),
+    )
+    assert isinstance(backdrop, BackdropRenderNode)
+
+    seen_node_ids: list[list[str]] = []
+    graph.nodes_deleted.connect(lambda node_ids: seen_node_ids.append(list(node_ids)))  # type: ignore[attr-defined]
+
+    backdrop.set_property("selected", True, push_undo=False)
+    graph.viewer()._delete_selected_nodes()
+
+    assert seen_node_ids == [[str(backdrop.id or "")]]
 
 
 def test_save_variant_menu_requires_single_selected_node(monkeypatch) -> None:

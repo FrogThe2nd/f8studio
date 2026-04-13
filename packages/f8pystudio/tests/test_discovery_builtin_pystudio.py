@@ -252,8 +252,8 @@ def test_backdrop_renderer_uses_dashed_outline_and_low_fill_alpha() -> None:
     node = BackdropRenderNode()
 
     assert node.view._BORDER_STYLE == QtCore.Qt.DashLine
-    assert node.view._FILL_ALPHA == 26
-    assert abs(float(node.view._FILL_ALPHA) / 255.0 - 0.1) < 0.01
+    assert 12 <= node.view._FILL_ALPHA <= 26
+    assert float(node.view._FILL_ALPHA) / 255.0 <= 0.1
 
 
 def test_backdrop_title_can_be_changed_programmatically() -> None:
