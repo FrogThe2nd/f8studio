@@ -10,19 +10,21 @@ ONNXRuntime image classifier service (no tracking).
 
 ## When to Use
 
-- Use `f8.dl.classifier` when each frame should map to one label or class distribution.
-- It performs whole-image classification on video frames provided via Shared Memory and outputs a class distribution or top-K predicted labels.
-- It is best for scene labels, coarse state estimation, or discrete control cues.
+- Use `f8.dl.classifier` when you need category predictions rather than detection boxes.
+- It fits graphs where a target region is already known and the next question is "what class is this?"
+- It is often the right tool for scene-state recognition or ROI-level classification.
 
 ## Common Wiring Patterns
 
-- Feed it from `f8.implayer` or `f8.screencap`, then inspect outputs with `Text Viz`, `Python Expr`, or downstream state mappings to drive application logic.
-- Keep a visualization or logging branch attached while tuning thresholds and class interpretation.
+- A common setup sends an ROI from a detector or tracker into the classifier.
+- If you classify full frames, make sure the model was trained for that style of input.
+- Route classification results into `f8.pyengine`, `Text Viz`, or UI logic.
 
 ## Pitfalls / Gotchas
 
-- Wrong model assets or label assumptions can look like logic bugs in downstream nodes; verify the loaded model in the properties.
-- Classification outputs need explicit business rules (hysteresis, thresholds) before they drive physical devices or actuator logic.
+- Classification quality depends heavily on model choice and correct preprocessing.
+- If the output feels unstable, verify the input crop before blaming the classifier.
+- Thresholds should be chosen from observed score distributions, not guessed in isolation.
 
 ## Service Reference
 

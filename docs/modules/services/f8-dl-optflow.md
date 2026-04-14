@@ -10,19 +10,21 @@ ONNXRuntime NeuFlowV2 dense optical flow service (flow SHM output).
 
 ## When to Use
 
-- Use `f8.dl.optflow` when learned flow quality is preferred over the classical CV implementation.
-- It provides high-quality dense optical flow using the NeuFlowV2 architecture, which is often more robust to lighting changes and local occlusions.
-- It is a strong option for motion-sensitive graphs when model-backed flow is already part of the deployment stack.
+- Use `f8.dl.optflow` when you need higher-quality motion estimation than simpler flow approaches provide.
+- It is most useful in scenes where motion vectors materially affect later logic and traditional flow is not good enough.
+- Choose it when flow quality matters more than absolute runtime cost.
 
 ## Common Wiring Patterns
 
-- Feed it from video producers, then inspect outputs through `f8.viz.video` (using flow visualization) or reduce them with `f8.cvkit.flowmetric`.
-- Compare it against the CVKit flow path before committing a release pipeline to balance performance and quality.
+- Feed it from a video source and route the result into `f8.pyengine`, summary logic, or visualization.
+- If `cvkit.denseoptflow` is already in use, compare both approaches in parallel before committing to the DL path.
+- Reserve it for places where the graph actually benefits from better motion quality.
 
 ## Pitfalls / Gotchas
 
-- GPU/runtime availability matters for performance; validate packaging and device selection (`ortProvider`) early.
-- Flow quality problems are often input-quality problems (blur, noise) rather than model bugs.
+- DL flow tends to be significantly more compute-heavy.
+- If the downstream logic only needs a rough activity score, this module may be overkill.
+- Validate on known sample footage before dropping it into a large live graph.
 
 ## Service Reference
 

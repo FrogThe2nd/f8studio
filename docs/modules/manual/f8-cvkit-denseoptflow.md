@@ -1,17 +1,17 @@
 ## When to Use
 
-- Use `f8.cvkit.denseoptflow` when you need per-pixel motion vectors to analyze how every part of a video frame is moving.
-- It provides a "classical" Computer Vision approach for motion-derived control, visual flow inspection, and regional motion summaries.
-- Ideal for general motion detection, background subtraction based on movement, or as a source for high-resolution flow metrics.
+- Use `f8.cvkit.denseoptflow` when you care about motion across the whole frame rather than just one tracked object.
+- It is useful for global movement analysis, camera motion estimation, and motion-driven control signals.
+- Reach for it when you need "where the frame is moving" rather than "where one target is".
 
 ## Common Wiring Patterns
 
-- **Motion to Metric**: Feed video from `f8.implayer` or `f8.screencap`, then connect the flow SHM output to `f8.cvkit.flowmetric` for scalar reduction (e.g., total motion magnitude).
-- **Visualization**: Branch the flow output to `f8.viz.video` with an optical flow overlay to visually inspect the direction and intensity of motion.
-- **Preprocessing Placement**: Keep this service as close as possible to the video producer to ensure the lowest latency and clear resolution assumptions.
+- Feed it from `f8.implayer` or `f8.screencap`.
+- Keep a video preview branch nearby during setup so you can compare motion output with the original image.
+- If you only need compact motion summaries, hand the result off to `f8.cvkit.flowmetric` or `f8.pyengine`.
 
 ## Pitfalls / Gotchas
 
-- **Channel Mismatch**: If the input SHM name is incorrect, downstream flow consumers will silently receive no data. Always verify that the producer's `shmName` matches the `inputShmName` property.
-- **Resource Intensity**: Dense optical flow is computationally expensive. If the frame rate drops significantly, consider increasing the `computeEveryNFrames` property or reducing the input resolution.
-- **Noise Sensitivity**: Classical flow algorithms are sensitive to sensor noise and lighting flickers, which can be interpreted as high-speed motion. Use input stabilization or filtering if the source is noisy.
+- High resolution and high frame rate can make dense flow expensive quickly; verify you really need full-quality input.
+- Compression artifacts, flicker, and capture jitter can distort the result.
+- If downstream logic is too sensitive, add smoothing or thresholding before using the flow values as control signals.

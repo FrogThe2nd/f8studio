@@ -1,15 +1,17 @@
 ## When to Use
 
-- Use `f8.dl.detector` when you need object detections with boxes or class-specific regions.
-- It provides general-purpose object detection using ONNX Runtime, consuming video frames from Shared Memory and outputting detection payloads (bounding boxes, scores, and classes).
-- It is the general DL detection path for scenes that are broader than human-only use cases.
+- Use `f8.dl.detector` when you need bounding boxes, classes, and confidence scores for objects in the frame.
+- It is the usual first step when the graph needs to know where targets are.
+- Choose it when multiple candidate objects may appear and later logic needs structured detections.
 
 ## Common Wiring Patterns
 
-- Feed it from a video producer (e.g., `f8.implayer`), then inspect detections via `Text Viz`, overlays, or handoff into `f8.pyengine` logic for business rules.
-- Keep the raw video source available in parallel for side-by-side validation during confidence threshold tuning.
+- Typical inputs are `f8.implayer` and `f8.screencap`.
+- Keep the original video visible during tuning so detection quality can be verified against the image.
+- Detection output often continues into `f8.dl.detsorter`, `f8.cvkit.tracking`, or `f8.pyengine`.
 
 ## Pitfalls / Gotchas
 
-- Threshold tuning is meaningless until the correct model and input resolution are confirmed.
-- Detection-heavy graphs can look sluggish if inference cost is ignored during release packaging; monitor the monitor port for latency.
+- Do not tune thresholds before confirming that model selection, input sizing, and class mapping are correct.
+- Slow performance can come from oversized input or deployment limits, not just from the model itself.
+- If results fluctuate badly, inspect source image quality before over-tuning postprocessing.
