@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any
 
 from nats.js.errors import NotFoundError as JsNotFoundError
@@ -121,3 +122,36 @@ def test_close_ignores_delete_key_value_not_found(monkeypatch) -> None:
 
     assert nc.drain_called is True
     assert tr.is_connected is False
+
+
+def test_connect_retries_via_logging_instead_of_stdout(monkeypatch, caplog) -> None:
+    js = _FakeJs()
+    nc = _FakeNc(js)
+    attempts = {"count": 0}
+
+    async def _fake_connect(*args: Any, **kwargs: Any) -> _FakeNc:
+        del args, kwargs
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise RuntimeError("offline")
+        return nc
+
+    async def _fake_sleep(_delay: float) -> None:
+        return None
+
+    monkeypatch.setattr("f8pysdk.transport.nats.connect", _fake_connect)
+    monkeypatch.setattr("f8pysdk.transport.asyncio.sleep", _fake_sleep)
+
+    with caplog.at_level(logging.WARNING, logger="f8pysdk.transport"):
+        tr = NatsTransport(
+            NatsTransportConfig(
+                url="nats://127.0.0.1:4222",
+                kv_bucket="kv.retry",
+            )
+        )
+        _run(tr.connect())
+
+    assert tr.is_connected is True
+    assert attempts["count"] == 2
+    assert "NATS server is not reachable" in caplog.text
+    assert "offline" not in caplog.text

@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import logging
-import os
+
+from f8pysdk.logging_utils import configure_root_logging_from_env
 
 def _main(argv: list[str] | None = None) -> int:
     if not logging.getLogger().handlers:
-        raw = (os.environ.get("F8_LOG_LEVEL") or "").strip().upper()
-        level = getattr(logging, raw, logging.WARNING) if raw else logging.WARNING
-        logging.basicConfig(level=level, format="%(levelname)s:%(name)s:%(message)s")
+        configure_root_logging_from_env()
 
     # Local import: keep `python -m f8pyengine.main --describe` as lightweight as possible.
     from f8pyengine.pyengine_service import build_app

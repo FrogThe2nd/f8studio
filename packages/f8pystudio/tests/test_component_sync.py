@@ -12,7 +12,7 @@ from qtpy import QtCore, QtWidgets
 from sqlalchemy import insert, select
 from f8pysdk.codec import copy_model
 
-from f8pystudio.assets.common import decode_http_response_text
+from f8pystudio.assets.common import decode_http_response_text, redact_http_body_for_log, redact_json_for_log
 from f8pystudio.assets.components.component_catalog import ComponentCatalogService
 from f8pystudio.assets.components.component_models import (
     F8ComponentEntry,
@@ -437,6 +437,43 @@ def test_decode_http_response_text_only_decodes_one_gzip_layer() -> None:
     assert decode_http_response_text(compressed_once, content_encoding="gzip") == payload.decode("utf-8")
     decoded = decode_http_response_text(compressed_twice, content_encoding="gzip")
     assert decoded != payload.decode("utf-8")
+
+
+def test_redact_http_body_for_log_hides_auth_payload_secrets() -> None:
+    raw = json.dumps(
+        {
+            "token": "plain-token",
+            "user": {"email": "user@example.com"},
+            "nested": {
+                "sessionCookie": "session=secret",
+                "accessToken": "old-token-only",
+            },
+        },
+    )
+
+    redacted = redact_http_body_for_log(raw, max_chars=1000)
+
+    assert "plain-token" not in redacted
+    assert "session=secret" not in redacted
+    assert "old-token-only" not in redacted
+    assert "[redacted]" in redacted
+    assert "user@example.com" in redacted
+
+
+def test_redact_json_for_log_hides_header_style_secret_keys() -> None:
+    redacted = redact_json_for_log(
+        {
+            "Authorization": "Bearer secret",
+            "Set-Cookie": "session=secret",
+            "safe": "visible",
+        },
+    )
+
+    assert redacted == {
+        "Authorization": "[redacted]",
+        "Set-Cookie": "[redacted]",
+        "safe": "visible",
+    }
 
 
 def test_component_sync_client_does_not_fallback_from_content_endpoint(tmp_path: Path, monkeypatch) -> None:

@@ -11,6 +11,21 @@ import zlib
 
 JsonObject: TypeAlias = dict[str, object]
 ASSET_CLOUD_BASE_URL_ENV: str = "F8_ASSET_CLOUD_BASE_URL"
+_REDACTED_VALUE = "[redacted]"
+_SENSITIVE_JSON_KEYS = frozenset(
+    {
+        "accessToken",
+        "authorization",
+        "cookie",
+        "idToken",
+        "password",
+        "refreshToken",
+        "session",
+        "sessionCookie",
+        "setCookie",
+        "token",
+    },
+)
 
 
 def now_iso() -> str:
@@ -95,3 +110,36 @@ def decode_http_response_text(raw_bytes: bytes, *, content_encoding: str) -> str
     if "gzip" in normalized_encoding:
         decoded_bytes = zlib.decompress(decoded_bytes, wbits=31)
     return decoded_bytes.decode("utf-8", errors="replace")
+
+
+def redact_json_for_log(value: object) -> object:
+    if isinstance(value, dict):
+        out: dict[str, object] = {}
+        for key, item in value.items():
+            key_text = str(key)
+            if _is_sensitive_json_key(key_text):
+                out[key_text] = _REDACTED_VALUE
+            else:
+                out[key_text] = redact_json_for_log(item)
+        return out
+    if isinstance(value, list):
+        return [redact_json_for_log(item) for item in value]
+    return value
+
+
+def redact_http_body_for_log(body_text: str, *, max_chars: int) -> str:
+    text = str(body_text or "")
+    try:
+        value = stable_json_loads(text)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return text[:max_chars]
+    return stable_json_dumps(redact_json_for_log(value))[:max_chars]
+
+
+def _is_sensitive_json_key(key: str) -> bool:
+    normalized = key.replace("-", "").replace("_", "").lower()
+    for sensitive_key in _SENSITIVE_JSON_KEYS:
+        sensitive_normalized = sensitive_key.replace("-", "").replace("_", "").lower()
+        if normalized == sensitive_normalized:
+            return True
+    return False

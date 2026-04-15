@@ -71,7 +71,11 @@ class NatsTransport:
                 if (now - last_err_log) < 2.0:
                     return
                 last_err_log = now
-                print(f"[f8] NATS connection error (will retry): {type(exc).__name__}: {exc}")
+                log.warning(
+                    "NATS connection error (will retry): %s: %s",
+                    type(exc).__name__,
+                    exc,
+                )
 
             while self._nc is None:
                 attempt += 1
@@ -87,9 +91,11 @@ class NatsTransport:
                     now = time.monotonic()
                     if attempt == 1 or (now - last_log) >= 2.0:
                         last_log = now
-                        print(
-                            f"[f8] NATS server is not reachable at {url!r}. "
-                            f"Start `nats-server` or set `F8_NATS_URL`. retrying... ({type(exc).__name__})"
+                        log.warning(
+                            "NATS server is not reachable at %r. Start `nats-server` or set "
+                            "`F8_NATS_URL`. retrying... (%s)",
+                            url,
+                            type(exc).__name__,
                         )
                     await asyncio.sleep(min(2.0, 0.2 * attempt))
                     continue

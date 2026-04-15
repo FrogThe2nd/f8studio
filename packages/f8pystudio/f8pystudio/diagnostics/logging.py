@@ -3,27 +3,14 @@ from __future__ import annotations
 import logging
 import os
 
-_LOG_FORMAT = "%(levelname)s:%(name)s:%(message)s"
-_TRUTHY_FLAGS = frozenset({"1", "true", "yes", "on", "enable", "enabled"})
-_LOG_LEVEL_BY_NAME: dict[str, int] = {
-    "DEBUG": logging.DEBUG,
-    "INFO": logging.INFO,
-    "WARNING": logging.WARNING,
-    "ERROR": logging.ERROR,
-    "CRITICAL": logging.CRITICAL,
-}
+from f8pysdk.logging_utils import (
+    apply_root_log_level as _apply_root_log_level,
+    resolve_env_log_level as _resolve_env_log_level,
+)
 
 
 def resolve_env_log_level(*, log_level_raw: str, discovery_timings_raw: str) -> int:
-    level_name = str(log_level_raw or "").strip().upper()
-    explicit_level = _LOG_LEVEL_BY_NAME.get(level_name)
-    if explicit_level is not None:
-        return explicit_level
-
-    timings_value = str(discovery_timings_raw or "").strip().lower()
-    if timings_value in _TRUTHY_FLAGS:
-        return logging.INFO
-    return logging.WARNING
+    return _resolve_env_log_level(log_level_raw=log_level_raw, discovery_timings_raw=discovery_timings_raw)
 
 
 def apply_root_log_level(level: int) -> None:
@@ -35,16 +22,12 @@ def apply_root_log_level(level: int) -> None:
     root logger level later does not stop that record from propagating to an
     already-installed root handler. Keeping root handlers in sync closes that
     gap for the studio's global log-level control.
-    """
-    normalized_level = int(level)
-    root_logger = logging.getLogger()
-    if not root_logger.handlers:
-        logging.basicConfig(level=normalized_level, format=_LOG_FORMAT)
-        root_logger = logging.getLogger()
 
-    root_logger.setLevel(normalized_level)
-    for handler in list(root_logger.handlers):
-        handler.setLevel(normalized_level)
+    ``logging.disable`` provides the final global cutoff. This also covers
+    handlers installed after the UI preference is applied, such as debug
+    console handlers with a default NOTSET level.
+    """
+    _apply_root_log_level(level)
 
 
 def configure_root_logging_from_env() -> None:

@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any
 
 from f8pysdk.app import ServiceApp, ServiceAppDefaults
 from f8pysdk.capabilities import RungraphHook
 from f8pysdk.codec import unwrap_json_value
+from f8pysdk.logging_utils import configure_root_logging_from_env
 from f8pysdk.registry import Registry
 from f8pysdk.runtime import ServiceRuntime
 from f8pysdk.specs import F8RuntimeGraph
@@ -76,9 +76,7 @@ def build_app() -> ServiceApp:
 
 def _main(argv: list[str] | None = None) -> int:
     if not logging.getLogger().handlers:
-        raw = (os.environ.get("F8_LOG_LEVEL") or "").strip().upper()
-        level = getattr(logging, raw, logging.WARNING) if raw else logging.WARNING
-        logging.basicConfig(level=level, format="%(levelname)s:%(name)s:%(message)s")
+        configure_root_logging_from_env()
     return build_app().cli(argv, program_name="F8PyScript")
 
 

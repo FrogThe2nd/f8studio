@@ -20,6 +20,7 @@ from ..common import (
     json_object_from_value,
     json_object_loads,
     origin_headers_for_base_url,
+    redact_http_body_for_log,
     resolve_asset_cloud_base_url,
 )
 from .variant_catalog import VariantCatalogService, variant_entry_has_cached_content, variant_entry_is_installed
@@ -606,7 +607,13 @@ class VariantSyncClient:
                 except Exception:
                     logger.exception("Failed to decode variant cloud response")
                     raw_body = raw_bytes.decode("utf-8", errors="replace")
-                logger.debug("Variant cloud %s %s status=%s body=%s", method, url, response_like.status, raw_body[:1000])
+                logger.debug(
+                    "Variant cloud %s %s status=%s body=%s",
+                    method,
+                    url,
+                    response_like.status,
+                    redact_http_body_for_log(raw_body, max_chars=1000),
+                )
                 session_cookie = _session_cookie_from_headers(response_like.headers)
                 if session_cookie:
                     self._access_token = session_cookie
@@ -627,7 +634,13 @@ class VariantSyncClient:
                     body_text = decode_http_response_text(body_bytes, content_encoding=str(content_encoding or ""))
                 except Exception:
                     body_text = body_bytes.decode("utf-8", errors="replace")
-                logger.warning("Variant cloud %s %s failed status=%s body=%s", method, url, exc.code, body_text[:1200])
+                logger.warning(
+                    "Variant cloud %s %s failed status=%s body=%s",
+                    method,
+                    url,
+                    exc.code,
+                    redact_http_body_for_log(body_text, max_chars=1200),
+                )
                 payload_obj = _try_parse_json_object(body_text)
                 message = _error_message(payload_obj) or body_text or f"{method} {path} failed with HTTP {exc.code}"
                 if exc.code == 401:
