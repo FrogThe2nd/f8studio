@@ -23,6 +23,7 @@ from f8pysdk.nodes import OperatorNode
 from f8pysdk.registry import RuntimeNodeRegistry
 
 from f8pystudio.studio_specs.identifiers import SERVICE_CLASS
+from .categories import PALETTE_CATEGORY_EXPR
 from ._py_expr_eval import (
     compile_expr,
     is_identifier,
@@ -230,7 +231,7 @@ class StateExprRuntimeNode(OperatorNode):
 StateExprRuntimeNode.SPEC = F8OperatorSpec(
     schemaVersion=F8OperatorSchemaVersion.f8operator_1,
     serviceClass=SERVICE_CLASS,
-    paletteCategory=SERVICE_CLASS,
+    paletteCategory=PALETTE_CATEGORY_EXPR,
     operatorClass=OPERATOR_CLASS,
     version="0.0.1",
     label="Studio State Expr",

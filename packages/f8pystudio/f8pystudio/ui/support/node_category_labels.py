@@ -10,9 +10,17 @@ PYENGINE_NODE_LIBRARY_CATEGORY_LABELS: dict[str, str] = {
     "f8.pyengine.debug": "PyEngine / Debug",
 }
 
+PYSTUDIO_NODE_LIBRARY_CATEGORY_LABELS: dict[str, str] = {
+    "f8.pystudio.viz": "PyStudio / Viz",
+    "f8.pystudio.control": "PyStudio / Control",
+    "f8.pystudio.expr": "PyStudio / Expr",
+    "f8.pystudio.canvas": "PyStudio / Canvas",
+    "f8.pystudio.routing": "PyStudio / Routing",
+}
+
 
 def display_node_category_label(category: str) -> str:
     category_id = str(category or "").strip()
     if not category_id:
         return "uncategorized"
-    return str(PYENGINE_NODE_LIBRARY_CATEGORY_LABELS.get(category_id, category_id))
+    return str(PYENGINE_NODE_LIBRARY_CATEGORY_LABELS.get(category_id, PYSTUDIO_NODE_LIBRARY_CATEGORY_LABELS.get(category_id, category_id)))

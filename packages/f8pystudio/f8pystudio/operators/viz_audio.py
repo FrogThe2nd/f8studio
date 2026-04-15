@@ -21,6 +21,7 @@ from f8pysdk.shm import audio_shm_name
 
 from f8pystudio.studio_specs.identifiers import SERVICE_CLASS
 from f8pystudio.contracts.ui_commands import emit_ui_command
+from .categories import PALETTE_CATEGORY_VIZ
 
 
 OPERATOR_CLASS = "f8.viz.audio"
@@ -43,7 +44,7 @@ class VizAudioRuntimeNode(OperatorNode):
     SPEC = F8OperatorSpec(
         schemaVersion=F8OperatorSchemaVersion.f8operator_1,
         serviceClass=SERVICE_CLASS,
-        paletteCategory=SERVICE_CLASS,
+        paletteCategory=PALETTE_CATEGORY_VIZ,
         operatorClass=OPERATOR_CLASS,
         version="0.0.1",
         label="Audio Viz",

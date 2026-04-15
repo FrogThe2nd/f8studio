@@ -19,6 +19,7 @@ from f8pysdk.registry import RuntimeNodeRegistry
 from f8pysdk.specs import integer_schema
 
 from f8pystudio.studio_specs.identifiers import SERVICE_CLASS
+from .categories import PALETTE_CATEGORY_CONTROL
 
 OPERATOR_CLASS = "f8.control_panel"
 
@@ -35,7 +36,7 @@ class ControlPanelRuntimeNode(OperatorNode):
     SPEC = F8OperatorSpec(
         schemaVersion=F8OperatorSchemaVersion.f8operator_1,
         serviceClass=SERVICE_CLASS,
-        paletteCategory=SERVICE_CLASS,
+        paletteCategory=PALETTE_CATEGORY_CONTROL,
         operatorClass=OPERATOR_CLASS,
         version="0.0.1",
         label="Control Panel",

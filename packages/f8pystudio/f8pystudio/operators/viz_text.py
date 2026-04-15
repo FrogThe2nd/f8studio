@@ -21,6 +21,7 @@ from f8pysdk.registry import RuntimeNodeRegistry
 
 from f8pystudio.studio_specs.identifiers import SERVICE_CLASS
 from f8pystudio.contracts.ui_commands import emit_ui_command
+from .categories import PALETTE_CATEGORY_VIZ
 from ._viz_base import StudioVizRuntimeNodeBase, viz_sampling_state_fields
 
 OPERATOR_CLASS = "f8.viz.text"
@@ -121,7 +122,7 @@ def register_operator(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistry:
         F8OperatorSpec(
             schemaVersion=F8OperatorSchemaVersion.f8operator_1,
             serviceClass=SERVICE_CLASS,
-            paletteCategory=SERVICE_CLASS,
+            paletteCategory=PALETTE_CATEGORY_VIZ,
             operatorClass=OPERATOR_CLASS,
             version="0.0.1",
             label="Text Viz",

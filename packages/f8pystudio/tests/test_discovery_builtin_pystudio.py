@@ -14,6 +14,12 @@ from f8pystudio.operators.note import OPERATOR_CLASS as NOTE_OPERATOR_CLASS
 from f8pystudio.operators.patch_hub import OPERATOR_CLASS as PATCH_HUB_OPERATOR_CLASS
 from f8pystudio.operators.state_expr import OPERATOR_CLASS as STATE_EXPR_OPERATOR_CLASS
 from f8pystudio.operators.value_stepper import OPERATOR_CLASS as VALUE_STEPPER_OPERATOR_CLASS
+from f8pystudio.operators.categories import (
+    PALETTE_CATEGORY_CANVAS,
+    PALETTE_CATEGORY_CONTROL,
+    PALETTE_CATEGORY_EXPR,
+    PALETTE_CATEGORY_ROUTING,
+)
 from f8pystudio.studio_specs.registry import create_pystudio_registry, shared_pystudio_registry
 from f8pystudio.render_nodes.backdrop import BackdropRenderNode
 from f8pystudio.render_nodes.note import NoteRenderNode
@@ -124,7 +130,7 @@ def test_discovery_registers_note_operator_spec() -> None:
     note = next((op for op in catalog.operators.all() if op.operatorClass == NOTE_OPERATOR_CLASS), None)
     assert note is not None
     assert note.specKind == "operator"
-    assert note.paletteCategory == STUDIO_SERVICE_CLASS
+    assert note.paletteCategory == PALETTE_CATEGORY_CANVAS
     assert list(note.dataInPorts or []) == []
     assert list(note.dataOutPorts or []) == []
     assert list(note.execInPorts or []) == []
@@ -173,6 +179,7 @@ def test_discovery_registers_patch_hub_operator_spec() -> None:
 
     patch_hub = next((op for op in catalog.operators.all() if op.operatorClass == PATCH_HUB_OPERATOR_CLASS), None)
     assert patch_hub is not None
+    assert patch_hub.paletteCategory == PALETTE_CATEGORY_ROUTING
     assert patch_hub.rendererClass == "patch_hub"
     assert [str(port.name or "") for port in list(patch_hub.dataInPorts or [])] == ["data"]
     assert [str(port.name or "") for port in list(patch_hub.dataOutPorts or [])] == ["data"]
@@ -312,6 +319,7 @@ def test_discovery_registers_value_stepper_operator_spec() -> None:
         None,
     )
     assert value_stepper is not None
+    assert value_stepper.paletteCategory == PALETTE_CATEGORY_CONTROL
     state_fields = {field.name: field for field in list(value_stepper.stateFields or [])}
     assert state_fields["value"].uiControl == "slider"
     assert state_fields["increaseTrigger"].uiControl == "button"
@@ -333,7 +341,7 @@ def test_discovery_registers_expr_operator_specs() -> None:
     assert state_expr is not None
     assert data_expr.serviceClass == STUDIO_SERVICE_CLASS
     assert state_expr.serviceClass == STUDIO_SERVICE_CLASS
-    assert data_expr.paletteCategory == STUDIO_SERVICE_CLASS
-    assert state_expr.paletteCategory == STUDIO_SERVICE_CLASS
+    assert data_expr.paletteCategory == PALETTE_CATEGORY_EXPR
+    assert state_expr.paletteCategory == PALETTE_CATEGORY_EXPR
     assert data_expr.label == "Studio Data Expr"
     assert state_expr.label == "Studio State Expr"

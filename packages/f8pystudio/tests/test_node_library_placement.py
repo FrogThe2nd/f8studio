@@ -192,6 +192,11 @@ def test_display_node_category_label_uses_readable_pyengine_alias() -> None:
     assert display_node_category_label("custom.category") == "custom.category"
 
 
+def test_display_node_category_label_uses_readable_pystudio_alias() -> None:
+    assert display_node_category_label("f8.pystudio.viz") == "PyStudio / Viz"
+    assert display_node_category_label("f8.pystudio.control") == "PyStudio / Control"
+
+
 class _FakeViewer:
     def __init__(self, *, graph_active: bool, node_active: bool) -> None:
         self._graph_active = bool(graph_active)
