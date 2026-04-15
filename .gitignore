@@ -88,4 +88,5 @@ services/**/win
 services/**/macos
 services/**/describe.json
 .codex
+.agents/
 package-lock.json
