@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from datetime import datetime, timezone
+from datetime import datetime, timezone, tzinfo
 import json
 import os
 from typing import TypeAlias, cast
@@ -30,6 +30,32 @@ _SENSITIVE_JSON_KEYS = frozenset(
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def format_timestamp_for_local_display(value: object, *, local_tz: tzinfo | None = None) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    parsed = _parse_timestamp_for_local_display(text)
+    if parsed is None:
+        return text
+    display_dt = parsed.astimezone(local_tz)
+    return display_dt.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def format_timestamp_tooltip(value: object, *, local_tz: tzinfo | None = None) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    parsed = _parse_timestamp_for_local_display(text)
+    if parsed is None:
+        return text
+    display_dt = parsed.astimezone(local_tz)
+    display_text = display_dt.strftime("%Y-%m-%d %H:%M:%S")
+    timezone_name = str(display_dt.tzname() or "").strip()
+    if timezone_name:
+        return f"{display_text} {timezone_name}"
+    return display_text
 
 
 def new_asset_id() -> str:
@@ -143,3 +169,14 @@ def _is_sensitive_json_key(key: str) -> bool:
         if normalized == sensitive_normalized:
             return True
     return False
+
+
+def _parse_timestamp_for_local_display(text: str) -> datetime | None:
+    normalized_text = text[:-1] + "+00:00" if text.endswith("Z") else text
+    try:
+        parsed = datetime.fromisoformat(normalized_text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed

@@ -21,11 +21,21 @@ class _FakeUser:
     username: str | None
 
 
+@dataclass
+class _FakeSession:
+    accountId: str
+    baseUrl: str
+    sessionCookie: str
+    user: _FakeUser
+    lastUsedAt: str
+
+
 class _FakeSyncClient:
     def __init__(self) -> None:
         self._base_url = "https://assetcloud.feel8.fun"
         self._remembered_username = "alice"
         self._current_user: _FakeUser | None = None
+        self._saved_sessions: list[_FakeSession] = []
         self.login_calls: list[tuple[str, str, str, bool]] = []
         self.logout_calls = 0
 
@@ -50,8 +60,8 @@ class _FakeSyncClient:
         self._current_user = _FakeUser(userId="u1", displayName="Alice", username=username)
         return object()
 
-    def saved_sessions(self) -> list[object]:
-        return []
+    def saved_sessions(self) -> list[_FakeSession]:
+        return list(self._saved_sessions)
 
     def current_account_id(self) -> str:
         return ""
@@ -160,3 +170,42 @@ def test_logout_current_account_shows_goodbye_message(monkeypatch) -> None:
     assert client.current_user() is None
     assert on_changed_calls == ["changed"]
     assert info_messages == [("Asset Cloud", "Goodbye, Alice.")]
+
+
+def test_build_asset_account_menu_formats_saved_session_time_locally(monkeypatch) -> None:
+    _ensure_app()
+    parent = QtWidgets.QWidget()
+    client = _FakeSyncClient()
+    client._current_user = _FakeUser(userId="u1", displayName="Alice", username="alice")
+    client._saved_sessions = [
+        _FakeSession(
+            accountId="acct-1",
+            baseUrl="https://assetcloud.feel8.fun",
+            sessionCookie="cookie",
+            user=_FakeUser(userId="u1", displayName="Alice", username="alice"),
+            lastUsedAt="2026-04-15T13:45:00+00:00",
+        )
+    ]
+
+    monkeypatch.setattr(
+        asset_cloud_account_menu,
+        "format_timestamp_for_local_display",
+        lambda value: f"LOCAL<{value}>",
+    )
+
+    menu = asset_cloud_account_menu.build_asset_account_menu(
+        parent=parent,
+        sync_client=client,
+        on_changed=None,
+    )
+
+    switch_menu_action = next(action for action in menu.actions() if action.text() == "Switch Account")
+    clear_menu_action = next(action for action in menu.actions() if action.text() == "Clear Saved Session")
+    switch_menu = switch_menu_action.menu()
+    clear_menu = clear_menu_action.menu()
+
+    expected = "Alice (alice) | Last used: LOCAL<2026-04-15T13:45:00+00:00>"
+    assert switch_menu is not None
+    assert clear_menu is not None
+    assert switch_menu.actions()[0].text() == expected
+    assert clear_menu.actions()[0].text() == expected

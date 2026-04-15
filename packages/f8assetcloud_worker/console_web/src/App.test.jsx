@@ -29,6 +29,8 @@ import {
   buildManagedAssetListPath,
   ConsoleRootApp,
   downloadableContentForAsset,
+  formatTimestampForDisplay,
+  formatTimestampTooltip,
 } from './App.jsx';
 
 function jsonResponse(data) {
@@ -257,5 +259,65 @@ describe('management asset paths', () => {
     expect(buildManagedAssetDetailPath({ assetType: 'variant', assetId: 'variant-1' }, { includeDeleted: true })).toBe(
       '/v1/management/variants/variant-1?includeDeleted=true',
     );
+  });
+});
+
+describe('formatTimestampForDisplay', () => {
+  it('formats ISO timestamps in the browser local timezone', () => {
+    const formatterSpy = vi.spyOn(Intl, 'DateTimeFormat').mockImplementation(function MockDateTimeFormat() {
+      return {
+        format: () => '04/15/2026, 09:45:00',
+      };
+    });
+
+    expect(formatTimestampForDisplay('2026-04-15T13:45:00Z')).toBe('04/15/2026, 09:45:00');
+    expect(formatTimestampForDisplay('')).toBe('');
+
+    formatterSpy.mockRestore();
+  });
+
+  it('returns the original text when the timestamp is invalid', () => {
+    expect(formatTimestampForDisplay('not-a-timestamp')).toBe('not-a-timestamp');
+  });
+});
+
+describe('formatTimestampTooltip', () => {
+  it('includes the local timezone abbreviation in the tooltip text', () => {
+    const formatterSpy = vi.spyOn(Intl, 'DateTimeFormat').mockImplementation(function MockDateTimeFormat(
+      _locale,
+      options,
+    ) {
+      if (options?.timeZoneName === 'short') {
+        return {
+          formatToParts: () => [
+            { type: 'month', value: '04' },
+            { type: 'literal', value: '/' },
+            { type: 'day', value: '15' },
+            { type: 'literal', value: '/' },
+            { type: 'year', value: '2026' },
+            { type: 'literal', value: ', ' },
+            { type: 'hour', value: '09' },
+            { type: 'literal', value: ':' },
+            { type: 'minute', value: '45' },
+            { type: 'literal', value: ':' },
+            { type: 'second', value: '00' },
+            { type: 'literal', value: ' ' },
+            { type: 'timeZoneName', value: 'EDT' },
+          ],
+        };
+      }
+      return {
+        format: () => '04/15/2026, 09:45:00',
+      };
+    });
+
+    expect(formatTimestampTooltip('2026-04-15T13:45:00Z')).toBe('04/15/2026, 09:45:00 EDT');
+    expect(formatTimestampTooltip('')).toBe('');
+
+    formatterSpy.mockRestore();
+  });
+
+  it('returns the original text when the timestamp is invalid', () => {
+    expect(formatTimestampTooltip('not-a-timestamp')).toBe('not-a-timestamp');
   });
 });

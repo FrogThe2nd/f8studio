@@ -7,6 +7,7 @@ from typing import Any
 
 from qtpy import QtCore, QtWidgets
 
+from ..common import format_timestamp_for_local_display, format_timestamp_tooltip
 from ..projects.project_models import F8ProjectSummary
 from ...ui.support.ui_notifications import show_warning
 
@@ -257,10 +258,11 @@ class ProjectPickerDialog(QtWidgets.QDialog):
                     f"Description: {selected_summary.description}",
                     f"Tags: {', '.join(selected_summary.tags)}",
                     f"Version: {selected_summary.latestVersionNumber}",
-                    f"Updated: {selected_summary.updatedAt}",
+                    f"Updated: {format_timestamp_for_local_display(selected_summary.updatedAt)}",
                 ]
             )
         )
+        self._details.setToolTip(format_timestamp_tooltip(selected_summary.updatedAt))
 
 
 @dataclass(frozen=True)
@@ -326,13 +328,17 @@ class AssetVersionBrowserDialog(QtWidgets.QDialog):
         layout.addWidget(buttons)
 
         for item in self._items:
-            label_parts = [f"v{item.version_number}", item.created_at]
+            display_time = format_timestamp_for_local_display(item.created_at)
+            tooltip_time = format_timestamp_tooltip(item.created_at)
+            label_parts = [f"v{item.version_number}", display_time]
             if item.revision:
                 label_parts.append(item.revision)
             if item.change_summary:
                 label_parts.append(item.change_summary)
             list_item = QtWidgets.QListWidgetItem(" | ".join(label_parts))
             list_item.setData(QtCore.Qt.UserRole, item.version_number)
+            if tooltip_time:
+                list_item.setToolTip(tooltip_time)
             self._list.addItem(list_item)
         self._list.currentItemChanged.connect(self._on_current_item_changed)  # type: ignore[attr-defined]
         if self._list.count() > 0:

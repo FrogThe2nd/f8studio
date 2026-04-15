@@ -37,6 +37,52 @@ function isPlainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
+export function formatTimestampForDisplay(value) {
+  const date = parseTimestampForDisplay(value);
+  if (!date) {
+    return String(value || '').trim();
+  }
+  return new Intl.DateTimeFormat(undefined, {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).format(date);
+}
+
+export function formatTimestampTooltip(value) {
+  const date = parseTimestampForDisplay(value);
+  if (!date) {
+    return String(value || '').trim();
+  }
+  const formattedParts = new Intl.DateTimeFormat(undefined, {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+    timeZoneName: 'short',
+  }).formatToParts(date);
+  return formattedParts.map((part) => part.value).join('');
+}
+
+function parseTimestampForDisplay(value) {
+  const text = String(value || '').trim();
+  if (!text) {
+    return null;
+  }
+  const date = new Date(text);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+  return date;
+}
+
 export function downloadableContentForAsset(asset, payload) {
   if (!isPlainObject(payload)) {
     throw new Error('Asset content response must be a JSON object.');
@@ -1441,7 +1487,13 @@ function ConsoleApp() {
                   asset.assetType,
                   asset.visibility,
                   asset.revision,
-                  ...(hasManagementAccess ? [asset.deletedAt || 'No'] : []),
+                  ...(hasManagementAccess ? [
+                    asset.deletedAt ? (
+                      <span title={formatTimestampTooltip(asset.deletedAt)}>
+                        {formatTimestampForDisplay(asset.deletedAt)}
+                      </span>
+                    ) : 'No'
+                  ] : []),
                   <div className="inline-form" key={`${asset.assetId}-actions`}>
                     <button type="button" onClick={() => void onDownloadAsset(asset)} disabled={loading}>Download Content</button>
                     {asset.deletedAt ? (
@@ -1483,7 +1535,11 @@ function ConsoleApp() {
                   ...(hasManagementAccess
                     ? [
                         asset.visibility,
-                        asset.deletedAt || 'No',
+                        asset.deletedAt ? (
+                          <span title={formatTimestampTooltip(asset.deletedAt)}>
+                            {formatTimestampForDisplay(asset.deletedAt)}
+                          </span>
+                        ) : 'No',
                         <div className="inline-form" key={`${asset.assetId}-manage`}>
                           <button type="button" onClick={() => void onDownloadAsset(asset)} disabled={loading}>Download Content</button>
                           {asset.deletedAt ? (
@@ -1709,7 +1765,13 @@ function ConsoleApp() {
                   user.displayName,
                   <RoleBadge role={user.role} key={`${user.userId}-role`} />,
                   <span className="asset-count-pill" key={`${user.userId}-assets`}>{String(user.assetCount || 0)} assets</span>,
-                  <span className="muted" key={`${user.userId}-created`}>{user.createdAt}</span>,
+                  <span
+                    className="muted"
+                    key={`${user.userId}-created`}
+                    title={formatTimestampTooltip(user.createdAt)}
+                  >
+                    {formatTimestampForDisplay(user.createdAt)}
+                  </span>,
                   <div className="inline-form table-actions" key={`${user.userId}-actions`}>
                     <button
                       type="button"

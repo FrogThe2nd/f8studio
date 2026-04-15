@@ -5,6 +5,7 @@ from typing import Protocol
 
 from qtpy import QtCore, QtWidgets
 
+from ..common import format_timestamp_for_local_display
 from ...ui.support.ui_icons import StudioIcon, icon_for
 from ...ui.support.ui_notifications import show_info, show_warning
 
@@ -143,7 +144,7 @@ def build_asset_account_menu(
     if saved_sessions:
         switch_menu = menu.addMenu("Switch Account")
         for session in saved_sessions:
-            label = f"{session.user.displayName} ({session.user.username or session.user.userId})"
+            label = _saved_session_label(session)
             action = switch_menu.addAction(label)
             action.setCheckable(True)
             action.setChecked(session.accountId == sync_client.current_account_id())
@@ -157,7 +158,7 @@ def build_asset_account_menu(
 
         clear_menu = menu.addMenu("Clear Saved Session")
         for session in saved_sessions:
-            label = f"{session.user.displayName} ({session.user.username or session.user.userId})"
+            label = _saved_session_label(session)
             action = clear_menu.addAction(label)
             action.triggered.connect(  # type: ignore[attr-defined]
                 _menu_callback(
@@ -230,6 +231,14 @@ def _user_greeting_name(user: AssetCloudUserLike | None) -> str:
     if username:
         return username
     return str(user.userId or "").strip()
+
+
+def _saved_session_label(session: AssetCloudSessionLike) -> str:
+    identity = f"{session.user.displayName} ({session.user.username or session.user.userId})"
+    last_used = format_timestamp_for_local_display(session.lastUsedAt)
+    if not last_used:
+        return identity
+    return f"{identity} | Last used: {last_used}"
 
 
 __all__ = [
