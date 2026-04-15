@@ -1,6 +1,5 @@
 import { betterAuth, generateId } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
-import { hashPassword } from 'better-auth/crypto';
 import { admin, username } from 'better-auth/plugins';
 import { ApiException } from 'chanfana';
 import { drizzle } from 'drizzle-orm/d1';
@@ -9,6 +8,7 @@ import { cors } from 'hono/cors';
 
 import { authSchema } from './auth_schema.js';
 import { registerOpenApiRoutes } from './openapi.js';
+import { authPasswordHashVersion, hashAuthPassword, verifyAuthPassword } from './password.js';
 import { AssetConflictError, AssetNotFoundError, AssetPermissionError, AssetValidationError, AssetRepository } from './repository.js';
 import { decompressGzip, isPlainObject, stringOrDefault, toBoolean } from './utils.js';
 
@@ -667,6 +667,10 @@ function createAuth(env, { siteSettings, baseURL, trustedOrigins }) {
       autoSignIn: false,
       requireEmailVerification: true,
       revokeSessionsOnPasswordReset: true,
+      password: {
+        hash: hashAuthPassword,
+        verify: verifyAuthPassword,
+      },
       resetPasswordTokenExpiresIn: secondsFromEnv(env.PASSWORD_RESET_TOKEN_TTL_SECONDS, 1800),
       sendResetPassword: async ({ user, token, url }) => {
         const appUser = toAppUser(user);
@@ -807,7 +811,7 @@ async function ensureBootstrapAdminOnce(env, config) {
   const timestamp = Date.now();
 
   if (existing === null) {
-    const passwordHash = await hashPassword(config.password);
+    const passwordHash = await hashAuthPassword(config.password);
     const userId = generateId();
     await env.DB.prepare(
       `INSERT INTO user
@@ -846,7 +850,7 @@ async function ensureBootstrapAdminOnce(env, config) {
     .run();
 
   if (existing.credential_account_id === null || existing.credential_account_id === undefined) {
-    const passwordHash = await hashPassword(config.password);
+    const passwordHash = await hashAuthPassword(config.password);
     await env.DB.prepare(
       `INSERT INTO account
          ("id", "accountId", "providerId", "userId", "accessToken", "refreshToken", "idToken", "accessTokenExpiresAt", "refreshTokenExpiresAt", "scope", "password", "createdAt", "updatedAt")
@@ -862,7 +866,7 @@ async function ensureBootstrapAdminOnce(env, config) {
   }
 
   if (syncedState === null || syncedState.configFingerprint !== configFingerprint) {
-    const passwordHash = await hashPassword(config.password);
+    const passwordHash = await hashAuthPassword(config.password);
     await env.DB.prepare(
       `UPDATE account
        SET accountId = ?,
@@ -1342,6 +1346,7 @@ async function readSiteSettings(db) {
 async function computeBootstrapAdminFingerprint(env, config) {
   const payload = JSON.stringify({
     authSecret: getAuthSecret(env),
+    passwordHashVersion: authPasswordHashVersion(),
     email: config.email,
     password: config.password,
     displayName: config.displayName,

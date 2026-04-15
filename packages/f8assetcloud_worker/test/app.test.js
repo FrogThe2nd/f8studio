@@ -3,9 +3,11 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { gunzipSync, gzipSync } from 'node:zlib';
+import { hashPassword as hashLegacyBetterAuthPassword } from 'better-auth/crypto';
 
 import { createApp, resetWorkerCachesForTesting } from '../src/app.js';
 import worker from '../src/index.js';
+import { authPasswordHashVersion, hashAuthPassword, verifyAuthPassword } from '../src/password.js';
 import { createSqliteD1Database } from '../test_support/sqlite_d1_adapter.js';
 
 const TEST_AUTH_SECRET = '0123456789abcdef0123456789abcdef';
@@ -484,6 +486,75 @@ test('bootstrap admin sync avoids rotating credentials after a cold-cache login'
   assert.equal(secondAccount.id, firstAccount.id);
   assert.equal(secondAccount.password, firstAccount.password);
   assert.equal(secondAccount.updated_at, firstAccount.updated_at);
+});
+
+test('worker password hash verifies credentials without Better Auth scrypt', async () => {
+  const hash = await hashAuthPassword(TEST_PASSWORD);
+  assert.match(hash, /^f8pbkdf2-sha256-v1\$50000\$/);
+  assert.equal(hash.includes(':'), false);
+  assert.equal(await verifyAuthPassword({ hash, password: TEST_PASSWORD }), true);
+  assert.equal(await verifyAuthPassword({ hash, password: TEST_PASSWORD_2 }), false);
+});
+
+test('bootstrap admin sync replaces legacy Better Auth password hashes', async (t) => {
+  const env = createEnv({ allowUserRegistration: false });
+  t.after(() => {
+    resetWorkerCachesForTesting();
+    env.DB.close();
+  });
+
+  const app = createApp();
+  const firstLogin = await signInUser(app, env, {
+    username: 'admin',
+  });
+  assert.equal(firstLogin.status, 200);
+
+  const legacyHash = await hashLegacyBetterAuthPassword(TEST_PASSWORD_2);
+  await env.DB.prepare(
+    `UPDATE account
+     SET password = ?
+     WHERE providerId = 'credential'
+       AND userId = (
+         SELECT id
+         FROM user
+         WHERE username = ?
+         LIMIT 1
+       )`,
+  )
+    .bind(legacyHash, 'admin')
+    .run();
+  await env.DB.prepare('DELETE FROM bootstrap_admin_state WHERE id = 1').run();
+
+  resetWorkerCachesForTesting();
+
+  const syncedApp = createApp();
+  const syncedLogin = await signInUser(syncedApp, env, {
+    username: 'admin',
+  });
+  assert.equal(syncedLogin.status, 200);
+  assert.ok(syncedLogin.cookie);
+
+  const account = await env.DB.prepare(
+    `SELECT a.password
+     FROM account a
+     JOIN user u ON u.id = a.userId
+     WHERE u.username = ? AND a.providerId = 'credential'
+     LIMIT 1`,
+  )
+    .bind('admin')
+    .first();
+  assert.notEqual(account, null);
+  assert.match(String(account.password), /^f8pbkdf2-sha256-v1\$50000\$/);
+  assert.equal(await verifyAuthPassword({ hash: account.password, password: TEST_PASSWORD }), true);
+
+  const bootstrapState = await env.DB.prepare(
+    `SELECT config_fingerprint
+     FROM bootstrap_admin_state
+     WHERE id = 1`,
+  ).first();
+  assert.notEqual(bootstrapState, null);
+  assert.ok(String(bootstrapState.config_fingerprint || '').length > 0);
+  assert.ok(authPasswordHashVersion().startsWith('f8pbkdf2-sha256-v1:'));
 });
 
 test('sign-out requires Origin header and deletes the current session when provided', async (t) => {
