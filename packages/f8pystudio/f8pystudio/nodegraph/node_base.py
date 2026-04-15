@@ -8,6 +8,7 @@ from typing import Any
 from NodeGraphQt import BaseNode
 from NodeGraphQt.nodes.base_node import NodeBaseWidget
 from NodeGraphQt.errors import NodeWidgetError
+from NodeGraphQt.qgraphics.node_backdrop import BackdropNodeItem
 
 from f8pysdk.specs import F8OperatorSpec, F8ServiceSpec
 from f8pysdk.specs import coerce_spec_payload
@@ -84,10 +85,11 @@ class F8StudioBaseNode(BaseNode):
                 continue
             self.model.set_property(name, val)
 
-        for name, widget in self.view.widgets.items():
-            if name not in self.model.properties and name not in self.model.custom_properties:
-                continue
-            self.model.set_property(name, widget.get_value())
+        if not isinstance(self.view, BackdropNodeItem):
+            for name, widget in self.view.widgets.items():
+                if name not in self.model.properties and name not in self.model.custom_properties:
+                    continue
+                self.model.set_property(name, widget.get_value())
 
         if not isinstance(self.model.f8_sys, dict):
             self.model.f8_sys = {}
