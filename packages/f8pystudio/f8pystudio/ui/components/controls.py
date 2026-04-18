@@ -20,6 +20,34 @@ _COMBO_POPUP_FLAGS = QtCore.Qt.Popup | QtCore.Qt.FramelessWindowHint | QtCore.Qt
 logger = logging.getLogger(__name__)
 
 
+def _qt_object_is_valid(obj: QtCore.QObject | None) -> bool:
+    """
+    Return True when the wrapped Qt/C++ instance is still alive.
+
+    PySide6 can keep the Python wrapper around after the underlying C++ object
+    has already been deleted. Accessing that wrapper raises
+    `RuntimeError: Internal C++ object ... already deleted.`
+    """
+    if obj is None:
+        return False
+    try:
+        import shiboken6  # type: ignore[import-not-found]
+    except ImportError:
+        shiboken6 = None
+
+    if shiboken6 is not None:
+        try:
+            return bool(shiboken6.isValid(obj))
+        except (RuntimeError, TypeError):
+            return False
+
+    try:
+        obj.parent()
+        return True
+    except RuntimeError:
+        return False
+
+
 def _strip_data_url_prefix(b64: str) -> tuple[str, str | None]:
     """
     Accepts either raw base64 or a minimal data URL like:
@@ -220,14 +248,21 @@ class F8OptionCombo(QtWidgets.QComboBox):
     def _on_popup_destroyed(self, _obj: Any) -> None:
         self._popup = None
 
+    def _delete_popup_later_on_destroyed(self, _obj: Any = None) -> None:
+        popup = self._popup
+        self._popup = None
+        if not _qt_object_is_valid(popup):
+            return
+        popup.deleteLater()
+
     def _ensure_popup(self) -> _F8ComboPopup:
         popup = self._popup
         if popup is not None:
             return popup
         popup = _F8ComboPopup(self)
         popup.valueSelected.connect(self._on_popup_selected)  # type: ignore[attr-defined]
-        popup.destroyed.connect(lambda _obj=None: self._on_popup_destroyed(_obj))  # type: ignore[attr-defined]
-        self.destroyed.connect(lambda _obj=None, current_popup=popup: current_popup.deleteLater())  # type: ignore[attr-defined]
+        popup.destroyed.connect(self._on_popup_destroyed)  # type: ignore[attr-defined]
+        self.destroyed.connect(self._delete_popup_later_on_destroyed)  # type: ignore[attr-defined]
         self._popup = popup
         return popup
 
