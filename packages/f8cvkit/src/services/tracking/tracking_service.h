@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <filesystem>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -39,6 +40,8 @@ enum class TrackerKind {
   MedianFlow,
   Mosse,
   Tld,
+  Nano,
+  Vit,
 };
 
 class TrackingService final : public f8::cppsdk::LifecycleNode,
@@ -52,6 +55,8 @@ class TrackingService final : public f8::cppsdk::LifecycleNode,
     std::string nats_url = "nats://127.0.0.1:4222";
     std::string shm_name;
     std::string tracker_kind = "csrt";
+    std::string model_dir = "models";
+    bool auto_download_models = true;
     int stop_tracking_cooldown_ms = 1000;
   };
 
@@ -85,6 +90,7 @@ class TrackingService final : public f8::cppsdk::LifecycleNode,
   void set_shm_name(const std::string& shm_name, const json& meta);
   void set_init_select(const std::string& mode, const json& meta);
   void set_tracker_kind(const std::string& kind, const json& meta);
+  void set_model_dir(const std::string& model_dir, const json& meta);
   bool ensure_video_open();
   void apply_init_box_if_any();
   void process_frame_once();
@@ -114,6 +120,10 @@ class TrackingService final : public f8::cppsdk::LifecycleNode,
   TrackerKind tracker_kind_ = TrackerKind::Csrt;
   std::string tracker_kind_state_ = "csrt";
   std::string active_tracker_kind_state_;
+  std::string model_dir_state_ = "models";
+  std::filesystem::path model_dir_path_;
+  bool auto_download_models_ = true;
+  std::int64_t model_download_retry_after_ms_ = 0;
 
   // Tracking state.
   std::mutex tracking_mu_;

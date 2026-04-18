@@ -2,7 +2,11 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
+#include <cstdlib>
 #include <limits>
+#include <thread>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -32,6 +36,11 @@ using f8::cppsdk::describe::schema_string_enum;
 using f8::cppsdk::describe::state_field;
 
 namespace {
+
+namespace fs = std::filesystem;
+
+constexpr std::int64_t kModelDownloadRetryCooldownMs = 30000;
+constexpr long kModelDownloadTimeoutSeconds = 300;
 
 bool json_number_to_int(const json& v, int& out) {
   return service_runtime::parse_json_int(v, out);
@@ -226,9 +235,294 @@ TrackerKind parse_tracker_kind(const std::string& raw, std::string& normalized, 
     ok = true;
     return TrackerKind::Tld;
   }
+  if (s == "nano" || s == "nanotrack") {
+    normalized = "nano";
+    ok = true;
+    return TrackerKind::Nano;
+  }
+  if (s == "vit" || s == "vittrack") {
+    normalized = "vit";
+    ok = true;
+    return TrackerKind::Vit;
+  }
   normalized = "csrt";
   ok = false;
   return TrackerKind::Csrt;
+}
+
+std::string tracker_kind_to_string(TrackerKind kind) {
+  if (kind == TrackerKind::Csrt) {
+    return "csrt";
+  }
+  if (kind == TrackerKind::Kcf) {
+    return "kcf";
+  }
+  if (kind == TrackerKind::Mil) {
+    return "mil";
+  }
+  if (kind == TrackerKind::Boosting) {
+    return "boosting";
+  }
+  if (kind == TrackerKind::MedianFlow) {
+    return "median_flow";
+  }
+  if (kind == TrackerKind::Mosse) {
+    return "mosse";
+  }
+  if (kind == TrackerKind::Tld) {
+    return "tld";
+  }
+  if (kind == TrackerKind::Nano) {
+    return "nano";
+  }
+  return "vit";
+}
+
+bool tracker_kind_uses_model_files(TrackerKind kind) {
+  return kind == TrackerKind::Nano || kind == TrackerKind::Vit;
+}
+
+std::string default_model_dir_state() {
+  return "models";
+}
+
+fs::path default_model_dir_path() {
+  std::error_code ec;
+  const fs::path cwd = fs::current_path(ec);
+  if (ec) {
+    return fs::path(default_model_dir_state());
+  }
+  return cwd / default_model_dir_state();
+}
+
+fs::path resolve_model_dir_path(const std::string& raw) {
+  const std::string trimmed = service_runtime::trim_copy(raw);
+  if (trimmed.empty()) {
+    return default_model_dir_path();
+  }
+  const fs::path candidate(trimmed);
+  if (candidate.is_absolute()) {
+    return candidate.lexically_normal();
+  }
+  std::error_code ec;
+  const fs::path cwd = fs::current_path(ec);
+  if (ec) {
+    return candidate.lexically_normal();
+  }
+  return (cwd / candidate).lexically_normal();
+}
+
+std::string normalize_model_dir_state(const std::string& raw) {
+  const std::string trimmed = service_runtime::trim_copy(raw);
+  if (trimmed.empty()) {
+    return default_model_dir_state();
+  }
+  return trimmed;
+}
+
+bool file_exists_nonempty(const fs::path& path) {
+  std::error_code ec;
+  if (!fs::exists(path, ec) || ec) {
+    return false;
+  }
+  const auto size = fs::file_size(path, ec);
+  if (ec) {
+    return false;
+  }
+  return size > 0;
+}
+
+void remove_path_if_exists(const fs::path& path) {
+  std::error_code ec;
+  if (fs::is_directory(path, ec) && !ec) {
+    fs::remove_all(path, ec);
+    return;
+  }
+  ec.clear();
+  fs::remove(path, ec);
+}
+
+std::string quote_shell_arg(const std::string& value) {
+#ifdef _WIN32
+  std::string out = "\"";
+  for (char ch : value) {
+    if (ch == '"' || ch == '\\') {
+      out.push_back('\\');
+    }
+    out.push_back(ch);
+  }
+  out.push_back('"');
+  return out;
+#else
+  std::string out = "'";
+  for (char ch : value) {
+    if (ch == '\'') {
+      out += "'\\''";
+      continue;
+    }
+    out.push_back(ch);
+  }
+  out.push_back('\'');
+  return out;
+#endif
+}
+
+bool run_command(const std::string& command, std::string& error_message) {
+  const int rc = std::system(command.c_str());
+  if (rc == 0) {
+    return true;
+  }
+  error_message = "command failed rc=" + std::to_string(rc) + ": " + command;
+  return false;
+}
+
+bool acquire_lock_dir(const fs::path& lock_dir, std::int64_t timeout_ms, std::string& error_message) {
+  const auto start = std::chrono::steady_clock::now();
+  while (true) {
+    std::error_code ec;
+    if (fs::create_directory(lock_dir, ec)) {
+      return true;
+    }
+    if (ec && ec.value() != static_cast<int>(std::errc::file_exists)) {
+      error_message = "create lock dir failed: " + lock_dir.string() + " : " + ec.message();
+      return false;
+    }
+    const auto elapsed_ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count();
+    if (elapsed_ms >= timeout_ms) {
+      error_message = "timed out waiting download lock: " + lock_dir.string();
+      return false;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+  }
+}
+
+struct DownloadedAsset {
+  const char* local_filename;
+  const char* url;
+};
+
+const std::array<DownloadedAsset, 2>& nano_assets() {
+  static const std::array<DownloadedAsset, 2> kAssets = {
+      DownloadedAsset{"backbone.onnx",
+                      "https://github.com/HonglinChu/SiamTrackers/raw/master/NanoTrack/models/nanotrackv2/nanotrack_backbone_sim.onnx"},
+      DownloadedAsset{"neckhead.onnx",
+                      "https://github.com/HonglinChu/SiamTrackers/raw/master/NanoTrack/models/nanotrackv2/nanotrack_head_sim.onnx"},
+  };
+  return kAssets;
+}
+
+const std::array<DownloadedAsset, 1>& vit_assets() {
+  static const std::array<DownloadedAsset, 1> kAssets = {
+      DownloadedAsset{"vitTracker.onnx",
+                      "https://huggingface.co/opencv/object_tracking_vittrack/resolve/main/object_tracking_vittrack_2023sep.onnx?download=true"},
+  };
+  return kAssets;
+}
+
+bool download_asset_via_curl(const std::string& url, const fs::path& dst_path, std::string& error_message) {
+  std::error_code ec;
+  fs::create_directories(dst_path.parent_path(), ec);
+  if (ec) {
+    error_message = "create model dir failed: " + dst_path.parent_path().string() + " : " + ec.message();
+    return false;
+  }
+
+  const fs::path tmp_path = fs::path(dst_path.string() + ".download.part");
+  remove_path_if_exists(tmp_path);
+
+  std::string command = "curl --fail --location --silent --show-error --max-time " +
+                        std::to_string(kModelDownloadTimeoutSeconds) + " --output " +
+                        quote_shell_arg(tmp_path.string()) + " " + quote_shell_arg(url);
+  if (!run_command(command, error_message)) {
+    remove_path_if_exists(tmp_path);
+    return false;
+  }
+  if (!file_exists_nonempty(tmp_path)) {
+    remove_path_if_exists(tmp_path);
+    error_message = "download produced empty file: " + dst_path.string() + " url=" + url;
+    return false;
+  }
+
+  remove_path_if_exists(dst_path);
+  fs::rename(tmp_path, dst_path, ec);
+  if (ec) {
+    error_message = "rename downloaded file failed: " + tmp_path.string() + " -> " + dst_path.string() + " : " +
+                    ec.message();
+    remove_path_if_exists(tmp_path);
+    return false;
+  }
+  return true;
+}
+
+bool ensure_plain_asset(const fs::path& model_dir, const DownloadedAsset& asset, bool auto_download_models,
+                        std::string& error_message) {
+  const fs::path asset_path = model_dir / asset.local_filename;
+  std::error_code ec;
+  fs::create_directories(model_dir, ec);
+  if (ec) {
+    error_message = "create model dir failed: " + model_dir.string() + " : " + ec.message();
+    spdlog::error("cvkit_tracking failed to create model dir dir={} error={}", model_dir.string(), error_message);
+    return false;
+  }
+  if (file_exists_nonempty(asset_path)) {
+    spdlog::info("cvkit_tracking model asset ready path={}", asset_path.string());
+    return true;
+  }
+  if (!auto_download_models) {
+    error_message = "missing tracker model file: " + asset_path.string() + " ; enable autoDownloadModels or place it manually";
+    spdlog::warn("cvkit_tracking model asset missing autoDownloadModels=false path={} url={}", asset_path.string(),
+                 asset.url);
+    return false;
+  }
+
+  const fs::path lock_dir = fs::path(asset_path.string() + ".download.lock");
+  if (!acquire_lock_dir(lock_dir, kModelDownloadTimeoutSeconds * 1000, error_message)) {
+    return false;
+  }
+  const auto unlock = [&lock_dir]() { remove_path_if_exists(lock_dir); };
+
+  if (file_exists_nonempty(asset_path)) {
+    spdlog::info("cvkit_tracking model asset became available while waiting for lock path={}", asset_path.string());
+    unlock();
+    return true;
+  }
+  spdlog::info("cvkit_tracking downloading model asset url={} path={}", asset.url, asset_path.string());
+  const bool ok = download_asset_via_curl(asset.url, asset_path, error_message);
+  if (ok) {
+    spdlog::info("cvkit_tracking downloaded model asset path={}", asset_path.string());
+  } else {
+    spdlog::error("cvkit_tracking failed to download model asset path={} url={} error={}", asset_path.string(),
+                  asset.url, error_message);
+  }
+  unlock();
+  return ok;
+}
+
+bool ensure_tracker_models_available(TrackerKind kind, const fs::path& model_dir, bool auto_download_models,
+                                     std::string& error_message) {
+  if (!tracker_kind_uses_model_files(kind)) {
+    return true;
+  }
+  spdlog::info("cvkit_tracking ensuring model assets trackerKind={} modelDir={} autoDownloadModels={}",
+               tracker_kind_to_string(kind), model_dir.string(), auto_download_models);
+  if (kind == TrackerKind::Nano) {
+    for (const DownloadedAsset& asset : nano_assets()) {
+      if (!ensure_plain_asset(model_dir, asset, auto_download_models, error_message)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  if (kind == TrackerKind::Vit) {
+    for (const DownloadedAsset& asset : vit_assets()) {
+      if (!ensure_plain_asset(model_dir, asset, auto_download_models, error_message)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  return true;
 }
 
 cv::Ptr<cv::Tracker> upgrade_legacy_tracker(const cv::Ptr<cv::legacy::Tracker>& legacy_tracker) {
@@ -238,7 +532,7 @@ cv::Ptr<cv::Tracker> upgrade_legacy_tracker(const cv::Ptr<cv::legacy::Tracker>& 
   return cv::legacy::upgradeTrackingAPI(legacy_tracker);
 }
 
-cv::Ptr<cv::Tracker> create_tracker_for_kind(TrackerKind kind) {
+cv::Ptr<cv::Tracker> create_tracker_for_kind(TrackerKind kind, const fs::path& model_dir) {
   if (kind == TrackerKind::Csrt) {
     return cv::TrackerCSRT::create();
   }
@@ -257,7 +551,18 @@ cv::Ptr<cv::Tracker> create_tracker_for_kind(TrackerKind kind) {
   if (kind == TrackerKind::Mosse) {
     return upgrade_legacy_tracker(cv::legacy::TrackerMOSSE::create());
   }
-  return upgrade_legacy_tracker(cv::legacy::TrackerTLD::create());
+  if (kind == TrackerKind::Tld) {
+    return upgrade_legacy_tracker(cv::legacy::TrackerTLD::create());
+  }
+  if (kind == TrackerKind::Nano) {
+    cv::TrackerNano::Params params;
+    params.backbone = (model_dir / "backbone.onnx").string();
+    params.neckhead = (model_dir / "neckhead.onnx").string();
+    return cv::TrackerNano::create(params);
+  }
+  cv::TrackerVit::Params params;
+  params.net = (model_dir / "vitTracker.onnx").string();
+  return cv::TrackerVit::create(params);
 }
 
 std::optional<cv::Rect> pick_best_bbox(const std::vector<TrackingInitCandidate>& candidates, const cv::Rect& frame_rect,
@@ -366,7 +671,11 @@ bool TrackingService::start() {
   init_select_mode_ = TrackingInitSelectMode::ClosestCenter;
   init_select_state_ = "closest_center";
   tracker_kind_ = TrackerKind::Csrt;
-  tracker_kind_state_ = "csrt";
+  tracker_kind_state_ = tracker_kind_to_string(tracker_kind_);
+  model_dir_state_ = normalize_model_dir_state(cfg_.model_dir);
+  model_dir_path_ = resolve_model_dir_path(model_dir_state_);
+  auto_download_models_ = cfg_.auto_download_models;
+  model_download_retry_after_ms_ = 0;
 
   if (!cfg_.tracker_kind.empty()) {
     std::string normalized;
@@ -384,6 +693,8 @@ bool TrackingService::start() {
   publish_state_if_changed("shmName", "", "init", json::object());
   publish_state_if_changed("initSelect", init_select_state_, "init", json::object());
   publish_state_if_changed("trackerKind", tracker_kind_state_, "init", json::object());
+  publish_state_if_changed("modelDir", model_dir_state_, "init", json::object());
+  publish_state_if_changed("autoDownloadModels", auto_download_models_, "init", json::object());
   publish_state_if_changed("stopTrackingCooldownMs", stop_tracking_cooldown_ms_.load(std::memory_order_acquire), "init",
                            json::object());
   publish_state_if_changed("stopTrackingCooldownUntilTsMs", 0, "init", json::object());
@@ -509,6 +820,21 @@ void TrackingService::on_state(const std::string& node_id, const std::string& fi
   }
   if (field == "trackerKind" && value.is_string()) {
     set_tracker_kind(value.get<std::string>(), meta);
+    return;
+  }
+  if (field == "modelDir" && value.is_string()) {
+    set_model_dir(value.get<std::string>(), meta);
+    return;
+  }
+  if (field == "autoDownloadModels") {
+    if (!value.is_boolean()) {
+      publish_state_if_changed("lastError", "invalid autoDownloadModels", "state", meta);
+      return;
+    }
+    auto_download_models_ = value.get<bool>();
+    model_download_retry_after_ms_ = 0;
+    publish_state_if_changed("autoDownloadModels", auto_download_models_, "state", meta);
+    publish_state_if_changed("lastError", "", "state", meta);
     return;
   }
   if (field == "stopTrackingCooldownMs") {
@@ -644,7 +970,16 @@ void TrackingService::set_tracker_kind(const std::string& kind, const json& meta
     tracker_kind_ = parsed;
     tracker_kind_state_ = normalized;
   }
+  model_download_retry_after_ms_ = 0;
   publish_state_if_changed("trackerKind", normalized, "state", meta);
+  publish_state_if_changed("lastError", "", "state", meta);
+}
+
+void TrackingService::set_model_dir(const std::string& model_dir, const json& meta) {
+  model_dir_state_ = normalize_model_dir_state(model_dir);
+  model_dir_path_ = resolve_model_dir_path(model_dir_state_);
+  model_download_retry_after_ms_ = 0;
+  publish_state_if_changed("modelDir", model_dir_state_, "state", meta);
   publish_state_if_changed("lastError", "", "state", meta);
 }
 
@@ -730,27 +1065,58 @@ void TrackingService::apply_init_box_if_any() {
   }
   cv::Rect bb = selected.value();
 
+  const std::int64_t now = f8::cppsdk::now_ms();
+  if (model_download_retry_after_ms_ > 0 && now < model_download_retry_after_ms_ && tracker_kind_uses_model_files(tracker_kind_)) {
+    const std::int64_t remain_ms = model_download_retry_after_ms_ - now;
+    spdlog::warn("cvkit_tracking model download cooldown active trackerKind={} retryInMs={}", tracker_kind_state_,
+                 remain_ms);
+    publish_state_if_changed("lastError",
+                             "tracker model download cooldown active for " + tracker_kind_state_ + " ; retry in " +
+                                 std::to_string(std::max<std::int64_t>(1, remain_ms / 1000)) + "s",
+                             "runtime", json::object({{"source", "initBox"}}));
+    return;
+  }
+
+  if (tracker_kind_uses_model_files(tracker_kind_)) {
+    std::string download_error;
+    if (!ensure_tracker_models_available(tracker_kind_, model_dir_path_, auto_download_models_, download_error)) {
+      model_download_retry_after_ms_ = now + kModelDownloadRetryCooldownMs;
+      spdlog::error("cvkit_tracking model preparation failed trackerKind={} modelDir={} retryAfterMs={} error={}",
+                    tracker_kind_state_, model_dir_path_.string(), model_download_retry_after_ms_, download_error);
+      publish_state_if_changed("lastError", download_error, "runtime", json::object({{"source", "initBox"}}));
+      return;
+    }
+    model_download_retry_after_ms_ = 0;
+  }
+
   {
     std::lock_guard<std::mutex> lock(tracking_mu_);
     if (is_tracking_)
       return;
     try {
-      tracker_ = create_tracker_for_kind(tracker_kind_);
+      spdlog::info("cvkit_tracking creating tracker kind={} modelDir={}", tracker_kind_state_, model_dir_path_.string());
+      tracker_ = create_tracker_for_kind(tracker_kind_, model_dir_path_);
       if (tracker_.empty()) {
+        spdlog::error("cvkit_tracking tracker create returned empty kind={}", tracker_kind_state_);
         publish_state_if_changed("lastError", "tracker create failed: " + tracker_kind_state_, "runtime",
                                  json::object());
         return;
       }
       tracker_->init(bgr, bb);
+      spdlog::info("cvkit_tracking tracker init ok kind={} bbox=[{},{},{},{}]", tracker_kind_state_, bb.x, bb.y,
+                   bb.width, bb.height);
       active_tracker_kind_state_ = tracker_kind_state_;
       bbox_ = bb;
+      publish_state_if_changed("lastError", "", "runtime", json::object({{"source", "initBox"}}));
       set_tracking(true, json::object({{"source", "initBox"}, {"candidates", static_cast<int>(candidates.size())}}));
     } catch (const cv::Exception& ex) {
+      spdlog::error("cvkit_tracking tracker init OpenCV exception kind={} error={}", tracker_kind_state_, ex.what());
       publish_state_if_changed("lastError", std::string("opencv tracker init failed: ") + ex.what(), "runtime",
                                json::object({{"source", "initBox"}}));
       stop_tracking_internal(json::object({{"reason", "opencv_exception"}, {"source", "initBox"}}));
       return;
     } catch (const std::exception& ex) {
+      spdlog::error("cvkit_tracking tracker init exception kind={} error={}", tracker_kind_state_, ex.what());
       publish_state_if_changed("lastError", std::string("tracker init failed: ") + ex.what(), "runtime",
                                json::object({{"source", "initBox"}}));
       stop_tracking_internal(json::object({{"reason", "std_exception"}, {"source", "initBox"}}));
@@ -932,9 +1298,17 @@ json TrackingService::describe() {
                   schema_string_enum({"first_box", "closest_center", "largest_area", "highest_score"}, "closest_center"), "rw",
                   "Init Select", "Init bbox selection strategy: first_box | closest_center | largest_area | highest_score.", true),
       state_field("trackerKind",
-                  schema_string_enum({"csrt", "kcf", "mil", "boosting", "median_flow", "mosse", "tld"}, "csrt"), "rw",
+                  schema_string_enum({"csrt", "kcf", "mil", "boosting", "median_flow", "mosse", "tld", "nano",
+                                      "vit"},
+                                     "csrt"),
+                  "rw",
                   "Tracker Kind",
-                  "OpenCV tracker backend: csrt | kcf | mil | boosting | median_flow | mosse | tld.", true),
+                  "OpenCV tracker backend: csrt | kcf | mil | boosting | median_flow | mosse | tld | nano | vit.",
+                  true),
+      state_field("modelDir", json{{"type", "string"}, {"default", default_model_dir_state()}}, "rw", "Model Dir",
+                  "Directory containing downloaded tracker model files for nano | vit.", true),
+      state_field("autoDownloadModels", json{{"type", "boolean"}, {"default", true}}, "rw", "Auto Download Models",
+                  "Auto-download missing tracker model files when a model-based tracker is selected.", true),
       state_field("stopTrackingCooldownMs", schema_integer(1000, 0, 60000), "rw", "Stop Cooldown (ms)",
                   "After stopTracking, ignore initBox for this many ms. Set to 0 to disable.", true),
       state_field("stopTrackingCooldownUntilTsMs", schema_integer(), "ro", "Stop Cooldown Until (tsMs)",

@@ -13,13 +13,19 @@ class CvkitTrackingDescribeTest(unittest.TestCase):
         service = payload["service"]
         state_fields = service["stateFields"]
         tracker_kind_field = next(field for field in state_fields if field["name"] == "trackerKind")
+        model_dir_field = next(field for field in state_fields if field["name"] == "modelDir")
+        auto_download_field = next(field for field in state_fields if field["name"] == "autoDownloadModels")
 
         self.assertEqual(tracker_kind_field["access"], "rw")
         self.assertEqual(tracker_kind_field["valueSchema"]["default"], "csrt")
         self.assertEqual(
             tracker_kind_field["valueSchema"]["enum"],
-            ["csrt", "kcf", "mil", "boosting", "median_flow", "mosse", "tld"],
+            ["csrt", "kcf", "mil", "boosting", "median_flow", "mosse", "tld", "nano", "vit"],
         )
+        self.assertEqual(model_dir_field["access"], "rw")
+        self.assertEqual(model_dir_field["valueSchema"]["default"], "models")
+        self.assertEqual(auto_download_field["access"], "rw")
+        self.assertIs(auto_download_field["valueSchema"]["default"], True)
 
 
 if __name__ == "__main__":
