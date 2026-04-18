@@ -200,11 +200,11 @@ class F8StudioMainWin(
         self._setup_service_manager_dock()
         self._apply_auto_proxy_enabled(enabled=self._auto_proxy_enabled, persist=False)
         self._apply_performance_overlay_enabled(enabled=self._performance_overlay_enabled, persist=False)
+        self._restore_saved_log_level()
         self._setup_menu()
         self._setup_toolbar()
         self._capture_default_dock_layout_state()
         self._restore_saved_window_layout()
-        self._restore_saved_log_level()
 
         self._shortcut_escape_cancel = QtGui.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key.Key_Escape), self)
         self._shortcut_escape_cancel.setContext(QtCore.Qt.ShortcutContext.WindowShortcut)

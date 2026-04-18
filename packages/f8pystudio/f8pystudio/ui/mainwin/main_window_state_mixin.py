@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from qtpy import QtCore
+from qtpy import QtCore, QtGui
 
 from f8pysdk.codec import coerce_bool
 
@@ -29,6 +29,7 @@ class MainWindowStateMixin:
         _auto_proxy_enabled: bool
         _performance_overlay_enabled: bool
         _closing: bool
+        _log_level_actions: dict[int, QtGui.QAction]
         _last_saved_undo_index: int
         _last_auto_deploy_observed_undo_index: int
         _last_auto_deploy_fingerprint: str
@@ -141,9 +142,20 @@ class MainWindowStateMixin:
         finally:
             settings.endGroup()
 
+    def _sync_log_level_actions(self, *, level: int) -> None:
+        normalized_level = self._normalize_supported_log_level(level)
+        for candidate_level, action in self._log_level_actions.items():
+            previous = action.blockSignals(True)
+            try:
+                action.setChecked(candidate_level == normalized_level)
+            finally:
+                action.blockSignals(previous)
+
     def _apply_log_level(self, *, level: int, persist: bool) -> None:
         normalized_level = self._normalize_supported_log_level(level)
         apply_root_log_level(normalized_level)
+        self._log_dock.set_minimum_level(normalized_level)
+        self._sync_log_level_actions(level=normalized_level)
         if persist:
             self._write_saved_log_level_name(level_name=self._log_level_name_for_value(normalized_level))
 

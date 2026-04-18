@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import logging
 import re
-from pathlib import Path
 from dataclasses import dataclass
+from pathlib import Path
 
 from qtpy import QtCore, QtGui, QtWidgets
 
@@ -14,6 +15,73 @@ from ...ui.support.ui_notifications import show_warning
 class _Rule:
     pattern: re.Pattern[str]
     fmt: QtGui.QTextCharFormat
+
+
+@dataclass(frozen=True)
+class _LogEntry:
+    line: str
+    level: int
+
+
+_BRACKET_LEVEL_RE = re.compile(r"\[(trace|debug|info|warn|warning|error|critical|fatal)\]", re.IGNORECASE)
+_PREFIX_LEVEL_RE = re.compile(r"^\s*\[?(trace|debug|info|warn|warning|error|critical|fatal)\]?\b", re.IGNORECASE)
+_TRACEBACK_LEVEL_RE = re.compile(
+    r"(Traceback \(most recent call last\):|^\s*File \"[^\"]+\", line \d+|\b[A-Za-z_]*Error:|\bException:)",
+    re.IGNORECASE,
+)
+
+
+def _normalize_log_level(level: int) -> int:
+    normalized = int(level)
+    if normalized <= logging.DEBUG:
+        return logging.DEBUG
+    if normalized <= logging.INFO:
+        return logging.INFO
+    if normalized <= logging.WARNING:
+        return logging.WARNING
+    if normalized <= logging.ERROR:
+        return logging.ERROR
+    return logging.CRITICAL
+
+
+def _level_value_from_name(level_name: str) -> int | None:
+    normalized = str(level_name or "").strip().upper()
+    if normalized == "TRACE":
+        return logging.DEBUG
+    if normalized == "DEBUG":
+        return logging.DEBUG
+    if normalized == "INFO":
+        return logging.INFO
+    if normalized in {"WARN", "WARNING"}:
+        return logging.WARNING
+    if normalized == "ERROR":
+        return logging.ERROR
+    if normalized in {"CRITICAL", "FATAL"}:
+        return logging.CRITICAL
+    return None
+
+
+def _infer_log_level(line: str) -> int:
+    text = str(line or "").strip()
+    if not text:
+        return logging.INFO
+
+    bracket_match = _BRACKET_LEVEL_RE.search(text)
+    if bracket_match is not None:
+        resolved = _level_value_from_name(bracket_match.group(1))
+        if resolved is not None:
+            return resolved
+
+    prefix_match = _PREFIX_LEVEL_RE.search(text)
+    if prefix_match is not None:
+        resolved = _level_value_from_name(prefix_match.group(1))
+        if resolved is not None:
+            return resolved
+
+    if _TRACEBACK_LEVEL_RE.search(text) is not None:
+        return logging.ERROR
+
+    return logging.INFO
 
 
 class _LogHighlighter(QtGui.QSyntaxHighlighter):
@@ -55,6 +123,8 @@ class ServiceLogView(QtWidgets.QPlainTextEdit):
 
     def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
+        self._entries: list[_LogEntry] = []
+        self._minimum_level = _normalize_log_level(logging.getLogger().getEffectiveLevel())
         self.setReadOnly(True)
         # Terminal-like: wrap at widget width (avoid horizontal scrollbar).
         self.setLineWrapMode(QtWidgets.QPlainTextEdit.WidgetWidth)
@@ -77,12 +147,29 @@ class ServiceLogView(QtWidgets.QPlainTextEdit):
 
         self._highlighter = _LogHighlighter(self.document())
 
+    def set_minimum_level(self, level: int) -> None:
+        normalized_level = _normalize_log_level(level)
+        if normalized_level == self._minimum_level:
+            return
+        self._minimum_level = normalized_level
+        self._rerender()
+
     def append_line(self, line: str) -> None:
         line = str(line or "")
         # Avoid double newlines.
         if line.endswith("\n"):
             line = line[:-1]
+        entry = _LogEntry(line=line, level=_infer_log_level(line))
+        self._entries.append(entry)
+        if len(self._entries) > self.maximumBlockCount():
+            self._entries = self._entries[-self.maximumBlockCount() :]
+        if entry.level < self._minimum_level:
+            return
         self.appendPlainText(line)
+
+    def _rerender(self) -> None:
+        visible_lines = [entry.line for entry in self._entries if entry.level >= self._minimum_level]
+        self.setPlainText("\n".join(visible_lines))
 
 
 class ServiceLogDock(QtWidgets.QDockWidget):
@@ -93,6 +180,7 @@ class ServiceLogDock(QtWidgets.QDockWidget):
     def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__("Service Logs", parent)
         self.setObjectName("ServiceLogsDock")
+        self._minimum_level = _normalize_log_level(logging.getLogger().getEffectiveLevel())
 
         self._tabs = QtWidgets.QTabWidget()
         self._tabs.setDocumentMode(True)
@@ -148,6 +236,7 @@ class ServiceLogDock(QtWidgets.QDockWidget):
         if view is not None:
             return view
         view = ServiceLogView()
+        view.set_minimum_level(self._minimum_level)
         view.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
         try:
             view.customContextMenuRequested.connect(lambda pos, service_id=sid: self._on_view_context_menu(service_id, pos))  # type: ignore[attr-defined]
@@ -156,6 +245,11 @@ class ServiceLogDock(QtWidgets.QDockWidget):
         self._views[sid] = view
         self._tabs.addTab(view, self._tab_label(sid))
         return view
+
+    def set_minimum_level(self, level: int) -> None:
+        self._minimum_level = _normalize_log_level(level)
+        for view in self._views.values():
+            view.set_minimum_level(self._minimum_level)
 
     @QtCore.Slot(str, str)
     def append(self, service_id: str, line: str) -> None:
