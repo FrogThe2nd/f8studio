@@ -222,7 +222,7 @@ class ComponentCatalogEntriesMixin:
             else:
                 local_sync_state = "synced"
                 remote_sync_state = "synced"
-        if local_entry is not None and local_entry.isLocalDraft:
+        if local_entry is not None and local_entry.isLocalDraft and remote_entry is None:
             owner_display_name = cls.LOCAL_DRAFT_LABEL
         return build_asset_catalog_row_state(
             asset_id=component_id,

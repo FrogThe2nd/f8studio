@@ -14,6 +14,7 @@ from f8pysdk.codec import copy_model
 
 from f8pystudio.assets.variants.variant_catalog import LocalVariantProvider, RemoteCacheProvider, VariantCatalogService
 from f8pystudio.assets.variants.variant_models import (
+    F8VariantDraftOriginKind,
     F8VariantEntry,
     F8VariantKind,
     F8VariantRemoteRequestError,
@@ -1039,6 +1040,76 @@ def test_variant_sync_persists_local_sync_base_and_second_sync_is_noop(monkeypat
     dialog.close()
 
 
+def test_variant_push_clears_local_draft_and_restores_remote_owner(monkeypatch, tmp_path: Path) -> None:
+    _ = _ensure_app()
+    settings = QtCore.QSettings(str(tmp_path / "variant-push-draft.ini"), QtCore.QSettings.IniFormat)
+    db_path = tmp_path / "assets.db"
+    service = VariantCatalogService(
+        local_provider=LocalVariantProvider(db_path=db_path),
+        remote_provider=RemoteCacheProvider(db_path=db_path),
+    )
+    local_entry = service.upsert_local_entry(
+        copy_model(
+            _make_entry(variant_id="draft-promote", source=F8VariantSourceKind.local),
+            update={
+                "isLocalDraft": True,
+                "draftOriginKind": F8VariantDraftOriginKind.new,
+            },
+        )
+    )
+
+    dialog = VariantCatalogDialog(
+        parent=None,
+        base_node_type="svc.a.op",
+        base_node_name="Variant",
+        node_graph=None,
+    )
+    dialog._sync_client = VariantSyncClient(settings=settings, catalog_service=service)
+    monkeypatch.setattr(dialog, "_reload", lambda *args, **kwargs: None)
+    monkeypatch.setattr(dialog, "_choose_visibility", lambda: F8VariantVisibility.private)
+
+    def _upload_entry(entry: F8VariantEntry) -> F8VariantEntry:
+        uploaded_entry = copy_model(
+            entry,
+            update={
+                "source": F8VariantSourceKind.remote_private,
+                "visibility": F8VariantVisibility.private,
+                "ownerUserId": "u1",
+                "ownerDisplayName": "User One",
+                "remoteRevision": "r1",
+                "remoteVersionNumber": 1,
+                "syncState": F8VariantSyncState.synced,
+                "installed": True,
+                "hasCachedContent": True,
+            },
+        )
+        return service.install_remote_entry(uploaded_entry)
+
+    monkeypatch.setattr(dialog._sync_client, "upload_entry", _upload_entry)
+
+    uploaded = dialog._push_selected_variant(local_entry=local_entry, remote_entry=None)
+
+    assert uploaded is not None
+    saved_local = service._local_provider.load_entries()[0]
+    saved_remote = service.remote_entry("draft-promote")
+    assert saved_local.isLocalDraft is False
+    assert saved_local.draftOriginKind is None
+    assert saved_local.draftOriginAssetId is None
+    assert saved_local.draftOriginRevision is None
+    assert saved_local.syncBaseRemoteRevision == "r1"
+    assert saved_local.syncBaseRemoteVersionNumber == 1
+    assert saved_local.syncBaseLocalVersionNumber == 1
+    assert saved_remote is not None
+    row_state = variant_row_state_for_entries(
+        variant_id="draft-promote",
+        local_entry=saved_local,
+        remote_entry=saved_remote,
+    )
+    assert row_state.owner_display_name == "User One"
+
+    dialog.close()
+
+
 def test_variant_manager_load_owned_remote_creates_local_head(monkeypatch, tmp_path: Path) -> None:
     _ = _ensure_app()
     settings = QtCore.QSettings(str(tmp_path / "variant-load.ini"), QtCore.QSettings.IniFormat)
@@ -1197,6 +1268,35 @@ def test_variant_row_state_uses_local_draft_owner_label() -> None:
     )
 
     assert row_state.owner_display_name == "Local Draft"
+
+
+def test_variant_row_state_prefers_remote_owner_when_remote_head_exists() -> None:
+    local_entry = copy_model(
+        _make_entry(variant_id="draft-owner-remote", source=F8VariantSourceKind.local),
+        update={"isLocalDraft": True},
+    )
+    remote_entry = copy_model(
+        _make_entry(
+            variant_id="draft-owner-remote",
+            source=F8VariantSourceKind.remote_private,
+            installed=True,
+            remote_revision="r1",
+        ),
+        update={
+            "visibility": F8VariantVisibility.private,
+            "remoteVersionNumber": 1,
+            "ownerUserId": "u1",
+            "ownerDisplayName": "User One",
+        },
+    )
+
+    row_state = variant_row_state_for_entries(
+        variant_id="draft-owner-remote",
+        local_entry=local_entry,
+        remote_entry=remote_entry,
+    )
+
+    assert row_state.owner_display_name == "User One"
 
 
 def test_variant_manager_save_over_remote_offload_seeds_remote_sync_base(monkeypatch, tmp_path: Path) -> None:

@@ -15,6 +15,7 @@ from f8pysdk.codec import copy_model
 from f8pystudio.assets.common import decode_http_response_text, redact_http_body_for_log, redact_json_for_log
 from f8pystudio.assets.components.component_catalog import ComponentCatalogService
 from f8pystudio.assets.components.component_models import (
+    F8ComponentDraftOriginKind,
     F8ComponentEntry,
     F8ComponentRemoteUser,
     F8ComponentRemoteRequestError,
@@ -728,6 +729,34 @@ def test_component_row_state_uses_local_draft_owner_label() -> None:
     assert row_state.owner_display_name == "Local Draft"
 
 
+def test_component_row_state_prefers_remote_owner_when_remote_head_exists() -> None:
+    local_entry = F8ComponentEntry(
+        record=F8ComponentRecord(componentId="draft-component-remote", name="Draft Component Remote"),
+        source=F8ComponentSourceKind.local,
+        localVersionNumber=1,
+        isLocalDraft=True,
+    )
+    remote_entry = F8ComponentEntry(
+        record=F8ComponentRecord(componentId="draft-component-remote", name="Draft Component Remote"),
+        source=F8ComponentSourceKind.remote_private,
+        visibility=F8ComponentVisibility.private,
+        ownerUserId="u1",
+        ownerDisplayName="User One",
+        remoteRevision="r1",
+        remoteVersionNumber=1,
+        installed=True,
+        hasCachedContent=True,
+    )
+
+    row_state = ComponentCatalogDialog._component_row_state_for_entries(
+        component_id="draft-component-remote",
+        local_entry=local_entry,
+        remote_entry=remote_entry,
+    )
+
+    assert row_state.owner_display_name == "User One"
+
+
 def test_component_catalog_load_owned_remote_creates_local_head(monkeypatch, tmp_path: Path) -> None:
     _ = _ensure_app()
     settings = QtCore.QSettings(str(tmp_path / "component-load.ini"), QtCore.QSettings.IniFormat)
@@ -793,6 +822,65 @@ def test_component_catalog_load_owned_remote_creates_local_head(monkeypatch, tmp
     assert local_entry.syncBaseRemoteRevision == "r4"
     assert local_entry.syncBaseRemoteVersionNumber == 4
     assert local_entry.syncBaseLocalVersionNumber == 4
+
+    dialog.close()
+
+
+def test_component_push_clears_local_draft(monkeypatch, tmp_path: Path) -> None:
+    _ = _ensure_app()
+    settings = QtCore.QSettings(str(tmp_path / "component-push-draft.ini"), QtCore.QSettings.IniFormat)
+    service = ComponentCatalogService(db_path=tmp_path / "assets.db")
+    local_entry = service.upsert_local_entry(
+        F8ComponentEntry(
+            record=F8ComponentRecord(
+                componentId="draft-component",
+                name="Draft Component",
+                schemaVersion="f8studio-session/1",
+                content={"schemaVersion": "f8studio-session/1", "layout": {"nodes": {}, "connections": []}},
+            ),
+            source=F8ComponentSourceKind.local,
+            localVersionNumber=1,
+            isLocalDraft=True,
+            draftOriginKind=F8ComponentDraftOriginKind.new,
+        )
+    )
+
+    dialog = ComponentCatalogDialog(parent=None, node_graph=None)
+    dialog._sync_client = ComponentSyncClient(settings=settings, catalog_service=service)
+    monkeypatch.setattr(dialog, "_reload", lambda *args, **kwargs: None)
+    monkeypatch.setattr(dialog, "_choose_visibility", lambda: F8ComponentVisibility.private)
+    monkeypatch.setattr(dialog, "_ensure_component_hydrated", lambda entry, operation_name: entry)
+
+    def _upload_entry(entry: F8ComponentEntry) -> F8ComponentEntry:
+        uploaded_entry = copy_model(
+            entry,
+            update={
+                "source": F8ComponentSourceKind.remote_private,
+                "visibility": F8ComponentVisibility.private,
+                "ownerUserId": "u1",
+                "ownerDisplayName": "User One",
+                "remoteRevision": "r1",
+                "remoteVersionNumber": 1,
+                "installed": True,
+                "hasCachedContent": True,
+            },
+        )
+        return service.install_remote_entry(uploaded_entry)
+
+    monkeypatch.setattr(dialog._sync_client, "upload_entry", _upload_entry)
+
+    uploaded = dialog._push_selected_component(local_entry=local_entry, remote_entry=None)
+
+    assert uploaded is not None
+    saved_local = service.entry("draft-component", include_uninstalled=True)
+    assert saved_local is not None
+    assert saved_local.isLocalDraft is False
+    assert saved_local.draftOriginKind is None
+    assert saved_local.draftOriginAssetId is None
+    assert saved_local.draftOriginRevision is None
+    assert saved_local.syncBaseRemoteRevision == "r1"
+    assert saved_local.syncBaseRemoteVersionNumber == 1
+    assert saved_local.syncBaseLocalVersionNumber == 1
 
     dialog.close()
 

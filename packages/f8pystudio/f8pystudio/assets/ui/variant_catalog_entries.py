@@ -66,7 +66,7 @@ def variant_row_state_for_entries(
         else:
             local_sync_state = F8VariantSyncState.synced.value
             remote_sync_state = F8VariantSyncState.synced.value
-    if local_entry is not None and local_entry.isLocalDraft:
+    if local_entry is not None and local_entry.isLocalDraft and remote_entry is None:
         owner_display_name = local_draft_label
     return build_asset_catalog_row_state(
         asset_id=variant_id,

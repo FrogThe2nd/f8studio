@@ -215,6 +215,10 @@ class VariantCatalogSyncFlowsMixin:
                 "remoteRevision": uploaded.remoteRevision,
                 "remoteVersionNumber": uploaded.remoteVersionNumber,
                 "syncState": F8VariantSyncState.synced,
+                "isLocalDraft": False,
+                "draftOriginKind": None,
+                "draftOriginAssetId": None,
+                "draftOriginRevision": None,
             },
         )
         _ = self._sync_client._catalog_service.upsert_local_entry(saved_local_entry)

@@ -177,6 +177,10 @@ class ComponentCatalogSyncFlowsMixin:
                 "remoteRevision": uploaded.remoteRevision,
                 "remoteVersionNumber": uploaded.remoteVersionNumber,
                 "syncState": uploaded.syncState,
+                "isLocalDraft": False,
+                "draftOriginKind": None,
+                "draftOriginAssetId": None,
+                "draftOriginRevision": None,
             },
         )
         _ = self._sync_client._catalog_service.upsert_local_entry(saved_local_entry)
