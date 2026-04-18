@@ -9,6 +9,7 @@
 #include <spdlog/spdlog.h>
 #include <nlohmann/json.hpp>
 #include <opencv2/imgproc.hpp>
+#include <opencv2/tracking/tracking_legacy.hpp>
 
 #include "f8cppsdk/describe_schema.h"
 #include "f8cppsdk/f8_naming.h"
@@ -188,6 +189,77 @@ TrackingInitSelectMode parse_init_select_mode(const std::string& raw, std::strin
   return TrackingInitSelectMode::ClosestCenter;
 }
 
+TrackerKind parse_tracker_kind(const std::string& raw, std::string& normalized, bool& ok) {
+  const std::string s = service_runtime::to_lower_ascii_copy(service_runtime::trim_copy(raw));
+  if (s.empty() || s == "csrt") {
+    normalized = "csrt";
+    ok = true;
+    return TrackerKind::Csrt;
+  }
+  if (s == "kcf") {
+    normalized = "kcf";
+    ok = true;
+    return TrackerKind::Kcf;
+  }
+  if (s == "mil") {
+    normalized = "mil";
+    ok = true;
+    return TrackerKind::Mil;
+  }
+  if (s == "boosting") {
+    normalized = "boosting";
+    ok = true;
+    return TrackerKind::Boosting;
+  }
+  if (s == "median_flow" || s == "medianflow") {
+    normalized = "median_flow";
+    ok = true;
+    return TrackerKind::MedianFlow;
+  }
+  if (s == "mosse") {
+    normalized = "mosse";
+    ok = true;
+    return TrackerKind::Mosse;
+  }
+  if (s == "tld") {
+    normalized = "tld";
+    ok = true;
+    return TrackerKind::Tld;
+  }
+  normalized = "csrt";
+  ok = false;
+  return TrackerKind::Csrt;
+}
+
+cv::Ptr<cv::Tracker> upgrade_legacy_tracker(const cv::Ptr<cv::legacy::Tracker>& legacy_tracker) {
+  if (legacy_tracker.empty()) {
+    return {};
+  }
+  return cv::legacy::upgradeTrackingAPI(legacy_tracker);
+}
+
+cv::Ptr<cv::Tracker> create_tracker_for_kind(TrackerKind kind) {
+  if (kind == TrackerKind::Csrt) {
+    return cv::TrackerCSRT::create();
+  }
+  if (kind == TrackerKind::Kcf) {
+    return cv::TrackerKCF::create();
+  }
+  if (kind == TrackerKind::Mil) {
+    return cv::TrackerMIL::create();
+  }
+  if (kind == TrackerKind::Boosting) {
+    return upgrade_legacy_tracker(cv::legacy::TrackerBoosting::create());
+  }
+  if (kind == TrackerKind::MedianFlow) {
+    return upgrade_legacy_tracker(cv::legacy::TrackerMedianFlow::create());
+  }
+  if (kind == TrackerKind::Mosse) {
+    return upgrade_legacy_tracker(cv::legacy::TrackerMOSSE::create());
+  }
+  return upgrade_legacy_tracker(cv::legacy::TrackerTLD::create());
+}
+
 std::optional<cv::Rect> pick_best_bbox(const std::vector<TrackingInitCandidate>& candidates, const cv::Rect& frame_rect,
                                        TrackingInitSelectMode mode) {
   if (candidates.empty())
@@ -293,10 +365,25 @@ bool TrackingService::start() {
   shm_name_override_.clear();
   init_select_mode_ = TrackingInitSelectMode::ClosestCenter;
   init_select_state_ = "closest_center";
+  tracker_kind_ = TrackerKind::Csrt;
+  tracker_kind_state_ = "csrt";
+
+  if (!cfg_.tracker_kind.empty()) {
+    std::string normalized;
+    bool ok = false;
+    const TrackerKind parsed = parse_tracker_kind(cfg_.tracker_kind, normalized, ok);
+    if (ok) {
+      tracker_kind_ = parsed;
+      tracker_kind_state_ = normalized;
+    } else {
+      spdlog::warn("invalid trackerKind in config: {} ; defaulting to csrt", cfg_.tracker_kind);
+    }
+  }
 
   publish_state_if_changed("serviceClass", cfg_.service_class, "init", json::object());
   publish_state_if_changed("shmName", "", "init", json::object());
   publish_state_if_changed("initSelect", init_select_state_, "init", json::object());
+  publish_state_if_changed("trackerKind", tracker_kind_state_, "init", json::object());
   publish_state_if_changed("stopTrackingCooldownMs", stop_tracking_cooldown_ms_.load(std::memory_order_acquire), "init",
                            json::object());
   publish_state_if_changed("stopTrackingCooldownUntilTsMs", 0, "init", json::object());
@@ -313,6 +400,7 @@ bool TrackingService::start() {
   tracker_.release();
   bbox_ = cv::Rect();
   is_tracking_ = false;
+  active_tracker_kind_state_.clear();
   pending_init_boxes_.clear();
   monitor_observed_frames_ = 0;
   monitor_processed_frames_ = 0;
@@ -419,6 +507,10 @@ void TrackingService::on_state(const std::string& node_id, const std::string& fi
     set_init_select(value.get<std::string>(), meta);
     return;
   }
+  if (field == "trackerKind" && value.is_string()) {
+    set_tracker_kind(value.get<std::string>(), meta);
+    return;
+  }
   if (field == "stopTrackingCooldownMs") {
     int v = 0;
     if (!json_number_to_int(value, v)) {
@@ -508,6 +600,7 @@ bool TrackingService::on_command(const std::string& call, const json& args, cons
 void TrackingService::stop_tracking_internal(const json& meta) {
   tracker_.release();
   bbox_ = cv::Rect();
+  active_tracker_kind_state_.clear();
   pending_init_boxes_.clear();
   set_tracking(false, meta);
 }
@@ -536,6 +629,23 @@ void TrackingService::set_init_select(const std::string& mode, const json& meta)
   init_select_mode_ = parsed;
   init_select_state_ = normalized;
   publish_state_if_changed("initSelect", init_select_state_, "state", meta);
+}
+
+void TrackingService::set_tracker_kind(const std::string& kind, const json& meta) {
+  std::string normalized;
+  bool ok = false;
+  const TrackerKind parsed = parse_tracker_kind(kind, normalized, ok);
+  if (!ok) {
+    publish_state_if_changed("lastError", "invalid trackerKind: " + kind, "state", meta);
+    return;
+  }
+  {
+    std::lock_guard<std::mutex> lock(tracking_mu_);
+    tracker_kind_ = parsed;
+    tracker_kind_state_ = normalized;
+  }
+  publish_state_if_changed("trackerKind", normalized, "state", meta);
+  publish_state_if_changed("lastError", "", "state", meta);
 }
 
 bool TrackingService::ensure_video_open() {
@@ -625,12 +735,14 @@ void TrackingService::apply_init_box_if_any() {
     if (is_tracking_)
       return;
     try {
-      tracker_ = cv::TrackerCSRT::create();
+      tracker_ = create_tracker_for_kind(tracker_kind_);
       if (tracker_.empty()) {
-        publish_state_if_changed("lastError", "TrackerCSRT::create failed", "runtime", json::object());
+        publish_state_if_changed("lastError", "tracker create failed: " + tracker_kind_state_, "runtime",
+                                 json::object());
         return;
       }
       tracker_->init(bgr, bb);
+      active_tracker_kind_state_ = tracker_kind_state_;
       bbox_ = bb;
       set_tracking(true, json::object({{"source", "initBox"}, {"candidates", static_cast<int>(candidates.size())}}));
     } catch (const cv::Exception& ex) {
@@ -651,6 +763,7 @@ void TrackingService::process_frame_once() {
   const std::int64_t process_start_ms = f8::cppsdk::now_ms();
   cv::Ptr<cv::Tracker> tracker;
   cv::Rect bbox;
+  std::string active_tracker_kind;
   {
     std::lock_guard<std::mutex> lock(tracking_mu_);
     if (!is_tracking_ || tracker_.empty()) {
@@ -659,6 +772,7 @@ void TrackingService::process_frame_once() {
     }
     tracker = tracker_;
     bbox = bbox_;
+    active_tracker_kind = active_tracker_kind_state_;
   }
   if (!ensure_video_open()) {
     return;
@@ -737,7 +851,7 @@ void TrackingService::process_frame_once() {
   out["height"] = hdr.height;
   out["status"] = "tracking";
   out["bbox"] = json::array({emit_bbox.x, emit_bbox.y, emit_bbox.x + emit_bbox.width, emit_bbox.y + emit_bbox.height});
-  out["tracker"] = json::object({{"kind", "csrt"}, {"ok", true}});
+  out["tracker"] = json::object({{"kind", active_tracker_kind}, {"ok", true}});
 
   publish_state_if_changed("lastError", "", "runtime", json::object());
   if (bus_) {
@@ -817,6 +931,10 @@ json TrackingService::describe() {
       state_field("initSelect",
                   schema_string_enum({"first_box", "closest_center", "largest_area", "highest_score"}, "closest_center"), "rw",
                   "Init Select", "Init bbox selection strategy: first_box | closest_center | largest_area | highest_score.", true),
+      state_field("trackerKind",
+                  schema_string_enum({"csrt", "kcf", "mil", "boosting", "median_flow", "mosse", "tld"}, "csrt"), "rw",
+                  "Tracker Kind",
+                  "OpenCV tracker backend: csrt | kcf | mil | boosting | median_flow | mosse | tld.", true),
       state_field("stopTrackingCooldownMs", schema_integer(1000, 0, 60000), "rw", "Stop Cooldown (ms)",
                   "After stopTracking, ignore initBox for this many ms. Set to 0 to disable.", true),
       state_field("stopTrackingCooldownUntilTsMs", schema_integer(), "ro", "Stop Cooldown Until (tsMs)",

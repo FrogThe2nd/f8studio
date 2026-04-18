@@ -31,6 +31,16 @@ enum class TrackingInitSelectMode {
   HighestScore,
 };
 
+enum class TrackerKind {
+  Csrt,
+  Kcf,
+  Mil,
+  Boosting,
+  MedianFlow,
+  Mosse,
+  Tld,
+};
+
 class TrackingService final : public f8::cppsdk::LifecycleNode,
                               public f8::cppsdk::StatefulNode,
                               public f8::cppsdk::DataReceivableNode,
@@ -41,6 +51,7 @@ class TrackingService final : public f8::cppsdk::LifecycleNode,
     std::string service_class = "f8.cvkit.tracking";
     std::string nats_url = "nats://127.0.0.1:4222";
     std::string shm_name;
+    std::string tracker_kind = "csrt";
     int stop_tracking_cooldown_ms = 1000;
   };
 
@@ -73,6 +84,7 @@ class TrackingService final : public f8::cppsdk::LifecycleNode,
   void emit_monitor_snapshot(std::int64_t ts_ms, std::uint64_t frame_id, double process_ms);
   void set_shm_name(const std::string& shm_name, const json& meta);
   void set_init_select(const std::string& mode, const json& meta);
+  void set_tracker_kind(const std::string& kind, const json& meta);
   bool ensure_video_open();
   void apply_init_box_if_any();
   void process_frame_once();
@@ -99,6 +111,9 @@ class TrackingService final : public f8::cppsdk::LifecycleNode,
   std::int64_t last_video_open_attempt_ms_ = 0;
   TrackingInitSelectMode init_select_mode_ = TrackingInitSelectMode::ClosestCenter;
   std::string init_select_state_ = "closest_center";
+  TrackerKind tracker_kind_ = TrackerKind::Csrt;
+  std::string tracker_kind_state_ = "csrt";
+  std::string active_tracker_kind_state_;
 
   // Tracking state.
   std::mutex tracking_mu_;
