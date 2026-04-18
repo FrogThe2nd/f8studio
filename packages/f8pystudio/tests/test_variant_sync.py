@@ -1159,6 +1159,31 @@ def test_variant_manager_copy_to_draft_creates_disconnected_local_draft(monkeypa
     dialog.close()
 
 
+def test_variant_catalog_action_buttons_start_hidden_inside_toolbar(monkeypatch) -> None:
+    _ = _ensure_app()
+    monkeypatch.setattr(VariantCatalogDialog, "_reload", lambda self, *_args, **_kwargs: None)
+
+    dialog = VariantCatalogDialog(parent=None, base_node_type="svc.a.op", base_node_name="Variant", node_graph=None)
+
+    action_buttons = (
+        dialog._btn_install,
+        dialog._btn_upload,
+        dialog._btn_subscribe,
+        dialog._btn_copy_local,
+        dialog._btn_delete,
+        dialog._btn_edit,
+        dialog._btn_visibility,
+        dialog._btn_history,
+        dialog._btn_create,
+    )
+
+    for button in action_buttons:
+        assert button.isHidden() is True
+        assert dialog._toolbar.isAncestorOf(button) is True
+
+    dialog.close()
+
+
 def test_variant_row_state_uses_local_draft_owner_label() -> None:
     local_entry = copy_model(
         _make_entry(variant_id="draft-owner", source=F8VariantSourceKind.local),
@@ -1567,7 +1592,7 @@ def test_variant_manager_history_uses_local_version_browser(monkeypatch, tmp_pat
     _FakeVersionBrowserDialog.seen_titles = []
     _FakeVersionBrowserDialog.seen_item_counts = []
 
-    monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_dialog.AssetVersionBrowserDialog", _FakeVersionBrowserDialog)
+    monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_version_flows.AssetVersionBrowserDialog", _FakeVersionBrowserDialog)
     monkeypatch.setattr(dialog, "_selected_entry", lambda: local_entry)
 
     dialog._on_history_clicked()
@@ -1598,7 +1623,7 @@ def test_variant_manager_history_uses_remote_version_browser(monkeypatch, tmp_pa
     _FakeVersionBrowserDialog.seen_titles = []
     _FakeVersionBrowserDialog.seen_item_counts = []
 
-    monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_dialog.AssetVersionBrowserDialog", _FakeVersionBrowserDialog)
+    monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_version_flows.AssetVersionBrowserDialog", _FakeVersionBrowserDialog)
     monkeypatch.setattr(dialog, "_selected_entry", lambda: remote_entry)
     monkeypatch.setattr(
         dialog._sync_client,

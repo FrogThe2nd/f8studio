@@ -164,7 +164,7 @@ class AudioCoreFeatureServiceNode(ServiceNode):
             return matrix[:, idx].astype(np.float32, copy=True)
         if channels == 1:
             return matrix[:, 0].astype(np.float32, copy=True)
-        return np.mean(matrix, axis=1, dtype=np.float32)
+        return np.asarray(np.mean(matrix, axis=1, dtype=np.float32), dtype=np.float32)
 
     async def _loop(self) -> None:
         if not librosa_available():

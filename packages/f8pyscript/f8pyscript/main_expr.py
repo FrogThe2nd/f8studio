@@ -3,6 +3,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+import msgspec
+
 from f8pysdk.app import ServiceApp, ServiceAppDefaults
 from f8pysdk.capabilities import RungraphHook
 from f8pysdk.codec import unwrap_json_value
@@ -52,9 +54,10 @@ class _ExprRuntimeHooks(RungraphHook):
         node_any.data_out_ports = [str(p.name) for p in list(service_snapshot.dataOutPorts or [])] or ["out"]
         node_any.state_fields = [str(s.name) for s in list(service_snapshot.stateFields or [])]
         ts_ms: int | None = None
-        if graph.meta is not None and graph.meta.ts is not None:
+        meta = graph.meta
+        if meta is not None and not isinstance(meta, msgspec.UnsetType) and meta.ts is not None:
             try:
-                ts_ms = int(graph.meta.ts)
+                ts_ms = int(meta.ts)
             except (TypeError, ValueError):
                 ts_ms = None
         state_values = service_snapshot.stateValues or {}

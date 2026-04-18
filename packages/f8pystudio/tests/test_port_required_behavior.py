@@ -16,7 +16,6 @@ from f8pysdk.specs import (
 from f8pysdk.specs import string_schema
 from f8pystudio.ui.widgets import node_property_panel as npw
 from f8pystudio.ui.widgets.node_property_panel import _F8SpecPortEditor
-from f8pystudio.ui.widgets.node_property_panel import editor as property_panel_editor
 from f8pystudio.ui.widgets.node_property_panel import ports as property_panel_ports
 from f8pystudio.nodegraph.spec_mutations import set_ports
 
@@ -313,9 +312,9 @@ def test_required_state_field_dialog_is_not_ui_only_when_editable(monkeypatch) -
         def exec_(self) -> int:
             return QtWidgets.QDialog.Rejected
 
-    monkeypatch.setattr(property_panel_editor, "_F8EditStateFieldDialog", _FakeStateDialog)
-
     class _FakeEditor:
+        _STATE_FIELD_DIALOG_CLS = _FakeStateDialog
+
         def __init__(self, spec: F8ServiceSpec) -> None:
             self._node = SimpleNamespace(
                 id="svc.test",
@@ -370,9 +369,9 @@ def test_add_state_field_defaults_to_optional_and_hidden(monkeypatch) -> None:
         def field(self) -> Any:
             raise AssertionError("field() should not be called when dialog is rejected")
 
-    monkeypatch.setattr(property_panel_editor, "_F8EditStateFieldDialog", _FakeStateDialog)
-
     class _FakeEditor:
+        _STATE_FIELD_DIALOG_CLS = _FakeStateDialog
+
         def __init__(self, spec: F8ServiceSpec) -> None:
             self._node = SimpleNamespace(spec=spec, model=SimpleNamespace(f8_sys={}))
 

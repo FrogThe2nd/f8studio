@@ -10,6 +10,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+import msgspec
+
 from f8pysdk._specs.builtin_fields import normalize_describe_payload_dict
 from f8pysdk.codec import dump_json, validate_as
 from f8pysdk.monitoring import MonitorContractError, validate_describe_monitor_contract
@@ -84,13 +86,10 @@ def _read_static_describe_file(service_dir: Path) -> dict[str, Any] | None:
 def _read_inline_describe(entry: F8ServiceEntry) -> dict[str, Any] | None:
     if (os.environ.get("F8_DISCOVERY_DISABLE_STATIC_DESCRIBE") or "").strip():
         return None
-    try:
-        extra = entry.model_extra or {}
-    except Exception:
-        extra = {}
-    if not isinstance(extra, dict):
+    entry_payload = dump_json(entry, mode="json")
+    if not isinstance(entry_payload, dict):
         return None
-    describe_obj = extra.get("describe")
+    describe_obj = entry_payload.get("describe")
     return describe_obj if isinstance(describe_obj, dict) else None
 
 
@@ -155,7 +154,8 @@ def describe_entry(service_dir: Path, entry: F8ServiceEntry) -> dict[str, Any] |
 
     try:
         launch = entry.launch
-        describe_args = list(entry.describeArgs or ["--describe"])
+        describe_args_value = entry.describeArgs
+        describe_args = list(describe_args_value) if isinstance(describe_args_value, list) else ["--describe"]
         timeout_ms = int(entry.timeoutMs or 4000)
         if _is_pixi_command(str(launch.command)):
             timeout_ms = max(timeout_ms, 15000)
@@ -166,14 +166,17 @@ def describe_entry(service_dir: Path, entry: F8ServiceEntry) -> dict[str, Any] |
     cmd = [str(launch.command), *[str(arg) for arg in (launch.args or [])], *[str(arg) for arg in describe_args]]
 
     env = os.environ.copy()
-    try:
-        env.update({str(k): str(v) for k, v in (launch.env or {}).items()})
-    except (AttributeError, RuntimeError, TypeError, ValueError):
-        pass
+    launch_env = launch.env
+    if isinstance(launch_env, dict):
+        try:
+            env.update({str(k): str(v) for k, v in launch_env.items()})
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            pass
 
     cwd = service_dir
     try:
-        workdir_raw = str(launch.workdir or "./")
+        workdir_value = launch.workdir
+        workdir_raw = "./" if workdir_value is None or isinstance(workdir_value, msgspec.UnsetType) else str(workdir_value)
         workdir_path = Path(workdir_raw).expanduser()
         if not workdir_path.is_absolute():
             workdir_path = (service_dir / workdir_path).resolve()

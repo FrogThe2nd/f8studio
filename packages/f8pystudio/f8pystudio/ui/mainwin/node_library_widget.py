@@ -1,41 +1,40 @@
 from __future__ import annotations
 
-from collections import defaultdict
 import logging
 from typing import Any
 
 from qtpy import QtCore, QtWidgets, QtGui
 from NodeGraphQt import NodesTreeWidget
-from NodeGraphQt.custom_widgets.nodes_tree import _BaseNodeTreeItem, TYPE_CATEGORY, TYPE_NODE
+from NodeGraphQt.custom_widgets.nodes_tree import TYPE_NODE
 
 from f8pysdk.codec import coerce_bool
 from ...assets.common.common import json_string_list_loads, stable_json_dumps
 from ...nodegraph.spec_visibility import is_hidden_spec_node_class, typed_spec_template_or_none
-from f8pysdk.specs import F8OperatorSpec, F8ServiceSpec
-from f8pysdk.specs import palette_category_from_spec
-from ...ui.support.node_category_labels import display_node_category_label
-from ...ui.support.ui_notifications import show_warning
-from ...assets.variants.variant_ids import build_variant_node_type, is_variant_node_type, parse_variant_node_type
+from ...assets.variants.variant_ids import is_variant_node_type, parse_variant_node_type
 from ...assets.variants.variant_repository import (
-    delete_variant,
-    list_variants_for_base,
-    list_variants_grouped_by_base,
     variant_exists,
 )
 from ...assets.variants.variant_events import subscribe_variants_changed
-from ..dialogs.node_docs_dialog import show_node_docs_dialog
+from .node_library_tree_build_mixin import NodeLibraryTreeBuildMixin
+from .node_library_tree_interaction_mixin import NodeLibraryTreeInteractionMixin
+from .node_library_tree_state_mixin import NodeLibraryTreeStateMixin
 
 logger = logging.getLogger(__name__)
 
 
-class _F8StudioNodesTreeWidget(NodesTreeWidget):
-    _ROLE_NODE_ID = int(QtCore.Qt.UserRole + 1)
-    _ROLE_NODE_NAME = int(QtCore.Qt.UserRole + 2)
-    _ROLE_BASE_NODE_ID = int(QtCore.Qt.UserRole + 3)
-    _ROLE_VARIANT_ID = int(QtCore.Qt.UserRole + 4)
-    _ROLE_IS_VARIANT = int(QtCore.Qt.UserRole + 5)
-    _ROLE_VARIANT_NAME = int(QtCore.Qt.UserRole + 6)
-    _ROLE_CATEGORY_ID = int(QtCore.Qt.UserRole + 7)
+class _F8StudioNodesTreeWidget(
+    NodeLibraryTreeBuildMixin,
+    NodeLibraryTreeStateMixin,
+    NodeLibraryTreeInteractionMixin,
+    NodesTreeWidget,
+):
+    _ROLE_NODE_ID = int(QtCore.Qt.ItemDataRole.UserRole) + 1
+    _ROLE_NODE_NAME = int(QtCore.Qt.ItemDataRole.UserRole) + 2
+    _ROLE_BASE_NODE_ID = int(QtCore.Qt.ItemDataRole.UserRole) + 3
+    _ROLE_VARIANT_ID = int(QtCore.Qt.ItemDataRole.UserRole) + 4
+    _ROLE_IS_VARIANT = int(QtCore.Qt.ItemDataRole.UserRole) + 5
+    _ROLE_VARIANT_NAME = int(QtCore.Qt.ItemDataRole.UserRole) + 6
+    _ROLE_CATEGORY_ID = int(QtCore.Qt.ItemDataRole.UserRole) + 7
     _TREE_BUILD_BATCH_SIZE = 48
 
     def __init__(self, parent: QtWidgets.QWidget | None = None, node_graph: Any | None = None) -> None:
@@ -61,7 +60,7 @@ class _F8StudioNodesTreeWidget(NodesTreeWidget):
         self.setIndentation(12)
         self.setUniformRowHeights(True)
         self.setDragEnabled(False)
-        self.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        self.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
         self.setStyleSheet(
             "QTreeView::item {"
             "  margin: 0px;"
@@ -118,406 +117,6 @@ class _F8StudioNodesTreeWidget(NodesTreeWidget):
 
     def set_expansion_state_changed_callback(self, callback: Any | None) -> None:
         self._on_expansion_state_changed = callback
-
-    def _build_search_blob(self, *, node_cls: Any, node_name: str, node_id: str) -> str:
-        parts: list[str] = [str(node_name), str(node_id)]
-        parts.append(str(node_cls.NODE_NAME))
-        spec = typed_spec_template_or_none(node_cls)
-        if spec is not None:
-            if spec.label:
-                parts.append(str(spec.label))
-            if spec.description:
-                parts.append(str(spec.description))
-            parts.extend(str(tag) for tag in list(spec.tags or []))
-            if isinstance(spec, F8OperatorSpec):
-                parts.append(str(spec.serviceClass))
-                parts.append(str(spec.operatorClass))
-            else:
-                parts.append(str(spec.serviceClass))
-        return " ".join(parts).lower()
-
-    def _matches_search(self, *, node_cls: Any, node_name: str, node_id: str) -> bool:
-        query = self._search_text
-        if not query:
-            return True
-        haystack = self._build_search_blob(node_cls=node_cls, node_name=node_name, node_id=node_id)
-        for token in query.split():
-            if token not in haystack:
-                return False
-        return True
-
-    @staticmethod
-    def _variant_search_blob(variant: Any) -> str:
-        parts = [
-            str(variant.name or ""),
-            str(variant.description or ""),
-            " ".join(str(t) for t in list(variant.tags or [])),
-        ]
-        spec = variant.spec if isinstance(variant.spec, dict) else {}
-        if isinstance(spec, dict):
-            parts.append(str(spec.get("label") or ""))
-            parts.append(str(spec.get("description") or ""))
-            parts.append(" ".join(str(t) for t in list(spec.get("tags") or [])))
-        return " ".join(parts).lower()
-
-    def _variant_matches_search(self, variant: Any) -> bool:
-        query = self._search_text
-        if not query:
-            return True
-        haystack = self._variant_search_blob(variant)
-        for token in query.split():
-            if token not in haystack:
-                return False
-        return True
-
-    @staticmethod
-    def _spec_description(spec: F8OperatorSpec | F8ServiceSpec) -> str:
-        desc = str(spec.description or "").strip()
-        if desc:
-            return desc
-        label = str(spec.label or "").strip()
-        if label:
-            return label
-        return ""
-
-    def _show_spec_dialog(self, *, node_id: str, node_name: str) -> None:
-        node_cls = self._factory.nodes.get(node_id) if self._factory is not None else None
-        if node_cls is None:
-            return
-        spec = typed_spec_template_or_none(node_cls)
-        if spec is None:
-            return
-        show_node_docs_dialog(parent=self, spec=spec, node_id=node_id, node_name=node_name)
-
-    def _open_variant_catalog(self, *, base_node_type: str, base_node_name: str) -> None:
-        callback = self._on_open_variant_catalog
-        if callable(callback):
-            callback(base_node_type=base_node_type, base_node_name=base_node_name)
-            return
-        try:
-            from ...assets.ui.variant_catalog_dialog import VariantCatalogDialog
-
-            dlg = VariantCatalogDialog(
-                parent=self.window(),
-                base_node_type=base_node_type,
-                base_node_name=base_node_name,
-                node_graph=self._node_graph,
-            )
-            dlg.setAttribute(QtCore.Qt.WA_DeleteOnClose, True)
-            dlg.destroyed.connect(self._on_variant_catalog_destroyed)  # type: ignore[attr-defined]
-            self._variant_catalog_dialogs.append(dlg)
-            dlg.show()
-            dlg.raise_()
-            dlg.activateWindow()
-        except Exception as exc:
-            show_warning(self, "Open Variant Catalog Failed", str(exc))
-
-    def _on_variant_catalog_destroyed(self, obj: Any) -> None:
-        self._variant_catalog_dialogs = [dialog for dialog in self._variant_catalog_dialogs if dialog is not obj]
-
-    def _on_item_clicked(self, item: QtWidgets.QTreeWidgetItem, column: int) -> None:
-        if item.type() != TYPE_NODE:
-            return
-        _ = column
-        graph = self._node_graph
-        if graph is None:
-            return
-        node_id = str(item.data(0, self._ROLE_NODE_ID) or "")
-        if not node_id:
-            return
-        node_name = str(item.data(0, self._ROLE_NODE_NAME) or item.text(0))
-        is_variant = bool(item.data(0, self._ROLE_IS_VARIANT))
-        if is_variant:
-            variant_name = str(item.data(0, self._ROLE_VARIANT_NAME) or "").strip()
-            if variant_name:
-                node_name = f"{node_name}\n - {variant_name}"
-        graph.begin_node_placement(node_id, node_name)
-
-    def _on_context_menu_requested(self, pos: QtCore.QPoint) -> None:
-        item = self.itemAt(pos)
-        if item is None or item.type() != TYPE_NODE:
-            return
-        menu = QtWidgets.QMenu(self)
-        graph = self._node_graph
-        if graph is None:
-            return
-        base_node_id = str(item.data(0, self._ROLE_BASE_NODE_ID) or item.data(0, self._ROLE_NODE_ID) or "")
-        base_node_name = str(item.data(0, self._ROLE_NODE_NAME) or item.text(0))
-        if not base_node_id:
-            return
-        is_variant_item = bool(item.data(0, self._ROLE_IS_VARIANT))
-        variant_id = str(item.data(0, self._ROLE_VARIANT_ID) or "").strip()
-        variant_name = str(item.data(0, self._ROLE_VARIANT_NAME) or "").strip()
-
-        action_info = menu.addAction("Show Details")
-        action_manage = menu.addAction("Open Variant Catalog...")
-        action_delete_variant = None
-        if is_variant_item and variant_id:
-            menu.addSeparator()
-            action_delete_variant = menu.addAction("Delete Variant...")
-
-        variants = list_variants_for_base(base_node_id)
-        if variants:
-            variants_menu = menu.addMenu("Variants")
-            variant_actions: dict[QtGui.QAction, tuple[str, str]] = {}
-            for v in variants:
-                act = variants_menu.addAction(str(v.name or v.variantId))
-                variant_actions[act] = (str(v.variantId), str(v.name or ""))
-        else:
-            variant_actions = {}
-
-        chosen = menu.exec(self.viewport().mapToGlobal(pos))
-        if chosen == action_info:
-            self._show_spec_dialog(node_id=base_node_id, node_name=base_node_name)
-            return
-        if chosen == action_manage:
-            self._open_variant_catalog(base_node_type=base_node_id, base_node_name=base_node_name)
-            return
-        if action_delete_variant is not None and chosen == action_delete_variant:
-            reply = QtWidgets.QMessageBox.question(self, "Delete variant", f"Delete variant '{variant_name}'?")
-            if reply != QtWidgets.QMessageBox.Yes:
-                return
-            removed = delete_variant(variant_id)
-            if not removed:
-                show_warning(self, "Delete variant failed", f"Variant not found: {variant_id}")
-            return
-        if chosen in variant_actions:
-            variant_id, variant_name = variant_actions[chosen]
-            variant_node_type = build_variant_node_type(variant_id)
-            placement_label = str(base_node_name)
-            if variant_name:
-                placement_label = f"{base_node_name}\n - {variant_name}"
-            graph.begin_node_placement(variant_node_type, placement_label)
-
-    def _emit_expansion_state_changed(self) -> None:
-        callback = self._on_expansion_state_changed
-        if not callable(callback):
-            return
-        callback(
-            set(self._saved_expanded_categories),
-            set(self._saved_expanded_base_nodes),
-            bool(self._saved_category_state_initialized),
-        )
-
-    def _set_item_expanded_from_memory(self, item: QtWidgets.QTreeWidgetItem, *, expanded: bool) -> None:
-        self._restoring_expanded_state = True
-        try:
-            item.setExpanded(bool(expanded))
-        finally:
-            self._restoring_expanded_state = False
-
-    def _all_known_category_ids(self) -> set[str]:
-        categories: set[str] = set()
-        if self._factory is None:
-            return categories
-        for node_ids in self._factory.names.values():
-            for node_id_any in list(node_ids or []):
-                node_id = str(node_id_any)
-                node_cls = self._factory.nodes.get(node_id)
-                if node_cls is None:
-                    continue
-                if is_hidden_spec_node_class(node_cls):
-                    continue
-                category = "uncategorized"
-                spec = typed_spec_template_or_none(node_cls)
-                if spec is not None:
-                    category = palette_category_from_spec(spec)
-                categories.add(category)
-        return categories
-
-    def _remember_item_expanded_state(self, item: QtWidgets.QTreeWidgetItem, *, expanded: bool) -> None:
-        if self._restoring_expanded_state or self._suppress_expansion_persistence:
-            return
-        category_id = str(item.data(0, self._ROLE_CATEGORY_ID) or "").strip()
-        if category_id:
-            if not self._saved_category_state_initialized:
-                self._saved_expanded_categories = self._all_known_category_ids()
-                self._saved_category_state_initialized = True
-            if expanded:
-                self._saved_expanded_categories.add(category_id)
-            else:
-                self._saved_expanded_categories.discard(category_id)
-            self._emit_expansion_state_changed()
-            return
-        if item.type() != TYPE_NODE:
-            return
-        if bool(item.data(0, self._ROLE_IS_VARIANT)):
-            return
-        base_node_id = str(item.data(0, self._ROLE_NODE_ID) or "").strip()
-        if not base_node_id:
-            return
-        if expanded:
-            self._saved_expanded_base_nodes.add(base_node_id)
-        else:
-            self._saved_expanded_base_nodes.discard(base_node_id)
-        self._emit_expansion_state_changed()
-
-    def _on_item_expanded(self, item: QtWidgets.QTreeWidgetItem) -> None:
-        self._remember_item_expanded_state(item, expanded=True)
-
-    def _on_item_collapsed(self, item: QtWidgets.QTreeWidgetItem) -> None:
-        self._remember_item_expanded_state(item, expanded=False)
-
-    def _show_status_message(self, message: str) -> None:
-        self.clear()
-        item = _BaseNodeTreeItem(self, [str(message or "")], type=TYPE_CATEGORY)
-        item.setFlags(QtCore.Qt.ItemIsEnabled)
-        item.setFirstColumnSpanned(True)
-        item.setSizeHint(0, QtCore.QSize(100, 22))
-        self.addTopLevelItem(item)
-
-    def _start_tree_build(self) -> None:
-        self._tree_build_generation += 1
-        generation = self._tree_build_generation
-        expanded_categories = set(self._saved_expanded_categories)
-        expanded_base_nodes = set(self._saved_expanded_base_nodes)
-        categories_initialized = bool(self._saved_category_state_initialized)
-        self._suppress_expansion_persistence = True
-        self.clear()
-        if self._factory is None:
-            self._suppress_expansion_persistence = False
-            return
-
-        show_variant_children = self._search_variants_enabled
-        variants_by_base: dict[str, list[Any]] = {}
-        if show_variant_children:
-            variants_by_base = {
-                base_node_type: list(records)
-                for base_node_type, records in list_variants_grouped_by_base(include_uninstalled=False).items()
-            }
-
-        node_types_by_category: dict[str, list[tuple[str, str, str, list[Any]]]] = defaultdict(list)
-        for node_name, node_ids in self._factory.names.items():
-            for node_id_any in list(node_ids or []):
-                node_id = str(node_id_any)
-                node_cls = self._factory.nodes.get(node_id)
-                if node_cls is None:
-                    continue
-                if is_hidden_spec_node_class(node_cls):
-                    continue
-                base_match = self._matches_search(node_cls=node_cls, node_name=str(node_name), node_id=node_id)
-                matched_variants: list[Any] = []
-                if show_variant_children:
-                    all_variants = variants_by_base.get(node_id, [])
-                    if not self._search_text:
-                        matched_variants = list(all_variants)
-                    else:
-                        for variant in all_variants:
-                            if self._variant_matches_search(variant):
-                                matched_variants.append(variant)
-                if not base_match and not matched_variants:
-                    continue
-                category = "uncategorized"
-                spec_description = ""
-                spec = typed_spec_template_or_none(node_cls)
-                if spec is not None:
-                    category = palette_category_from_spec(spec)
-                    spec_description = self._spec_description(spec)
-                node_types_by_category[category].append(
-                    (node_id, str(node_name), spec_description, matched_variants)
-                )
-
-        self._category_items = {}
-        for category in sorted(node_types_by_category.keys()):
-            label = str(self._custom_labels.get(category, display_node_category_label(category)))
-            cat_item = _BaseNodeTreeItem(self, [label], type=TYPE_CATEGORY)
-            cat_item.setFirstColumnSpanned(True)
-            cat_item.setFlags(QtCore.Qt.ItemIsEnabled)
-            cat_item.setSizeHint(0, QtCore.QSize(100, 22))
-            cat_item.setData(0, self._ROLE_CATEGORY_ID, category)
-            self.addTopLevelItem(cat_item)
-            self._category_items[category] = cat_item
-
-        self._tree_build_rows = []
-        for category, nodes_list in node_types_by_category.items():
-            for node_id, node_name, spec_description, matched_variants in nodes_list:
-                self._tree_build_rows.append((category, node_id, node_name, spec_description, matched_variants))
-        self._tree_build_index = 0
-        self._tree_build_pending_refresh = False
-        self._append_tree_build_batch(
-            generation=generation,
-            expanded_base_nodes=expanded_base_nodes,
-            categories_initialized=categories_initialized,
-            expanded_categories=expanded_categories,
-        )
-
-    def _append_tree_build_batch(
-        self,
-        *,
-        generation: int,
-        expanded_base_nodes: set[str],
-        categories_initialized: bool,
-        expanded_categories: set[str],
-    ) -> None:
-        if generation != self._tree_build_generation:
-            return
-        if self._factory is None:
-            return
-        end_index = min(self._tree_build_index + self._TREE_BUILD_BATCH_SIZE, len(self._tree_build_rows))
-        while self._tree_build_index < end_index:
-            category, node_id, node_name, spec_description, matched_variants = self._tree_build_rows[self._tree_build_index]
-            self._tree_build_index += 1
-            category_item = self._category_items.get(category)
-            if category_item is None:
-                continue
-            item = _BaseNodeTreeItem(category_item, [node_name], type=TYPE_NODE)
-            item.setToolTip(0, node_id)
-            item.setSizeHint(0, QtCore.QSize(100, 22))
-            item.setData(0, self._ROLE_NODE_ID, node_id)
-            item.setData(0, self._ROLE_BASE_NODE_ID, node_id)
-            item.setData(0, self._ROLE_NODE_NAME, node_name)
-            item.setData(0, self._ROLE_IS_VARIANT, False)
-            category_item.addChild(item)
-
-            if spec_description:
-                item.setToolTip(0, f"{node_id}\n\n{spec_description}")
-
-            for variant in matched_variants:
-                variant_node_type = build_variant_node_type(str(variant.variantId))
-                variant_text = f"|{variant.name}|"
-                variant_item = _BaseNodeTreeItem(item, [variant_text], type=TYPE_NODE)
-                variant_item.setToolTip(0, variant_node_type)
-                variant_item.setSizeHint(0, QtCore.QSize(100, 22))
-                variant_item.setData(0, self._ROLE_NODE_ID, variant_node_type)
-                variant_item.setData(0, self._ROLE_BASE_NODE_ID, node_id)
-                variant_item.setData(0, self._ROLE_NODE_NAME, node_name)
-                variant_item.setData(0, self._ROLE_VARIANT_ID, str(variant.variantId))
-                variant_item.setData(0, self._ROLE_IS_VARIANT, True)
-                variant_item.setData(0, self._ROLE_VARIANT_NAME, str(variant.name or ""))
-                item.addChild(variant_item)
-            self._set_item_expanded_from_memory(item, expanded=node_id in expanded_base_nodes)
-
-        if self._tree_build_index < len(self._tree_build_rows):
-            QtCore.QTimer.singleShot(
-                0,
-                lambda: self._append_tree_build_batch(
-                    generation=generation,
-                    expanded_base_nodes=expanded_base_nodes,
-                    categories_initialized=categories_initialized,
-                    expanded_categories=expanded_categories,
-                ),
-            )
-            return
-        for index in range(self.topLevelItemCount()):
-            category_item = self.topLevelItem(index)
-            if category_item is None:
-                continue
-            category_id = str(category_item.data(0, self._ROLE_CATEGORY_ID) or "").strip()
-            category_expanded = True
-            if categories_initialized:
-                category_expanded = category_id in expanded_categories
-            self._set_item_expanded_from_memory(category_item, expanded=category_expanded)
-        self._suppress_expansion_persistence = False
-        if self._tree_build_pending_refresh:
-            self._start_tree_build()
-
-    def _build_tree(self) -> None:
-        if not self._tree_build_activated:
-            self._tree_build_pending_refresh = True
-            self._show_status_message("Open the node library to load nodes.")
-            return
-        self._show_status_message("Loading nodes...")
-        QtCore.QTimer.singleShot(0, self._start_tree_build)
 
 
 class F8StudioNodeLibraryWidget(QtWidgets.QWidget):

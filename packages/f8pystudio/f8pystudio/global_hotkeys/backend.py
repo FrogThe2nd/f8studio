@@ -502,11 +502,11 @@ class X11GlobalHotkeyBackend:
                 time.sleep(0.05)
                 continue
             try:
-                event_type = int(getattr(event, "type", -1))
+                event_type = int(event.type)
                 if event_type != int(self._x.KeyPress):
                     continue
-                keycode = int(getattr(event, "detail", 0))
-                state = int(getattr(event, "state", 0)) & self._BASE_MODIFIER_MASK
+                keycode = int(event.detail)
+                state = int(event.state) & self._BASE_MODIFIER_MASK
                 binding_id = self._event_bindings.get((keycode, state))
                 if binding_id:
                     self._activation_callback(binding_id)
@@ -532,14 +532,14 @@ class X11GlobalHotkeyBackend:
         except Exception:
             return 0
         masks = [
-            int(getattr(self._x, "ShiftMask", 0)),
-            int(getattr(self._x, "LockMask", 0)),
-            int(getattr(self._x, "ControlMask", 0)),
-            int(getattr(self._x, "Mod1Mask", 0)),
-            int(getattr(self._x, "Mod2Mask", 0)),
-            int(getattr(self._x, "Mod3Mask", 0)),
-            int(getattr(self._x, "Mod4Mask", 0)),
-            int(getattr(self._x, "Mod5Mask", 0)),
+            int(self._x.ShiftMask),
+            int(self._x.LockMask),
+            int(self._x.ControlMask),
+            int(self._x.Mod1Mask),
+            int(self._x.Mod2Mask),
+            int(self._x.Mod3Mask),
+            int(self._x.Mod4Mask),
+            int(self._x.Mod5Mask),
         ]
         for index, entries in enumerate(list(modifier_map or [])):
             for entry in list(entries or []):

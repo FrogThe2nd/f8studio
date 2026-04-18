@@ -154,7 +154,7 @@ def _is_pid_running(pid: int) -> bool:
                 text=True,
                 check=False,
             )
-        except Exception:
+        except OSError:
             return False
         out = (proc.stdout or "").strip()
         if not out or out.lower().startswith("info:"):
@@ -186,7 +186,7 @@ def _terminate_pid(pid: int, *, timeout_s: float = 2.0) -> bool:
                 stderr=subprocess.DEVNULL,
                 check=False,
             )
-        except Exception:
+        except OSError:
             return False
         if int(proc.returncode) == 0:
             return True
@@ -196,8 +196,8 @@ def _terminate_pid(pid: int, *, timeout_s: float = 2.0) -> bool:
         os.kill(target_pid, signal.SIGTERM)
     except ProcessLookupError:
         return True
-    except Exception:
-        logger.debug("SIGTERM failed pid=%s", target_pid, exc_info=True)
+    except OSError as exc:
+        logger.debug("SIGTERM failed pid=%s error_type=%s", target_pid, type(exc).__name__, exc_info=exc)
 
     deadline = time.monotonic() + max(0.1, float(timeout_s))
     while time.monotonic() < deadline:
@@ -209,8 +209,8 @@ def _terminate_pid(pid: int, *, timeout_s: float = 2.0) -> bool:
         os.kill(target_pid, signal.SIGKILL)
     except ProcessLookupError:
         return True
-    except Exception:
-        logger.debug("SIGKILL failed pid=%s", target_pid, exc_info=True)
+    except OSError as exc:
+        logger.debug("SIGKILL failed pid=%s error_type=%s", target_pid, type(exc).__name__, exc_info=exc)
         return not _is_pid_running(target_pid)
 
     deadline_kill = time.monotonic() + max(0.1, float(timeout_s))
@@ -395,13 +395,6 @@ class ProcLauncherServiceNode(ServiceNode, ClosableNode):
             self._log_once(
                 f"spawn failed argv={argv!r} err={type(exc).__name__}:{exc}",
                 sig=f"spawn:os:{argv!r}:{type(exc).__name__}",
-                level="error",
-            )
-            return
-        except Exception as exc:
-            self._log_once(
-                f"spawn failed argv={argv!r} err={type(exc).__name__}:{exc}",
-                sig=f"spawn:ex:{argv!r}:{type(exc).__name__}",
                 level="error",
             )
             return

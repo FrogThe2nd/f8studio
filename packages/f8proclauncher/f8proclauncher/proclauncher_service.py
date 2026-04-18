@@ -18,8 +18,12 @@ async def _teardown(runtime: ServiceRuntime) -> None:
         node = runtime.bus.get_node(runtime.bus.service_id)
         if node is not None and isinstance(node, ClosableNode):
             await node.close()
-    except Exception:
-        logger.exception("service teardown: close failed service_id=%s", runtime.bus.service_id)
+    except Exception as exc:
+        logger.exception(
+            "service teardown: close failed service_id=%s error_type=%s",
+            runtime.bus.service_id,
+            type(exc).__name__,
+        )
 
 
 def build_app() -> ServiceApp:

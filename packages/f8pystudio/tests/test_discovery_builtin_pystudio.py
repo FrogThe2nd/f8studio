@@ -25,7 +25,7 @@ from f8pystudio.render_nodes.backdrop import BackdropRenderNode
 from f8pystudio.render_nodes.note import NoteRenderNode
 from f8pystudio.render_nodes.patch_hub import PatchHubRenderNode
 from f8pystudio.render_nodes.registry import RenderNodeRegistry
-from f8pystudio.ui.widgets.node_property_panel.editor import _should_show_commands_tab
+from f8pystudio.ui.widgets.node_property_panel.editor_tabs_mixin import NodePropertyEditorTabsMixin
 from f8pystudio.ui.widgets.node_property_panel.ports import _F8SpecPortEditor
 from f8pysdk.service_runtime_tools.inventory.catalog import ServiceCatalog
 from f8pysdk.service_runtime_tools.inventory.discovery import load_discovery_into_catalog
@@ -291,7 +291,7 @@ def test_patch_hub_port_editor_renames_mirrored_terminals() -> None:
 
 def test_patch_hub_commands_tab_stays_hidden_without_commands_or_editability() -> None:
     node = PatchHubRenderNode()
-    assert _should_show_commands_tab(node.spec) is False
+    assert NodePropertyEditorTabsMixin._should_show_commands_tab(node.spec) is False
 
 
 def test_commands_tab_stays_visible_when_commands_are_editable_even_if_empty() -> None:
@@ -303,7 +303,7 @@ def test_commands_tab_stays_visible_when_commands_are_editable_even_if_empty() -
         commands=[],
     )
 
-    assert _should_show_commands_tab(spec) is True
+    assert NodePropertyEditorTabsMixin._should_show_commands_tab(spec) is True
 
 
 def test_discovery_registers_value_stepper_operator_spec() -> None:

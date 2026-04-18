@@ -63,6 +63,9 @@ class _LayoutHarness(QtWidgets.QMainWindow):
     _capture_default_dock_layout_state = F8StudioMainWin._capture_default_dock_layout_state
     _restore_saved_window_layout = F8StudioMainWin._restore_saved_window_layout
     _save_window_layout = F8StudioMainWin._save_window_layout
+    _add_menu_section = F8StudioMainWin._add_menu_section
+    _build_view_menu = F8StudioMainWin._build_view_menu
+    _build_log_level_menu = F8StudioMainWin._build_log_level_menu
     _setup_menu = F8StudioMainWin._setup_menu
     _on_reset_layout_triggered = F8StudioMainWin._on_reset_layout_action
     _read_saved_auto_proxy_enabled = F8StudioMainWin._read_saved_auto_proxy_enabled
@@ -141,6 +144,7 @@ class _LayoutHarness(QtWidgets.QMainWindow):
         self._open_project_action = self._create_action("Open Project", handler=lambda: None)
         self._quicksave_project_action = self._create_action("Quick Save", handler=lambda: None)
         self._save_project_as_action = self._create_action("Save Project As", handler=lambda: None)
+        self._clear_all_nodes_action = self._create_action("Clear All Nodes", handler=lambda: None)
         self._auto_save_action = self._create_action(
             "Auto Save",
             handler=lambda _checked: None,
@@ -182,6 +186,9 @@ class _LayoutHarness(QtWidgets.QMainWindow):
 
     def _layout_settings(self) -> QtCore.QSettings:
         return self._settings
+
+    def _ordered_view_docks(self) -> list[QtWidgets.QDockWidget]:
+        return list(self._dock_widgets)
 
     def _setup_view_menu(self) -> None:
         self._setup_menu()

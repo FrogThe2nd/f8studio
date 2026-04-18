@@ -91,12 +91,67 @@ def test_nodegraph_init_has_no_dynamic_getattr_export() -> None:
     assert "__getattr__" not in source
 
 
-def test_service_basenode_imports_extracted_node_helpers() -> None:
+def test_service_basenode_imports_concern_mixins_instead_of_helper_wrappers() -> None:
     imports = _import_targets(PACKAGE_ROOT / "nodegraph" / "service_basenode.py")
     required_targets = {
-        "f8pystudio.nodegraph.items.service_node_interaction",
-        "f8pystudio.nodegraph.items.service_node_layout",
+        "f8pystudio.nodegraph.service_node_graph_mixin",
+        "f8pystudio.nodegraph.service_node_layout_mixin",
+        "f8pystudio.nodegraph.service_node_ports_mixin",
+        "f8pystudio.nodegraph.service_node_toolbar_mixin",
         "f8pystudio.nodegraph.items.service_node_painting",
+    }
+    assert required_targets <= imports
+    removed_targets = {
+        "f8pystudio.nodegraph.items.service_node_graph_hooks",
+        "f8pystudio.nodegraph.items.service_node_layout",
+        "f8pystudio.nodegraph.items.service_node_ports",
+    }
+    assert not (removed_targets & imports)
+
+
+def test_ai_assist_sidebar_imports_mixins_instead_of_internal_helper_modules() -> None:
+    imports = _import_targets(PACKAGE_ROOT / "ui" / "mainwin" / "ai_assist_sidebar.py")
+    required_targets = {
+        "f8pystudio.ui.mainwin.ai_assist_sidebar_graph_context_mixin",
+        "f8pystudio.ui.mainwin.ai_assist_sidebar_toolbar_mixin",
+    }
+    assert required_targets <= imports
+    removed_targets = {
+        "f8pystudio.ui.mainwin.ai_assist_sidebar_graph_context",
+        "f8pystudio.ui.mainwin.ai_assist_sidebar_toolbar",
+    }
+    assert not (removed_targets & imports)
+
+
+def test_schema_builder_dialog_imports_concern_mixins() -> None:
+    imports = _import_targets(PACKAGE_ROOT / "ui" / "dialogs" / "schema_builder_dialog.py")
+    required_targets = {
+        "f8pystudio.ui.dialogs.schema_builder_common",
+        "f8pystudio.ui.dialogs.schema_builder_form_mixin",
+        "f8pystudio.ui.dialogs.schema_builder_sync_mixin",
+        "f8pystudio.ui.dialogs.schema_builder_tree_mixin",
+    }
+    assert required_targets <= imports
+
+
+def test_node_library_widget_imports_tree_mixins() -> None:
+    imports = _import_targets(PACKAGE_ROOT / "ui" / "mainwin" / "node_library_widget.py")
+    required_targets = {
+        "f8pystudio.ui.mainwin.node_library_tree_build_mixin",
+        "f8pystudio.ui.mainwin.node_library_tree_interaction_mixin",
+        "f8pystudio.ui.mainwin.node_library_tree_state_mixin",
+    }
+    assert required_targets <= imports
+
+
+def test_node_property_panel_editor_imports_selection_and_sync_mixins() -> None:
+    imports = _import_targets(PACKAGE_ROOT / "ui" / "widgets" / "node_property_panel" / "editor.py")
+    required_targets = {
+        "f8pystudio.ui.widgets.node_property_panel.editor_build_mixin",
+        "f8pystudio.ui.widgets.node_property_panel.editor_view_state_mixin",
+        "f8pystudio.ui.widgets.node_property_panel.graph_sync_mixin",
+        "f8pystudio.ui.widgets.node_property_panel.selection_mixin",
+        "f8pystudio.ui.widgets.node_property_panel.state_fields_mixin",
     }
     assert required_targets <= imports
 

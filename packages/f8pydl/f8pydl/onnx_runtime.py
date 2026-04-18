@@ -230,7 +230,7 @@ class OnnxYoloDetectorRuntime:
                 kpts = kpts[keep_idx]
 
                 boxes_img = self._map_boxes_to_frame(boxes, lb=lb, frame_bgr=frame_bgr)
-                out: list[Detection] = []
+                detections: list[Detection] = []
                 h0, w0 = frame_bgr.shape[:2]
                 for (x1f, y1f, x2f, y2f), sc, ci, kp_flat in zip(boxes_img, scores, cls_idx, kpts, strict=False):
                     x1i = int(round(float(x1f)))
@@ -240,7 +240,7 @@ class OnnxYoloDetectorRuntime:
                     if x2i <= x1i or y2i <= y1i:
                         continue
                     kp = np.asarray(kp_flat, dtype=np.float32).reshape((int(kpt_count), dims))
-                    kps_out: list[PoseKeypoint] = []
+                    pose_keypoints: list[PoseKeypoint] = []
                     for j in range(int(kpt_count)):
                         x = float(kp[j, 0])
                         y = float(kp[j, 1])
@@ -249,16 +249,16 @@ class OnnxYoloDetectorRuntime:
                         y = (y - float(lb.pad_y)) / float(lb.scale if lb.scale > 0 else 1.0)
                         x = max(0.0, min(float(w0), x))
                         y = max(0.0, min(float(h0), y))
-                        kps_out.append(PoseKeypoint(x=x, y=y, score=s))
-                    out.append(
+                        pose_keypoints.append(PoseKeypoint(x=x, y=y, score=s))
+                    detections.append(
                         Detection(
                             cls=names.get(int(ci), str(int(ci))),
                             conf=float(sc),
                             xyxy=(x1i, y1i, x2i, y2i),
-                            keypoints=kps_out,
+                            keypoints=pose_keypoints,
                         )
                     )
-                return out
+                return detections
 
         has_obj = False
         kpt_off = 4 + nc

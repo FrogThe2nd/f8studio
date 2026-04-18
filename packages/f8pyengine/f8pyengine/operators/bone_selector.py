@@ -5,6 +5,7 @@ from typing import Any
 
 from f8pysdk.specs import (
     F8DataPortSpec,
+    F8ComplexObjectTypeSchema,
     F8OperatorSchemaVersion,
     F8OperatorSpec,
     F8RuntimeNode,
@@ -24,7 +25,7 @@ from ..constants import SERVICE_CLASS
 OPERATOR_CLASS = "f8.bone_selector"
 
 
-def _bone_schema() -> dict[str, Any]:
+def _bone_schema() -> F8ComplexObjectTypeSchema:
     return complex_object_schema(
         properties={
             "name": string_schema(),
@@ -34,7 +35,7 @@ def _bone_schema() -> dict[str, Any]:
     )
 
 
-def _skeleton_schema() -> dict[str, Any]:
+def _skeleton_schema() -> F8ComplexObjectTypeSchema:
     return complex_object_schema(
         properties={
             "bones": array_schema(items=_bone_schema()),

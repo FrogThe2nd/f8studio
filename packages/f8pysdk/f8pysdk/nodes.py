@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from .capabilities import (
     BusAttachableNode,
@@ -13,6 +13,9 @@ from .capabilities import (
     StatefulNode,
 )
 from .state import StateRead
+
+if TYPE_CHECKING:
+    from .generated import F8OperatorSpec
 
 
 @dataclass
@@ -127,6 +130,7 @@ class OperatorNode(RuntimeNode, ExecutableNode):
 
     exec_in_ports: list[str] = field(default_factory=list)
     exec_out_ports: list[str] = field(default_factory=list)
+    SPEC: ClassVar["F8OperatorSpec"]
 
     async def on_exec(self, exec_id: str | int, in_port: str | None = None) -> list[str]:
         _ = exec_id

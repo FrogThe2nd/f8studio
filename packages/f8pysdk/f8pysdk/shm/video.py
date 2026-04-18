@@ -8,7 +8,7 @@ import ctypes
 import errno
 from dataclasses import dataclass
 from multiprocessing.shared_memory import SharedMemory
-from typing import Optional, Tuple
+from typing import Optional, Tuple, cast
 
 from .core import open_shared_memory_create, open_shared_memory_readonly
 from .naming import frame_event_name, video_shm_name
@@ -133,9 +133,10 @@ class VideoShmReader:
 
     @property
     def buf(self) -> memoryview:
-        if not self._shm:
+        shm = self._shm
+        if shm is None:
             raise RuntimeError("VideoShmReader is not open")
-        return self._shm.buf
+        return cast(memoryview, shm.buf)
 
     def wait_new_frame(self, timeout_ms: int = 10) -> bool:
         if self._event:
@@ -243,9 +244,10 @@ class VideoShmWriter:
 
     @property
     def buf(self) -> memoryview:
-        if not self._shm:
+        shm = self._shm
+        if shm is None:
             raise RuntimeError("VideoShmWriter is not open")
-        return self._shm.buf
+        return cast(memoryview, shm.buf)
 
     def _init_header(self) -> None:
         buf = self.buf

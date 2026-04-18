@@ -45,6 +45,19 @@ class AssetCatalogRowState:
             return None
         return " | ".join(parts)
 
+    def badge_texts(self) -> list[str]:
+        texts = [self.presence.value]
+        visibility_key = self.visibility_icon_key()
+        if visibility_key is not None:
+            texts.append(visibility_key)
+        if self.sync_health is not None:
+            texts.append(self.sync_health.value)
+        if self.local_version_number is not None:
+            texts.append(f"L{int(self.local_version_number)}")
+        if self.remote_version_number is not None:
+            texts.append(f"R{int(self.remote_version_number)}")
+        return texts
+
     def visibility_icon_key(self) -> str | None:
         if not self.has_remote_head or not self.visibility:
             return None

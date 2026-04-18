@@ -25,7 +25,7 @@ from f8pystudio.assets.components.component_models import (
 )
 from f8pystudio.assets.components.component_sync import ComponentSyncClient
 from f8pystudio.assets.db import component_remote_cache_table
-from f8pystudio.assets.ui.component_catalog_dialog import ComponentCatalogDialog, component_row_state_for_entries
+from f8pystudio.assets.ui.component_catalog_dialog import ComponentCatalogDialog
 
 
 def _component_record(component_id: str, name: str) -> dict[str, object]:
@@ -680,12 +680,12 @@ def test_component_row_state_badges_cover_local_remote_and_both() -> None:
         remoteVersionNumber=5,
     )
 
-    both_state = component_row_state_for_entries(
+    both_state = ComponentCatalogDialog._component_row_state_for_entries(
         component_id="asset-1",
         local_entry=local_entry,
         remote_entry=remote_entry,
     )
-    remote_state = component_row_state_for_entries(
+    remote_state = ComponentCatalogDialog._component_row_state_for_entries(
         component_id="asset-2",
         local_entry=None,
         remote_entry=F8ComponentEntry(
@@ -696,7 +696,7 @@ def test_component_row_state_badges_cover_local_remote_and_both() -> None:
             remoteVersionNumber=2,
         ),
     )
-    local_state = component_row_state_for_entries(
+    local_state = ComponentCatalogDialog._component_row_state_for_entries(
         component_id="asset-3",
         local_entry=F8ComponentEntry(
             record=F8ComponentRecord(componentId="asset-3", name="Local Only"),
@@ -719,7 +719,7 @@ def test_component_row_state_uses_local_draft_owner_label() -> None:
         isLocalDraft=True,
     )
 
-    row_state = component_row_state_for_entries(
+    row_state = ComponentCatalogDialog._component_row_state_for_entries(
         component_id="draft-component",
         local_entry=local_entry,
         remote_entry=None,
@@ -825,7 +825,7 @@ def test_component_catalog_copy_to_draft_creates_disconnected_local_draft(monkey
     dialog._sync_client = ComponentSyncClient(settings=settings, catalog_service=service)
     monkeypatch.setattr(dialog, "_selected_entry", lambda: remote_entry)
     monkeypatch.setattr(dialog, "_ensure_component_hydrated", lambda entry, operation_name: entry)
-    monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_dialog.show_info", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_actions_mixin.show_info", lambda *_args, **_kwargs: None)
 
     dialog._on_copy_local_clicked()
 
@@ -967,5 +967,30 @@ def test_component_catalog_disables_load_offload_for_local_draft(monkeypatch, tm
     dialog._on_install_clicked()
 
     assert delete_calls == []
+
+    dialog.close()
+
+
+def test_component_catalog_action_buttons_start_hidden_inside_toolbar(monkeypatch) -> None:
+    _ = _ensure_app()
+    monkeypatch.setattr(ComponentCatalogDialog, "_reload", lambda self, *_args: None)
+
+    dialog = ComponentCatalogDialog(parent=None, node_graph=None)
+
+    action_buttons = (
+        dialog._btn_install,
+        dialog._btn_upload,
+        dialog._btn_subscribe,
+        dialog._btn_copy_local,
+        dialog._btn_delete,
+        dialog._btn_edit,
+        dialog._btn_visibility,
+        dialog._btn_history,
+        dialog._btn_create,
+    )
+
+    for button in action_buttons:
+        assert button.isHidden() is True
+        assert dialog._toolbar.isAncestorOf(button) is True
 
     dialog.close()

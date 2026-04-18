@@ -12,6 +12,8 @@ from qtpy import QtCore, QtWidgets
 from f8pysdk.specs import F8OperatorSpec
 
 from f8pystudio.ui.mainwin.ai_assist_sidebar import AiAssistSidebarWidget
+from f8pystudio.ui.mainwin.ai_assist_sidebar_graph_context_mixin import AiAssistSidebarGraphContextMixin
+from f8pystudio.ui.mainwin.ai_assist_sidebar_toolbar_mixin import AiAssistSidebarToolbarMixin
 from f8pystudio.ui.support import webengine_utils
 
 
@@ -218,3 +220,16 @@ def test_sidebar_reuses_prewarmed_webengine_view(monkeypatch) -> None:
     assert len(_FakeWebEngineView.created) == 1
     assert widget._view.parent() is widget
     assert widget._view.base_url is not None
+
+
+def test_sidebar_uses_toolbar_mixin_methods_directly() -> None:
+    assert AiAssistSidebarWidget._refresh_context_toolbar is AiAssistSidebarToolbarMixin._refresh_context_toolbar
+    assert AiAssistSidebarWidget._on_context_usage_updated is AiAssistSidebarToolbarMixin._on_context_usage_updated
+    assert AiAssistSidebarWidget._on_ctx_menu_requested is AiAssistSidebarToolbarMixin._on_ctx_menu_requested
+
+
+def test_sidebar_uses_graph_context_mixin_methods_directly() -> None:
+    assert AiAssistSidebarWidget._wire_graph_signals is AiAssistSidebarGraphContextMixin._wire_graph_signals
+    assert AiAssistSidebarWidget._schedule_selection_refresh is AiAssistSidebarGraphContextMixin._schedule_selection_refresh
+    assert AiAssistSidebarWidget._apply_graph_selection is AiAssistSidebarGraphContextMixin._apply_graph_selection
+    assert AiAssistSidebarWidget._pin_selected_context is AiAssistSidebarGraphContextMixin._pin_selected_context

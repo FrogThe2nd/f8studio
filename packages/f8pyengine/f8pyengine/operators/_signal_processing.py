@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from f8pysdk.codec import parse_number
 
@@ -129,15 +129,18 @@ def sampling_hz_from_interval_ms(value: Any, *, default_interval_ms: float) -> f
 def design_lowpass(*, sampling_hz: float, cutoff: float, order: int) -> np.ndarray:
     nyquist = 0.5 * float(sampling_hz)
     normalized_cutoff = min(max(float(cutoff), 1e-6), nyquist - 1e-6)
-    return butter(int(order), normalized_cutoff, btype="lowpass", fs=float(sampling_hz), output="sos")
+    return cast(np.ndarray, butter(int(order), normalized_cutoff, btype="lowpass", fs=float(sampling_hz), output="sos"))
 
 def design_highpass(*, sampling_hz: float, cutoff: float, order: int) -> np.ndarray:
     nyquist = 0.5 * float(sampling_hz)
     normalized_cutoff = min(max(float(cutoff), 1e-6), nyquist - 1e-6)
-    return butter(int(order), normalized_cutoff, btype="highpass", fs=float(sampling_hz), output="sos")
+    return cast(np.ndarray, butter(int(order), normalized_cutoff, btype="highpass", fs=float(sampling_hz), output="sos"))
 
 def design_bandpass(*, sampling_hz: float, low_cutoff: float, high_cutoff: float, order: int) -> np.ndarray:
     nyquist = 0.5 * float(sampling_hz)
     clipped_low = min(max(float(low_cutoff), 1e-6), nyquist - 2e-6)
     clipped_high = min(max(float(high_cutoff), clipped_low + 1e-6), nyquist - 1e-6)
-    return butter(int(order), [clipped_low, clipped_high], btype="bandpass", fs=float(sampling_hz), output="sos")
+    return cast(
+        np.ndarray,
+        butter(int(order), [clipped_low, clipped_high], btype="bandpass", fs=float(sampling_hz), output="sos"),
+    )

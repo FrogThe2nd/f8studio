@@ -13,6 +13,9 @@ from f8pystudio.ui.dialogs.schema_builder_dialog import (
     schema_to_json_obj,
     validate_schema_json_unknown_keys,
 )
+from f8pystudio.ui.dialogs.schema_builder_form_mixin import SchemaBuilderFormMixin
+from f8pystudio.ui.dialogs.schema_builder_sync_mixin import SchemaBuilderSyncMixin
+from f8pystudio.ui.dialogs.schema_builder_tree_mixin import SchemaBuilderTreeMixin
 
 
 def _ensure_app() -> QtWidgets.QApplication:
@@ -195,3 +198,9 @@ app.processEvents()
         text=True,
     )
     assert result.returncode == 0, f"subprocess exited with {result.returncode}: {result.stderr}"
+
+
+def test_schema_builder_uses_sync_tree_and_form_mixins_directly() -> None:
+    assert SchemaBuilderDialog._on_json_debounce_timeout is SchemaBuilderSyncMixin._on_json_debounce_timeout
+    assert SchemaBuilderDialog._rebuild_tree is SchemaBuilderTreeMixin._rebuild_tree
+    assert SchemaBuilderDialog._render_form is SchemaBuilderFormMixin._render_form

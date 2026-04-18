@@ -106,13 +106,13 @@ class _TCodeViewerWindow(QtWidgets.QDialog):
 
         if QtWebEngineWidgets is None:
             fallback = QtWidgets.QLabel("QtWebEngine is not available")
-            fallback.setAlignment(QtCore.Qt.AlignCenter)
+            fallback.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
             layout.addWidget(fallback, 1)
             return
 
         configure_default_webengine_profile()
         self._view = QtWebEngineWidgets.QWebEngineView(self)
-        self._view.setContextMenuPolicy(QtCore.Qt.NoContextMenu)
+        self._view.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.NoContextMenu)
         self._enable_remote_asset_access()
         self._view.loadFinished.connect(self._on_page_loaded)  # type: ignore[attr-defined]
         page = self._view.page()
