@@ -96,7 +96,9 @@ class ComponentCatalogVersionFlowsMixin:
 
     def _save_remote_version_as_local_component(self, *, entry: F8ComponentEntry, version_number: int) -> None:
         try:
-            historical_entry = self._sync_client.get_component_version(str(entry.record.componentId), int(version_number))
+            historical_entry = self._sync_client.get_component_version(
+                str(entry.record.componentId), int(version_number)
+            )
         except Exception as exc:
             show_warning(self, "Load version failed", str(exc))
             return
@@ -125,7 +127,9 @@ class ComponentCatalogVersionFlowsMixin:
         if not self._ensure_logged_in():
             return
         try:
-            historical_entry = self._sync_client.get_component_version(str(entry.record.componentId), int(version_number))
+            historical_entry = self._sync_client.get_component_version(
+                str(entry.record.componentId), int(version_number)
+            )
         except Exception as exc:
             show_warning(self, "Load version failed", str(exc))
             return

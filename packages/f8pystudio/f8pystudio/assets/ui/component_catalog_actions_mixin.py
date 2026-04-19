@@ -60,16 +60,23 @@ class ComponentCatalogActionsMixin:
         menu = QtWidgets.QMenu(self)
         if current_tab == self._TAB_MINE:
             can_load, can_offload = self._load_action_availability(local_entry=local_entry, remote_entry=remote_entry)
-            load_action = menu.addAction("Offload" if can_offload else "Load")
-            load_action.setEnabled(can_load or can_offload)
-            load_action.triggered.connect(self._on_install_clicked)  # type: ignore[attr-defined]
+            edit_action = menu.addAction("Edit Metadata")
+            edit_action.setEnabled(local_entry is not None)
+            edit_action.triggered.connect(self._on_edit_clicked)  # type: ignore[attr-defined]
+            if can_load:
+                load_action = menu.addAction("Load")
+                load_action.triggered.connect(self._on_install_clicked)  # type: ignore[attr-defined]
             delete_action = menu.addAction("Delete")
-            delete_action.setEnabled(local_entry is not None or (remote_entry is not None and self._is_owned_remote_entry(remote_entry)))
+            delete_action.setEnabled(
+                local_entry is not None or (remote_entry is not None and self._is_owned_remote_entry(remote_entry))
+            )
             delete_action.triggered.connect(self._on_delete_clicked)  # type: ignore[attr-defined]
             fork_action = menu.addAction("Copy to Draft")
             fork_action.triggered.connect(self._on_copy_local_clicked)  # type: ignore[attr-defined]
             sync_action = menu.addAction("Sync")
-            sync_action.setEnabled(local_entry is not None or (remote_entry is not None and self._is_owned_remote_entry(remote_entry)))
+            sync_action.setEnabled(
+                local_entry is not None or (remote_entry is not None and self._is_owned_remote_entry(remote_entry))
+            )
             sync_action.triggered.connect(self._on_upload_clicked)  # type: ignore[attr-defined]
             visibility_label = "Make Public"
             if remote_entry is not None and remote_entry.visibility == F8ComponentVisibility.public:
@@ -77,31 +84,36 @@ class ComponentCatalogActionsMixin:
             visibility_action = menu.addAction(visibility_label)
             visibility_action.setEnabled(remote_entry is not None and self._is_owned_remote_entry(remote_entry))
             visibility_action.triggered.connect(self._on_visibility_clicked)  # type: ignore[attr-defined]
+            history_action = menu.addAction("History")
+            history_action.setEnabled(local_entry is not None or remote_entry is not None)
+            history_action.triggered.connect(self._on_history_clicked)  # type: ignore[attr-defined]
         elif current_tab == self._TAB_COMMUNITY:
             subscribe_action = menu.addAction("Unsubscribe" if selected_entry.subscribed else "Subscribe")
             subscribe_action.setEnabled(
-                selected_entry.source == F8ComponentSourceKind.remote_public and not self._is_owned_remote_entry(selected_entry)
+                selected_entry.source == F8ComponentSourceKind.remote_public
+                and not self._is_owned_remote_entry(selected_entry)
             )
             subscribe_action.triggered.connect(self._on_subscribe_clicked)  # type: ignore[attr-defined]
             fork_action = menu.addAction("Copy to Draft")
             fork_action.triggered.connect(self._on_copy_local_clicked)  # type: ignore[attr-defined]
+            history_action = menu.addAction("History")
+            history_action.setEnabled(local_entry is not None or remote_entry is not None)
+            history_action.triggered.connect(self._on_history_clicked)  # type: ignore[attr-defined]
         else:
-            offload_action = menu.addAction("Offload")
-            offload_action.setEnabled(local_entry is not None or (remote_entry is not None and component_entry_is_installed(remote_entry)))
-            offload_action.triggered.connect(self._on_install_clicked)  # type: ignore[attr-defined]
+            if local_entry is not None or (remote_entry is not None and component_entry_is_installed(remote_entry)):
+                offload_action = menu.addAction(
+                    "Delete"
+                )  # explicitly replacing Offload with Delete locally according to Variants semantics
+                offload_action.triggered.connect(self._on_install_clicked)  # type: ignore[attr-defined]
             pull_action = menu.addAction("Pull")
             pull_action.setEnabled(remote_entry is not None and component_entry_is_installed(remote_entry))
             pull_action.triggered.connect(self._on_upload_clicked)  # type: ignore[attr-defined]
             history_action = menu.addAction("History")
             history_action.setEnabled(local_entry is not None or remote_entry is not None)
             history_action.triggered.connect(self._on_history_clicked)  # type: ignore[attr-defined]
-        if component_entry_is_installed(selected_entry):
-            menu.addSeparator()
-            insert_action = menu.addAction("Create on canvas")
-            insert_action.triggered.connect(self._on_insert_clicked)  # type: ignore[attr-defined]
         return menu
 
-    def _component_overwrite_choices(self) -> list[AssetOverwriteChoice]:
+    def _component_overwrite_choices(self, *, exclude_component_id: str | None = None) -> list[AssetOverwriteChoice]:
         choices = [
             AssetOverwriteChoice(
                 asset_id=str(entry.record.componentId),
@@ -111,6 +123,7 @@ class ComponentCatalogActionsMixin:
             )
             for entry in self._sync_client._catalog_service.load_all_entries()
             if self._is_mine_entry(entry)
+            and (exclude_component_id is None or str(entry.record.componentId) != exclude_component_id)
         ]
         choices.sort(key=lambda choice: choice.label.lower())
         return choices
@@ -131,6 +144,12 @@ class ComponentCatalogActionsMixin:
                 continue
             if self._normalize_component_name(entry.record.name) == normalized_name:
                 return entry
+        return None
+
+    def _validate_edit_component_name(self, candidate: str, component_id: str) -> str | None:
+        normalized_name = self._normalize_component_name(candidate)
+        if self._mine_entry_by_name(normalized_name, exclude_component_id=component_id) is not None:
+            return f"Component name '{normalized_name}' already exists. Please rename."
         return None
 
     def _validate_save_component_name(self, candidate: str, overwrite_component_id: str | None) -> str | None:
@@ -200,19 +219,32 @@ class ComponentCatalogActionsMixin:
 
     def _on_edit_clicked(self) -> None:
         selected_entry = self._selected_entry()
-        if selected_entry is None or selected_entry.source != F8ComponentSourceKind.local:
+        if selected_entry is None:
             return
-        record = selected_entry.record
-        metadata_dialog = ProjectAssetMetaDialog(
+        component_id = str(selected_entry.record.componentId or "").strip()
+        # The Mine tab may show a remote cache entry even when a local copy exists.
+        # Always resolve the actual local entry so we edit the right record.
+        local_entry = self._local_entry_for_component_id(component_id)
+        if local_entry is None:
+            # No local copy — nothing to edit locally.
+            return
+        record = local_entry.record
+        metadata_dialog = AssetOverwriteMetaDialog(
             parent=self,
             title="Edit Component Metadata",
             name=record.name,
             description=record.description,
             tags=list(record.tags or []),
+            overwrite_choices=self._component_overwrite_choices(exclude_component_id=component_id),
+            overwrite_label="Load Metadata From",
+            name_validator=lambda candidate, _selected_id: self._validate_edit_component_name(
+                candidate, component_id
+            ),
         )
         if metadata_dialog.exec() != QtWidgets.QDialog.Accepted:
             return
-        name, description, tags = metadata_dialog.values()
+        name, description, tags, _overwrite_component_id = metadata_dialog.values()
+        from f8pysdk.codec import copy_model
         updated_record = validate_as(
             F8ComponentRecord,
             {
@@ -223,7 +255,26 @@ class ComponentCatalogActionsMixin:
                 "updatedAt": component_now_iso(),
             },
         )
-        upsert_component(updated_record)
+        try:
+            _ = self._sync_client._catalog_service.upsert_local_entry(
+                copy_model(local_entry, update={"record": updated_record})
+            )
+        except ValueError as exc:
+            show_warning(self, "Invalid name", str(exc))
+            return
+        # If already synced to remote, patch metadata there too (no new version created).
+        remote_entry = self._remote_entry_for_component_id(component_id)
+        if remote_entry is not None and self._is_owned_remote_entry(remote_entry):
+            try:
+                _ = self._sync_client.patch_component_meta(
+                    component_id,
+                    name=name,
+                    description=description,
+                    tags=[str(t) for t in tags],
+                )
+            except Exception as exc:
+                show_warning(self, "Remote metadata update failed", str(exc))
+        self._reload()
 
     def _on_delete_clicked(self) -> None:
         selected_entry, local_entry, remote_entry = self._selected_action_entries()

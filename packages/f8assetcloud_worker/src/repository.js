@@ -1,4 +1,4 @@
-import { compressGzip, decompressGzip, escapeLikePattern, isPlainObject, nowIso, nullableString, stringOrDefault, toBoolean } from './utils.js';
+﻿import { compressGzip, decompressGzip, escapeLikePattern, isPlainObject, nowIso, nullableString, stringOrDefault, toBoolean } from './utils.js';
 
 const PAGE_SIZE = 100;
 const MAX_CONTENT_BYTES = 10 * 1024 * 1024;
@@ -13,9 +13,9 @@ export class AssetConflictError extends Error {
   }
 }
 
-export class AssetPermissionError extends Error {}
-export class AssetNotFoundError extends Error {}
-export class AssetValidationError extends Error {}
+export class AssetPermissionError extends Error { }
+export class AssetNotFoundError extends Error { }
+export class AssetValidationError extends Error { }
 
 export class AssetRepository {
   constructor(db) {
@@ -796,6 +796,33 @@ export class AssetRepository {
     return this._getAssetDetailPayload({ assetId, assetType, userId, versionNumber: null });
   }
 
+  async updateVariantMeta({ variantId, payload, user }) {
+    return this._updateAssetMeta({ assetId: variantId, assetType: 'variant', payload, userId: user.userId });
+  }
+
+  async updateComponentMeta({ componentId, payload, user }) {
+    return this._updateAssetMeta({ assetId: componentId, assetType: 'component', payload, userId: user.userId });
+  }
+
+  async _updateAssetMeta({ assetId, assetType, payload, userId }) {
+    // Metadata-only update: updates name/description/tags without creating a new version row.
+    await this._requireOwnedAsset({ assetId, assetType, userId });
+    const name = requireNonEmptyString(payload.name, 'name is required');
+    const description = String(payload.description || '');
+    const tags = Array.isArray(payload.tags) ? payload.tags.map(String) : [];
+    await this._db.prepare(
+      `UPDATE asset_heads
+       SET name = ?,
+           description = ?,
+           tags_json = ?,
+           updated_at = ?
+       WHERE asset_id = ?`,
+    )
+      .bind(name, description, JSON.stringify(tags), nowIso(), String(assetId))
+      .run();
+    return this._getAssetDetailPayload({ assetId, assetType, userId, versionNumber: null });
+  }
+
   async _requireOwnedAsset({ assetId, assetType, userId }) {
     const existing = await this.getAssetById(assetId, assetType);
     if (existing === null || String(existing.asset_type) !== assetType) {
@@ -1312,9 +1339,9 @@ function genericTypedAssetPayload(row, viewerUserId) {
     editable: isOwner,
     subscription: isSubscribed
       ? {
-          subscribedAt: String(row.subscribed_at),
-          lastSeenRevision: nullableString(row.last_seen_revision),
-        }
+        subscribedAt: String(row.subscribed_at),
+        lastSeenRevision: nullableString(row.last_seen_revision),
+      }
       : null,
   };
 }

@@ -341,7 +341,6 @@ class MainWindowUiMixin:
                 self._import_project_json_action,
                 self._export_project_json_action,
                 self._export_published_session_action,
-                self._save_component_action,
             ],
         )
 
@@ -462,9 +461,9 @@ class MainWindowUiMixin:
                 tool_tip="Browse local project versions and restore an older snapshot as the latest version",
             ),
             save_component_action=self._create_action(
-                "Export to Component",
+                "Save As Component",
                 handler=self._on_save_component_action,
-                tool_tip="Export the entire current project as a publish-safe component",
+                tool_tip="Create a publish-safe component from the current graph",
             ),
             manage_components_action=self._create_action(
                 "Components Catalog",

@@ -102,7 +102,9 @@ class VariantCatalogActionsMixin:
             tags=list(selected.tags or []),
             overwrite_choices=self._overwrite_choices_for_base(exclude_variant_id=str(selected.variantId)),
             overwrite_label="Load Metadata From",
-            name_validator=lambda candidate, _selected_id: self._validate_edit_variant_name(candidate, selected.variantId),
+            name_validator=lambda candidate, _selected_id: self._validate_edit_variant_name(
+                candidate, selected.variantId
+            ),
         )
         if dlg.exec() != QtWidgets.QDialog.Accepted:
             return
@@ -112,12 +114,13 @@ class VariantCatalogActionsMixin:
         payload["description"] = description
         payload["tags"] = tags
         payload["updatedAt"] = variant_now_iso()
+        new_record = validate_as(F8VariantRecord, payload)
         try:
             _ = upsert_variant_entry(
                 copy_model(
                     selected_entry,
                     update={
-                        "record": validate_as(F8VariantRecord, payload),
+                        "record": new_record,
                         "remoteVersionNumber": selected_entry.remoteVersionNumber,
                     },
                 )
@@ -125,6 +128,18 @@ class VariantCatalogActionsMixin:
         except ValueError as exc:
             show_warning(self, "Invalid name", str(exc))
             return
+        # If already pushed to remote, patch metadata there too (no new version created).
+        if selected_entry.remoteRevision is not None:
+            try:
+                _ = self._sync_client.patch_variant_meta(
+                    str(selected.variantId),
+                    name=name,
+                    description=description,
+                    tags=[str(t) for t in tags],
+                )
+            except Exception as exc:
+                show_warning(self, "Remote metadata update failed", str(exc))
+        self._reload(preserve_variant_id=str(selected.variantId))
 
     def _overwrite_choices_for_base(self, *, exclude_variant_id: str | None = None) -> list[AssetOverwriteChoice]:
         choices = [
@@ -242,7 +257,9 @@ class VariantCatalogActionsMixin:
         duplicate_name = ensure_unique_variant_name(
             str(record.baseNodeType or ""),
             f"{str(record.name or '').strip() or 'Variant'} Draft",
-            existing_records=[entry.record for entry in self._sync_client._catalog_service._local_provider.load_entries()],
+            existing_records=[
+                entry.record for entry in self._sync_client._catalog_service._local_provider.load_entries()
+            ],
         )
         duplicate_record = validate_as(
             F8VariantRecord,

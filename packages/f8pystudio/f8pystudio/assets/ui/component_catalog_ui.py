@@ -123,7 +123,6 @@ class ComponentCatalogUiMixin:
         self._toolbar.addWidget(self._btn_edit)
         self._toolbar.addWidget(self._btn_visibility)
         self._toolbar.addWidget(self._btn_history)
-        self._toolbar.addWidget(self._btn_create)
 
         self._btn_refresh = btn_refresh
         self._btn_add = btn_add

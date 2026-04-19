@@ -90,10 +90,10 @@ class ComponentCatalogSelectionMixin:
         )
         self._set_button_state(
             self._btn_install,
-            visible=has_selection and current_tab != self._TAB_COMMUNITY,
-            enabled=can_load or can_offload,
-            tooltip=load_tooltip,
-            icon_token=StudioIcon.CLOUD_DOWN if not can_offload else StudioIcon.CLOUD_UP,
+            visible=has_selection and current_tab != self._TAB_COMMUNITY and can_load,
+            enabled=can_load,
+            tooltip="Load",
+            icon_token=StudioIcon.CLOUD_DOWN,
         )
 
         self._set_button_state(
@@ -129,8 +129,12 @@ class ComponentCatalogSelectionMixin:
 
         self._set_button_state(
             self._btn_delete,
-            visible=has_selection and current_tab == self._TAB_MINE,
-            enabled=local_entry is not None or (remote_entry is not None and self._is_owned_remote_entry(remote_entry)),
+            visible=has_selection and current_tab != self._TAB_COMMUNITY,
+            enabled=(
+                local_entry is not None
+                or (remote_entry is not None and self._is_owned_remote_entry(remote_entry))
+                or (current_tab == self._TAB_INSTALLED and can_offload)
+            ),
             tooltip="Delete",
             icon_token=StudioIcon.TRASH,
         )
@@ -162,13 +166,7 @@ class ComponentCatalogSelectionMixin:
             icon_token=StudioIcon.ARTICLE,
         )
 
-        self._set_button_state(
-            self._btn_create,
-            visible=has_selection and current_tab == self._TAB_INSTALLED,
-            enabled=selected is not None and component_entry_is_installed(selected),
-            tooltip="Create on canvas",
-            icon_token=StudioIcon.CIRCLE_PLUS,
-        )
+        # 'Create on canvas' (_btn_create) removed per catalog UX alignment.
 
     def _on_selection_changed(self) -> None:
         selected_entry = self._selected_entry()

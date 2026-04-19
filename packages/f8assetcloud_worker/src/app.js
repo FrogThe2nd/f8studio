@@ -1,4 +1,4 @@
-import { betterAuth, generateId } from 'better-auth';
+﻿import { betterAuth, generateId } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { admin, username } from 'better-auth/plugins';
 import { ApiException } from 'chanfana';
