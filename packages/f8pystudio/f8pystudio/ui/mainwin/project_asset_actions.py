@@ -16,10 +16,10 @@ from ...assets.ui.project_asset_dialogs import (
     AssetVersionBrowserAction,
     AssetVersionBrowserDialog,
     AssetVersionBrowserItem,
-    ProjectAssetMetaDialog,
+    ProjectAssetMetaDialog, AssetOverwriteChoice, AssetOverwriteMetaDialog,
     ProjectPickerDialog,
 )
-from ...assets.components.component_models import F8ComponentRecord
+from ...assets.components.component_models import F8ComponentRecord, F8ComponentEntry, F8ComponentSourceKind
 from ...assets.components.component_repository import upsert_component
 from ...assets.projects.project_models import F8ProjectRecord
 from ...assets.projects.project_storage import ProjectStorageService
@@ -305,6 +305,47 @@ def export_publish_json_dialog(
         return str(start_dir or ""), None
 
 
+def _current_component_user_id() -> str:
+    from ...assets.components.component_sync import ComponentSyncClient
+    user = ComponentSyncClient().current_user()
+    if user is None:
+        return ""
+    return str(user.userId or "").strip()
+
+def _is_owned_remote_component_entry(entry: F8ComponentEntry, *, current_user_id: str) -> bool:
+    if entry.source == F8ComponentSourceKind.remote_private:
+        return True
+    if entry.source != F8ComponentSourceKind.remote_public:
+        return False
+    if not current_user_id:
+        return False
+    return str(entry.ownerUserId or "").strip() == current_user_id
+
+def _mine_component_entries() -> list[F8ComponentEntry]:
+    from ...assets.components.component_repository import list_component_entries
+    current_user_id = _current_component_user_id()
+    entries: list[F8ComponentEntry] = []
+    for entry in list_component_entries(include_uninstalled=True):
+        if entry.source == F8ComponentSourceKind.local or _is_owned_remote_component_entry(entry, current_user_id=current_user_id):
+            entries.append(entry)
+    return entries
+
+def _normalize_component_name(name: str) -> str:
+    return str(name or "").strip()
+
+def _mine_component_entry_by_name(name: str, *, exclude_component_id: str | None = None) -> F8ComponentEntry | None:
+    normalized_name = _normalize_component_name(name)
+    excluded_id = str(exclude_component_id or "").strip()
+    if not normalized_name:
+        return None
+    for entry in _mine_component_entries():
+        component_id = str(entry.record.componentId or "").strip()
+        if excluded_id and component_id == excluded_id:
+            continue
+        if _normalize_component_name(entry.record.name) == normalized_name:
+            return entry
+    return None
+
 def save_component_as_dialog(
     *,
     parent: QtWidgets.QWidget,
@@ -313,35 +354,73 @@ def save_component_as_dialog(
     show_warning: MessageDialogFn,
 ) -> bool:
     seed_name, seed_description, seed_tags = _component_seed_from_current_project()
-    dialog = ProjectAssetMetaDialog(
+    mine_entries = _mine_component_entries()
+    overwrite_choices = [
+        AssetOverwriteChoice(
+            asset_id=str(entry.record.componentId),
+            label=str(entry.record.name),
+            description=str(entry.record.description),
+            tags=[str(tag) for tag in list(entry.record.tags or []) if str(tag).strip()],
+        )
+        for entry in mine_entries
+    ]
+    overwrite_choices.sort(key=lambda choice: choice.label.lower())
+
+    def _validate_save_component_name(candidate: str, overwrite_component_id: str | None) -> str | None:
+        normalized_name = _normalize_component_name(candidate)
+        overwrite_entry = None
+        if overwrite_component_id:
+            for entry in _mine_component_entries():
+                if str(entry.record.componentId) == str(overwrite_component_id):
+                    overwrite_entry = entry
+                    break
+        exclude_id = None if overwrite_entry is None else str(overwrite_entry.record.componentId)
+        if _mine_component_entry_by_name(name=normalized_name, exclude_component_id=exclude_id) is not None:
+            return f"Component name '{normalized_name}' already exists. Please choose the existing component to overwrite."
+        return None
+
+    dialog = AssetOverwriteMetaDialog(
         parent=parent,
-        title="Save As Component",
+        title="Export to Component",
         name=seed_name,
         description=seed_description,
         tags=seed_tags,
+        overwrite_choices=overwrite_choices,
+        overwrite_label="Overwrite Existing Component",
+        name_validator=_validate_save_component_name,
     )
     if dialog.exec() != QtWidgets.QDialog.Accepted:
         return False
 
     try:
-        name, description, tags = dialog.values()
+        name, description, tags, overwrite_component_id = dialog.values()
+        overwrite_entry = None
+        if overwrite_component_id:
+            for entry in _mine_component_entries():
+                if str(entry.record.componentId) == str(overwrite_component_id):
+                    overwrite_entry = entry
+                    break
+        if overwrite_entry is None:
+            overwrite_entry = _mine_component_entry_by_name(name)
         record = F8ComponentRecord(
-            componentId=new_asset_id(),
+            componentId=new_asset_id() if overwrite_entry is None else str(overwrite_entry.record.componentId),
             name=name,
             description=description,
             tags=tags,
             content=studio_graph.serialize_publish_session(),
         )
+        from ...assets.components.component_repository import upsert_component
         upsert_component(record)
-        log_dock.append("studio", f"[component] saved: {record.name} ({record.componentId})\n")
-        show_info(parent, "Component saved", f"Saved component:\n{record.name}")
+        action_text = "Updated" if overwrite_entry is not None else "Saved"
+        log_dock.append("studio", f"[component] {action_text.lower()}: {record.name} ({record.componentId})\n")
+        from ..support.ui_notifications import show_info
+        show_info(parent, f"Component {action_text}", f"{action_text} component:\n{record.name}")
         return True
     except Exception as exc:
         log_dock.append("studio", f"[component] save failed: {exc}\n")
         log_dock.report_exception("studio", "component save failed", exc)
         show_warning(parent, "Save component failed", f"Failed to save component.\n\n{exc}")
         return False
-
 
 def open_component_catalog_dialog(*, parent: QtWidgets.QWidget, studio_graph: ProjectAssetGraphLike) -> None:
     dialog = ComponentCatalogDialog(parent=parent, node_graph=studio_graph)
