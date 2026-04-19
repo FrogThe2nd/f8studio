@@ -1165,3 +1165,30 @@ def test_component_catalog_action_buttons_start_hidden_inside_toolbar(monkeypatc
         assert dialog._toolbar.isAncestorOf(button) is True
 
     dialog.close()
+
+
+def test_component_catalog_row_without_description_stays_compact(monkeypatch) -> None:
+    _ = _ensure_app()
+    monkeypatch.setattr(ComponentCatalogDialog, "_reload", lambda self, *_args: None)
+
+    dialog = ComponentCatalogDialog(parent=None, node_graph=None)
+    entry = F8ComponentEntry(
+        record=F8ComponentRecord(
+            componentId="compact-row",
+            name="Compact Row",
+            description="",
+            schemaVersion="f8studio-session/1",
+            content={"schemaVersion": "f8studio-session/1", "layout": {"nodes": {}, "connections": []}},
+        ),
+        source=F8ComponentSourceKind.remote_public,
+        visibility=F8ComponentVisibility.public,
+        remoteVersionNumber=3,
+        installed=True,
+        hasCachedContent=True,
+    )
+
+    row_widget = dialog._build_list_row(entry)
+
+    assert row_widget.sizeHint().height() <= 56
+
+    dialog.close()

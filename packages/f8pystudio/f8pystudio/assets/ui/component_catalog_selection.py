@@ -233,11 +233,8 @@ class ComponentCatalogSelectionMixin:
         if preview_node_count > AUTO_PREVIEW_NODE_THRESHOLD:
             self._preview.show_deferred_component_payload(
                 entry.record.content,
-                message=(
-                    f"This component has {preview_node_count} nodes.\n"
-                    "Automatic preview is paused to keep browsing fast."
-                ),
-                button_text="Load preview manually",
+                message=f"{preview_node_count} nodes.",
+                button_text="Load preview",
             )
             return
         self._preview.show_component_payload(entry.record.content)
