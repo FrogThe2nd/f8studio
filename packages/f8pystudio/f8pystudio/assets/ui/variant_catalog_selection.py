@@ -8,6 +8,7 @@ from qtpy import QtCore, QtWidgets
 
 from f8pysdk.codec import dump_json
 
+from ...ui.support.qt_lifecycle import qt_runtime_error_is_object_deleted
 from ...ui.support.ui_icons import StudioIcon, icon_for
 from ..variants.variant_catalog import variant_entry_has_cached_content, variant_entry_is_installed
 from ..variants.variant_models import F8VariantEntry, F8VariantRecord, F8VariantSourceKind, F8VariantVisibility
@@ -54,7 +55,12 @@ class VariantCatalogSelectionMixin:
         self._pending_reload_variant_id = ""
 
     def _selected_entry(self) -> F8VariantEntry | None:
-        item = self._list.currentItem()
+        try:
+            item = self._list.currentItem()
+        except RuntimeError as exc:
+            if qt_runtime_error_is_object_deleted(exc):
+                return None
+            raise
         if item is None:
             return None
         variant_id = str(item.data(QtCore.Qt.ItemDataRole.UserRole) or "").strip()

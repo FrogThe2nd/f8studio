@@ -1151,6 +1151,22 @@ def test_component_catalog_dialog_defers_initial_remote_refresh(monkeypatch, tmp
     dialog.close()
 
 
+def test_component_catalog_ignores_deleted_selection_wrapper() -> None:
+    _ensure_app()
+    dialog = ComponentCatalogDialog(parent=None, node_graph=None)
+
+    class _DeletedListWidget:
+        def currentItem(self) -> None:
+            raise RuntimeError("Internal C++ object (PySide6.QtWidgets.QListWidget) already deleted.")
+
+    dialog._list = _DeletedListWidget()  # type: ignore[assignment]
+
+    assert dialog._selected_entry() is None
+    dialog._on_selection_changed()
+
+    dialog.close()
+
+
 def test_variant_dialog_hydration_failure_updates_raw_and_preview(monkeypatch) -> None:
     _ensure_app()
     monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", lambda _cb: (lambda: None))
@@ -1299,6 +1315,41 @@ def test_variant_dialog_defers_reload_during_selection_cache(monkeypatch) -> Non
     assert dialog._selected_variant_id() == "variant-remote"
     assert dialog._btn_install.isEnabled() is True
     assert dialog._btn_create.isEnabled() is False
+
+    dialog.close()
+
+
+def test_variant_dialog_ignores_variants_changed_after_list_deleted(monkeypatch) -> None:
+    _ensure_app()
+    callbacks: list[object] = []
+
+    def _subscribe(callback):
+        callbacks.append(callback)
+        return lambda: callbacks.remove(callback) if callback in callbacks else None
+
+    monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", _subscribe)
+    dialog = VariantCatalogDialog(
+        parent=None,
+        base_node_type="svc.preview.variant",
+        base_node_name="Preview Variant",
+        node_graph=None,
+    )
+
+    class _DeletedListWidget:
+        def currentItem(self) -> None:
+            raise RuntimeError("Internal C++ object (PySide6.QtWidgets.QListWidget) already deleted.")
+
+    def _raise_deleted(*_args, **_kwargs) -> None:
+        raise RuntimeError("Internal C++ object (PySide6.QtWidgets.QListWidget) already deleted.")
+
+    dialog._list = _DeletedListWidget()  # type: ignore[assignment]
+    dialog._reload = _raise_deleted  # type: ignore[method-assign]
+
+    callback = callbacks[0]
+    callback()
+
+    assert callbacks == []
+    assert dialog._variants_changed_unsubscribe is None
 
     dialog.close()
 

@@ -8,6 +8,7 @@ from qtpy import QtCore, QtWidgets
 
 from f8pysdk.codec import dump_json, validate_as
 
+from ...ui.support.qt_lifecycle import qt_runtime_error_is_object_deleted
 from ...ui.support.ui_icons import StudioIcon, icon_for
 from ...ui.support.ui_notifications import show_warning
 from ..variants.variant_events import subscribe_variants_changed
@@ -67,7 +68,13 @@ class VariantCatalogBrowserMixin:
         self._clear_variants_changed_subscription()
 
     def _on_variants_changed(self) -> None:
-        selected_variant_id = self._selected_variant_id()
+        try:
+            selected_variant_id = self._selected_variant_id()
+        except RuntimeError as exc:
+            if qt_runtime_error_is_object_deleted(exc):
+                self._clear_variants_changed_subscription()
+                return
+            raise
         if self._is_handling_selection_change:
             logger.warning(
                 "Variant manager deferred variants_changed reload while handling selection variant_id=%s",
@@ -80,7 +87,7 @@ class VariantCatalogBrowserMixin:
         try:
             self._reload(preserve_variant_id=selected_variant_id)
         except RuntimeError as exc:
-            if "already deleted" in str(exc):
+            if qt_runtime_error_is_object_deleted(exc):
                 self._clear_variants_changed_subscription()
                 return
             raise

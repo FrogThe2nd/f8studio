@@ -7,6 +7,7 @@ from qtpy import QtCore, QtWidgets
 
 from f8pysdk.codec import dump_json, validate_as
 
+from ...ui.support.qt_lifecycle import qt_runtime_error_is_object_deleted
 from ..components.component_events import subscribe_components_changed
 from ..components.component_models import F8ComponentEntry, F8ComponentSourceKind
 from ...ui.support.ui_icons import StudioIcon, icon_for
@@ -321,7 +322,7 @@ class ComponentCatalogBrowserMixin:
         try:
             self._reload()
         except RuntimeError as exc:
-            if "already deleted" in str(exc):
+            if qt_runtime_error_is_object_deleted(exc):
                 self._clear_components_changed_subscription()
                 return
             raise

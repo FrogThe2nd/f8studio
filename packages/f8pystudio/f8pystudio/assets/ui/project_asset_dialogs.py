@@ -9,6 +9,7 @@ from qtpy import QtCore, QtWidgets
 
 from ..common import format_timestamp_for_local_display, format_timestamp_tooltip
 from ..projects.project_models import F8ProjectSummary
+from ...ui.support.qt_lifecycle import qt_runtime_error_is_object_deleted
 from ...ui.support.ui_notifications import show_warning
 
 
@@ -66,6 +67,15 @@ class ProjectAssetMetaDialog(QtWidgets.QDialog):
             str(self._description.text() or "").strip(),
             [tag for tag in tags if tag],
         )
+
+
+def _list_current_item_or_none(list_widget: QtWidgets.QListWidget) -> QtWidgets.QListWidgetItem | None:
+    try:
+        return list_widget.currentItem()
+    except RuntimeError as exc:
+        if qt_runtime_error_is_object_deleted(exc):
+            return None
+        raise
 
 
 @dataclass(frozen=True)
@@ -224,12 +234,14 @@ class ProjectPickerDialog(QtWidgets.QDialog):
                 self._list.setCurrentRow(index)
             self._list.addItem(item)
         self._list.currentItemChanged.connect(self._on_current_item_changed)  # type: ignore[attr-defined]
-        if self._list.currentItem() is None and self._list.count() > 0:
+        current_item = _list_current_item_or_none(self._list)
+        if current_item is None and self._list.count() > 0:
             self._list.setCurrentRow(0)
-        self._on_current_item_changed(self._list.currentItem(), None)
+            current_item = _list_current_item_or_none(self._list)
+        self._on_current_item_changed(current_item, None)
 
     def selected_project_id(self) -> str:
-        item = self._list.currentItem()
+        item = _list_current_item_or_none(self._list)
         if item is None:
             return ""
         return str(item.data(QtCore.Qt.UserRole) or "").strip()

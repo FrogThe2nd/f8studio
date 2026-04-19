@@ -15,6 +15,7 @@ from ...assets.variants.variant_repository import (
     variant_exists,
 )
 from ...assets.variants.variant_events import subscribe_variants_changed
+from ...ui.support.qt_lifecycle import qt_runtime_error_is_object_deleted
 from .node_library_tree_build_mixin import NodeLibraryTreeBuildMixin
 from .node_library_tree_interaction_mixin import NodeLibraryTreeInteractionMixin
 from .node_library_tree_state_mixin import NodeLibraryTreeStateMixin
@@ -204,9 +205,21 @@ class F8StudioNodeLibraryWidget(QtWidgets.QWidget):
             categories_initialized=categories_initialized,
         )
 
+    def _clear_variants_changed_subscription(self) -> None:
+        unsubscribe = self._unsubscribe_variants_changed
+        self._unsubscribe_variants_changed = None
+        if unsubscribe is not None:
+            unsubscribe()
+
     def _on_variants_changed(self) -> None:
-        self._tree.update()
-        self._cancel_invalid_variant_placement_if_needed()
+        try:
+            self._tree.update()
+            self._cancel_invalid_variant_placement_if_needed()
+        except RuntimeError as exc:
+            if qt_runtime_error_is_object_deleted(exc):
+                self._clear_variants_changed_subscription()
+                return
+            raise
 
     def _cancel_invalid_variant_placement_if_needed(self) -> None:
         graph = self._node_graph
@@ -234,10 +247,7 @@ class F8StudioNodeLibraryWidget(QtWidgets.QWidget):
             return
 
     def _on_destroyed(self, _obj: Any) -> None:
-        unsubscribe = self._unsubscribe_variants_changed
-        self._unsubscribe_variants_changed = None
-        if unsubscribe is not None:
-            unsubscribe()
+        self._clear_variants_changed_subscription()
 
     def set_category_label(self, category: str, label: str) -> None:
         self._tree.set_category_label(category, label)

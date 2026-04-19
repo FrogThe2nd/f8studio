@@ -8,6 +8,7 @@ from qtpy import QtCore, QtWidgets
 
 from f8pysdk.codec import dump_json
 
+from ...ui.support.qt_lifecycle import qt_runtime_error_is_object_deleted
 from ...nodegraph.session_schema import extract_layout
 from ...ui.support.ui_icons import StudioIcon, icon_for
 from ..components.component_catalog import (
@@ -24,7 +25,12 @@ AUTO_PREVIEW_NODE_THRESHOLD = 10
 
 class ComponentCatalogSelectionMixin:
     def _selected_entry(self) -> F8ComponentEntry | None:
-        item = self._list.currentItem()
+        try:
+            item = self._list.currentItem()
+        except RuntimeError as exc:
+            if qt_runtime_error_is_object_deleted(exc):
+                return None
+            raise
         if item is None:
             return None
         component_id = str(item.data(QtCore.Qt.UserRole) or "").strip()
