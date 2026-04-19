@@ -7,9 +7,9 @@ from typing import Any, Protocol, cast
 from qtpy import QtWidgets
 
 from ..assets.common import new_asset_id
-from ..assets.components.component_models import F8ComponentRecord
+from ..assets.components.component_models import F8ComponentEntry, F8ComponentRecord, F8ComponentSourceKind
 from ..assets.components.component_repository import upsert_component
-from ..assets.ui.project_asset_dialogs import ProjectAssetMetaDialog
+from ..assets.ui.project_asset_dialogs import AssetOverwriteChoice, AssetOverwriteMetaDialog
 from ..ui.support.ui_notifications import show_info, show_warning
 from .component_publish_payload import (
     collect_component_selected_node_ids,
@@ -59,6 +59,52 @@ class GraphComponentActionsMixin:
         except (AttributeError, RuntimeError, TypeError):
             return ""
 
+    @staticmethod
+    def _current_component_user_id() -> str:
+        from ..assets.components.component_sync import ComponentSyncClient
+        user = ComponentSyncClient().current_user()
+        if user is None:
+            return ""
+        return str(user.userId or "").strip()
+
+    @staticmethod
+    def _is_owned_remote_component_entry(entry: F8ComponentEntry, *, current_user_id: str) -> bool:
+        if entry.source == F8ComponentSourceKind.remote_private:
+            return True
+        if entry.source != F8ComponentSourceKind.remote_public:
+            return False
+        if not current_user_id:
+            return False
+        return str(entry.ownerUserId or "").strip() == current_user_id
+
+    @classmethod
+    def _mine_component_entries(cls) -> list[F8ComponentEntry]:
+        from ..assets.components.component_repository import list_component_entries
+        current_user_id = cls._current_component_user_id()
+        entries: list[F8ComponentEntry] = []
+        for entry in list_component_entries(include_uninstalled=True):
+            if entry.source == F8ComponentSourceKind.local or cls._is_owned_remote_component_entry(entry, current_user_id=current_user_id):
+                entries.append(entry)
+        return entries
+
+    @classmethod
+    def _normalize_component_name(cls, name: str) -> str:
+        return str(name or "").strip()
+
+    @classmethod
+    def _mine_component_entry_by_name(cls, name: str, *, exclude_component_id: str | None = None) -> F8ComponentEntry | None:
+        normalized_name = cls._normalize_component_name(name)
+        excluded_id = str(exclude_component_id or "").strip()
+        if not normalized_name:
+            return None
+        for entry in cls._mine_component_entries():
+            component_id = str(entry.record.componentId or "").strip()
+            if excluded_id and component_id == excluded_id:
+                continue
+            if cls._normalize_component_name(entry.record.name) == normalized_name:
+                return entry
+        return None
+
     def _save_selected_nodes_as_component(self) -> None:
         host = cast(_GraphComponentHost, cast(object, self))
         selected_nodes = list(host.selected_nodes() or [])
@@ -72,24 +118,60 @@ class GraphComponentActionsMixin:
             return
 
         default_name = self._selected_node_name(selected_nodes[0]) if len(selected_nodes) == 1 else "Selection Component"
-        dialog = ProjectAssetMetaDialog(
+        
+        overwrite_choices = [
+            AssetOverwriteChoice(
+                asset_id=str(entry.record.componentId),
+                label=str(entry.record.name),
+                description=str(entry.record.description),
+                tags=[str(tag) for tag in list(entry.record.tags or []) if str(tag).strip()],
+            )
+            for entry in self._mine_component_entries()
+        ]
+        overwrite_choices.sort(key=lambda choice: choice.label.lower())
+
+        def _validate_save_component_name(candidate: str, overwrite_component_id: str | None) -> str | None:
+            normalized_name = self._normalize_component_name(candidate)
+            overwrite_entry = None
+            if overwrite_component_id:
+                for entry in self._mine_component_entries():
+                    if str(entry.record.componentId) == str(overwrite_component_id):
+                        overwrite_entry = entry
+                        break
+            exclude_id = None if overwrite_entry is None else str(overwrite_entry.record.componentId)
+            if self._mine_component_entry_by_name(name=normalized_name, exclude_component_id=exclude_id) is not None:
+                return f"Component name '{normalized_name}' already exists. Please choose the existing component to overwrite."
+            return None
+
+        dialog = AssetOverwriteMetaDialog(
             parent=host._notification_parent(),
             title="Save As Component",
             name=default_name or "Selection Component",
             description="",
             tags=[],
+            overwrite_choices=overwrite_choices,
+            overwrite_label="Overwrite Existing Component",
+            name_validator=_validate_save_component_name,
         )
         if dialog.exec() != QtWidgets.QDialog.Accepted:
             return
 
         try:
-            name, description, tags = dialog.values()
+            name, description, tags, overwrite_component_id = dialog.values()
             payload = trim_component_publish_payload_to_selected_nodes(
                 payload=host.serialize_publish_session(),
                 selected_node_ids=selected_node_ids,
             )
+            overwrite_entry = None
+            if overwrite_component_id:
+                for entry in self._mine_component_entries():
+                    if str(entry.record.componentId) == str(overwrite_component_id):
+                        overwrite_entry = entry
+                        break
+            if overwrite_entry is None:
+                overwrite_entry = self._mine_component_entry_by_name(name)
             record = F8ComponentRecord(
-                componentId=new_asset_id(),
+                componentId=new_asset_id() if overwrite_entry is None else str(overwrite_entry.record.componentId),
                 name=name,
                 description=description,
                 tags=tags,
@@ -101,7 +183,8 @@ class GraphComponentActionsMixin:
             show_warning(host._notification_parent(), "Save component failed", f"Failed to save component.\n\n{exc}")
             return
 
-        show_info(host._notification_parent(), "Component saved", f"Saved component:\n{record.name}")
+        action_text = "Updated" if overwrite_entry is not None else "Saved"
+        show_info(host._notification_parent(), f"Component {action_text}", f"{action_text} component:\n{record.name}")
 
     def _on_save_component_menu_action(self, graph: object, node: object) -> None:
         _ = (graph, node)

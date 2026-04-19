@@ -26,7 +26,7 @@ from ...nodegraph.component_publish_payload import (
     trim_component_publish_payload_to_selected_nodes,
 )
 from ...ui.support.ui_notifications import show_info, show_warning
-from .project_asset_dialogs import ProjectAssetMetaDialog
+from .project_asset_dialogs import AssetOverwriteChoice, AssetOverwriteMetaDialog
 
 
 logger = logging.getLogger(__name__)
@@ -101,16 +101,64 @@ class ComponentCatalogActionsMixin:
             insert_action.triggered.connect(self._on_insert_clicked)  # type: ignore[attr-defined]
         return menu
 
+    def _component_overwrite_choices(self) -> list[AssetOverwriteChoice]:
+        choices = [
+            AssetOverwriteChoice(
+                asset_id=str(entry.record.componentId),
+                label=str(entry.record.name),
+                description=str(entry.record.description),
+                tags=[str(tag) for tag in list(entry.record.tags or []) if str(tag).strip()],
+            )
+            for entry in self._sync_client._catalog_service.load_all_entries()
+            if self._is_mine_entry(entry)
+        ]
+        choices.sort(key=lambda choice: choice.label.lower())
+        return choices
+
+    def _normalize_component_name(self, name: str) -> str:
+        return str(name or "").strip()
+
+    def _mine_entry_by_name(self, name: str, *, exclude_component_id: str | None = None) -> F8ComponentEntry | None:
+        normalized_name = self._normalize_component_name(name)
+        excluded_id = str(exclude_component_id or "").strip()
+        if not normalized_name:
+            return None
+        for entry in self._sync_client._catalog_service.load_all_entries():
+            if not self._is_mine_entry(entry):
+                continue
+            component_id = str(entry.record.componentId or "").strip()
+            if excluded_id and component_id == excluded_id:
+                continue
+            if self._normalize_component_name(entry.record.name) == normalized_name:
+                return entry
+        return None
+
+    def _validate_save_component_name(self, candidate: str, overwrite_component_id: str | None) -> str | None:
+        normalized_name = self._normalize_component_name(candidate)
+        overwrite_entry = None
+        if overwrite_component_id:
+            for entry in self._sync_client._catalog_service.load_all_entries():
+                if self._is_mine_entry(entry) and str(entry.record.componentId) == str(overwrite_component_id):
+                    overwrite_entry = entry
+                    break
+        exclude_id = None if overwrite_entry is None else str(overwrite_entry.record.componentId)
+        if self._mine_entry_by_name(name=normalized_name, exclude_component_id=exclude_id) is not None:
+            return f"Component name '{normalized_name}' already exists. Please choose the existing component to overwrite."
+        return None
+
     def _on_add_clicked(self) -> None:
         graph = self._graph
         if graph is None:
             return
-        metadata_dialog = ProjectAssetMetaDialog(
+        metadata_dialog = AssetOverwriteMetaDialog(
             parent=self,
             title="Save As Component",
             name="Untitled Component",
             description="",
             tags=[],
+            overwrite_choices=self._component_overwrite_choices(),
+            overwrite_label="Overwrite Existing Component",
+            name_validator=self._validate_save_component_name,
         )
         if metadata_dialog.exec() != QtWidgets.QDialog.Accepted:
             return
@@ -126,9 +174,17 @@ class ComponentCatalogActionsMixin:
                     payload=payload,
                     selected_node_ids=selected_node_ids,
                 )
-            name, description, tags = metadata_dialog.values()
+            name, description, tags, overwrite_component_id = metadata_dialog.values()
+            overwrite_entry = None
+            if overwrite_component_id:
+                for entry in self._sync_client._catalog_service.load_all_entries():
+                    if self._is_mine_entry(entry) and str(entry.record.componentId) == str(overwrite_component_id):
+                        overwrite_entry = entry
+                        break
+            if overwrite_entry is None:
+                overwrite_entry = self._mine_entry_by_name(name)
             record = F8ComponentRecord(
-                componentId=new_asset_id(),
+                componentId=new_asset_id() if overwrite_entry is None else str(overwrite_entry.record.componentId),
                 name=name,
                 description=description,
                 tags=tags,
@@ -139,7 +195,8 @@ class ComponentCatalogActionsMixin:
             logger.exception("Component catalog save component failed")
             show_warning(self, "Save component failed", f"Failed to save component.\n\n{exc}")
             return
-        show_info(self, "Saved", f"Saved component:\n{record.name}")
+        action_text = "Updated" if overwrite_entry is not None else "Saved"
+        show_info(self, action_text, f"{action_text} component:\n{record.name}")
 
     def _on_edit_clicked(self) -> None:
         selected_entry = self._selected_entry()
