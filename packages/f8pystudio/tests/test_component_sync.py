@@ -1176,7 +1176,7 @@ def test_component_catalog_row_without_description_stays_compact(monkeypatch) ->
         record=F8ComponentRecord(
             componentId="compact-row",
             name="Compact Row",
-            description="",
+            description="This description should not appear in the row.",
             schemaVersion="f8studio-session/1",
             content={"schemaVersion": "f8studio-session/1", "layout": {"nodes": {}, "connections": []}},
         ),
@@ -1188,7 +1188,9 @@ def test_component_catalog_row_without_description_stays_compact(monkeypatch) ->
     )
 
     row_widget = dialog._build_list_row(entry)
+    row_labels = [label.text() for label in row_widget.findChildren(QtWidgets.QLabel)]
 
     assert row_widget.sizeHint().height() <= 56
+    assert "This description should not appear in the row." not in row_labels
 
     dialog.close()

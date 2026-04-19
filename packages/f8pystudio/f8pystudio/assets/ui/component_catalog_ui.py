@@ -139,7 +139,7 @@ class ComponentCatalogUiMixin:
     def _build_detail_split(self, *, node_graph: object) -> QtWidgets.QSplitter:
         self._list = QtWidgets.QListWidget(self)
         self._list.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
-        self._list.setSpacing(2)
+        self._list.setSpacing(3)
         self._list.setStyleSheet("QListWidget::item { border: 0; padding: 0; }")
         self._list.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
         self._list.itemSelectionChanged.connect(self._on_selection_changed)  # type: ignore[attr-defined]
@@ -182,12 +182,12 @@ class ComponentCatalogUiMixin:
             "}"
         )
         root = QtWidgets.QVBoxLayout(container)
-        root.setContentsMargins(8, 6, 8, 6)
-        root.setSpacing(4)
+        root.setContentsMargins(10, 8, 10, 8)
+        root.setSpacing(6)
 
         title_row = QtWidgets.QHBoxLayout()
         title_row.setContentsMargins(0, 0, 0, 0)
-        title_row.setSpacing(6)
+        title_row.setSpacing(8)
         if row_state.subscribed:
             icon_label = QtWidgets.QLabel(container)
             icon_label.setPixmap(icon_for(container, StudioIcon.HEART_ON).pixmap(14, 14))
@@ -208,7 +208,7 @@ class ComponentCatalogUiMixin:
 
         meta_row = QtWidgets.QHBoxLayout()
         meta_row.setContentsMargins(0, 0, 0, 0)
-        meta_row.setSpacing(4)
+        meta_row.setSpacing(6)
         visibility_badge = self._build_visibility_badge(container, row_state)
         if visibility_badge is not None:
             meta_row.addWidget(visibility_badge, 0)
@@ -220,12 +220,6 @@ class ComponentCatalogUiMixin:
             meta_row.addWidget(version_badge, 0)
         meta_row.addStretch(1)
         root.addLayout(meta_row)
-
-        if entry.record.description:
-            description_label = QtWidgets.QLabel(str(entry.record.description or ""), container)
-            description_label.setWordWrap(True)
-            description_label.setStyleSheet("color: palette(mid);")
-            root.addWidget(description_label)
         return container
 
     @staticmethod
@@ -235,7 +229,7 @@ class ComponentCatalogUiMixin:
             "QLabel {"
             " border: 1px solid #596273;"
             " border-radius: 9px;"
-            " padding: 0px 5px;"
+            " padding: 1px 6px;"
             " color: #d7dde7;"
             " background: #2a3038;"
             "}"
