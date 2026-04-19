@@ -27,6 +27,7 @@ from f8pystudio.assets.components.component_models import (
 from f8pystudio.assets.components.component_sync import ComponentSyncClient
 from f8pystudio.assets.db import component_remote_cache_table
 from f8pystudio.assets.ui.component_catalog_dialog import ComponentCatalogDialog
+from f8pystudio.assets.ui.asset_sync_resolution import AssetSyncDirection
 
 
 def _component_record(component_id: str, name: str) -> dict[str, object]:
@@ -881,6 +882,88 @@ def test_component_push_clears_local_draft(monkeypatch, tmp_path: Path) -> None:
     assert saved_local.syncBaseRemoteRevision == "r1"
     assert saved_local.syncBaseRemoteVersionNumber == 1
     assert saved_local.syncBaseLocalVersionNumber == 1
+
+    dialog.close()
+
+
+def test_component_sync_does_not_bump_local_version_when_only_sync_metadata_changes(monkeypatch, tmp_path: Path) -> None:
+    _ = _ensure_app()
+    settings = QtCore.QSettings(str(tmp_path / "component-sync-noop.ini"), QtCore.QSettings.IniFormat)
+    service = ComponentCatalogService(db_path=tmp_path / "assets.db")
+    local_entry = service.upsert_local_entry(
+        F8ComponentEntry(
+            record=F8ComponentRecord(
+                componentId="owned-overwrite",
+                name="Owned Overwrite",
+                schemaVersion="f8studio-session/1",
+                content={"schemaVersion": "f8studio-session/1", "layout": {"nodes": {}, "connections": []}},
+            ),
+            source=F8ComponentSourceKind.local,
+            localVersionNumber=5,
+            syncBaseRemoteRevision="r4",
+            syncBaseRemoteVersionNumber=4,
+            syncBaseLocalVersionNumber=4,
+        )
+    )
+    remote_entry = service.install_remote_entry(
+        F8ComponentEntry(
+            record=copy_model(local_entry.record, update={"content": {}}),
+            source=F8ComponentSourceKind.remote_private,
+            visibility=F8ComponentVisibility.private,
+            ownerUserId="u1",
+            ownerDisplayName="User One",
+            remoteRevision="r4",
+            remoteVersionNumber=4,
+            installed=True,
+            hasCachedContent=False,
+        )
+    )
+
+    dialog = ComponentCatalogDialog(parent=None, node_graph=None)
+    dialog._sync_client = ComponentSyncClient(settings=settings, catalog_service=service)
+    monkeypatch.setattr(dialog, "_ensure_logged_in", lambda: True)
+    monkeypatch.setattr(dialog, "_ensure_component_hydrated", lambda entry, operation_name: entry)
+    monkeypatch.setattr(
+        dialog._sync_client,
+        "current_user",
+        lambda: F8ComponentRemoteUser(userId="u1", displayName="User One", username="user-one"),
+    )
+    monkeypatch.setattr(dialog, "_reload", lambda *args, **kwargs: None)
+    monkeypatch.setattr(dialog, "_selected_action_entries", lambda: (local_entry, service.entry("owned-overwrite", include_uninstalled=True), service.remote_entry("owned-overwrite")))
+
+    upload_calls: list[F8ComponentEntry] = []
+
+    def _upload_entry(entry: F8ComponentEntry) -> F8ComponentEntry:
+        upload_calls.append(entry)
+        uploaded_entry = copy_model(
+            remote_entry,
+            update={
+                "record": entry.record,
+                "remoteRevision": "r5",
+                "remoteVersionNumber": 5,
+                "installed": True,
+                "hasCachedContent": True,
+            },
+        )
+        return service.install_remote_entry(uploaded_entry)
+
+    monkeypatch.setattr(dialog._sync_client, "upload_entry", _upload_entry)
+
+    synced = dialog._sync_selected_component()
+
+    assert synced is not None
+    assert len(upload_calls) == 1
+    saved_local = service.entry("owned-overwrite", include_uninstalled=True)
+    saved_remote = service.remote_entry("owned-overwrite")
+    assert saved_local is not None
+    assert saved_remote is not None
+    assert saved_local.localVersionNumber == 5
+    assert saved_local.syncBaseRemoteRevision == "r5"
+    assert saved_local.syncBaseRemoteVersionNumber == 5
+    assert saved_local.syncBaseLocalVersionNumber == 5
+    assert saved_remote.remoteRevision == "r5"
+    assert saved_remote.remoteVersionNumber == 5
+    assert dialog._component_sync_decision(local_entry=saved_local, remote_entry=saved_remote) == AssetSyncDirection.noop
 
     dialog.close()
 

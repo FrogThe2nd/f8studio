@@ -100,8 +100,15 @@ class LocalComponentProvider:
         record = entry.record
         version_timestamp = component_now_iso()
         existing_statement = select(
+            component_heads_local_table.c.component_id,
             component_heads_local_table.c.created_at,
             component_heads_local_table.c.latest_version_number,
+            component_heads_local_table.c.updated_at,
+            component_heads_local_table.c.name,
+            component_heads_local_table.c.description,
+            component_heads_local_table.c.tags_json,
+            component_heads_local_table.c.schema_version,
+            component_heads_local_table.c.content,
         ).where(component_heads_local_table.c.component_id == str(record.componentId))
         
         with self._db.begin_sqla() as conn:
@@ -132,7 +139,10 @@ class LocalComponentProvider:
             else:
                 existing_mapping = _row_mapping(existing)
                 created_at = mapping_str(existing_mapping, "created_at")
-                version_number = mapping_int(existing_mapping, "latest_version_number") + 1
+                existing_record = _component_record_from_row(existing_mapping, updated_at_key="updated_at")
+                current_version_number = mapping_int(existing_mapping, "latest_version_number")
+                version_changed = _component_content_changed(existing_record, record)
+                version_number = current_version_number + 1 if version_changed else current_version_number
                 _ = conn.execute(
                     update(component_heads_local_table)
                     .where(component_heads_local_table.c.component_id == str(record.componentId))
@@ -566,6 +576,18 @@ def _component_content_is_hydrated(content: Mapping[str, object]) -> bool:
     layout_value = content.get("layout")
     schema_version_value = content.get("schemaVersion")
     return isinstance(layout_value, dict) and isinstance(schema_version_value, str) and bool(schema_version_value.strip())
+
+
+def _component_content_changed(existing_record: F8ComponentRecord, incoming_record: F8ComponentRecord) -> bool:
+    if str(existing_record.name) != str(incoming_record.name):
+        return True
+    if str(existing_record.description) != str(incoming_record.description):
+        return True
+    if str(existing_record.schemaVersion) != str(incoming_record.schemaVersion):
+        return True
+    if stable_json_dumps(list(existing_record.tags or [])) != stable_json_dumps(list(incoming_record.tags or [])):
+        return True
+    return stable_json_dumps(existing_record.content) != stable_json_dumps(incoming_record.content)
 
 
 def _initial_local_version_number(entry: F8ComponentEntry) -> int:
