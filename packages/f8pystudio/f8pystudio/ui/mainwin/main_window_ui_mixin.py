@@ -9,6 +9,7 @@ from qtpy import QtCore, QtGui, QtWidgets
 from ...assets.ui.asset_cloud_account_menu import build_asset_account_menu
 from ...assets.variants.variant_sync import VariantSyncClient
 from ...nodegraph.edge_rules import EDGE_KIND_DATA, EDGE_KIND_EXEC, EDGE_KIND_STATE
+from ...ui.support.qt_lifecycle import qt_runtime_error_is_object_deleted
 from ...ui.support.ui_icons import StudioIcon, icon_for
 from ..support.service_inventory import collect_declared_services
 from ..widgets.layers_panel import LayersPanelWidget
@@ -40,7 +41,6 @@ class MainWindowActionBundle:
     project_history_action: QtGui.QAction
     save_component_action: QtGui.QAction
     manage_components_action: QtGui.QAction
-    insert_component_action: QtGui.QAction
     auto_save_action: QtGui.QAction
     auto_deploy_action: QtGui.QAction
     performance_overlay_action: QtGui.QAction
@@ -110,6 +110,7 @@ class MainWindowUiMixin:
         _asset_cloud_sync_client: VariantSyncClient | None
         _asset_cloud_account_button: QtWidgets.QToolButton | None
         _node_library_widget: F8StudioNodeLibraryWidget | None
+        _unsubscribe_asset_cache_changed: Callable[[], None] | None
         _ai_assist_sidebar: AiAssistSidebarWidget | None
         _deferred_startup_scheduled: bool
         _deferred_startup_completed: bool
@@ -137,7 +138,6 @@ class MainWindowUiMixin:
         _performance_overlay_action: QtGui.QAction
         _import_graph_action: QtGui.QAction
         _save_component_action: QtGui.QAction
-        _insert_component_action: QtGui.QAction
         _exec_lines_action: QtGui.QAction
         _data_lines_action: QtGui.QAction
         _state_lines_action: QtGui.QAction
@@ -167,7 +167,6 @@ class MainWindowUiMixin:
         def _on_project_history_action(self) -> None: ...
         def _on_save_component_action(self) -> None: ...
         def _on_manage_components_action(self) -> None: ...
-        def _on_insert_component_action(self) -> None: ...
         def _on_auto_save_toggled(self, checked: bool) -> None: ...
         def _on_auto_deploy_toggled(self, checked: bool) -> None: ...
         def _on_performance_overlay_toggled(self, checked: bool) -> None: ...
@@ -236,9 +235,32 @@ class MainWindowUiMixin:
     def _ensure_node_library_widget(self) -> None:
         if self._node_library_widget is not None:
             return
-        widget = F8StudioNodeLibraryWidget(node_graph=self.studio_graph)
+        widget = F8StudioNodeLibraryWidget(node_graph=self.studio_graph, asset_cache_auto_refresh=False)
         self._node_library_widget = widget
         self._replace_dock_widget(self._node_library_dock, widget)
+        self.rebuild_asset_search_sources()
+
+    def rebuild_asset_search_sources(self) -> None:
+        self.studio_graph.rebuild_asset_search_sources()
+        widget = self._node_library_widget
+        if widget is None:
+            return
+        try:
+            widget.rebuild_asset_search_sources()
+        except RuntimeError as exc:
+            if qt_runtime_error_is_object_deleted(exc):
+                self._node_library_widget = None
+                return
+            raise
+
+    def _on_asset_cache_changed(self) -> None:
+        self.rebuild_asset_search_sources()
+
+    def _clear_asset_cache_changed_subscription(self) -> None:
+        unsubscribe = self._unsubscribe_asset_cache_changed
+        self._unsubscribe_asset_cache_changed = None
+        if unsubscribe is not None:
+            unsubscribe()
 
     def _ensure_ai_assist_sidebar(self) -> None:
         if self._ai_assist_sidebar is not None:
@@ -471,11 +493,6 @@ class MainWindowUiMixin:
                 icon=StudioIcon.CUBE_UNFOLDED,
                 tool_tip="Components Catalog",
             ),
-            insert_component_action=self._create_action(
-                "Insert Component",
-                handler=self._on_insert_component_action,
-                tool_tip="Quickly browse reusable components and insert one into the current graph",
-            ),
             auto_save_action=self._create_action(
                 "Auto Save",
                 handler=self._on_auto_save_toggled,
@@ -553,7 +570,6 @@ class MainWindowUiMixin:
         self._project_history_action = action_bundle.project_history_action
         self._save_component_action = action_bundle.save_component_action
         self._manage_components_action = action_bundle.manage_components_action
-        self._insert_component_action = action_bundle.insert_component_action
         self._auto_save_action = action_bundle.auto_save_action
         self._auto_deploy_action = action_bundle.auto_deploy_action
         self._performance_overlay_action = action_bundle.performance_overlay_action

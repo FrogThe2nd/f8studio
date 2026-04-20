@@ -4,6 +4,7 @@ import logging
 import os
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 from qtpy import QtCore, QtWidgets
 
@@ -77,6 +78,11 @@ class _LayoutHarness(QtWidgets.QMainWindow):
     _write_saved_performance_overlay_enabled = F8StudioMainWin._write_saved_performance_overlay_enabled
     _apply_performance_overlay_enabled = F8StudioMainWin._apply_performance_overlay_enabled
     _on_performance_overlay_toggled = F8StudioMainWin._on_performance_overlay_toggled
+    _replace_dock_widget = F8StudioMainWin._replace_dock_widget
+    _ensure_node_library_widget = F8StudioMainWin._ensure_node_library_widget
+    rebuild_asset_search_sources = F8StudioMainWin.rebuild_asset_search_sources
+    _on_asset_cache_changed = F8StudioMainWin._on_asset_cache_changed
+    _clear_asset_cache_changed_subscription = F8StudioMainWin._clear_asset_cache_changed_subscription
 
     class _FakeViewer(F8StudioNodeViewer):
         def __init__(self) -> None:
@@ -148,6 +154,8 @@ class _LayoutHarness(QtWidgets.QMainWindow):
         self._default_dock_layout_state = QtCore.QByteArray()
         self._auto_proxy_enabled = self._read_saved_auto_proxy_enabled()
         self._performance_overlay_enabled = self._read_saved_performance_overlay_enabled()
+        self._node_library_widget = None
+        self._unsubscribe_asset_cache_changed = None
         self._fake_viewer = self._FakeViewer()
         self.studio_graph = self._FakeStudioGraph(self._fake_viewer)
         self._open_project_action = self._create_action("Open Project", handler=lambda: None)
@@ -161,7 +169,6 @@ class _LayoutHarness(QtWidgets.QMainWindow):
             checked=False,
         )
         self._project_history_action = self._create_action("Project History", handler=lambda: None)
-        self._insert_component_action = self._create_action("Insert Component", handler=lambda: None)
         self._save_component_action = self._create_action("Save Component", handler=lambda: None)
         self._import_project_json_action = self._create_action("Import Project JSON", handler=lambda: None)
         self._export_project_json_action = self._create_action("Export Project JSON", handler=lambda: None)
@@ -229,6 +236,43 @@ def test_saved_dock_layout_is_restored_from_settings(tmp_path: Path) -> None:
     _process_events()
 
     assert reader._node_library_dock.isVisible() is False
+
+
+def test_asset_cache_changed_rebuilds_graph_and_node_library(tmp_path: Path) -> None:
+    _ensure_app()
+    harness = _LayoutHarness(_new_settings(tmp_path / "asset-refresh.ini"))
+    calls: list[str] = []
+    harness.studio_graph = SimpleNamespace(rebuild_asset_search_sources=lambda: calls.append("graph"))
+    harness._node_library_widget = SimpleNamespace(rebuild_asset_search_sources=lambda: calls.append("library"))
+
+    harness._on_asset_cache_changed()
+
+    assert calls == ["graph", "library"]
+
+
+def test_ensure_node_library_widget_uses_main_window_refresh_coordinator(monkeypatch, tmp_path: Path) -> None:
+    _ensure_app()
+    harness = _LayoutHarness(_new_settings(tmp_path / "asset-refresh-widget.ini"))
+    calls: list[str] = []
+    created: dict[str, object] = {}
+
+    class _FakeNodeLibraryWidget(QtWidgets.QWidget):
+        def __init__(self, parent=None, node_graph=None, *, asset_cache_auto_refresh=True) -> None:
+            super().__init__(parent)
+            created["node_graph"] = node_graph
+            created["asset_cache_auto_refresh"] = asset_cache_auto_refresh
+
+        def rebuild_asset_search_sources(self) -> None:
+            calls.append("library")
+
+    harness.studio_graph = SimpleNamespace(rebuild_asset_search_sources=lambda: calls.append("graph"))
+    monkeypatch.setattr("f8pystudio.ui.mainwin.main_window_ui_mixin.F8StudioNodeLibraryWidget", _FakeNodeLibraryWidget)
+
+    harness._ensure_node_library_widget()
+
+    assert created["node_graph"] is harness.studio_graph
+    assert created["asset_cache_auto_refresh"] is False
+    assert calls == ["graph", "library"]
 
 
 def test_view_menu_actions_are_checkable_and_reset_restores_defaults(tmp_path: Path) -> None:

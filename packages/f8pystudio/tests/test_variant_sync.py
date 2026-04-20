@@ -33,7 +33,7 @@ from f8pystudio.assets.db import variant_remote_cache_table
 from f8pystudio.assets.ui.asset_sync_resolution import AssetSyncDirection
 from f8pystudio.assets.ui.variant_catalog_dialog import VariantCatalogDialog, variant_row_state_for_entries
 from f8pystudio.nodegraph.graph_variant_actions import GraphVariantActionsMixin
-from f8pysdk.specs import F8VariantRecord
+from f8pysdk.specs import F8ServiceSpec, F8VariantRecord
 
 
 def _make_entry(*, variant_id: str, source: F8VariantSourceKind, installed: bool = True, remote_revision: str | None = None) -> F8VariantEntry:
@@ -66,6 +66,24 @@ def _ensure_app() -> QtWidgets.QApplication:
     if app is None:
         app = QtWidgets.QApplication([])
     return app
+
+
+class _GraphVariantSaveHost(GraphVariantActionsMixin):
+    def __init__(self) -> None:
+        self._parent = QtWidgets.QWidget()
+
+    def _notification_parent(self) -> QtWidgets.QWidget | None:
+        return self._parent
+
+    def context_nodes_menu(self) -> None:
+        return None
+
+    def selected_nodes(self) -> list[object]:
+        return []
+
+    def create_node(self, node_type: str, *, pos: tuple[float, float] | None = None, selected: bool = True, push_undo: bool = True) -> None:
+        _ = (node_type, pos, selected, push_undo)
+        return None
 
 
 class _VariantApiHandler(BaseHTTPRequestHandler):
@@ -740,7 +758,7 @@ def test_variant_refresh_scope_page_preserves_cached_preview_without_marking_ins
     assert service.entry("public-1", include_uninstalled=False) is None
 
 
-def test_variant_upload_replays_missing_local_history_versions(tmp_path: Path, monkeypatch) -> None:
+def test_variant_upload_uses_latest_local_snapshot_only(tmp_path: Path, monkeypatch) -> None:
     settings = QtCore.QSettings(str(tmp_path / "variant-sync-history.ini"), QtCore.QSettings.IniFormat)
     db_path = tmp_path / "assets.db"
     service = VariantCatalogService(
@@ -816,15 +834,25 @@ def test_variant_upload_replays_missing_local_history_versions(tmp_path: Path, m
 
     monkeypatch.setattr(client, "_request_json", _request_json)
 
-    uploaded = client.upload_entry(third)
+    uploaded = client.upload_entry(
+        copy_model(
+            third,
+            update={
+                "source": F8VariantSourceKind.remote_private,
+                "visibility": F8VariantVisibility.private,
+                "remoteRevision": "r1",
+                "remoteVersionNumber": 1,
+                "installed": True,
+                "hasCachedContent": True,
+            },
+        )
+    )
 
-    assert [payload["changeSummary"] for payload in request_payloads] == [
-        "Sync local variant history v2",
-        "Sync local variant history v3",
-    ]
-    assert [payload["record"]["spec"]["label"] for payload in request_payloads] == ["v2", "v3"]
-    assert uploaded.remoteVersionNumber == 3
-    assert uploaded.remoteRevision == "r3"
+    assert len(request_payloads) == 1
+    assert request_payloads[0]["record"]["spec"]["label"] == "v3"
+    assert "changeSummary" not in request_payloads[0]
+    assert uploaded.remoteVersionNumber == 2
+    assert uploaded.remoteRevision == "r2"
 
 
 def test_variant_remote_cache_load_cleans_empty_variant_ids(tmp_path: Path) -> None:
@@ -967,7 +995,7 @@ def test_variant_row_state_badges_cover_remote_both_and_conflict() -> None:
     assert local_changes_state.badge_texts() == ["both", "public", "local changes", "L7", "R6"]
 
 
-def test_variant_sync_persists_local_sync_base_and_second_sync_is_noop(monkeypatch, tmp_path: Path) -> None:
+def test_variant_manager_sync_button_is_disabled_for_owned_remote_without_draft(monkeypatch, tmp_path: Path) -> None:
     app = QtWidgets.QApplication.instance()
     if app is None:
         app = QtWidgets.QApplication([])
@@ -1001,46 +1029,22 @@ def test_variant_sync_persists_local_sync_base_and_second_sync_is_noop(monkeypat
         node_graph=None,
     )
     dialog._sync_client = VariantSyncClient(settings=settings, catalog_service=service)
-    monkeypatch.setattr(dialog, "_reload", lambda *args, **kwargs: None)
-    monkeypatch.setattr(dialog, "_ensure_logged_in", lambda: True)
+    monkeypatch.setattr(
+        dialog._sync_client,
+        "current_user",
+        lambda: F8VariantRemoteUser(userId="u1", displayName="User One", username="user-one"),
+    )
+    dialog._scope_tabs.setCurrentIndex(dialog._TAB_MINE)
+    dialog._refresh_action_buttons(remote_entry)
 
-    upload_calls: list[F8VariantEntry] = []
-
-    def _upload_entry(entry: F8VariantEntry) -> F8VariantEntry:
-        upload_calls.append(entry)
-        return copy_model(
-            remote_entry,
-            update={
-                "remoteRevision": "r1",
-                "remoteVersionNumber": 1,
-                "syncState": F8VariantSyncState.synced,
-            },
-        )
-
-    monkeypatch.setattr(dialog._sync_client, "upload_entry", _upload_entry)
-
-    uploaded = dialog._push_selected_variant(local_entry=local_entry, remote_entry=remote_entry)
-
-    assert uploaded is not None
-    assert len(upload_calls) == 1
-    saved_local = service.entry("sync-1", include_uninstalled=True)
-    assert saved_local is not None
-    assert saved_local.syncBaseRemoteRevision == "r1"
-    assert saved_local.syncBaseRemoteVersionNumber == 1
-    assert saved_local.syncBaseLocalVersionNumber == 1
-
-    monkeypatch.setattr(dialog, "_selected_local_entry", lambda: service.entry("sync-1", include_uninstalled=True))
-    monkeypatch.setattr(dialog, "_selected_remote_entry", lambda: remote_entry)
-
-    synced = dialog._sync_selected_variant()
-
-    assert synced is None
-    assert len(upload_calls) == 1
+    assert local_entry.isLocalDraft is True
+    assert dialog._btn_upload.isVisible() is False
+    assert dialog._btn_upload.isEnabled() is False
 
     dialog.close()
 
 
-def test_variant_push_clears_local_draft_and_restores_remote_owner(monkeypatch, tmp_path: Path) -> None:
+def test_variant_publish_new_draft_keeps_linked_draft_and_restores_remote_owner(monkeypatch, tmp_path: Path) -> None:
     _ = _ensure_app()
     settings = QtCore.QSettings(str(tmp_path / "variant-push-draft.ini"), QtCore.QSettings.IniFormat)
     db_path = tmp_path / "assets.db"
@@ -1065,14 +1069,18 @@ def test_variant_push_clears_local_draft_and_restores_remote_owner(monkeypatch, 
         node_graph=None,
     )
     dialog._sync_client = VariantSyncClient(settings=settings, catalog_service=service)
-    monkeypatch.setattr(dialog, "_reload", lambda *args, **kwargs: None)
+    monkeypatch.setattr(dialog, "_render_browser_from_state", lambda *args, **kwargs: None)
     monkeypatch.setattr(dialog, "_choose_visibility", lambda: F8VariantVisibility.private)
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.variant_catalog_sync_flows.new_asset_id",
+        lambda: "published-variant",
+    )
 
-    def _upload_entry(entry: F8VariantEntry) -> F8VariantEntry:
+    def _create_variant(entry: F8VariantEntry) -> F8VariantEntry:
         uploaded_entry = copy_model(
-            entry,
+            _make_entry(variant_id="published-variant", source=F8VariantSourceKind.remote_private),
             update={
-                "source": F8VariantSourceKind.remote_private,
+                "record": copy_model(entry.record, update={"variantId": "published-variant"}),
                 "visibility": F8VariantVisibility.private,
                 "ownerUserId": "u1",
                 "ownerDisplayName": "User One",
@@ -1085,32 +1093,25 @@ def test_variant_push_clears_local_draft_and_restores_remote_owner(monkeypatch, 
         )
         return service.install_remote_entry(uploaded_entry)
 
-    monkeypatch.setattr(dialog._sync_client, "upload_entry", _upload_entry)
+    monkeypatch.setattr(dialog._sync_client, "create_variant", _create_variant)
 
-    uploaded = dialog._push_selected_variant(local_entry=local_entry, remote_entry=None)
+    uploaded = dialog._publish_variant_draft(local_entry)
 
     assert uploaded is not None
-    saved_local = service._local_provider.load_entries()[0]
-    saved_remote = service.remote_entry("draft-promote")
-    assert saved_local.isLocalDraft is False
-    assert saved_local.draftOriginKind is None
-    assert saved_local.draftOriginAssetId is None
-    assert saved_local.draftOriginRevision is None
-    assert saved_local.syncBaseRemoteRevision == "r1"
-    assert saved_local.syncBaseRemoteVersionNumber == 1
-    assert saved_local.syncBaseLocalVersionNumber == 1
+    saved_draft = dialog._draft_service_for_catalog().draft("draft-promote")
+    saved_remote = service.remote_entry("published-variant")
+    assert saved_draft is not None
+    assert saved_draft.record.variantId == "draft-promote"
+    assert saved_draft.originKind == F8VariantDraftOriginKind.new
+    assert saved_draft.publishTargetAssetId == "published-variant"
+    assert saved_draft.publishBaseRemoteRevision == "r1"
     assert saved_remote is not None
-    row_state = variant_row_state_for_entries(
-        variant_id="draft-promote",
-        local_entry=saved_local,
-        remote_entry=saved_remote,
-    )
-    assert row_state.owner_display_name == "User One"
+    assert saved_remote.ownerDisplayName == "User One"
 
     dialog.close()
 
 
-def test_variant_manager_load_owned_remote_creates_local_head(monkeypatch, tmp_path: Path) -> None:
+def test_variant_manager_load_owned_remote_only_updates_remote_cache(monkeypatch, tmp_path: Path) -> None:
     _ = _ensure_app()
     settings = QtCore.QSettings(str(tmp_path / "variant-load.ini"), QtCore.QSettings.IniFormat)
     db_path = tmp_path / "assets.db"
@@ -1141,7 +1142,7 @@ def test_variant_manager_load_owned_remote_creates_local_head(monkeypatch, tmp_p
         node_graph=None,
     )
     dialog._sync_client = VariantSyncClient(settings=settings, catalog_service=service)
-    monkeypatch.setattr(dialog, "_reload", lambda *args, **kwargs: None)
+    monkeypatch.setattr(dialog, "_render_browser_from_state", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         dialog._sync_client,
         "current_user",
@@ -1165,14 +1166,8 @@ def test_variant_manager_load_owned_remote_creates_local_head(monkeypatch, tmp_p
     loaded = dialog._load_selected_remote_variant()
 
     assert loaded is not None
-    local_entry = service._local_provider.load_entries()[0]
     remote_after = service.remote_entry("owned-remote")
-    assert local_entry.record.variantId == "owned-remote"
-    assert local_entry.localVersionNumber == 1
-    assert local_entry.isLocalDraft is False
-    assert local_entry.syncBaseRemoteRevision == "r1"
-    assert local_entry.syncBaseRemoteVersionNumber == 1
-    assert local_entry.syncBaseLocalVersionNumber == 1
+    assert dialog._draft_service_for_catalog().draft_for_publish_target("owned-remote") is None
     assert remote_after is not None
     assert remote_after.installed is True
     assert remote_after.hasCachedContent is True
@@ -1211,7 +1206,7 @@ def test_variant_manager_copy_to_draft_creates_disconnected_local_draft(monkeypa
         node_graph=None,
     )
     dialog._sync_client = VariantSyncClient(settings=settings, catalog_service=service)
-    monkeypatch.setattr(dialog, "_reload", lambda *args, **kwargs: None)
+    monkeypatch.setattr(dialog, "_render_browser_from_state", lambda *args, **kwargs: None)
     monkeypatch.setattr(dialog, "_selected_entry", lambda: remote_entry)
     monkeypatch.setattr(dialog._sync_client, "cache_variant_content", lambda _variant_id: remote_entry)
 
@@ -1220,8 +1215,8 @@ def test_variant_manager_copy_to_draft_creates_disconnected_local_draft(monkeypa
     assert duplicated is not None
     assert duplicated.record.variantId != "remote-draft-source"
     assert duplicated.isLocalDraft is True
-    assert duplicated.draftOriginAssetId == "remote-draft-source"
-    assert duplicated.draftOriginRevision == "r7"
+    assert duplicated.draftOriginAssetId is None
+    assert duplicated.draftOriginRevision is None
     assert duplicated.syncBaseRemoteRevision is None
     assert duplicated.syncBaseRemoteVersionNumber is None
     assert duplicated.syncBaseLocalVersionNumber is None
@@ -1232,7 +1227,7 @@ def test_variant_manager_copy_to_draft_creates_disconnected_local_draft(monkeypa
 
 def test_variant_catalog_action_buttons_start_hidden_inside_toolbar(monkeypatch) -> None:
     _ = _ensure_app()
-    monkeypatch.setattr(VariantCatalogDialog, "_reload", lambda self, *_args, **_kwargs: None)
+    monkeypatch.setattr(VariantCatalogDialog, "_render_browser_from_state", lambda self, *_args, **_kwargs: None)
 
     dialog = VariantCatalogDialog(parent=None, base_node_type="svc.a.op", base_node_name="Variant", node_graph=None)
 
@@ -1342,51 +1337,54 @@ def test_variant_manager_save_over_remote_offload_seeds_remote_sync_base(monkeyp
         "current_user",
         lambda: F8VariantRemoteUser(userId="u1", displayName="User One", username="user-one"),
     )
+    monkeypatch.setattr(dialog, "_render_browser_from_state", lambda *args, **kwargs: None)
 
     saved_entry = dialog._save_variant_record(record=modified_record, overwrite_entry=remote_entry)
 
-    assert saved_entry.localVersionNumber == 5
-    assert saved_entry.remoteVersionNumber == 4
-    assert saved_entry.syncBaseRemoteRevision == "r4"
-    assert saved_entry.syncBaseRemoteVersionNumber == 4
-    assert saved_entry.syncBaseLocalVersionNumber == 4
-    assert dialog._variant_sync_decision(local_entry=saved_entry, remote_entry=remote_entry) == AssetSyncDirection.push
+    assert saved_entry.isLocalDraft is True
+    assert saved_entry.record.variantId != "owned-overwrite"
+    assert saved_entry.localVersionNumber is None
+    assert saved_entry.remoteVersionNumber is None
+    assert saved_entry.draftOriginAssetId == "owned-overwrite"
+    assert saved_entry.draftOriginRevision == "r4"
 
-    upload_calls: list[F8VariantEntry] = []
+    update_calls: list[F8VariantEntry] = []
 
-    def _upload_entry(entry: F8VariantEntry) -> F8VariantEntry:
-        upload_calls.append(entry)
-        return copy_model(
+    def _update_variant(entry: F8VariantEntry) -> F8VariantEntry:
+        update_calls.append(entry)
+        uploaded_entry = copy_model(
             remote_entry,
             update={
-                "record": entry.record,
+                "record": copy_model(entry.record, update={"variantId": "owned-overwrite"}),
                 "remoteRevision": "r5",
                 "remoteVersionNumber": 5,
                 "installed": True,
                 "hasCachedContent": True,
             },
         )
+        return service.install_remote_entry(uploaded_entry)
 
-    monkeypatch.setattr(dialog, "_ensure_logged_in", lambda: True)
-    monkeypatch.setattr(dialog, "_selected_local_entry", lambda: service._local_provider.load_entries()[0])
-    monkeypatch.setattr(dialog, "_selected_remote_entry", lambda: service.remote_entry("owned-overwrite"))
-    monkeypatch.setattr(dialog, "_reload", lambda *args, **kwargs: None)
-    monkeypatch.setattr(dialog._sync_client, "upload_entry", _upload_entry)
+    monkeypatch.setattr(
+        dialog._sync_client,
+        "cache_variant_content",
+        lambda _variant_id: copy_model(remote_entry, update={"hasCachedContent": True}),
+    )
+    monkeypatch.setattr(dialog._sync_client, "update_variant", _update_variant)
 
-    synced = dialog._sync_selected_variant()
+    published = dialog._publish_variant_draft(saved_entry)
 
-    assert synced is not None
-    assert len(upload_calls) == 1
-    saved_local = service._local_provider.load_entries()[0]
-    assert saved_local.localVersionNumber == 5
-    assert saved_local.syncBaseRemoteRevision == "r5"
-    assert saved_local.syncBaseRemoteVersionNumber == 5
-    assert saved_local.syncBaseLocalVersionNumber == 5
+    assert published is not None
+    assert len(update_calls) == 1
+    assert update_calls[0].record.variantId == "owned-overwrite"
+    updated_draft = dialog._draft_service_for_catalog().draft(str(saved_entry.record.variantId))
+    assert updated_draft is not None
+    assert updated_draft.publishTargetAssetId == "owned-overwrite"
+    assert updated_draft.publishBaseRemoteRevision == "r5"
 
     dialog.close()
 
 
-def test_variant_manager_offload_removes_local_head_and_remote_cache(tmp_path: Path) -> None:
+def test_variant_manager_offload_keeps_draft_and_clears_remote_cache(tmp_path: Path) -> None:
     _ = _ensure_app()
     settings = QtCore.QSettings(str(tmp_path / "variant-offload.ini"), QtCore.QSettings.IniFormat)
     db_path = tmp_path / "assets.db"
@@ -1433,7 +1431,8 @@ def test_variant_manager_offload_removes_local_head_and_remote_cache(tmp_path: P
     changed = dialog._offload_selected_variant(local_entry=local_entry, remote_entry=remote_entry)
 
     assert changed is True
-    assert service._local_provider.load_entries() == []
+    saved_draft = dialog._draft_service_for_catalog().draft(str(local_entry.record.variantId))
+    assert saved_draft is not None
     remote_after = service.remote_entry("owned-offload")
     assert remote_after is not None
     assert remote_after.installed is False
@@ -1442,7 +1441,7 @@ def test_variant_manager_offload_removes_local_head_and_remote_cache(tmp_path: P
     dialog.close()
 
 
-def test_variant_manager_pull_replace_aligns_local_version_with_remote(monkeypatch, tmp_path: Path) -> None:
+def test_variant_manager_pull_replace_does_not_mutate_local_draft(monkeypatch, tmp_path: Path) -> None:
     _ = _ensure_app()
     settings = QtCore.QSettings(str(tmp_path / "variant-pull-replace.ini"), QtCore.QSettings.IniFormat)
     db_path = tmp_path / "assets.db"
@@ -1482,7 +1481,7 @@ def test_variant_manager_pull_replace_aligns_local_version_with_remote(monkeypat
     dialog._sync_client = VariantSyncClient(settings=settings, catalog_service=service)
     monkeypatch.setattr(dialog, "_selected_local_entry", lambda: local_entry)
     monkeypatch.setattr(dialog, "_selected_remote_entry", lambda: remote_entry)
-    monkeypatch.setattr(dialog, "_reload", lambda *args, **kwargs: None)
+    monkeypatch.setattr(dialog, "_render_browser_from_state", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         dialog._sync_client,
         "install_variant",
@@ -1492,16 +1491,18 @@ def test_variant_manager_pull_replace_aligns_local_version_with_remote(monkeypat
     pulled = dialog._pull_selected_variant(force_replace_local=True)
 
     assert pulled is not None
-    saved_local = service._local_provider.load_entries()[0]
-    assert saved_local.localVersionNumber == 4
-    assert saved_local.syncBaseRemoteRevision == "r4"
-    assert saved_local.syncBaseRemoteVersionNumber == 4
-    assert saved_local.syncBaseLocalVersionNumber == 4
+    saved_draft = dialog._draft_service_for_catalog().draft("replace-me")
+    assert saved_draft is not None
+    assert saved_draft.publishTargetAssetId is None
+    remote_after = service.remote_entry("replace-me")
+    assert remote_after is not None
+    assert remote_after.installed is True
+    assert remote_after.hasCachedContent is True
 
     dialog.close()
 
 
-def test_variant_manager_mine_buttons_enable_sync_for_owned_remote_without_local(monkeypatch, tmp_path: Path) -> None:
+def test_variant_manager_mine_buttons_hide_sync_for_owned_remote_without_local(monkeypatch, tmp_path: Path) -> None:
     _ = _ensure_app()
     settings = QtCore.QSettings(str(tmp_path / "variant-buttons.ini"), QtCore.QSettings.IniFormat)
     db_path = tmp_path / "assets.db"
@@ -1541,12 +1542,13 @@ def test_variant_manager_mine_buttons_enable_sync_for_owned_remote_without_local
     dialog._scope_tabs.setCurrentIndex(dialog._TAB_MINE)
     dialog._refresh_action_buttons(remote_entry)
 
-    assert dialog._btn_upload.isEnabled() is True
+    assert dialog._btn_upload.isVisible() is False
+    assert dialog._btn_upload.isEnabled() is False
 
     dialog.close()
 
 
-def test_variant_manager_resolve_overwrite_target_includes_owned_remote(monkeypatch, tmp_path: Path) -> None:
+def test_variant_manager_resolve_overwrite_target_uses_local_draft_only(monkeypatch, tmp_path: Path) -> None:
     _ = _ensure_app()
     settings = QtCore.QSettings(str(tmp_path / "variant-overwrite.ini"), QtCore.QSettings.IniFormat)
     db_path = tmp_path / "assets.db"
@@ -1570,7 +1572,6 @@ def test_variant_manager_resolve_overwrite_target_includes_owned_remote(monkeypa
         },
     )
     service.replace_remote_entries([remote_entry])
-
     dialog = VariantCatalogDialog(
         parent=None,
         base_node_type="svc.a.op",
@@ -1583,13 +1584,28 @@ def test_variant_manager_resolve_overwrite_target_includes_owned_remote(monkeypa
         "current_user",
         lambda: F8VariantRemoteUser(userId="u1", displayName="User One", username="user-one"),
     )
+    draft_service = dialog._draft_service_for_catalog()
+    _ = draft_service.create_draft_from_record(
+        copy_model(
+            remote_entry.record,
+            update={
+                "variantId": "draft-same-name",
+                "name": "Same Name",
+                "updatedAt": variant_now_iso(),
+            },
+        ),
+        origin_kind=F8VariantDraftOriginKind.new,
+        publish_target_asset_id=None,
+        publish_base_remote_revision=None,
+        draft_id="draft-same-name",
+    )
 
     target = dialog._resolve_overwrite_target(name="Same Name", overwrite_variant_id=None)
     choices = dialog._overwrite_choices_for_base()
 
     assert target is not None
-    assert target.record.variantId == "owned-name"
-    assert [choice.asset_id for choice in choices] == ["owned-name"]
+    assert target.record.variantId == "draft-same-name"
+    assert [choice.asset_id for choice in choices] == ["draft-same-name"]
 
     dialog.close()
 
@@ -1635,41 +1651,92 @@ def test_variant_manager_disables_load_offload_for_local_draft(monkeypatch, tmp_
     dialog.close()
 
 
-def test_graph_variant_actions_include_owned_remote_name_conflicts(monkeypatch, tmp_path: Path) -> None:
-    db_path = tmp_path / "assets.db"
-    service = VariantCatalogService(
-        local_provider=LocalVariantProvider(db_path=db_path),
-        remote_provider=RemoteCacheProvider(db_path=db_path),
-    )
-    remote_entry = copy_model(
-        _make_entry(
-            variant_id="graph-owned",
-            source=F8VariantSourceKind.remote_private,
-            installed=False,
-            remote_revision="r1",
-        ),
+def test_graph_variant_actions_name_conflicts_only_use_local_drafts(monkeypatch) -> None:
+    draft_entry = copy_model(
+        _make_entry(variant_id="graph-draft", source=F8VariantSourceKind.local),
         update={
-            "record": copy_model(_make_entry(variant_id="graph-owned", source=F8VariantSourceKind.remote_private).record, update={"name": "Graph Name"}),
-            "visibility": F8VariantVisibility.private,
-            "remoteVersionNumber": 1,
-            "ownerUserId": "u1",
-            "ownerDisplayName": "User One",
+            "record": copy_model(
+                _make_entry(variant_id="graph-draft", source=F8VariantSourceKind.local).record,
+                update={"name": "Graph Name"},
+            ),
+            "isLocalDraft": True,
         },
     )
-    service.replace_remote_entries([remote_entry])
-    monkeypatch.setattr("f8pystudio.assets.variants.variant_repository._service", lambda: service)
     monkeypatch.setattr(
-        "f8pystudio.nodegraph.graph_variant_actions.VariantSyncClient.current_user",
-        lambda self: F8VariantRemoteUser(userId="u1", displayName="User One", username="user-one"),
+        GraphVariantActionsMixin,
+        "_draft_variant_entries_for_base",
+        classmethod(lambda cls, node_type: [draft_entry] if node_type == "svc.a.op" else []),
     )
 
-    target = GraphVariantActionsMixin._mine_variant_entry_by_name(
+    target = GraphVariantActionsMixin._draft_variant_entry_by_name(
         node_type="svc.a.op",
         name="Graph Name",
     )
 
     assert target is not None
-    assert target.record.variantId == "graph-owned"
+    assert target.record.variantId == "graph-draft"
+
+
+def test_graph_variant_actions_overwrite_choices_only_include_drafts(monkeypatch) -> None:
+    _ensure_app()
+    captured_choice_ids: list[str] = []
+    draft_entry = F8VariantEntry(
+        record=F8VariantRecord(
+            variantId="draft-variant",
+            kind=F8VariantKind.service,
+            baseNodeType="svc.a.op",
+            serviceClass="svc.test",
+            operatorClass=None,
+            name="Draft Variant",
+            description="",
+            tags=[],
+            spec={"label": "Draft Variant"},
+            createdAt=variant_now_iso(),
+            updatedAt=variant_now_iso(),
+        ),
+        source=F8VariantSourceKind.local,
+        isLocalDraft=True,
+    )
+
+    class _FakeVariantNode:
+        NODE_NAME = "Variant Node"
+        type_ = "svc.a.op"
+        spec = F8ServiceSpec(serviceClass="svc.test", label="Variant Node")
+
+        def name(self) -> str:
+            return "Node Variant"
+
+    host = _GraphVariantSaveHost()
+
+    monkeypatch.setattr(
+        GraphVariantActionsMixin,
+        "_variant_node_or_none",
+        staticmethod(lambda node: node),
+    )
+    monkeypatch.setattr(
+        GraphVariantActionsMixin,
+        "_draft_variant_entries_for_base",
+        classmethod(lambda cls, node_type: [draft_entry] if node_type == "svc.a.op" else []),
+    )
+
+    def _capture_prompt(
+        self,
+        *,
+        default_name: str,
+        default_description: str,
+        default_tags: list[str],
+        overwrite_choices: list[object],
+        name_validator: object = None,
+    ) -> None:
+        del self, default_name, default_description, default_tags, name_validator
+        captured_choice_ids.extend([str(choice.asset_id) for choice in overwrite_choices])
+        return None
+
+    monkeypatch.setattr(GraphVariantActionsMixin, "_prompt_variant_metadata", _capture_prompt)
+
+    host._save_node_as_variant(_FakeVariantNode())
+
+    assert captured_choice_ids == ["draft-variant"]
 
 
 def test_variant_manager_history_uses_local_version_browser(monkeypatch, tmp_path: Path) -> None:
@@ -1679,26 +1746,29 @@ def test_variant_manager_history_uses_local_version_browser(monkeypatch, tmp_pat
         local_provider=LocalVariantProvider(db_path=tmp_path / "assets.db"),
         remote_provider=RemoteCacheProvider(db_path=tmp_path / "assets.db"),
     )
-    local_entry = service.upsert_local_entry(
-        F8VariantEntry(
-            record=_make_entry(variant_id="local-history", source=F8VariantSourceKind.local).record,
-            source=F8VariantSourceKind.local,
-            syncState=F8VariantSyncState.local_only,
-        )
-    )
-
     dialog = VariantCatalogDialog(parent=None, base_node_type="svc.a.op", base_node_name="Variant", node_graph=None)
     dialog._sync_client = VariantSyncClient(settings=settings, catalog_service=service)
-    _FakeVersionBrowserDialog.seen_titles = []
-    _FakeVersionBrowserDialog.seen_item_counts = []
+    local_entry = dialog._draft_service_for_catalog().list_catalog_entries()
+    if not local_entry:
+        _ = dialog._draft_service_for_catalog().create_draft_from_record(
+            _make_entry(variant_id="local-history", source=F8VariantSourceKind.local).record,
+            origin_kind=F8VariantDraftOriginKind.new,
+            publish_target_asset_id=None,
+            publish_base_remote_revision=None,
+            draft_id="local-history",
+        )
+    draft_entry = dialog._draft_service_for_catalog().list_catalog_entries()[0]
+    info_messages: list[tuple[str, str]] = []
 
-    monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_version_flows.AssetVersionBrowserDialog", _FakeVersionBrowserDialog)
-    monkeypatch.setattr(dialog, "_selected_entry", lambda: local_entry)
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.variant_catalog_version_flows.show_info",
+        lambda _parent, title, message: info_messages.append((str(title), str(message))),
+    )
+    monkeypatch.setattr(dialog, "_selected_entry", lambda: draft_entry)
 
     dialog._on_history_clicked()
 
-    assert _FakeVersionBrowserDialog.seen_titles == [f"Variant History - {local_entry.record.name}"]
-    assert _FakeVersionBrowserDialog.seen_item_counts == [1]
+    assert info_messages == [("Variant History", "Local drafts do not keep local version history.")]
     dialog.close()
 
 
@@ -1720,6 +1790,7 @@ def test_variant_manager_history_uses_remote_version_browser(monkeypatch, tmp_pa
     )
     dialog = VariantCatalogDialog(parent=None, base_node_type="svc.a.op", base_node_name="Variant", node_graph=None)
     dialog._sync_client = VariantSyncClient(settings=settings, catalog_service=service)
+    dialog._scope_tabs.setCurrentIndex(dialog._TAB_MINE)
     _FakeVersionBrowserDialog.seen_titles = []
     _FakeVersionBrowserDialog.seen_item_counts = []
 

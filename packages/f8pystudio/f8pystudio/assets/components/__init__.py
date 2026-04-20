@@ -1,6 +1,8 @@
 from .component_catalog import ComponentCatalogService
+from .component_drafts import ComponentDraftService
 from .component_events import emit_components_changed, subscribe_components_changed
 from .component_models import (
+    F8ComponentDraftEntry,
     F8ComponentEntry,
     F8ComponentLocalVersionSummary,
     F8ComponentRecord,
@@ -30,9 +32,11 @@ from .component_sync import ComponentSyncClient
 
 __all__ = [
     "ComponentCatalogService",
+    "ComponentDraftService",
     "ComponentSyncClient",
     "emit_components_changed",
     "subscribe_components_changed",
+    "F8ComponentDraftEntry",
     "F8ComponentEntry",
     "F8ComponentLocalVersionSummary",
     "F8ComponentRecord",

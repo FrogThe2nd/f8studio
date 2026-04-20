@@ -21,10 +21,11 @@ class ComponentCatalogUiMixin:
 
     def _build_toolbar(self) -> QtWidgets.QHBoxLayout:
         self._scope_tabs = QtWidgets.QTabBar(self)
+        self._scope_tabs.addTab("Drafts")
         self._scope_tabs.addTab("Mine")
         self._scope_tabs.addTab("Community")
         self._scope_tabs.addTab("Installed")
-        self._scope_tabs.currentChanged.connect(self._reload)  # type: ignore[attr-defined]
+        self._scope_tabs.currentChanged.connect(self._on_scope_tab_changed)  # type: ignore[attr-defined]
 
         self._account_button = QtWidgets.QToolButton(self)
         self._account_button.setToolButtonStyle(QtCore.Qt.ToolButtonIconOnly)
@@ -59,19 +60,19 @@ class ComponentCatalogUiMixin:
         self._toolbar.addWidget(self._filter_combo)
         self._toolbar.addSeparator()
 
-        btn_add = QtWidgets.QPushButton(self)
-        btn_refresh = QtWidgets.QPushButton(self)
-        btn_import = QtWidgets.QPushButton(self)
-        btn_export = QtWidgets.QPushButton(self)
-        self._btn_install = QtWidgets.QPushButton(self)
-        self._btn_upload = QtWidgets.QPushButton(self)
-        self._btn_subscribe = QtWidgets.QPushButton(self)
-        self._btn_copy_local = QtWidgets.QPushButton(self)
-        self._btn_delete = QtWidgets.QPushButton(self)
-        self._btn_edit = QtWidgets.QPushButton(self)
-        self._btn_visibility = QtWidgets.QPushButton(self)
-        self._btn_history = QtWidgets.QPushButton(self)
-        self._btn_create = QtWidgets.QPushButton(self)
+        btn_add = QtWidgets.QPushButton(self._toolbar)
+        btn_refresh = QtWidgets.QPushButton(self._toolbar)
+        btn_import = QtWidgets.QPushButton(self._toolbar)
+        btn_export = QtWidgets.QPushButton(self._toolbar)
+        self._btn_install = QtWidgets.QPushButton(self._toolbar)
+        self._btn_upload = QtWidgets.QPushButton(self._toolbar)
+        self._btn_subscribe = QtWidgets.QPushButton(self._toolbar)
+        self._btn_copy_local = QtWidgets.QPushButton(self._toolbar)
+        self._btn_delete = QtWidgets.QPushButton(self._toolbar)
+        self._btn_edit = QtWidgets.QPushButton(self._toolbar)
+        self._btn_visibility = QtWidgets.QPushButton(self._toolbar)
+        self._btn_history = QtWidgets.QPushButton(self._toolbar)
+        self._btn_create = QtWidgets.QPushButton(self._toolbar)
 
         button_specs = [
             (btn_add, StudioIcon.CIRCLE_PLUS, "Save As Component"),
@@ -171,6 +172,10 @@ class ComponentCatalogUiMixin:
 
     def _build_list_row(self, entry: F8ComponentEntry) -> QtWidgets.QWidget:
         row_state = self._row_state_for_entry(entry)
+        linked_reference_text = self._linked_draft_reference_text(entry)
+        linked_reference_tooltip = self._linked_draft_reference_tooltip(entry)
+        linked_draft_badge_text = self._linked_draft_badge_text(entry)
+        linked_draft_badge_tooltip = self._linked_draft_badge_tooltip(entry)
         container = QtWidgets.QWidget(self._list)
         container.setObjectName("catalogRowCard")
         container.setStyleSheet(
@@ -181,8 +186,8 @@ class ComponentCatalogUiMixin:
             "}"
         )
         root = QtWidgets.QVBoxLayout(container)
-        root.setContentsMargins(10, 8, 10, 8)
-        root.setSpacing(6)
+        root.setContentsMargins(10, 6, 10, 6)
+        root.setSpacing(4)
 
         title_row = QtWidgets.QHBoxLayout()
         title_row.setContentsMargins(0, 0, 0, 0)
@@ -205,9 +210,41 @@ class ComponentCatalogUiMixin:
             title_row.addWidget(owner_label, 0)
         root.addLayout(title_row)
 
+        if linked_reference_text is not None:
+            linked_label = QtWidgets.QLabel(linked_reference_text, container)
+            linked_label.setStyleSheet(
+                "QLabel {"
+                " color: #dbeafe;"
+                " font-size: 12px;"
+                " font-weight: 600;"
+                " background: #172033;"
+                " border: 1px solid #355070;"
+                " border-radius: 8px;"
+                " padding: 2px 8px;"
+                "}"
+            )
+            if linked_reference_tooltip is not None:
+                linked_label.setToolTip(linked_reference_tooltip)
+            root.addWidget(linked_label)
+
         meta_row = QtWidgets.QHBoxLayout()
         meta_row.setContentsMargins(0, 0, 0, 0)
         meta_row.setSpacing(6)
+        if linked_draft_badge_text is not None:
+            linked_draft_badge = self._build_text_badge(container, linked_draft_badge_text)
+            linked_draft_badge.setStyleSheet(
+                "QLabel {"
+                " border: 1px solid #1f7a5a;"
+                " border-radius: 9px;"
+                " padding: 1px 6px;"
+                " color: #dcfce7;"
+                " background: #14532d;"
+                " font-weight: 600;"
+                "}"
+            )
+            if linked_draft_badge_tooltip is not None:
+                linked_draft_badge.setToolTip(linked_draft_badge_tooltip)
+            meta_row.addWidget(linked_draft_badge, 0)
         visibility_badge = self._build_visibility_badge(container, row_state)
         if visibility_badge is not None:
             meta_row.addWidget(visibility_badge, 0)
@@ -335,4 +372,6 @@ class ComponentCatalogUiMixin:
             return None
         if owner_text.casefold() == cls.LOCAL_DRAFT_LABEL.casefold():
             return cls.LOCAL_DRAFT_LABEL
+        if owner_text.casefold() == cls.LINKED_DRAFT_LABEL.casefold():
+            return cls.LINKED_DRAFT_LABEL
         return f"by {owner_text}"

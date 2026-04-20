@@ -18,6 +18,16 @@ class VariantCatalogVersionFlowsMixin:
         selected_entry = self._selected_entry()
         if selected_entry is None:
             return
+        if self._scope_tabs.currentIndex() == self._TAB_DRAFTS:
+            if not selected_entry.draftOriginAssetId:
+                show_info(self, "Variant History", "Local drafts do not keep local version history.")
+                return
+            remote_entry = self._remote_entry_for_variant_id(str(selected_entry.draftOriginAssetId))
+            if remote_entry is None:
+                show_warning(self, "History failed", "Linked cloud asset is not available.")
+                return
+            self._show_remote_history(remote_entry)
+            return
         if selected_entry.source == F8VariantSourceKind.local:
             self._show_local_history(selected_entry)
             return

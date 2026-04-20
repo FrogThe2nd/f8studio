@@ -14,7 +14,7 @@ class VariantCatalogUiMixin:
     _is_global_mode: bool
     setWindowTitle: Any
     resize: Any
-    _reload: Any
+    _on_scope_tab_changed: Any
     _on_accounts_clicked: Any
     _on_search_text_changed: Any
     _on_search_submitted: Any
@@ -49,10 +49,11 @@ class VariantCatalogUiMixin:
 
     def _build_toolbar(self) -> QtWidgets.QHBoxLayout:
         self._scope_tabs = QtWidgets.QTabBar(self)
+        self._scope_tabs.addTab("Drafts")
         self._scope_tabs.addTab("Mine")
         self._scope_tabs.addTab("Community")
         self._scope_tabs.addTab("Installed")
-        self._scope_tabs.currentChanged.connect(self._reload)  # type: ignore[attr-defined]
+        self._scope_tabs.currentChanged.connect(self._on_scope_tab_changed)  # type: ignore[attr-defined]
 
         self._account_button = QtWidgets.QToolButton(self)
         self._account_button.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonIconOnly)
@@ -98,19 +99,19 @@ class VariantCatalogUiMixin:
         self._toolbar.addWidget(self._filter_combo)
         self._toolbar.addSeparator()
 
-        btn_add = QtWidgets.QPushButton("Save From Selected Node", self)
-        btn_refresh = QtWidgets.QPushButton("Refresh", self)
-        btn_import = QtWidgets.QPushButton("Import...", self)
-        btn_export = QtWidgets.QPushButton("Export...", self)
-        self._btn_install = QtWidgets.QPushButton(self)
-        self._btn_upload = QtWidgets.QPushButton(self)
-        self._btn_subscribe = QtWidgets.QPushButton(self)
-        self._btn_copy_local = QtWidgets.QPushButton(self)
-        self._btn_delete = QtWidgets.QPushButton(self)
-        self._btn_edit = QtWidgets.QPushButton(self)
-        self._btn_visibility = QtWidgets.QPushButton(self)
-        self._btn_history = QtWidgets.QPushButton(self)
-        self._btn_create = QtWidgets.QPushButton(self)
+        btn_add = QtWidgets.QPushButton("Save From Selected Node", self._toolbar)
+        btn_refresh = QtWidgets.QPushButton("Refresh", self._toolbar)
+        btn_import = QtWidgets.QPushButton("Import...", self._toolbar)
+        btn_export = QtWidgets.QPushButton("Export...", self._toolbar)
+        self._btn_install = QtWidgets.QPushButton(self._toolbar)
+        self._btn_upload = QtWidgets.QPushButton(self._toolbar)
+        self._btn_subscribe = QtWidgets.QPushButton(self._toolbar)
+        self._btn_copy_local = QtWidgets.QPushButton(self._toolbar)
+        self._btn_delete = QtWidgets.QPushButton(self._toolbar)
+        self._btn_edit = QtWidgets.QPushButton(self._toolbar)
+        self._btn_visibility = QtWidgets.QPushButton(self._toolbar)
+        self._btn_history = QtWidgets.QPushButton(self._toolbar)
+        self._btn_create = QtWidgets.QPushButton(self._toolbar)
 
         btn_refresh.setIcon(icon_for(btn_refresh, StudioIcon.REFRESH))
         btn_add.setIcon(icon_for(btn_add, StudioIcon.CIRCLE_PLUS))

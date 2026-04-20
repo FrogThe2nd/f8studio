@@ -163,3 +163,47 @@ def test_studio_toast_reflows_without_overlap_after_bottom_toast_closes() -> Non
     toast_top.close()
     parent.close()
     QtWidgets.QApplication.processEvents()
+
+
+def test_studio_toast_falls_back_to_screen_geometry_after_anchor_deletion() -> None:
+    _ensure_app()
+    parent = QtWidgets.QWidget()
+    parent.setGeometry(100, 120, 920, 720)
+    parent.show()
+
+    toast_bottom = _StudioToast(
+        anchor=parent,
+        title="First",
+        message="Bottom toast",
+        style=_INFO_STYLE,
+        duration_ms=0,
+    )
+    toast_top = _StudioToast(
+        anchor=parent,
+        title="Second",
+        message="Top toast",
+        style=_INFO_STYLE,
+        duration_ms=0,
+    )
+
+    _ACTIVE_TOASTS.append(toast_bottom)
+    _ACTIVE_TOASTS.append(toast_top)
+    toast_bottom.show_with_animation()
+    toast_top.show_with_animation()
+    QtWidgets.QApplication.processEvents()
+
+    parent.close()
+    parent.deleteLater()
+    QtWidgets.QApplication.processEvents()
+
+    geometry = toast_top._target_geometry()
+    assert geometry.width() > 0
+    assert geometry.height() > 0
+
+    toast_bottom.close()
+    QtWidgets.QApplication.processEvents()
+
+    assert toast_top in _ACTIVE_TOASTS
+
+    toast_top.close()
+    QtWidgets.QApplication.processEvents()

@@ -19,7 +19,6 @@ from .project_asset_actions import (
     insert_graph_json_dialog,
     load_last_project,
     open_component_catalog_dialog,
-    open_component_insert_dialog,
     open_project_dialog,
     save_component_as_dialog,
     save_project,
@@ -252,17 +251,6 @@ class MainWindowProjectMixin:
     @QtCore.Slot()
     def _on_manage_components_action(self) -> None:
         open_component_catalog_dialog(parent=self, studio_graph=self.studio_graph)
-
-    @QtCore.Slot()
-    def _on_insert_component_action(self) -> None:
-        open_component_insert_dialog(parent=self, studio_graph=self.studio_graph)
-
-    def _open_component_insert_dialog_for_graph(self, scene_pos: tuple[float, float] | None) -> None:
-        open_component_insert_dialog(
-            parent=self,
-            studio_graph=self.studio_graph,
-            insert_scene_pos=scene_pos,
-        )
 
     def _open_node_docs_dialog_for_graph(self, spec: SpecTemplate, node_id: str, node_name: str) -> None:
         show_node_docs_dialog(parent=self, spec=spec, node_id=node_id, node_name=node_name)

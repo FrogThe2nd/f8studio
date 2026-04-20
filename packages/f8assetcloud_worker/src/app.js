@@ -307,6 +307,15 @@ async function routeAssetRequest({ auth, repo, request, url, assetType }) {
     return jsonResponse(200, result);
   }
 
+  if (parts.length === 2 && parts[1] === 'meta' && request.method === 'PATCH') {
+    const user = await requireAssetWriteUser({ auth, repo, request });
+    const payload = await readJsonBody(request);
+    const result = assetType === 'variant'
+      ? await repo.updateVariantMeta({ variantId: assetId, payload, user })
+      : await repo.updateComponentMeta({ componentId: assetId, payload, user });
+    return jsonResponse(200, result);
+  }
+
   if (parts.length === 2 && parts[1] === 'versions' && request.method === 'GET') {
     const viewer = await optionalAuthenticatedUser({ auth, request });
     const result = assetType === 'variant'

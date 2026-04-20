@@ -843,6 +843,13 @@ class F8StudioNodeViewer(NodeViewer):
             return
         graph.toggle_node_search()
 
+    def tab_search_rebuild_nodes(self, nodes: dict[str, list[str]]) -> None:
+        self._search_widget.rebuild = True
+        self.tab_search_set_nodes(nodes)
+
+    def is_tab_search_visible(self) -> bool:
+        return bool(self._search_widget.isVisible())
+
     def _validate_accept_connection(self, from_port, to_port):  # type: ignore[override]
         if not super()._validate_accept_connection(from_port, to_port):
             return False

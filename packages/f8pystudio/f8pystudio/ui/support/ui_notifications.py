@@ -10,6 +10,8 @@ from typing import Callable
 
 from qtpy import QtCore, QtGui, QtWidgets
 
+from .qt_lifecycle import qt_object_is_valid, qt_runtime_error_is_object_deleted
+
 logger = logging.getLogger(__name__)
 
 _MAX_VISIBLE_TOASTS = 4
@@ -203,6 +205,7 @@ class _StudioToast(QtWidgets.QFrame):
     ) -> None:
         super().__init__(None)
         self._anchor = anchor.window() if anchor is not None else None
+        self._anchor_stack_key = None if self._anchor is None else id(self._anchor)
         self._style = style
         self._duration_ms = max(0, duration_ms)
         self._safe_window_mode = _use_safe_toast_window_mode()
@@ -402,9 +405,10 @@ class _StudioToast(QtWidgets.QFrame):
         self.resize(self.sizeHint().expandedTo(self.minimumSizeHint()))
 
     def _target_width(self) -> int:
-        screen = _screen_for_parent(self._anchor)
-        if self._anchor is not None:
-            anchor_width = max(1, self._anchor.frameGeometry().width())
+        anchor = self._live_anchor()
+        screen = _screen_for_parent(anchor)
+        if anchor is not None:
+            anchor_width = max(1, anchor.frameGeometry().width())
             usable_width = anchor_width - (_TOAST_SCREEN_MARGIN * 2)
             return max(_TOAST_MIN_WIDTH, min(_TOAST_MAX_WIDTH, usable_width))
         if screen is None:
@@ -413,7 +417,7 @@ class _StudioToast(QtWidgets.QFrame):
         return max(_TOAST_MIN_WIDTH, min(_TOAST_MAX_WIDTH, int(available_width * 0.38)))
 
     def _anchor_key(self) -> int | None:
-        return None if self._anchor is None else id(self._anchor)
+        return self._anchor_stack_key
 
     def _stack_offset(self) -> int:
         offset = 0
@@ -434,27 +438,38 @@ class _StudioToast(QtWidgets.QFrame):
         self.move(max(min_x, x), max(min_y, y))
 
     def _target_geometry(self) -> QtCore.QRect:
-        if self._anchor is not None:
-            return self._anchor.frameGeometry()
-        screen = _screen_for_parent(self._anchor)
+        anchor = self._live_anchor()
+        if anchor is not None:
+            return anchor.frameGeometry()
+        screen = _screen_for_parent(anchor)
         if screen is None:
             return QtCore.QRect(0, 0, 1280, 720)
         return screen.availableGeometry()
 
     def _install_anchor_filter(self) -> None:
-        if self._anchor is None or self._watched_anchor is self._anchor:
+        anchor = self._live_anchor()
+        if anchor is None or self._watched_anchor is anchor:
             return
-        self._anchor.installEventFilter(self)
-        self._watched_anchor = self._anchor
+        anchor.installEventFilter(self)
+        self._watched_anchor = anchor
 
     def _remove_anchor_filter(self) -> None:
         if self._watched_anchor is None:
             return
         try:
             self._watched_anchor.removeEventFilter(self)
-        except RuntimeError:
-            pass
+        except RuntimeError as exc:
+            if not qt_runtime_error_is_object_deleted(exc):
+                raise
         self._watched_anchor = None
+
+    def _live_anchor(self) -> QtWidgets.QWidget | None:
+        anchor = self._anchor
+        if qt_object_is_valid(anchor):
+            return anchor
+        self._anchor = None
+        self._remove_anchor_filter()
+        return None
 
     def eventFilter(self, watched: QtCore.QObject, event: QtCore.QEvent) -> bool:
         if watched is self._anchor and event.type() in {

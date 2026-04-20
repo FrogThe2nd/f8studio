@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import zlib
 import http.cookies
@@ -229,11 +229,16 @@ class ComponentSyncClient:
         )
         return _component_record_from_content_payload(payload, component_id=component_id)
 
-    def hydrate_component(self, component_id: str) -> F8ComponentEntry:
+    def cache_component_content(self, component_id: str) -> F8ComponentEntry:
         detail_entry = self.get_component(component_id)
         record = self.get_component_content(component_id)
-        hydrated_entry = _hydrate_component_entry(detail_entry, record)
-        return self._catalog_service.install_remote_entry(hydrated_entry)
+        cached_entry = _hydrate_component_entry(detail_entry, record)
+        cached_entry = copy_model(cached_entry, update={"installed": False, "hasCachedContent": True})
+        return self._catalog_service.cache_remote_entry(cached_entry)
+
+    def hydrate_component(self, component_id: str) -> F8ComponentEntry:
+        cached_entry = self.cache_component_content(component_id)
+        return self._catalog_service.install_remote_entry(cached_entry)
 
     def create_component(self, entry: F8ComponentEntry, *, change_summary: str | None = None) -> F8ComponentEntry:
         _require_component_record_for_upload(entry.record)

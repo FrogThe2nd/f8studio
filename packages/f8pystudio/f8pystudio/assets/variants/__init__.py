@@ -5,8 +5,10 @@ from .variant_ids import (
     is_variant_node_type,
     parse_variant_node_type,
 )
+from .variant_drafts import VariantDraftService
 from .variant_models import (
     F8VariantCatalogSnapshot,
+    F8VariantDraftEntry,
     F8VariantEntry,
     F8VariantKind,
     F8VariantLibrary,
@@ -47,6 +49,7 @@ __all__ = [
     "is_variant_node_type",
     "parse_variant_node_type",
     "F8VariantCatalogSnapshot",
+    "F8VariantDraftEntry",
     "F8VariantEntry",
     "F8VariantKind",
     "F8VariantLibrary",
@@ -77,5 +80,6 @@ __all__ = [
     "variant_entry",
     "variant_record",
     "variants_file_path",
+    "VariantDraftService",
     "VariantSyncClient",
 ]

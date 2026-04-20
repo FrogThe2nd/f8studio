@@ -11,7 +11,6 @@ from f8pysdk.codec import dump_json
 
 from ...assets.common import JsonObject, new_asset_id
 from ...assets.ui.component_catalog_dialog import ComponentCatalogDialog
-from ...assets.ui.component_insert_dialog import ComponentInsertDialog
 from ...assets.ui.project_asset_dialogs import (
     AssetVersionBrowserAction,
     AssetVersionBrowserDialog,
@@ -429,16 +428,6 @@ def open_component_catalog_dialog(*, parent: QtWidgets.QWidget, studio_graph: Pr
     dialog.show()
     dialog.raise_()
     dialog.activateWindow()
-
-
-def open_component_insert_dialog(
-    *,
-    parent: QtWidgets.QWidget,
-    studio_graph: ProjectAssetGraphLike,
-    insert_scene_pos: tuple[float, float] | None = None,
-) -> None:
-    dialog = ComponentInsertDialog(parent=parent, node_graph=studio_graph, insert_scene_pos=insert_scene_pos)
-    dialog.exec()
 
 
 def show_project_history_dialog(

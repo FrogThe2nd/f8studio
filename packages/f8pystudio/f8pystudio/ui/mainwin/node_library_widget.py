@@ -8,13 +8,13 @@ from NodeGraphQt import NodesTreeWidget
 from NodeGraphQt.custom_widgets.nodes_tree import TYPE_NODE
 
 from f8pysdk.codec import coerce_bool
+from ...assets.common.asset_cache_events import subscribe_asset_cache_changed
 from ...assets.common.common import json_string_list_loads, stable_json_dumps
 from ...nodegraph.spec_visibility import is_hidden_spec_node_class, typed_spec_template_or_none
 from ...assets.variants.variant_ids import is_variant_node_type, parse_variant_node_type
 from ...assets.variants.variant_repository import (
     variant_exists,
 )
-from ...assets.variants.variant_events import subscribe_variants_changed
 from ...ui.support.qt_lifecycle import qt_runtime_error_is_object_deleted
 from .node_library_tree_build_mixin import NodeLibraryTreeBuildMixin
 from .node_library_tree_interaction_mixin import NodeLibraryTreeInteractionMixin
@@ -132,11 +132,19 @@ class F8StudioNodeLibraryWidget(QtWidgets.QWidget):
     _EXPANDED_CATEGORIES_KEY = "expanded_categories"
     _EXPANDED_BASE_NODES_KEY = "expanded_base_nodes"
 
-    def __init__(self, parent: QtWidgets.QWidget | None = None, node_graph: Any | None = None) -> None:
+    def __init__(
+        self,
+        parent: QtWidgets.QWidget | None = None,
+        node_graph: Any | None = None,
+        *,
+        asset_cache_auto_refresh: bool = True,
+    ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Node Library")
         self._node_graph = node_graph
-        self._unsubscribe_variants_changed: Any | None = subscribe_variants_changed(self._on_variants_changed)
+        self._unsubscribe_asset_cache_changed: Any | None = None
+        if asset_cache_auto_refresh:
+            self._unsubscribe_asset_cache_changed = subscribe_asset_cache_changed(self._on_asset_cache_changed)
         (
             saved_expanded_categories,
             saved_expanded_base_nodes,
@@ -205,19 +213,22 @@ class F8StudioNodeLibraryWidget(QtWidgets.QWidget):
             categories_initialized=categories_initialized,
         )
 
-    def _clear_variants_changed_subscription(self) -> None:
-        unsubscribe = self._unsubscribe_variants_changed
-        self._unsubscribe_variants_changed = None
+    def _clear_asset_cache_changed_subscription(self) -> None:
+        unsubscribe = self._unsubscribe_asset_cache_changed
+        self._unsubscribe_asset_cache_changed = None
         if unsubscribe is not None:
             unsubscribe()
 
-    def _on_variants_changed(self) -> None:
+    def rebuild_asset_search_sources(self) -> None:
+        self._tree.update()
+
+    def _on_asset_cache_changed(self) -> None:
         try:
-            self._tree.update()
+            self.rebuild_asset_search_sources()
             self._cancel_invalid_variant_placement_if_needed()
         except RuntimeError as exc:
             if qt_runtime_error_is_object_deleted(exc):
-                self._clear_variants_changed_subscription()
+                self._clear_asset_cache_changed_subscription()
                 return
             raise
 
@@ -247,7 +258,7 @@ class F8StudioNodeLibraryWidget(QtWidgets.QWidget):
             return
 
     def _on_destroyed(self, _obj: Any) -> None:
-        self._clear_variants_changed_subscription()
+        self._clear_asset_cache_changed_subscription()
 
     def set_category_label(self, category: str, label: str) -> None:
         self._tree.set_category_label(category, label)

@@ -7,6 +7,7 @@ from typing import Any, Protocol, cast
 from qtpy import QtWidgets
 
 from ..assets.common import new_asset_id
+from ..assets.components.component_drafts import ComponentDraftService
 from ..assets.components.component_models import F8ComponentEntry, F8ComponentRecord, F8ComponentSourceKind
 from ..assets.components.component_repository import upsert_component
 from ..assets.ui.project_asset_dialogs import AssetOverwriteChoice, AssetOverwriteMetaDialog
@@ -59,45 +60,21 @@ class GraphComponentActionsMixin:
         except (AttributeError, RuntimeError, TypeError):
             return ""
 
-    @staticmethod
-    def _current_component_user_id() -> str:
-        from ..assets.components.component_sync import ComponentSyncClient
-        user = ComponentSyncClient().current_user()
-        if user is None:
-            return ""
-        return str(user.userId or "").strip()
-
-    @staticmethod
-    def _is_owned_remote_component_entry(entry: F8ComponentEntry, *, current_user_id: str) -> bool:
-        if entry.source == F8ComponentSourceKind.remote_private:
-            return True
-        if entry.source != F8ComponentSourceKind.remote_public:
-            return False
-        if not current_user_id:
-            return False
-        return str(entry.ownerUserId or "").strip() == current_user_id
-
     @classmethod
-    def _mine_component_entries(cls) -> list[F8ComponentEntry]:
-        from ..assets.components.component_repository import list_component_entries
-        current_user_id = cls._current_component_user_id()
-        entries: list[F8ComponentEntry] = []
-        for entry in list_component_entries(include_uninstalled=True):
-            if entry.source == F8ComponentSourceKind.local or cls._is_owned_remote_component_entry(entry, current_user_id=current_user_id):
-                entries.append(entry)
-        return entries
+    def _draft_component_entries(cls) -> list[F8ComponentEntry]:
+        return ComponentDraftService().list_catalog_entries()
 
     @classmethod
     def _normalize_component_name(cls, name: str) -> str:
         return str(name or "").strip()
 
     @classmethod
-    def _mine_component_entry_by_name(cls, name: str, *, exclude_component_id: str | None = None) -> F8ComponentEntry | None:
+    def _draft_component_entry_by_name(cls, name: str, *, exclude_component_id: str | None = None) -> F8ComponentEntry | None:
         normalized_name = cls._normalize_component_name(name)
         excluded_id = str(exclude_component_id or "").strip()
         if not normalized_name:
             return None
-        for entry in cls._mine_component_entries():
+        for entry in cls._draft_component_entries():
             component_id = str(entry.record.componentId or "").strip()
             if excluded_id and component_id == excluded_id:
                 continue
@@ -126,7 +103,7 @@ class GraphComponentActionsMixin:
                 description=str(entry.record.description),
                 tags=[str(tag) for tag in list(entry.record.tags or []) if str(tag).strip()],
             )
-            for entry in self._mine_component_entries()
+            for entry in self._draft_component_entries()
         ]
         overwrite_choices.sort(key=lambda choice: choice.label.lower())
 
@@ -134,12 +111,12 @@ class GraphComponentActionsMixin:
             normalized_name = self._normalize_component_name(candidate)
             overwrite_entry = None
             if overwrite_component_id:
-                for entry in self._mine_component_entries():
+                for entry in self._draft_component_entries():
                     if str(entry.record.componentId) == str(overwrite_component_id):
                         overwrite_entry = entry
                         break
             exclude_id = None if overwrite_entry is None else str(overwrite_entry.record.componentId)
-            if self._mine_component_entry_by_name(name=normalized_name, exclude_component_id=exclude_id) is not None:
+            if self._draft_component_entry_by_name(name=normalized_name, exclude_component_id=exclude_id) is not None:
                 return f"Component name '{normalized_name}' already exists. Please choose the existing component to overwrite."
             return None
 
@@ -164,12 +141,12 @@ class GraphComponentActionsMixin:
             )
             overwrite_entry = None
             if overwrite_component_id:
-                for entry in self._mine_component_entries():
+                for entry in self._draft_component_entries():
                     if str(entry.record.componentId) == str(overwrite_component_id):
                         overwrite_entry = entry
                         break
             if overwrite_entry is None:
-                overwrite_entry = self._mine_component_entry_by_name(name)
+                overwrite_entry = self._draft_component_entry_by_name(name)
             record = F8ComponentRecord(
                 componentId=new_asset_id() if overwrite_entry is None else str(overwrite_entry.record.componentId),
                 name=name,

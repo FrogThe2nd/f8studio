@@ -28,6 +28,7 @@ from f8pystudio.assets.components.component_sync import ComponentSyncClient
 from f8pystudio.assets.db import component_remote_cache_table
 from f8pystudio.assets.ui.component_catalog_dialog import ComponentCatalogDialog
 from f8pystudio.assets.ui.asset_sync_resolution import AssetSyncDirection
+from f8pystudio.nodegraph.graph_component_actions import GraphComponentActionsMixin
 
 
 def _component_record(component_id: str, name: str) -> dict[str, object]:
@@ -60,6 +61,29 @@ def _ensure_app() -> QtWidgets.QApplication:
     if app is None:
         app = QtWidgets.QApplication([])
     return app
+
+
+class _GraphComponentSaveHost(GraphComponentActionsMixin):
+    def __init__(self) -> None:
+        self._parent = QtWidgets.QWidget()
+
+    def _notification_parent(self) -> QtWidgets.QWidget | None:
+        return self._parent
+
+    def context_nodes_menu(self) -> None:
+        return None
+
+    def selected_nodes(self) -> list[object]:
+        return [type("SelectedNode", (), {"id": "node-a", "name": lambda self: "Node A"})()]
+
+    def serialize_publish_session(self) -> dict[str, object]:
+        return {
+            "schemaVersion": "f8studio-session/1",
+            "layout": {
+                "nodes": {"node-a": {"id": "node-a", "name": "Node A"}},
+                "connections": [],
+            },
+        }
 
 
 class _ComponentApiHandler(BaseHTTPRequestHandler):
@@ -377,6 +401,32 @@ def test_component_sync_client_supports_anonymous_public_install_and_cookie_sess
         assert client.current_session() is None
         assert client.saved_sessions() == []
         assert server.last_signout_origin == f"http://127.0.0.1:{server.server_port}"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_component_sync_client_can_cache_content_without_installing(tmp_path: Path) -> None:
+    server = _Server(("127.0.0.1", 0))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        settings = QtCore.QSettings(str(tmp_path / "component-cache.ini"), QtCore.QSettings.IniFormat)
+        service = ComponentCatalogService(db_path=tmp_path / "assets.db")
+        client = ComponentSyncClient(settings=settings, catalog_service=service)
+        client.set_base_url(f"http://127.0.0.1:{server.server_port}")
+
+        cached = client.cache_component_content("public-1")
+
+        assert cached.installed is False
+        assert cached.hasCachedContent is True
+        assert isinstance(cached.record.content.get("layout"), dict)
+        assert service.entry("public-1", include_uninstalled=False) is None
+        cached_entry = service.entry("public-1", include_uninstalled=True)
+        assert cached_entry is not None
+        assert cached_entry.installed is False
+        assert cached_entry.hasCachedContent is True
     finally:
         server.shutdown()
         server.server_close()
@@ -758,7 +808,7 @@ def test_component_row_state_prefers_remote_owner_when_remote_head_exists() -> N
     assert row_state.owner_display_name == "User One"
 
 
-def test_component_catalog_load_owned_remote_creates_local_head(monkeypatch, tmp_path: Path) -> None:
+def test_component_catalog_load_owned_remote_keeps_remote_only_cache(monkeypatch, tmp_path: Path) -> None:
     _ = _ensure_app()
     settings = QtCore.QSettings(str(tmp_path / "component-load.ini"), QtCore.QSettings.IniFormat)
     service = ComponentCatalogService(db_path=tmp_path / "assets.db")
@@ -784,7 +834,7 @@ def test_component_catalog_load_owned_remote_creates_local_head(monkeypatch, tmp
 
     dialog = ComponentCatalogDialog(parent=None, node_graph=None)
     dialog._sync_client = ComponentSyncClient(settings=settings, catalog_service=service)
-    monkeypatch.setattr(dialog, "_reload", lambda *args, **kwargs: None)
+    monkeypatch.setattr(dialog, "_render_browser_from_state", lambda *args, **kwargs: None)
     monkeypatch.setattr(dialog, "_selected_action_entries", lambda: (remote_entry, None, remote_entry))
     monkeypatch.setattr(
         dialog._sync_client,
@@ -816,18 +866,17 @@ def test_component_catalog_load_owned_remote_creates_local_head(monkeypatch, tmp
 
     dialog._on_install_clicked()
 
-    local_entry = service.entry("owned-component", include_uninstalled=True)
-    assert local_entry is not None
-    assert local_entry.source == F8ComponentSourceKind.local
-    assert local_entry.isLocalDraft is False
-    assert local_entry.syncBaseRemoteRevision == "r4"
-    assert local_entry.syncBaseRemoteVersionNumber == 4
-    assert local_entry.syncBaseLocalVersionNumber == 4
+    cached_entry = service.entry("owned-component", include_uninstalled=True)
+    assert cached_entry is not None
+    assert cached_entry.source == F8ComponentSourceKind.remote_private
+    assert cached_entry.installed is True
+    assert cached_entry.hasCachedContent is True
+    assert dialog._draft_service_for_catalog().draft_for_publish_target("owned-component") is None
 
     dialog.close()
 
 
-def test_component_push_clears_local_draft(monkeypatch, tmp_path: Path) -> None:
+def test_component_publish_new_draft_keeps_linked_draft(monkeypatch, tmp_path: Path) -> None:
     _ = _ensure_app()
     settings = QtCore.QSettings(str(tmp_path / "component-push-draft.ini"), QtCore.QSettings.IniFormat)
     service = ComponentCatalogService(db_path=tmp_path / "assets.db")
@@ -848,11 +897,14 @@ def test_component_push_clears_local_draft(monkeypatch, tmp_path: Path) -> None:
 
     dialog = ComponentCatalogDialog(parent=None, node_graph=None)
     dialog._sync_client = ComponentSyncClient(settings=settings, catalog_service=service)
-    monkeypatch.setattr(dialog, "_reload", lambda *args, **kwargs: None)
+    monkeypatch.setattr(dialog, "_render_browser_from_state", lambda *args, **kwargs: None)
     monkeypatch.setattr(dialog, "_choose_visibility", lambda: F8ComponentVisibility.private)
     monkeypatch.setattr(dialog, "_ensure_component_hydrated", lambda entry, operation_name: entry)
 
-    def _upload_entry(entry: F8ComponentEntry) -> F8ComponentEntry:
+    create_calls: list[F8ComponentEntry] = []
+
+    def _create_component(entry: F8ComponentEntry) -> F8ComponentEntry:
+        create_calls.append(entry)
         uploaded_entry = copy_model(
             entry,
             update={
@@ -868,29 +920,92 @@ def test_component_push_clears_local_draft(monkeypatch, tmp_path: Path) -> None:
         )
         return service.install_remote_entry(uploaded_entry)
 
-    monkeypatch.setattr(dialog._sync_client, "upload_entry", _upload_entry)
+    monkeypatch.setattr(dialog._sync_client, "create_component", _create_component)
 
-    uploaded = dialog._push_selected_component(local_entry=local_entry, remote_entry=None)
+    uploaded = dialog._publish_component_draft(local_entry)
 
     assert uploaded is not None
+    assert len(create_calls) == 1
+    saved_draft = dialog._draft_service_for_catalog().draft("draft-component")
+    assert saved_draft is not None
+    assert saved_draft.publishTargetAssetId == str(uploaded.record.componentId)
+    assert saved_draft.publishBaseRemoteRevision == "r1"
     saved_local = service.entry("draft-component", include_uninstalled=True)
     assert saved_local is not None
-    assert saved_local.isLocalDraft is False
-    assert saved_local.draftOriginKind is None
-    assert saved_local.draftOriginAssetId is None
-    assert saved_local.draftOriginRevision is None
-    assert saved_local.syncBaseRemoteRevision == "r1"
-    assert saved_local.syncBaseRemoteVersionNumber == 1
-    assert saved_local.syncBaseLocalVersionNumber == 1
+    assert saved_local.isLocalDraft is True
+    assert saved_local.draftOriginAssetId == str(uploaded.record.componentId)
+    assert saved_local.draftOriginRevision == "r1"
 
     dialog.close()
 
 
-def test_component_sync_does_not_bump_local_version_when_only_sync_metadata_changes(monkeypatch, tmp_path: Path) -> None:
+def test_component_upload_clicked_publishes_selected_draft(monkeypatch, tmp_path: Path) -> None:
+    _ = _ensure_app()
+    settings = QtCore.QSettings(str(tmp_path / "component-upload-clicked.ini"), QtCore.QSettings.IniFormat)
+    service = ComponentCatalogService(db_path=tmp_path / "assets.db")
+    draft_entry = service.upsert_local_entry(
+        F8ComponentEntry(
+            record=F8ComponentRecord(
+                componentId="draft-upload-clicked",
+                name="Draft Upload Clicked",
+                schemaVersion="f8studio-session/1",
+                content={"schemaVersion": "f8studio-session/1", "layout": {"nodes": {}, "connections": []}},
+            ),
+            source=F8ComponentSourceKind.local,
+            isLocalDraft=True,
+            draftOriginKind=F8ComponentDraftOriginKind.new,
+        )
+    )
+
+    dialog = ComponentCatalogDialog(parent=None, node_graph=None)
+    dialog._sync_client = ComponentSyncClient(settings=settings, catalog_service=service)
+    dialog._entries = [draft_entry]
+    dialog._scope_tabs.setCurrentIndex(dialog._TAB_DRAFTS)
+    monkeypatch.setattr(dialog, "_selected_entry", lambda: draft_entry)
+
+    publish_calls: list[F8ComponentEntry] = []
+    info_messages: list[tuple[str, str]] = []
+    monkeypatch.setattr(dialog, "_render_browser_from_state", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        dialog,
+        "_publish_component_draft",
+        lambda entry: publish_calls.append(entry) or entry,
+    )
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.component_catalog_actions_mixin.show_info",
+        lambda _parent, title, message: info_messages.append((str(title), str(message))),
+    )
+
+    assert dialog._selected_local_entry() is not None
+
+    dialog._on_upload_clicked()
+
+    assert publish_calls == [draft_entry]
+    assert info_messages == [("Published", "Published draft:\nDraft Upload Clicked")]
+
+    dialog.close()
+
+
+def test_component_publish_metadata_only_uses_patch_meta(monkeypatch, tmp_path: Path) -> None:
     _ = _ensure_app()
     settings = QtCore.QSettings(str(tmp_path / "component-sync-noop.ini"), QtCore.QSettings.IniFormat)
     service = ComponentCatalogService(db_path=tmp_path / "assets.db")
     local_entry = service.upsert_local_entry(
+        F8ComponentEntry(
+            record=F8ComponentRecord(
+                componentId="linked-draft",
+                name="Owned Overwrite Draft",
+                schemaVersion="f8studio-session/1",
+                content={"schemaVersion": "f8studio-session/1", "layout": {"nodes": {}, "connections": []}},
+            ),
+            source=F8ComponentSourceKind.local,
+            isLocalDraft=True,
+            draftOriginKind=F8ComponentDraftOriginKind.copy_remote,
+            draftOriginAssetId="owned-overwrite",
+            draftOriginRevision="r4",
+        )
+    )
+    remote_entry = service.install_remote_entry(
         F8ComponentEntry(
             record=F8ComponentRecord(
                 componentId="owned-overwrite",
@@ -898,16 +1013,6 @@ def test_component_sync_does_not_bump_local_version_when_only_sync_metadata_chan
                 schemaVersion="f8studio-session/1",
                 content={"schemaVersion": "f8studio-session/1", "layout": {"nodes": {}, "connections": []}},
             ),
-            source=F8ComponentSourceKind.local,
-            localVersionNumber=5,
-            syncBaseRemoteRevision="r4",
-            syncBaseRemoteVersionNumber=4,
-            syncBaseLocalVersionNumber=4,
-        )
-    )
-    remote_entry = service.install_remote_entry(
-        F8ComponentEntry(
-            record=copy_model(local_entry.record, update={"content": {}}),
             source=F8ComponentSourceKind.remote_private,
             visibility=F8ComponentVisibility.private,
             ownerUserId="u1",
@@ -915,55 +1020,51 @@ def test_component_sync_does_not_bump_local_version_when_only_sync_metadata_chan
             remoteRevision="r4",
             remoteVersionNumber=4,
             installed=True,
-            hasCachedContent=False,
+            hasCachedContent=True,
         )
     )
 
     dialog = ComponentCatalogDialog(parent=None, node_graph=None)
     dialog._sync_client = ComponentSyncClient(settings=settings, catalog_service=service)
-    monkeypatch.setattr(dialog, "_ensure_logged_in", lambda: True)
     monkeypatch.setattr(dialog, "_ensure_component_hydrated", lambda entry, operation_name: entry)
     monkeypatch.setattr(
         dialog._sync_client,
         "current_user",
         lambda: F8ComponentRemoteUser(userId="u1", displayName="User One", username="user-one"),
     )
-    monkeypatch.setattr(dialog, "_reload", lambda *args, **kwargs: None)
-    monkeypatch.setattr(dialog, "_selected_action_entries", lambda: (local_entry, service.entry("owned-overwrite", include_uninstalled=True), service.remote_entry("owned-overwrite")))
+    monkeypatch.setattr(dialog, "_render_browser_from_state", lambda *args, **kwargs: None)
+    patch_calls: list[tuple[str, str, str, list[str]]] = []
+    update_calls: list[F8ComponentEntry] = []
 
-    upload_calls: list[F8ComponentEntry] = []
-
-    def _upload_entry(entry: F8ComponentEntry) -> F8ComponentEntry:
-        upload_calls.append(entry)
+    def _patch_component_meta(component_id: str, *, name: str, description: str, tags: list[str]) -> F8ComponentEntry:
+        patch_calls.append((str(component_id), str(name), str(description), list(tags)))
         uploaded_entry = copy_model(
             remote_entry,
             update={
-                "record": entry.record,
+                "record": copy_model(remote_entry.record, update={"name": name, "description": description, "tags": tags}),
                 "remoteRevision": "r5",
-                "remoteVersionNumber": 5,
                 "installed": True,
                 "hasCachedContent": True,
             },
         )
         return service.install_remote_entry(uploaded_entry)
 
-    monkeypatch.setattr(dialog._sync_client, "upload_entry", _upload_entry)
+    monkeypatch.setattr(dialog._sync_client, "patch_component_meta", _patch_component_meta)
+    monkeypatch.setattr(dialog._sync_client, "update_component", lambda entry: update_calls.append(entry) or entry)
 
-    synced = dialog._sync_selected_component()
+    published = dialog._publish_component_draft(local_entry)
 
-    assert synced is not None
-    assert len(upload_calls) == 1
-    saved_local = service.entry("owned-overwrite", include_uninstalled=True)
+    assert published is not None
+    assert patch_calls == [("owned-overwrite", "Owned Overwrite Draft", "", [])]
+    assert update_calls == []
+    saved_local = service.entry("linked-draft", include_uninstalled=True)
     saved_remote = service.remote_entry("owned-overwrite")
     assert saved_local is not None
     assert saved_remote is not None
-    assert saved_local.localVersionNumber == 5
-    assert saved_local.syncBaseRemoteRevision == "r5"
-    assert saved_local.syncBaseRemoteVersionNumber == 5
-    assert saved_local.syncBaseLocalVersionNumber == 5
+    assert saved_local.isLocalDraft is True
+    assert saved_local.draftOriginAssetId == "owned-overwrite"
+    assert saved_local.draftOriginRevision == "r5"
     assert saved_remote.remoteRevision == "r5"
-    assert saved_remote.remoteVersionNumber == 5
-    assert dialog._component_sync_decision(local_entry=saved_local, remote_entry=saved_remote) == AssetSyncDirection.noop
 
     dialog.close()
 
@@ -1005,8 +1106,8 @@ def test_component_catalog_copy_to_draft_creates_disconnected_local_draft(monkey
     draft_entry = local_entries[0]
     assert draft_entry.record.componentId != "remote-component"
     assert draft_entry.isLocalDraft is True
-    assert draft_entry.draftOriginAssetId == "remote-component"
-    assert draft_entry.draftOriginRevision == "r9"
+    assert draft_entry.draftOriginAssetId is None
+    assert draft_entry.draftOriginRevision is None
     assert draft_entry.syncBaseRemoteRevision is None
     assert draft_entry.syncBaseRemoteVersionNumber is None
     assert draft_entry.syncBaseLocalVersionNumber is None
@@ -1043,19 +1144,13 @@ def test_component_catalog_delete_removes_local_and_owned_remote(monkeypatch, tm
     _ = _ensure_app()
     settings = QtCore.QSettings(str(tmp_path / "component-delete-dialog.ini"), QtCore.QSettings.IniFormat)
     service = ComponentCatalogService(db_path=tmp_path / "assets.db")
-    local_entry = service.upsert_local_entry(
-        F8ComponentEntry(
-            record=F8ComponentRecord(
-                componentId="owned-delete",
-                name="Owned Delete",
-                schemaVersion="f8studio-session/1",
-                content={"schemaVersion": "f8studio-session/1", "layout": {"nodes": {}, "connections": []}},
-            ),
-            source=F8ComponentSourceKind.local,
-        )
-    )
     remote_entry = F8ComponentEntry(
-        record=copy_model(local_entry.record, update={"content": {}}),
+        record=F8ComponentRecord(
+            componentId="owned-delete",
+            name="Owned Delete",
+            schemaVersion="f8studio-session/1",
+            content={},
+        ),
         source=F8ComponentSourceKind.remote_private,
         visibility=F8ComponentVisibility.private,
         ownerUserId="u1",
@@ -1069,6 +1164,13 @@ def test_component_catalog_delete_removes_local_and_owned_remote(monkeypatch, tm
 
     dialog = ComponentCatalogDialog(parent=None, node_graph=None)
     dialog._sync_client = ComponentSyncClient(settings=settings, catalog_service=service)
+    _ = dialog._draft_service_for_catalog().create_draft_from_record(
+        copy_model(remote_entry.record, update={"componentId": "draft-owned-delete", "content": {"schemaVersion": "f8studio-session/1", "layout": {"nodes": {}, "connections": []}}}),
+        origin_kind=F8ComponentDraftOriginKind.copy_remote,
+        publish_target_asset_id="owned-delete",
+        publish_base_remote_revision="r7",
+        draft_id="draft-owned-delete",
+    )
     reload_calls: list[str] = []
     remote_delete_calls: list[str] = []
     monkeypatch.setattr(
@@ -1076,8 +1178,9 @@ def test_component_catalog_delete_removes_local_and_owned_remote(monkeypatch, tm
         "question",
         lambda *args, **kwargs: QtWidgets.QMessageBox.Yes,
     )
-    monkeypatch.setattr(dialog, "_reload", lambda *args, **kwargs: reload_calls.append("reload"))
-    monkeypatch.setattr(dialog, "_selected_action_entries", lambda: (local_entry, local_entry, remote_entry))
+    monkeypatch.setattr(dialog, "_render_browser_from_state", lambda *args, **kwargs: reload_calls.append("reload"))
+    dialog._scope_tabs.setCurrentIndex(dialog._TAB_MINE)
+    monkeypatch.setattr(dialog, "_selected_action_entries", lambda: (remote_entry, None, remote_entry))
     monkeypatch.setattr(
         dialog._sync_client,
         "current_user",
@@ -1093,7 +1196,7 @@ def test_component_catalog_delete_removes_local_and_owned_remote(monkeypatch, tm
 
     assert remote_delete_calls == ["owned-delete"]
     assert reload_calls
-    assert service._local_provider.load_entries() == []
+    assert dialog._draft_service_for_catalog().draft("draft-owned-delete") is not None
     dialog.close()
 
 
@@ -1138,13 +1241,53 @@ def test_component_catalog_disables_load_offload_for_local_draft(monkeypatch, tm
     dialog._on_install_clicked()
 
     assert delete_calls == []
-
     dialog.close()
+
+
+def test_graph_component_actions_overwrite_choices_only_include_drafts(monkeypatch) -> None:
+    _ensure_app()
+    captured_choice_ids: list[str] = []
+    draft_entry = F8ComponentEntry(
+        record=F8ComponentRecord(componentId="draft-component", name="Draft Component"),
+        source=F8ComponentSourceKind.local,
+        isLocalDraft=True,
+    )
+    host = _GraphComponentSaveHost()
+
+    class _FakeOverwriteDialog:
+        def __init__(
+            self,
+            *,
+            parent: QtWidgets.QWidget | None,
+            title: str,
+            name: str,
+            description: str,
+            tags: list[str],
+            overwrite_choices: list[object],
+            overwrite_label: str,
+            name_validator: object,
+        ) -> None:
+            del parent, title, name, description, tags, overwrite_label, name_validator
+            captured_choice_ids.extend([str(choice.asset_id) for choice in overwrite_choices])
+
+        def exec(self) -> int:
+            return QtWidgets.QDialog.Rejected
+
+    monkeypatch.setattr(
+        GraphComponentActionsMixin,
+        "_draft_component_entries",
+        classmethod(lambda cls: [draft_entry]),
+    )
+    monkeypatch.setattr("f8pystudio.nodegraph.graph_component_actions.AssetOverwriteMetaDialog", _FakeOverwriteDialog)
+
+    host._save_selected_nodes_as_component()
+
+    assert captured_choice_ids == ["draft-component"]
 
 
 def test_component_catalog_action_buttons_start_hidden_inside_toolbar(monkeypatch) -> None:
     _ = _ensure_app()
-    monkeypatch.setattr(ComponentCatalogDialog, "_reload", lambda self, *_args: None)
+    monkeypatch.setattr(ComponentCatalogDialog, "_render_browser_from_state", lambda self, *_args: None)
 
     dialog = ComponentCatalogDialog(parent=None, node_graph=None)
 
@@ -1169,7 +1312,7 @@ def test_component_catalog_action_buttons_start_hidden_inside_toolbar(monkeypatc
 
 def test_component_catalog_row_without_description_stays_compact(monkeypatch) -> None:
     _ = _ensure_app()
-    monkeypatch.setattr(ComponentCatalogDialog, "_reload", lambda self, *_args: None)
+    monkeypatch.setattr(ComponentCatalogDialog, "_render_browser_from_state", lambda self, *_args: None)
 
     dialog = ComponentCatalogDialog(parent=None, node_graph=None)
     entry = F8ComponentEntry(

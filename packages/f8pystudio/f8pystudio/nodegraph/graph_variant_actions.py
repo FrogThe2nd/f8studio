@@ -17,17 +17,16 @@ from ..ui.support.ui_notifications import show_info, show_warning
 from ..assets.ui.project_asset_dialogs import AssetOverwriteChoice, AssetOverwriteMetaDialog
 from ..assets.variants.variant_compose import _VariantNode as _ComposeVariantNode
 from ..assets.variants.variant_compose import build_variant_record_from_node
+from ..assets.variants.variant_drafts import VariantDraftService
 from ..assets.variants.variant_ids import build_variant_node_type
 from ..assets.variants.variant_metadata import variant_ref_from_record, variant_ref_to_json
 from ..assets.variants.variant_models import F8VariantDraftOriginKind, F8VariantEntry, F8VariantSourceKind
 from ..assets.variants.variant_repository import (
-    list_entries_for_base,
     normalize_variant_name,
     upsert_variant,
     upsert_variant_entry,
     variant_record,
 )
-from ..assets.variants.variant_sync import VariantSyncClient
 from .node_base import F8StudioBaseNode
 from .node_model import F8StudioNodeModel
 
@@ -130,34 +129,18 @@ class GraphVariantActionsMixin:
                 out.append(entry_object)
         return out
 
-    @staticmethod
-    def _current_variant_user_id() -> str:
-        user = VariantSyncClient().current_user()
-        if user is None:
-            return ""
-        return str(user.userId or "").strip()
-
-    @staticmethod
-    def _is_owned_remote_variant_entry(entry: F8VariantEntry, *, current_user_id: str) -> bool:
-        if entry.source == F8VariantSourceKind.remote_private:
-            return True
-        if entry.source != F8VariantSourceKind.remote_public:
-            return False
-        if not current_user_id:
-            return False
-        return str(entry.ownerUserId or "").strip() == current_user_id
-
     @classmethod
-    def _mine_variant_entries_for_base(cls, node_type: str) -> list[F8VariantEntry]:
-        current_user_id = cls._current_variant_user_id()
+    def _draft_variant_entries_for_base(cls, node_type: str) -> list[F8VariantEntry]:
+        service = VariantDraftService()
         entries: list[F8VariantEntry] = []
-        for entry in list_entries_for_base(node_type, include_uninstalled=True):
-            if entry.source == F8VariantSourceKind.local or cls._is_owned_remote_variant_entry(entry, current_user_id=current_user_id):
-                entries.append(entry)
+        for entry in service.list_catalog_entries():
+            if str(entry.record.baseNodeType or "").strip() != str(node_type or "").strip():
+                continue
+            entries.append(entry)
         return entries
 
     @classmethod
-    def _mine_variant_entry_by_name(
+    def _draft_variant_entry_by_name(
         cls,
         *,
         node_type: str,
@@ -168,7 +151,7 @@ class GraphVariantActionsMixin:
         excluded_variant_id = str(exclude_variant_id or "").strip()
         if not normalized_name:
             return None
-        for entry in cls._mine_variant_entries_for_base(node_type):
+        for entry in cls._draft_variant_entries_for_base(node_type):
             variant_id = str(entry.record.variantId or "").strip()
             if excluded_variant_id and variant_id == excluded_variant_id:
                 continue
@@ -248,7 +231,7 @@ class GraphVariantActionsMixin:
                 description=str(entry.record.description),
                 tags=[str(tag) for tag in list(entry.record.tags or []) if str(tag).strip()],
             )
-            for entry in self._mine_variant_entries_for_base(node_type)
+            for entry in self._draft_variant_entries_for_base(node_type)
         ]
 
         def _validate_variant_name(candidate: str, overwrite_variant_id: str | None) -> str | None:
@@ -258,13 +241,13 @@ class GraphVariantActionsMixin:
                 overwrite_entry = next(
                     (
                         entry
-                        for entry in self._mine_variant_entries_for_base(node_type)
+                        for entry in self._draft_variant_entries_for_base(node_type)
                         if str(entry.record.variantId or "").strip() == str(overwrite_variant_id).strip()
                     ),
                     None,
                 )
             exclude_variant_id = None if overwrite_entry is None else str(overwrite_entry.record.variantId)
-            if self._mine_variant_entry_by_name(
+            if self._draft_variant_entry_by_name(
                 node_type=node_type,
                 name=normalized_name,
                 exclude_variant_id=exclude_variant_id,
@@ -287,12 +270,12 @@ class GraphVariantActionsMixin:
             None
             if overwrite_variant_id is None
             else next(
-                (entry for entry in self._mine_variant_entries_for_base(node_type) if str(entry.record.variantId) == str(overwrite_variant_id)),
+                (entry for entry in self._draft_variant_entries_for_base(node_type) if str(entry.record.variantId) == str(overwrite_variant_id)),
                 None,
             )
         )
         if overwrite_entry is None:
-            overwrite_entry = self._mine_variant_entry_by_name(node_type=node_type, name=normalized_name)
+            overwrite_entry = self._draft_variant_entry_by_name(node_type=node_type, name=normalized_name)
         record = build_variant_record_from_node(
             node=cast(_ComposeVariantNode, cast(object, variant_node)),
             name=name,
@@ -316,14 +299,6 @@ class GraphVariantActionsMixin:
                                 else F8VariantDraftOriginKind.new
                             ),
                         },
-                    )
-                ).record
-            else:
-                saved_record = upsert_variant_entry(
-                    self._local_seed_from_remote_variant_entry(
-                        overwrite_entry,
-                        record=record,
-                        mark_modified=True,
                     )
                 ).record
         except ValueError as exc:

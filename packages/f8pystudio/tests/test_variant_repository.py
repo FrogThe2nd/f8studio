@@ -15,6 +15,7 @@ from f8pystudio.assets.variants.variant_models import (
 )
 from f8pysdk.specs import F8VariantRecord
 from f8pystudio.assets.variants.variant_catalog import VariantCatalogService
+from f8pystudio.assets.variants.variant_drafts import VariantDraftService
 from f8pystudio.assets.variants.variant_ids import build_variant_node_type, parse_variant_node_type
 from f8pystudio.assets.variants.variant_repository import (
     delete_variant,
@@ -118,18 +119,19 @@ def test_variant_exists_returns_expected(monkeypatch: pytest.MonkeyPatch, tmp_pa
 def test_delete_variant_removes_local_history_rows(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     _patch_variants_file(monkeypatch, tmp_path)
     service = VariantCatalogService(db_path=tmp_path / "assets.db")
+    draft_service = VariantDraftService(db_path=tmp_path / "assets.db")
     monkeypatch.setattr("f8pystudio.assets.variants.variant_repository._service", lambda: service)
 
     first = upsert_variant(_make_variant_record(variant_id="v-delete", base_node_type="svc.a.op", name="delete-me"))
     _ = upsert_variant(copy_model(first, update={"spec": {"label": "changed"}}))
 
-    assert service._local_provider.list_versions("v-delete")
+    assert draft_service.draft("v-delete") is not None
 
     deleted = delete_variant("v-delete")
 
     assert deleted is True
     assert service.entry("v-delete", include_uninstalled=True) is None
-    assert service._local_provider.list_versions("v-delete") == []
+    assert draft_service.draft("v-delete") is None
 
 
 def test_export_import_library_v1_entries_preserves_current_version_and_sync_base(
@@ -138,30 +140,25 @@ def test_export_import_library_v1_entries_preserves_current_version_and_sync_bas
 ) -> None:
     _patch_variants_file(monkeypatch, tmp_path)
     service = VariantCatalogService(db_path=tmp_path / "assets.db")
+    draft_service = VariantDraftService(db_path=tmp_path / "assets.db")
     monkeypatch.setattr("f8pystudio.assets.variants.variant_repository._service", lambda: service)
-    entry = F8VariantEntry(
-        record=_make_variant_record(variant_id="v-sync", base_node_type="svc.a.op", name="sync"),
-        source=F8VariantSourceKind.local,
-        localVersionNumber=5,
-        syncBaseRemoteRevision="r7",
-        syncBaseRemoteVersionNumber=7,
-        syncBaseLocalVersionNumber=5,
-        isLocalDraft=True,
-        draftOriginKind=F8VariantDraftOriginKind.copy_remote,
-        draftOriginAssetId="remote-sync",
-        draftOriginRevision="r7",
+    _ = draft_service.create_draft_from_record(
+        _make_variant_record(variant_id="v-sync", base_node_type="svc.a.op", name="sync"),
+        origin_kind=F8VariantDraftOriginKind.copy_remote,
+        publish_target_asset_id="remote-sync",
+        publish_base_remote_revision="r7",
+        draft_id="v-sync",
     )
-    _ = service.upsert_local_entry(entry)
 
     export_path = tmp_path / "variants-export.json"
     export_to_json(str(export_path))
 
     exported = json.loads(export_path.read_text(encoding="utf-8"))
     assert exported["schemaVersion"] == "f8variantlib/1"
-    assert exported["entries"][0]["localVersionNumber"] == 5
-    assert exported["entries"][0]["syncBaseRemoteRevision"] == "r7"
-    assert exported["entries"][0]["syncBaseRemoteVersionNumber"] == 7
-    assert exported["entries"][0]["syncBaseLocalVersionNumber"] == 5
+    assert exported["entries"][0]["localVersionNumber"] is None
+    assert exported["entries"][0]["syncBaseRemoteRevision"] is None
+    assert exported["entries"][0]["syncBaseRemoteVersionNumber"] is None
+    assert exported["entries"][0]["syncBaseLocalVersionNumber"] is None
     assert exported["entries"][0]["isLocalDraft"] is True
     assert exported["entries"][0]["draftOriginKind"] == "copy_remote"
     assert exported["entries"][0]["draftOriginAssetId"] == "remote-sync"
@@ -173,10 +170,10 @@ def test_export_import_library_v1_entries_preserves_current_version_and_sync_bas
 
     imported = replaced_service.entry("v-sync", include_uninstalled=True)
     assert imported is not None
-    assert imported.localVersionNumber == 5
-    assert imported.syncBaseRemoteRevision == "r7"
-    assert imported.syncBaseRemoteVersionNumber == 7
-    assert imported.syncBaseLocalVersionNumber == 5
+    assert imported.localVersionNumber is None
+    assert imported.syncBaseRemoteRevision is None
+    assert imported.syncBaseRemoteVersionNumber is None
+    assert imported.syncBaseLocalVersionNumber is None
     assert imported.isLocalDraft is True
     assert imported.draftOriginKind == F8VariantDraftOriginKind.copy_remote
     assert imported.draftOriginAssetId == "remote-sync"

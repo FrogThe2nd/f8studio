@@ -121,7 +121,9 @@ class ComponentCatalogVersionFlowsMixin:
         )
         upsert_component(local_record)
         show_info(self, "Saved", f"Saved local component from v{int(version_number)}:\n{local_record.name}")
-        self._reload()
+        self._rebuild_browser_after_draft_changed(
+            preserve_component_id=str(local_record.componentId)
+        )
 
     def _fork_remote_version_to_cloud(self, *, entry: F8ComponentEntry, version_number: int) -> None:
         if not self._ensure_logged_in():
@@ -169,7 +171,9 @@ class ComponentCatalogVersionFlowsMixin:
             show_warning(self, "Fork failed", str(exc))
             return
         show_info(self, "Forked", f"Created remote fork from v{int(version_number)}:\n{created.record.name}")
-        self._reload()
+        self._rebuild_browser_after_remote_asset_changed(
+            preserve_component_id=str(created.record.componentId)
+        )
 
     def _choose_visibility(self) -> F8ComponentVisibility | None:
         answer = QtWidgets.QMessageBox.question(

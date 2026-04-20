@@ -2,7 +2,9 @@ from .db import AssetsDatabase, assets_db_path
 from .projects import F8ProjectRecord, F8ProjectSummary, F8ProjectVersionSummary, ProjectStorageService
 from .components import (
     ComponentCatalogService,
+    ComponentDraftService,
     ComponentSyncClient,
+    F8ComponentDraftEntry,
     F8ComponentEntry,
     F8ComponentRecord,
     F8ComponentSourceKind,
@@ -10,6 +12,7 @@ from .components import (
     F8ComponentVisibility,
 )
 from .variants import (
+    F8VariantDraftEntry,
     F8VariantEntry,
     F8VariantKind,
     F8VariantRecord,
@@ -17,6 +20,7 @@ from .variants import (
     F8VariantSourceKind,
     F8VariantSyncState,
     F8VariantVisibility,
+    VariantDraftService,
     VariantSyncClient,
 )
 
@@ -25,16 +29,20 @@ __all__ = [
     "assets_db_path",
     "ProjectStorageService",
     "ComponentCatalogService",
+    "ComponentDraftService",
     "ComponentSyncClient",
+    "VariantDraftService",
     "VariantSyncClient",
     "F8ProjectRecord",
     "F8ProjectSummary",
     "F8ProjectVersionSummary",
+    "F8ComponentDraftEntry",
     "F8ComponentEntry",
     "F8ComponentRecord",
     "F8ComponentSourceKind",
     "F8ComponentSyncState",
     "F8ComponentVisibility",
+    "F8VariantDraftEntry",
     "F8VariantEntry",
     "F8VariantKind",
     "F8VariantRecord",

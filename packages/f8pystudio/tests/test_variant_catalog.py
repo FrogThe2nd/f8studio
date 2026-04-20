@@ -67,17 +67,7 @@ def test_variant_catalog_providers_persist_local_and_remote_entries_in_assets_db
 
 def test_catalog_service_prefers_local_and_hides_uninstalled_public_remote(tmp_path: Path) -> None:
     db_path = tmp_path / "assets.db"
-    local_provider = LocalVariantProvider(db_path=db_path)
     remote_provider = RemoteCacheProvider(db_path=db_path)
-    local_provider.save_entries(
-        [
-            F8VariantEntry(
-                record=_make_record(variant_id="shared", base_node_type="svc.a.op", name="Local Shared"),
-                source=F8VariantSourceKind.local,
-                syncState=F8VariantSyncState.local_only,
-            )
-        ]
-    )
     remote_provider.save_entries(
         [
             F8VariantEntry(
@@ -94,7 +84,15 @@ def test_catalog_service_prefers_local_and_hides_uninstalled_public_remote(tmp_p
             ),
         ]
     )
-    service = VariantCatalogService(local_provider=local_provider, remote_provider=remote_provider)
+    service = VariantCatalogService(db_path=db_path, remote_provider=remote_provider)
+    service.upsert_local_entry(
+        F8VariantEntry(
+            record=_make_record(variant_id="shared", base_node_type="svc.a.op", name="Local Shared"),
+            source=F8VariantSourceKind.local,
+            syncState=F8VariantSyncState.local_only,
+            isLocalDraft=True,
+        )
+    )
 
     visible = service.list_records_for_base("svc.a.op")
     all_entries = service.list_entries_for_base("svc.a.op", include_uninstalled=True)
@@ -157,7 +155,7 @@ def test_local_variant_provider_preserves_service_variant_without_operator_class
     assert isinstance(loaded[0].record.operatorClass, msgspec.UnsetType)
 
 
-def test_variant_catalog_service_keeps_local_version_for_metadata_only_edits(tmp_path: Path) -> None:
+def test_variant_catalog_service_keeps_only_latest_draft_snapshot_for_metadata_only_edits(tmp_path: Path) -> None:
     service = VariantCatalogService(db_path=tmp_path / "assets.db")
     first = service.upsert_local_entry(
         F8VariantEntry(
@@ -183,18 +181,21 @@ def test_variant_catalog_service_keeps_local_version_for_metadata_only_edits(tmp
 
     loaded = service.entry("local-1", include_uninstalled=True)
 
-    assert first.localVersionNumber == 1
-    assert second.localVersionNumber == 1
+    assert first.localVersionNumber is None
+    assert second.localVersionNumber is None
+    assert service.list_local_versions("local-1") == []
+    assert service.local_version_record("local-1", 1) is None
     assert loaded is not None
-    assert loaded.localVersionNumber == 1
+    assert loaded.localVersionNumber is None
+    assert loaded.isLocalDraft is True
     assert loaded.record.name == "Local One Renamed"
     assert loaded.record.description == "metadata only"
     assert loaded.record.tags == ["updated"]
 
 
-def test_variant_catalog_service_tracks_local_versions_for_content_changes(tmp_path: Path) -> None:
+def test_variant_catalog_service_keeps_only_latest_draft_snapshot_for_content_changes(tmp_path: Path) -> None:
     service = VariantCatalogService(db_path=tmp_path / "assets.db")
-    first = service.upsert_local_entry(
+    _ = service.upsert_local_entry(
         F8VariantEntry(
             record=_make_record(variant_id="local-1", base_node_type="svc.a.op", name="Local One"),
             source=F8VariantSourceKind.local,
@@ -215,17 +216,17 @@ def test_variant_catalog_service_tracks_local_versions_for_content_changes(tmp_p
     versions = service.list_local_versions("local-1")
     version_one = service.local_version_record("local-1", 1)
     version_two = service.local_version_record("local-1", 2)
+    loaded = service.entry("local-1", include_uninstalled=True)
 
-    assert first.localVersionNumber == 1
-    assert second.localVersionNumber == 2
-    assert [version.versionNumber for version in versions] == [1, 2]
-    assert version_one is not None
-    assert version_one.spec == {"label": "Local One"}
-    assert version_two is not None
-    assert version_two.spec == {"label": "Local One v2"}
+    assert second.localVersionNumber is None
+    assert versions == []
+    assert version_one is None
+    assert version_two is None
+    assert loaded is not None
+    assert loaded.record.spec == {"label": "Local One v2"}
 
 
-def test_variant_catalog_service_can_seed_local_version_from_remote_version(tmp_path: Path) -> None:
+def test_variant_catalog_service_ignores_remote_version_when_saving_draft(tmp_path: Path) -> None:
     service = VariantCatalogService(db_path=tmp_path / "assets.db")
     saved = service.upsert_local_entry(
         F8VariantEntry(
@@ -238,5 +239,6 @@ def test_variant_catalog_service_can_seed_local_version_from_remote_version(tmp_
 
     versions = service.list_local_versions("remote-seeded")
 
-    assert saved.localVersionNumber == 5
-    assert [version.versionNumber for version in versions] == [5]
+    assert saved.localVersionNumber is None
+    assert saved.isLocalDraft is True
+    assert versions == []

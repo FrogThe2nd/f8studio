@@ -87,6 +87,22 @@ component_remote_cache_table = Table(
     Column("content", LargeBinary, nullable=False),
 )
 
+component_drafts_local_table = Table(
+    "component_drafts_local",
+    _METADATA,
+    Column("draft_id", Text, primary_key=True),
+    Column("name", Text, nullable=False),
+    Column("description", Text, nullable=False),
+    Column("tags_json", Text, nullable=False),
+    Column("schema_version", Text, nullable=False),
+    Column("content", LargeBinary, nullable=False),
+    Column("origin_kind", Text, nullable=True),
+    Column("publish_target_asset_id", Text, nullable=True),
+    Column("publish_base_remote_revision", Text, nullable=True),
+    Column("created_at", Text, nullable=False),
+    Column("updated_at", Text, nullable=False),
+)
+
 # Variant local/remote tables are defined here so variants can migrate into the
 # same assets.db without introducing a second SQLite file.
 variant_heads_local_table = Table(
@@ -153,9 +169,30 @@ variant_remote_cache_table = Table(
     Column("content", LargeBinary, nullable=False),
 )
 
+variant_drafts_local_table = Table(
+    "variant_drafts_local",
+    _METADATA,
+    Column("draft_id", Text, primary_key=True),
+    Column("name", Text, nullable=False),
+    Column("description", Text, nullable=False),
+    Column("tags_json", Text, nullable=False),
+    Column("kind", Text, nullable=False),
+    Column("base_node_type", Text, nullable=False),
+    Column("service_class", Text, nullable=False),
+    Column("operator_class", Text, nullable=True),
+    Column("content", LargeBinary, nullable=False),
+    Column("origin_kind", Text, nullable=True),
+    Column("publish_target_asset_id", Text, nullable=True),
+    Column("publish_base_remote_revision", Text, nullable=True),
+    Column("created_at", Text, nullable=False),
+    Column("updated_at", Text, nullable=False),
+)
+
 Index("idx_project_heads_updated_at", project_heads_table.c.updated_at)
 Index("idx_component_heads_local_updated_at", component_heads_local_table.c.updated_at)
+Index("idx_component_drafts_local_updated_at", component_drafts_local_table.c.updated_at)
 Index("idx_variant_heads_local_updated_at", variant_heads_local_table.c.updated_at)
+Index("idx_variant_drafts_local_updated_at", variant_drafts_local_table.c.updated_at)
 Index("idx_variant_remote_cache_updated_at", variant_remote_cache_table.c.updated_at)
 
 
@@ -320,8 +357,10 @@ __all__ = [
     "project_heads_table",
     "project_versions_table",
     "component_heads_local_table",
+    "component_drafts_local_table",
     "component_remote_cache_table",
     "variant_heads_local_table",
+    "variant_drafts_local_table",
     "variant_versions_local_table",
     "variant_remote_cache_table",
 ]

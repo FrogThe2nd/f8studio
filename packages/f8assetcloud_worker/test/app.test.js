@@ -632,11 +632,13 @@ test('openapi endpoints expose the audited worker contract', async (t) => {
   assert.ok(openapi.json.paths['/v1/components']);
   assert.ok(openapi.json.paths['/v1/components/{componentId}']);
   assert.ok(openapi.json.paths['/v1/components/{componentId}/content']);
+  assert.ok(openapi.json.paths['/v1/components/{componentId}/meta']);
   assert.ok(openapi.json.paths['/v1/components/{componentId}/versions']);
   assert.ok(openapi.json.paths['/v1/components/{componentId}/subscribe']);
   assert.ok(openapi.json.paths['/v1/variants']);
   assert.ok(openapi.json.paths['/v1/variants/{variantId}']);
   assert.ok(openapi.json.paths['/v1/variants/{variantId}/content']);
+  assert.ok(openapi.json.paths['/v1/variants/{variantId}/meta']);
   assert.ok(openapi.json.paths['/v1/variants/{variantId}/versions']);
   assert.ok(openapi.json.paths['/v1/variants/{variantId}/subscribe']);
   assert.ok(openapi.json.paths['/v1/management/users']);
@@ -846,6 +848,60 @@ test('variant asset lifecycle works with Better Auth cookie sessions', async (t)
   assert.equal(conflict.status, 409);
   assert.equal(conflict.json.revision, 'r2');
 
+  const variantHeadBeforeMetaPatch = await env.DB.prepare(
+    `SELECT latest_version_number, latest_revision, updated_at, schema_version
+     FROM asset_heads
+     WHERE asset_id = ?`,
+  )
+    .bind('alice-variant')
+    .first();
+
+  const metadataPatched = await jsonRequest(app, env, '/v1/variants/alice-variant/meta', {
+    method: 'PATCH',
+    cookie: alice.cookie,
+    payload: {
+      name: 'Alice Public Metadata',
+      description: 'Metadata only update',
+      tags: ['meta', 'variant'],
+    },
+  });
+  assert.equal(metadataPatched.status, 200);
+  assert.equal(metadataPatched.json.name, 'Alice Public Metadata');
+  assert.equal(metadataPatched.json.description, 'Metadata only update');
+  assert.deepEqual(metadataPatched.json.tags, ['meta', 'variant']);
+  assert.equal(metadataPatched.json.latestVersionNumber, 2);
+  assert.equal(metadataPatched.json.latestRevision, 'r2');
+
+  const variantHeadAfterMetaPatch = await env.DB.prepare(
+    `SELECT latest_version_number, latest_revision, updated_at, schema_version
+     FROM asset_heads
+     WHERE asset_id = ?`,
+  )
+    .bind('alice-variant')
+    .first();
+  assert.equal(Number(variantHeadAfterMetaPatch?.latest_version_number ?? 0), 2);
+  assert.equal(String(variantHeadAfterMetaPatch?.latest_revision || ''), 'r2');
+  assert.equal(String(variantHeadAfterMetaPatch?.schema_version || ''), '');
+  assert.notEqual(
+    String(variantHeadAfterMetaPatch?.updated_at || ''),
+    String(variantHeadBeforeMetaPatch?.updated_at || ''),
+  );
+
+  const variantVersionsAfterMetaPatch = await jsonRequest(app, env, '/v1/variants/alice-variant/versions', { cookie: alice.cookie });
+  assert.equal(variantVersionsAfterMetaPatch.status, 200);
+  assert.equal(variantVersionsAfterMetaPatch.json.versions.length, 2);
+
+  const forbiddenVariantMetadataPatch = await jsonRequest(app, env, '/v1/variants/alice-variant/meta', {
+    method: 'PATCH',
+    cookie: bob.cookie,
+    payload: {
+      name: 'Bob Variant Edit',
+      description: 'forbidden',
+      tags: ['forbidden'],
+    },
+  });
+  assert.equal(forbiddenVariantMetadataPatch.status, 403);
+
   const forked = await jsonRequest(app, env, '/v1/variants/alice-variant/fork', {
     method: 'POST',
     cookie: bob.cookie,
@@ -969,13 +1025,67 @@ test('component asset lifecycle validates session envelope and visibility rules'
   assert.equal(updated.status, 200);
   assert.equal(updated.json.revision, 'r2');
 
+  const componentHeadBeforeMetaPatch = await env.DB.prepare(
+    `SELECT latest_version_number, latest_revision, updated_at, schema_version
+     FROM asset_heads
+     WHERE asset_id = ?`,
+  )
+    .bind('component-a')
+    .first();
+
+  const componentMetadataPatched = await jsonRequest(app, env, '/v1/components/component-a/meta', {
+    method: 'PATCH',
+    cookie: alice.cookie,
+    payload: {
+      name: 'Published Session Metadata',
+      description: 'Metadata only component update',
+      tags: ['meta', 'component'],
+    },
+  });
+  assert.equal(componentMetadataPatched.status, 200);
+  assert.equal(componentMetadataPatched.json.name, 'Published Session Metadata');
+  assert.equal(componentMetadataPatched.json.description, 'Metadata only component update');
+  assert.deepEqual(componentMetadataPatched.json.tags, ['meta', 'component']);
+  assert.equal(componentMetadataPatched.json.latestVersionNumber, 2);
+  assert.equal(componentMetadataPatched.json.latestRevision, 'r2');
+
+  const componentHeadAfterMetaPatch = await env.DB.prepare(
+    `SELECT latest_version_number, latest_revision, updated_at, schema_version
+     FROM asset_heads
+     WHERE asset_id = ?`,
+  )
+    .bind('component-a')
+    .first();
+  assert.equal(Number(componentHeadAfterMetaPatch?.latest_version_number ?? 0), 2);
+  assert.equal(String(componentHeadAfterMetaPatch?.latest_revision || ''), 'r2');
+  assert.equal(String(componentHeadAfterMetaPatch?.schema_version || ''), 'f8studio-session/1');
+  assert.notEqual(
+    String(componentHeadAfterMetaPatch?.updated_at || ''),
+    String(componentHeadBeforeMetaPatch?.updated_at || ''),
+  );
+
+  const componentVersionsAfterMetaPatch = await jsonRequest(app, env, '/v1/components/component-a/versions', { cookie: alice.cookie });
+  assert.equal(componentVersionsAfterMetaPatch.status, 200);
+  assert.equal(componentVersionsAfterMetaPatch.json.versions.length, 2);
+
+  const forbiddenComponentMetadataPatch = await jsonRequest(app, env, '/v1/components/component-a/meta', {
+    method: 'PATCH',
+    cookie: bob.cookie,
+    payload: {
+      name: 'Bob Component Edit',
+      description: 'forbidden',
+      tags: ['forbidden'],
+    },
+  });
+  assert.equal(forbiddenComponentMetadataPatch.status, 403);
+
   const oldVersion = await jsonRequest(app, env, '/v1/components/component-a/versions/1', { cookie: bob.cookie });
   assert.equal(oldVersion.status, 200);
   assert.equal(oldVersion.json.componentId, 'component-a');
   assert.equal(oldVersion.json.hasContent, true);
   const oldVersionContent = await jsonRequest(app, env, '/v1/components/component-a/versions/1/content', { cookie: bob.cookie });
   assert.equal(oldVersionContent.status, 200);
-  assert.equal(oldVersionContent.json.record.name, 'Published Session v2');
+  assert.equal(oldVersionContent.json.record.name, 'Published Session Metadata');
 
   const forbidden = await jsonRequest(app, env, '/v1/components/component-a', {
     method: 'PUT',

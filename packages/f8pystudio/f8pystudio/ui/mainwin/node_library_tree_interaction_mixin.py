@@ -46,16 +46,17 @@ class NodeLibraryTreeInteractionMixin:
 
     @staticmethod
     def _variant_search_blob(variant: Any) -> str:
+        record = variant.record
         parts = [
-            str(variant.name or ""),
-            str(variant.description or ""),
-            " ".join(str(t) for t in list(variant.tags or [])),
+            str(record.name or ""),
+            str(record.description or ""),
+            " ".join(str(tag) for tag in list(record.tags or [])),
         ]
-        spec = variant.spec if isinstance(variant.spec, dict) else {}
+        spec = record.spec if isinstance(record.spec, dict) else {}
         if isinstance(spec, dict):
             parts.append(str(spec.get("label") or ""))
             parts.append(str(spec.get("description") or ""))
-            parts.append(" ".join(str(t) for t in list(spec.get("tags") or [])))
+            parts.append(" ".join(str(tag) for tag in list(spec.get("tags") or [])))
         return " ".join(parts).lower()
 
     def _variant_matches_search(self, variant: Any) -> bool:

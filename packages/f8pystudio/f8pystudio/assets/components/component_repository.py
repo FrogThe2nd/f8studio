@@ -5,8 +5,16 @@ from pathlib import Path
 
 from f8pysdk.codec import copy_model
 from f8pystudio.nodegraph.session_schema import extract_layout
+from .component_drafts import ComponentDraftService, draft_as_catalog_entry
 from .component_catalog import ComponentCatalogService
-from .component_models import F8ComponentDraftOriginKind, F8ComponentEntry, F8ComponentRecord, F8ComponentSourceKind
+from .component_catalog import component_entry_is_installed
+from .component_models import (
+    F8ComponentDraftEntry,
+    F8ComponentDraftOriginKind,
+    F8ComponentEntry,
+    F8ComponentRecord,
+    F8ComponentSourceKind,
+)
 from ..common import JsonObject, json_object_loads, json_string_list_loads
 
 
@@ -14,32 +22,61 @@ def _service() -> ComponentCatalogService:
     return ComponentCatalogService()
 
 
+def _draft_service() -> ComponentDraftService:
+    service = _service()
+    return ComponentDraftService(db_path=service.db_path)
+
+
 def list_component_entries(*, include_uninstalled: bool = False) -> list[F8ComponentEntry]:
-    return _service().list_entries(include_uninstalled=include_uninstalled)
+    entries = _draft_service().list_catalog_entries() + _service().load_remote_entries()
+    if include_uninstalled:
+        return sorted(entries, key=_component_sort_key)
+    return sorted([entry for entry in entries if component_entry_is_installed(entry)], key=_component_sort_key)
 
 
 def component_entry(component_id: str, *, include_uninstalled: bool = True) -> F8ComponentEntry | None:
-    return _service().entry(component_id, include_uninstalled=include_uninstalled)
+    normalized_component_id = str(component_id or "").strip()
+    if not normalized_component_id:
+        return None
+    draft = _draft_service().draft(normalized_component_id)
+    if draft is not None:
+        return draft_as_catalog_entry(draft)
+    entry = _service().remote_entry(normalized_component_id)
+    if entry is None:
+        return None
+    if include_uninstalled or component_entry_is_installed(entry):
+        return entry
+    return None
 
 
 def upsert_component(record: F8ComponentRecord) -> F8ComponentRecord:
-    existing_local_entry = _service().entry(str(record.componentId), include_uninstalled=True)
-    if existing_local_entry is not None and existing_local_entry.source == F8ComponentSourceKind.local:
-        saved = _service().upsert_local_entry(copy_model(existing_local_entry, update={"record": record}))
-        return saved.record
-    saved = _service().upsert_local_entry(
-        F8ComponentEntry(
-            record=record,
-            source=F8ComponentSourceKind.local,
-            isLocalDraft=True,
-            draftOriginKind=F8ComponentDraftOriginKind.new,
+    draft_service = _draft_service()
+    existing_draft = draft_service.draft(str(record.componentId))
+    if existing_draft is not None:
+        saved = draft_service.save_draft(
+            F8ComponentDraftEntry(
+                draftId=existing_draft.draftId,
+                record=record,
+                originKind=existing_draft.originKind,
+                publishTargetAssetId=existing_draft.publishTargetAssetId,
+                publishBaseRemoteRevision=existing_draft.publishBaseRemoteRevision,
+                createdAt=existing_draft.createdAt,
+                updatedAt=existing_draft.updatedAt,
+            )
         )
+        return saved.record
+    saved = draft_service.create_draft_from_record(
+        record,
+        origin_kind=F8ComponentDraftOriginKind.new,
+        publish_target_asset_id=None,
+        publish_base_remote_revision=None,
+        draft_id=str(record.componentId),
     )
     return saved.record
 
 
 def delete_component(component_id: str) -> bool:
-    return _service().delete_local_entry(component_id)
+    return _draft_service().delete_draft(component_id)
 
 
 def import_component_from_json(path: str, *, metadata: dict[str, object] | None = None) -> F8ComponentRecord:
@@ -86,6 +123,10 @@ def _metadata_tags(metadata: dict[str, object]) -> list[str]:
 
 def _content_schema_version(content: JsonObject) -> str:
     return str(content["schemaVersion"])
+
+
+def _component_sort_key(entry: F8ComponentEntry) -> tuple[str, str]:
+    return (str(entry.record.name or "").lower(), str(entry.record.componentId or ""))
 
 
 __all__ = [

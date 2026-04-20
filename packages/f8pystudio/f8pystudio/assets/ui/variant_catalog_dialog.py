@@ -4,6 +4,7 @@ from typing import Any
 
 from qtpy import QtWidgets
 
+from ..variants.variant_drafts import VariantDraftService
 from ..variants.variant_models import F8VariantEntry
 from ..variants.variant_sync import VariantSyncClient
 from .catalog_status import AssetCatalogRowState
@@ -26,10 +27,12 @@ class VariantCatalogDialog(
     VariantCatalogUiMixin,
     QtWidgets.QDialog,
 ):
-    _TAB_MINE = 0
-    _TAB_COMMUNITY = 1
-    _TAB_INSTALLED = 2
+    _TAB_DRAFTS = 0
+    _TAB_MINE = 1
+    _TAB_COMMUNITY = 2
+    _TAB_INSTALLED = 3
     LOCAL_DRAFT_LABEL = "Local Draft"
+    LINKED_DRAFT_LABEL = "Linked Draft"
     LOCAL_DRAFT_LOAD_TOOLTIP = "Not available for Local Draft"
 
     def __init__(
@@ -48,9 +51,18 @@ class VariantCatalogDialog(
         self._entries: list[F8VariantEntry] = []
         self._row_states_by_variant_id: dict[str, AssetCatalogRowState] = {}
         self._sync_client = VariantSyncClient()
+        self._draft_service = VariantDraftService(
+            db_path=self._sync_client._catalog_service.db_path
+        )
         self._initialize_browser_state()
         self._initialize_selection_state()
         self._initialize_ui(node_graph=node_graph)
         if self._is_global_mode:
-            self._populate_node_type_combo()
-        self._reload()
+            self._sync_node_type_combo_ui()
+        self._render_browser_initial_state()
+
+    def _draft_service_for_catalog(self) -> VariantDraftService:
+        draft_db_path = self._sync_client._catalog_service.db_path
+        if self._draft_service._db._path != draft_db_path:
+            self._draft_service = VariantDraftService(db_path=draft_db_path)
+        return self._draft_service

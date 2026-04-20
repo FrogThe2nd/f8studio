@@ -26,6 +26,7 @@ def variant_row_state_for_entries(
     local_entry: F8VariantEntry | None,
     remote_entry: F8VariantEntry | None,
     local_draft_label: str = "Local Draft",
+    linked_draft_label: str = "Linked Draft",
 ) -> AssetCatalogRowState:
     cached_remote_content = False
     if remote_entry is not None:
@@ -67,7 +68,7 @@ def variant_row_state_for_entries(
             local_sync_state = F8VariantSyncState.synced.value
             remote_sync_state = F8VariantSyncState.synced.value
     if local_entry is not None and local_entry.isLocalDraft and remote_entry is None:
-        owner_display_name = local_draft_label
+        owner_display_name = linked_draft_label if local_entry.draftOriginAssetId else local_draft_label
     return build_asset_catalog_row_state(
         asset_id=variant_id,
         has_local_head=local_entry is not None,
@@ -84,12 +85,14 @@ def variant_row_state_for_entries(
 
 
 class VariantCatalogEntriesMixin:
+    _TAB_DRAFTS: int
     _TAB_MINE: int
     _TAB_COMMUNITY: int
     _TAB_INSTALLED: int
     _base_node_type: str
     _is_global_mode: bool
     LOCAL_DRAFT_LABEL: str
+    LINKED_DRAFT_LABEL: str
     _sync_client: Any
     _scope_tabs: Any
     _row_states_by_variant_id: dict[str, AssetCatalogRowState]
@@ -99,6 +102,10 @@ class VariantCatalogEntriesMixin:
     _current_filter_value: Any
     _entry_matches_query: Any
     _owner_label_text: Any
+    _linked_draft_reference_text: Any
+    _linked_draft_reference_tooltip: Any
+    _linked_draft_badge_text: Any
+    _linked_draft_badge_tooltip: Any
     _is_owned_remote_entry: Any
     _is_owned_remote_shared_entry: Any
     _is_mine_entry: Any
@@ -113,11 +120,17 @@ class VariantCatalogEntriesMixin:
         row_state = self._row_state_for_entry(entry)
         current_tab = self._scope_tabs.currentIndex()
         current_filter = self._current_filter_value()
+        if current_tab == self._TAB_DRAFTS:
+            if not self._is_local_draft_entry(entry):
+                return False
+            if current_filter == "linked":
+                return bool(entry.draftOriginAssetId)
+            if current_filter == "unpublished":
+                return not bool(entry.draftOriginAssetId)
+            return True
         if current_tab == self._TAB_MINE:
             if not self._is_mine_entry(entry):
                 return False
-            if current_filter == "local":
-                return row_state.has_local_head
             if current_filter == "private":
                 return row_state.has_remote_head and row_state.visibility == F8VariantVisibility.private.value
             if current_filter == "shared":
@@ -136,10 +149,10 @@ class VariantCatalogEntriesMixin:
                 return not bool(entry.subscribed)
             return True
         if current_tab == self._TAB_INSTALLED:
-            if not row_state.has_local_presence:
+            if not variant_entry_is_installed(entry):
                 return False
             if current_filter == "mine":
-                return row_state.has_local_head or self._is_owned_remote_entry(entry)
+                return self._is_owned_remote_entry(entry)
             if current_filter == "subscribed":
                 return row_state.subscribed and not self._is_owned_remote_entry(entry)
             return True
@@ -153,7 +166,7 @@ class VariantCatalogEntriesMixin:
 
         local_entries = [
             entry
-            for entry in service._local_provider.load_entries()
+            for entry in self._draft_service_for_catalog().list_catalog_entries()
             if self._matches_base_type(entry, current_base_type=current_base_type)
         ]
         remote_entries = [
@@ -177,6 +190,15 @@ class VariantCatalogEntriesMixin:
                 for entry in remote_entries[:10]
             ],
         )
+        if current_tab == self._TAB_DRAFTS:
+            return sorted(
+                [
+                    entry
+                    for entry in local_entries
+                    if self._matches_filter(entry) and self._entry_matches_query(entry, normalized_query)
+                ],
+                key=self._entry_sort_key,
+            )
         if current_tab == self._TAB_COMMUNITY:
             return sorted(
                 [
@@ -187,19 +209,15 @@ class VariantCatalogEntriesMixin:
                 key=self._entry_sort_key,
             )
         if current_tab == self._TAB_MINE:
-            merged: dict[str, F8VariantEntry] = {
-                str(entry.record.variantId): entry
-                for entry in local_entries
-                if self._is_mine_entry(entry) and self._entry_matches_query(entry, normalized_query)
-            }
-            for entry in remote_entries:
-                if self._is_owned_remote_entry(entry) and self._entry_matches_query(entry, normalized_query):
-                    merged[str(entry.record.variantId)] = entry
-            return sorted(merged.values(), key=self._entry_sort_key)
-        if current_base_type:
-            entries = list_entries_for_base(current_base_type, include_uninstalled=True)
-        else:
-            entries = service.load_all_entries()
+            return sorted(
+                [
+                    entry
+                    for entry in remote_entries
+                    if self._matches_filter(entry) and self._entry_matches_query(entry, normalized_query)
+                ],
+                key=self._entry_sort_key,
+            )
+        entries = remote_entries
         return [
             entry
             for entry in entries
@@ -211,7 +229,7 @@ class VariantCatalogEntriesMixin:
         current_base_type = self._get_current_base_node_type()
         local_entries = [
             entry
-            for entry in service._local_provider.load_entries()
+            for entry in self._draft_service_for_catalog().list_catalog_entries()
             if self._matches_base_type(entry, current_base_type=current_base_type)
         ]
         remote_entries = [
@@ -236,6 +254,7 @@ class VariantCatalogEntriesMixin:
                 local_entry=local_by_id.get(variant_id),
                 remote_entry=remote_by_id.get(variant_id),
                 local_draft_label=self.LOCAL_DRAFT_LABEL,
+                linked_draft_label=self.LINKED_DRAFT_LABEL,
             )
         return row_states
 
@@ -250,6 +269,7 @@ class VariantCatalogEntriesMixin:
             local_entry=entry if entry.source == F8VariantSourceKind.local else None,
             remote_entry=entry if entry.source != F8VariantSourceKind.local else None,
             local_draft_label=self.LOCAL_DRAFT_LABEL,
+            linked_draft_label=self.LINKED_DRAFT_LABEL,
         )
 
     @staticmethod
@@ -304,12 +324,14 @@ class VariantCatalogEntriesMixin:
         return self._is_owned_remote_entry(entry) and bool(entry.visibility) and entry.visibility.value == "public"
 
     def _is_mine_entry(self, entry: F8VariantEntry) -> bool:
-        if entry.source == F8VariantSourceKind.local:
-            return True
         return self._is_owned_remote_entry(entry)
 
     def _build_list_row(self, entry: F8VariantEntry) -> QtWidgets.QWidget:
         row_state = self._row_state_for_entry(entry)
+        linked_reference_text = self._linked_draft_reference_text(entry)
+        linked_reference_tooltip = self._linked_draft_reference_tooltip(entry)
+        linked_draft_badge_text = self._linked_draft_badge_text(entry)
+        linked_draft_badge_tooltip = self._linked_draft_badge_tooltip(entry)
         container = QtWidgets.QWidget(self._list)
         container.setObjectName("catalogRowCard")
         container.setStyleSheet(
@@ -344,9 +366,41 @@ class VariantCatalogEntriesMixin:
             title_row.addWidget(owner_label, 0)
         root.addLayout(title_row)
 
+        if linked_reference_text is not None:
+            linked_label = QtWidgets.QLabel(linked_reference_text, container)
+            linked_label.setStyleSheet(
+                "QLabel {"
+                " color: #dbeafe;"
+                " font-size: 12px;"
+                " font-weight: 600;"
+                " background: #172033;"
+                " border: 1px solid #355070;"
+                " border-radius: 8px;"
+                " padding: 2px 8px;"
+                "}"
+            )
+            if linked_reference_tooltip is not None:
+                linked_label.setToolTip(linked_reference_tooltip)
+            root.addWidget(linked_label)
+
         meta_row = QtWidgets.QHBoxLayout()
         meta_row.setContentsMargins(0, 0, 0, 0)
         meta_row.setSpacing(6)
+        if linked_draft_badge_text is not None:
+            linked_draft_badge = self._build_text_badge(container, linked_draft_badge_text)
+            linked_draft_badge.setStyleSheet(
+                "QLabel {"
+                " border: 1px solid #1f7a5a;"
+                " border-radius: 9px;"
+                " padding: 1px 6px;"
+                " color: #dcfce7;"
+                " background: #14532d;"
+                " font-weight: 600;"
+                "}"
+            )
+            if linked_draft_badge_tooltip is not None:
+                linked_draft_badge.setToolTip(linked_draft_badge_tooltip)
+            meta_row.addWidget(linked_draft_badge, 0)
         if self._is_global_mode and not self._get_current_base_node_type():
             base_type = str(entry.record.baseNodeType or "").strip()
             if base_type:

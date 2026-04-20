@@ -7,16 +7,19 @@ from qtpy import QtCore, QtWidgets
 
 from NodeGraphQt.custom_widgets.nodes_tree import _BaseNodeTreeItem, TYPE_CATEGORY, TYPE_NODE
 
+from ...assets.common.asset_display_labels import variant_tree_display_name
 from ...assets.variants.variant_ids import build_variant_node_type
-from ...assets.variants.variant_repository import list_variants_grouped_by_base
+from ...assets.variants.variant_repository import list_variant_entries_grouped_by_base
 from ...nodegraph.spec_visibility import is_hidden_spec_node_class, typed_spec_template_or_none
 from ...ui.support.node_category_labels import display_node_category_label
+from ...ui.support.qt_lifecycle import qt_runtime_error_is_object_deleted
 from f8pysdk.specs import palette_category_from_spec
 
 
 class NodeLibraryTreeBuildMixin:
     def _show_status_message(self, message: str) -> None:
         host = cast(Any, self)
+        host._tree_build_generation += 1
         host.clear()
         item = _BaseNodeTreeItem(host, [str(message or "")], type=TYPE_CATEGORY)
         item.setFlags(QtCore.Qt.ItemFlag.ItemIsEnabled)
@@ -41,8 +44,8 @@ class NodeLibraryTreeBuildMixin:
         variants_by_base: dict[str, list[Any]] = {}
         if show_variant_children:
             variants_by_base = {
-                base_node_type: list(records)
-                for base_node_type, records in list_variants_grouped_by_base(include_uninstalled=False).items()
+                base_node_type: list(entries)
+                for base_node_type, entries in list_variant_entries_grouped_by_base(include_uninstalled=False).items()
             }
 
         node_types_by_category: dict[str, list[tuple[str, str, str, list[Any]]]] = defaultdict(list)
@@ -114,7 +117,12 @@ class NodeLibraryTreeBuildMixin:
             category_item = host._category_items.get(category)
             if category_item is None:
                 continue
-            item = _BaseNodeTreeItem(category_item, [node_name], type=TYPE_NODE)
+            try:
+                item = _BaseNodeTreeItem(category_item, [node_name], type=TYPE_NODE)
+            except RuntimeError as exc:
+                if qt_runtime_error_is_object_deleted(exc):
+                    return
+                raise
             item.setToolTip(0, node_id)
             item.setSizeHint(0, QtCore.QSize(100, 22))
             item.setData(0, host._ROLE_NODE_ID, node_id)
@@ -127,17 +135,22 @@ class NodeLibraryTreeBuildMixin:
                 item.setToolTip(0, f"{node_id}\n\n{spec_description}")
 
             for variant in matched_variants:
-                variant_node_type = build_variant_node_type(str(variant.variantId))
-                variant_text = f"|{variant.name}|"
-                variant_item = _BaseNodeTreeItem(item, [variant_text], type=TYPE_NODE)
+                variant_node_type = build_variant_node_type(str(variant.record.variantId))
+                variant_text = variant_tree_display_name(variant)
+                try:
+                    variant_item = _BaseNodeTreeItem(item, [variant_text], type=TYPE_NODE)
+                except RuntimeError as exc:
+                    if qt_runtime_error_is_object_deleted(exc):
+                        return
+                    raise
                 variant_item.setToolTip(0, variant_node_type)
                 variant_item.setSizeHint(0, QtCore.QSize(100, 22))
                 variant_item.setData(0, host._ROLE_NODE_ID, variant_node_type)
                 variant_item.setData(0, host._ROLE_BASE_NODE_ID, node_id)
                 variant_item.setData(0, host._ROLE_NODE_NAME, node_name)
-                variant_item.setData(0, host._ROLE_VARIANT_ID, str(variant.variantId))
+                variant_item.setData(0, host._ROLE_VARIANT_ID, str(variant.record.variantId))
                 variant_item.setData(0, host._ROLE_IS_VARIANT, True)
-                variant_item.setData(0, host._ROLE_VARIANT_NAME, str(variant.name or ""))
+                variant_item.setData(0, host._ROLE_VARIANT_NAME, str(variant.record.name or ""))
                 item.addChild(variant_item)
             host._set_item_expanded_from_memory(item, expanded=node_id in expanded_base_nodes)
 
@@ -156,7 +169,12 @@ class NodeLibraryTreeBuildMixin:
             category_item = host.topLevelItem(index)
             if category_item is None:
                 continue
-            category_id = str(category_item.data(0, host._ROLE_CATEGORY_ID) or "").strip()
+            try:
+                category_id = str(category_item.data(0, host._ROLE_CATEGORY_ID) or "").strip()
+            except RuntimeError as exc:
+                if qt_runtime_error_is_object_deleted(exc):
+                    return
+                raise
             category_expanded = True
             if categories_initialized:
                 category_expanded = category_id in expanded_categories

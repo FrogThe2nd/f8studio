@@ -68,6 +68,16 @@ class F8ComponentEntry(Struct, kw_only=True):
     draftOriginRevision: str | None = None
 
 
+class F8ComponentDraftEntry(Struct, kw_only=True):
+    draftId: str
+    record: F8ComponentRecord
+    originKind: F8ComponentDraftOriginKind | None = None
+    publishTargetAssetId: str | None = None
+    publishBaseRemoteRevision: str | None = None
+    createdAt: str = field(default_factory=now_iso)
+    updatedAt: str = field(default_factory=now_iso)
+
+
 class F8ComponentCatalogSnapshot(Struct, kw_only=True):
     schemaVersion: str = "f8componentcatalog/1"
     entries: list[F8ComponentEntry] = field(default_factory=list)
@@ -143,6 +153,7 @@ __all__ = [
     "F8ComponentVisibility",
     "F8ComponentSyncState",
     "F8ComponentDraftOriginKind",
+    "F8ComponentDraftEntry",
     "F8ComponentRecord",
     "F8ComponentEntry",
     "F8ComponentCatalogSnapshot",

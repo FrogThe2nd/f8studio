@@ -7,16 +7,17 @@ from typing import Protocol, cast
 
 from qtpy import QtWidgets
 
-from f8pysdk.specs import F8VariantRecord
 from f8pysdk.specs import palette_category_from_spec
 
 from ..assets.common import JsonObject
+from ..assets.common.asset_display_labels import component_search_display_name, variant_search_display_name
 from ..assets.components.component_repository import component_entry, list_component_entries
 from ..assets.projects.project_storage import ProjectStorageService
 from ..ui.support.node_category_labels import display_node_category_label
 from ..ui.support.ui_notifications import show_warning
 from ..assets.variants.variant_ids import build_variant_node_type
-from ..assets.variants.variant_repository import list_variants_grouped_by_base
+from ..assets.variants.variant_models import F8VariantEntry
+from ..assets.variants.variant_repository import list_variant_entries_grouped_by_base
 from .service_basenode import F8StudioServiceNodeItem
 from .spec_visibility import is_hidden_spec_node_class, typed_spec_template_or_none
 
@@ -29,7 +30,11 @@ class _NodeFactoryProtocol(Protocol):
 class _TabSearchViewerProtocol(Protocol):
     def tab_search_set_nodes(self, nodes: dict[str, list[str]]) -> None: ...
 
+    def tab_search_rebuild_nodes(self, nodes: dict[str, list[str]]) -> None: ...
+
     def tab_search_toggle(self) -> None: ...
+
+    def is_tab_search_visible(self) -> bool: ...
 
 
 class _SearchNodeProtocol(Protocol):
@@ -82,18 +87,8 @@ class GraphSearchActionsMixin:
             self._tab_search_component_ids = component_ids
         return component_ids
 
-    def toggle_node_search(self) -> None:
-        """
-        Open node search (tab search menu).
-
-        NodeGraphQt's default implementation only opens when the viewer is
-        under the mouse; for keyboard shortcuts we want it to open when the
-        viewer has focus.
-        """
+    def _build_tab_search_nodes(self) -> dict[str, list[str]]:
         host = cast(_GraphSearchHost, cast(object, self))
-        viewer = host.viewer()
-        if viewer is None:
-            return
         factory = host.node_factory
         names = factory.names
         nodes = factory.nodes
@@ -125,7 +120,7 @@ class GraphSearchActionsMixin:
                 kept_types.append(alias_id)
             if kept_types:
                 filtered_names[str(node_name)] = kept_types
-        variants_by_base = list_variants_grouped_by_base(include_uninstalled=False)
+        variants_by_base = list_variant_entries_grouped_by_base(include_uninstalled=False)
         self._append_variant_search_entries(
             filtered_names=filtered_names,
             alias_counts=alias_counts,
@@ -135,9 +130,30 @@ class GraphSearchActionsMixin:
             variants_by_base=variants_by_base,
         )
         self._append_component_search_entries(filtered_names=filtered_names, alias_counts=alias_counts)
+        return filtered_names
 
-        viewer.tab_search_set_nodes(filtered_names)
+    def toggle_node_search(self) -> None:
+        """
+        Open node search (tab search menu).
+
+        NodeGraphQt's default implementation only opens when the viewer is
+        under the mouse; for keyboard shortcuts we want it to open when the
+        viewer has focus.
+        """
+        host = cast(_GraphSearchHost, cast(object, self))
+        viewer = host.viewer()
+        if viewer is None:
+            return
+        filtered_names = self._build_tab_search_nodes()
+        viewer.tab_search_rebuild_nodes(filtered_names)
         viewer.tab_search_toggle()
+
+    def refresh_tab_search_if_visible(self) -> None:
+        host = cast(_GraphSearchHost, cast(object, self))
+        viewer = host.viewer()
+        if viewer is None or not viewer.is_tab_search_visible():
+            return
+        viewer.tab_search_rebuild_nodes(self._build_tab_search_nodes())
 
     def _append_variant_search_entries(
         self,
@@ -147,7 +163,7 @@ class GraphSearchActionsMixin:
         nodes: dict[str, type[object]],
         base_node_names: dict[str, str],
         base_node_categories: dict[str, str],
-        variants_by_base: dict[str, list[F8VariantRecord]],
+        variants_by_base: dict[str, list[F8VariantEntry]],
     ) -> None:
         """
         Add saved variants to tab-search without requiring dynamic node-class registration.
@@ -158,11 +174,11 @@ class GraphSearchActionsMixin:
         seen_variant_ids: set[str] = set()
         for base_node_type in list(base_node_names.keys()):
             for variant in list(variants_by_base.get(base_node_type, [])):
-                variant_id = str(variant.variantId or "").strip()
+                variant_id = str(variant.record.variantId or "").strip()
                 if not variant_id or variant_id in seen_variant_ids:
                     continue
                 seen_variant_ids.add(variant_id)
-                base_node_type = str(variant.baseNodeType or "").strip()
+                base_node_type = str(variant.record.baseNodeType or "").strip()
                 if not base_node_type:
                     continue
                 base_node_cls = nodes.get(base_node_type)
@@ -181,7 +197,7 @@ class GraphSearchActionsMixin:
                 if not base_node_name:
                     base_node_name = base_node_type.split(".")[-1] if "." in base_node_type else base_node_type
 
-                variant_name = str(variant.name or "").strip() or variant_id
+                variant_name = str(variant.record.name or "").strip() or variant_id
                 base_leaf = base_node_type.split(".")[-1] if "." in base_node_type else base_node_type
                 variant_leaf = self._tab_search_leaf_token(variant_name)
                 alias_base = f"{category}.{base_leaf}_variant_{variant_leaf}"
@@ -190,7 +206,7 @@ class GraphSearchActionsMixin:
                 alias_id = alias_base if count == 1 else f"{alias_base}_{count}"
                 node_type_aliases[alias_id] = build_variant_node_type(variant_id)
 
-                display_name = f"{base_node_name} | {variant_name}"
+                display_name = variant_search_display_name(variant, base_node_name=base_node_name)
                 existing = filtered_names.get(display_name)
                 if existing is None:
                     filtered_names[display_name] = [alias_id]
@@ -216,7 +232,7 @@ class GraphSearchActionsMixin:
             alias_id = alias_base if count == 1 else f"{alias_base}_{count}"
             component_ids[alias_id] = component_id
 
-            display_name = f"Component | {component_name}"
+            display_name = component_search_display_name(entry)
             existing = filtered_names.get(display_name)
             if existing is None:
                 filtered_names[display_name] = [alias_id]

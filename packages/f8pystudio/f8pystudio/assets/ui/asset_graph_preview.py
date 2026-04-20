@@ -17,6 +17,7 @@ from ...assets.common import JsonObject, json_object_from_value
 from ...nodegraph.node_graph import F8StudioGraph
 from ...nodegraph.viewer import F8StudioNodeViewer
 from ...ui.support.state_builders import set_control_read_only
+from ...ui.support.qt_lifecycle import qt_runtime_error_is_object_deleted
 from ...ui.widgets.node_property_panel import F8StudioSingleNodePropertiesWidget
 from ..variants.variant_ids import build_variant_node_type
 
@@ -406,7 +407,12 @@ class AssetGraphPreviewPane(QtWidgets.QWidget):
     def _focus_loaded_nodes_if_current(self, request_id: int) -> None:
         if request_id != self._current_request_id:
             return
-        self._focus_loaded_nodes()
+        try:
+            self._focus_loaded_nodes()
+        except RuntimeError as exc:
+            if qt_runtime_error_is_object_deleted(exc):
+                return
+            raise
 
     def _next_request_id(self) -> int:
         self._current_request_id += 1
@@ -473,10 +479,20 @@ class AssetGraphPreviewPane(QtWidgets.QWidget):
         self._inspector.set_node(selected_node)
 
     def _focus_loaded_nodes(self) -> None:
-        viewer = self._preview_graph.viewer()
+        try:
+            viewer = self._preview_graph.viewer()
+        except RuntimeError as exc:
+            if qt_runtime_error_is_object_deleted(exc):
+                return
+            raise
         if not isinstance(viewer, QtWidgets.QGraphicsView):
             return
-        scene = viewer.scene()
+        try:
+            scene = viewer.scene()
+        except RuntimeError as exc:
+            if qt_runtime_error_is_object_deleted(exc):
+                return
+            raise
         if scene is None:
             return
         node_rects: list[QtCore.QRectF] = []

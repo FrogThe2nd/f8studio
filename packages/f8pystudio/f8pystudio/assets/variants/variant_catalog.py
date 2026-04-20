@@ -30,6 +30,7 @@ from ..common.remote_cache_common import (
 )
 from .variant_events import emit_variants_changed
 from .variant_models import (
+    F8VariantDraftEntry,
     F8VariantDraftOriginKind,
     F8VariantEntry,
     F8VariantLocalVersionSummary,
@@ -431,14 +432,27 @@ class VariantCatalogService:
         local_provider: LocalVariantProvider | None = None,
         remote_provider: RemoteCacheProvider | None = None,
     ) -> None:
-        self._local_provider: LocalVariantProvider
-        self._local_provider = LocalVariantProvider(db_path) if local_provider is None else local_provider
+        if db_path is not None:
+            self._db_path = Path(db_path)
+        elif local_provider is not None:
+            self._db_path = local_provider._db._path
+        elif remote_provider is not None:
+            self._db_path = remote_provider._db._path
+        else:
+            self._db_path = AssetsDatabase().path
         self._remote_provider: RemoteCacheProvider
-        self._remote_provider = RemoteCacheProvider(db_path) if remote_provider is None else remote_provider
+        self._remote_provider = RemoteCacheProvider(self._db_path) if remote_provider is None else remote_provider
+
+    @property
+    def db_path(self) -> Path:
+        return self._db_path
 
     def load_all_entries(self) -> list[F8VariantEntry]:
         merged: dict[str, F8VariantEntry] = {}
-        for source_entries in [self._remote_provider.load_entries(), self._local_provider.load_entries()]:
+        from .variant_drafts import VariantDraftService
+
+        draft_entries = VariantDraftService(db_path=self._db_path).list_catalog_entries()
+        for source_entries in [self._remote_provider.load_entries(), draft_entries]:
             for entry in source_entries:
                 variant_id = str(entry.record.variantId or "").strip()
                 if not variant_id:
@@ -480,24 +494,55 @@ class VariantCatalogService:
         return self.record(variant_id) is not None
 
     def upsert_local_entry(self, entry: F8VariantEntry) -> F8VariantEntry:
-        local_entry = entry if entry.source == F8VariantSourceKind.local else copy_model(entry, update={"source": F8VariantSourceKind.local})
-        local_entries = self._local_provider.load_entries()
-        _validate_unique_name(local_entries, local_entry.record, exclude_variant_id=str(local_entry.record.variantId))
-        saved = self._local_provider.save_entry(local_entry)
+        from .variant_drafts import VariantDraftService, draft_as_catalog_entry
+
+        local_entry = entry if entry.source == F8VariantSourceKind.local else copy_model(
+            entry,
+            update={"source": F8VariantSourceKind.local},
+        )
+        draft_service = VariantDraftService(db_path=self._db_path)
+        current_entries = draft_service.list_catalog_entries()
+        _validate_unique_name(current_entries, local_entry.record, exclude_variant_id=str(local_entry.record.variantId))
+        existing_draft = draft_service.draft(str(local_entry.record.variantId))
+        if existing_draft is not None:
+            saved = draft_service.save_draft(
+                F8VariantDraftEntry(
+                    draftId=existing_draft.draftId,
+                    record=local_entry.record,
+                    originKind=local_entry.draftOriginKind or existing_draft.originKind,
+                    publishTargetAssetId=local_entry.draftOriginAssetId or existing_draft.publishTargetAssetId,
+                    publishBaseRemoteRevision=local_entry.draftOriginRevision or existing_draft.publishBaseRemoteRevision,
+                    createdAt=existing_draft.createdAt,
+                    updatedAt=existing_draft.updatedAt,
+                )
+            )
+        else:
+            saved = draft_service.create_draft_from_record(
+                local_entry.record,
+                origin_kind=local_entry.draftOriginKind or F8VariantDraftOriginKind.new,
+                publish_target_asset_id=local_entry.draftOriginAssetId,
+                publish_base_remote_revision=local_entry.draftOriginRevision,
+                draft_id=str(local_entry.record.variantId),
+            )
         emit_variants_changed()
-        return saved
+        return draft_as_catalog_entry(saved)
 
     def delete_local_entry(self, variant_id: str) -> bool:
-        deleted = self._local_provider.delete_entry(variant_id)
+        from .variant_drafts import VariantDraftService
+
+        deleted = VariantDraftService(db_path=self._db_path).delete_draft(variant_id)
         if deleted:
             emit_variants_changed()
         return deleted
 
     def list_local_versions(self, variant_id: str) -> list[F8VariantLocalVersionSummary]:
-        return self._local_provider.list_versions(variant_id)
+        _ = variant_id
+        return []
 
     def local_version_record(self, variant_id: str, version_number: int) -> F8VariantRecord | None:
-        return self._local_provider.version_record(variant_id, version_number)
+        _ = variant_id
+        _ = version_number
+        return None
 
     def replace_remote_entries(self, entries: list[F8VariantEntry]) -> None:
         self._remote_provider.save_entries(entries)
@@ -609,7 +654,9 @@ class VariantCatalogService:
         return target
 
     def export_local_library(self) -> F8VariantLibrary:
-        return entries_to_library(self._local_provider.load_entries())
+        from .variant_drafts import VariantDraftService
+
+        return entries_to_library(VariantDraftService(db_path=self._db_path).list_catalog_entries())
 
     def import_local_library(self, library: F8VariantLibrary, *, mode: str) -> F8VariantLibrary:
         raw_entries = library.entries
@@ -639,7 +686,10 @@ class VariantCatalogService:
         )
 
     def import_local_entries(self, entries: list[F8VariantEntry], *, mode: str) -> F8VariantLibrary:
-        current_entries = [] if mode == "replace" else self._local_provider.load_entries()
+        from .variant_drafts import VariantDraftService
+
+        draft_service = VariantDraftService(db_path=self._db_path)
+        current_entries = [] if mode == "replace" else draft_service.list_catalog_entries()
         current_records = [entry.record for entry in current_entries]
         imported_entries = list(current_entries)
         for entry in entries:
@@ -656,7 +706,14 @@ class VariantCatalogService:
                 entry = copy_model(entry, update={"record": variant})
             imported_entries.append(entry)
             current_records = [entry.record for entry in imported_entries]
-        self._local_provider.save_entries(imported_entries)
+        if mode == "replace":
+            for existing_draft in draft_service.list_drafts():
+                draft_service.delete_draft(existing_draft.draftId)
+        else:
+            for entry in current_entries:
+                draft_service.delete_draft(str(entry.record.variantId))
+        for entry in imported_entries:
+            _ = self.upsert_local_entry(entry)
         emit_variants_changed()
         return entries_to_library(imported_entries)
 

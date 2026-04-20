@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from qtpy import QtWidgets
@@ -22,13 +23,45 @@ from ..variants.variant_repository import (
     export_to_json,
     import_from_json,
     normalize_variant_name,
-    upsert_variant_entry,
 )
 from ...ui.support.ui_notifications import show_info, show_warning
 from .project_asset_dialogs import AssetOverwriteChoice, AssetOverwriteMetaDialog
 
 
 class VariantCatalogActionsMixin:
+    def _save_variant_draft(
+        self,
+        *,
+        record: F8VariantRecord,
+        origin_kind: F8VariantDraftOriginKind | None,
+        publish_target_asset_id: str | None,
+        publish_base_remote_revision: str | None,
+        draft_id: str | None = None,
+    ) -> F8VariantEntry:
+        draft_service = self._draft_service_for_catalog()
+        draft_identifier = str(draft_id or record.variantId or "").strip() or new_asset_id()
+        normalized_name = ensure_unique_variant_name(
+            str(record.baseNodeType or ""),
+            str(record.name or ""),
+            exclude_variant_id=draft_identifier,
+            existing_records=[
+                entry.record
+                for entry in draft_service.list_catalog_entries()
+                if str(entry.record.baseNodeType or "").strip() == str(record.baseNodeType or "").strip()
+            ],
+        )
+        saved = draft_service.create_draft_from_record(
+            copy_model(record, update={"name": normalized_name}),
+            origin_kind=origin_kind,
+            publish_target_asset_id=publish_target_asset_id,
+            publish_base_remote_revision=publish_base_remote_revision,
+            draft_id=draft_identifier,
+        )
+        saved_entry = self._local_entry_for_variant_id(saved.draftId)
+        if saved_entry is None:
+            raise ValueError("Failed to save variant draft.")
+        return saved_entry
+
     def _find_selected_base_node(self) -> Any | None:
         graph = self._graph
         if graph is None:
@@ -90,17 +123,30 @@ class VariantCatalogActionsMixin:
         show_info(self, action_text, f"{action_text} variant:\n{saved_entry.record.name}")
 
     def _on_edit_clicked(self) -> None:
+        selected_entry = self._selected_entry()
+        if selected_entry is None:
+            return
+        if self._scope_tabs.currentIndex() != self._TAB_DRAFTS:
+            draft_entry = self._ensure_variant_draft_for_entry(selected_entry)
+            if draft_entry is None:
+                return
+            self._scope_tabs.setCurrentIndex(self._TAB_DRAFTS)
+            self._rebuild_browser_after_draft_changed(
+                preserve_variant_id=str(draft_entry.record.variantId)
+            )
+            show_info(self, "Draft Ready", f"Opened draft for:\n{draft_entry.record.name}")
+            return
         selected_entry = self._selected_local_entry()
         if selected_entry is None:
             return
         selected = selected_entry.record
         dlg = AssetOverwriteMetaDialog(
             parent=self,
-            title="Edit Variant Metadata",
+            title="Edit Draft Metadata",
             name=selected.name,
             description=selected.description,
             tags=list(selected.tags or []),
-            overwrite_choices=self._overwrite_choices_for_base(exclude_variant_id=str(selected.variantId)),
+            overwrite_choices=[],
             overwrite_label="Load Metadata From",
             name_validator=lambda candidate, _selected_id: self._validate_edit_variant_name(
                 candidate, selected.variantId
@@ -116,30 +162,19 @@ class VariantCatalogActionsMixin:
         payload["updatedAt"] = variant_now_iso()
         new_record = validate_as(F8VariantRecord, payload)
         try:
-            _ = upsert_variant_entry(
-                copy_model(
-                    selected_entry,
-                    update={
-                        "record": new_record,
-                        "remoteVersionNumber": selected_entry.remoteVersionNumber,
-                    },
-                )
+            _ = self._save_variant_draft(
+                record=new_record,
+                origin_kind=selected_entry.draftOriginKind,
+                publish_target_asset_id=selected_entry.draftOriginAssetId,
+                publish_base_remote_revision=selected_entry.draftOriginRevision,
+                draft_id=str(selected_entry.record.variantId),
             )
         except ValueError as exc:
             show_warning(self, "Invalid name", str(exc))
             return
-        # If already pushed to remote, patch metadata there too (no new version created).
-        if selected_entry.remoteRevision is not None:
-            try:
-                _ = self._sync_client.patch_variant_meta(
-                    str(selected.variantId),
-                    name=name,
-                    description=description,
-                    tags=[str(t) for t in tags],
-                )
-            except Exception as exc:
-                show_warning(self, "Remote metadata update failed", str(exc))
-        self._reload(preserve_variant_id=str(selected.variantId))
+        self._rebuild_browser_after_draft_changed(
+            preserve_variant_id=str(selected.variantId)
+        )
 
     def _overwrite_choices_for_base(self, *, exclude_variant_id: str | None = None) -> list[AssetOverwriteChoice]:
         choices = [
@@ -149,21 +184,43 @@ class VariantCatalogActionsMixin:
                 description=str(entry.record.description),
                 tags=[str(tag) for tag in list(entry.record.tags or []) if str(tag).strip()],
             )
-            for entry in self._mine_entries_for_base(exclude_variant_id=exclude_variant_id)
+            for entry in self._draft_entries_for_base(exclude_variant_id=exclude_variant_id)
         ]
         choices.sort(key=lambda choice: choice.label.lower())
         return choices
+
+    def _draft_entries_for_base(self, *, exclude_variant_id: str | None = None) -> list[F8VariantEntry]:
+        excluded_variant_id = str(exclude_variant_id or "").strip()
+        current_base_type = self._get_current_base_node_type()
+        entries: list[F8VariantEntry] = []
+        for entry in self._draft_service_for_catalog().list_catalog_entries():
+            if str(entry.record.baseNodeType or "").strip() != current_base_type:
+                continue
+            variant_id = str(entry.record.variantId or "").strip()
+            if excluded_variant_id and variant_id == excluded_variant_id:
+                continue
+            entries.append(entry)
+        return entries
+
+    def _draft_entry_by_name(self, name: str, *, exclude_variant_id: str | None = None) -> F8VariantEntry | None:
+        normalized_name = normalize_variant_name(name)
+        if not normalized_name:
+            return None
+        for entry in self._draft_entries_for_base(exclude_variant_id=exclude_variant_id):
+            if normalize_variant_name(entry.record.name) == normalized_name:
+                return entry
+        return None
 
     def _resolve_overwrite_target(self, *, name: str, overwrite_variant_id: str | None) -> F8VariantEntry | None:
         normalized_name = normalize_variant_name(name)
         overwrite_entry = (
             None
             if overwrite_variant_id is None
-            else self._sync_client._catalog_service.entry(str(overwrite_variant_id), include_uninstalled=True)
+            else self._local_entry_for_variant_id(str(overwrite_variant_id))
         )
-        if overwrite_entry is not None and self._is_mine_entry(overwrite_entry):
+        if overwrite_entry is not None and overwrite_entry.source == F8VariantSourceKind.local:
             return overwrite_entry
-        return self._mine_entry_by_name(normalized_name)
+        return self._draft_entry_by_name(normalized_name)
 
     def _save_variant_record(
         self,
@@ -172,41 +229,36 @@ class VariantCatalogActionsMixin:
         overwrite_entry: F8VariantEntry | None,
     ) -> F8VariantEntry:
         if overwrite_entry is None:
-            return self._sync_client._catalog_service.upsert_local_entry(
-                F8VariantEntry(
-                    record=record,
-                    source=F8VariantSourceKind.local,
-                    isLocalDraft=True,
-                    draftOriginKind=F8VariantDraftOriginKind.new,
-                )
+            return self._save_variant_draft(
+                record=record,
+                origin_kind=F8VariantDraftOriginKind.new,
+                publish_target_asset_id=None,
+                publish_base_remote_revision=None,
             )
         if overwrite_entry.source == F8VariantSourceKind.local:
-            return self._sync_client._catalog_service.upsert_local_entry(
-                copy_model(overwrite_entry, update={"record": record})
+            return self._save_variant_draft(
+                record=record,
+                origin_kind=overwrite_entry.draftOriginKind,
+                publish_target_asset_id=overwrite_entry.draftOriginAssetId,
+                publish_base_remote_revision=overwrite_entry.draftOriginRevision,
+                draft_id=str(overwrite_entry.record.variantId),
             )
-        local_entry = self._local_entry_for_variant_id(str(overwrite_entry.record.variantId))
-        if local_entry is not None:
-            return self._sync_client._catalog_service.upsert_local_entry(
-                copy_model(local_entry, update={"record": record})
-            )
-        seeded_entry = self._local_seed_from_remote_entry(
-            overwrite_entry,
-            record=record,
-            mark_modified=True,
-        )
-        return self._replace_local_variant_head(seeded_entry)
+        draft_entry = self._ensure_variant_draft_for_entry(overwrite_entry, record=record)
+        if draft_entry is None:
+            raise ValueError("Failed to create linked draft.")
+        return draft_entry
 
     def _validate_save_variant_name(self, candidate: str, overwrite_variant_id: str | None) -> str | None:
         normalized_name = normalize_variant_name(candidate)
         target_entry = self._resolve_overwrite_target(name=normalized_name, overwrite_variant_id=overwrite_variant_id)
         exclude_variant_id = None if target_entry is None else str(target_entry.record.variantId)
-        if self._mine_entry_by_name(normalized_name, exclude_variant_id=exclude_variant_id) is not None:
+        if self._draft_entry_by_name(normalized_name, exclude_variant_id=exclude_variant_id) is not None:
             return f"Variant name '{normalized_name}' already exists. Please choose the existing variant to overwrite."
         return None
 
     def _validate_edit_variant_name(self, candidate: str, variant_id: str) -> str | None:
         normalized_name = normalize_variant_name(candidate)
-        if self._mine_entry_by_name(normalized_name, exclude_variant_id=variant_id) is not None:
+        if self._draft_entry_by_name(normalized_name, exclude_variant_id=variant_id) is not None:
             return f"Variant name '{normalized_name}' already exists. Please rename."
         return None
 
@@ -214,28 +266,48 @@ class VariantCatalogActionsMixin:
         selected_entry, local_entry, remote_entry = self._selected_action_entries()
         if selected_entry is None:
             return
+        current_tab = self._scope_tabs.currentIndex()
+        if current_tab == self._TAB_DRAFTS:
+            if local_entry is None:
+                return
+            if QtWidgets.QMessageBox.question(self, "Delete draft", f"Delete draft '{selected_entry.record.name}'?") != QtWidgets.QMessageBox.Yes:
+                return
+            if not self._draft_service_for_catalog().delete_draft(str(local_entry.record.variantId)):
+                show_warning(self, "Delete failed", "Draft was not found.")
+                return
+            self._rebuild_browser_after_draft_changed()
+            return
+        if current_tab == self._TAB_INSTALLED:
+            can_remove_installed = local_entry is not None or (remote_entry is not None and variant_entry_is_installed(remote_entry))
+            if not can_remove_installed:
+                return
+            if QtWidgets.QMessageBox.question(
+                self,
+                "Remove from Installed",
+                f"Remove installed cache for '{selected_entry.record.name}'?",
+            ) != QtWidgets.QMessageBox.Yes:
+                return
+            if self._offload_selected_variant(local_entry=local_entry, remote_entry=remote_entry):
+                show_info(
+                    self,
+                    "Removed from Installed",
+                    f"Removed from installed cache:\n{selected_entry.record.name}",
+                )
+            return
         has_owned_remote = remote_entry is not None and self._is_owned_remote_entry(remote_entry)
-        if local_entry is None and not has_owned_remote:
+        if not has_owned_remote:
             return
         title = "Delete variant"
-        prompt = f"Delete variant '{selected_entry.record.name}'?"
-        if local_entry is not None and has_owned_remote:
-            prompt = f"Delete local and remote variant '{selected_entry.record.name}'?"
-        elif has_owned_remote:
-            prompt = f"Delete remote variant '{selected_entry.record.name}'?"
-        elif local_entry is not None:
-            prompt = f"Delete local variant '{selected_entry.record.name}'?"
+        prompt = f"Delete remote variant '{selected_entry.record.name}'?"
         if QtWidgets.QMessageBox.question(self, title, prompt) != QtWidgets.QMessageBox.Yes:
             return
         try:
-            if local_entry is not None:
-                _ = self._sync_client._catalog_service.delete_local_entry(str(local_entry.record.variantId))
             if has_owned_remote and remote_entry is not None:
                 self._sync_client.delete_variant(str(remote_entry.record.variantId))
         except Exception as exc:
             show_warning(self, "Delete failed", str(exc))
             return
-        self._reload()
+        self._rebuild_browser_after_remote_asset_changed()
 
     def _on_delete_local_clicked(self) -> None:
         self._on_delete_clicked()
@@ -247,21 +319,29 @@ class VariantCatalogActionsMixin:
         selected_entry = self._selected_entry()
         if selected_entry is None:
             return None
-        if selected_entry.source != F8VariantSourceKind.local:
+        source_entry = selected_entry
+        if source_entry.source != F8VariantSourceKind.local and not source_entry.hasCachedContent:
             try:
-                selected_entry = self._sync_client.cache_variant_content(str(selected_entry.record.variantId))
+                source_entry = self._sync_client.cache_variant_content(str(source_entry.record.variantId))
             except Exception as exc:
                 show_warning(self, "Load failed", str(exc))
                 return None
-        record = selected_entry.record
+        record = source_entry.record
+        origin_kind = F8VariantDraftOriginKind.copy_remote
+        publish_target_asset_id = None
+        publish_base_remote_revision = None
+        if source_entry.source == F8VariantSourceKind.local and source_entry.isLocalDraft:
+            origin_kind = F8VariantDraftOriginKind.copy_local
+            publish_target_asset_id = source_entry.draftOriginAssetId
+            publish_base_remote_revision = source_entry.draftOriginRevision
         duplicate_name = ensure_unique_variant_name(
             str(record.baseNodeType or ""),
             f"{str(record.name or '').strip() or 'Variant'} Draft",
             existing_records=[
-                entry.record for entry in self._sync_client._catalog_service._local_provider.load_entries()
+                entry.record for entry in self._draft_service_for_catalog().list_catalog_entries()
             ],
         )
-        duplicate_record = validate_as(
+        duplicated_record = validate_as(
             F8VariantRecord,
             {
                 **dump_json(record, mode="json"),
@@ -270,32 +350,80 @@ class VariantCatalogActionsMixin:
                 "updatedAt": variant_now_iso(),
             },
         )
-        try:
-            duplicated_entry = self._sync_client._catalog_service.upsert_local_entry(
-                F8VariantEntry(
-                    record=duplicate_record,
-                    source=F8VariantSourceKind.local,
-                    isLocalDraft=True,
-                    draftOriginKind=(
-                        F8VariantDraftOriginKind.copy_local
-                        if selected_entry.source == F8VariantSourceKind.local
-                        else F8VariantDraftOriginKind.copy_remote
-                    ),
-                    draftOriginAssetId=str(record.variantId),
-                    draftOriginRevision=selected_entry.remoteRevision,
-                )
-            )
-        except ValueError as exc:
-            show_warning(self, "Copy to Draft failed", str(exc))
-            return None
-        self._reload(preserve_variant_id=str(duplicated_entry.record.variantId))
+        duplicated_entry = self._save_variant_draft(
+            record=duplicated_record,
+            origin_kind=origin_kind,
+            publish_target_asset_id=publish_target_asset_id,
+            publish_base_remote_revision=publish_base_remote_revision,
+        )
+        self._rebuild_browser_after_draft_changed(
+            preserve_variant_id=str(duplicated_entry.record.variantId)
+        )
         return self._local_entry_for_variant_id(str(duplicated_entry.record.variantId))
 
     def _on_duplicate_clicked(self) -> None:
+        current_tab = self._scope_tabs.currentIndex()
+        if current_tab == self._TAB_MINE:
+            selected_entry = self._selected_entry()
+            if selected_entry is None:
+                return
+            draft_entry = self._ensure_variant_draft_for_entry(selected_entry)
+            if draft_entry is None:
+                return
+            self._scope_tabs.setCurrentIndex(self._TAB_DRAFTS)
+            self._rebuild_browser_after_draft_changed(
+                preserve_variant_id=str(draft_entry.record.variantId)
+            )
+            show_info(self, "Draft Ready", f"Opened draft for:\n{draft_entry.record.name}")
+            return
         duplicated = self._duplicate_selected_variant_as_local()
         if duplicated is None:
             return
         show_info(self, "Draft Created", f"Created local draft:\n{duplicated.record.name}")
+
+    def _ensure_variant_draft_for_entry(
+        self,
+        entry: F8VariantEntry,
+        *,
+        record: F8VariantRecord | None = None,
+        always_duplicate: bool = False,
+    ) -> F8VariantEntry | None:
+        if entry.source == F8VariantSourceKind.local and entry.isLocalDraft and record is None and not always_duplicate:
+            return entry
+        hydrated_entry = entry
+        if hydrated_entry.source != F8VariantSourceKind.local and record is None and not hydrated_entry.hasCachedContent:
+            try:
+                hydrated_entry = self._sync_client.cache_variant_content(str(hydrated_entry.record.variantId))
+            except Exception as exc:
+                show_warning(self, "Load failed", str(exc))
+                return None
+        publish_target_asset_id: str | None = None
+        publish_base_remote_revision: str | None = None
+        origin_kind = F8VariantDraftOriginKind.copy_remote
+        if entry.source == F8VariantSourceKind.local and entry.isLocalDraft:
+            origin_kind = F8VariantDraftOriginKind.copy_local
+        elif self._is_owned_remote_entry(entry):
+            publish_target_asset_id = str(entry.record.variantId)
+            publish_base_remote_revision = entry.remoteRevision
+            if not always_duplicate:
+                existing_draft = self._draft_service_for_catalog().draft_for_publish_target(publish_target_asset_id)
+                if existing_draft is not None:
+                    return self._local_entry_for_variant_id(existing_draft.draftId)
+        draft_record = validate_as(
+            F8VariantRecord,
+            {
+                **dump_json(hydrated_entry.record if record is None else record, mode="json"),
+                "variantId": new_asset_id(),
+                "updatedAt": variant_now_iso(),
+            },
+        )
+        saved = self._save_variant_draft(
+            record=draft_record,
+            origin_kind=origin_kind,
+            publish_target_asset_id=publish_target_asset_id,
+            publish_base_remote_revision=publish_base_remote_revision,
+        )
+        return self._local_entry_for_variant_id(str(saved.record.variantId))
 
     def _on_create_clicked(self) -> None:
         selected_entry = self._selected_local_entry() or self._selected_entry()

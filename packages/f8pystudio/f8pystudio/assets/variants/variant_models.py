@@ -59,6 +59,16 @@ class F8VariantEntry(Struct, kw_only=True):
     draftOriginRevision: str | None = None
 
 
+class F8VariantDraftEntry(Struct, kw_only=True):
+    draftId: str
+    record: F8VariantRecord
+    originKind: F8VariantDraftOriginKind | None = None
+    publishTargetAssetId: str | None = None
+    publishBaseRemoteRevision: str | None = None
+    createdAt: str = field(default_factory=now_iso)
+    updatedAt: str = field(default_factory=now_iso)
+
+
 class F8VariantCatalogSnapshot(Struct, kw_only=True):
     schemaVersion: str = "f8variantcatalog/1"
     entries: list[F8VariantEntry] = field(default_factory=list)
@@ -137,6 +147,7 @@ __all__ = [
     "F8VariantVisibility",
     "F8VariantSyncState",
     "F8VariantDraftOriginKind",
+    "F8VariantDraftEntry",
     "F8VariantEntry",
     "F8VariantCatalogSnapshot",
     "F8VariantLocalVersionSummary",

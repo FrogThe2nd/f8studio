@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 
 from qtpy import QtCore, QtWidgets
@@ -26,7 +27,7 @@ from ...nodegraph.component_publish_payload import (
     trim_component_publish_payload_to_selected_nodes,
 )
 from ...ui.support.ui_notifications import show_info, show_warning
-from .project_asset_dialogs import AssetOverwriteChoice, AssetOverwriteMetaDialog
+from .project_asset_dialogs import AssetOverwriteChoice, AssetOverwriteMetaDialog, ProjectAssetMetaDialog
 
 
 logger = logging.getLogger(__name__)
@@ -58,26 +59,35 @@ class ComponentCatalogActionsMixin:
         remote_entry: F8ComponentEntry | None,
     ) -> QtWidgets.QMenu:
         menu = QtWidgets.QMenu(self)
-        if current_tab == self._TAB_MINE:
-            can_load, can_offload = self._load_action_availability(local_entry=local_entry, remote_entry=remote_entry)
-            edit_action = menu.addAction("Edit Metadata")
+        if current_tab == self._TAB_DRAFTS:
+            edit_action = menu.addAction("Edit Draft Metadata")
             edit_action.setEnabled(local_entry is not None)
             edit_action.triggered.connect(self._on_edit_clicked)  # type: ignore[attr-defined]
+            publish_action = menu.addAction("Publish Draft")
+            publish_action.setEnabled(local_entry is not None)
+            publish_action.triggered.connect(self._on_upload_clicked)  # type: ignore[attr-defined]
+            duplicate_action = menu.addAction("Copy to Draft")
+            duplicate_action.setEnabled(local_entry is not None)
+            duplicate_action.triggered.connect(self._on_copy_local_clicked)  # type: ignore[attr-defined]
+            delete_action = menu.addAction("Delete Draft")
+            delete_action.setEnabled(local_entry is not None)
+            delete_action.triggered.connect(self._on_delete_clicked)  # type: ignore[attr-defined]
+            history_action = menu.addAction("History")
+            history_action.setEnabled(bool(local_entry is not None and local_entry.draftOriginAssetId))
+            history_action.triggered.connect(self._on_history_clicked)  # type: ignore[attr-defined]
+        elif current_tab == self._TAB_MINE:
+            can_load, _can_offload = self._load_action_availability(local_entry=local_entry, remote_entry=remote_entry)
+            open_draft_action = menu.addAction("Open Draft")
+            open_draft_action.setEnabled(selected_entry is not None)
+            open_draft_action.triggered.connect(self._on_copy_local_clicked)  # type: ignore[attr-defined]
             if can_load:
                 load_action = menu.addAction("Load")
                 load_action.triggered.connect(self._on_install_clicked)  # type: ignore[attr-defined]
             delete_action = menu.addAction("Delete")
             delete_action.setEnabled(
-                local_entry is not None or (remote_entry is not None and self._is_owned_remote_entry(remote_entry))
+                remote_entry is not None and self._is_owned_remote_entry(remote_entry)
             )
             delete_action.triggered.connect(self._on_delete_clicked)  # type: ignore[attr-defined]
-            fork_action = menu.addAction("Copy to Draft")
-            fork_action.triggered.connect(self._on_copy_local_clicked)  # type: ignore[attr-defined]
-            sync_action = menu.addAction("Sync")
-            sync_action.setEnabled(
-                local_entry is not None or (remote_entry is not None and self._is_owned_remote_entry(remote_entry))
-            )
-            sync_action.triggered.connect(self._on_upload_clicked)  # type: ignore[attr-defined]
             visibility_label = "Make Public"
             if remote_entry is not None and remote_entry.visibility == F8ComponentVisibility.public:
                 visibility_label = "Make Private"
@@ -101,9 +111,7 @@ class ComponentCatalogActionsMixin:
             history_action.triggered.connect(self._on_history_clicked)  # type: ignore[attr-defined]
         else:
             if local_entry is not None or (remote_entry is not None and component_entry_is_installed(remote_entry)):
-                offload_action = menu.addAction(
-                    "Delete"
-                )  # explicitly replacing Offload with Delete locally according to Variants semantics
+                offload_action = menu.addAction("Remove from Installed")
                 offload_action.triggered.connect(self._on_install_clicked)  # type: ignore[attr-defined]
             pull_action = menu.addAction("Pull")
             pull_action.setEnabled(remote_entry is not None and component_entry_is_installed(remote_entry))
@@ -121,9 +129,8 @@ class ComponentCatalogActionsMixin:
                 description=str(entry.record.description),
                 tags=[str(tag) for tag in list(entry.record.tags or []) if str(tag).strip()],
             )
-            for entry in self._sync_client._catalog_service.load_all_entries()
-            if self._is_mine_entry(entry)
-            and (exclude_component_id is None or str(entry.record.componentId) != exclude_component_id)
+            for entry in self._draft_service_for_catalog().list_catalog_entries()
+            if exclude_component_id is None or str(entry.record.componentId) != exclude_component_id
         ]
         choices.sort(key=lambda choice: choice.label.lower())
         return choices
@@ -131,14 +138,12 @@ class ComponentCatalogActionsMixin:
     def _normalize_component_name(self, name: str) -> str:
         return str(name or "").strip()
 
-    def _mine_entry_by_name(self, name: str, *, exclude_component_id: str | None = None) -> F8ComponentEntry | None:
+    def _draft_entry_by_name(self, name: str, *, exclude_component_id: str | None = None) -> F8ComponentEntry | None:
         normalized_name = self._normalize_component_name(name)
         excluded_id = str(exclude_component_id or "").strip()
         if not normalized_name:
             return None
-        for entry in self._sync_client._catalog_service.load_all_entries():
-            if not self._is_mine_entry(entry):
-                continue
+        for entry in self._draft_service_for_catalog().list_catalog_entries():
             component_id = str(entry.record.componentId or "").strip()
             if excluded_id and component_id == excluded_id:
                 continue
@@ -148,20 +153,15 @@ class ComponentCatalogActionsMixin:
 
     def _validate_edit_component_name(self, candidate: str, component_id: str) -> str | None:
         normalized_name = self._normalize_component_name(candidate)
-        if self._mine_entry_by_name(normalized_name, exclude_component_id=component_id) is not None:
+        if self._draft_entry_by_name(normalized_name, exclude_component_id=component_id) is not None:
             return f"Component name '{normalized_name}' already exists. Please rename."
         return None
 
     def _validate_save_component_name(self, candidate: str, overwrite_component_id: str | None) -> str | None:
         normalized_name = self._normalize_component_name(candidate)
-        overwrite_entry = None
-        if overwrite_component_id:
-            for entry in self._sync_client._catalog_service.load_all_entries():
-                if self._is_mine_entry(entry) and str(entry.record.componentId) == str(overwrite_component_id):
-                    overwrite_entry = entry
-                    break
+        overwrite_entry = None if not overwrite_component_id else self._local_entry_for_component_id(str(overwrite_component_id))
         exclude_id = None if overwrite_entry is None else str(overwrite_entry.record.componentId)
-        if self._mine_entry_by_name(name=normalized_name, exclude_component_id=exclude_id) is not None:
+        if self._draft_entry_by_name(name=normalized_name, exclude_component_id=exclude_id) is not None:
             return f"Component name '{normalized_name}' already exists. Please choose the existing component to overwrite."
         return None
 
@@ -194,14 +194,9 @@ class ComponentCatalogActionsMixin:
                     selected_node_ids=selected_node_ids,
                 )
             name, description, tags, overwrite_component_id = metadata_dialog.values()
-            overwrite_entry = None
-            if overwrite_component_id:
-                for entry in self._sync_client._catalog_service.load_all_entries():
-                    if self._is_mine_entry(entry) and str(entry.record.componentId) == str(overwrite_component_id):
-                        overwrite_entry = entry
-                        break
+            overwrite_entry = None if not overwrite_component_id else self._local_entry_for_component_id(str(overwrite_component_id))
             if overwrite_entry is None:
-                overwrite_entry = self._mine_entry_by_name(name)
+                overwrite_entry = self._draft_entry_by_name(name)
             record = F8ComponentRecord(
                 componentId=new_asset_id() if overwrite_entry is None else str(overwrite_entry.record.componentId),
                 name=name,
@@ -221,21 +216,29 @@ class ComponentCatalogActionsMixin:
         selected_entry = self._selected_entry()
         if selected_entry is None:
             return
+        current_tab = self._scope_tabs.currentIndex()
+        if current_tab != self._TAB_DRAFTS:
+            draft_entry = self._ensure_component_draft_for_entry(selected_entry)
+            if draft_entry is None:
+                return
+            self._scope_tabs.setCurrentIndex(self._TAB_DRAFTS)
+            self._rebuild_browser_after_draft_changed(
+                preserve_component_id=str(draft_entry.record.componentId)
+            )
+            show_info(self, "Draft Ready", f"Opened draft for:\n{draft_entry.record.name}")
+            return
         component_id = str(selected_entry.record.componentId or "").strip()
-        # The Mine tab may show a remote cache entry even when a local copy exists.
-        # Always resolve the actual local entry so we edit the right record.
         local_entry = self._local_entry_for_component_id(component_id)
         if local_entry is None:
-            # No local copy — nothing to edit locally.
             return
         record = local_entry.record
         metadata_dialog = AssetOverwriteMetaDialog(
             parent=self,
-            title="Edit Component Metadata",
+            title="Edit Draft Metadata",
             name=record.name,
             description=record.description,
             tags=list(record.tags or []),
-            overwrite_choices=self._component_overwrite_choices(exclude_component_id=component_id),
+            overwrite_choices=[],
             overwrite_label="Load Metadata From",
             name_validator=lambda candidate, _selected_id: self._validate_edit_component_name(
                 candidate, component_id
@@ -256,95 +259,100 @@ class ComponentCatalogActionsMixin:
             },
         )
         try:
-            _ = self._sync_client._catalog_service.upsert_local_entry(
-                copy_model(local_entry, update={"record": updated_record})
+            _ = self._draft_service_for_catalog().create_draft_from_record(
+                updated_record,
+                origin_kind=local_entry.draftOriginKind,
+                publish_target_asset_id=local_entry.draftOriginAssetId,
+                publish_base_remote_revision=local_entry.draftOriginRevision,
+                draft_id=component_id,
             )
         except ValueError as exc:
             show_warning(self, "Invalid name", str(exc))
             return
-        # If already synced to remote, patch metadata there too (no new version created).
-        remote_entry = self._remote_entry_for_component_id(component_id)
-        if remote_entry is not None and self._is_owned_remote_entry(remote_entry):
-            try:
-                _ = self._sync_client.patch_component_meta(
-                    component_id,
-                    name=name,
-                    description=description,
-                    tags=[str(t) for t in tags],
-                )
-            except Exception as exc:
-                show_warning(self, "Remote metadata update failed", str(exc))
-        self._reload()
+        self._rebuild_browser_after_draft_changed(preserve_component_id=component_id)
 
     def _on_delete_clicked(self) -> None:
         selected_entry, local_entry, remote_entry = self._selected_action_entries()
         if selected_entry is None:
             return
+        current_tab = self._scope_tabs.currentIndex()
+        if current_tab == self._TAB_DRAFTS:
+            if local_entry is None:
+                return
+            answer = QtWidgets.QMessageBox.question(self, "Delete draft", f"Delete draft '{selected_entry.record.name}'?")
+            if answer != QtWidgets.QMessageBox.Yes:
+                return
+            if not self._draft_service_for_catalog().delete_draft(str(local_entry.record.componentId)):
+                show_warning(self, "Delete failed", "Draft was not found.")
+                return
+            self._rebuild_browser_after_draft_changed()
+            return
+        if current_tab == self._TAB_INSTALLED:
+            can_remove_installed = local_entry is not None or (remote_entry is not None and component_entry_is_installed(remote_entry))
+            if not can_remove_installed:
+                return
+            answer = QtWidgets.QMessageBox.question(
+                self,
+                "Remove from Installed",
+                f"Remove installed cache for '{selected_entry.record.name}'?",
+            )
+            if answer != QtWidgets.QMessageBox.Yes:
+                return
+            if self._offload_selected_component(local_entry=local_entry, remote_entry=remote_entry):
+                show_info(self, "Removed from Installed", f"Removed from installed cache:\n{selected_entry.record.name}")
+            return
         has_owned_remote = remote_entry is not None and self._is_owned_remote_entry(remote_entry)
-        if local_entry is None and not has_owned_remote:
+        if not has_owned_remote:
             return
         title = "Delete component"
-        prompt = f"Delete component '{selected_entry.record.name}'?"
-        if local_entry is not None and has_owned_remote:
-            prompt = f"Delete local and remote component '{selected_entry.record.name}'?"
-        elif has_owned_remote:
-            prompt = f"Delete remote component '{selected_entry.record.name}'?"
-        elif local_entry is not None:
-            prompt = f"Delete local component '{selected_entry.record.name}'?"
+        prompt = f"Delete remote component '{selected_entry.record.name}'?"
         answer = QtWidgets.QMessageBox.question(self, title, prompt)
         if answer != QtWidgets.QMessageBox.Yes:
             return
         try:
-            if local_entry is not None:
-                _ = self._sync_client._catalog_service.delete_local_entry(str(local_entry.record.componentId))
             if has_owned_remote and remote_entry is not None:
                 self._sync_client.delete_component(str(remote_entry.record.componentId))
         except Exception as exc:
             show_warning(self, "Delete failed", str(exc))
             return
-        self._reload()
+        self._rebuild_browser_after_remote_asset_changed()
 
     def _on_copy_local_clicked(self) -> None:
         selected_entry = self._selected_entry()
         if selected_entry is None:
             return
-        selected_entry = self._ensure_component_hydrated(selected_entry, operation_name="Load component")
-        if selected_entry is None:
+        current_tab = self._scope_tabs.currentIndex()
+        copied = self._ensure_component_draft_for_entry(
+            selected_entry,
+            always_duplicate=current_tab != self._TAB_MINE,
+        )
+        if copied is None:
             return
-        copied = validate_as(
-            F8ComponentRecord,
-            {
-                **dump_json(selected_entry.record, mode="json"),
-                "componentId": new_asset_id(),
-                "updatedAt": component_now_iso(),
-            },
+        self._scope_tabs.setCurrentIndex(self._TAB_DRAFTS)
+        self._rebuild_browser_after_draft_changed(
+            preserve_component_id=str(copied.record.componentId)
         )
-        _ = self._sync_client._catalog_service.upsert_local_entry(
-            F8ComponentEntry(
-                record=copied,
-                source=F8ComponentSourceKind.local,
-                isLocalDraft=True,
-                draftOriginKind=(
-                    F8ComponentDraftOriginKind.copy_local
-                    if selected_entry.source == F8ComponentSourceKind.local
-                    else F8ComponentDraftOriginKind.copy_remote
-                ),
-                draftOriginAssetId=str(selected_entry.record.componentId),
-                draftOriginRevision=selected_entry.remoteRevision,
-            )
-        )
-        show_info(self, "Draft Created", f"Created local draft:\n{copied.name}")
+        if current_tab == self._TAB_MINE:
+            show_info(self, "Draft Ready", f"Opened draft for:\n{copied.record.name}")
+        else:
+            show_info(self, "Draft Created", f"Created local draft:\n{copied.record.name}")
 
     def _on_upload_clicked(self) -> None:
         current_tab = self._scope_tabs.currentIndex()
+        if current_tab == self._TAB_DRAFTS:
+            draft_entry = self._selected_local_entry()
+            if draft_entry is None:
+                return
+            published = self._publish_component_draft(draft_entry)
+            if published is not None:
+                show_info(self, "Published", f"Published draft:\n{published.record.name}")
+            return
         if current_tab == self._TAB_INSTALLED:
             pulled = self._pull_selected_component()
             if pulled is not None:
                 show_info(self, "Pulled", f"Pulled component:\n{pulled.record.name}")
             return
-        synced = self._sync_selected_component()
-        if synced is not None:
-            show_info(self, "Synced", f"Synced component:\n{synced.record.name}")
+        return
 
     def _on_install_clicked(self) -> None:
         selected_entry, local_entry, remote_entry = self._selected_action_entries()
@@ -355,7 +363,7 @@ class ComponentCatalogActionsMixin:
         if local_entry is not None or (remote_entry is not None and component_entry_is_installed(remote_entry)):
             offloaded_name = str(selected_entry.record.name or "")
             if self._offload_selected_component(local_entry=local_entry, remote_entry=remote_entry):
-                show_info(self, "Offloaded", f"Offloaded component:\n{offloaded_name}")
+                show_info(self, "Removed from Installed", f"Removed from installed cache:\n{offloaded_name}")
             return
         if remote_entry is None:
             return
@@ -364,13 +372,10 @@ class ComponentCatalogActionsMixin:
         except Exception as exc:
             show_warning(self, "Load failed", str(exc))
             return
-        try:
-            installed = self._ensure_owned_remote_component_has_local_head(installed)
-        except Exception as exc:
-            show_warning(self, "Load failed", str(exc))
-            return
         show_info(self, "Loaded", f"Loaded component:\n{installed.record.name}")
-        self._reload()
+        self._rebuild_browser_after_installed_state_changed(
+            preserve_component_id=str(installed.record.componentId)
+        )
 
     def _on_subscribe_clicked(self) -> None:
         selected_entry = self._selected_entry()
@@ -388,16 +393,168 @@ class ComponentCatalogActionsMixin:
         except Exception as exc:
             show_warning(self, "Subscription failed", str(exc))
             return
-        self._reload()
+        self._rebuild_browser_after_remote_scope_state_changed(
+            preserve_component_id=str(updated.record.componentId)
+        )
 
     def _on_history_clicked(self) -> None:
         selected_entry = self._selected_entry()
         if selected_entry is None:
             return
+        if self._scope_tabs.currentIndex() == self._TAB_DRAFTS:
+            if not selected_entry.draftOriginAssetId:
+                show_info(self, "Draft History", "Local drafts do not keep local version history.")
+                return
+            remote_entry = self._remote_entry_for_component_id(str(selected_entry.draftOriginAssetId))
+            if remote_entry is None:
+                show_warning(self, "History failed", "Linked cloud asset is not available.")
+                return
+            self._show_remote_history(remote_entry)
+            return
         if selected_entry.source == F8ComponentSourceKind.local:
             self._show_local_history(selected_entry)
             return
         self._show_remote_history(selected_entry)
+
+    def _ensure_component_draft_for_entry(
+        self,
+        entry: F8ComponentEntry,
+        *,
+        always_duplicate: bool = False,
+    ) -> F8ComponentEntry | None:
+        if entry.source == F8ComponentSourceKind.local and entry.isLocalDraft and not always_duplicate:
+            return entry
+        hydrated_entry = self._ensure_component_hydrated(entry, operation_name="Load component")
+        if hydrated_entry is None:
+            return None
+        publish_target_asset_id: str | None = None
+        publish_base_remote_revision: str | None = None
+        origin_kind = F8ComponentDraftOriginKind.copy_remote
+        if entry.source == F8ComponentSourceKind.local and entry.isLocalDraft:
+            origin_kind = F8ComponentDraftOriginKind.copy_local
+        elif self._is_owned_remote_entry(hydrated_entry):
+            publish_target_asset_id = str(hydrated_entry.record.componentId)
+            publish_base_remote_revision = hydrated_entry.remoteRevision
+            if not always_duplicate:
+                existing_draft = self._draft_service_for_catalog().draft_for_publish_target(publish_target_asset_id)
+                if existing_draft is not None:
+                    return self._local_entry_for_component_id(existing_draft.draftId)
+        draft_record = validate_as(
+            F8ComponentRecord,
+            {
+                **dump_json(hydrated_entry.record, mode="json"),
+                "componentId": new_asset_id() if always_duplicate or publish_target_asset_id else new_asset_id(),
+                "updatedAt": component_now_iso(),
+            },
+        )
+        saved = self._draft_service_for_catalog().create_draft_from_record(
+            draft_record,
+            origin_kind=origin_kind,
+            publish_target_asset_id=publish_target_asset_id,
+            publish_base_remote_revision=publish_base_remote_revision,
+            draft_id=str(draft_record.componentId),
+        )
+        return self._local_entry_for_component_id(saved.draftId)
+
+    def _publish_component_draft(self, draft_entry: F8ComponentEntry) -> F8ComponentEntry | None:
+        target_asset_id = None if draft_entry.draftOriginAssetId is None else str(draft_entry.draftOriginAssetId).strip() or None
+        if target_asset_id:
+            remote_entry = self._remote_entry_for_component_id(target_asset_id)
+            if remote_entry is None:
+                try:
+                    remote_entry = self._sync_client.get_component(target_asset_id)
+                except Exception as exc:
+                    show_warning(self, "Publish failed", str(exc))
+                    return None
+            remote_entry = self._ensure_component_hydrated(remote_entry, operation_name="Load component")
+            if remote_entry is None:
+                return None
+            content_changed = json.dumps(remote_entry.record.content, sort_keys=True, default=str) != json.dumps(
+                draft_entry.record.content,
+                sort_keys=True,
+                default=str,
+            )
+            schema_changed = str(remote_entry.record.schemaVersion) != str(draft_entry.record.schemaVersion)
+            name_changed = str(remote_entry.record.name) != str(draft_entry.record.name)
+            description_changed = str(remote_entry.record.description) != str(draft_entry.record.description)
+            tags_changed = list(remote_entry.record.tags or []) != list(draft_entry.record.tags or [])
+            try:
+                if not content_changed and not schema_changed and (name_changed or description_changed or tags_changed):
+                    published = self._sync_client.patch_component_meta(
+                        target_asset_id,
+                        name=str(draft_entry.record.name),
+                        description=str(draft_entry.record.description),
+                        tags=[str(tag) for tag in list(draft_entry.record.tags or [])],
+                    )
+                else:
+                    upload_record = validate_as(
+                        F8ComponentRecord,
+                        {
+                            **dump_json(draft_entry.record, mode="json"),
+                            "componentId": target_asset_id,
+                        },
+                    )
+                    published = self._sync_client.update_component(
+                        F8ComponentEntry(
+                            record=upload_record,
+                            source=remote_entry.source,
+                            visibility=remote_entry.visibility,
+                            remoteRevision=remote_entry.remoteRevision,
+                            remoteVersionNumber=remote_entry.remoteVersionNumber,
+                            installed=True,
+                            hasCachedContent=True,
+                        )
+                    )
+            except Exception as exc:
+                show_warning(self, "Publish failed", str(exc))
+                return None
+            _ = self._draft_service_for_catalog().create_draft_from_record(
+                draft_entry.record,
+                origin_kind=draft_entry.draftOriginKind,
+                publish_target_asset_id=target_asset_id,
+                publish_base_remote_revision=published.remoteRevision,
+                draft_id=str(draft_entry.record.componentId),
+            )
+            self._rebuild_browser_after_draft_changed(
+                preserve_component_id=str(draft_entry.record.componentId)
+            )
+            return published
+        visibility = self._choose_visibility()
+        if visibility is None:
+            return None
+        publish_asset_id = new_asset_id()
+        upload_record = validate_as(
+            F8ComponentRecord,
+            {
+                **dump_json(draft_entry.record, mode="json"),
+                "componentId": publish_asset_id,
+            },
+        )
+        source = F8ComponentSourceKind.remote_private if visibility == F8ComponentVisibility.private else F8ComponentSourceKind.remote_public
+        try:
+            published = self._sync_client.create_component(
+                F8ComponentEntry(
+                    record=upload_record,
+                    source=source,
+                    visibility=visibility,
+                    installed=True,
+                    hasCachedContent=True,
+                )
+            )
+        except Exception as exc:
+            show_warning(self, "Publish failed", str(exc))
+            return None
+        _ = self._draft_service_for_catalog().create_draft_from_record(
+            draft_entry.record,
+            origin_kind=draft_entry.draftOriginKind or F8ComponentDraftOriginKind.new,
+            publish_target_asset_id=publish_asset_id,
+            publish_base_remote_revision=published.remoteRevision,
+            draft_id=str(draft_entry.record.componentId),
+        )
+        self._rebuild_browser_after_draft_changed(
+            preserve_component_id=str(draft_entry.record.componentId)
+        )
+        return published
 
     def _on_visibility_clicked(self) -> None:
         selected_entry = self._selected_entry()
@@ -428,7 +585,9 @@ class ComponentCatalogActionsMixin:
         except Exception as exc:
             show_warning(self, "Visibility update failed", str(exc))
             return
-        self._reload()
+        self._rebuild_browser_after_remote_asset_changed(
+            preserve_component_id=str(selected_entry.record.componentId)
+        )
 
     def _on_insert_clicked(self) -> None:
         selected_entry = self._selected_entry()

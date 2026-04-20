@@ -11,7 +11,6 @@ from f8pysdk.codec import copy_model
 
 from ..db import (
     AssetsDatabase,
-    component_heads_local_table,
     component_remote_cache_table,
 )
 from ..common import (
@@ -24,6 +23,7 @@ from ..common import (
 )
 from .component_events import emit_components_changed
 from .component_models import (
+    F8ComponentDraftEntry,
     F8ComponentDraftOriginKind,
     F8ComponentEntry,
     F8ComponentLocalVersionSummary,
@@ -328,17 +328,22 @@ class ComponentCatalogService:
         self,
         *,
         db_path: Path | None = None,
-        local_provider: LocalComponentProvider | None = None,
         remote_provider: RemoteComponentCacheProvider | None = None,
     ) -> None:
-        self._local_provider: LocalComponentProvider
-        self._local_provider = LocalComponentProvider(db_path) if local_provider is None else local_provider
+        self._db_path = Path(db_path) if db_path is not None else AssetsDatabase().path
         self._remote_provider: RemoteComponentCacheProvider
         self._remote_provider = RemoteComponentCacheProvider(db_path) if remote_provider is None else remote_provider
 
+    @property
+    def db_path(self) -> Path:
+        return self._db_path
+
     def load_all_entries(self) -> list[F8ComponentEntry]:
         merged: dict[str, F8ComponentEntry] = {}
-        for source_entries in [self._remote_provider.load_entries(), self._local_provider.load_entries()]:
+        from .component_drafts import ComponentDraftService
+
+        draft_entries = ComponentDraftService(db_path=self._db_path).list_catalog_entries()
+        for source_entries in [self._remote_provider.load_entries(), draft_entries]:
             for entry in source_entries:
                 component_id = str(entry.record.componentId or "").strip()
                 if not component_id:
@@ -364,45 +369,52 @@ class ComponentCatalogService:
         return [entry for entry in entries if component_entry_is_installed(entry)]
 
     def upsert_local_entry(self, entry: F8ComponentEntry) -> F8ComponentEntry:
-        local_entry = entry if entry.source == F8ComponentSourceKind.local else copy_model(entry, update={"source": F8ComponentSourceKind.local})
-        saved = self._local_provider.save_entry(local_entry)
+        from .component_drafts import ComponentDraftService, draft_as_catalog_entry
+
+        local_entry = entry if entry.source == F8ComponentSourceKind.local else copy_model(
+            entry,
+            update={"source": F8ComponentSourceKind.local},
+        )
+        draft_service = ComponentDraftService(db_path=self._db_path)
+        existing_draft = draft_service.draft(str(local_entry.record.componentId))
+        if existing_draft is not None:
+            saved = draft_service.save_draft(
+                F8ComponentDraftEntry(
+                    draftId=existing_draft.draftId,
+                    record=local_entry.record,
+                    originKind=local_entry.draftOriginKind or existing_draft.originKind,
+                    publishTargetAssetId=local_entry.draftOriginAssetId or existing_draft.publishTargetAssetId,
+                    publishBaseRemoteRevision=local_entry.draftOriginRevision or existing_draft.publishBaseRemoteRevision,
+                    createdAt=existing_draft.createdAt,
+                    updatedAt=existing_draft.updatedAt,
+                )
+            )
+        else:
+            saved = draft_service.create_draft_from_record(
+                local_entry.record,
+                origin_kind=local_entry.draftOriginKind or F8ComponentDraftOriginKind.new,
+                publish_target_asset_id=local_entry.draftOriginAssetId,
+                publish_base_remote_revision=local_entry.draftOriginRevision,
+                draft_id=str(local_entry.record.componentId),
+            )
         emit_components_changed()
-        return saved
+        return draft_as_catalog_entry(saved)
 
     def delete_local_entry(self, component_id: str) -> bool:
-        deleted = self._local_provider.delete_entry(component_id)
+        from .component_drafts import ComponentDraftService
+
+        deleted = ComponentDraftService(db_path=self._db_path).delete_draft(component_id)
         if deleted:
             emit_components_changed()
         return deleted
 
     def list_local_versions(self, component_id: str) -> list[F8ComponentLocalVersionSummary]:
-        normalized_component_id = str(component_id or "").strip()
-        if not normalized_component_id:
-            return []
-        statement = select(
-            component_heads_local_table.c.component_id,
-            component_heads_local_table.c.latest_version_number,
-            component_heads_local_table.c.created_at,
-        ).where(component_heads_local_table.c.component_id == normalized_component_id)
-        with self._db_for_local_provider().connect_sqla() as conn:
-            row = conn.execute(statement).mappings().first()
-        if row is None:
-            return []
-        row_mapping = _row_mapping(row)
-        return [
-            F8ComponentLocalVersionSummary(
-                componentId=mapping_str(row_mapping, "component_id"),
-                versionNumber=mapping_int(row_mapping, "latest_version_number"),
-                createdAt=mapping_str(row_mapping, "created_at"),
-            )
-        ]
+        return []
 
     def local_version_record(self, component_id: str, version_number: int) -> F8ComponentRecord | None:
-        entry = self.entry(component_id)
-        return None if entry is None else entry.record
-
-    def _db_for_local_provider(self) -> AssetsDatabase:
-        return self._local_provider._db
+        _ = component_id
+        _ = version_number
+        return None
 
     def replace_remote_entries(self, entries: list[F8ComponentEntry]) -> None:
         self._remote_provider.save_entries(entries)
@@ -429,20 +441,34 @@ class ComponentCatalogService:
                 "downloadedAt": component_now_iso(),
             },
         )
+        return self._save_remote_entry(installed_entry)
+
+    def cache_remote_entry(self, entry: F8ComponentEntry) -> F8ComponentEntry:
+        cached_entry = copy_model(
+            entry,
+            update={
+                "installed": False,
+                "hasCachedContent": component_entry_has_cached_content(entry),
+                "downloadedAt": component_now_iso(),
+            },
+        )
+        return self._save_remote_entry(cached_entry)
+
+    def _save_remote_entry(self, entry: F8ComponentEntry) -> F8ComponentEntry:
         current = self._remote_provider.load_entries()
         out: list[F8ComponentEntry] = []
         found = False
         for current_entry in current:
-            if str(current_entry.record.componentId) == str(installed_entry.record.componentId):
-                out.append(installed_entry)
+            if str(current_entry.record.componentId) == str(entry.record.componentId):
+                out.append(entry)
                 found = True
             else:
                 out.append(current_entry)
         if not found:
-            out.append(installed_entry)
+            out.append(entry)
         self._remote_provider.save_entries(out)
         emit_components_changed()
-        return installed_entry
+        return entry
 
     def uninstall_remote_entry(self, component_id: str) -> F8ComponentEntry | None:
         current = self._remote_provider.load_entries()

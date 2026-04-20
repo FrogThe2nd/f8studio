@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import logging
-from typing import Iterable
+from typing import Callable, Iterable
 
 from qtpy import QtCore, QtGui, QtWidgets
 
+from ...assets.common.asset_cache_events import subscribe_asset_cache_changed
 from ...assets.variants.variant_sync import VariantSyncClient
 from ...global_hotkeys.controller import ControlPanelGlobalHotkeyController
 from ...nodegraph.node_graph import F8StudioGraph
@@ -75,7 +76,6 @@ class F8StudioMainWin(
     _project_history_action: QtGui.QAction
     _save_component_action: QtGui.QAction
     _manage_components_action: QtGui.QAction
-    _insert_component_action: QtGui.QAction
     _deploy_action: QtGui.QAction
     _stop_all_services_action: QtGui.QAction
     _exec_lines_action: QtGui.QAction
@@ -112,6 +112,7 @@ class F8StudioMainWin(
     _asset_cloud_sync_client: VariantSyncClient | None
     _asset_cloud_account_button: QtWidgets.QToolButton | None
     _node_library_widget: F8StudioNodeLibraryWidget | None
+    _unsubscribe_asset_cache_changed: Callable[[], None] | None
     _ai_assist_sidebar: AiAssistSidebarWidget | None
     _auto_load_worker: _ProjectAutoLoadWorker | None
     _runtime_state_sync: RuntimeStateSyncController
@@ -142,13 +143,14 @@ class F8StudioMainWin(
         self._asset_cloud_sync_client = None
         self._asset_cloud_account_button = None
         self._node_library_widget = None
+        self._unsubscribe_asset_cache_changed = None
         self._ai_assist_sidebar = None
         self._deferred_startup_scheduled = False
         self._deferred_startup_completed = False
         self._closing = False
         self._auto_load_worker = None
 
-        self.studio_graph = F8StudioGraph()
+        self.studio_graph = F8StudioGraph(asset_cache_auto_refresh=False)
         self.studio_graph.node_factory.clear_registered_nodes()
         node_class_list = list(node_classes)
         for node_class in node_class_list:
@@ -229,7 +231,7 @@ class F8StudioMainWin(
         self.studio_graph.property_changed.connect(self._on_ui_property_changed)  # type: ignore[attr-defined]
         self.studio_graph.nodes_deleted.connect(self._on_graph_nodes_deleted)  # type: ignore[attr-defined]
         self.studio_graph.set_node_docs_dialog_opener(self._open_node_docs_dialog_for_graph)
-        self.studio_graph.set_component_insert_dialog_opener(self._open_component_insert_dialog_for_graph)
+        self._unsubscribe_asset_cache_changed = subscribe_asset_cache_changed(self._on_asset_cache_changed)
 
         app = QtWidgets.QApplication.instance()
         if app is not None:
@@ -275,6 +277,7 @@ class F8StudioMainWin(
 
     def closeEvent(self, event) -> None:
         self._closing = True
+        self._clear_asset_cache_changed_subscription()
         self._save_window_layout()
         self._auto_save_project()
         self._global_hotkey_controller.close()

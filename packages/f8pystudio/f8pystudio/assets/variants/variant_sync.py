@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import http.cookies
 import json
@@ -452,7 +452,9 @@ class VariantSyncClient:
     def upload_entry(self, entry: F8VariantEntry) -> F8VariantEntry:
         _require_variant_record_for_upload(entry.record)
         try:
-            return self._upload_entry_with_history(entry)
+            if entry.remoteRevision:
+                return self.update_variant(entry)
+            return self.create_variant(entry)
         except F8VariantRemoteConflictError as exc:
             _ = self._catalog_service.mark_conflict(str(entry.record.variantId), remote_revision=exc.remote_revision)
             raise
@@ -466,93 +468,6 @@ class VariantSyncClient:
                 )
                 return recovered_entry
             raise
-
-    def _upload_entry_with_history(self, entry: F8VariantEntry) -> F8VariantEntry:
-        local_entry = entry if entry.source == F8VariantSourceKind.local else None
-        if local_entry is None:
-            if entry.remoteRevision:
-                return self.update_variant(entry)
-            return self.create_variant(entry)
-        return self._upload_local_entry_history(local_entry)
-
-    def _upload_local_entry_history(self, entry: F8VariantEntry) -> F8VariantEntry:
-        remote_entry = self._catalog_service.remote_entry(str(entry.record.variantId))
-        effective_entry = entry
-        if remote_entry is not None:
-            effective_entry = copy_model(
-                entry,
-                update={
-                    "source": remote_entry.source,
-                    "visibility": remote_entry.visibility,
-                    "remoteRevision": remote_entry.remoteRevision,
-                    "remoteVersionNumber": remote_entry.remoteVersionNumber,
-                    "installed": True,
-                    "hasCachedContent": True,
-                },
-            )
-        remote_version_number = 0 if remote_entry is None or remote_entry.remoteVersionNumber is None else int(remote_entry.remoteVersionNumber)
-        local_versions = self._catalog_service.list_local_versions(str(entry.record.variantId))
-        current_local_version = 1 if entry.localVersionNumber is None else int(entry.localVersionNumber)
-        if remote_version_number > current_local_version:
-            raise F8VariantRemoteRequestError(
-                f"Remote variant is newer than local variant: remote v{remote_version_number}, local v{current_local_version}."
-            )
-        if not local_versions:
-            if effective_entry.remoteRevision:
-                return self.update_variant(effective_entry)
-            return self.create_variant(effective_entry)
-
-        history_versions_to_push = [version.versionNumber for version in local_versions if int(version.versionNumber) > remote_version_number]
-        if not history_versions_to_push:
-            if effective_entry.remoteRevision:
-                return self.update_variant(effective_entry)
-            return self.create_variant(effective_entry)
-
-        current_remote_revision = effective_entry.remoteRevision
-        uploaded_entry: F8VariantEntry | None = None
-        for version_number in history_versions_to_push:
-            version_record = self._record_for_local_upload_version(entry, version_number=version_number)
-            version_entry = copy_model(
-                effective_entry,
-                update={
-                    "record": version_record,
-                    "remoteRevision": current_remote_revision,
-                    "installed": True,
-                    "hasCachedContent": True,
-                },
-            )
-            if current_remote_revision:
-                uploaded_entry = self.update_variant(
-                    version_entry,
-                    change_summary=f"Sync local variant history v{int(version_number)}",
-                )
-            else:
-                uploaded_entry = self.create_variant(
-                    version_entry,
-                    change_summary=f"Sync local variant history v{int(version_number)}",
-                )
-            current_remote_revision = uploaded_entry.remoteRevision
-            effective_entry = copy_model(
-                effective_entry,
-                update={
-                    "source": uploaded_entry.source,
-                    "visibility": uploaded_entry.visibility,
-                    "remoteVersionNumber": uploaded_entry.remoteVersionNumber,
-                },
-            )
-        if uploaded_entry is None:
-            raise RuntimeError(f"Variant upload produced no remote entry for {entry.record.variantId}.")
-        return uploaded_entry
-
-    def _record_for_local_upload_version(self, entry: F8VariantEntry, *, version_number: int) -> F8VariantRecord:
-        target_version_number = int(version_number)
-        current_local_version = None if entry.localVersionNumber is None else int(entry.localVersionNumber)
-        if current_local_version == target_version_number:
-            return entry.record
-        record = self._catalog_service.local_version_record(str(entry.record.variantId), target_version_number)
-        if record is None:
-            raise FileNotFoundError(f"Local variant version not found: {entry.record.variantId} v{target_version_number}")
-        return record
 
     def _fetch_current_user(self, session_cookie: str) -> F8VariantRemoteUser:
         payload, _ = self._request_json_response("GET", "/v1/me", None, authorized=False, session_cookie_override=session_cookie)

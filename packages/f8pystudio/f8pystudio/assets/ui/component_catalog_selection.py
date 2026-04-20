@@ -24,6 +24,8 @@ AUTO_PREVIEW_NODE_THRESHOLD = 10
 
 
 class ComponentCatalogSelectionMixin:
+    LINKED_DRAFT_LABEL: str
+
     def _selected_entry(self) -> F8ComponentEntry | None:
         try:
             item = self._list.currentItem()
@@ -41,11 +43,29 @@ class ComponentCatalogSelectionMixin:
                 return entry
         return None
 
+    def _selected_component_id(self) -> str:
+        entry = self._selected_entry()
+        if entry is None:
+            return ""
+        return str(entry.record.componentId or "").strip()
+
+    def _selected_local_entry(self) -> F8ComponentEntry | None:
+        component_id = self._selected_component_id()
+        if not component_id:
+            return None
+        return self._local_entry_for_component_id(component_id)
+
+    def _selected_remote_entry(self) -> F8ComponentEntry | None:
+        component_id = self._selected_component_id()
+        if not component_id:
+            return None
+        return self._remote_entry_for_component_id(component_id)
+
     def _local_entry_for_component_id(self, component_id: str) -> F8ComponentEntry | None:
         normalized_component_id = str(component_id or "").strip()
         if not normalized_component_id:
             return None
-        for entry in self._sync_client._catalog_service._local_provider.load_entries():
+        for entry in self._draft_service_for_catalog().list_catalog_entries():
             if str(entry.record.componentId or "").strip() == normalized_component_id:
                 return entry
         return None
@@ -64,11 +84,65 @@ class ComponentCatalogSelectionMixin:
         if active_entry is None:
             return None, None, None
         component_id = str(active_entry.record.componentId or "").strip()
+        local_entry = self._local_entry_for_component_id(component_id)
+        if local_entry is None and active_entry.source == F8ComponentSourceKind.local:
+            local_entry = active_entry
         return (
             active_entry,
-            self._local_entry_for_component_id(component_id),
+            local_entry,
             self._remote_entry_for_component_id(component_id),
         )
+
+    def _linked_draft_reference_text(self, entry: F8ComponentEntry) -> str | None:
+        if not entry.isLocalDraft:
+            return None
+        target_asset_id = str(entry.draftOriginAssetId or "").strip()
+        if not target_asset_id:
+            return None
+        remote_entry = self._remote_entry_for_component_id(target_asset_id)
+        if remote_entry is not None:
+            owner_name = str(remote_entry.ownerDisplayName or "").strip()
+            asset_name = str(remote_entry.record.name or "").strip()
+            if owner_name and asset_name:
+                return f"linked to {owner_name}.{asset_name}"
+            if asset_name:
+                return f"linked to {asset_name}"
+            if owner_name:
+                return f"linked to {owner_name}"
+        return f"linked to asset:{target_asset_id[:8]}"
+
+    def _linked_draft_reference_tooltip(self, entry: F8ComponentEntry) -> str | None:
+        if not entry.isLocalDraft:
+            return None
+        target_asset_id = str(entry.draftOriginAssetId or "").strip()
+        if not target_asset_id:
+            return None
+        return f"Cloud target asset: {target_asset_id}"
+
+    def _linked_draft_badge_text(self, entry: F8ComponentEntry) -> str | None:
+        if entry.source == F8ComponentSourceKind.local:
+            return None
+        asset_id = str(entry.record.componentId or "").strip()
+        if not asset_id:
+            return None
+        draft_entry = self._draft_service_for_catalog().draft_for_publish_target(asset_id)
+        if draft_entry is None:
+            return None
+        return "draft"
+
+    def _linked_draft_badge_tooltip(self, entry: F8ComponentEntry) -> str | None:
+        if entry.source == F8ComponentSourceKind.local:
+            return None
+        asset_id = str(entry.record.componentId or "").strip()
+        if not asset_id:
+            return None
+        draft_entry = self._draft_service_for_catalog().draft_for_publish_target(asset_id)
+        if draft_entry is None:
+            return None
+        draft_name = str(draft_entry.record.name or "").strip()
+        if draft_name:
+            return f"Linked local draft exists: {draft_name}\nCloud asset: {asset_id}"
+        return f"Linked local draft exists.\nCloud asset: {asset_id}"
 
     def _refresh_action_buttons(
         self,
@@ -79,6 +153,8 @@ class ComponentCatalogSelectionMixin:
             selected = selected_entry_override
             component_id = str(selected_entry_override.record.componentId or "").strip()
             local_entry = self._local_entry_for_component_id(component_id)
+            if local_entry is None and selected_entry_override.source == F8ComponentSourceKind.local:
+                local_entry = selected_entry_override
             remote_entry = self._remote_entry_for_component_id(component_id)
 
         current_tab = self._scope_tabs.currentIndex()
@@ -90,17 +166,20 @@ class ComponentCatalogSelectionMixin:
         )
         self._set_button_state(
             self._btn_install,
-            visible=has_selection and current_tab != self._TAB_COMMUNITY and can_load,
+            visible=has_selection and current_tab in {self._TAB_MINE, self._TAB_INSTALLED} and can_load,
             enabled=can_load,
-            tooltip="Load",
+            tooltip=load_tooltip,
             icon_token=StudioIcon.CLOUD_DOWN,
         )
 
         self._set_button_state(
             self._btn_upload,
-            visible=has_selection and current_tab != self._TAB_COMMUNITY,
-            enabled=local_entry is not None or (remote_entry is not None and self._is_owned_remote_entry(remote_entry)),
-            tooltip="Sync",
+            visible=has_selection and current_tab in {self._TAB_DRAFTS, self._TAB_INSTALLED},
+            enabled=(
+                (current_tab == self._TAB_DRAFTS and local_entry is not None)
+                or (current_tab == self._TAB_INSTALLED and remote_entry is not None)
+            ),
+            tooltip="Publish Draft" if current_tab == self._TAB_DRAFTS else "Pull",
             icon_token=StudioIcon.TRANSFER,
         )
 
@@ -121,9 +200,9 @@ class ComponentCatalogSelectionMixin:
 
         self._set_button_state(
             self._btn_copy_local,
-            visible=has_selection and current_tab != self._TAB_INSTALLED,
-            enabled=has_selection,
-            tooltip="Copy to Draft",
+            visible=has_selection and current_tab != self._TAB_DRAFTS,
+            enabled=has_selection and current_tab != self._TAB_MINE or remote_entry is not None or selected is not None,
+            tooltip="Copy to Draft" if current_tab != self._TAB_MINE else "Open Draft",
             icon_token=StudioIcon.SAVE_AS,
         )
 
@@ -131,19 +210,20 @@ class ComponentCatalogSelectionMixin:
             self._btn_delete,
             visible=has_selection and current_tab != self._TAB_COMMUNITY,
             enabled=(
-                local_entry is not None
+                (current_tab == self._TAB_DRAFTS and local_entry is not None)
+                or local_entry is not None
                 or (remote_entry is not None and self._is_owned_remote_entry(remote_entry))
                 or (current_tab == self._TAB_INSTALLED and can_offload)
             ),
-            tooltip="Delete",
+            tooltip="Remove from Installed" if current_tab == self._TAB_INSTALLED else "Delete",
             icon_token=StudioIcon.TRASH,
         )
 
         self._set_button_state(
             self._btn_edit,
-            visible=has_selection and current_tab == self._TAB_MINE,
-            enabled=local_entry is not None,
-            tooltip="Edit Metadata",
+            visible=has_selection and current_tab == self._TAB_DRAFTS,
+            enabled=current_tab == self._TAB_DRAFTS and local_entry is not None,
+            tooltip="Edit Draft Metadata",
             icon_token=StudioIcon.EDIT,
         )
 
@@ -161,7 +241,7 @@ class ComponentCatalogSelectionMixin:
         self._set_button_state(
             self._btn_history,
             visible=has_selection and current_tab != self._TAB_COMMUNITY,
-            enabled=local_entry is not None or remote_entry is not None,
+            enabled=(current_tab == self._TAB_DRAFTS and bool(local_entry is not None and local_entry.draftOriginAssetId)) or local_entry is not None or remote_entry is not None,
             tooltip="History",
             icon_token=StudioIcon.ARTICLE,
         )
@@ -197,10 +277,10 @@ class ComponentCatalogSelectionMixin:
             return selected_entry, ""
         component_id = str(selected_entry.record.componentId or "").strip()
         try:
-            return self._sync_client.hydrate_component(component_id), ""
+            return self._sync_client.cache_component_content(component_id), ""
         except Exception as exc:
             logger.exception(
-                "Component manager failed to hydrate selected component preview component_id=%s",
+                "Component manager failed to cache selected component preview component_id=%s",
                 component_id,
             )
             return None, str(exc)
@@ -215,7 +295,7 @@ class ComponentCatalogSelectionMixin:
             json.dumps(
                 {
                     "componentId": str(selected_entry.record.componentId),
-                    "operation": "hydrate_component",
+                    "operation": "cache_component_content",
                     "error": hydration_error,
                 },
                 ensure_ascii=False,

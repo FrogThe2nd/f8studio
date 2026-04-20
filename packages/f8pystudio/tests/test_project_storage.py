@@ -49,6 +49,17 @@ def test_assets_database_initializes_component_project_and_variant_tables(tmp_pa
     assert "component_versions_local" not in table_names
 
 
+def test_default_assets_database_path_is_isolated_under_pytest() -> None:
+    db = AssetsDatabase()
+
+    normalized_path = db.path.expanduser().resolve()
+
+    assert normalized_path.name == "assets.db"
+    assert "pytest-" in str(normalized_path)
+    assert normalized_path.parent.name == "studio"
+    assert normalized_path.parent.parent.name == ".f8"
+
+
 def test_assets_database_serializes_concurrent_initialization_for_same_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     db = AssetsDatabase(path=tmp_path / "assets.db")
     start_barrier = threading.Barrier(3)
@@ -145,20 +156,20 @@ def test_assets_database_migrates_remote_cache_library_slug_columns(tmp_path: Pa
     assert "library_slug" in variant_columns
 
 
-def test_component_catalog_uses_head_only_local_component_schema(tmp_path: Path) -> None:
+def test_component_catalog_uses_draft_only_local_component_schema(tmp_path: Path) -> None:
     service = ComponentCatalogService(db_path=tmp_path / "assets.db")
     local_entry = _component_entry(component_id="local-head-only", source=F8ComponentSourceKind.local, installed=True)
 
     saved = service.upsert_local_entry(local_entry)
     versions = service.list_local_versions(saved.record.componentId)
 
-    assert [version.versionNumber for version in versions] == [1]
-    assert service.local_version_record(saved.record.componentId, 1) is not None
+    assert versions == []
+    assert service.local_version_record(saved.record.componentId, 1) is None
 
     with closing(sqlite3.connect(tmp_path / "assets.db")) as conn:
         table_names = {str(row[0]) for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
 
-    assert "component_heads_local" in table_names
+    assert "component_drafts_local" in table_names
     assert "component_versions_local" not in table_names
 
 

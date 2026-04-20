@@ -27,6 +27,7 @@ from .layers import normalize_layer_defs
 from .service_bridge_protocol import ServiceBridge
 from .session_layout_codec import SessionLayoutCodecMixin
 from .viewer import F8StudioNodeViewer
+from ..assets.common.asset_cache_events import subscribe_asset_cache_changed
 from ..render_nodes.backdrop import BackdropRenderNode
 from ..ui.support.ui_notifications import show_warning
 from ..ui.dialogs.node_docs_dialog import SpecTemplate
@@ -64,6 +65,7 @@ class F8StudioGraph(
             parent (object): object parent.
             **kwargs (dict): Used for overriding internal objects at init time.
         """
+        asset_cache_auto_refresh = bool(kwargs.pop("asset_cache_auto_refresh", True))
         undo_stack = kwargs.get("undo_stack") or QtGui.QUndoStack(parent)
         viewer = kwargs.get("viewer") or F8StudioNodeViewer(undo_stack=undo_stack)
 
@@ -89,9 +91,11 @@ class F8StudioGraph(
         self._node_docs_menu_node_types: set[str] = set()
         self._graph_context_menu_commands_installed = False
         self._node_docs_dialog_opener: Callable[[SpecTemplate, str, str], None] | None = None
-        self._component_insert_dialog_opener: Callable[[tuple[float, float] | None], None] | None = None
-
+        self._unsubscribe_asset_cache_changed = None
+        if asset_cache_auto_refresh:
+            self._unsubscribe_asset_cache_changed = subscribe_asset_cache_changed(self._on_asset_cache_changed)
         self.property_changed.connect(self._on_property_changed)  # type: ignore[attr-defined]
+        self.destroyed.connect(self._on_destroyed)  # type: ignore[attr-defined]
 
         self._service_bridge: ServiceBridge | None = None
         self._global_hotkey_controller: Any | None = None
@@ -105,6 +109,21 @@ class F8StudioGraph(
         self.port_connected.connect(self._on_port_connected)  # type: ignore[attr-defined]
         self.port_disconnected.connect(self._on_port_disconnected)  # type: ignore[attr-defined]
         self._install_graph_context_menu_commands()
+
+    def rebuild_asset_search_sources(self) -> None:
+        self.refresh_tab_search_if_visible()
+
+    def _on_asset_cache_changed(self) -> None:
+        self.rebuild_asset_search_sources()
+
+    def _clear_asset_cache_changed_subscription(self) -> None:
+        unsubscribe = self._unsubscribe_asset_cache_changed
+        self._unsubscribe_asset_cache_changed = None
+        if unsubscribe is not None:
+            unsubscribe()
+
+    def _on_destroyed(self, _obj: object) -> None:
+        self._clear_asset_cache_changed_subscription()
 
     def _on_viewer_node_placement_changed(self, active: bool, label: str) -> None:
         self.node_placement_changed.emit(bool(active), str(label or ""))
@@ -139,12 +158,6 @@ class F8StudioGraph(
         if isinstance(viewer, F8StudioNodeViewer):
             viewer.begin_graph_placement(request=request, label=label)
 
-    def set_component_insert_dialog_opener(
-        self,
-        opener: Callable[[tuple[float, float] | None], None] | None,
-    ) -> None:
-        self._component_insert_dialog_opener = opener
-
     def set_node_docs_dialog_opener(
         self,
         opener: Callable[[SpecTemplate, str, str], None] | None,
@@ -160,32 +173,13 @@ class F8StudioGraph(
             return
         opener(spec, node_id, node_name)
 
-    def open_component_insert_dialog(self, *, scene_pos: tuple[float, float] | None = None) -> None:
-        opener = self._component_insert_dialog_opener
-        if opener is None:
-            parent = self._notification_parent()
-            if parent is not None:
-                show_warning(parent, "Insert component unavailable", "No component insert dialog handler is configured.")
-            return
-        opener(scene_pos)
-
     def _install_graph_context_menu_commands(self) -> None:
         if self._graph_context_menu_commands_installed:
             return
         graph_menu = self.context_menu()
         if graph_menu is None:
             return
-        graph_menu.add_separator()
-        graph_menu.add_command("Insert Component...", func=self._on_open_component_insert_dialog_action)
         self._graph_context_menu_commands_installed = True
-
-    def _on_open_component_insert_dialog_action(self, _graph: Any) -> None:
-        viewer = self.viewer()
-        if not isinstance(viewer, F8StudioNodeViewer):
-            self.open_component_insert_dialog(scene_pos=None)
-            return
-        scene_pos_qt = viewer.scene_cursor_pos()
-        self.open_component_insert_dialog(scene_pos=(float(scene_pos_qt.x()), float(scene_pos_qt.y())))
 
     def cancel_graph_placement(self) -> None:
         viewer = self._viewer

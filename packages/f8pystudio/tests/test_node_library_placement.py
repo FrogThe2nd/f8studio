@@ -99,7 +99,7 @@ def test_library_keeps_placement_for_non_variant(monkeypatch) -> None:
     assert fake_graph.cancel_node_placement_calls == 0
 
 
-def test_library_unsubscribes_when_variants_changed_hits_deleted_tree(monkeypatch) -> None:
+def test_library_unsubscribes_when_asset_cache_changed_hits_deleted_tree(monkeypatch) -> None:
     _ensure_app()
     callbacks: list[object] = []
 
@@ -107,7 +107,7 @@ def test_library_unsubscribes_when_variants_changed_hits_deleted_tree(monkeypatc
         callbacks.append(callback)
         return lambda: callbacks.remove(callback) if callback in callbacks else None
 
-    monkeypatch.setattr("f8pystudio.ui.mainwin.node_library_widget.subscribe_variants_changed", _subscribe)
+    monkeypatch.setattr("f8pystudio.ui.mainwin.node_library_widget.subscribe_asset_cache_changed", _subscribe)
     widget = F8StudioNodeLibraryWidget(node_graph=None)
 
     class _DeletedTreeWidget:
@@ -120,7 +120,7 @@ def test_library_unsubscribes_when_variants_changed_hits_deleted_tree(monkeypatc
     callback()
 
     assert callbacks == []
-    assert widget._unsubscribe_variants_changed is None
+    assert widget._unsubscribe_asset_cache_changed is None
 
 
 def test_library_search_variants_checkbox_persists_user_choice(monkeypatch, tmp_path) -> None:

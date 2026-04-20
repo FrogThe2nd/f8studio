@@ -10,12 +10,23 @@ from .catalog_status import AssetCatalogRowState, build_asset_catalog_row_state
 
 
 class ComponentCatalogEntriesMixin:
+    LINKED_DRAFT_LABEL: str
+
     def _entries_for_current_tab(self) -> list[F8ComponentEntry]:
         current_tab = self._scope_tabs.currentIndex()
         service = self._sync_client._catalog_service
         normalized_query = self._current_query().lower()
-        local_entries = service._local_provider.load_entries()
+        draft_entries = self._draft_service_for_catalog().list_catalog_entries()
         remote_entries = service._remote_provider.load_entries()
+        if current_tab == self._TAB_DRAFTS:
+            return sorted(
+                [
+                    entry
+                    for entry in draft_entries
+                    if self._matches_filter(entry) and self._entry_matches_query(entry, normalized_query)
+                ],
+                key=self._entry_sort_key,
+            )
         if current_tab == self._TAB_COMMUNITY:
             return sorted(
                 [
@@ -26,23 +37,17 @@ class ComponentCatalogEntriesMixin:
                 key=self._entry_sort_key,
             )
         if current_tab == self._TAB_MINE:
-            merged: dict[str, F8ComponentEntry] = {
-                str(entry.record.componentId): entry
-                for entry in local_entries
-                if self._matches_filter(entry) and self._entry_matches_query(entry, normalized_query)
-            }
-            for entry in remote_entries:
-                if self._is_owned_remote_entry(entry) and self._entry_matches_query(entry, normalized_query):
-                    component_id = str(entry.record.componentId)
-                    existing_entry = merged.get(component_id)
-                    if existing_entry is None:
-                        merged[component_id] = entry
-                    else:
-                        merged[component_id] = self._merge_entries_for_mine_tab(existing_entry, entry)
-            return sorted(merged.values(), key=self._entry_sort_key)
+            return sorted(
+                [
+                    entry
+                    for entry in remote_entries
+                    if self._matches_filter(entry) and self._entry_matches_query(entry, normalized_query)
+                ],
+                key=self._entry_sort_key,
+            )
         return [
             entry
-            for entry in sorted(list_component_entries(include_uninstalled=True), key=self._entry_sort_key)
+            for entry in sorted(remote_entries, key=self._entry_sort_key)
             if self._matches_filter(entry) and self._entry_matches_query(entry, normalized_query)
         ]
 
@@ -50,11 +55,17 @@ class ComponentCatalogEntriesMixin:
         row_state = self._row_state_for_entry(entry)
         current_tab = self._scope_tabs.currentIndex()
         current_filter = self._current_filter_value()
+        if current_tab == self._TAB_DRAFTS:
+            if not self._is_local_draft_entry(entry):
+                return False
+            if current_filter == "linked":
+                return bool(entry.draftOriginAssetId)
+            if current_filter == "unpublished":
+                return not bool(entry.draftOriginAssetId)
+            return True
         if current_tab == self._TAB_MINE:
             if not self._is_mine_entry(entry):
                 return False
-            if current_filter == "local":
-                return row_state.has_local_head
             if current_filter == "private":
                 return row_state.has_remote_head and row_state.visibility == F8ComponentVisibility.private.value
             if current_filter == "shared":
@@ -68,17 +79,17 @@ class ComponentCatalogEntriesMixin:
             if current_filter == "not_subscribed":
                 return not bool(entry.subscribed)
             return True
-        if not row_state.has_local_presence:
+        if not component_entry_has_cached_content(entry):
             return False
         if current_filter == "mine":
-            return row_state.has_local_head or self._is_owned_remote_entry(entry)
+            return self._is_owned_remote_entry(entry)
         if current_filter == "subscribed":
             return row_state.subscribed and not self._is_owned_remote_entry(entry)
         return True
 
     def _build_row_states(self) -> dict[str, AssetCatalogRowState]:
         service = self._sync_client._catalog_service
-        local_entries = service._local_provider.load_entries()
+        local_entries = self._draft_service_for_catalog().list_catalog_entries()
         remote_entries = service._remote_provider.load_entries()
         local_by_id = {
             str(entry.record.componentId): entry
@@ -134,8 +145,6 @@ class ComponentCatalogEntriesMixin:
         return self._is_owned_remote_entry(entry) and entry.visibility == F8ComponentVisibility.public
 
     def _is_mine_entry(self, entry: F8ComponentEntry) -> bool:
-        if entry.source == F8ComponentSourceKind.local:
-            return True
         return self._is_owned_remote_entry(entry)
 
     def _is_community_entry(self, entry: F8ComponentEntry) -> bool:
@@ -223,7 +232,7 @@ class ComponentCatalogEntriesMixin:
                 local_sync_state = "synced"
                 remote_sync_state = "synced"
         if local_entry is not None and local_entry.isLocalDraft and remote_entry is None:
-            owner_display_name = cls.LOCAL_DRAFT_LABEL
+            owner_display_name = cls.LINKED_DRAFT_LABEL if local_entry.draftOriginAssetId else cls.LOCAL_DRAFT_LABEL
         return build_asset_catalog_row_state(
             asset_id=component_id,
             has_local_head=local_entry is not None,

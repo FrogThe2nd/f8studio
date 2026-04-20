@@ -25,8 +25,27 @@ from f8pysdk.specs import any_schema, number_schema, string_schema
 from f8pystudio.assets.ui.asset_graph_preview import AssetGraphPreviewPane
 from f8pystudio.assets.ui.component_catalog_dialog import ComponentCatalogDialog
 from f8pystudio.assets.ui.variant_catalog_dialog import VariantCatalogDialog
-from f8pystudio.assets.components.component_models import F8ComponentEntry, F8ComponentRecord, F8ComponentSourceKind
-from f8pystudio.assets.variants.variant_models import F8VariantEntry, F8VariantSourceKind, variant_now_iso
+from f8pystudio.assets.components.component_catalog import ComponentCatalogService
+from f8pystudio.assets.variants.variant_catalog import LocalVariantProvider, RemoteCacheProvider, VariantCatalogService
+from f8pystudio.assets.components.component_sync import ComponentSyncClient
+from f8pystudio.assets.components.component_models import (
+    F8ComponentDraftOriginKind,
+    F8ComponentEntry,
+    F8ComponentRecord,
+    F8ComponentRemoteUser,
+    F8ComponentSourceKind,
+    F8ComponentVisibility,
+    component_now_iso,
+)
+from f8pystudio.assets.variants.variant_models import (
+    F8VariantDraftOriginKind,
+    F8VariantEntry,
+    F8VariantRemoteUser,
+    F8VariantSourceKind,
+    F8VariantVisibility,
+    variant_now_iso,
+)
+from f8pystudio.assets.variants.variant_sync import VariantSyncClient
 from f8pystudio.nodegraph.node_graph import F8StudioGraph
 from f8pystudio.nodegraph.operator_basenode import F8StudioOperatorBaseNode
 from f8pystudio.nodegraph.service_basenode import F8StudioServiceBaseNode
@@ -793,7 +812,7 @@ def test_component_catalog_selection_updates_preview_and_raw(monkeypatch) -> Non
         installed=True,
     )
     monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None))
-    monkeypatch.setattr(ComponentCatalogDialog, "_reload", lambda self, *_args: None)
+    monkeypatch.setattr(ComponentCatalogDialog, "_render_browser_from_state", lambda self, *_args: None)
     dialog = ComponentCatalogDialog(parent=None, node_graph=host_graph)
     dialog._entries = [entry]
     item = QtWidgets.QListWidgetItem()
@@ -824,7 +843,7 @@ def test_component_catalog_large_selection_defers_preview_until_requested(monkey
         installed=True,
     )
     monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None))
-    monkeypatch.setattr(ComponentCatalogDialog, "_reload", lambda self, *_args: None)
+    monkeypatch.setattr(ComponentCatalogDialog, "_render_browser_from_state", lambda self, *_args: None)
     dialog = ComponentCatalogDialog(parent=None, node_graph=host_graph)
     dialog._entries = [entry]
     item = QtWidgets.QListWidgetItem()
@@ -837,7 +856,7 @@ def test_component_catalog_large_selection_defers_preview_until_requested(monkey
     assert "11 nodes" in dialog._preview.current_status_text()
     assert len(list(dialog._preview.preview_graph.all_nodes() or [])) == 0
     load_button = dialog._preview._deferred_button  # type: ignore[attr-defined]
-    assert load_button.text() == "Load preview manually"
+    assert load_button.text() == "Load preview"
 
     dialog._preview._load_deferred_preview()  # type: ignore[attr-defined]
     _wait_for_preview_completion(dialog._preview)
@@ -850,7 +869,7 @@ def test_component_catalog_large_selection_defers_preview_until_requested(monkey
 def test_component_catalog_context_menu_matches_variant_style_for_community(monkeypatch) -> None:
     _ensure_app()
     monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None))
-    monkeypatch.setattr(ComponentCatalogDialog, "_reload", lambda self, *_args: None)
+    monkeypatch.setattr(ComponentCatalogDialog, "_render_browser_from_state", lambda self, *_args: None)
     dialog = ComponentCatalogDialog(parent=None, node_graph=None)
     entry = F8ComponentEntry(
         record=F8ComponentRecord(
@@ -879,29 +898,728 @@ def test_component_catalog_context_menu_matches_variant_style_for_community(monk
         remote_entry=entry,
     )
 
-    assert [action.text() for action in menu.actions()] == ["Subscribe", "Copy to Draft"]
+    assert [action.text() for action in menu.actions()] == ["Subscribe", "Copy to Draft", "History"]
 
     dialog.close()
 
 
-def test_component_catalog_context_menu_shows_mine_actions_and_insert(monkeypatch) -> None:
+def test_component_dialog_ui_state_handlers_use_semantic_rebuilds(monkeypatch) -> None:
+    _ensure_app()
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed",
+        lambda _cb: (lambda: None),
+    )
+    monkeypatch.setattr(ComponentCatalogDialog, "_render_browser_from_state", lambda self, *_args, **_kwargs: None)
+    dialog = ComponentCatalogDialog(parent=None, node_graph=None)
+    monkeypatch.setattr(dialog, "_selected_component_id", lambda: "component-ui-state")
+
+    events: list[tuple[str, str | None]] = []
+    monkeypatch.setattr(
+        dialog,
+        "_rebuild_browser_after_tab_ui_state_changed",
+        lambda *, preserve_component_id=None: events.append(("tab", preserve_component_id)),
+    )
+    monkeypatch.setattr(
+        dialog,
+        "_rebuild_browser_after_query_ui_state_changed",
+        lambda *, preserve_component_id=None: events.append(("query", preserve_component_id)),
+    )
+    monkeypatch.setattr(
+        dialog,
+        "_rebuild_browser_after_filter_ui_state_changed",
+        lambda *, preserve_component_id=None: events.append(("filter", preserve_component_id)),
+    )
+
+    dialog._on_scope_tab_changed(dialog._TAB_COMMUNITY)
+    dialog._search_input.setText("draft")
+    dialog._tab_queries[dialog._TAB_DRAFTS] = ""
+    dialog._on_search_submitted()
+    dialog._filter_combo.blockSignals(True)
+    dialog._filter_combo.clear()
+    dialog._filter_combo.addItem("All Drafts", "all")
+    dialog._filter_combo.addItem("Linked Drafts", "linked")
+    dialog._filter_combo.setCurrentIndex(1)
+    dialog._filter_combo.blockSignals(False)
+    dialog._tab_filters[dialog._TAB_DRAFTS] = "all"
+    dialog._on_filter_changed()
+
+    assert events == [
+        ("tab", "component-ui-state"),
+        ("query", "component-ui-state"),
+        ("filter", "component-ui-state"),
+    ]
+
+    dialog.close()
+
+
+def test_component_dialog_browser_rebuild_distinguishes_pure_vs_preserve(monkeypatch) -> None:
+    _ensure_app()
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed",
+        lambda _cb: (lambda: None),
+    )
+    monkeypatch.setattr(ComponentCatalogDialog, "_render_browser_from_state", lambda self, *_args, **_kwargs: None)
+    dialog = ComponentCatalogDialog(parent=None, node_graph=None)
+
+    reload_calls: list[dict[str, object]] = []
+
+    def _record_reload(*_args, **kwargs) -> None:
+        reload_calls.append(dict(kwargs))
+
+    monkeypatch.setattr(dialog, "_render_browser_from_state", _record_reload)
+    monkeypatch.setattr(dialog, "_selected_component_id", lambda: "component-preserve")
+
+    dialog._rebuild_browser_from_asset_cache()
+    dialog._rebuild_browser_from_asset_cache_preserving_selection()
+    dialog._rebuild_browser_from_asset_cache_for_change()
+    dialog._rebuild_browser_from_asset_cache_for_change(preserve_component_id="component-explicit")
+
+    assert reload_calls == [
+        {},
+        {"preserve_component_id": "component-preserve"},
+        {},
+        {"preserve_component_id": "component-explicit"},
+    ]
+
+    dialog.close()
+
+
+def test_component_selection_preview_caches_without_installing(monkeypatch, tmp_path: Path) -> None:
     _ensure_app()
     monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None))
-    monkeypatch.setattr(ComponentCatalogDialog, "_reload", lambda self, *_args: None)
+    original_render_browser_from_state = ComponentCatalogDialog._render_browser_from_state
+    monkeypatch.setattr(ComponentCatalogDialog, "_render_browser_from_state", lambda self, *_args, **_kwargs: None)
+    dialog = ComponentCatalogDialog(parent=None, node_graph=None)
+    monkeypatch.setattr(ComponentCatalogDialog, "_render_browser_from_state", original_render_browser_from_state)
+
+    settings = QtCore.QSettings(str(tmp_path / "component-preview-cache.ini"), QtCore.QSettings.IniFormat)
+    db_path = tmp_path / "assets.db"
+    service = ComponentCatalogService(db_path=db_path)
+    dialog._sync_client = ComponentSyncClient(settings=settings, catalog_service=service)
+
+    entry = F8ComponentEntry(
+        record=F8ComponentRecord(
+            componentId="component-preview-cache",
+            name="Preview Cache Component",
+            description="Preview only",
+            tags=["preview"],
+            content={},
+        ),
+        source=F8ComponentSourceKind.remote_private,
+        visibility=F8ComponentVisibility.private,
+        ownerUserId="u1",
+        ownerDisplayName="User One",
+        installed=False,
+        hasCachedContent=False,
+    )
+    dialog._entries = [entry]
+    dialog._sync_client._catalog_service._remote_provider.save_entries([entry])
+
+    cached_entry = copy_model(
+        entry,
+        update={
+            "record": copy_model(
+                entry.record,
+                update={"content": _component_payload_for_node(_make_service_node_class())},
+            ),
+            "installed": False,
+            "hasCachedContent": True,
+        },
+    )
+    cache_calls: list[str] = []
+    hydrate_calls: list[str] = []
+    monkeypatch.setattr(
+        dialog._sync_client,
+        "cache_component_content",
+        lambda component_id: cache_calls.append(str(component_id)) or cached_entry,
+    )
+    monkeypatch.setattr(
+        dialog._sync_client,
+        "hydrate_component",
+        lambda component_id: hydrate_calls.append(str(component_id)) or cached_entry,
+    )
+
+    item = QtWidgets.QListWidgetItem()
+    item.setData(QtCore.Qt.ItemDataRole.UserRole, "component-preview-cache")
+    dialog._list.addItem(item)
+
+    dialog._list.setCurrentRow(0)
+    QtWidgets.QApplication.processEvents()
+
+    assert cache_calls == ["component-preview-cache"]
+    assert hydrate_calls == []
+    assert dialog._sync_client._catalog_service.entry("component-preview-cache", include_uninstalled=False) is None
+
+    dialog.close()
+
+
+def test_variant_catalog_context_menu_shows_draft_actions(monkeypatch) -> None:
+    _ensure_app()
+    monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(VariantCatalogDialog, "_render_browser_from_state", lambda self, *_args, **_kwargs: None)
+    dialog = VariantCatalogDialog(
+        parent=None,
+        base_node_type="svc.preview.variant",
+        base_node_name="Preview Variant",
+        node_graph=None,
+    )
+    entry = F8VariantEntry(
+        record=F8VariantRecord(
+            variantId="variant-draft-menu",
+            kind=F8VariantKind.service,
+            baseNodeType="svc.preview.service",
+            serviceClass="svc.preview.service",
+            operatorClass=None,
+            name="Draft Variant",
+            description="",
+            tags=[],
+            spec={"label": "Draft Variant"},
+            createdAt=variant_now_iso(),
+            updatedAt=variant_now_iso(),
+        ),
+        source=F8VariantSourceKind.local,
+        installed=True,
+        hasCachedContent=True,
+        isLocalDraft=True,
+    )
+    dialog._entries = [entry]
+    item = QtWidgets.QListWidgetItem()
+    item.setData(QtCore.Qt.ItemDataRole.UserRole, "variant-draft-menu")
+    dialog._list.addItem(item)
+
+    dialog._scope_tabs.setCurrentIndex(dialog._TAB_DRAFTS)
+    dialog._list.setCurrentRow(0)
+    QtWidgets.QApplication.processEvents()
+
+    menu_actions: list[str] = []
+
+    class _FakeMenu:
+        def __init__(self, _parent: object) -> None:
+            self._actions: list[QtWidgets.QAction] = []
+
+        def addAction(self, text: str) -> QtWidgets.QAction:
+            action = QtWidgets.QAction(text, dialog)
+            self._actions.append(action)
+            return action
+
+        def addSeparator(self) -> QtWidgets.QAction:
+            action = QtWidgets.QAction(dialog)
+            action.setSeparator(True)
+            self._actions.append(action)
+            return action
+
+        def actions(self) -> list[QtWidgets.QAction]:
+            return list(self._actions)
+
+        def exec(self, _pos: object) -> None:
+            menu_actions.extend(action.text() for action in self._actions)
+
+    monkeypatch.setattr(QtWidgets, "QMenu", _FakeMenu)
+
+    dialog._on_list_context_menu_requested(QtCore.QPoint(0, 0))
+
+    assert menu_actions == [
+        "Edit Draft Metadata",
+        "Publish Draft",
+        "Copy to Draft",
+        "Delete Draft",
+        "History",
+    ]
+
+    dialog.close()
+
+
+def test_component_dialog_shows_linked_draft_reference(monkeypatch, tmp_path: Path) -> None:
+    _ensure_app()
+    monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None))
+    original_render_browser_from_state = ComponentCatalogDialog._render_browser_from_state
+    monkeypatch.setattr(ComponentCatalogDialog, "_render_browser_from_state", lambda self, *_args, **_kwargs: None)
+    dialog = ComponentCatalogDialog(parent=None, node_graph=None)
+    monkeypatch.setattr(ComponentCatalogDialog, "_render_browser_from_state", original_render_browser_from_state)
+    settings = QtCore.QSettings(str(tmp_path / "component-linked-draft.ini"), QtCore.QSettings.IniFormat)
+    db_path = tmp_path / "assets.db"
+    service = ComponentCatalogService(db_path=db_path)
+    dialog._sync_client = ComponentSyncClient(settings=settings, catalog_service=service)
+    monkeypatch.setattr(dialog, "_refresh_remote_catalog_if_needed", lambda: None)
+    dialog._sync_client._catalog_service._remote_provider.save_entries(
+        [
+            F8ComponentEntry(
+                record=F8ComponentRecord(
+                    componentId="remote-component-1",
+                    name="Cloud Reference",
+                    description="",
+                    schemaVersion="f8studio-session/1",
+                    content={"schemaVersion": "f8studio-session/1", "layout": {"nodes": {}, "connections": []}},
+                    createdAt=component_now_iso(),
+                    updatedAt=component_now_iso(),
+                ),
+                source=F8ComponentSourceKind.remote_private,
+                visibility=F8ComponentVisibility.private,
+                ownerUserId="u1",
+                ownerDisplayName="User One",
+                installed=False,
+            )
+        ]
+    )
+    _ = dialog._draft_service_for_catalog().create_draft_from_record(
+        F8ComponentRecord(
+            componentId="draft-linked-component",
+            name="Local Draft Component",
+            description="",
+            schemaVersion="f8studio-session/1",
+            content={"schemaVersion": "f8studio-session/1", "layout": {"nodes": {}, "connections": []}},
+            createdAt=component_now_iso(),
+            updatedAt=component_now_iso(),
+        ),
+        origin_kind=F8ComponentDraftOriginKind.copy_remote,
+        publish_target_asset_id="remote-component-1",
+        publish_base_remote_revision="rev-1",
+        draft_id="draft-linked-component",
+    )
+
+    dialog._render_browser_from_state()
+
+    item = dialog._list.item(0)
+    assert item is not None
+    row_widget = dialog._list.itemWidget(item)
+    assert row_widget is not None
+    label_texts = [label.text() for label in row_widget.findChildren(QtWidgets.QLabel)]
+
+    assert "Linked Draft" in label_texts
+    assert "linked to User One.Cloud Reference" in label_texts
+
+    dialog.close()
+
+
+def test_component_dialog_remote_row_shows_draft_badge(monkeypatch, tmp_path: Path) -> None:
+    _ensure_app()
+    monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(ComponentCatalogDialog, "_render_browser_from_state", lambda self, *_args, **_kwargs: None)
+    dialog = ComponentCatalogDialog(parent=None, node_graph=None)
+    settings = QtCore.QSettings(str(tmp_path / "component-draft-badge.ini"), QtCore.QSettings.IniFormat)
+    db_path = tmp_path / "assets.db"
+    service = ComponentCatalogService(db_path=db_path)
+    dialog._sync_client = ComponentSyncClient(settings=settings, catalog_service=service)
+    remote_entry = F8ComponentEntry(
+        record=F8ComponentRecord(
+            componentId="remote-component-draft-badge",
+            name="Remote Mine Component",
+            description="",
+            schemaVersion="f8studio-session/1",
+            content={"schemaVersion": "f8studio-session/1", "layout": {"nodes": {}, "connections": []}},
+            createdAt=component_now_iso(),
+            updatedAt=component_now_iso(),
+        ),
+        source=F8ComponentSourceKind.remote_private,
+        visibility=F8ComponentVisibility.private,
+        ownerUserId="u1",
+        ownerDisplayName="User One",
+        installed=False,
+    )
+    dialog._sync_client._catalog_service._remote_provider.save_entries([remote_entry])
+    _ = dialog._draft_service_for_catalog().create_draft_from_record(
+        F8ComponentRecord(
+            componentId="local-linked-component",
+            name="Local Linked Component",
+            description="",
+            schemaVersion="f8studio-session/1",
+            content={"schemaVersion": "f8studio-session/1", "layout": {"nodes": {}, "connections": []}},
+            createdAt=component_now_iso(),
+            updatedAt=component_now_iso(),
+        ),
+        origin_kind=F8ComponentDraftOriginKind.copy_remote,
+        publish_target_asset_id="remote-component-draft-badge",
+        publish_base_remote_revision="rev-2",
+        draft_id="local-linked-component",
+    )
+
+    row_widget = dialog._build_list_row(remote_entry)
+    row_labels = [label.text() for label in row_widget.findChildren(QtWidgets.QLabel)]
+
+    assert "draft" in row_labels
+
+    dialog.close()
+
+
+def test_variant_dialog_shows_linked_draft_label(monkeypatch, tmp_path: Path) -> None:
+    _ensure_app()
+    monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", lambda _cb: (lambda: None))
+    original_render_browser_from_state = VariantCatalogDialog._render_browser_from_state
+    monkeypatch.setattr(VariantCatalogDialog, "_render_browser_from_state", lambda self, *_args, **_kwargs: None)
+    dialog = VariantCatalogDialog(
+        parent=None,
+        base_node_type="svc.preview.service",
+        base_node_name="Preview Service",
+        node_graph=None,
+    )
+    monkeypatch.setattr(VariantCatalogDialog, "_render_browser_from_state", original_render_browser_from_state)
+    settings = QtCore.QSettings(str(tmp_path / "variant-linked-draft.ini"), QtCore.QSettings.IniFormat)
+    db_path = tmp_path / "assets.db"
+    service = VariantCatalogService(
+        local_provider=LocalVariantProvider(db_path=db_path),
+        remote_provider=RemoteCacheProvider(db_path=db_path),
+    )
+    dialog._sync_client = VariantSyncClient(settings=settings, catalog_service=service)
+    monkeypatch.setattr(dialog, "_refresh_remote_catalog_if_needed", lambda: None)
+    dialog._sync_client._catalog_service._remote_provider.save_entries(
+        [
+            F8VariantEntry(
+                record=F8VariantRecord(
+                    variantId="remote-variant-1",
+                    kind=F8VariantKind.service,
+                    baseNodeType="svc.preview.service",
+                    serviceClass="svc.preview.service",
+                    operatorClass=None,
+                    name="Cloud Reference Variant",
+                    description="",
+                    tags=[],
+                    spec={"label": "Cloud Reference Variant"},
+                    createdAt=variant_now_iso(),
+                    updatedAt=variant_now_iso(),
+                ),
+                source=F8VariantSourceKind.remote_private,
+                visibility=F8VariantVisibility.private,
+                ownerUserId="u1",
+                ownerDisplayName="User One",
+                installed=False,
+            )
+        ]
+    )
+    _ = dialog._draft_service_for_catalog().create_draft_from_record(
+        F8VariantRecord(
+            variantId="draft-linked",
+            kind=F8VariantKind.service,
+            baseNodeType="svc.preview.service",
+            serviceClass="svc.preview.service",
+            operatorClass=None,
+            name="Linked Draft Variant",
+            description="",
+            tags=[],
+            spec={"label": "Linked Draft Variant"},
+            createdAt=variant_now_iso(),
+            updatedAt=variant_now_iso(),
+        ),
+        origin_kind=F8VariantDraftOriginKind.copy_remote,
+        publish_target_asset_id="remote-variant-1",
+        publish_base_remote_revision="rev-1",
+        draft_id="draft-linked",
+    )
+
+    dialog._render_browser_from_state()
+
+    item = dialog._list.item(0)
+    assert item is not None
+    row_widget = dialog._list.itemWidget(item)
+    assert row_widget is not None
+    label_texts = [label.text() for label in row_widget.findChildren(QtWidgets.QLabel)]
+
+    assert "Linked Draft" in label_texts
+    assert "linked to User One.Cloud Reference Variant" in label_texts
+
+    dialog.close()
+
+
+def test_variant_dialog_remote_row_shows_draft_badge(monkeypatch, tmp_path: Path) -> None:
+    _ensure_app()
+    monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(VariantCatalogDialog, "_render_browser_from_state", lambda self, *_args, **_kwargs: None)
+    dialog = VariantCatalogDialog(
+        parent=None,
+        base_node_type="svc.preview.service",
+        base_node_name="Preview Service",
+        node_graph=None,
+    )
+    settings = QtCore.QSettings(str(tmp_path / "variant-draft-badge.ini"), QtCore.QSettings.IniFormat)
+    db_path = tmp_path / "assets.db"
+    service = VariantCatalogService(
+        local_provider=LocalVariantProvider(db_path=db_path),
+        remote_provider=RemoteCacheProvider(db_path=db_path),
+    )
+    dialog._sync_client = VariantSyncClient(settings=settings, catalog_service=service)
+    remote_entry = F8VariantEntry(
+        record=F8VariantRecord(
+            variantId="remote-variant-draft-badge",
+            kind=F8VariantKind.service,
+            baseNodeType="svc.preview.service",
+            serviceClass="svc.preview.service",
+            operatorClass=None,
+            name="Remote Mine Variant",
+            description="",
+            tags=[],
+            spec={"label": "Remote Mine Variant"},
+            createdAt=variant_now_iso(),
+            updatedAt=variant_now_iso(),
+        ),
+        source=F8VariantSourceKind.remote_private,
+        visibility=F8VariantVisibility.private,
+        ownerUserId="u1",
+        ownerDisplayName="User One",
+        installed=False,
+    )
+    dialog._sync_client._catalog_service._remote_provider.save_entries([remote_entry])
+    _ = dialog._draft_service_for_catalog().create_draft_from_record(
+        F8VariantRecord(
+            variantId="local-linked-variant",
+            kind=F8VariantKind.service,
+            baseNodeType="svc.preview.service",
+            serviceClass="svc.preview.service",
+            operatorClass=None,
+            name="Local Linked Variant",
+            description="",
+            tags=[],
+            spec={"label": "Local Linked Variant"},
+            createdAt=variant_now_iso(),
+            updatedAt=variant_now_iso(),
+        ),
+        origin_kind=F8VariantDraftOriginKind.copy_remote,
+        publish_target_asset_id="remote-variant-draft-badge",
+        publish_base_remote_revision="rev-2",
+        draft_id="local-linked-variant",
+    )
+
+    row_widget = dialog._build_list_row(remote_entry)
+    row_labels = [label.text() for label in row_widget.findChildren(QtWidgets.QLabel)]
+
+    assert "draft" in row_labels
+
+    dialog.close()
+
+
+def test_variant_dialog_node_type_combo_tracks_current_tab_entries(monkeypatch, tmp_path: Path) -> None:
+    _ensure_app()
+    monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", lambda _cb: (lambda: None))
+    original_render_browser_from_state = VariantCatalogDialog._render_browser_from_state
+    monkeypatch.setattr(VariantCatalogDialog, "_render_browser_from_state", lambda self, *_args, **_kwargs: None)
+    dialog = VariantCatalogDialog(parent=None, node_graph=None)
+    monkeypatch.setattr(VariantCatalogDialog, "_render_browser_from_state", original_render_browser_from_state)
+    settings = QtCore.QSettings(str(tmp_path / "variant-node-types.ini"), QtCore.QSettings.IniFormat)
+    db_path = tmp_path / "assets.db"
+    service = VariantCatalogService(
+        local_provider=LocalVariantProvider(db_path=db_path),
+        remote_provider=RemoteCacheProvider(db_path=db_path),
+    )
+    dialog._sync_client = VariantSyncClient(settings=settings, catalog_service=service)
+    monkeypatch.setattr(dialog, "_refresh_remote_catalog_if_needed", lambda: None)
+    monkeypatch.setattr(
+        dialog._sync_client,
+        "current_user",
+        lambda: F8VariantRemoteUser(userId="u1", displayName="User One", username="user-one"),
+    )
+    monkeypatch.setattr(dialog._sync_client, "current_access_token", lambda: "token")
+
+    _ = dialog._draft_service_for_catalog().create_draft_from_record(
+        F8VariantRecord(
+            variantId="draft-node-type",
+            kind=F8VariantKind.service,
+            baseNodeType="svc.draft.node",
+            serviceClass="svc.preview.service",
+            operatorClass=None,
+            name="Draft Node Type",
+            description="",
+            tags=[],
+            spec={"label": "Draft Node Type"},
+            createdAt=variant_now_iso(),
+            updatedAt=variant_now_iso(),
+        ),
+        origin_kind=F8VariantDraftOriginKind.new,
+        publish_target_asset_id=None,
+        publish_base_remote_revision=None,
+        draft_id="draft-node-type",
+    )
+    dialog._sync_client._catalog_service._remote_provider.save_entries(
+        [
+            F8VariantEntry(
+                record=F8VariantRecord(
+                    variantId="community-node-type",
+                    kind=F8VariantKind.service,
+                    baseNodeType="svc.community.node",
+                    serviceClass="svc.preview.service",
+                    operatorClass=None,
+                    name="Community Node Type",
+                    description="",
+                    tags=[],
+                    spec={"label": "Community Node Type"},
+                    createdAt=variant_now_iso(),
+                    updatedAt=variant_now_iso(),
+                ),
+                source=F8VariantSourceKind.remote_public,
+                visibility=F8VariantVisibility.public,
+                installed=False,
+                subscribed=False,
+            ),
+            F8VariantEntry(
+                record=F8VariantRecord(
+                    variantId="mine-node-type",
+                    kind=F8VariantKind.service,
+                    baseNodeType="svc.mine.node",
+                    serviceClass="svc.preview.service",
+                    operatorClass=None,
+                    name="Mine Node Type",
+                    description="",
+                    tags=[],
+                    spec={"label": "Mine Node Type"},
+                    createdAt=variant_now_iso(),
+                    updatedAt=variant_now_iso(),
+                ),
+                source=F8VariantSourceKind.remote_private,
+                visibility=F8VariantVisibility.private,
+                ownerUserId="u1",
+                ownerDisplayName="User One",
+                installed=False,
+                subscribed=False,
+            ),
+        ]
+    )
+
+    dialog._render_browser_from_state()
+    QtWidgets.QApplication.processEvents()
+
+    assert [dialog._node_type_combo.itemText(index) for index in range(dialog._node_type_combo.count())] == [
+        "All Types",
+        "svc.draft.node",
+    ]
+
+    dialog._scope_tabs.setCurrentIndex(dialog._TAB_COMMUNITY)
+    dialog._render_browser_from_state()
+    QtWidgets.QApplication.processEvents()
+
+    assert [dialog._node_type_combo.itemText(index) for index in range(dialog._node_type_combo.count())] == [
+        "All Types",
+        "svc.community.node",
+    ]
+
+    dialog._scope_tabs.setCurrentIndex(dialog._TAB_MINE)
+    dialog._render_browser_from_state()
+    QtWidgets.QApplication.processEvents()
+
+    assert [dialog._node_type_combo.itemText(index) for index in range(dialog._node_type_combo.count())] == [
+        "All Types",
+        "svc.mine.node",
+    ]
+
+    dialog.close()
+
+
+def test_variant_dialog_ui_state_handlers_use_semantic_rebuilds(monkeypatch) -> None:
+    _ensure_app()
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed",
+        lambda _cb: (lambda: None),
+    )
+    monkeypatch.setattr(VariantCatalogDialog, "_render_browser_from_state", lambda self, *_args, **_kwargs: None)
+    dialog = VariantCatalogDialog(parent=None, node_graph=None)
+    monkeypatch.setattr(dialog, "_selected_variant_id", lambda: "variant-ui-state")
+
+    events: list[tuple[str, str | None]] = []
+    monkeypatch.setattr(
+        dialog,
+        "_rebuild_browser_after_tab_ui_state_changed",
+        lambda *, preserve_variant_id=None: events.append(("tab", preserve_variant_id)),
+    )
+    monkeypatch.setattr(
+        dialog,
+        "_rebuild_browser_after_query_ui_state_changed",
+        lambda *, preserve_variant_id=None: events.append(("query", preserve_variant_id)),
+    )
+    monkeypatch.setattr(
+        dialog,
+        "_rebuild_browser_after_filter_ui_state_changed",
+        lambda *, preserve_variant_id=None: events.append(("filter", preserve_variant_id)),
+    )
+    monkeypatch.setattr(
+        dialog,
+        "_rebuild_browser_after_node_type_ui_state_changed",
+        lambda *, preserve_variant_id=None: events.append(("node_type", preserve_variant_id)),
+    )
+
+    dialog._on_scope_tab_changed(dialog._TAB_COMMUNITY)
+    dialog._search_input.setText("draft")
+    dialog._tab_queries[dialog._TAB_DRAFTS] = ""
+    dialog._on_search_submitted()
+    dialog._filter_combo.blockSignals(True)
+    dialog._filter_combo.clear()
+    dialog._filter_combo.addItem("All Drafts", "all")
+    dialog._filter_combo.addItem("Linked Drafts", "linked")
+    dialog._filter_combo.setCurrentIndex(1)
+    dialog._filter_combo.blockSignals(False)
+    dialog._tab_filters[dialog._TAB_DRAFTS] = "all"
+    dialog._on_filter_changed()
+    dialog._node_type_combo.blockSignals(True)
+    dialog._node_type_combo.clear()
+    dialog._node_type_combo.addItem("All Types", "")
+    dialog._node_type_combo.addItem("svc.example.node", "svc.example.node")
+    dialog._node_type_combo.setCurrentIndex(1)
+    dialog._node_type_combo.blockSignals(False)
+    dialog._on_node_type_filter_changed()
+
+    assert events == [
+        ("tab", "variant-ui-state"),
+        ("query", "variant-ui-state"),
+        ("filter", "variant-ui-state"),
+        ("node_type", "variant-ui-state"),
+    ]
+
+    dialog.close()
+
+
+def test_variant_dialog_browser_rebuild_distinguishes_pure_vs_preserve(monkeypatch) -> None:
+    _ensure_app()
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed",
+        lambda _cb: (lambda: None),
+    )
+    monkeypatch.setattr(VariantCatalogDialog, "_render_browser_from_state", lambda self, *_args, **_kwargs: None)
+    dialog = VariantCatalogDialog(parent=None, node_graph=None)
+
+    reload_calls: list[dict[str, object]] = []
+
+    def _record_reload(*_args, **kwargs) -> None:
+        reload_calls.append(dict(kwargs))
+
+    monkeypatch.setattr(dialog, "_render_browser_from_state", _record_reload)
+    monkeypatch.setattr(dialog, "_selected_variant_id", lambda: "variant-preserve")
+
+    dialog._rebuild_browser_from_asset_cache()
+    dialog._rebuild_browser_from_asset_cache_preserving_selection()
+    dialog._rebuild_browser_from_asset_cache_for_change()
+    dialog._rebuild_browser_from_asset_cache_for_change(preserve_variant_id="variant-explicit")
+
+    assert reload_calls == [
+        {},
+        {"preserve_variant_id": "variant-preserve"},
+        {},
+        {"preserve_variant_id": "variant-explicit"},
+    ]
+
+    dialog.close()
+
+
+def test_component_catalog_context_menu_shows_current_mine_actions(monkeypatch) -> None:
+    _ensure_app()
+    monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(ComponentCatalogDialog, "_render_browser_from_state", lambda self, *_args: None)
     dialog = ComponentCatalogDialog(parent=None, node_graph=None)
     entry = F8ComponentEntry(
         record=F8ComponentRecord(
-            componentId="component-mine-local",
-            name="Mine Local Component",
+            componentId="component-mine-remote",
+            name="Mine Remote Component",
             content=_component_payload_for_node(_make_service_node_class()),
         ),
-        source=F8ComponentSourceKind.local,
-        installed=True,
+        source=F8ComponentSourceKind.remote_private,
+        visibility=F8ComponentVisibility.private,
+        ownerUserId="u1",
+        ownerDisplayName="User One",
+        installed=False,
     )
     dialog._entries = [entry]
-    dialog._sync_client._catalog_service._local_provider.save_entry(entry)
+    dialog._sync_client._catalog_service._remote_provider.save_entries([entry])
+    monkeypatch.setattr(
+        dialog._sync_client,
+        "current_user",
+        lambda: F8ComponentRemoteUser(userId="u1", displayName="User One", username="user-one"),
+    )
     item = QtWidgets.QListWidgetItem()
-    item.setData(QtCore.Qt.ItemDataRole.UserRole, "component-mine-local")
+    item.setData(QtCore.Qt.ItemDataRole.UserRole, "component-mine-remote")
     dialog._list.addItem(item)
 
     dialog._scope_tabs.setCurrentIndex(dialog._TAB_MINE)
@@ -911,11 +1629,153 @@ def test_component_catalog_context_menu_shows_mine_actions_and_insert(monkeypatc
     menu = dialog._build_list_context_menu(
         current_tab=dialog._TAB_MINE,
         selected_entry=entry,
-        local_entry=entry,
-        remote_entry=None,
+        local_entry=None,
+        remote_entry=entry,
     )
 
-    assert [action.text() for action in menu.actions()] == ["Offload", "Delete", "Copy to Draft", "Sync", "Make Public", "", "Create on canvas"]
+    assert [action.text() for action in menu.actions()] == [
+        "Open Draft",
+        "Load",
+        "Delete",
+        "Make Public",
+        "History",
+    ]
+
+    dialog.close()
+
+
+def test_component_dialog_mine_toolbar_uses_open_draft_and_load(monkeypatch) -> None:
+    _ensure_app()
+    monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(ComponentCatalogDialog, "_render_browser_from_state", lambda self, *_args: None)
+    dialog = ComponentCatalogDialog(parent=None, node_graph=None)
+    entry = F8ComponentEntry(
+        record=F8ComponentRecord(
+            componentId="component-mine-toolbar",
+            name="Mine Toolbar Component",
+            content=_component_payload_for_node(_make_service_node_class()),
+        ),
+        source=F8ComponentSourceKind.remote_private,
+        visibility=F8ComponentVisibility.private,
+        ownerUserId="u1",
+        ownerDisplayName="User One",
+        installed=False,
+    )
+    dialog._entries = [entry]
+    dialog._sync_client._catalog_service._remote_provider.save_entries([entry])
+    monkeypatch.setattr(
+        dialog._sync_client,
+        "current_user",
+        lambda: F8ComponentRemoteUser(userId="u1", displayName="User One", username="user-one"),
+    )
+    item = QtWidgets.QListWidgetItem()
+    item.setData(QtCore.Qt.ItemDataRole.UserRole, "component-mine-toolbar")
+    dialog._list.addItem(item)
+
+    dialog._scope_tabs.setCurrentIndex(dialog._TAB_MINE)
+    dialog._list.setCurrentRow(0)
+    QtWidgets.QApplication.processEvents()
+
+    assert dialog._btn_copy_local.isHidden() is False
+    assert dialog._btn_copy_local.toolTip() == "Open Draft"
+    assert dialog._btn_install.isHidden() is False
+    assert dialog._btn_install.toolTip() == "Load"
+    assert dialog._btn_edit.isHidden() is True
+
+    dialog.close()
+
+
+def test_component_dialog_installed_uses_remove_from_installed(monkeypatch) -> None:
+    _ensure_app()
+    monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(ComponentCatalogDialog, "_render_browser_from_state", lambda self, *_args: None)
+    dialog = ComponentCatalogDialog(parent=None, node_graph=None)
+    entry = F8ComponentEntry(
+        record=F8ComponentRecord(
+            componentId="component-installed",
+            name="Installed Component",
+            content=_component_payload_for_node(_make_service_node_class()),
+        ),
+        source=F8ComponentSourceKind.remote_private,
+        visibility=F8ComponentVisibility.private,
+        ownerUserId="u1",
+        ownerDisplayName="User One",
+        installed=True,
+        hasCachedContent=True,
+    )
+    dialog._entries = [entry]
+    dialog._sync_client._catalog_service._remote_provider.save_entries([entry])
+    item = QtWidgets.QListWidgetItem()
+    item.setData(QtCore.Qt.ItemDataRole.UserRole, "component-installed")
+    dialog._list.addItem(item)
+
+    dialog._scope_tabs.setCurrentIndex(dialog._TAB_INSTALLED)
+    dialog._list.setCurrentRow(0)
+    QtWidgets.QApplication.processEvents()
+
+    assert dialog._btn_delete.isHidden() is False
+    assert dialog._btn_delete.toolTip() == "Remove from Installed"
+
+    menu = dialog._build_list_context_menu(
+        current_tab=dialog._TAB_INSTALLED,
+        selected_entry=entry,
+        local_entry=None,
+        remote_entry=entry,
+    )
+    assert [action.text() for action in menu.actions()] == [
+        "Remove from Installed",
+        "Pull",
+        "History",
+    ]
+
+    dialog.close()
+
+
+def test_component_dialog_installed_delete_offloads_without_remote_delete(monkeypatch) -> None:
+    _ensure_app()
+    monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(ComponentCatalogDialog, "_render_browser_from_state", lambda self, *_args: None)
+    dialog = ComponentCatalogDialog(parent=None, node_graph=None)
+    entry = F8ComponentEntry(
+        record=F8ComponentRecord(
+            componentId="component-installed-delete",
+            name="Installed Delete Component",
+            content=_component_payload_for_node(_make_service_node_class()),
+        ),
+        source=F8ComponentSourceKind.remote_private,
+        visibility=F8ComponentVisibility.private,
+        ownerUserId="u1",
+        ownerDisplayName="User One",
+        installed=True,
+        hasCachedContent=True,
+    )
+    dialog._entries = [entry]
+    dialog._sync_client._catalog_service._remote_provider.save_entries([entry])
+    item = QtWidgets.QListWidgetItem()
+    item.setData(QtCore.Qt.ItemDataRole.UserRole, "component-installed-delete")
+    dialog._list.addItem(item)
+    dialog._scope_tabs.setCurrentIndex(dialog._TAB_INSTALLED)
+    dialog._list.setCurrentRow(0)
+    QtWidgets.QApplication.processEvents()
+
+    offload_calls: list[str] = []
+    delete_calls: list[str] = []
+    monkeypatch.setattr(QtWidgets.QMessageBox, "question", lambda *args, **kwargs: QtWidgets.QMessageBox.Yes)
+    monkeypatch.setattr(
+        dialog,
+        "_offload_selected_component",
+        lambda *, local_entry, remote_entry: offload_calls.append(str(remote_entry.record.componentId)) or True,
+    )
+    monkeypatch.setattr(
+        dialog._sync_client,
+        "delete_component",
+        lambda component_id: delete_calls.append(str(component_id)),
+    )
+
+    dialog._on_delete_clicked()
+
+    assert offload_calls == ["component-installed-delete"]
+    assert delete_calls == []
 
     dialog.close()
 
@@ -923,7 +1783,7 @@ def test_component_catalog_context_menu_shows_mine_actions_and_insert(monkeypatc
 def test_component_dialog_toolbar_matches_variant_style_for_community(monkeypatch) -> None:
     _ensure_app()
     monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None))
-    monkeypatch.setattr(ComponentCatalogDialog, "_reload", lambda self, *_args: None)
+    monkeypatch.setattr(ComponentCatalogDialog, "_render_browser_from_state", lambda self, *_args: None)
     dialog = ComponentCatalogDialog(parent=None, node_graph=None)
     entry = F8ComponentEntry(
         record=F8ComponentRecord(
@@ -977,7 +1837,7 @@ def test_component_catalog_create_on_canvas_keeps_dialog_open(monkeypatch) -> No
             self.placement_calls.append((request, str(label)))
 
     monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None))
-    monkeypatch.setattr(ComponentCatalogDialog, "_reload", lambda self, *_args: None)
+    monkeypatch.setattr(ComponentCatalogDialog, "_render_browser_from_state", lambda self, *_args: None)
     dialog = ComponentCatalogDialog(parent=None, node_graph=_FakeGraph())
     entry = F8ComponentEntry(
         record=F8ComponentRecord(
@@ -1038,8 +1898,11 @@ def test_component_catalog_save_as_component_uses_selected_subgraph(monkeypatch)
             name: str,
             description: str,
             tags: list[str],
+            overwrite_choices: list[object],
+            overwrite_label: str,
+            name_validator: object,
         ) -> None:
-            del parent, title
+            del parent, title, overwrite_choices, overwrite_label, name_validator
             self._name = name
             self._description = description
             self._tags = list(tags)
@@ -1047,12 +1910,12 @@ def test_component_catalog_save_as_component_uses_selected_subgraph(monkeypatch)
         def exec(self) -> int:
             return QtWidgets.QDialog.Accepted
 
-        def values(self) -> tuple[str, str, list[str]]:
-            return (self._name, self._description, list(self._tags))
+        def values(self) -> tuple[str, str, list[str], str | None]:
+            return (self._name, self._description, list(self._tags), None)
 
     monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None))
-    monkeypatch.setattr(ComponentCatalogDialog, "_reload", lambda self, *_args: None)
-    monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_actions_mixin.ProjectAssetMetaDialog", _FakeMetaDialog)
+    monkeypatch.setattr(ComponentCatalogDialog, "_render_browser_from_state", lambda self, *_args: None)
+    monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_actions_mixin.AssetOverwriteMetaDialog", _FakeMetaDialog)
     monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_actions_mixin.upsert_component", lambda record: saved_records.append(record))
     monkeypatch.setattr(
         "f8pystudio.assets.ui.component_catalog_actions_mixin.show_info",
@@ -1068,6 +1931,99 @@ def test_component_catalog_save_as_component_uses_selected_subgraph(monkeypatch)
     assert set(saved_record.content["layout"]["nodes"].keys()) == {"node_a", "node_b"}
     assert saved_record.content["layout"]["connections"] == [{"out": ["node_a", "out"], "in": ["node_b", "in"]}]
     assert info_messages == [("Saved", "Saved component:\nUntitled Component")]
+
+    dialog.close()
+
+
+def test_component_catalog_save_as_component_overwrite_choices_only_include_drafts(monkeypatch, tmp_path: Path) -> None:
+    _ensure_app()
+    payload = wrap_layout_for_save(
+        {
+            "nodes": {
+                "node_a": {"id": "node_a", "name": "Node A"},
+            },
+            "connections": [],
+        }
+    )
+    graph = _FakeComponentSaveGraph(payload=payload, selected_nodes=[])
+    saved_records: list[object] = []
+    captured_choice_ids: list[str] = []
+
+    class _FakeMetaDialog:
+        def __init__(
+            self,
+            *,
+            parent: QtWidgets.QWidget | None,
+            title: str,
+            name: str,
+            description: str,
+            tags: list[str],
+            overwrite_choices: list[object],
+            overwrite_label: str,
+            name_validator: object,
+        ) -> None:
+            del parent, title, overwrite_label, name_validator
+            self._name = name
+            self._description = description
+            self._tags = list(tags)
+            captured_choice_ids.extend([str(choice.asset_id) for choice in overwrite_choices])
+
+        def exec(self) -> int:
+            return QtWidgets.QDialog.Accepted
+
+        def values(self) -> tuple[str, str, list[str], str | None]:
+            return (self._name, self._description, list(self._tags), None)
+
+    monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(ComponentCatalogDialog, "_render_browser_from_state", lambda self, *_args: None)
+    monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_actions_mixin.AssetOverwriteMetaDialog", _FakeMetaDialog)
+    monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_actions_mixin.upsert_component", lambda record: saved_records.append(record))
+    monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_actions_mixin.show_info", lambda *_args: None)
+    dialog = ComponentCatalogDialog(parent=None, node_graph=graph)
+    dialog._sync_client = ComponentSyncClient(
+        settings=QtCore.QSettings(str(tmp_path / "component-save-overwrite.ini"), QtCore.QSettings.IniFormat),
+        catalog_service=ComponentCatalogService(db_path=tmp_path / "assets.db"),
+    )
+    dialog._sync_client._catalog_service._remote_provider.save_entries(
+        [
+            F8ComponentEntry(
+                record=F8ComponentRecord(
+                    componentId="remote-mine-component",
+                    name="Existing Name",
+                    description="",
+                    schemaVersion="f8studio-session/1",
+                    content={"schemaVersion": "f8studio-session/1", "layout": {"nodes": {}, "connections": []}},
+                    createdAt=component_now_iso(),
+                    updatedAt=component_now_iso(),
+                ),
+                source=F8ComponentSourceKind.remote_private,
+                visibility=F8ComponentVisibility.private,
+                ownerUserId="u1",
+                ownerDisplayName="User One",
+                installed=False,
+            )
+        ]
+    )
+    _ = dialog._draft_service_for_catalog().create_draft_from_record(
+        F8ComponentRecord(
+            componentId="draft-existing-component",
+            name="Existing Name",
+            description="",
+            schemaVersion="f8studio-session/1",
+            content={"schemaVersion": "f8studio-session/1", "layout": {"nodes": {}, "connections": []}},
+            createdAt=component_now_iso(),
+            updatedAt=component_now_iso(),
+        ),
+        origin_kind=F8ComponentDraftOriginKind.new,
+        publish_target_asset_id=None,
+        publish_base_remote_revision=None,
+        draft_id="draft-existing-component",
+    )
+
+    dialog._on_add_clicked()
+
+    assert captured_choice_ids == ["draft-existing-component"]
+    assert len(saved_records) == 1
 
     dialog.close()
 
@@ -1097,8 +2053,11 @@ def test_component_catalog_save_as_component_uses_full_graph_without_selection(m
             name: str,
             description: str,
             tags: list[str],
+            overwrite_choices: list[object],
+            overwrite_label: str,
+            name_validator: object,
         ) -> None:
-            del parent, title
+            del parent, title, overwrite_choices, overwrite_label, name_validator
             self._name = name
             self._description = description
             self._tags = list(tags)
@@ -1106,12 +2065,12 @@ def test_component_catalog_save_as_component_uses_full_graph_without_selection(m
         def exec(self) -> int:
             return QtWidgets.QDialog.Accepted
 
-        def values(self) -> tuple[str, str, list[str]]:
-            return (self._name, self._description, list(self._tags))
+        def values(self) -> tuple[str, str, list[str], str | None]:
+            return (self._name, self._description, list(self._tags), None)
 
     monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None))
-    monkeypatch.setattr(ComponentCatalogDialog, "_reload", lambda self, *_args: None)
-    monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_actions_mixin.ProjectAssetMetaDialog", _FakeMetaDialog)
+    monkeypatch.setattr(ComponentCatalogDialog, "_render_browser_from_state", lambda self, *_args: None)
+    monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_actions_mixin.AssetOverwriteMetaDialog", _FakeMetaDialog)
     monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_actions_mixin.upsert_component", lambda record: saved_records.append(record))
     monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_actions_mixin.show_info", lambda *_args: None)
     dialog = ComponentCatalogDialog(parent=None, node_graph=graph)
@@ -1170,7 +2129,7 @@ def test_component_catalog_ignores_deleted_selection_wrapper() -> None:
 def test_variant_dialog_hydration_failure_updates_raw_and_preview(monkeypatch) -> None:
     _ensure_app()
     monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", lambda _cb: (lambda: None))
-    monkeypatch.setattr(VariantCatalogDialog, "_reload", lambda self, *_args, **_kwargs: None)
+    monkeypatch.setattr(VariantCatalogDialog, "_render_browser_from_state", lambda self, *_args, **_kwargs: None)
     dialog = VariantCatalogDialog(
         parent=None,
         base_node_type="svc.preview.variant",
@@ -1212,7 +2171,7 @@ def test_variant_dialog_hydration_failure_updates_raw_and_preview(monkeypatch) -
 def test_variant_dialog_install_allows_anonymous_public_variant(monkeypatch) -> None:
     _ensure_app()
     monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", lambda _cb: (lambda: None))
-    monkeypatch.setattr(VariantCatalogDialog, "_reload", lambda self, *_args, **_kwargs: None)
+    monkeypatch.setattr(VariantCatalogDialog, "_render_browser_from_state", lambda self, *_args, **_kwargs: None)
     monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_actions_mixin.show_info", lambda *_args, **_kwargs: None)
     dialog = VariantCatalogDialog(
         parent=None,
@@ -1304,7 +2263,7 @@ def test_variant_dialog_defers_reload_during_selection_cache(monkeypatch) -> Non
         events.append("cache:end")
         return cached_entry
 
-    dialog._reload = _recording_reload  # type: ignore[method-assign]
+    dialog._render_browser_from_state = _recording_reload  # type: ignore[method-assign]
     dialog._sync_client.cache_variant_content = _cache_variant_content  # type: ignore[method-assign]
     events.clear()
 
@@ -1313,7 +2272,7 @@ def test_variant_dialog_defers_reload_during_selection_cache(monkeypatch) -> Non
 
     assert events[:3] == ["cache:start", "cache:end", "reload"]
     assert dialog._selected_variant_id() == "variant-remote"
-    assert dialog._btn_install.isEnabled() is True
+    assert dialog._btn_install.isEnabled() is False
     assert dialog._btn_create.isEnabled() is False
 
     dialog.close()
@@ -1343,13 +2302,13 @@ def test_variant_dialog_ignores_variants_changed_after_list_deleted(monkeypatch)
         raise RuntimeError("Internal C++ object (PySide6.QtWidgets.QListWidget) already deleted.")
 
     dialog._list = _DeletedListWidget()  # type: ignore[assignment]
-    dialog._reload = _raise_deleted  # type: ignore[method-assign]
+    dialog._render_browser_from_state = _raise_deleted  # type: ignore[method-assign]
 
     callback = callbacks[0]
     callback()
 
     assert callbacks == []
-    assert dialog._variants_changed_unsubscribe is None
+    assert dialog._asset_cache_changed_unsubscribe is None
 
     dialog.close()
 
@@ -1357,7 +2316,7 @@ def test_variant_dialog_ignores_variants_changed_after_list_deleted(monkeypatch)
 def test_variant_dialog_subscribe_also_loads_public_variant(monkeypatch) -> None:
     _ensure_app()
     monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", lambda _cb: (lambda: None))
-    monkeypatch.setattr(VariantCatalogDialog, "_reload", lambda self, *_args, **_kwargs: None)
+    monkeypatch.setattr(VariantCatalogDialog, "_render_browser_from_state", lambda self, *_args, **_kwargs: None)
     monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_actions_mixin.show_info", lambda *_args, **_kwargs: None)
     dialog = VariantCatalogDialog(
         parent=None,
@@ -1402,7 +2361,7 @@ def test_variant_dialog_subscribe_also_loads_public_variant(monkeypatch) -> None
 def test_variant_dialog_community_actions_hide_load_and_show_fork(monkeypatch) -> None:
     _ensure_app()
     monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", lambda _cb: (lambda: None))
-    monkeypatch.setattr(VariantCatalogDialog, "_reload", lambda self, *_args, **_kwargs: None)
+    monkeypatch.setattr(VariantCatalogDialog, "_render_browser_from_state", lambda self, *_args, **_kwargs: None)
     dialog = VariantCatalogDialog(
         parent=None,
         base_node_type="svc.preview.variant",
@@ -1447,10 +2406,206 @@ def test_variant_dialog_community_actions_hide_load_and_show_fork(monkeypatch) -
     dialog.close()
 
 
+def test_variant_dialog_mine_toolbar_uses_open_draft_and_load(monkeypatch) -> None:
+    _ensure_app()
+    monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(VariantCatalogDialog, "_render_browser_from_state", lambda self, *_args, **_kwargs: None)
+    dialog = VariantCatalogDialog(
+        parent=None,
+        base_node_type="svc.preview.variant",
+        base_node_name="Preview Variant",
+        node_graph=None,
+    )
+    entry = F8VariantEntry(
+        record=F8VariantRecord(
+            variantId="variant-mine-toolbar",
+            kind=F8VariantKind.service,
+            baseNodeType="svc.preview.service",
+            serviceClass="svc.preview.service",
+            operatorClass=None,
+            name="Mine Toolbar Variant",
+            description="",
+            tags=[],
+            spec={"label": "Mine Toolbar Variant"},
+            createdAt=variant_now_iso(),
+            updatedAt=variant_now_iso(),
+        ),
+        source=F8VariantSourceKind.remote_private,
+        visibility=F8VariantVisibility.private,
+        ownerUserId="u1",
+        ownerDisplayName="User One",
+        installed=False,
+    )
+    dialog._entries = [entry]
+    dialog._sync_client._catalog_service._remote_provider.save_entries([entry])
+    monkeypatch.setattr(
+        dialog._sync_client,
+        "current_user",
+        lambda: F8VariantRemoteUser(userId="u1", displayName="User One", username="user-one"),
+    )
+    item = QtWidgets.QListWidgetItem()
+    item.setData(QtCore.Qt.ItemDataRole.UserRole, "variant-mine-toolbar")
+    dialog._list.addItem(item)
+
+    dialog._scope_tabs.setCurrentIndex(dialog._TAB_MINE)
+    dialog._list.setCurrentRow(0)
+    QtWidgets.QApplication.processEvents()
+
+    assert dialog._btn_copy_local.isHidden() is False
+    assert dialog._btn_copy_local.toolTip() == "Open Draft"
+    assert dialog._btn_install.isHidden() is False
+    assert dialog._btn_install.toolTip() == "Load"
+    assert dialog._btn_edit.isHidden() is True
+
+    dialog.close()
+
+
+def test_variant_dialog_installed_uses_remove_from_installed(monkeypatch) -> None:
+    _ensure_app()
+    monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(VariantCatalogDialog, "_render_browser_from_state", lambda self, *_args, **_kwargs: None)
+    dialog = VariantCatalogDialog(
+        parent=None,
+        base_node_type="svc.preview.variant",
+        base_node_name="Preview Variant",
+        node_graph=None,
+    )
+    entry = F8VariantEntry(
+        record=F8VariantRecord(
+            variantId="variant-installed",
+            kind=F8VariantKind.service,
+            baseNodeType="svc.preview.service",
+            serviceClass="svc.preview.service",
+            operatorClass=None,
+            name="Installed Variant",
+            description="",
+            tags=[],
+            spec={"label": "Installed Variant"},
+            createdAt=variant_now_iso(),
+            updatedAt=variant_now_iso(),
+        ),
+        source=F8VariantSourceKind.remote_private,
+        visibility=F8VariantVisibility.private,
+        ownerUserId="u1",
+        ownerDisplayName="User One",
+        installed=True,
+        hasCachedContent=True,
+    )
+    dialog._entries = [entry]
+    dialog._sync_client._catalog_service._remote_provider.save_entries([entry])
+    item = QtWidgets.QListWidgetItem()
+    item.setData(QtCore.Qt.ItemDataRole.UserRole, "variant-installed")
+    dialog._list.addItem(item)
+
+    dialog._scope_tabs.setCurrentIndex(dialog._TAB_INSTALLED)
+    dialog._list.setCurrentRow(0)
+    QtWidgets.QApplication.processEvents()
+
+    assert dialog._btn_delete.isHidden() is False
+    assert dialog._btn_delete.toolTip() == "Remove from Installed"
+
+    menu_actions: list[str] = []
+
+    class _FakeMenu:
+        def __init__(self, _parent: object) -> None:
+            self._actions: list[QtWidgets.QAction] = []
+
+        def addAction(self, text: str) -> QtWidgets.QAction:
+            action = QtWidgets.QAction(text, dialog)
+            self._actions.append(action)
+            return action
+
+        def addSeparator(self) -> QtWidgets.QAction:
+            action = QtWidgets.QAction(dialog)
+            action.setSeparator(True)
+            self._actions.append(action)
+            return action
+
+        def actions(self) -> list[QtWidgets.QAction]:
+            return list(self._actions)
+
+        def exec(self, _pos: object) -> None:
+            menu_actions.extend(action.text() for action in self._actions if not action.isSeparator())
+
+    monkeypatch.setattr(QtWidgets, "QMenu", _FakeMenu)
+    dialog._on_list_context_menu_requested(QtCore.QPoint(0, 0))
+
+    assert menu_actions == [
+        "Remove from Installed",
+        "Pull",
+        "History",
+        "Create on canvas",
+    ]
+
+    dialog.close()
+
+
+def test_variant_dialog_installed_delete_offloads_without_remote_delete(monkeypatch) -> None:
+    _ensure_app()
+    monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(VariantCatalogDialog, "_render_browser_from_state", lambda self, *_args, **_kwargs: None)
+    dialog = VariantCatalogDialog(
+        parent=None,
+        base_node_type="svc.preview.variant",
+        base_node_name="Preview Variant",
+        node_graph=None,
+    )
+    entry = F8VariantEntry(
+        record=F8VariantRecord(
+            variantId="variant-installed-delete",
+            kind=F8VariantKind.service,
+            baseNodeType="svc.preview.service",
+            serviceClass="svc.preview.service",
+            operatorClass=None,
+            name="Installed Delete Variant",
+            description="",
+            tags=[],
+            spec={"label": "Installed Delete Variant"},
+            createdAt=variant_now_iso(),
+            updatedAt=variant_now_iso(),
+        ),
+        source=F8VariantSourceKind.remote_private,
+        visibility=F8VariantVisibility.private,
+        ownerUserId="u1",
+        ownerDisplayName="User One",
+        installed=True,
+        hasCachedContent=True,
+    )
+    dialog._entries = [entry]
+    dialog._sync_client._catalog_service._remote_provider.save_entries([entry])
+    item = QtWidgets.QListWidgetItem()
+    item.setData(QtCore.Qt.ItemDataRole.UserRole, "variant-installed-delete")
+    dialog._list.addItem(item)
+    dialog._scope_tabs.setCurrentIndex(dialog._TAB_INSTALLED)
+    dialog._list.setCurrentRow(0)
+    QtWidgets.QApplication.processEvents()
+
+    offload_calls: list[str] = []
+    delete_calls: list[str] = []
+    monkeypatch.setattr(QtWidgets.QMessageBox, "question", lambda *args, **kwargs: QtWidgets.QMessageBox.Yes)
+    monkeypatch.setattr(
+        dialog,
+        "_offload_selected_variant",
+        lambda *, local_entry, remote_entry: offload_calls.append(str(remote_entry.record.variantId)) or True,
+    )
+    monkeypatch.setattr(
+        dialog._sync_client,
+        "delete_variant",
+        lambda variant_id: delete_calls.append(str(variant_id)),
+    )
+
+    dialog._on_delete_clicked()
+
+    assert offload_calls == ["variant-installed-delete"]
+    assert delete_calls == []
+
+    dialog.close()
+
+
 def test_variant_dialog_cached_remote_preview_does_not_refetch_content(monkeypatch) -> None:
     _ensure_app()
     monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", lambda _cb: (lambda: None))
-    monkeypatch.setattr(VariantCatalogDialog, "_reload", lambda self, *_args, **_kwargs: None)
+    monkeypatch.setattr(VariantCatalogDialog, "_render_browser_from_state", lambda self, *_args, **_kwargs: None)
     dialog = VariantCatalogDialog(
         parent=None,
         base_node_type="svc.preview.variant",
@@ -1495,7 +2650,7 @@ def test_variant_dialog_cached_remote_preview_does_not_refetch_content(monkeypat
 def test_variant_dialog_enables_history_for_local_entry(monkeypatch) -> None:
     _ensure_app()
     monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", lambda _cb: (lambda: None))
-    monkeypatch.setattr(VariantCatalogDialog, "_reload", lambda self, *_args, **_kwargs: None)
+    monkeypatch.setattr(VariantCatalogDialog, "_render_browser_from_state", lambda self, *_args, **_kwargs: None)
     dialog = VariantCatalogDialog(
         parent=None,
         base_node_type="svc.preview.variant",

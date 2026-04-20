@@ -17,10 +17,12 @@ logger = logging.getLogger(__name__)
 
 
 class VariantCatalogSelectionMixin:
+    _TAB_DRAFTS: int
     _TAB_MINE: int
     _TAB_COMMUNITY: int
     _TAB_INSTALLED: int
     LOCAL_DRAFT_LABEL: str
+    LINKED_DRAFT_LABEL: str
     LOCAL_DRAFT_LOAD_TOOLTIP: str
     _entries: list[F8VariantEntry]
     _sync_client: Any
@@ -37,7 +39,7 @@ class VariantCatalogSelectionMixin:
     _btn_visibility: QtWidgets.QPushButton
     _btn_history: QtWidgets.QPushButton
     _btn_create: QtWidgets.QPushButton
-    _reload: Any
+    _render_browser_from_state: Any
     _on_create_clicked: Any
     _on_edit_clicked: Any
     _on_load_or_offload_clicked: Any
@@ -51,8 +53,8 @@ class VariantCatalogSelectionMixin:
 
     def _initialize_selection_state(self) -> None:
         self._is_handling_selection_change = False
-        self._pending_reload_from_variants_changed = False
-        self._pending_reload_variant_id = ""
+        self._pending_asset_cache_rebuild = False
+        self._pending_asset_cache_rebuild_variant_id = ""
 
     def _selected_entry(self) -> F8VariantEntry | None:
         try:
@@ -97,7 +99,7 @@ class VariantCatalogSelectionMixin:
         normalized_variant_id = str(variant_id or "").strip()
         if not normalized_variant_id:
             return None
-        for entry in self._sync_client._catalog_service._local_provider.load_entries():
+        for entry in self._draft_service_for_catalog().list_catalog_entries():
             if str(entry.record.variantId or "").strip() == normalized_variant_id:
                 return entry
         return None
@@ -114,6 +116,8 @@ class VariantCatalogSelectionMixin:
             return None, None, None
         variant_id = str(active_entry.record.variantId or "").strip()
         local_entry = self._local_entry_for_variant_id(variant_id)
+        if local_entry is None and active_entry.source == F8VariantSourceKind.local:
+            local_entry = active_entry
         if local_entry is None:
             fallback_local_entry = self._selected_local_entry()
             if fallback_local_entry is not None and str(fallback_local_entry.record.variantId or "").strip() == variant_id:
@@ -171,7 +175,60 @@ class VariantCatalogSelectionMixin:
             return None
         if owner_text.casefold() == self.LOCAL_DRAFT_LABEL.casefold():
             return self.LOCAL_DRAFT_LABEL
+        if owner_text.casefold() == self.LINKED_DRAFT_LABEL.casefold():
+            return self.LINKED_DRAFT_LABEL
         return f"by {owner_text}"
+
+    def _linked_draft_reference_text(self, entry: F8VariantEntry) -> str | None:
+        if not entry.isLocalDraft:
+            return None
+        target_asset_id = str(entry.draftOriginAssetId or "").strip()
+        if not target_asset_id:
+            return None
+        remote_entry = self._remote_entry_for_variant_id(target_asset_id)
+        if remote_entry is not None:
+            owner_name = str(remote_entry.ownerDisplayName or "").strip()
+            asset_name = str(remote_entry.record.name or "").strip()
+            if owner_name and asset_name:
+                return f"linked to {owner_name}.{asset_name}"
+            if asset_name:
+                return f"linked to {asset_name}"
+            if owner_name:
+                return f"linked to {owner_name}"
+        return f"linked to asset:{target_asset_id[:8]}"
+
+    def _linked_draft_reference_tooltip(self, entry: F8VariantEntry) -> str | None:
+        if not entry.isLocalDraft:
+            return None
+        target_asset_id = str(entry.draftOriginAssetId or "").strip()
+        if not target_asset_id:
+            return None
+        return f"Cloud target asset: {target_asset_id}"
+
+    def _linked_draft_badge_text(self, entry: F8VariantEntry) -> str | None:
+        if entry.source == F8VariantSourceKind.local:
+            return None
+        asset_id = str(entry.record.variantId or "").strip()
+        if not asset_id:
+            return None
+        draft_entry = self._draft_service_for_catalog().draft_for_publish_target(asset_id)
+        if draft_entry is None:
+            return None
+        return "draft"
+
+    def _linked_draft_badge_tooltip(self, entry: F8VariantEntry) -> str | None:
+        if entry.source == F8VariantSourceKind.local:
+            return None
+        asset_id = str(entry.record.variantId or "").strip()
+        if not asset_id:
+            return None
+        draft_entry = self._draft_service_for_catalog().draft_for_publish_target(asset_id)
+        if draft_entry is None:
+            return None
+        draft_name = str(draft_entry.record.name or "").strip()
+        if draft_name:
+            return f"Linked local draft exists: {draft_name}\nCloud asset: {asset_id}"
+        return f"Linked local draft exists.\nCloud asset: {asset_id}"
 
     def _refresh_action_buttons(self, selected_entry_override: F8VariantEntry | None) -> None:
         selected, local_entry, remote_entry = self._selected_action_entries()
@@ -179,6 +236,8 @@ class VariantCatalogSelectionMixin:
             selected = selected_entry_override
             variant_id = str(selected_entry_override.record.variantId or "").strip()
             local_entry = self._local_entry_for_variant_id(variant_id)
+            if local_entry is None and selected_entry_override.source == F8VariantSourceKind.local:
+                local_entry = selected_entry_override
             remote_entry = self._remote_entry_for_variant_id(variant_id)
 
         current_tab = self._scope_tabs.currentIndex()
@@ -187,16 +246,19 @@ class VariantCatalogSelectionMixin:
         tooltip = self._load_action_tooltip(can_offload=can_offload, local_entry=local_entry)
         self._set_button_state(
             self._btn_install,
-            visible=has_selection and current_tab != self._TAB_COMMUNITY,
-            enabled=can_load or can_offload,
+            visible=has_selection and current_tab in {self._TAB_MINE, self._TAB_INSTALLED} and can_load,
+            enabled=can_load,
             tooltip=tooltip,
-            icon_token=StudioIcon.CLOUD_DOWN if not can_offload else StudioIcon.CLOUD_UP,
+            icon_token=StudioIcon.CLOUD_DOWN,
         )
         self._set_button_state(
             self._btn_upload,
-            visible=has_selection and current_tab != self._TAB_COMMUNITY,
-            enabled=local_entry is not None or (remote_entry is not None and self._is_owned_remote_entry(remote_entry)),
-            tooltip="Sync",
+            visible=has_selection and current_tab in {self._TAB_DRAFTS, self._TAB_INSTALLED},
+            enabled=(
+                (current_tab == self._TAB_DRAFTS and local_entry is not None)
+                or (current_tab == self._TAB_INSTALLED and remote_entry is not None)
+            ),
+            tooltip="Publish Draft" if current_tab == self._TAB_DRAFTS else "Pull",
             icon_token=StudioIcon.TRANSFER,
         )
         can_subscribe = (
@@ -215,23 +277,28 @@ class VariantCatalogSelectionMixin:
         )
         self._set_button_state(
             self._btn_copy_local,
-            visible=has_selection and current_tab != self._TAB_INSTALLED,
+            visible=has_selection and current_tab != self._TAB_DRAFTS,
             enabled=has_selection,
-            tooltip="Copy to Draft",
+            tooltip="Copy to Draft" if current_tab != self._TAB_MINE else "Open Draft",
             icon_token=StudioIcon.SAVE_AS,
         )
         self._set_button_state(
             self._btn_delete,
-            visible=has_selection and current_tab == self._TAB_MINE,
-            enabled=local_entry is not None or (remote_entry is not None and self._is_owned_remote_entry(remote_entry)),
-            tooltip="Delete",
+            visible=has_selection and current_tab != self._TAB_COMMUNITY,
+            enabled=(
+                (current_tab == self._TAB_DRAFTS and local_entry is not None)
+                or local_entry is not None
+                or (remote_entry is not None and self._is_owned_remote_entry(remote_entry))
+                or (current_tab == self._TAB_INSTALLED and can_offload)
+            ),
+            tooltip="Remove from Installed" if current_tab == self._TAB_INSTALLED else "Delete",
             icon_token=StudioIcon.TRASH,
         )
         self._set_button_state(
             self._btn_edit,
-            visible=has_selection and current_tab == self._TAB_MINE,
-            enabled=local_entry is not None,
-            tooltip="Edit Metadata",
+            visible=has_selection and current_tab == self._TAB_DRAFTS,
+            enabled=current_tab == self._TAB_DRAFTS and local_entry is not None,
+            tooltip="Edit Draft Metadata",
             icon_token=StudioIcon.EDIT,
         )
         visibility_label = "Make Public"
@@ -247,7 +314,7 @@ class VariantCatalogSelectionMixin:
         self._set_button_state(
             self._btn_history,
             visible=has_selection and current_tab != self._TAB_COMMUNITY,
-            enabled=local_entry is not None or remote_entry is not None,
+            enabled=((current_tab == self._TAB_DRAFTS) and bool(local_entry is not None and local_entry.draftOriginAssetId)) or local_entry is not None or remote_entry is not None,
             tooltip="History",
             icon_token=StudioIcon.ARTICLE,
         )
@@ -298,10 +365,8 @@ class VariantCatalogSelectionMixin:
         selected_entry: F8VariantEntry,
         variant_id: str,
     ) -> F8VariantEntry:
-        if self._scope_tabs.currentIndex() != self._TAB_MINE:
-            return selected_entry
         local_entry = self._local_entry_for_variant_id(variant_id)
-        if local_entry is None:
+        if self._scope_tabs.currentIndex() != self._TAB_DRAFTS or local_entry is None:
             return selected_entry
         return local_entry
 
@@ -371,16 +436,18 @@ class VariantCatalogSelectionMixin:
         self._preview.show_variant_record(entry.record)
 
     def _run_pending_reload(self, *, pending_reload_variant_id: str) -> None:
-        if not self._pending_reload_from_variants_changed:
+        if not self._pending_asset_cache_rebuild:
             return
-        reload_variant_id = str(self._pending_reload_variant_id or pending_reload_variant_id).strip()
-        self._pending_reload_from_variants_changed = False
-        self._pending_reload_variant_id = ""
+        reload_variant_id = str(self._pending_asset_cache_rebuild_variant_id or pending_reload_variant_id).strip()
+        self._pending_asset_cache_rebuild = False
+        self._pending_asset_cache_rebuild_variant_id = ""
         logger.warning(
-            "Variant manager running deferred reload after selection handling variant_id=%s",
+            "Variant manager running deferred browser rebuild after selection handling variant_id=%s",
             reload_variant_id,
         )
-        self._reload(preserve_variant_id=reload_variant_id)
+        self._rebuild_browser_after_installed_state_changed(
+            preserve_variant_id=reload_variant_id
+        )
 
     def _on_item_double_clicked(self, _item: QtWidgets.QListWidgetItem) -> None:
         self._on_create_clicked()
@@ -394,22 +461,35 @@ class VariantCatalogSelectionMixin:
             return
         current_tab = self._scope_tabs.currentIndex()
         menu = QtWidgets.QMenu(self)
-        if current_tab == self._TAB_MINE:
-            can_load, can_offload = self._load_action_availability(local_entry=local_entry, remote_entry=remote_entry)
-            edit_action = menu.addAction("Edit Metadata")
+        if current_tab == self._TAB_DRAFTS:
+            edit_action = menu.addAction("Edit Draft Metadata")
             edit_action.setEnabled(local_entry is not None)
             edit_action.triggered.connect(self._on_edit_clicked)  # type: ignore[attr-defined]
-            load_action = menu.addAction("Offload" if can_offload else "Load")
-            load_action.setEnabled(can_load or can_offload)
-            load_action.triggered.connect(self._on_load_or_offload_clicked)  # type: ignore[attr-defined]
-            delete_action = menu.addAction("Delete")
-            delete_action.setEnabled(local_entry is not None or (remote_entry is not None and self._is_owned_remote_entry(remote_entry)))
-            delete_action.triggered.connect(self._on_delete_clicked)  # type: ignore[attr-defined]
+            publish_action = menu.addAction("Publish Draft")
+            publish_action.setEnabled(local_entry is not None)
+            publish_action.triggered.connect(self._on_upload_clicked)  # type: ignore[attr-defined]
             duplicate_action = menu.addAction("Copy to Draft")
+            duplicate_action.setEnabled(local_entry is not None)
             duplicate_action.triggered.connect(self._on_duplicate_clicked)  # type: ignore[attr-defined]
-            sync_action = menu.addAction("Sync")
-            sync_action.setEnabled(local_entry is not None or (remote_entry is not None and self._is_owned_remote_entry(remote_entry)))
-            sync_action.triggered.connect(self._on_sync_or_update_clicked)  # type: ignore[attr-defined]
+            delete_action = menu.addAction("Delete Draft")
+            delete_action.setEnabled(local_entry is not None)
+            delete_action.triggered.connect(self._on_delete_clicked)  # type: ignore[attr-defined]
+            history_action = menu.addAction("History")
+            history_action.setEnabled(bool(local_entry is not None and local_entry.draftOriginAssetId))
+            history_action.triggered.connect(self._on_history_clicked)  # type: ignore[attr-defined]
+        elif current_tab == self._TAB_MINE:
+            can_load, _can_offload = self._load_action_availability(local_entry=local_entry, remote_entry=remote_entry)
+            open_draft_action = menu.addAction("Open Draft")
+            open_draft_action.setEnabled(selected_entry is not None)
+            open_draft_action.triggered.connect(self._on_duplicate_clicked)  # type: ignore[attr-defined]
+            if can_load:
+                load_action = menu.addAction("Load")
+                load_action.triggered.connect(self._on_load_or_offload_clicked)  # type: ignore[attr-defined]
+            delete_action = menu.addAction("Delete")
+            delete_action.setEnabled(
+                remote_entry is not None and self._is_owned_remote_entry(remote_entry)
+            )
+            delete_action.triggered.connect(self._on_delete_clicked)  # type: ignore[attr-defined]
             visibility_label = "Make Public"
             if remote_entry is not None and remote_entry.visibility == F8VariantVisibility.public:
                 visibility_label = "Make Private"
@@ -431,16 +511,16 @@ class VariantCatalogSelectionMixin:
             history_action.setEnabled(local_entry is not None or remote_entry is not None)
             history_action.triggered.connect(self._on_history_clicked)  # type: ignore[attr-defined]
         else:
-            offload_action = menu.addAction("Offload")
-            offload_action.setEnabled(local_entry is not None or (remote_entry is not None and variant_entry_is_installed(remote_entry)))
-            offload_action.triggered.connect(self._on_load_or_offload_clicked)  # type: ignore[attr-defined]
+            if local_entry is not None or (remote_entry is not None and variant_entry_is_installed(remote_entry)):
+                offload_action = menu.addAction("Remove from Installed")
+                offload_action.triggered.connect(self._on_load_or_offload_clicked)  # type: ignore[attr-defined]
             pull_action = menu.addAction("Pull")
             pull_action.setEnabled(remote_entry is not None and variant_entry_is_installed(remote_entry))
-            pull_action.triggered.connect(self._on_sync_or_update_clicked)  # type: ignore[attr-defined]
+            pull_action.triggered.connect(self._on_upload_clicked)  # type: ignore[attr-defined]
             history_action = menu.addAction("History")
             history_action.setEnabled(local_entry is not None or remote_entry is not None)
             history_action.triggered.connect(self._on_history_clicked)  # type: ignore[attr-defined]
-        if variant_entry_is_installed(selected_entry):
+        if current_tab != self._TAB_DRAFTS and variant_entry_is_installed(selected_entry):
             menu.addSeparator()
             create_action = menu.addAction("Create on canvas")
             create_action.triggered.connect(self._on_create_clicked)  # type: ignore[attr-defined]

@@ -331,6 +331,12 @@ const visibilityUpdateRequestSchema = z.object({
   revision: z.string().optional(),
 });
 
+const assetMetaUpdateRequestSchema = z.object({
+  name: z.string(),
+  description: z.string().optional(),
+  tags: z.array(z.string()).optional(),
+});
+
 const variantForkRequestSchema = z.object({
   variantId: z.string().optional(),
   name: z.string().optional(),
@@ -580,6 +586,20 @@ export function registerOpenApiRoutes(app, handlers) {
     }),
   }, handlers.routeComponentAssetRequest);
 
+  registerRoute(openapi, 'patch', '/v1/components/:componentId/meta', {
+    tags: ['components'],
+    summary: 'Update component metadata',
+    request: {
+      params: z.object({
+        componentId: z.string(),
+      }),
+      body: jsonRequestBody(assetMetaUpdateRequestSchema, 'Component metadata update payload'),
+    },
+    responses: withCommonErrorResponses({
+      200: jsonSuccessResponse(componentDetailSchema, 'Component with updated metadata'),
+    }),
+  }, handlers.routeComponentAssetRequest);
+
   registerRoute(openapi, 'get', '/v1/components/:componentId/versions', {
     tags: ['components'],
     summary: 'List component versions',
@@ -748,6 +768,20 @@ export function registerOpenApiRoutes(app, handlers) {
     },
     responses: withCommonErrorResponses({
       200: jsonSuccessResponse(variantDetailSchema, 'Variant with updated visibility'),
+    }),
+  }, handlers.routeVariantAssetRequest);
+
+  registerRoute(openapi, 'patch', '/v1/variants/:variantId/meta', {
+    tags: ['variants'],
+    summary: 'Update variant metadata',
+    request: {
+      params: z.object({
+        variantId: z.string(),
+      }),
+      body: jsonRequestBody(assetMetaUpdateRequestSchema, 'Variant metadata update payload'),
+    },
+    responses: withCommonErrorResponses({
+      200: jsonSuccessResponse(variantDetailSchema, 'Variant with updated metadata'),
     }),
   }, handlers.routeVariantAssetRequest);
 
