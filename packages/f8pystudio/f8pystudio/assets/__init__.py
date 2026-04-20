@@ -8,7 +8,6 @@ from .components import (
     F8ComponentEntry,
     F8ComponentRecord,
     F8ComponentSourceKind,
-    F8ComponentSyncState,
     F8ComponentVisibility,
 )
 from .variants import (
@@ -18,7 +17,6 @@ from .variants import (
     F8VariantRecord,
     F8VariantRef,
     F8VariantSourceKind,
-    F8VariantSyncState,
     F8VariantVisibility,
     VariantDraftService,
     VariantSyncClient,
@@ -40,7 +38,6 @@ __all__ = [
     "F8ComponentEntry",
     "F8ComponentRecord",
     "F8ComponentSourceKind",
-    "F8ComponentSyncState",
     "F8ComponentVisibility",
     "F8VariantDraftEntry",
     "F8VariantEntry",
@@ -48,6 +45,5 @@ __all__ = [
     "F8VariantRecord",
     "F8VariantRef",
     "F8VariantSourceKind",
-    "F8VariantSyncState",
     "F8VariantVisibility",
 ]

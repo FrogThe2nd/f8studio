@@ -4,23 +4,15 @@ from collections.abc import Mapping
 import logging
 from pathlib import Path
 from typing import cast
-
 import zlib
-from sqlalchemy import and_, delete, func, insert, select, update
+
+from sqlalchemy import delete, insert, select
 from f8pysdk.codec import copy_model
 
-from ..db import (
-    AssetsDatabase,
-    component_remote_cache_table,
-)
-from ..common import (
-    json_object_loads,
-    json_string_list_loads,
-    mapping_int,
-    mapping_optional_str,
-    mapping_str,
-    stable_json_dumps,
-)
+from ..common import json_object_loads, json_string_list_loads, mapping_optional_str, mapping_str, stable_json_dumps
+from ..common.remote_cache_common import RemoteCacheMetadata, remote_cache_metadata_from_fields
+from ..db import AssetsDatabase, component_remote_cache_table
+from .component_drafts import ComponentDraftService, draft_as_catalog_entry
 from .component_events import emit_components_changed
 from .component_models import (
     F8ComponentDraftEntry,
@@ -29,13 +21,8 @@ from .component_models import (
     F8ComponentLocalVersionSummary,
     F8ComponentRecord,
     F8ComponentSourceKind,
-    F8ComponentSyncState,
     F8ComponentVisibility,
     component_now_iso,
-)
-from ..common.remote_cache_common import (
-    RemoteCacheMetadata,
-    remote_cache_metadata_from_fields,
 )
 
 logger = logging.getLogger(__name__)
@@ -43,179 +30,42 @@ logger = logging.getLogger(__name__)
 
 class LocalComponentProvider:
     def __init__(self, db_path: Path | None = None) -> None:
-        self._db: AssetsDatabase
-        self._db = AssetsDatabase(db_path)
-        self._db.ensure_initialized()
+        self._draft_service = ComponentDraftService(db_path=db_path)
 
     def load_entries(self) -> list[F8ComponentEntry]:
-        statement = (
-            select(
-                component_heads_local_table.c.component_id,
-                component_heads_local_table.c.name,
-                component_heads_local_table.c.description,
-                component_heads_local_table.c.tags_json,
-                component_heads_local_table.c.schema_version,
-                component_heads_local_table.c.latest_version_number,
-                component_heads_local_table.c.content,
-                component_heads_local_table.c.created_at,
-                component_heads_local_table.c.updated_at,
-                component_heads_local_table.c.sync_base_remote_revision,
-                component_heads_local_table.c.sync_base_remote_version_number,
-                component_heads_local_table.c.sync_base_local_version_number,
-                component_heads_local_table.c.is_local_draft,
-                component_heads_local_table.c.draft_origin_kind,
-                component_heads_local_table.c.draft_origin_asset_id,
-                component_heads_local_table.c.draft_origin_revision,
-            )
-            .order_by(func.lower(component_heads_local_table.c.name), component_heads_local_table.c.component_id)
-        )
-        with self._db.connect_sqla() as conn:
-            rows = conn.execute(statement).mappings().all()
-        out: list[F8ComponentEntry] = []
-        for row in rows:
-            row_mapping = _row_mapping(row)
-            record = _component_record_from_row(row_mapping, updated_at_key="updated_at")
-            out.append(
-                F8ComponentEntry(
-                    record=record,
-                    source=F8ComponentSourceKind.local,
-                    hasCachedContent=True,
-                    localVersionNumber=mapping_int(row_mapping, "latest_version_number"),
-                    syncBaseRemoteRevision=mapping_optional_str(row_mapping, "sync_base_remote_revision"),
-                    syncBaseRemoteVersionNumber=mapping_int(row_mapping, "sync_base_remote_version_number")
-                    if row_mapping.get("sync_base_remote_version_number") is not None
-                    else None,
-                    syncBaseLocalVersionNumber=mapping_int(row_mapping, "sync_base_local_version_number")
-                    if row_mapping.get("sync_base_local_version_number") is not None
-                    else None,
-                    isLocalDraft=_sqlite_row_bool(row_mapping, "is_local_draft"),
-                    draftOriginKind=_component_draft_origin_kind_from_row(row_mapping, "draft_origin_kind"),
-                    draftOriginAssetId=mapping_optional_str(row_mapping, "draft_origin_asset_id"),
-                    draftOriginRevision=mapping_optional_str(row_mapping, "draft_origin_revision"),
-                )
-            )
-        return out
+        return self._draft_service.list_catalog_entries()
 
     def save_entry(self, entry: F8ComponentEntry) -> F8ComponentEntry:
-        record = entry.record
-        version_timestamp = component_now_iso()
-        existing_statement = select(
-            component_heads_local_table.c.component_id,
-            component_heads_local_table.c.created_at,
-            component_heads_local_table.c.latest_version_number,
-            component_heads_local_table.c.updated_at,
-            component_heads_local_table.c.name,
-            component_heads_local_table.c.description,
-            component_heads_local_table.c.tags_json,
-            component_heads_local_table.c.schema_version,
-            component_heads_local_table.c.content,
-        ).where(component_heads_local_table.c.component_id == str(record.componentId))
-        
-        with self._db.begin_sqla() as conn:
-            existing = conn.execute(existing_statement).mappings().first()
-            if existing is None:
-                created_at = str(record.createdAt or version_timestamp)
-                version_number = _initial_local_version_number(entry)
-                _ = conn.execute(
-                    insert(component_heads_local_table).values(
-                        component_id=str(record.componentId),
-                        name=str(record.name),
-                        description=str(record.description),
-                        tags_json=stable_json_dumps(list(record.tags or [])),
-                        schema_version=str(record.schemaVersion),
-                        latest_version_number=version_number,
-                        content=_compress_content(stable_json_dumps(record.content)),
-                        created_at=created_at,
-                        updated_at=version_timestamp,
-                        sync_base_remote_revision=entry.syncBaseRemoteRevision,
-                        sync_base_remote_version_number=entry.syncBaseRemoteVersionNumber,
-                        sync_base_local_version_number=entry.syncBaseLocalVersionNumber,
-                        is_local_draft=1 if entry.isLocalDraft else 0,
-                        draft_origin_kind=None if entry.draftOriginKind is None else entry.draftOriginKind.value,
-                        draft_origin_asset_id=entry.draftOriginAssetId,
-                        draft_origin_revision=entry.draftOriginRevision,
-                    )
+        origin_kind = entry.draftOriginKind or F8ComponentDraftOriginKind.new
+        existing_draft = self._draft_service.draft(str(entry.record.componentId))
+        if existing_draft is None:
+            saved = self._draft_service.create_draft_from_record(
+                entry.record,
+                origin_kind=origin_kind,
+                publish_target_asset_id=entry.draftOriginAssetId,
+                publish_base_remote_revision=entry.draftOriginRevision,
+                draft_id=str(entry.record.componentId),
+            )
+        else:
+            saved = self._draft_service.save_draft(
+                F8ComponentDraftEntry(
+                    draftId=existing_draft.draftId,
+                    record=entry.record,
+                    originKind=origin_kind,
+                    publishTargetAssetId=entry.draftOriginAssetId or existing_draft.publishTargetAssetId,
+                    publishBaseRemoteRevision=entry.draftOriginRevision or existing_draft.publishBaseRemoteRevision,
+                    createdAt=existing_draft.createdAt,
+                    updatedAt=existing_draft.updatedAt,
                 )
-            else:
-                existing_mapping = _row_mapping(existing)
-                created_at = mapping_str(existing_mapping, "created_at")
-                existing_record = _component_record_from_row(existing_mapping, updated_at_key="updated_at")
-                current_version_number = mapping_int(existing_mapping, "latest_version_number")
-                version_changed = _component_content_changed(existing_record, record)
-                version_number = current_version_number + 1 if version_changed else current_version_number
-                _ = conn.execute(
-                    update(component_heads_local_table)
-                    .where(component_heads_local_table.c.component_id == str(record.componentId))
-                    .values(
-                        name=str(record.name),
-                        description=str(record.description),
-                        tags_json=stable_json_dumps(list(record.tags or [])),
-                        schema_version=str(record.schemaVersion),
-                        latest_version_number=version_number,
-                        content=_compress_content(stable_json_dumps(record.content)),
-                        updated_at=version_timestamp,
-                        sync_base_remote_revision=entry.syncBaseRemoteRevision,
-                        sync_base_remote_version_number=entry.syncBaseRemoteVersionNumber,
-                        sync_base_local_version_number=entry.syncBaseLocalVersionNumber,
-                        is_local_draft=1 if entry.isLocalDraft else 0,
-                        draft_origin_kind=None if entry.draftOriginKind is None else entry.draftOriginKind.value,
-                        draft_origin_asset_id=entry.draftOriginAssetId,
-                        draft_origin_revision=entry.draftOriginRevision,
-                    )
-                )
-        
-        saved_record = F8ComponentRecord(
-            componentId=str(record.componentId),
-            name=str(record.name),
-            description=str(record.description),
-            tags=[str(tag) for tag in list(record.tags or []) if str(tag).strip()],
-            schemaVersion=str(record.schemaVersion),
-            content=record.content,
-            createdAt=created_at,
-            updatedAt=version_timestamp,
-        )
-        return F8ComponentEntry(
-            syncBaseLocalVersionNumber=(
-                entry.syncBaseLocalVersionNumber
-                if entry.syncBaseLocalVersionNumber is not None
-                else (version_number if entry.syncBaseRemoteRevision is not None else None)
-            ),
-            record=saved_record,
-            source=entry.source,
-            visibility=entry.visibility,
-            ownerUserId=entry.ownerUserId,
-            ownerDisplayName=entry.ownerDisplayName,
-            librarySlug=entry.librarySlug,
-            remoteRevision=entry.remoteRevision,
-            syncBaseRemoteRevision=entry.syncBaseRemoteRevision,
-            syncState=entry.syncState,
-            downloadedAt=entry.downloadedAt,
-            installed=entry.installed,
-            hasCachedContent=True,
-            subscribed=entry.subscribed,
-            localVersionNumber=version_number,
-            remoteVersionNumber=entry.remoteVersionNumber,
-            syncBaseRemoteVersionNumber=entry.syncBaseRemoteVersionNumber,
-            isLocalDraft=entry.isLocalDraft,
-            draftOriginKind=entry.draftOriginKind,
-            draftOriginAssetId=entry.draftOriginAssetId,
-            draftOriginRevision=entry.draftOriginRevision,
-        )
+            )
+        return draft_as_catalog_entry(saved)
 
     def delete_entry(self, component_id: str) -> bool:
-        normalized_component_id = str(component_id or "").strip()
-        if not normalized_component_id:
-            return False
-        with self._db.begin_sqla() as conn:
-            head_cursor = conn.execute(
-                delete(component_heads_local_table).where(component_heads_local_table.c.component_id == normalized_component_id)
-            )
-        return bool(head_cursor.rowcount)
+        return self._draft_service.delete_draft(component_id)
 
 
 class RemoteComponentCacheProvider:
     def __init__(self, db_path: Path | None = None) -> None:
-        self._db: AssetsDatabase
         self._db = AssetsDatabase(db_path)
         self._db.ensure_initialized()
 
@@ -227,24 +77,18 @@ class RemoteComponentCacheProvider:
                 component_remote_cache_table.c.description,
                 component_remote_cache_table.c.tags_json,
                 component_remote_cache_table.c.schema_version,
-                component_remote_cache_table.c.remote_version_number,
                 component_remote_cache_table.c.created_at,
                 component_remote_cache_table.c.updated_at,
-                component_remote_cache_table.c.content,
                 component_remote_cache_table.c.source,
                 component_remote_cache_table.c.visibility,
                 component_remote_cache_table.c.owner_user_id,
                 component_remote_cache_table.c.owner_display_name,
-                component_remote_cache_table.c.library_slug,
                 component_remote_cache_table.c.remote_revision,
-                component_remote_cache_table.c.sync_base_remote_revision,
-                component_remote_cache_table.c.sync_state,
                 component_remote_cache_table.c.downloaded_at,
                 component_remote_cache_table.c.installed,
                 component_remote_cache_table.c.has_cached_content,
                 component_remote_cache_table.c.subscribed,
-                component_remote_cache_table.c.sync_base_remote_version_number,
-                component_remote_cache_table.c.sync_base_local_version_number,
+                component_remote_cache_table.c.content,
             )
             .order_by(component_remote_cache_table.c.component_id)
         )
@@ -267,13 +111,12 @@ class RemoteComponentCacheProvider:
                 continue
             out.append(entry)
         if invalid_found:
-            logger.debug("Cleaning invalid component remote cache rows")
             self.save_entries(out)
         return out
 
     def save_entries(self, entries: list[F8ComponentEntry]) -> None:
         with self._db.begin_sqla() as conn:
-            _ = conn.execute(delete(component_remote_cache_table))
+            conn.execute(delete(component_remote_cache_table))
             for entry in entries:
                 component_id = str(entry.record.componentId or "").strip()
                 if not component_id:
@@ -283,41 +126,31 @@ class RemoteComponentCacheProvider:
                     visibility=None if entry.visibility is None else str(entry.visibility.value),
                     owner_user_id=entry.ownerUserId,
                     owner_display_name=entry.ownerDisplayName,
-                    library_slug=entry.librarySlug,
                     remote_revision=entry.remoteRevision,
-                    sync_state=str(entry.syncState.value),
                     downloaded_at=entry.downloadedAt,
                     installed=entry.installed,
                     subscribed=entry.subscribed,
                 )
-                _ = conn.execute(
+                conn.execute(
                     insert(component_remote_cache_table).values(
                         component_id=component_id,
                         name=str(entry.record.name),
                         description=str(entry.record.description),
                         tags_json=stable_json_dumps(list(entry.record.tags or [])),
                         schema_version=str(entry.record.schemaVersion),
-                        remote_version_number=entry.remoteVersionNumber,
                         created_at=str(entry.record.createdAt),
                         updated_at=str(entry.record.updatedAt),
                         source=metadata.source,
                         visibility=metadata.visibility,
                         owner_user_id=metadata.owner_user_id,
                         owner_display_name=metadata.owner_display_name,
-                        library_slug=metadata.library_slug,
                         remote_revision=metadata.remote_revision,
-                        sync_base_remote_revision=entry.syncBaseRemoteRevision,
-                        sync_state=metadata.sync_state,
                         downloaded_at=metadata.downloaded_at,
                         installed=1 if metadata.installed else 0,
                         has_cached_content=1 if component_entry_has_cached_content(entry) else 0,
                         subscribed=1 if metadata.subscribed else 0,
-                        sync_base_remote_version_number=entry.syncBaseRemoteVersionNumber,
-                        sync_base_local_version_number=entry.syncBaseLocalVersionNumber,
                         content=_compress_content(
-                            stable_json_dumps(
-                                entry.record.content if component_entry_has_cached_content(entry) else {}
-                            )
+                            stable_json_dumps(entry.record.content if component_entry_has_cached_content(entry) else {})
                         ),
                     )
                 )
@@ -331,8 +164,7 @@ class ComponentCatalogService:
         remote_provider: RemoteComponentCacheProvider | None = None,
     ) -> None:
         self._db_path = Path(db_path) if db_path is not None else AssetsDatabase().path
-        self._remote_provider: RemoteComponentCacheProvider
-        self._remote_provider = RemoteComponentCacheProvider(db_path) if remote_provider is None else remote_provider
+        self._remote_provider = RemoteComponentCacheProvider(self._db_path) if remote_provider is None else remote_provider
 
     @property
     def db_path(self) -> Path:
@@ -340,26 +172,25 @@ class ComponentCatalogService:
 
     def load_all_entries(self) -> list[F8ComponentEntry]:
         merged: dict[str, F8ComponentEntry] = {}
-        from .component_drafts import ComponentDraftService
-
-        draft_entries = ComponentDraftService(db_path=self._db_path).list_catalog_entries()
-        for source_entries in [self._remote_provider.load_entries(), draft_entries]:
+        for source_entries in [self._remote_provider.load_entries(), ComponentDraftService(db_path=self._db_path).list_catalog_entries()]:
             for entry in source_entries:
                 component_id = str(entry.record.componentId or "").strip()
-                if not component_id:
-                    continue
-                merged[component_id] = entry
+                if component_id:
+                    merged[component_id] = entry
         return sorted(merged.values(), key=_entry_sort_key)
 
     def entry(self, component_id: str, *, include_uninstalled: bool = True) -> F8ComponentEntry | None:
         normalized_component_id = str(component_id or "").strip()
         if not normalized_component_id:
             return None
-        for entry in self.load_all_entries():
-            if str(entry.record.componentId) != normalized_component_id:
-                continue
-            if include_uninstalled or component_entry_is_installed(entry):
-                return entry
+        draft = ComponentDraftService(db_path=self._db_path).draft(normalized_component_id)
+        if draft is not None:
+            return draft_as_catalog_entry(draft)
+        entry = self.remote_entry(normalized_component_id)
+        if entry is None:
+            return None
+        if include_uninstalled or component_entry_is_installed(entry):
+            return entry
         return None
 
     def list_entries(self, *, include_uninstalled: bool = False) -> list[F8ComponentEntry]:
@@ -369,51 +200,45 @@ class ComponentCatalogService:
         return [entry for entry in entries if component_entry_is_installed(entry)]
 
     def upsert_local_entry(self, entry: F8ComponentEntry) -> F8ComponentEntry:
-        from .component_drafts import ComponentDraftService, draft_as_catalog_entry
-
-        local_entry = entry if entry.source == F8ComponentSourceKind.local else copy_model(
-            entry,
-            update={"source": F8ComponentSourceKind.local},
-        )
         draft_service = ComponentDraftService(db_path=self._db_path)
-        existing_draft = draft_service.draft(str(local_entry.record.componentId))
-        if existing_draft is not None:
+        existing_draft = draft_service.draft(str(entry.record.componentId))
+        origin_kind = entry.draftOriginKind or (existing_draft.originKind if existing_draft is not None else F8ComponentDraftOriginKind.new)
+        if existing_draft is None:
+            saved = draft_service.create_draft_from_record(
+                entry.record,
+                origin_kind=origin_kind,
+                publish_target_asset_id=entry.draftOriginAssetId,
+                publish_base_remote_revision=entry.draftOriginRevision,
+                draft_id=str(entry.record.componentId),
+            )
+        else:
             saved = draft_service.save_draft(
                 F8ComponentDraftEntry(
                     draftId=existing_draft.draftId,
-                    record=local_entry.record,
-                    originKind=local_entry.draftOriginKind or existing_draft.originKind,
-                    publishTargetAssetId=local_entry.draftOriginAssetId or existing_draft.publishTargetAssetId,
-                    publishBaseRemoteRevision=local_entry.draftOriginRevision or existing_draft.publishBaseRemoteRevision,
+                    record=entry.record,
+                    originKind=origin_kind,
+                    publishTargetAssetId=entry.draftOriginAssetId or existing_draft.publishTargetAssetId,
+                    publishBaseRemoteRevision=entry.draftOriginRevision or existing_draft.publishBaseRemoteRevision,
                     createdAt=existing_draft.createdAt,
                     updatedAt=existing_draft.updatedAt,
                 )
-            )
-        else:
-            saved = draft_service.create_draft_from_record(
-                local_entry.record,
-                origin_kind=local_entry.draftOriginKind or F8ComponentDraftOriginKind.new,
-                publish_target_asset_id=local_entry.draftOriginAssetId,
-                publish_base_remote_revision=local_entry.draftOriginRevision,
-                draft_id=str(local_entry.record.componentId),
             )
         emit_components_changed()
         return draft_as_catalog_entry(saved)
 
     def delete_local_entry(self, component_id: str) -> bool:
-        from .component_drafts import ComponentDraftService
-
         deleted = ComponentDraftService(db_path=self._db_path).delete_draft(component_id)
         if deleted:
             emit_components_changed()
         return deleted
 
     def list_local_versions(self, component_id: str) -> list[F8ComponentLocalVersionSummary]:
+        del component_id
         return []
 
     def local_version_record(self, component_id: str, version_number: int) -> F8ComponentRecord | None:
-        _ = component_id
-        _ = version_number
+        del component_id
+        del version_number
         return None
 
     def replace_remote_entries(self, entries: list[F8ComponentEntry]) -> None:
@@ -433,23 +258,29 @@ class ComponentCatalogService:
         return None
 
     def install_remote_entry(self, entry: F8ComponentEntry) -> F8ComponentEntry:
+        downloaded_at = entry.downloadedAt
+        if component_entry_has_cached_content(entry) and not downloaded_at:
+            downloaded_at = component_now_iso()
         installed_entry = copy_model(
             entry,
             update={
                 "installed": component_entry_has_cached_content(entry),
                 "hasCachedContent": component_entry_has_cached_content(entry),
-                "downloadedAt": component_now_iso(),
+                "downloadedAt": downloaded_at,
             },
         )
         return self._save_remote_entry(installed_entry)
 
     def cache_remote_entry(self, entry: F8ComponentEntry) -> F8ComponentEntry:
+        downloaded_at = entry.downloadedAt
+        if component_entry_has_cached_content(entry) and not downloaded_at:
+            downloaded_at = component_now_iso()
         cached_entry = copy_model(
             entry,
             update={
                 "installed": False,
                 "hasCachedContent": component_entry_has_cached_content(entry),
-                "downloadedAt": component_now_iso(),
+                "downloadedAt": downloaded_at,
             },
         )
         return self._save_remote_entry(cached_entry)
@@ -511,7 +342,7 @@ class ComponentCatalogService:
         target: F8ComponentEntry | None = None
         for entry in current:
             if str(entry.record.componentId) == str(component_id):
-                target = copy_model(entry, update={"syncState": F8ComponentSyncState.conflict, "remoteRevision": remote_revision})
+                target = copy_model(entry, update={"remoteRevision": remote_revision})
                 out.append(target)
             else:
                 out.append(entry)
@@ -532,18 +363,32 @@ def _row_mapping(row: object) -> Mapping[object, object]:
     return cast(Mapping[object, object], row)
 
 
-def _component_record_from_row(row: Mapping[object, object], *, updated_at_key: str = "updated_at") -> F8ComponentRecord:
-    updated_at = mapping_optional_str(row, updated_at_key)
-    content_raw = row.get("content")
+def _component_record_from_row(row: Mapping[object, object]) -> F8ComponentRecord:
     return F8ComponentRecord(
         componentId=mapping_str(row, "component_id"),
         name=mapping_str(row, "name"),
         description=mapping_str(row, "description"),
         tags=json_string_list_loads(row.get("tags_json")),
         schemaVersion=mapping_str(row, "schema_version"),
-        content=json_object_loads(_decompress_content(content_raw)),
+        content=json_object_loads(_decompress_content(row.get("content"))),
         createdAt=mapping_str(row, "created_at"),
-        updatedAt=updated_at if updated_at is not None else mapping_str(row, "updated_at"),
+        updatedAt=mapping_str(row, "updated_at"),
+    )
+
+
+def _component_entry_from_remote_cache_row(row: Mapping[object, object], metadata: RemoteCacheMetadata) -> F8ComponentEntry:
+    visibility = None if metadata.visibility is None else F8ComponentVisibility(metadata.visibility)
+    return F8ComponentEntry(
+        record=_component_record_from_row(row),
+        source=F8ComponentSourceKind(metadata.source),
+        visibility=visibility,
+        ownerUserId=metadata.owner_user_id,
+        ownerDisplayName=metadata.owner_display_name,
+        remoteRevision=metadata.remote_revision,
+        downloadedAt=metadata.downloaded_at,
+        installed=metadata.installed,
+        hasCachedContent=_sqlite_row_bool(row, "has_cached_content"),
+        subscribed=metadata.subscribed,
     )
 
 
@@ -551,43 +396,18 @@ def _compress_content(json_str: str) -> bytes:
     return zlib.compress(json_str.encode("utf-8"), level=6, wbits=31)
 
 
-def _decompress_content(data: bytes | None) -> str:
+def _decompress_content(data: object) -> str:
     if data is None:
         return "{}"
+    raw = bytes(data)
     try:
-        return zlib.decompress(data, wbits=31).decode("utf-8")
-    except Exception:
-        if isinstance(data, str):
-            return data
-        return (data or b"").decode("utf-8", errors="replace")
+        return zlib.decompress(raw, wbits=31).decode("utf-8")
+    except zlib.error:
+        return raw.decode("utf-8", errors="replace")
 
 
-def _component_entry_from_remote_cache_row(row: Mapping[object, object], metadata: RemoteCacheMetadata) -> F8ComponentEntry:
-    visibility = None if metadata.visibility is None else F8ComponentVisibility(metadata.visibility)
-    record = _component_record_from_row(row)
-    has_cached_content = _sqlite_row_bool(row, "has_cached_content")
-    return F8ComponentEntry(
-        record=record,
-        source=F8ComponentSourceKind(metadata.source),
-        visibility=visibility,
-        ownerUserId=metadata.owner_user_id,
-        ownerDisplayName=metadata.owner_display_name,
-        librarySlug=metadata.library_slug,
-        remoteRevision=metadata.remote_revision,
-        syncBaseRemoteRevision=mapping_optional_str(row, "sync_base_remote_revision"),
-        syncState=F8ComponentSyncState(metadata.sync_state),
-        downloadedAt=metadata.downloaded_at,
-        installed=metadata.installed,
-        hasCachedContent=has_cached_content,
-        subscribed=metadata.subscribed,
-        remoteVersionNumber=mapping_int(row, "remote_version_number") if row.get("remote_version_number") is not None else None,
-        syncBaseRemoteVersionNumber=mapping_int(row, "sync_base_remote_version_number")
-        if row.get("sync_base_remote_version_number") is not None
-        else None,
-        syncBaseLocalVersionNumber=mapping_int(row, "sync_base_local_version_number")
-        if row.get("sync_base_local_version_number") is not None
-        else None,
-    )
+def _sqlite_row_bool(row: Mapping[object, object], key: str) -> bool:
+    return bool(int(str(row[key])))
 
 
 def component_entry_has_cached_content(entry: F8ComponentEntry) -> bool:
@@ -602,40 +422,6 @@ def _component_content_is_hydrated(content: Mapping[str, object]) -> bool:
     layout_value = content.get("layout")
     schema_version_value = content.get("schemaVersion")
     return isinstance(layout_value, dict) and isinstance(schema_version_value, str) and bool(schema_version_value.strip())
-
-
-def _component_content_changed(existing_record: F8ComponentRecord, incoming_record: F8ComponentRecord) -> bool:
-    if str(existing_record.name) != str(incoming_record.name):
-        return True
-    if str(existing_record.description) != str(incoming_record.description):
-        return True
-    if str(existing_record.schemaVersion) != str(incoming_record.schemaVersion):
-        return True
-    if stable_json_dumps(list(existing_record.tags or [])) != stable_json_dumps(list(incoming_record.tags or [])):
-        return True
-    return stable_json_dumps(existing_record.content) != stable_json_dumps(incoming_record.content)
-
-
-def _initial_local_version_number(entry: F8ComponentEntry) -> int:
-    if entry.localVersionNumber is not None:
-        return max(1, int(entry.localVersionNumber))
-    if entry.remoteVersionNumber is not None:
-        return max(1, int(entry.remoteVersionNumber))
-    return 1
-
-
-def _sqlite_row_bool(row: Mapping[object, object], key: str) -> bool:
-    return bool(int(str(row[key])))
-
-
-def _component_draft_origin_kind_from_row(
-    row: Mapping[object, object],
-    key: str,
-) -> F8ComponentDraftOriginKind | None:
-    raw_value = mapping_optional_str(row, key)
-    if raw_value is None:
-        return None
-    return F8ComponentDraftOriginKind(raw_value)
 
 
 def component_entry_is_installed(entry: F8ComponentEntry) -> bool:

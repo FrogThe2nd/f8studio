@@ -295,7 +295,7 @@ class ComponentCatalogBrowserMixin:
         user = self._sync_client.current_user()
         if user is None:
             return "Accounts"
-        return str(user.username or user.displayName or "Accounts")
+        return str(user.displayName or user.email or "Accounts")
 
     def _on_login_clicked(self) -> None:
         if prompt_asset_cloud_sign_in(parent=self, sync_client=self._sync_client):

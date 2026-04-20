@@ -13,8 +13,8 @@
     "d1:migrate": "wrangler d1 migrations apply DB --remote",
     "d1:migrate:local": "wrangler d1 migrations apply DB --local",
     "d1:migrate:preview": "wrangler d1 migrations apply DB --remote --preview",
-    "d1:reset:remote": "TABLE_DROP_SQL=\"$(wrangler d1 execute feel8-assets --remote --command=\"SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'\" --json | jq -r '.[0].results[]?.name | \"DROP TABLE IF EXISTS \\\"\" + . + \"\\\";\"')\" && wrangler d1 execute feel8-assets --remote --command=\"$(printf 'PRAGMA foreign_keys=off;\\n%s\\nPRAGMA foreign_keys=on;\\n' \"$TABLE_DROP_SQL\")\" && npm run d1:migrate",
-    "d1:reset:preview": "TABLE_DROP_SQL=\"$(wrangler d1 execute feel8-assets --remote --preview --command=\"SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'\" --json | jq -r '.[0].results[]?.name | \"DROP TABLE IF EXISTS \\\"\" + . + \"\\\";\"')\" && wrangler d1 execute feel8-assets --remote --preview --command=\"$(printf 'PRAGMA foreign_keys=off;\\n%s\\nPRAGMA foreign_keys=on;\\n' \"$TABLE_DROP_SQL\")\" && npm run d1:migrate:preview"
+    "d1:reset:remote": "sh ./scripts/reset_d1.sh remote",
+    "d1:reset:preview": "sh ./scripts/reset_d1.sh preview"
   },
   "devDependencies": {
     "wrangler": "^4.80.0"

@@ -2,14 +2,12 @@ import { integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
 
 export const userTable = sqliteTable('user', {
   id: text('id').primaryKey(),
-  name: text('name').notNull(),
+  name: text('name').notNull().unique(),
   email: text('email').notNull(),
   emailVerified: integer('emailVerified', { mode: 'boolean' }).notNull(),
   image: text('image'),
   createdAt: integer('createdAt', { mode: 'timestamp_ms' }).notNull(),
   updatedAt: integer('updatedAt', { mode: 'timestamp_ms' }).notNull(),
-  username: text('username'),
-  displayUsername: text('displayUsername'),
   role: text('role'),
   banned: integer('banned', { mode: 'boolean' }),
   banReason: text('banReason'),

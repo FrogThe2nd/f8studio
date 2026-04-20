@@ -17,8 +17,9 @@ def _ensure_app() -> QtWidgets.QApplication:
 @dataclass
 class _FakeUser:
     userId: str
+    name: str | None
     displayName: str
-    username: str | None
+    email: str | None
 
 
 @dataclass
@@ -33,7 +34,7 @@ class _FakeSession:
 class _FakeSyncClient:
     def __init__(self) -> None:
         self._base_url = "https://assetcloud.feel8.fun"
-        self._remembered_username = "alice"
+        self._remembered_email = "alice@example.com"
         self._current_user: _FakeUser | None = None
         self._saved_sessions: list[_FakeSession] = []
         self.login_calls: list[tuple[str, str, str, bool]] = []
@@ -49,15 +50,15 @@ class _FakeSyncClient:
     def set_base_url(self, base_url: str) -> None:
         self._base_url = str(base_url)
 
-    def remembered_username(self) -> str:
-        return self._remembered_username
+    def remembered_email(self) -> str:
+        return self._remembered_email
 
     def current_user(self) -> _FakeUser | None:
         return self._current_user
 
-    def login(self, *, base_url: str, username: str, password: str, remember: bool) -> object:
-        self.login_calls.append((str(base_url), str(username), str(password), bool(remember)))
-        self._current_user = _FakeUser(userId="u1", displayName="Alice", username=username)
+    def login(self, *, base_url: str, email: str, password: str, remember: bool) -> object:
+        self.login_calls.append((str(base_url), str(email), str(password), bool(remember)))
+        self._current_user = _FakeUser(userId="u1", name="Alice", displayName="Alice", email=email)
         return object()
 
     def saved_sessions(self) -> list[_FakeSession]:
@@ -81,16 +82,16 @@ class _FakeSyncClient:
 
 
 class _AcceptedSignInDialog:
-    def __init__(self, *, parent: QtWidgets.QWidget | None, base_url: str, username: str) -> None:
+    def __init__(self, *, parent: QtWidgets.QWidget | None, base_url: str, email: str) -> None:
         del parent
         self.base_url = str(base_url)
-        self.username = str(username)
+        self.email = str(email)
 
     def exec(self) -> int:
         return QtWidgets.QDialog.Accepted
 
     def values(self) -> tuple[str, str]:
-        return "alice", "secret"
+        return "alice@example.com", "secret"
 
 
 def test_prompt_asset_cloud_sign_in_shows_welcome_message(monkeypatch) -> None:
@@ -113,7 +114,7 @@ def test_prompt_asset_cloud_sign_in_shows_welcome_message(monkeypatch) -> None:
     result = asset_cloud_account_menu.prompt_asset_cloud_sign_in(parent=parent, sync_client=client)
 
     assert result is True
-    assert client.login_calls == [("https://assetcloud.feel8.fun", "alice", "secret", True)]
+    assert client.login_calls == [("https://assetcloud.feel8.fun", "alice@example.com", "secret", True)]
     assert info_messages == [("Asset Cloud", "Hi Alice, welcome back!")]
 
 
@@ -138,7 +139,7 @@ def test_prompt_asset_cloud_sign_in_preserves_loopback_base_url(monkeypatch) -> 
     result = asset_cloud_account_menu.prompt_asset_cloud_sign_in(parent=parent, sync_client=client)
 
     assert result is True
-    assert client.login_calls == [("http://127.0.0.1:8787", "alice", "secret", True)]
+    assert client.login_calls == [("http://127.0.0.1:8787", "alice@example.com", "secret", True)]
     assert info_messages == [("Asset Cloud", "Hi Alice, welcome back!")]
 
 
@@ -146,7 +147,7 @@ def test_logout_current_account_shows_goodbye_message(monkeypatch) -> None:
     _ensure_app()
     parent = QtWidgets.QWidget()
     client = _FakeSyncClient()
-    client._current_user = _FakeUser(userId="u1", displayName="Alice", username="alice")
+    client._current_user = _FakeUser(userId="u1", name="Alice", displayName="Alice", email="alice@example.com")
     info_messages: list[tuple[str, str]] = []
     on_changed_calls: list[str] = []
 
@@ -176,13 +177,13 @@ def test_build_asset_account_menu_formats_saved_session_time_locally(monkeypatch
     _ensure_app()
     parent = QtWidgets.QWidget()
     client = _FakeSyncClient()
-    client._current_user = _FakeUser(userId="u1", displayName="Alice", username="alice")
+    client._current_user = _FakeUser(userId="u1", name="Alice", displayName="Alice", email="alice@example.com")
     client._saved_sessions = [
         _FakeSession(
             accountId="acct-1",
             baseUrl="https://assetcloud.feel8.fun",
             sessionCookie="cookie",
-            user=_FakeUser(userId="u1", displayName="Alice", username="alice"),
+            user=_FakeUser(userId="u1", name="Alice", displayName="Alice", email="alice@example.com"),
             lastUsedAt="2026-04-15T13:45:00+00:00",
         )
     ]
@@ -204,7 +205,7 @@ def test_build_asset_account_menu_formats_saved_session_time_locally(monkeypatch
     switch_menu = switch_menu_action.menu()
     clear_menu = clear_menu_action.menu()
 
-    expected = "Alice (alice) | Last used: LOCAL<2026-04-15T13:45:00+00:00>"
+    expected = "Alice (alice@example.com) | Last used: LOCAL<2026-04-15T13:45:00+00:00>"
     assert switch_menu is not None
     assert clear_menu is not None
     assert switch_menu.actions()[0].text() == expected

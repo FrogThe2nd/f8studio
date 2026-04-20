@@ -203,15 +203,12 @@ function ConsoleApp() {
   const session = sessionQuery.data;
   const isLoggedIn = Boolean(session?.user);
   const sessionStillLoadingWithoutData = sessionQuery.isPending && !isLoggedIn;
-  const registerUsernameAbortRef = useRef(null);
-
   const [authMode, setAuthMode] = useState('login');
-  const [username, setUsername] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loginPasswordVisible, setLoginPasswordVisible] = useState(false);
-  const [registerDisplayName, setRegisterDisplayName] = useState('');
+  const [registerName, setRegisterName] = useState('');
   const [registerEmail, setRegisterEmail] = useState('');
-  const [registerUsername, setRegisterUsername] = useState('');
   const [registerPassword, setRegisterPassword] = useState('');
   const [registerConfirmPassword, setRegisterConfirmPassword] = useState('');
   const [registerPasswordVisible, setRegisterPasswordVisible] = useState(false);
@@ -229,11 +226,6 @@ function ConsoleApp() {
     allowUserRegistration: false,
   });
   const [linkedAccounts, setLinkedAccounts] = useState([]);
-  const [usernameAvailability, setUsernameAvailability] = useState({
-    state: 'idle',
-    message: 'Choose a username with letters, numbers, or underscores.',
-  });
-
   const [mineAssetType, setMineAssetType] = useState('all');
   const [mineQuery, setMineQuery] = useState('');
   const [mineAssets, setMineAssets] = useState([]);
@@ -245,13 +237,11 @@ function ConsoleApp() {
   const [users, setUsers] = useState([]);
   const [userQuery, setUserQuery] = useState('');
   const [editingUserId, setEditingUserId] = useState('');
-  const [editUsername, setEditUsername] = useState('');
-  const [editDisplayName, setEditDisplayName] = useState('');
+  const [editName, setEditName] = useState('');
   const [editRole, setEditRole] = useState('user');
-  const [newUsername, setNewUsername] = useState('');
+  const [newName, setNewName] = useState('');
   const [newEmail, setNewEmail] = useState('');
   const [newPassword, setNewPassword] = useState('');
-  const [newDisplayName, setNewDisplayName] = useState('');
   const [newRole, setNewRole] = useState('user');
 
   const [currentPassword, setCurrentPassword] = useState('');
@@ -337,79 +327,6 @@ function ConsoleApp() {
       setAuthMode('login');
     }
   }, [authMode, siteSettings.allowUserRegistration]);
-
-  useEffect(() => {
-    if (authMode !== 'register') {
-      if (registerUsernameAbortRef.current) {
-        registerUsernameAbortRef.current.abort();
-        registerUsernameAbortRef.current = null;
-      }
-      setUsernameAvailability({
-        state: 'idle',
-        message: 'Choose a username with letters, numbers, or underscores.',
-      });
-      return;
-    }
-
-    const normalizedUsername = registerUsername.trim();
-    if (!normalizedUsername) {
-      setUsernameAvailability({
-        state: 'idle',
-        message: 'Username is required.',
-      });
-      return;
-    }
-    if (!/^[A-Za-z0-9_]{3,64}$/.test(normalizedUsername)) {
-      setUsernameAvailability({
-        state: 'invalid',
-        message: 'Use 3-64 letters, numbers, or underscores.',
-      });
-      return;
-    }
-
-    const controller = new AbortController();
-    registerUsernameAbortRef.current = controller;
-    const timeoutId = window.setTimeout(async () => {
-      setUsernameAvailability({
-        state: 'checking',
-        message: 'Checking availability...',
-      });
-      try {
-        const response = await fetch('/api/auth/is-username-available', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ username: normalizedUsername }),
-          signal: controller.signal,
-        });
-        const data = await parseJsonResponse(response);
-        if (!response.ok) {
-          throw new Error(data.message || 'Unable to validate username.');
-        }
-        setUsernameAvailability(data.available ? {
-          state: 'available',
-          message: 'Username is available.',
-        } : {
-          state: 'taken',
-          message: 'Username is already taken.',
-        });
-      } catch (error) {
-        if (controller.signal.aborted) {
-          return;
-        }
-        setUsernameAvailability({
-          state: 'error',
-          message: error instanceof Error ? error.message : String(error),
-        });
-      }
-    }, 350);
-
-    return () => {
-      window.clearTimeout(timeoutId);
-      controller.abort();
-    };
-  }, [authMode, registerUsername]);
 
   async function apiRequest(path, options = {}) {
     const { timeoutMs, ...requestOptions } = options;
@@ -581,23 +498,23 @@ function ConsoleApp() {
 
   async function onLogin(event) {
     event.preventDefault();
-    if (!username.trim() || !password) {
-      setStatusText('Username and password are required.');
+    if (!email.trim() || !password) {
+      setStatusText('Email and password are required.');
       return;
     }
     setLoading(true);
     setStatusText('Signing in...');
     setProfileLoadError('');
     try {
-      await authClient.signIn.username({
-        username: username.trim(),
+      await authClient.signIn.email({
+        email: email.trim(),
         password,
       });
       await sessionQuery.refetch();
       await Promise.all([loadProfile(), loadLinkedAccounts()]);
       setPassword('');
       setActivePage('profile');
-      setStatusText(`Signed in as ${username.trim()}`);
+      setStatusText(`Signed in as ${email.trim()}`);
     } catch (error) {
       setStatusText(error instanceof Error ? error.message : String(error));
     } finally {
@@ -651,37 +568,25 @@ function ConsoleApp() {
       setAuthMode('login');
       return;
     }
-    if (!registerEmail.trim() || !registerUsername.trim() || !registerPassword) {
-      setStatusText('Email, username, and password are required.');
+    if (!registerName.trim() || !registerEmail.trim() || !registerPassword) {
+      setStatusText('Name, email, and password are required.');
       return;
     }
     if (registerPassword !== registerConfirmPassword) {
       setStatusText('Registration passwords do not match.');
       return;
     }
-    if (usernameAvailability.state === 'checking') {
-      setStatusText('Please wait until username availability is checked.');
-      return;
-    }
-    if (usernameAvailability.state === 'taken' || usernameAvailability.state === 'invalid') {
-      setStatusText(usernameAvailability.message);
-      return;
-    }
-    const normalizedDisplayName = registerDisplayName.trim() || registerUsername.trim();
     setLoading(true);
     setStatusText('Creating account...');
     try {
       await authClient.signUp.email({
-        name: normalizedDisplayName,
+        name: registerName.trim(),
         email: registerEmail.trim(),
-        username: registerUsername.trim(),
-        displayUsername: normalizedDisplayName,
         password: registerPassword,
         callbackURL: `${window.location.origin}${VERIFY_EMAIL_PATH}?verified=1`,
       });
-      setRegisterDisplayName('');
+      setRegisterName('');
       setRegisterEmail('');
-      setRegisterUsername('');
       setRegisterPassword('');
       setRegisterConfirmPassword('');
       setAuthMode('login');
@@ -911,17 +816,15 @@ function ConsoleApp() {
       await apiRequest(`${MANAGEMENT_API_BASE_PATH}/users`, {
         method: 'POST',
         body: JSON.stringify({
-          username: newUsername.trim(),
+          name: newName.trim(),
           email: newEmail.trim(),
           password: newPassword,
-          displayName: newDisplayName.trim() || newUsername.trim(),
           role: newRole,
         }),
       });
-      setNewUsername('');
+      setNewName('');
       setNewEmail('');
       setNewPassword('');
-      setNewDisplayName('');
       setNewRole('user');
       await loadUsers();
       setStatusText('User created');
@@ -954,15 +857,13 @@ function ConsoleApp() {
 
   function onBeginEditUser(user) {
     setEditingUserId(user.userId);
-    setEditUsername(user.username);
-    setEditDisplayName(user.displayName);
+    setEditName(user.name || user.displayName);
     setEditRole(String(user.role || 'user'));
   }
 
   function onCancelEditUser() {
     setEditingUserId('');
-    setEditUsername('');
-    setEditDisplayName('');
+    setEditName('');
     setEditRole('user');
   }
 
@@ -976,8 +877,7 @@ function ConsoleApp() {
       await apiRequest(`${MANAGEMENT_API_BASE_PATH}/users/${encodeURIComponent(editingUserId)}`, {
         method: 'PUT',
         body: JSON.stringify({
-          username: editUsername.trim(),
-          displayName: editDisplayName.trim(),
+          name: editName.trim(),
           role: editRole,
         }),
       });
@@ -1180,12 +1080,13 @@ function ConsoleApp() {
             {authMode === 'login' ? (
               <>
                 <label>
-                  Username *
+                  Email *
                   <input
-                    autoComplete="username"
-                    value={username}
-                    onChange={(event) => setUsername(event.target.value)}
-                    placeholder="username"
+                    autoComplete="email"
+                    type="email"
+                    value={email}
+                    onChange={(event) => setEmail(event.target.value)}
+                    placeholder="you@example.com"
                     required
                   />
                 </label>
@@ -1204,11 +1105,12 @@ function ConsoleApp() {
             {authMode === 'register' ? (
               <>
                 <label>
-                  Display Name
+                  Name *
                   <input
-                    value={registerDisplayName}
-                    onChange={(event) => setRegisterDisplayName(event.target.value)}
-                    placeholder="Optional, defaults to username"
+                    value={registerName}
+                    onChange={(event) => setRegisterName(event.target.value)}
+                    placeholder="Your name"
+                    required
                   />
                 </label>
                 <label>
@@ -1222,26 +1124,7 @@ function ConsoleApp() {
                     required
                   />
                 </label>
-                <label>
-                  Username *
-                  <input
-                    autoComplete="username"
-                    value={registerUsername}
-                    onChange={(event) => setRegisterUsername(event.target.value)}
-                    placeholder="username"
-                    required
-                  />
-                </label>
-                <FieldHint
-                  tone={
-                    usernameAvailability.state === 'available' ? 'success'
-                      : usernameAvailability.state === 'taken' || usernameAvailability.state === 'invalid' || usernameAvailability.state === 'error' ? 'error'
-                        : 'muted'
-                  }
-                >
-                  {usernameAvailability.message}
-                </FieldHint>
-                <FieldHint>Display name supports Chinese and other normal text. Leave it empty to use your username.</FieldHint>
+                <FieldHint>Name must be unique. It can include normal display text, including Chinese.</FieldHint>
                 <PasswordField
                   label="Password *"
                   autoComplete="new-password"
@@ -1287,14 +1170,11 @@ function ConsoleApp() {
               disabled={
                 loading
                 || (authMode === 'register' && (
-                  !registerEmail.trim()
-                  || !registerUsername.trim()
+                  !registerName.trim()
+                  || !registerEmail.trim()
                   || !registerPassword
                   || !registerConfirmPassword
                   || registerPassword !== registerConfirmPassword
-                  || usernameAvailability.state === 'checking'
-                  || usernameAvailability.state === 'taken'
-                  || usernameAvailability.state === 'invalid'
                 ))
               }
             >
@@ -1322,7 +1202,7 @@ function ConsoleApp() {
         <div>
           <span className="eyebrow">Feel8 Console</span>
           <h1>{pageTitle}</h1>
-          <p className="muted">Welcome, {currentUser?.displayName || currentUser?.username}</p>
+          <p className="muted">Welcome, {currentUser?.displayName || currentUser?.name || currentUser?.email}</p>
         </div>
         <div className="actions">
           <button type="button" onClick={() => void refreshCurrentPage()} disabled={loading}>Refresh</button>
@@ -1370,12 +1250,12 @@ function ConsoleApp() {
             <section className="card panel">
               <h2>Profile</h2>
               <div className="profile-grid">
-                <div><strong>Username:</strong> {currentUser?.username}</div>
+                <div><strong>Name:</strong> {currentUser?.name || currentUser?.displayName}</div>
                 <div><strong>Display Name:</strong> {currentUser?.displayName}</div>
-              <div><strong>Email:</strong> {currentUser?.email}</div>
-              <div><strong>Email Verified:</strong> {currentUser?.emailVerified ? 'Yes' : 'No'}</div>
-              <div><strong>Role:</strong> {formatUserRole(currentUser?.role)}</div>
-            </div>
+                <div><strong>Email:</strong> {currentUser?.email}</div>
+                <div><strong>Email Verified:</strong> {currentUser?.emailVerified ? 'Yes' : 'No'}</div>
+                <div><strong>Role:</strong> {formatUserRole(currentUser?.role)}</div>
+              </div>
               <div className="auth-methods">
                 <div className="section-head">
                   <h3>Sign-In Methods</h3>
@@ -1577,7 +1457,7 @@ function ConsoleApp() {
                   <input
                     value={userQuery}
                     onChange={(event) => setUserQuery(event.target.value)}
-                    placeholder="Search by username or email"
+                    placeholder="Search by name or email"
                   />
                   <button type="button" onClick={() => void loadUsers()} disabled={loading}>Search</button>
                 </div>
@@ -1659,11 +1539,10 @@ function ConsoleApp() {
                     </div>
                     <div className="form-grid form-grid-2">
                       <label>
-                        New Username
+                        Name
                         <input
-                          autoComplete="username"
-                          value={newUsername}
-                          onChange={(event) => setNewUsername(event.target.value)}
+                          value={newName}
+                          onChange={(event) => setNewName(event.target.value)}
                         />
                       </label>
                       <label>
@@ -1684,13 +1563,6 @@ function ConsoleApp() {
                           onChange={(event) => setNewPassword(event.target.value)}
                         />
                       </label>
-                      <label>
-                        Display Name
-                        <input
-                          value={newDisplayName}
-                          onChange={(event) => setNewDisplayName(event.target.value)}
-                        />
-                      </label>
                       <label className="field-span-2">
                         Role
                         <select value={newRole} onChange={(event) => setNewRole(event.target.value)}>
@@ -1701,7 +1573,7 @@ function ConsoleApp() {
                       </label>
                     </div>
                     <div className="management-actions">
-                      <button type="submit" disabled={loading || !newUsername.trim() || !newEmail.trim() || !newPassword}>Create User</button>
+                      <button type="submit" disabled={loading || !newName.trim() || !newEmail.trim() || !newPassword}>Create User</button>
                     </div>
                   </form>
 
@@ -1716,18 +1588,10 @@ function ConsoleApp() {
                       </div>
                       <div className="form-grid form-grid-2">
                         <label>
-                          Username
+                          Name
                           <input
-                            autoComplete="username"
-                            value={editUsername}
-                            onChange={(event) => setEditUsername(event.target.value)}
-                          />
-                        </label>
-                        <label>
-                          Display Name
-                          <input
-                            value={editDisplayName}
-                            onChange={(event) => setEditDisplayName(event.target.value)}
+                            value={editName}
+                            onChange={(event) => setEditName(event.target.value)}
                           />
                         </label>
                         <label className="field-span-2">
@@ -1740,7 +1604,7 @@ function ConsoleApp() {
                         </label>
                       </div>
                       <div className="management-actions">
-                        <button type="submit" disabled={loading || !editUsername.trim() || !editDisplayName.trim()}>Save Changes</button>
+                        <button type="submit" disabled={loading || !editName.trim()}>Save Changes</button>
                         <button type="button" className="button-secondary" onClick={onCancelEditUser} disabled={loading}>Cancel</button>
                       </div>
                     </form>
@@ -1756,10 +1620,10 @@ function ConsoleApp() {
                   </div>
                 </div>
                 <SimpleTable
-                columns={['Username', 'Email', 'Display Name', 'Role', 'Assets', 'Created At', 'Actions']}
+                columns={['Name', 'Email', 'Display Name', 'Role', 'Assets', 'Created At', 'Actions']}
                 rows={users.map((user) => [
-                  <div className="table-primary-cell" key={`${user.userId}-username`}>
-                    <strong>{user.username}</strong>
+                  <div className="table-primary-cell" key={`${user.userId}-name`}>
+                    <strong>{user.name || user.displayName}</strong>
                   </div>,
                   <span className="muted" key={`${user.userId}-email`}>{user.email || 'No email'}</span>,
                   user.displayName,
@@ -1784,7 +1648,7 @@ function ConsoleApp() {
                     <button
                       type="button"
                       className="button-danger"
-                      onClick={() => void onDeleteUser(user.userId, user.username)}
+                      onClick={() => void onDeleteUser(user.userId, user.name || user.displayName || user.email)}
                       disabled={loading}
                     >
                       Delete

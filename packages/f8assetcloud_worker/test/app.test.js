@@ -166,15 +166,13 @@ function wrapBlobRowsAsDataArrays(db) {
   };
 }
 
-async function signUpUser(app, env, { username, email, displayName, password = TEST_PASSWORD }) {
+async function signUpUser(app, env, { name, email, password = TEST_PASSWORD }) {
   const { result, logs } = await captureConsoleInfo(() => jsonRequest(app, env, '/api/auth/sign-up/email', {
     method: 'POST',
     payload: {
       email,
       password,
-      name: displayName,
-      username,
-      displayUsername: displayName,
+      name,
     },
   }));
   return {
@@ -187,11 +185,11 @@ async function verifyUserEmail(app, env, token) {
   return jsonRequest(app, env, `/v1/auth/verify-email?token=${encodeURIComponent(token)}`);
 }
 
-async function signInUser(app, env, { username, password = TEST_PASSWORD }) {
-  const result = await jsonRequest(app, env, '/api/auth/sign-in/username', {
+async function signInUser(app, env, { email, password = TEST_PASSWORD }) {
+  const result = await jsonRequest(app, env, '/api/auth/sign-in/email', {
     method: 'POST',
     payload: {
-      username,
+      email,
       password,
     },
   });
@@ -212,15 +210,15 @@ async function requestPasswordReset(app, env, email) {
   };
 }
 
-async function createVerifiedSession(app, env, { username, email, displayName, password = TEST_PASSWORD }) {
-  const signedUp = await signUpUser(app, env, { username, email, displayName, password });
+async function createVerifiedSession(app, env, { name, email, password = TEST_PASSWORD }) {
+  const signedUp = await signUpUser(app, env, { name, email, password });
   assert.equal(signedUp.status, 200);
   assert.ok(signedUp.verifyToken);
 
   const verified = await verifyUserEmail(app, env, signedUp.verifyToken);
   assert.equal(verified.status, 200);
 
-  const signedIn = await signInUser(app, env, { username, password });
+  const signedIn = await signInUser(app, env, { email, password });
   assert.equal(signedIn.status, 200);
   assert.ok(signedIn.cookie);
 
@@ -301,17 +299,16 @@ test('auth flows use Better Auth cookie sessions and email actions', async (t) =
   assert.equal(siteSettings.json.allowUserRegistration, true);
 
   const signedUp = await signUpUser(app, env, {
-    username: 'alice',
+    name: 'Alice',
     email: 'alice@example.com',
-    displayName: 'Alice',
   });
   assert.equal(signedUp.status, 200);
-  assert.equal(signedUp.json.user.username, 'alice');
+  assert.equal(signedUp.json.user.name, 'Alice');
   assert.equal(signedUp.json.user.emailVerified, false);
   assert.ok(signedUp.verifyToken);
 
   const loginBeforeVerify = await signInUser(app, env, {
-    username: 'alice',
+    email: 'alice@example.com',
   });
   assert.equal(loginBeforeVerify.status, 403);
   assert.equal(loginBeforeVerify.json.code, 'EMAIL_NOT_VERIFIED');
@@ -325,22 +322,19 @@ test('auth flows use Better Auth cookie sessions and email actions', async (t) =
     payload: {
       email: 'alice2@example.com',
       password: TEST_PASSWORD,
-      name: 'Alice 2',
-      username: 'alice',
-      displayUsername: 'Alice 2',
+      name: 'Alice',
     },
   });
-  assert.equal(duplicate.status, 400);
-  assert.equal(duplicate.json.code, 'USERNAME_IS_ALREADY_TAKEN');
+  assert.equal(duplicate.status, 422);
 
   const loginFail = await signInUser(app, env, {
-    username: 'alice',
+    email: 'alice@example.com',
     password: 'wrong-password',
   });
   assert.equal(loginFail.status, 401);
 
   const signedIn = await signInUser(app, env, {
-    username: 'alice',
+    email: 'alice@example.com',
   });
   assert.equal(signedIn.status, 200);
   assert.ok(signedIn.cookie);
@@ -362,13 +356,13 @@ test('auth flows use Better Auth cookie sessions and email actions', async (t) =
   assert.equal(changedPassword.status, 200);
 
   const oldLogin = await signInUser(app, env, {
-    username: 'alice',
+    email: 'alice@example.com',
     password: TEST_PASSWORD,
   });
   assert.equal(oldLogin.status, 401);
 
   const newLogin = await signInUser(app, env, {
-    username: 'alice',
+    email: 'alice@example.com',
     password: TEST_PASSWORD_2,
   });
   assert.equal(newLogin.status, 200);
@@ -394,36 +388,10 @@ test('auth flows use Better Auth cookie sessions and email actions', async (t) =
   assert.equal(reset.json.reset, true);
 
   const resetLogin = await signInUser(app, env, {
-    username: 'alice',
+    email: 'alice@example.com',
     password: TEST_PASSWORD_3,
   });
   assert.equal(resetLogin.status, 200);
-
-  const reservedUsername = await jsonRequest(app, env, '/api/auth/sign-up/email', {
-    method: 'POST',
-    payload: {
-      email: 'owner@example.com',
-      password: TEST_PASSWORD,
-      name: 'Owner User',
-      username: 'owner',
-      displayUsername: 'Owner User',
-    },
-  });
-  assert.equal(reservedUsername.status, 400);
-  assert.equal(reservedUsername.json.code, 'INVALID_USERNAME');
-
-  const reservedDisplayName = await jsonRequest(app, env, '/api/auth/sign-up/email', {
-    method: 'POST',
-    payload: {
-      email: 'support@example.com',
-      password: TEST_PASSWORD,
-      name: 'Support',
-      username: 'normal_user',
-      displayUsername: 'Support',
-    },
-  });
-  assert.equal(reservedDisplayName.status, 400);
-  assert.equal(reservedDisplayName.json.code, 'INVALID_DISPLAY_USERNAME');
 });
 
 test('bootstrap admin sync avoids rotating credentials after a cold-cache login', async (t) => {
@@ -435,7 +403,7 @@ test('bootstrap admin sync avoids rotating credentials after a cold-cache login'
 
   const firstApp = createApp();
   const firstLogin = await signInUser(firstApp, env, {
-    username: 'admin',
+    email: 'admin@example.com',
   });
   assert.equal(firstLogin.status, 200);
   assert.ok(firstLogin.cookie);
@@ -447,10 +415,10 @@ test('bootstrap admin sync avoids rotating credentials after a cold-cache login'
        a.updatedAt AS updated_at
      FROM account a
      JOIN user u ON u.id = a.userId
-     WHERE u.username = ? AND a.providerId = 'credential'
+     WHERE u.email = ? AND a.providerId = 'credential'
      LIMIT 1`,
   )
-    .bind('admin')
+    .bind('admin@example.com')
     .first();
   assert.notEqual(firstAccount, null);
 
@@ -465,7 +433,7 @@ test('bootstrap admin sync avoids rotating credentials after a cold-cache login'
 
   const secondApp = createApp();
   const secondLogin = await signInUser(secondApp, env, {
-    username: 'admin',
+    email: 'admin@example.com',
   });
   assert.equal(secondLogin.status, 200);
   assert.ok(secondLogin.cookie);
@@ -477,10 +445,10 @@ test('bootstrap admin sync avoids rotating credentials after a cold-cache login'
        a.updatedAt AS updated_at
      FROM account a
      JOIN user u ON u.id = a.userId
-     WHERE u.username = ? AND a.providerId = 'credential'
+     WHERE u.email = ? AND a.providerId = 'credential'
      LIMIT 1`,
   )
-    .bind('admin')
+    .bind('admin@example.com')
     .first();
   assert.notEqual(secondAccount, null);
   assert.equal(secondAccount.id, firstAccount.id);
@@ -505,7 +473,7 @@ test('bootstrap admin sync replaces legacy Better Auth password hashes', async (
 
   const app = createApp();
   const firstLogin = await signInUser(app, env, {
-    username: 'admin',
+    email: 'admin@example.com',
   });
   assert.equal(firstLogin.status, 200);
 
@@ -517,11 +485,11 @@ test('bootstrap admin sync replaces legacy Better Auth password hashes', async (
        AND userId = (
          SELECT id
          FROM user
-         WHERE username = ?
+         WHERE email = ?
          LIMIT 1
        )`,
   )
-    .bind(legacyHash, 'admin')
+    .bind(legacyHash, 'admin@example.com')
     .run();
   await env.DB.prepare('DELETE FROM bootstrap_admin_state WHERE id = 1').run();
 
@@ -529,7 +497,7 @@ test('bootstrap admin sync replaces legacy Better Auth password hashes', async (
 
   const syncedApp = createApp();
   const syncedLogin = await signInUser(syncedApp, env, {
-    username: 'admin',
+    email: 'admin@example.com',
   });
   assert.equal(syncedLogin.status, 200);
   assert.ok(syncedLogin.cookie);
@@ -538,10 +506,10 @@ test('bootstrap admin sync replaces legacy Better Auth password hashes', async (
     `SELECT a.password
      FROM account a
      JOIN user u ON u.id = a.userId
-     WHERE u.username = ? AND a.providerId = 'credential'
+     WHERE u.email = ? AND a.providerId = 'credential'
      LIMIT 1`,
   )
-    .bind('admin')
+    .bind('admin@example.com')
     .first();
   assert.notEqual(account, null);
   assert.match(String(account.password), /^f8pbkdf2-sha256-v1\$50000\$/);
@@ -566,7 +534,7 @@ test('sign-out requires Origin header and deletes the current session when provi
   const app = createApp();
 
   const signedIn = await signInUser(app, env, {
-    username: 'admin',
+    email: 'admin@example.com',
   });
   assert.equal(signedIn.status, 200);
   assert.ok(signedIn.cookie);
@@ -668,7 +636,7 @@ test('hot asset list queries use composite indexes without temp sorting', async 
     `EXPLAIN QUERY PLAN
      SELECT
        h.*,
-       COALESCE(u.displayUsername, u.name) AS owner_display_name,
+       u.name AS owner_display_name,
        s.subscribed_at,
        s.last_seen_revision,
        v.created_by_user_id,
@@ -677,7 +645,7 @@ test('hot asset list queries use composite indexes without temp sorting', async 
        v.revision
      FROM asset_heads h
      JOIN asset_versions v
-       ON v.asset_id = h.asset_id AND v.version_number = h.latest_version_number
+       ON v.asset_id = h.asset_id AND v.version_number = h.current_version_number
      LEFT JOIN user u ON u.id = h.owner_user_id
      LEFT JOIN asset_subscriptions s
        ON s.asset_id = h.asset_id AND s.subscriber_user_id = ?
@@ -695,7 +663,7 @@ test('hot asset list queries use composite indexes without temp sorting', async 
     `EXPLAIN QUERY PLAN
      SELECT
        h.*,
-       COALESCE(u.displayUsername, u.name) AS owner_display_name,
+       u.name AS owner_display_name,
        v.created_at AS version_created_at,
        v.created_by_user_id,
        v.change_summary,
@@ -703,7 +671,7 @@ test('hot asset list queries use composite indexes without temp sorting', async 
        v.revision
      FROM asset_heads h
      JOIN asset_versions v
-       ON v.asset_id = h.asset_id AND v.version_number = h.latest_version_number
+       ON v.asset_id = h.asset_id AND v.version_number = h.current_version_number
      LEFT JOIN user u ON u.id = h.owner_user_id
      WHERE h.deleted_at IS NULL
      ORDER BY h.updated_at DESC, h.asset_id
@@ -722,14 +690,12 @@ test('variant asset lifecycle works with Better Auth cookie sessions', async (t)
   const app = createApp();
 
   const alice = await createVerifiedSession(app, env, {
-    username: 'alice',
+    name: 'Alice',
     email: 'alice@example.com',
-    displayName: 'Alice',
   });
   const bob = await createVerifiedSession(app, env, {
-    username: 'bob',
+    name: 'Bob',
     email: 'bob@example.com',
-    displayName: 'Bob',
   });
 
   const created = await jsonRequest(app, env, '/v1/variants', {
@@ -745,6 +711,18 @@ test('variant asset lifecycle works with Better Auth cookie sessions', async (t)
   const assetHeadColumns = await env.DB.prepare("PRAGMA table_info(asset_heads)").all();
   assert.equal(
     Array.isArray(assetHeadColumns.results) && assetHeadColumns.results.some((column) => String(column.name) === 'content'),
+    false,
+  );
+  assert.equal(
+    Array.isArray(assetHeadColumns.results) && assetHeadColumns.results.some((column) => String(column.name) === 'current_version_number'),
+    true,
+  );
+  assert.equal(
+    Array.isArray(assetHeadColumns.results) && assetHeadColumns.results.some((column) => String(column.name) === 'latest_revision'),
+    false,
+  );
+  assert.equal(
+    Array.isArray(assetHeadColumns.results) && assetHeadColumns.results.some((column) => String(column.name) === 'schema_version'),
     false,
   );
   const storedVariantVersion = await env.DB.prepare(
@@ -849,7 +827,7 @@ test('variant asset lifecycle works with Better Auth cookie sessions', async (t)
   assert.equal(conflict.json.revision, 'r2');
 
   const variantHeadBeforeMetaPatch = await env.DB.prepare(
-    `SELECT latest_version_number, latest_revision, updated_at, schema_version
+    `SELECT current_version_number, updated_at
      FROM asset_heads
      WHERE asset_id = ?`,
   )
@@ -869,19 +847,16 @@ test('variant asset lifecycle works with Better Auth cookie sessions', async (t)
   assert.equal(metadataPatched.json.name, 'Alice Public Metadata');
   assert.equal(metadataPatched.json.description, 'Metadata only update');
   assert.deepEqual(metadataPatched.json.tags, ['meta', 'variant']);
-  assert.equal(metadataPatched.json.latestVersionNumber, 2);
-  assert.equal(metadataPatched.json.latestRevision, 'r2');
+  assert.equal(metadataPatched.json.revision, 'r2');
 
   const variantHeadAfterMetaPatch = await env.DB.prepare(
-    `SELECT latest_version_number, latest_revision, updated_at, schema_version
+    `SELECT current_version_number, updated_at
      FROM asset_heads
      WHERE asset_id = ?`,
   )
     .bind('alice-variant')
     .first();
-  assert.equal(Number(variantHeadAfterMetaPatch?.latest_version_number ?? 0), 2);
-  assert.equal(String(variantHeadAfterMetaPatch?.latest_revision || ''), 'r2');
-  assert.equal(String(variantHeadAfterMetaPatch?.schema_version || ''), '');
+  assert.equal(Number(variantHeadAfterMetaPatch?.current_version_number ?? 0), 2);
   assert.notEqual(
     String(variantHeadAfterMetaPatch?.updated_at || ''),
     String(variantHeadBeforeMetaPatch?.updated_at || ''),
@@ -945,14 +920,12 @@ test('component asset lifecycle validates session envelope and visibility rules'
   const app = createApp();
 
   const alice = await createVerifiedSession(app, env, {
-    username: 'alice',
+    name: 'Alice',
     email: 'alice@example.com',
-    displayName: 'Alice',
   });
   const bob = await createVerifiedSession(app, env, {
-    username: 'bob',
+    name: 'Bob',
     email: 'bob@example.com',
-    displayName: 'Bob',
   });
 
   const invalid = await jsonRequest(app, env, '/v1/components', {
@@ -996,7 +969,7 @@ test('component asset lifecycle validates session envelope and visibility rules'
   const componentListSearch = await jsonRequest(app, env, '/v1/components?owner=public');
   assert.equal(componentListSearch.status, 200);
   assert.equal(componentListSearch.json.entries[0].componentId, 'component-a');
-  assert.equal(componentListSearch.json.entries[0].schemaVersion, 'f8studio-session/1');
+  assert.equal(Object.hasOwn(componentListSearch.json.entries[0], 'schemaVersion'), false);
   assert.equal(Object.hasOwn(componentListSearch.json.entries[0], 'variantKind'), false);
 
   const subscribed = await jsonRequest(app, env, '/v1/components/component-a/subscribe', {
@@ -1026,7 +999,7 @@ test('component asset lifecycle validates session envelope and visibility rules'
   assert.equal(updated.json.revision, 'r2');
 
   const componentHeadBeforeMetaPatch = await env.DB.prepare(
-    `SELECT latest_version_number, latest_revision, updated_at, schema_version
+    `SELECT current_version_number, updated_at
      FROM asset_heads
      WHERE asset_id = ?`,
   )
@@ -1046,19 +1019,16 @@ test('component asset lifecycle validates session envelope and visibility rules'
   assert.equal(componentMetadataPatched.json.name, 'Published Session Metadata');
   assert.equal(componentMetadataPatched.json.description, 'Metadata only component update');
   assert.deepEqual(componentMetadataPatched.json.tags, ['meta', 'component']);
-  assert.equal(componentMetadataPatched.json.latestVersionNumber, 2);
-  assert.equal(componentMetadataPatched.json.latestRevision, 'r2');
+  assert.equal(componentMetadataPatched.json.revision, 'r2');
 
   const componentHeadAfterMetaPatch = await env.DB.prepare(
-    `SELECT latest_version_number, latest_revision, updated_at, schema_version
+    `SELECT current_version_number, updated_at
      FROM asset_heads
      WHERE asset_id = ?`,
   )
     .bind('component-a')
     .first();
-  assert.equal(Number(componentHeadAfterMetaPatch?.latest_version_number ?? 0), 2);
-  assert.equal(String(componentHeadAfterMetaPatch?.latest_revision || ''), 'r2');
-  assert.equal(String(componentHeadAfterMetaPatch?.schema_version || ''), 'f8studio-session/1');
+  assert.equal(Number(componentHeadAfterMetaPatch?.current_version_number ?? 0), 2);
   assert.notEqual(
     String(componentHeadAfterMetaPatch?.updated_at || ''),
     String(componentHeadBeforeMetaPatch?.updated_at || ''),
@@ -1115,9 +1085,8 @@ test('component list and search do not depend on variant details table', async (
   const app = createApp();
 
   const alice = await createVerifiedSession(app, env, {
-    username: 'alice',
+    name: 'Alice',
     email: 'alice@example.com',
-    displayName: 'Alice',
   });
 
   const created = await jsonRequest(app, env, '/v1/components', {
@@ -1128,7 +1097,7 @@ test('component list and search do not depend on variant details table', async (
   assert.equal(created.status, 200);
 
   const admin = await signInUser(app, env, {
-    username: 'admin',
+    email: 'admin@example.com',
   });
   assert.equal(admin.status, 200);
 
@@ -1173,9 +1142,8 @@ test('component content endpoint reads canonical stored session payload and reje
   const app = createApp();
 
   const alice = await createVerifiedSession(app, env, {
-    username: 'alice',
+    name: 'Alice',
     email: 'alice@example.com',
-    displayName: 'Alice',
   });
 
   const created = await jsonRequest(app, env, '/v1/components', {
@@ -1301,9 +1269,8 @@ test('component content endpoint decodes canonical gzip blobs from buffer-like D
   const app = createApp();
 
   const alice = await createVerifiedSession(app, env, {
-    username: 'alice',
+    name: 'Alice',
     email: 'alice@example.com',
-    displayName: 'Alice',
   });
 
   const created = await jsonRequest(app, env, '/v1/components', {
@@ -1328,9 +1295,8 @@ test('variant content endpoint reads canonical raw spec and rejects wrapped blob
   const app = createApp();
 
   const alice = await createVerifiedSession(app, env, {
-    username: 'alice',
+    name: 'Alice',
     email: 'alice@example.com',
-    displayName: 'Alice',
   });
 
   const created = await jsonRequest(app, env, '/v1/variants', {
@@ -1414,15 +1380,14 @@ test('management APIs support Better Auth backed user and asset management', asy
   const app = createApp();
 
   const managementLogin = await signInUser(app, env, {
-    username: 'admin',
+    email: 'admin@example.com',
   });
   assert.equal(managementLogin.status, 200);
   assert.ok(managementLogin.cookie);
 
   const alice = await createVerifiedSession(app, env, {
-    username: 'alice',
+    name: 'Alice',
     email: 'alice@example.com',
-    displayName: 'Alice',
   });
 
   const createdByAlice = await jsonRequest(app, env, '/v1/variants', {
@@ -1443,10 +1408,9 @@ test('management APIs support Better Auth backed user and asset management', asy
     method: 'POST',
     cookie: managementLogin.cookie,
     payload: {
-      username: 'ops',
+      name: 'Ops',
       email: 'ops@example.com',
       password: TEST_PASSWORD,
-      displayName: 'Ops',
       role: 'readonly',
     },
   });
@@ -1458,14 +1422,13 @@ test('management APIs support Better Auth backed user and asset management', asy
     method: 'PUT',
     cookie: managementLogin.cookie,
     payload: {
-      username: 'ops_team',
-      displayName: 'Ops Team',
+      name: 'Ops Team',
       role: 'user',
       password: TEST_PASSWORD_2,
     },
   });
   assert.equal(managementUpdatesUser.status, 200);
-  assert.equal(managementUpdatesUser.json.username, 'ops_team');
+  assert.equal(managementUpdatesUser.json.name, 'Ops Team');
   assert.equal(managementUpdatesUser.json.displayName, 'Ops Team');
   assert.equal(managementUpdatesUser.json.role, 'user');
 
@@ -1478,14 +1441,14 @@ test('management APIs support Better Auth backed user and asset management', asy
     true,
   );
 
-  const usernameConflict = await jsonRequest(app, env, `${MANAGEMENT_API_BASE_PATH}/users/${opsUserId}`, {
+  const nameConflict = await jsonRequest(app, env, `${MANAGEMENT_API_BASE_PATH}/users/${opsUserId}`, {
     method: 'PUT',
     cookie: managementLogin.cookie,
     payload: {
-      username: 'alice',
+      name: 'Alice',
     },
   });
-  assert.equal(usernameConflict.status, 409);
+  assert.equal(nameConflict.status, 409);
 
   const managementViewsAliceAssets = await jsonRequest(app, env, `${MANAGEMENT_API_BASE_PATH}/variants?ownerUserId=${encodeURIComponent(alice.userId)}`, {
     cookie: managementLogin.cookie,
@@ -1614,15 +1577,14 @@ test('site settings default to registration disabled and management can enable r
   assert.equal(initialSettings.json.allowUserRegistration, false);
 
   const blockedSignUp = await signUpUser(app, env, {
-    username: 'blocked_user',
+    name: 'Blocked User',
     email: 'blocked@example.com',
-    displayName: 'Blocked User',
   });
   assert.equal(blockedSignUp.status, 403);
   assert.equal(blockedSignUp.json.message, 'new user registration is disabled');
 
   const managementLogin = await signInUser(app, env, {
-    username: 'admin',
+    email: 'admin@example.com',
   });
   assert.equal(managementLogin.status, 200);
 
@@ -1643,12 +1605,11 @@ test('site settings default to registration disabled and management can enable r
   assert.equal(enabledSettings.json.allowUserRegistration, true);
 
   const allowedSignUp = await signUpUser(app, env, {
-    username: 'allowed_user',
+    name: 'Allowed User',
     email: 'allowed@example.com',
-    displayName: 'Allowed User',
   });
   assert.equal(allowedSignUp.status, 200);
-  assert.equal(allowedSignUp.json.user.username, 'allowed_user');
+  assert.equal(allowedSignUp.json.user.name, 'Allowed User');
 });
 
 test('management can permanently purge all assets', async (t) => {
@@ -1657,14 +1618,13 @@ test('management can permanently purge all assets', async (t) => {
   const app = createApp();
 
   const managementLogin = await signInUser(app, env, {
-    username: 'admin',
+    email: 'admin@example.com',
   });
   assert.equal(managementLogin.status, 200);
 
   const alice = await createVerifiedSession(app, env, {
-    username: 'alice',
+    name: 'Alice',
     email: 'alice@example.com',
-    displayName: 'Alice',
   });
 
   const createdVariant = await jsonRequest(app, env, '/v1/variants', {
@@ -1749,7 +1709,7 @@ test('management can permanently purge all assets', async (t) => {
     cookie: managementLogin.cookie,
   });
   assert.equal(userDirectory.status, 200);
-  const aliceEntry = userDirectory.json.entries.find((entry) => entry.username === 'alice');
+  const aliceEntry = userDirectory.json.entries.find((entry) => entry.email === 'alice@example.com');
   assert.equal(aliceEntry.assetCount, 0);
 });
 
@@ -1808,9 +1768,8 @@ test('worker gzips large asset payload responses by default and leaves auth/list
   const app = createApp();
 
   const alice = await createVerifiedSession(app, env, {
-    username: 'alice',
+    name: 'Alice',
     email: 'alice@example.com',
-    displayName: 'Alice',
   });
 
   const created = await jsonRequest(app, env, '/v1/components', {
@@ -1861,9 +1820,8 @@ test('worker can accept gzip-compressed asset JSON request bodies', async (t) =>
   const app = createApp();
 
   const alice = await createVerifiedSession(app, env, {
-    username: 'alice',
+    name: 'Alice',
     email: 'alice@example.com',
-    displayName: 'Alice',
   });
 
   const compressedPayload = gzipSync(Buffer.from(JSON.stringify(
@@ -1890,9 +1848,8 @@ test('worker rejects mismatched gzip request body headers', async (t) => {
   t.after(() => env.DB.close());
 
   const alice = await createVerifiedSession(createApp(), env, {
-    username: 'alice',
+    name: 'Alice',
     email: 'alice@example.com',
-    displayName: 'Alice',
   });
 
   const payloadJson = JSON.stringify(

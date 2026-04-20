@@ -159,36 +159,6 @@ class GraphVariantActionsMixin:
                 return entry
         return None
 
-    @staticmethod
-    def _local_seed_from_remote_variant_entry(
-        remote_entry: F8VariantEntry,
-        *,
-        record: F8VariantRecord,
-        mark_modified: bool,
-    ) -> F8VariantEntry:
-        remote_version_number = None if remote_entry.remoteVersionNumber is None else int(remote_entry.remoteVersionNumber)
-        local_version_number: int | None = remote_version_number
-        sync_base_local_version_number: int | None = remote_version_number
-        if mark_modified:
-            local_version_number = 1 if remote_version_number is None else remote_version_number + 1
-        return copy_model(
-            remote_entry,
-            update={
-                "record": record,
-                "source": F8VariantSourceKind.local,
-                "installed": True,
-                "hasCachedContent": True,
-                "localVersionNumber": local_version_number,
-                "syncBaseRemoteRevision": remote_entry.remoteRevision,
-                "syncBaseRemoteVersionNumber": remote_version_number,
-                "syncBaseLocalVersionNumber": sync_base_local_version_number,
-                "isLocalDraft": False,
-                "draftOriginKind": None,
-                "draftOriginAssetId": None,
-                "draftOriginRevision": None,
-            },
-        )
-
     def _prompt_variant_metadata(
         self,
         *,

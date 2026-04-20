@@ -34,17 +34,17 @@ Asset storage contract:
 - `asset_heads` stores current queryable metadata for all assets:
   - owner
   - visibility
-  - current revision and version number
+  - current version number
   - name
   - description
   - tags
-  - component `schema_version`
 - `variant_details` stores current variant-specific metadata:
   - `variant_kind`
   - `base_node_type`
   - `service_class`
   - `operator_class`
 - `asset_versions` stores versioned large payload blobs only:
+  - revision
   - component versions store canonical session content `{ schemaVersion, layout }`
   - variant versions store canonical `spec`
 - `GET .../content` reconstructs a full API `record` from current relational metadata plus the versioned blob payload
@@ -52,7 +52,7 @@ Asset storage contract:
 
 ## Auth features
 
-- Username + password sign-in
+- Email + password sign-in
 - Email verification
 - Password reset
 - Google OAuth login
@@ -64,7 +64,7 @@ Asset storage contract:
 Auth:
 
 - `POST /api/auth/sign-up/email`
-- `POST /api/auth/sign-in/username`
+- `POST /api/auth/sign-in/email`
 - `POST /api/auth/sign-out`
 - `POST /api/auth/request-password-reset`
 - `GET /api/auth/get-session`
@@ -145,13 +145,12 @@ OpenAPI contract:
 Required:
 
 - `BETTER_AUTH_SECRET`
-- `BOOTSTRAP_ADMIN_USERNAME`
+- `BOOTSTRAP_ADMIN_NAME`
+- `BOOTSTRAP_ADMIN_EMAIL`
 - `BOOTSTRAP_ADMIN_PASSWORD`
 
 Recommended:
 
-- `BOOTSTRAP_ADMIN_DISPLAY_NAME`
-- `BOOTSTRAP_ADMIN_EMAIL`
 - `AUTH_BASE_URL`
 - `AUTH_VERIFY_EMAIL_BASE_URL`
 - `AUTH_RESET_PASSWORD_BASE_URL`
@@ -265,7 +264,9 @@ cd packages/f8assetcloud_worker
 npm run d1:reset:preview
 ```
 
-This in-place reset approach does not require hard-coding table names. It enumerates every non-`sqlite_%` table, drops them all, including `d1_migrations`, and then reapplies the current baseline migration.
+This in-place reset approach uses an explicit ordered table drop list that is compatible with remote D1 execution, then reapplies the current baseline migration.
+The reset SQL lives in [scripts/reset_d1.sh](/home/sxs/SS/Feel8/f8studio/packages/f8assetcloud_worker/scripts/reset_d1.sh) so the drop order stays centralized instead of being duplicated inside `package.json`.
+By default the script reads `database_name` from [wrangler.toml](/home/sxs/SS/Feel8/f8studio/packages/f8assetcloud_worker/wrangler.toml). You can override it with `D1_DATABASE_NAME=...` or point to a different config with `WRANGLER_TOML_PATH=...`.
 
 ## Notes
 

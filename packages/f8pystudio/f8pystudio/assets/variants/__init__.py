@@ -19,7 +19,6 @@ from .variant_models import (
     F8VariantRemoteRequestError,
     F8VariantRemoteUser,
     F8VariantSourceKind,
-    F8VariantSyncState,
     F8VariantVisibility,
 )
 from .variant_metadata import normalize_variant_sys_metadata, variant_ref_from_dict, variant_ref_from_record, variant_ref_to_json
@@ -60,7 +59,6 @@ __all__ = [
     "F8VariantRemoteRequestError",
     "F8VariantRemoteUser",
     "F8VariantSourceKind",
-    "F8VariantSyncState",
     "F8VariantVisibility",
     "normalize_variant_sys_metadata",
     "variant_ref_from_dict",

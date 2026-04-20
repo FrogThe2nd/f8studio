@@ -1,6 +1,6 @@
 ﻿import { betterAuth, generateId } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
-import { admin, username } from 'better-auth/plugins';
+import { admin } from 'better-auth/plugins';
 import { ApiException } from 'chanfana';
 import { drizzle } from 'drizzle-orm/d1';
 import { Hono } from 'hono';
@@ -381,19 +381,14 @@ async function routeManagementRequest({ env, managementUser, auth, repo, request
 
   if (request.method === 'POST' && url.pathname === `${MANAGEMENT_API_BASE_PATH}/users`) {
     const payload = await readJsonBody(request);
-    const usernameValue = requireBodyString(payload.username, 'username is required');
-    const displayName = bodyStringOrDefault(payload.displayName, usernameValue);
+    const name = requireBodyString(payload.name, 'name is required');
     const role = normalizeManagedUserRolePayload(payload);
     const created = await auth.api.createUser({
       body: {
         email: requireBodyString(payload.email, 'email is required'),
         password: requireBodyString(payload.password, 'password is required'),
-        name: displayName,
+        name,
         role,
-        data: {
-          username: normalizeUsername(usernameValue),
-          displayUsername: displayName,
-        },
       },
       headers: request.headers,
     });
@@ -427,13 +422,8 @@ async function routeManagementRequest({ env, managementUser, auth, repo, request
     }
     const payload = await readJsonBody(request);
     const data = {};
-    if (payload.username !== undefined) {
-      data.username = normalizeUsername(requireBodyString(payload.username, 'username is required'));
-    }
-    if (payload.displayName !== undefined) {
-      const displayName = requireBodyString(payload.displayName, 'displayName is required');
-      data.name = displayName;
-      data.displayUsername = displayName;
+    if (payload.name !== undefined) {
+      data.name = requireBodyString(payload.name, 'name is required');
     }
     if (Object.keys(data).length > 0) {
       await auth.api.adminUpdateUser({
@@ -649,8 +639,6 @@ async function routeManagementRequest({ env, managementUser, auth, repo, request
 
 function createAuth(env, { siteSettings, baseURL, trustedOrigins }) {
   const db = drizzle(env.DB);
-  const bootstrapUsername = String(env.BOOTSTRAP_ADMIN_USERNAME || '').trim().toLowerCase();
-  const bootstrapDisplayName = String(env.BOOTSTRAP_ADMIN_DISPLAY_NAME || '').trim();
   const socialProviders = {};
   if (hasGoogleProvider(env)) {
     socialProviders.google = {
@@ -690,7 +678,7 @@ function createAuth(env, { siteSettings, baseURL, trustedOrigins }) {
         await sendResetPasswordMessage({
           env,
           toEmail: appUser.email,
-          username: appUser.displayName || appUser.username,
+          recipientName: appUser.displayName || appUser.email,
           resetUrl,
         });
       },
@@ -709,18 +697,13 @@ function createAuth(env, { siteSettings, baseURL, trustedOrigins }) {
         await sendVerifyEmailMessage({
           env,
           toEmail: appUser.email,
-          username: appUser.displayName || appUser.username,
+          recipientName: appUser.displayName || appUser.email,
           verificationUrl,
         });
       },
     },
     socialProviders,
     plugins: [
-      username({
-        usernameNormalization: (value) => String(value || '').trim().toLowerCase(),
-        usernameValidator: (value) => validateUsername(value, bootstrapUsername),
-        displayUsernameValidator: (value) => validateDisplayName(value, bootstrapDisplayName),
-      }),
       admin({
         defaultRole: USER_ROLE_USER,
         adminRoles: [USER_ROLE_ADMIN],
@@ -782,16 +765,25 @@ async function ensureBootstrapAdmin({ env }) {
 }
 
 function readBootstrapAdminConfig(env) {
-  const usernameValue = String(env.BOOTSTRAP_ADMIN_USERNAME || '').trim().toLowerCase();
+  const legacyUsername = String(env.BOOTSTRAP_ADMIN_USERNAME || '').trim();
+  const name = String(
+    env.BOOTSTRAP_ADMIN_NAME
+      || env.BOOTSTRAP_ADMIN_DISPLAY_NAME
+      || legacyUsername
+      || 'Administrator',
+  ).trim();
   const password = String(env.BOOTSTRAP_ADMIN_PASSWORD || '').trim();
-  if (!usernameValue || !password) {
+  const email = String(
+    env.BOOTSTRAP_ADMIN_EMAIL
+      || (legacyUsername ? `${legacyUsername.toLowerCase()}@local.invalid` : ''),
+  ).trim().toLowerCase();
+  if (!name || !password || !email) {
     return null;
   }
   return {
-    usernameValue,
+    name,
     password,
-    email: String(env.BOOTSTRAP_ADMIN_EMAIL || `${usernameValue}@local.invalid`).trim().toLowerCase(),
-    displayName: String(env.BOOTSTRAP_ADMIN_DISPLAY_NAME || 'Administrator').trim() || 'Administrator',
+    email,
   };
 }
 
@@ -812,10 +804,10 @@ async function ensureBootstrapAdminOnce(env, config) {
      FROM user u
      LEFT JOIN account a
        ON a.userId = u.id AND a.providerId = 'credential'
-     WHERE u.email = ? OR u.username = ?
+     WHERE u.email = ? OR u.name = ?
      LIMIT 1`,
   )
-    .bind(config.email, config.usernameValue)
+    .bind(config.email, config.name)
     .first();
   const timestamp = Date.now();
 
@@ -824,10 +816,10 @@ async function ensureBootstrapAdminOnce(env, config) {
     const userId = generateId();
     await env.DB.prepare(
       `INSERT INTO user
-         ("id", "name", "email", "emailVerified", "image", "createdAt", "updatedAt", "username", "displayUsername", "role", "banned", "banReason", "banExpires")
-       VALUES (?, ?, ?, 1, NULL, ?, ?, ?, ?, 'admin', 0, NULL, NULL)`,
+         ("id", "name", "email", "emailVerified", "image", "createdAt", "updatedAt", "role", "banned", "banReason", "banExpires")
+       VALUES (?, ?, ?, 1, NULL, ?, ?, 'admin', 0, NULL, NULL)`,
     )
-      .bind(userId, config.displayName, config.email, timestamp, timestamp, config.usernameValue, config.displayName)
+      .bind(userId, config.name, config.email, timestamp, timestamp)
       .run();
     await env.DB.prepare(
       `INSERT INTO account
@@ -849,13 +841,11 @@ async function ensureBootstrapAdminOnce(env, config) {
      SET email = ?,
          role = 'admin',
          emailVerified = 1,
-         username = ?,
-         displayUsername = ?,
          name = ?,
          updatedAt = ?
      WHERE id = ?`,
   )
-    .bind(config.email, config.usernameValue, config.displayName, config.displayName, timestamp, userId)
+    .bind(config.email, config.name, timestamp, userId)
     .run();
 
   if (existing.credential_account_id === null || existing.credential_account_id === undefined) {
@@ -948,7 +938,7 @@ async function assertUserHasNoAssets(repo, userId) {
 function toApiUser(user) {
   return {
     userId: user.userId,
-    username: user.username,
+    name: user.name,
     displayName: user.displayName,
     email: user.email,
     emailVerified: user.emailVerified,
@@ -960,11 +950,11 @@ function toApiUser(user) {
 
 function toAppUser(user) {
   const email = stringOrDefault(user.email, '');
-  const usernameValue = stringOrDefault(user.username, email || String(user.id || ''));
-  const displayName = stringOrDefault(user.displayUsername, stringOrDefault(user.name, usernameValue));
+  const name = stringOrDefault(user.name, email || String(user.id || ''));
+  const displayName = name;
   return {
     userId: String(user.id),
-    username: usernameValue,
+    name,
     displayName,
     email,
     emailVerified: Boolean(user.emailVerified),
@@ -1080,18 +1070,6 @@ function validateIdentityName(value) {
   return isSafeDisplayText(text);
 }
 
-function validateUsername(value, allowedReservedValue = '') {
-  const text = String(value || '').trim();
-  if (!text) {
-    return false;
-  }
-  const canonical = canonicalizeIdentityName(text);
-  if (RESERVED_IDENTITY_NAMES.has(canonical) && canonical !== canonicalizeIdentityName(allowedReservedValue)) {
-    return false;
-  }
-  return /^[A-Za-z0-9_]{3,64}$/.test(text);
-}
-
 function validateDisplayName(value, allowedReservedValue = '') {
   const text = String(value || '').trim();
   if (!text) {
@@ -1197,7 +1175,6 @@ function handleError(error) {
     const payload = {
       message: 'conflict',
       revision: error.revision,
-      remoteRevision: error.revision,
     };
     if (error.assetType === 'variant') {
       payload.variantId = error.assetId;
@@ -1291,27 +1268,27 @@ function resolveAuthActionUrl({ preferredUrl, fallbackUrl }) {
   return String(fallbackUrl || '').trim();
 }
 
-async function sendVerifyEmailMessage({ env, toEmail, username, verificationUrl }) {
+async function sendVerifyEmailMessage({ env, toEmail, recipientName, verificationUrl }) {
   await sendAuthEmail({
     env,
     debugLabel: 'verify email',
     debugUrl: verificationUrl,
     toEmail,
     subject: 'Verify your email',
-    text: `Hi ${username}, verify your email: ${verificationUrl}`,
-    html: `<p>Hi ${escapeHtml(username)},</p><p>Please verify your email:</p><p><a href="${escapeHtml(verificationUrl)}">${escapeHtml(verificationUrl)}</a></p>`,
+    text: `Hi ${recipientName}, verify your email: ${verificationUrl}`,
+    html: `<p>Hi ${escapeHtml(recipientName)},</p><p>Please verify your email:</p><p><a href="${escapeHtml(verificationUrl)}">${escapeHtml(verificationUrl)}</a></p>`,
   });
 }
 
-async function sendResetPasswordMessage({ env, toEmail, username, resetUrl }) {
+async function sendResetPasswordMessage({ env, toEmail, recipientName, resetUrl }) {
   await sendAuthEmail({
     env,
     debugLabel: 'reset password',
     debugUrl: resetUrl,
     toEmail,
     subject: 'Reset your password',
-    text: `Hi ${username}, reset your password: ${resetUrl}`,
-    html: `<p>Hi ${escapeHtml(username)},</p><p>Use this link to reset password:</p><p><a href="${escapeHtml(resetUrl)}">${escapeHtml(resetUrl)}</a></p>`,
+    text: `Hi ${recipientName}, reset your password: ${resetUrl}`,
+    html: `<p>Hi ${escapeHtml(recipientName)},</p><p>Use this link to reset password:</p><p><a href="${escapeHtml(resetUrl)}">${escapeHtml(resetUrl)}</a></p>`,
   });
 }
 
@@ -1358,8 +1335,7 @@ async function computeBootstrapAdminFingerprint(env, config) {
     passwordHashVersion: authPasswordHashVersion(),
     email: config.email,
     password: config.password,
-    displayName: config.displayName,
-    usernameValue: config.usernameValue,
+    name: config.name,
   });
   const digest = await crypto.subtle.digest('SHA-256', textEncoder.encode(payload));
   return bytesToHex(new Uint8Array(digest));
@@ -1392,8 +1368,6 @@ async function readBootstrapAdminCredentialAccount(db, userId) {
     `SELECT
        u.id,
        u.email,
-       u.username,
-       u.displayUsername,
        u.name,
        u.role,
        u.emailVerified,
@@ -1417,9 +1391,7 @@ function bootstrapAdminMatchesConfig(row, config) {
   }
   return (
     String(row.email || '').trim().toLowerCase() === config.email
-    && String(row.username || '').trim().toLowerCase() === config.usernameValue
-    && String(row.displayUsername || '').trim() === config.displayName
-    && String(row.name || '').trim() === config.displayName
+    && String(row.name || '').trim() === config.name
     && String(row.role || '').trim() === USER_ROLE_ADMIN
     && Number(row.emailVerified || 0) !== 0
   );
@@ -1600,15 +1572,6 @@ function requireQueryString(value, message) {
     throw new HttpError(400, message);
   }
   return text;
-}
-
-function bodyStringOrDefault(value, fallback) {
-  const text = String(value || '').trim();
-  return text || fallback;
-}
-
-function normalizeUsername(value) {
-  return requireBodyString(value, 'username is required').toLowerCase();
 }
 
 class HttpError extends Error {

@@ -14,13 +14,17 @@ directory = "./console_web/dist"
 binding = "ASSETS"
 
 [vars]
-BOOTSTRAP_ADMIN_USERNAME = "admin"
-BOOTSTRAP_ADMIN_DISPLAY_NAME = "Admin"
+# Bootstrap admin identity
+BOOTSTRAP_ADMIN_NAME = "Admin"
 BOOTSTRAP_ADMIN_EMAIL = "feel8.fun@gmail.com"
+
+# Auth email delivery
 AUTH_EMAIL_FROM = "Feel8 <no-reply@feel8.fun>"
 EMAIL_VERIFY_TOKEN_TTL_SECONDS = "1800"
 PASSWORD_RESET_TOKEN_TTL_SECONDS = "1800"
-# Comma-separated list of extra origins allowed for CORS (in addition to AUTH_BASE_URL).
+
+# Comma-separated list of extra origins allowed for CORS in addition to the
+# resolved auth base URL / request origin.
 # Example: "http://localhost:5173,http://localhost:3000"
 CORS_ALLOWED_ORIGINS = ""
 

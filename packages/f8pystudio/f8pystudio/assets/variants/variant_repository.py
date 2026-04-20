@@ -29,7 +29,6 @@ from .variant_models import (
     F8VariantDraftOriginKind,
     F8VariantEntry,
     F8VariantSourceKind,
-    F8VariantSyncState,
 )
 
 
@@ -318,10 +317,6 @@ def _variant_library_payload(entries: list[F8VariantEntry]) -> dict[str, object]
         "entries": [
             {
                 "record": dump_json(entry.record, mode="json"),
-                "localVersionNumber": entry.localVersionNumber,
-                "syncBaseRemoteRevision": entry.syncBaseRemoteRevision,
-                "syncBaseRemoteVersionNumber": entry.syncBaseRemoteVersionNumber,
-                "syncBaseLocalVersionNumber": entry.syncBaseLocalVersionNumber,
                 "isLocalDraft": entry.isLocalDraft,
                 "draftOriginKind": None if entry.draftOriginKind is None else entry.draftOriginKind.value,
                 "draftOriginAssetId": entry.draftOriginAssetId,
@@ -346,13 +341,8 @@ def _variant_entries_from_library_payload(payload: dict[str, object]) -> list[F8
             F8VariantEntry(
                 record=entry.record,
                 source=F8VariantSourceKind.local,
-                syncState=F8VariantSyncState.local_only,
                 installed=True,
                 hasCachedContent=True,
-                localVersionNumber=_optional_int(raw_entry.get("localVersionNumber")),
-                syncBaseRemoteRevision=_optional_str(raw_entry.get("syncBaseRemoteRevision")),
-                syncBaseRemoteVersionNumber=_optional_int(raw_entry.get("syncBaseRemoteVersionNumber")),
-                syncBaseLocalVersionNumber=_optional_int(raw_entry.get("syncBaseLocalVersionNumber")),
                 isLocalDraft=_required_bool(raw_entry, "isLocalDraft"),
                 draftOriginKind=_required_draft_origin_kind(raw_entry, "draftOriginKind"),
                 draftOriginAssetId=_optional_str(raw_entry.get("draftOriginAssetId")),

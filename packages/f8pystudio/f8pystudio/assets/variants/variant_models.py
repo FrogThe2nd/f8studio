@@ -21,14 +21,6 @@ class F8VariantVisibility(Enum):
     public = "public"
 
 
-class F8VariantSyncState(Enum):
-    synced = "synced"
-    local_only = "local_only"
-    modified_local = "modified_local"
-    stale_remote = "stale_remote"
-    conflict = "conflict"
-
-
 class F8VariantDraftOriginKind(Enum):
     new = "new"
     copy_local = "copy_local"
@@ -41,18 +33,11 @@ class F8VariantEntry(Struct, kw_only=True):
     visibility: F8VariantVisibility | None = None
     ownerUserId: str | None = None
     ownerDisplayName: str | None = None
-    librarySlug: str | None = None
     remoteRevision: str | None = None
-    syncBaseRemoteRevision: str | None = None
-    syncState: F8VariantSyncState = F8VariantSyncState.local_only
     downloadedAt: str | None = None
     installed: bool = True
     hasCachedContent: bool | None = None
     subscribed: bool = False
-    localVersionNumber: int | None = None
-    remoteVersionNumber: int | None = None
-    syncBaseRemoteVersionNumber: int | None = None
-    syncBaseLocalVersionNumber: int | None = None
     isLocalDraft: bool = False
     draftOriginKind: F8VariantDraftOriginKind | None = None
     draftOriginAssetId: str | None = None
@@ -82,8 +67,9 @@ class F8VariantLocalVersionSummary(Struct, kw_only=True):
 
 class F8VariantRemoteUser(Struct, kw_only=True):
     userId: str
+    name: str | None = None
     displayName: str
-    username: str | None = None
+    email: str | None = None
 
 
 class F8VariantRemoteAuth(Struct, kw_only=True):
@@ -145,7 +131,6 @@ __all__ = [
     "F8VariantLibrary",
     "F8VariantSourceKind",
     "F8VariantVisibility",
-    "F8VariantSyncState",
     "F8VariantDraftOriginKind",
     "F8VariantDraftEntry",
     "F8VariantEntry",

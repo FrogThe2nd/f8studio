@@ -10,11 +10,9 @@ from ..variants.variant_catalog import variant_entry_is_installed
 from ..variants.variant_models import (
     F8VariantEntry,
     F8VariantSourceKind,
-    F8VariantSyncState,
     F8VariantVisibility,
 )
 from ..variants.variant_repository import list_entries_for_base, normalize_variant_name
-from .asset_sync_resolution import AssetSyncDirection, determine_asset_sync_direction
 from .catalog_status import AssetCatalogRowState, build_asset_catalog_row_state
 
 logger = logging.getLogger(__name__)
@@ -34,39 +32,10 @@ def variant_row_state_for_entries(
     visibility = None
     owner_display_name = None
     subscribed = False
-    remote_sync_state = None
-    remote_version_number = None
     if remote_entry is not None:
         visibility = None if remote_entry.visibility is None else remote_entry.visibility.value
         owner_display_name = remote_entry.ownerDisplayName
         subscribed = bool(remote_entry.subscribed)
-        remote_sync_state = remote_entry.syncState.value
-        remote_version_number = remote_entry.remoteVersionNumber
-    local_sync_state = None if local_entry is None else local_entry.syncState.value
-    local_version_number = None if local_entry is None else local_entry.localVersionNumber
-    if local_entry is not None and remote_entry is not None:
-        sync_direction = determine_asset_sync_direction(
-            has_local_entry=True,
-            has_remote_entry=True,
-            local_version_number=local_entry.localVersionNumber,
-            remote_version_number=remote_entry.remoteVersionNumber,
-            sync_base_remote_revision=local_entry.syncBaseRemoteRevision,
-            sync_base_remote_version_number=local_entry.syncBaseRemoteVersionNumber,
-            sync_base_local_version_number=local_entry.syncBaseLocalVersionNumber,
-            current_remote_revision=remote_entry.remoteRevision,
-        ).direction
-        if sync_direction == AssetSyncDirection.conflict:
-            local_sync_state = F8VariantSyncState.conflict.value
-            remote_sync_state = F8VariantSyncState.conflict.value
-        elif sync_direction == AssetSyncDirection.push:
-            local_sync_state = F8VariantSyncState.modified_local.value
-            remote_sync_state = F8VariantSyncState.synced.value
-        elif sync_direction == AssetSyncDirection.pull:
-            local_sync_state = F8VariantSyncState.stale_remote.value
-            remote_sync_state = F8VariantSyncState.synced.value
-        else:
-            local_sync_state = F8VariantSyncState.synced.value
-            remote_sync_state = F8VariantSyncState.synced.value
     if local_entry is not None and local_entry.isLocalDraft and remote_entry is None:
         owner_display_name = linked_draft_label if local_entry.draftOriginAssetId else local_draft_label
     return build_asset_catalog_row_state(
@@ -77,10 +46,6 @@ def variant_row_state_for_entries(
         visibility=visibility,
         owner_display_name=owner_display_name,
         subscribed=subscribed,
-        local_version_number=local_version_number,
-        remote_version_number=remote_version_number,
-        local_sync_state=local_sync_state,
-        remote_sync_state=remote_sync_state,
     )
 
 
@@ -419,12 +384,6 @@ class VariantCatalogEntriesMixin:
         visibility_badge = self._build_visibility_badge(container, row_state)
         if visibility_badge is not None:
             meta_row.addWidget(visibility_badge, 0)
-        sync_badge = self._build_sync_badge(container, row_state)
-        if sync_badge is not None:
-            meta_row.addWidget(sync_badge, 0)
-        version_badge = self._build_version_badge(container, row_state)
-        if version_badge is not None:
-            meta_row.addWidget(version_badge, 0)
         meta_row.addStretch(1)
         root.addLayout(meta_row)
 
@@ -447,78 +406,6 @@ class VariantCatalogEntriesMixin:
             " background: #2a3038;"
             "}"
         )
-        return badge
-
-    def _build_version_badge(
-        self,
-        parent: QtWidgets.QWidget,
-        row_state: AssetCatalogRowState,
-    ) -> QtWidgets.QLabel | None:
-        version_text = row_state.compact_version_badge()
-        if version_text is None:
-            return None
-        sync_key = row_state.sync_indicator_key()
-        local_color = "#cbd5e1"
-        remote_color = "#cbd5e1"
-        if sync_key == "push":
-            local_color = "#86efac"
-            remote_color = "#94a3b8"
-        elif sync_key == "pull":
-            local_color = "#94a3b8"
-            remote_color = "#93c5fd"
-        elif sync_key == "conflict":
-            local_color = "#fca5a5"
-            remote_color = "#fdba74"
-        badge = self._build_text_badge(parent, "")
-        badge.setTextFormat(QtCore.Qt.TextFormat.RichText)
-        parts: list[str] = []
-        if row_state.local_version_number is not None:
-            parts.append(f"<span style='color:{local_color};font-weight:600;'>L{int(row_state.local_version_number)}</span>")
-        if row_state.remote_version_number is not None:
-            parts.append(f"<span style='color:{remote_color};font-weight:600;'>R{int(row_state.remote_version_number)}</span>")
-        badge.setText(" <span style='color:#64748b;'>|</span> ".join(parts))
-        if sync_key == "push":
-            badge.setToolTip("Local version is ahead of remote")
-        elif sync_key == "pull":
-            badge.setToolTip("Remote version is ahead of local")
-        elif sync_key == "conflict":
-            badge.setToolTip("Local and remote versions diverged")
-        else:
-            badge.setToolTip(version_text)
-        return badge
-
-    @staticmethod
-    def _sync_badge_token(row_state: AssetCatalogRowState) -> StudioIcon | None:
-        sync_key = row_state.sync_indicator_key()
-        if sync_key == "synced":
-            return StudioIcon.CHECK
-        if sync_key == "push":
-            return StudioIcon.CLOUD_UP
-        if sync_key == "pull":
-            return StudioIcon.CLOUD_DOWN
-        if sync_key == "conflict":
-            return StudioIcon.X
-        return None
-
-    def _build_sync_badge(
-        self,
-        parent: QtWidgets.QWidget,
-        row_state: AssetCatalogRowState,
-    ) -> QtWidgets.QLabel | None:
-        token = self._sync_badge_token(row_state)
-        if token is None:
-            return None
-        badge = self._build_text_badge(parent, "")
-        badge.setPixmap(icon_for(parent, token).pixmap(12, 12))
-        sync_key = row_state.sync_indicator_key()
-        if sync_key == "synced":
-            badge.setToolTip("Local and remote are in sync")
-        elif sync_key == "push":
-            badge.setToolTip("Local is ahead of remote")
-        elif sync_key == "pull":
-            badge.setToolTip("Remote is ahead of local")
-        elif sync_key == "conflict":
-            badge.setToolTip("Local and remote changed differently")
         return badge
 
     def _build_visibility_badge(

@@ -37,28 +37,6 @@ project_versions_table = Table(
     Column("created_at", Text, nullable=False),
 )
 
-component_heads_local_table = Table(
-    "component_heads_local",
-    _METADATA,
-    Column("component_id", Text, primary_key=True),
-    Column("name", Text, nullable=False),
-    Column("description", Text, nullable=False),
-    Column("tags_json", Text, nullable=False),
-    Column("schema_version", Text, nullable=False),
-    Column("latest_version_number", Integer, nullable=False),
-    Column("content", LargeBinary, nullable=False),
-    Column("created_at", Text, nullable=False),
-    Column("updated_at", Text, nullable=False),
-    Column("sync_base_remote_revision", Text, nullable=True),
-    Column("sync_base_remote_version_number", Integer, nullable=True),
-    Column("sync_base_local_version_number", Integer, nullable=True),
-    Column("is_local_draft", Integer, nullable=False, default=0),
-    Column("draft_origin_kind", Text, nullable=True),
-    Column("draft_origin_asset_id", Text, nullable=True),
-    Column("draft_origin_revision", Text, nullable=True),
-)
-
-
 component_remote_cache_table = Table(
     "component_remote_cache",
     _METADATA,
@@ -67,23 +45,17 @@ component_remote_cache_table = Table(
     Column("description", Text, nullable=False),
     Column("tags_json", Text, nullable=False),
     Column("schema_version", Text, nullable=False),
-    Column("remote_version_number", Integer, nullable=True),
     Column("created_at", Text, nullable=False),
     Column("updated_at", Text, nullable=False),
     Column("source", Text, nullable=False),
     Column("visibility", Text, nullable=True),
     Column("owner_user_id", Text, nullable=True),
     Column("owner_display_name", Text, nullable=True),
-    Column("library_slug", Text, nullable=True),
     Column("remote_revision", Text, nullable=True),
-    Column("sync_base_remote_revision", Text, nullable=True),
-    Column("sync_state", Text, nullable=False),
     Column("downloaded_at", Text, nullable=True),
     Column("installed", Integer, nullable=False),
     Column("has_cached_content", Integer, nullable=False),
     Column("subscribed", Integer, nullable=False),
-    Column("sync_base_remote_version_number", Integer, nullable=True),
-    Column("sync_base_local_version_number", Integer, nullable=True),
     Column("content", LargeBinary, nullable=False),
 )
 
@@ -103,41 +75,6 @@ component_drafts_local_table = Table(
     Column("updated_at", Text, nullable=False),
 )
 
-# Variant local/remote tables are defined here so variants can migrate into the
-# same assets.db without introducing a second SQLite file.
-variant_heads_local_table = Table(
-    "variant_heads_local",
-    _METADATA,
-    Column("variant_id", Text, primary_key=True),
-    Column("name", Text, nullable=False),
-    Column("description", Text, nullable=False),
-    Column("tags_json", Text, nullable=False),
-    Column("kind", Text, nullable=False),
-    Column("base_node_type", Text, nullable=False),
-    Column("service_class", Text, nullable=False),
-    Column("operator_class", Text, nullable=True),
-    Column("latest_version_number", Integer, nullable=False, default=1),
-    Column("content", LargeBinary, nullable=False),
-    Column("created_at", Text, nullable=False),
-    Column("updated_at", Text, nullable=False),
-    Column("sync_base_remote_revision", Text, nullable=True),
-    Column("sync_base_remote_version_number", Integer, nullable=True),
-    Column("sync_base_local_version_number", Integer, nullable=True),
-    Column("is_local_draft", Integer, nullable=False, default=0),
-    Column("draft_origin_kind", Text, nullable=True),
-    Column("draft_origin_asset_id", Text, nullable=True),
-    Column("draft_origin_revision", Text, nullable=True),
-)
-
-variant_versions_local_table = Table(
-    "variant_versions_local",
-    _METADATA,
-    Column("variant_id", Text, ForeignKey("variant_heads_local.variant_id"), primary_key=True),
-    Column("version_number", Integer, primary_key=True),
-    Column("record_json", LargeBinary, nullable=False),
-    Column("created_at", Text, nullable=False),
-)
-
 variant_remote_cache_table = Table(
     "variant_remote_cache",
     _METADATA,
@@ -149,23 +86,17 @@ variant_remote_cache_table = Table(
     Column("base_node_type", Text, nullable=False),
     Column("service_class", Text, nullable=False),
     Column("operator_class", Text, nullable=True),
-    Column("remote_version_number", Integer, nullable=True),
     Column("created_at", Text, nullable=False),
     Column("updated_at", Text, nullable=False),
     Column("source", Text, nullable=False),
     Column("visibility", Text, nullable=True),
     Column("owner_user_id", Text, nullable=True),
     Column("owner_display_name", Text, nullable=True),
-    Column("library_slug", Text, nullable=True),
     Column("remote_revision", Text, nullable=True),
-    Column("sync_base_remote_revision", Text, nullable=True),
-    Column("sync_state", Text, nullable=False),
     Column("downloaded_at", Text, nullable=True),
     Column("installed", Integer, nullable=False),
     Column("has_cached_content", Integer, nullable=False),
     Column("subscribed", Integer, nullable=False),
-    Column("sync_base_remote_version_number", Integer, nullable=True),
-    Column("sync_base_local_version_number", Integer, nullable=True),
     Column("content", LargeBinary, nullable=False),
 )
 
@@ -189,9 +120,7 @@ variant_drafts_local_table = Table(
 )
 
 Index("idx_project_heads_updated_at", project_heads_table.c.updated_at)
-Index("idx_component_heads_local_updated_at", component_heads_local_table.c.updated_at)
 Index("idx_component_drafts_local_updated_at", component_drafts_local_table.c.updated_at)
-Index("idx_variant_heads_local_updated_at", variant_heads_local_table.c.updated_at)
 Index("idx_variant_drafts_local_updated_at", variant_drafts_local_table.c.updated_at)
 Index("idx_variant_remote_cache_updated_at", variant_remote_cache_table.c.updated_at)
 
@@ -277,42 +206,7 @@ class AssetsDatabase:
         return engine
 
     def _apply_additive_migrations(self, engine: Engine) -> None:
-        inspector = inspect(engine)
-        self._ensure_nullable_text_column(engine, inspector=inspector, table_name="component_remote_cache", column_name="library_slug")
-        self._ensure_nullable_text_column(engine, inspector=inspector, table_name="variant_remote_cache", column_name="library_slug")
-        self._ensure_integer_column_with_default(
-            engine,
-            inspector=inspector,
-            table_name="variant_heads_local",
-            column_name="latest_version_number",
-            default_value=1,
-        )
-        for table_name, column_name in [
-            ("component_heads_local", "draft_origin_kind"),
-            ("component_heads_local", "draft_origin_asset_id"),
-            ("component_heads_local", "draft_origin_revision"),
-            ("component_heads_local", "sync_base_remote_revision"),
-            ("component_remote_cache", "sync_base_remote_revision"),
-            ("variant_heads_local", "draft_origin_kind"),
-            ("variant_heads_local", "draft_origin_asset_id"),
-            ("variant_heads_local", "draft_origin_revision"),
-            ("variant_heads_local", "sync_base_remote_revision"),
-            ("variant_remote_cache", "sync_base_remote_revision"),
-        ]:
-            self._ensure_nullable_text_column(engine, inspector=inspector, table_name=table_name, column_name=column_name)
-        for table_name, column_name in [
-            ("component_heads_local", "is_local_draft"),
-            ("component_heads_local", "sync_base_remote_version_number"),
-            ("component_remote_cache", "sync_base_remote_version_number"),
-            ("variant_heads_local", "is_local_draft"),
-            ("variant_heads_local", "sync_base_remote_version_number"),
-            ("variant_remote_cache", "sync_base_remote_version_number"),
-            ("component_heads_local", "sync_base_local_version_number"),
-            ("component_remote_cache", "sync_base_local_version_number"),
-            ("variant_heads_local", "sync_base_local_version_number"),
-            ("variant_remote_cache", "sync_base_local_version_number"),
-        ]:
-            self._ensure_nullable_integer_column(engine, inspector=inspector, table_name=table_name, column_name=column_name)
+        del engine
 
     def _ensure_nullable_text_column(self, engine: Engine, *, inspector: Inspector, table_name: str, column_name: str) -> None:
         if table_name not in set(inspector.get_table_names()):
@@ -356,11 +250,8 @@ __all__ = [
     "assets_db_path",
     "project_heads_table",
     "project_versions_table",
-    "component_heads_local_table",
     "component_drafts_local_table",
     "component_remote_cache_table",
-    "variant_heads_local_table",
     "variant_drafts_local_table",
-    "variant_versions_local_table",
     "variant_remote_cache_table",
 ]

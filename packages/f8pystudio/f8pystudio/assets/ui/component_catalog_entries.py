@@ -5,7 +5,6 @@ from f8pysdk.codec import copy_model
 from ..components.component_catalog import component_entry_has_cached_content, component_entry_is_installed
 from ..components.component_models import F8ComponentEntry, F8ComponentSourceKind, F8ComponentVisibility
 from ..components.component_repository import list_component_entries
-from .asset_sync_resolution import AssetSyncDirection, determine_asset_sync_direction
 from .catalog_status import AssetCatalogRowState, build_asset_catalog_row_state
 
 
@@ -198,39 +197,10 @@ class ComponentCatalogEntriesMixin:
         visibility = None
         owner_display_name = None
         subscribed = False
-        remote_sync_state = None
-        remote_version_number = None
         if remote_entry is not None:
             visibility = None if remote_entry.visibility is None else remote_entry.visibility.value
             owner_display_name = remote_entry.ownerDisplayName
             subscribed = bool(remote_entry.subscribed)
-            remote_sync_state = remote_entry.syncState.value
-            remote_version_number = remote_entry.remoteVersionNumber
-        local_sync_state = None if local_entry is None else local_entry.syncState.value
-        local_version_number = None if local_entry is None else local_entry.localVersionNumber
-        if local_entry is not None and remote_entry is not None:
-            sync_direction = determine_asset_sync_direction(
-                has_local_entry=True,
-                has_remote_entry=True,
-                local_version_number=local_entry.localVersionNumber,
-                remote_version_number=remote_entry.remoteVersionNumber,
-                sync_base_remote_revision=local_entry.syncBaseRemoteRevision,
-                sync_base_remote_version_number=local_entry.syncBaseRemoteVersionNumber,
-                sync_base_local_version_number=local_entry.syncBaseLocalVersionNumber,
-                current_remote_revision=remote_entry.remoteRevision,
-            ).direction
-            if sync_direction == AssetSyncDirection.conflict:
-                local_sync_state = "conflict"
-                remote_sync_state = "conflict"
-            elif sync_direction == AssetSyncDirection.push:
-                local_sync_state = "modified_local"
-                remote_sync_state = "synced"
-            elif sync_direction == AssetSyncDirection.pull:
-                local_sync_state = "stale_remote"
-                remote_sync_state = "synced"
-            else:
-                local_sync_state = "synced"
-                remote_sync_state = "synced"
         if local_entry is not None and local_entry.isLocalDraft and remote_entry is None:
             owner_display_name = cls.LINKED_DRAFT_LABEL if local_entry.draftOriginAssetId else cls.LOCAL_DRAFT_LABEL
         return build_asset_catalog_row_state(
@@ -241,8 +211,4 @@ class ComponentCatalogEntriesMixin:
             visibility=visibility,
             owner_display_name=owner_display_name,
             subscribed=subscribed,
-            local_version_number=local_version_number,
-            remote_version_number=remote_version_number,
-            local_sync_state=local_sync_state,
-            remote_sync_state=remote_sync_state,
         )

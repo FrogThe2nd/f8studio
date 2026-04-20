@@ -22,7 +22,6 @@ from f8pystudio.assets.components.component_models import (
     component_now_iso,
     F8ComponentRecord,
     F8ComponentSourceKind,
-    F8ComponentSyncState,
     F8ComponentVisibility,
 )
 from f8pystudio.assets.projects.project_storage import ProjectStorageService
@@ -39,14 +38,16 @@ def test_assets_database_initializes_component_project_and_variant_tables(tmp_pa
     assert {
         "project_heads",
         "project_versions",
-        "component_heads_local",
+        "component_drafts_local",
         "component_remote_cache",
-        "variant_heads_local",
-        "variant_versions_local",
+        "variant_drafts_local",
         "variant_remote_cache",
     }.issubset(table_names)
 
+    assert "component_heads_local" not in table_names
     assert "component_versions_local" not in table_names
+    assert "variant_heads_local" not in table_names
+    assert "variant_versions_local" not in table_names
 
 
 def test_default_assets_database_path_is_isolated_under_pytest() -> None:
@@ -104,47 +105,8 @@ def test_assets_database_serializes_concurrent_initialization_for_same_path(tmp_
     assert max_concurrent_create_all_calls == 1
 
 
-def test_assets_database_migrates_remote_cache_library_slug_columns(tmp_path: Path) -> None:
+def test_assets_database_uses_simplified_remote_cache_schema(tmp_path: Path) -> None:
     db_path = tmp_path / "assets.db"
-    with closing(sqlite3.connect(db_path)) as conn:
-        conn.execute(
-            """
-            CREATE TABLE component_remote_cache (
-                component_id TEXT PRIMARY KEY,
-                source TEXT NOT NULL,
-                visibility TEXT,
-                owner_user_id TEXT,
-                owner_display_name TEXT,
-                remote_revision TEXT,
-                sync_state TEXT NOT NULL,
-                downloaded_at TEXT,
-                installed INTEGER NOT NULL,
-                subscribed INTEGER NOT NULL,
-                record_json TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            )
-            """
-        )
-        conn.execute(
-            """
-            CREATE TABLE variant_remote_cache (
-                variant_id TEXT PRIMARY KEY,
-                source TEXT NOT NULL,
-                visibility TEXT,
-                owner_user_id TEXT,
-                owner_display_name TEXT,
-                remote_revision TEXT,
-                sync_state TEXT NOT NULL,
-                downloaded_at TEXT,
-                installed INTEGER NOT NULL,
-                subscribed INTEGER NOT NULL,
-                record_json TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            )
-            """
-        )
-        conn.commit()
-
     db = AssetsDatabase(path=db_path)
     db.ensure_initialized()
 
@@ -152,8 +114,10 @@ def test_assets_database_migrates_remote_cache_library_slug_columns(tmp_path: Pa
         component_columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(component_remote_cache)").fetchall()}
         variant_columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(variant_remote_cache)").fetchall()}
 
-    assert "library_slug" in component_columns
-    assert "library_slug" in variant_columns
+    assert "library_slug" not in component_columns
+    assert "library_slug" not in variant_columns
+    assert "sync_state" not in component_columns
+    assert "sync_state" not in variant_columns
 
 
 def test_component_catalog_uses_draft_only_local_component_schema(tmp_path: Path) -> None:
@@ -170,6 +134,7 @@ def test_component_catalog_uses_draft_only_local_component_schema(tmp_path: Path
         table_names = {str(row[0]) for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
 
     assert "component_drafts_local" in table_names
+    assert "component_heads_local" not in table_names
     assert "component_versions_local" not in table_names
 
 
@@ -264,7 +229,6 @@ def _component_entry(
         source=source,
         visibility=F8ComponentVisibility.public if source == F8ComponentSourceKind.remote_public else None,
         remoteRevision="r1" if source != F8ComponentSourceKind.local else None,
-        syncState=F8ComponentSyncState.synced if source != F8ComponentSourceKind.local else F8ComponentSyncState.local_only,
         installed=installed,
     )
 
@@ -580,15 +544,15 @@ def test_component_catalog_hides_uninstalled_remote_entries_until_installed(tmp_
     assert installed_entry.downloadedAt is not None
 
 
-def test_component_catalog_persists_remote_library_slug(tmp_path: Path) -> None:
+def test_component_catalog_persists_remote_revision(tmp_path: Path) -> None:
     service = ComponentCatalogService(db_path=tmp_path / "assets.db")
     remote_entry = copy_model(
         _component_entry(component_id="remote-1", source=F8ComponentSourceKind.remote_public, installed=False),
-        update={"librarySlug": "community/featured"},
+        update={"remoteRevision": "r-featured"},
     )
 
     service.replace_remote_entries([remote_entry])
 
     loaded = service.entry("remote-1", include_uninstalled=True)
     assert loaded is not None
-    assert loaded.librarySlug == "community/featured"
+    assert loaded.remoteRevision == "r-featured"

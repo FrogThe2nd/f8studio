@@ -45,7 +45,7 @@ const managementPurgeAllAssetsResponseSchema = z.object({
 
 const apiUserResponseSchema = z.object({
   userId: z.string(),
-  username: z.string(),
+  name: z.string(),
   displayName: z.string(),
   email: z.string(),
   emailVerified: z.boolean(),
@@ -75,9 +75,6 @@ const typedAssetBaseSchema = z.object({
   ownerDisplayName: nullableStringSchema,
   visibility: visibilitySchema,
   revision: z.string(),
-  latestRevision: z.string(),
-  versionNumber: z.number().int(),
-  latestVersionNumber: z.number().int(),
   changeSummary: nullableStringSchema,
   name: z.string(),
   description: z.string(),
@@ -153,7 +150,6 @@ const variantSummarySchema = typedAssetBaseSchema.extend({
 const componentSummarySchema = typedAssetBaseSchema.extend({
   assetType: z.literal('component'),
   componentId: z.string(),
-  schemaVersion: z.string(),
   hasContent: z.boolean(),
 });
 
@@ -163,8 +159,17 @@ const variantDetailSchema = variantSummarySchema.extend({
 });
 
 const componentDetailSchema = componentSummarySchema.extend({
+  schemaVersion: z.string(),
   versionCreatedAt: z.string(),
   createdByUserId: z.string(),
+});
+
+const variantVersionDetailSchema = variantDetailSchema.extend({
+  versionNumber: z.number().int(),
+});
+
+const componentVersionDetailSchema = componentDetailSchema.extend({
+  versionNumber: z.number().int(),
 });
 
 const variantContentResponseSchema = z.object({
@@ -229,9 +234,6 @@ const adminAssetBaseSchema = z.object({
   ownerDisplayName: nullableStringSchema,
   visibility: visibilitySchema,
   revision: z.string(),
-  latestRevision: z.string(),
-  versionNumber: z.number().int(),
-  latestVersionNumber: z.number().int(),
   changeSummary: nullableStringSchema,
   name: z.string(),
   description: z.string(),
@@ -251,7 +253,6 @@ const adminVariantSummarySchema = adminAssetBaseSchema.extend({
 
 const adminComponentSummarySchema = adminAssetBaseSchema.extend({
   assetType: z.literal('component'),
-  schemaVersion: nullableStringSchema,
 });
 
 const adminVariantDetailSchema = adminVariantSummarySchema.extend({
@@ -352,18 +353,16 @@ const componentForkRequestSchema = z.object({
 });
 
 const managementUserCreateRequestSchema = z.object({
-  username: z.string(),
+  name: z.string(),
   email: z.string(),
   password: z.string(),
-  displayName: z.string().optional(),
   role: roleSchema.optional(),
   isAdmin: z.boolean().optional(),
   canUpload: z.boolean().optional(),
 });
 
 const managementUserUpdateRequestSchema = z.object({
-  username: z.string().optional(),
-  displayName: z.string().optional(),
+  name: z.string().optional(),
   password: z.string().optional(),
   role: roleSchema.optional(),
   isAdmin: z.boolean().optional(),
@@ -624,7 +623,7 @@ export function registerOpenApiRoutes(app, handlers) {
       }),
     },
     responses: withCommonErrorResponses({
-      200: jsonSuccessResponse(componentDetailSchema, 'Component version detail'),
+      200: jsonSuccessResponse(componentVersionDetailSchema, 'Component version detail'),
     }),
   }, handlers.routeComponentAssetRequest);
 
@@ -809,7 +808,7 @@ export function registerOpenApiRoutes(app, handlers) {
       }),
     },
     responses: withCommonErrorResponses({
-      200: jsonSuccessResponse(variantDetailSchema, 'Variant version detail'),
+      200: jsonSuccessResponse(variantVersionDetailSchema, 'Variant version detail'),
     }),
   }, handlers.routeVariantAssetRequest);
 

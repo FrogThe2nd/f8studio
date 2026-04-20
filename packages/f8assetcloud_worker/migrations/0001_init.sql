@@ -2,21 +2,18 @@ PRAGMA foreign_keys = ON;
 
 CREATE TABLE user (
   id TEXT PRIMARY KEY,
-  name TEXT NOT NULL,
+  name TEXT NOT NULL UNIQUE,
   email TEXT NOT NULL UNIQUE,
   emailVerified INTEGER NOT NULL DEFAULT 0,
   image TEXT,
   createdAt INTEGER NOT NULL,
   updatedAt INTEGER NOT NULL,
-  username TEXT UNIQUE,
-  displayUsername TEXT,
   role TEXT,
   banned INTEGER NOT NULL DEFAULT 0,
   banReason TEXT,
   banExpires INTEGER
 );
 
-CREATE INDEX idx_user_username ON user(username);
 CREATE INDEX idx_user_role ON user(role);
 
 CREATE TABLE session (
@@ -72,19 +69,16 @@ CREATE TABLE asset_heads (
   asset_type TEXT NOT NULL,
   owner_user_id TEXT NOT NULL,
   visibility TEXT NOT NULL,
-  latest_revision TEXT NOT NULL,
-  latest_version_number INTEGER NOT NULL,
+  current_version_number INTEGER NOT NULL,
   name TEXT NOT NULL,
   description TEXT NOT NULL,
   tags_json TEXT NOT NULL,
-  schema_version TEXT,
   deleted_at TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   FOREIGN KEY (owner_user_id) REFERENCES user(id)
 );
 
-CREATE INDEX idx_asset_heads_schema_version ON asset_heads(schema_version);
 CREATE INDEX idx_asset_heads_type_visibility_name
   ON asset_heads(asset_type, visibility, deleted_at, LOWER(name), asset_id);
 CREATE INDEX idx_asset_heads_type_owner_name

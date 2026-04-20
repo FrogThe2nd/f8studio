@@ -248,12 +248,6 @@ class ComponentCatalogUiMixin:
         visibility_badge = self._build_visibility_badge(container, row_state)
         if visibility_badge is not None:
             meta_row.addWidget(visibility_badge, 0)
-        sync_badge = self._build_sync_badge(container, row_state)
-        if sync_badge is not None:
-            meta_row.addWidget(sync_badge, 0)
-        version_badge = self._build_version_badge(container, row_state)
-        if version_badge is not None:
-            meta_row.addWidget(version_badge, 0)
         meta_row.addStretch(1)
         root.addLayout(meta_row)
         return container
@@ -270,78 +264,6 @@ class ComponentCatalogUiMixin:
             " background: #2a3038;"
             "}"
         )
-        return badge
-
-    def _build_version_badge(
-        self,
-        parent: QtWidgets.QWidget,
-        row_state: AssetCatalogRowState,
-    ) -> QtWidgets.QLabel | None:
-        version_text = row_state.compact_version_badge()
-        if version_text is None:
-            return None
-        sync_key = row_state.sync_indicator_key()
-        local_color = "#cbd5e1"
-        remote_color = "#cbd5e1"
-        if sync_key == "push":
-            local_color = "#86efac"
-            remote_color = "#94a3b8"
-        elif sync_key == "pull":
-            local_color = "#94a3b8"
-            remote_color = "#93c5fd"
-        elif sync_key == "conflict":
-            local_color = "#fca5a5"
-            remote_color = "#fdba74"
-        badge = self._build_text_badge(parent, "")
-        badge.setTextFormat(QtCore.Qt.TextFormat.RichText)
-        parts: list[str] = []
-        if row_state.local_version_number is not None:
-            parts.append(f"<span style='color:{local_color};font-weight:600;'>L{int(row_state.local_version_number)}</span>")
-        if row_state.remote_version_number is not None:
-            parts.append(f"<span style='color:{remote_color};font-weight:600;'>R{int(row_state.remote_version_number)}</span>")
-        badge.setText(" <span style='color:#64748b;'>|</span> ".join(parts))
-        if sync_key == "push":
-            badge.setToolTip("Local version is ahead of remote")
-        elif sync_key == "pull":
-            badge.setToolTip("Remote version is ahead of local")
-        elif sync_key == "conflict":
-            badge.setToolTip("Local and remote versions diverged")
-        else:
-            badge.setToolTip(version_text)
-        return badge
-
-    @staticmethod
-    def _sync_badge_token(row_state: AssetCatalogRowState) -> StudioIcon | None:
-        sync_key = row_state.sync_indicator_key()
-        if sync_key == "synced":
-            return StudioIcon.CHECK
-        if sync_key == "push":
-            return StudioIcon.CLOUD_UP
-        if sync_key == "pull":
-            return StudioIcon.CLOUD_DOWN
-        if sync_key == "conflict":
-            return StudioIcon.X
-        return None
-
-    def _build_sync_badge(
-        self,
-        parent: QtWidgets.QWidget,
-        row_state: AssetCatalogRowState,
-    ) -> QtWidgets.QLabel | None:
-        token = self._sync_badge_token(row_state)
-        if token is None:
-            return None
-        badge = self._build_text_badge(parent, "")
-        badge.setPixmap(icon_for(parent, token).pixmap(12, 12))
-        sync_key = row_state.sync_indicator_key()
-        if sync_key == "synced":
-            badge.setToolTip("Local and remote are in sync")
-        elif sync_key == "push":
-            badge.setToolTip("Local is ahead of remote")
-        elif sync_key == "pull":
-            badge.setToolTip("Remote is ahead of local")
-        elif sync_key == "conflict":
-            badge.setToolTip("Local and remote changed differently")
         return badge
 
     def _build_visibility_badge(

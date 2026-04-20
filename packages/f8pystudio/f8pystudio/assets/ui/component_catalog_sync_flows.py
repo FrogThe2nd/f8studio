@@ -8,7 +8,6 @@ from ..components.component_models import (
     F8ComponentVisibility,
 )
 from ...ui.support.ui_notifications import show_warning
-from .asset_sync_resolution import AssetSyncDirection
 
 
 class ComponentCatalogSyncFlowsMixin:

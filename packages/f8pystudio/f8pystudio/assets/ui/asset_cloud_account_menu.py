@@ -12,8 +12,9 @@ from ...ui.support.ui_notifications import show_info, show_warning
 
 class AssetCloudUserLike(Protocol):
     userId: str
+    name: str | None
     displayName: str
-    username: str | None
+    email: str | None
 
 
 class AssetCloudSessionLike(Protocol):
@@ -32,11 +33,11 @@ class AssetCloudSyncClient(Protocol):
 
     def set_base_url(self, base_url: str) -> None: ...
 
-    def remembered_username(self) -> str: ...
+    def remembered_email(self) -> str: ...
 
     def current_user(self) -> AssetCloudUserLike | None: ...
 
-    def login(self, *, base_url: str, username: str, password: str, remember: bool) -> object: ...
+    def login(self, *, base_url: str, email: str, password: str, remember: bool) -> object: ...
 
     def saved_sessions(self) -> list[AssetCloudSessionLike]: ...
 
@@ -52,12 +53,12 @@ class AssetCloudSyncClient(Protocol):
 
 
 class AssetCloudSignInDialog(QtWidgets.QDialog):
-    def __init__(self, *, parent: QtWidgets.QWidget | None, base_url: str, username: str) -> None:
+    def __init__(self, *, parent: QtWidgets.QWidget | None, base_url: str, email: str) -> None:
         super().__init__(parent)
         self.setWindowTitle("Asset Cloud Sign In")
         self.resize(460, 180)
-        self._username = QtWidgets.QLineEdit(username, self)
-        self._username.setClearButtonEnabled(True)
+        self._email = QtWidgets.QLineEdit(email, self)
+        self._email.setClearButtonEnabled(True)
         self._password = QtWidgets.QLineEdit(self)
         self._password.setEchoMode(QtWidgets.QLineEdit.Password)
         self._password.setClearButtonEnabled(True)
@@ -67,7 +68,7 @@ class AssetCloudSignInDialog(QtWidgets.QDialog):
         endpoint_label.setWordWrap(True)
 
         form = QtWidgets.QFormLayout()
-        form.addRow("Username", self._username)
+        form.addRow("Email", self._email)
         form.addRow("Password", self._password)
 
         buttons = QtWidgets.QDialogButtonBox(
@@ -83,10 +84,10 @@ class AssetCloudSignInDialog(QtWidgets.QDialog):
         layout.addWidget(buttons)
 
     def _on_accept_clicked(self) -> None:
-        username = str(self._username.text() or "").strip()
+        email = str(self._email.text() or "").strip()
         password = str(self._password.text() or "")
-        if not username:
-            show_warning(self, "Login failed", "Username cannot be empty.")
+        if not email:
+            show_warning(self, "Login failed", "Email cannot be empty.")
             return
         if not password:
             show_warning(self, "Login failed", "Password cannot be empty.")
@@ -94,18 +95,18 @@ class AssetCloudSignInDialog(QtWidgets.QDialog):
         self.accept()
 
     def values(self) -> tuple[str, str]:
-        return str(self._username.text() or "").strip(), str(self._password.text() or "")
+        return str(self._email.text() or "").strip(), str(self._password.text() or "")
 
 
 def prompt_asset_cloud_sign_in(*, parent: QtWidgets.QWidget, sync_client: AssetCloudSyncClient) -> bool:
     base_url = sync_client.base_url()
     sync_client.set_base_url(base_url)
-    dialog = AssetCloudSignInDialog(parent=parent, base_url=base_url, username=sync_client.remembered_username())
+    dialog = AssetCloudSignInDialog(parent=parent, base_url=base_url, email=sync_client.remembered_email())
     if dialog.exec() != QtWidgets.QDialog.Accepted:
         return False
-    username, password = dialog.values()
+    email, password = dialog.values()
     try:
-        sync_client.login(base_url=base_url, username=username, password=password, remember=True)
+        sync_client.login(base_url=base_url, email=email, password=password, remember=True)
     except Exception as exc:
         show_warning(parent, "Login failed", f"{exc}\n\nCloud URL: {base_url}")
         return False
@@ -227,14 +228,15 @@ def _user_greeting_name(user: AssetCloudUserLike | None) -> str:
     display_name = str(user.displayName or "").strip()
     if display_name:
         return display_name
-    username = str(user.username or "").strip()
-    if username:
-        return username
+    email = str(user.email or "").strip()
+    if email:
+        return email
     return str(user.userId or "").strip()
 
 
 def _saved_session_label(session: AssetCloudSessionLike) -> str:
-    identity = f"{session.user.displayName} ({session.user.username or session.user.userId})"
+    label = _user_greeting_name(session.user)
+    identity = f"{label} ({session.user.email or session.user.userId})"
     last_used = format_timestamp_for_local_display(session.lastUsedAt)
     if not last_used:
         return identity

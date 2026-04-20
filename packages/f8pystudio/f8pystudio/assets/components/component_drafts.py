@@ -25,7 +25,6 @@ from .component_models import (
     F8ComponentEntry,
     F8ComponentRecord,
     F8ComponentSourceKind,
-    F8ComponentSyncState,
     component_now_iso,
 )
 
@@ -172,7 +171,6 @@ def draft_as_catalog_entry(draft: F8ComponentDraftEntry) -> F8ComponentEntry:
     return F8ComponentEntry(
         record=draft.record,
         source=F8ComponentSourceKind.local,
-        syncState=F8ComponentSyncState.local_only,
         installed=True,
         hasCachedContent=True,
         isLocalDraft=True,

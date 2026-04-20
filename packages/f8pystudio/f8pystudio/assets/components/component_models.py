@@ -19,14 +19,6 @@ class F8ComponentVisibility(Enum):
     public = "public"
 
 
-class F8ComponentSyncState(Enum):
-    synced = "synced"
-    local_only = "local_only"
-    modified_local = "modified_local"
-    stale_remote = "stale_remote"
-    conflict = "conflict"
-
-
 class F8ComponentDraftOriginKind(Enum):
     new = "new"
     copy_local = "copy_local"
@@ -50,18 +42,11 @@ class F8ComponentEntry(Struct, kw_only=True):
     visibility: F8ComponentVisibility | None = None
     ownerUserId: str | None = None
     ownerDisplayName: str | None = None
-    librarySlug: str | None = None
     remoteRevision: str | None = None
-    syncBaseRemoteRevision: str | None = None
-    syncState: F8ComponentSyncState = F8ComponentSyncState.local_only
     downloadedAt: str | None = None
     installed: bool = True
     hasCachedContent: bool | None = None
     subscribed: bool = False
-    localVersionNumber: int | None = None
-    remoteVersionNumber: int | None = None
-    syncBaseRemoteVersionNumber: int | None = None
-    syncBaseLocalVersionNumber: int | None = None
     isLocalDraft: bool = False
     draftOriginKind: F8ComponentDraftOriginKind | None = None
     draftOriginAssetId: str | None = None
@@ -85,8 +70,9 @@ class F8ComponentCatalogSnapshot(Struct, kw_only=True):
 
 class F8ComponentRemoteUser(Struct, kw_only=True):
     userId: str
+    name: str | None = None
     displayName: str
-    username: str | None = None
+    email: str | None = None
 
 
 class F8ComponentRemoteAuth(Struct, kw_only=True):
@@ -151,7 +137,6 @@ def component_now_iso() -> str:
 __all__ = [
     "F8ComponentSourceKind",
     "F8ComponentVisibility",
-    "F8ComponentSyncState",
     "F8ComponentDraftOriginKind",
     "F8ComponentDraftEntry",
     "F8ComponentRecord",

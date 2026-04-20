@@ -10,7 +10,6 @@ from f8pystudio.assets.variants.variant_models import (
     F8VariantEntry,
     F8VariantKind,
     F8VariantSourceKind,
-    F8VariantSyncState,
     variant_now_iso,
 )
 from f8pysdk.specs import F8VariantRecord
@@ -43,7 +42,6 @@ def test_variant_catalog_providers_persist_local_and_remote_entries_in_assets_db
             F8VariantEntry(
                 record=_make_record(variant_id="local-1", base_node_type="svc.a.op", name="Local One"),
                 source=F8VariantSourceKind.local,
-                syncState=F8VariantSyncState.local_only,
             )
         ]
     )
@@ -52,7 +50,6 @@ def test_variant_catalog_providers_persist_local_and_remote_entries_in_assets_db
             F8VariantEntry(
                 record=_make_record(variant_id="remote-1", base_node_type="svc.a.op", name="Remote One"),
                 source=F8VariantSourceKind.remote_public,
-                syncState=F8VariantSyncState.synced,
                 installed=False,
             )
         ]
@@ -73,13 +70,11 @@ def test_catalog_service_prefers_local_and_hides_uninstalled_public_remote(tmp_p
             F8VariantEntry(
                 record=_make_record(variant_id="shared", base_node_type="svc.a.op", name="Remote Shared"),
                 source=F8VariantSourceKind.remote_public,
-                syncState=F8VariantSyncState.synced,
                 installed=False,
             ),
             F8VariantEntry(
                 record=_make_record(variant_id="public_only", base_node_type="svc.a.op", name="Public Only"),
                 source=F8VariantSourceKind.remote_public,
-                syncState=F8VariantSyncState.synced,
                 installed=False,
             ),
         ]
@@ -89,7 +84,6 @@ def test_catalog_service_prefers_local_and_hides_uninstalled_public_remote(tmp_p
         F8VariantEntry(
             record=_make_record(variant_id="shared", base_node_type="svc.a.op", name="Local Shared"),
             source=F8VariantSourceKind.local,
-            syncState=F8VariantSyncState.local_only,
             isLocalDraft=True,
         )
     )
@@ -102,7 +96,7 @@ def test_catalog_service_prefers_local_and_hides_uninstalled_public_remote(tmp_p
     assert all_entries[0].record.name == "Local Shared"
 
 
-def test_remote_variant_provider_persists_library_slug(tmp_path: Path) -> None:
+def test_remote_variant_provider_persists_remote_revision(tmp_path: Path) -> None:
     db_path = tmp_path / "assets.db"
     provider = RemoteCacheProvider(db_path=db_path)
     provider.save_entries(
@@ -110,8 +104,7 @@ def test_remote_variant_provider_persists_library_slug(tmp_path: Path) -> None:
             F8VariantEntry(
                 record=_make_record(variant_id="remote-1", base_node_type="svc.a.op", name="Remote One"),
                 source=F8VariantSourceKind.remote_public,
-                librarySlug="official/default",
-                syncState=F8VariantSyncState.synced,
+                remoteRevision="r1",
                 installed=False,
             )
         ]
@@ -120,7 +113,7 @@ def test_remote_variant_provider_persists_library_slug(tmp_path: Path) -> None:
     loaded = provider.load_entries()
 
     assert len(loaded) == 1
-    assert loaded[0].librarySlug == "official/default"
+    assert loaded[0].remoteRevision == "r1"
 
 
 def test_local_variant_provider_preserves_service_variant_without_operator_class(tmp_path: Path) -> None:
@@ -144,7 +137,6 @@ def test_local_variant_provider_preserves_service_variant_without_operator_class
                     updatedAt=now,
                 ),
                 source=F8VariantSourceKind.local,
-                syncState=F8VariantSyncState.local_only,
             )
         ]
     )
@@ -161,7 +153,6 @@ def test_variant_catalog_service_keeps_only_latest_draft_snapshot_for_metadata_o
         F8VariantEntry(
             record=_make_record(variant_id="local-1", base_node_type="svc.a.op", name="Local One"),
             source=F8VariantSourceKind.local,
-            syncState=F8VariantSyncState.local_only,
         )
     )
     second = service.upsert_local_entry(
@@ -175,18 +166,14 @@ def test_variant_catalog_service_keeps_only_latest_draft_snapshot_for_metadata_o
                 },
             ),
             source=F8VariantSourceKind.local,
-            syncState=F8VariantSyncState.local_only,
         )
     )
 
     loaded = service.entry("local-1", include_uninstalled=True)
 
-    assert first.localVersionNumber is None
-    assert second.localVersionNumber is None
     assert service.list_local_versions("local-1") == []
     assert service.local_version_record("local-1", 1) is None
     assert loaded is not None
-    assert loaded.localVersionNumber is None
     assert loaded.isLocalDraft is True
     assert loaded.record.name == "Local One Renamed"
     assert loaded.record.description == "metadata only"
@@ -199,7 +186,6 @@ def test_variant_catalog_service_keeps_only_latest_draft_snapshot_for_content_ch
         F8VariantEntry(
             record=_make_record(variant_id="local-1", base_node_type="svc.a.op", name="Local One"),
             source=F8VariantSourceKind.local,
-            syncState=F8VariantSyncState.local_only,
         )
     )
     second = service.upsert_local_entry(
@@ -209,7 +195,6 @@ def test_variant_catalog_service_keeps_only_latest_draft_snapshot_for_content_ch
                 update={"spec": {"label": "Local One v2"}},
             ),
             source=F8VariantSourceKind.local,
-            syncState=F8VariantSyncState.local_only,
         )
     )
 
@@ -218,7 +203,6 @@ def test_variant_catalog_service_keeps_only_latest_draft_snapshot_for_content_ch
     version_two = service.local_version_record("local-1", 2)
     loaded = service.entry("local-1", include_uninstalled=True)
 
-    assert second.localVersionNumber is None
     assert versions == []
     assert version_one is None
     assert version_two is None
@@ -232,13 +216,11 @@ def test_variant_catalog_service_ignores_remote_version_when_saving_draft(tmp_pa
         F8VariantEntry(
             record=_make_record(variant_id="remote-seeded", base_node_type="svc.a.op", name="Remote Seeded"),
             source=F8VariantSourceKind.local,
-            syncState=F8VariantSyncState.local_only,
-            remoteVersionNumber=5,
+            remoteRevision="r5",
         )
     )
 
     versions = service.list_local_versions("remote-seeded")
 
-    assert saved.localVersionNumber is None
     assert saved.isLocalDraft is True
     assert versions == []

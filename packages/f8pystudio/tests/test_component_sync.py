@@ -27,7 +27,6 @@ from f8pystudio.assets.components.component_models import (
 from f8pystudio.assets.components.component_sync import ComponentSyncClient
 from f8pystudio.assets.db import component_remote_cache_table
 from f8pystudio.assets.ui.component_catalog_dialog import ComponentCatalogDialog
-from f8pystudio.assets.ui.asset_sync_resolution import AssetSyncDirection
 from f8pystudio.nodegraph.graph_component_actions import GraphComponentActionsMixin
 
 
@@ -132,7 +131,7 @@ class _ComponentApiHandler(BaseHTTPRequestHandler):
         return False
 
     def do_POST(self) -> None:  # noqa: N802
-        if self.path == "/api/auth/sign-in/username":
+        if self.path == "/api/auth/sign-in/email":
             self.server.last_login_user_agent = str(self.headers.get("User-Agent") or "")
             self._write_json(
                 200,
@@ -186,7 +185,7 @@ class _ComponentApiHandler(BaseHTTPRequestHandler):
         if self.path == "/v1/me":
             if not self._check_auth():
                 return
-            self._write_json(200, {"userId": "u1", "username": "u", "displayName": "User One"})
+            self._write_json(200, {"userId": "u1", "name": "User One", "displayName": "User One", "email": "u@example.com"})
             return
         if self.path == "/v1/components/public-1":
             self._write_json(200, self.server.public_asset)
@@ -280,9 +279,6 @@ class _Server(ThreadingHTTPServer):
             "ownerDisplayName": "Remote User" if visibility == "public" else "User One",
             "visibility": visibility,
             "revision": "r-public" if visibility == "public" else "r-private",
-            "latestRevision": "r-public" if visibility == "public" else "r-private",
-            "versionNumber": 1,
-            "latestVersionNumber": 1,
             "createdAt": str(record["createdAt"]),
             "updatedAt": str(record["updatedAt"]),
             "editable": visibility != "public",
@@ -304,9 +300,6 @@ class _Server(ThreadingHTTPServer):
             "ownerDisplayName": "Remote User" if visibility == "public" else "User One",
             "visibility": visibility,
             "revision": "r-public" if visibility == "public" else "r-private",
-            "latestRevision": "r-public" if visibility == "public" else "r-private",
-            "versionNumber": 1,
-            "latestVersionNumber": 1,
             "name": str(record["name"]),
             "description": str(record["description"]),
             "tags": list(record["tags"]),
@@ -341,7 +334,6 @@ def test_component_sync_client_supports_anonymous_public_install_and_cookie_sess
         anonymous_page = client.list_components(scope="community")
         assert anonymous_page.entries[0].record.componentId == "public-1"
         assert anonymous_page.entries[0].source == F8ComponentSourceKind.remote_public
-        assert anonymous_page.entries[0].remoteVersionNumber == 1
 
         installed = client.install_component("public-1")
         assert installed.installed is True
@@ -349,7 +341,7 @@ def test_component_sync_client_supports_anonymous_public_install_and_cookie_sess
         public_version = client.get_component_version("public-1", 1)
         assert public_version.record.componentId == "public-1"
 
-        auth = client.login(base_url=f"http://127.0.0.1:{server.server_port}", username="u", password="p", remember=True)
+        auth = client.login(base_url=f"http://127.0.0.1:{server.server_port}", email="u@example.com", password="p", remember=True)
         assert auth.user.displayName == "User One"
         assert server.last_login_user_agent == "F8Studio/1.0"
 
@@ -359,7 +351,6 @@ def test_component_sync_client_supports_anonymous_public_install_and_cookie_sess
         cached_public = service.entry("public-1", include_uninstalled=True)
         assert cached_public is not None
         assert isinstance(cached_public.record.content.get("layout"), dict)
-        assert cached_public.remoteVersionNumber == 1
 
         mine_page = client.list_components(scope="mine")
         assert mine_page.entries[0].record.componentId == "private-1"
@@ -445,7 +436,7 @@ def test_component_sync_client_rejects_legacy_saved_sessions(tmp_path: Path) -> 
                 "user": {
                     "userId": "u1",
                     "displayName": "Legacy User",
-                    "username": "legacy",
+                    "email": "legacy@example.com",
                 },
                 "accessToken": "old-token-only",
                 "lastUsedAt": "2026-04-04T00:00:00+00:00",
@@ -612,7 +603,7 @@ def test_component_logout_clears_local_session_when_remote_signout_fails(tmp_pat
         service = ComponentCatalogService(db_path=tmp_path / "assets.db")
         client = ComponentSyncClient(settings=settings, catalog_service=service)
         base_url = f"http://127.0.0.1:{server.server_port}"
-        _ = client.login(base_url=base_url, username="u", password="p", remember=True)
+        _ = client.login(base_url=base_url, email="u@example.com", password="p", remember=True)
 
         def _raise_signout_timeout(_path: str, _payload: dict[str, object], *, authorized: bool) -> dict[str, object]:
             assert authorized is True
@@ -645,16 +636,13 @@ def test_component_remote_cache_load_cleans_empty_component_ids(tmp_path: Path) 
                 description="",
                 tags_json="[]",
                 schema_version="f8studio-session/1",
-                remote_version_number=1,
                 created_at="2026-04-04T00:00:00+00:00",
                 updated_at="2026-04-04T00:00:00+00:00",
                 source="remote_public",
                 visibility="public",
                 owner_user_id="u1",
                 owner_display_name="User One",
-                library_slug="community",
                 remote_revision="r1",
-                sync_state="synced",
                 downloaded_at=None,
                 installed=0,
                 has_cached_content=0,
@@ -682,16 +670,13 @@ def test_component_remote_cache_row_with_content_loads_as_installed(tmp_path: Pa
                 description=str(canonical_record["description"]),
                 tags_json=json.dumps(canonical_record["tags"]),
                 schema_version=str(canonical_record["schemaVersion"]),
-                remote_version_number=1,
                 created_at=str(canonical_record["createdAt"]),
                 updated_at=str(canonical_record["updatedAt"]),
                 source="remote_public",
                 visibility="public",
                 owner_user_id="u1",
                 owner_display_name="User One",
-                library_slug="community",
                 remote_revision="r1",
-                sync_state="synced",
                 downloaded_at="2026-04-04T00:00:00+00:00",
                 installed=1,
                 has_cached_content=1,
@@ -705,7 +690,6 @@ def test_component_remote_cache_row_with_content_loads_as_installed(tmp_path: Pa
     assert loaded.record.componentId == "remote-1"
     assert loaded.installed is True
     assert loaded.hasCachedContent is True
-    assert loaded.remoteVersionNumber == 1
     assert loaded.record.content["schemaVersion"] == "f8studio-session/1"
 
 
@@ -713,10 +697,6 @@ def test_component_row_state_badges_cover_local_remote_and_both() -> None:
     local_entry = F8ComponentEntry(
         record=F8ComponentRecord(componentId="asset-1", name="Local"),
         source=F8ComponentSourceKind.local,
-        localVersionNumber=5,
-        syncBaseRemoteRevision="r5",
-        syncBaseRemoteVersionNumber=5,
-        syncBaseLocalVersionNumber=5,
     )
     remote_entry = F8ComponentEntry(
         record=F8ComponentRecord(
@@ -729,7 +709,6 @@ def test_component_row_state_badges_cover_local_remote_and_both() -> None:
         visibility=F8ComponentVisibility.public,
         installed=True,
         remoteRevision="r5",
-        remoteVersionNumber=5,
     )
 
     both_state = ComponentCatalogDialog._component_row_state_for_entries(
@@ -745,7 +724,6 @@ def test_component_row_state_badges_cover_local_remote_and_both() -> None:
             source=F8ComponentSourceKind.remote_public,
             visibility=F8ComponentVisibility.public,
             installed=False,
-            remoteVersionNumber=2,
         ),
     )
     local_state = ComponentCatalogDialog._component_row_state_for_entries(
@@ -753,21 +731,19 @@ def test_component_row_state_badges_cover_local_remote_and_both() -> None:
         local_entry=F8ComponentEntry(
             record=F8ComponentRecord(componentId="asset-3", name="Local Only"),
             source=F8ComponentSourceKind.local,
-            localVersionNumber=1,
         ),
         remote_entry=None,
     )
 
-    assert both_state.badge_texts() == ["both", "public", "synced", "L5", "R5"]
-    assert remote_state.badge_texts() == ["remote", "public", "R2"]
-    assert local_state.badge_texts() == ["local", "L1"]
+    assert both_state.badge_texts() == ["both", "public"]
+    assert remote_state.badge_texts() == ["remote", "public"]
+    assert local_state.badge_texts() == ["local"]
 
 
 def test_component_row_state_uses_local_draft_owner_label() -> None:
     local_entry = F8ComponentEntry(
         record=F8ComponentRecord(componentId="draft-component", name="Draft Component"),
         source=F8ComponentSourceKind.local,
-        localVersionNumber=1,
         isLocalDraft=True,
     )
 
@@ -784,7 +760,6 @@ def test_component_row_state_prefers_remote_owner_when_remote_head_exists() -> N
     local_entry = F8ComponentEntry(
         record=F8ComponentRecord(componentId="draft-component-remote", name="Draft Component Remote"),
         source=F8ComponentSourceKind.local,
-        localVersionNumber=1,
         isLocalDraft=True,
     )
     remote_entry = F8ComponentEntry(
@@ -794,7 +769,6 @@ def test_component_row_state_prefers_remote_owner_when_remote_head_exists() -> N
         ownerUserId="u1",
         ownerDisplayName="User One",
         remoteRevision="r1",
-        remoteVersionNumber=1,
         installed=True,
         hasCachedContent=True,
     )
@@ -826,7 +800,6 @@ def test_component_catalog_load_owned_remote_keeps_remote_only_cache(monkeypatch
         ownerUserId="u1",
         ownerDisplayName="User One",
         remoteRevision="r4",
-        remoteVersionNumber=4,
         installed=False,
         hasCachedContent=False,
     )
@@ -839,7 +812,7 @@ def test_component_catalog_load_owned_remote_keeps_remote_only_cache(monkeypatch
     monkeypatch.setattr(
         dialog._sync_client,
         "current_user",
-        lambda: F8ComponentRemoteUser(userId="u1", displayName="User One", username="user-one"),
+        lambda: F8ComponentRemoteUser(userId="u1", name="User One", displayName="User One", email="user-one@example.com"),
     )
     monkeypatch.setattr(
         dialog._sync_client,
@@ -889,7 +862,6 @@ def test_component_publish_new_draft_keeps_linked_draft(monkeypatch, tmp_path: P
                 content={"schemaVersion": "f8studio-session/1", "layout": {"nodes": {}, "connections": []}},
             ),
             source=F8ComponentSourceKind.local,
-            localVersionNumber=1,
             isLocalDraft=True,
             draftOriginKind=F8ComponentDraftOriginKind.new,
         )
@@ -913,7 +885,6 @@ def test_component_publish_new_draft_keeps_linked_draft(monkeypatch, tmp_path: P
                 "ownerUserId": "u1",
                 "ownerDisplayName": "User One",
                 "remoteRevision": "r1",
-                "remoteVersionNumber": 1,
                 "installed": True,
                 "hasCachedContent": True,
             },
@@ -1018,7 +989,6 @@ def test_component_publish_metadata_only_uses_patch_meta(monkeypatch, tmp_path: 
             ownerUserId="u1",
             ownerDisplayName="User One",
             remoteRevision="r4",
-            remoteVersionNumber=4,
             installed=True,
             hasCachedContent=True,
         )
@@ -1030,7 +1000,7 @@ def test_component_publish_metadata_only_uses_patch_meta(monkeypatch, tmp_path: 
     monkeypatch.setattr(
         dialog._sync_client,
         "current_user",
-        lambda: F8ComponentRemoteUser(userId="u1", displayName="User One", username="user-one"),
+        lambda: F8ComponentRemoteUser(userId="u1", name="User One", displayName="User One", email="user-one@example.com"),
     )
     monkeypatch.setattr(dialog, "_render_browser_from_state", lambda *args, **kwargs: None)
     patch_calls: list[tuple[str, str, str, list[str]]] = []
@@ -1087,7 +1057,6 @@ def test_component_catalog_copy_to_draft_creates_disconnected_local_draft(monkey
         ownerUserId="u2",
         ownerDisplayName="Remote User",
         remoteRevision="r9",
-        remoteVersionNumber=9,
         installed=False,
         hasCachedContent=False,
     )
@@ -1108,10 +1077,6 @@ def test_component_catalog_copy_to_draft_creates_disconnected_local_draft(monkey
     assert draft_entry.isLocalDraft is True
     assert draft_entry.draftOriginAssetId is None
     assert draft_entry.draftOriginRevision is None
-    assert draft_entry.syncBaseRemoteRevision is None
-    assert draft_entry.syncBaseRemoteVersionNumber is None
-    assert draft_entry.syncBaseLocalVersionNumber is None
-    assert draft_entry.remoteVersionNumber is None
 
     dialog.close()
 
@@ -1125,7 +1090,7 @@ def test_component_sync_client_delete_component_removes_remote_cache(tmp_path: P
         service = ComponentCatalogService(db_path=tmp_path / "assets.db")
         client = ComponentSyncClient(settings=settings, catalog_service=service)
         base_url = f"http://127.0.0.1:{server.server_port}"
-        _ = client.login(base_url=base_url, username="u", password="p", remember=True)
+        _ = client.login(base_url=base_url, email="u@example.com", password="p", remember=True)
         _ = client.refresh_scope_page(scope="mine", query="", cursor="", append=False)
 
         assert service.entry("private-1", include_uninstalled=True) is not None
@@ -1156,7 +1121,6 @@ def test_component_catalog_delete_removes_local_and_owned_remote(monkeypatch, tm
         ownerUserId="u1",
         ownerDisplayName="User One",
         remoteRevision="r7",
-        remoteVersionNumber=7,
         installed=True,
         hasCachedContent=False,
     )
@@ -1184,7 +1148,7 @@ def test_component_catalog_delete_removes_local_and_owned_remote(monkeypatch, tm
     monkeypatch.setattr(
         dialog._sync_client,
         "current_user",
-        lambda: F8ComponentRemoteUser(userId="u1", displayName="User One", username="user-one"),
+        lambda: F8ComponentRemoteUser(userId="u1", name="User One", displayName="User One", email="user-one@example.com"),
     )
     monkeypatch.setattr(
         dialog._sync_client,
@@ -1325,7 +1289,6 @@ def test_component_catalog_row_without_description_stays_compact(monkeypatch) ->
         ),
         source=F8ComponentSourceKind.remote_public,
         visibility=F8ComponentVisibility.public,
-        remoteVersionNumber=3,
         installed=True,
         hasCachedContent=True,
     )

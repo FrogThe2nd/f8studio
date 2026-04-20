@@ -255,7 +255,6 @@ class VariantCatalogBrowserMixin:
                     "visibility": None if entry.visibility is None else entry.visibility.value,
                     "subscribed": bool(entry.subscribed),
                     "installed": bool(entry.installed),
-                    "syncState": entry.syncState.value,
                 }
                 for entry in self._entries[:10]
             ],
@@ -383,7 +382,7 @@ class VariantCatalogBrowserMixin:
         user = self._sync_client.current_user()
         if user is None:
             return "Accounts"
-        return str(user.username or user.displayName or "Accounts")
+        return str(user.displayName or user.email or "Accounts")
 
     def _current_query(self) -> str:
         return str(self._tab_queries.get(self._scope_tabs.currentIndex(), "")).strip()
@@ -722,4 +721,4 @@ class VariantCatalogBrowserMixin:
         user = self._sync_client.current_user()
         if user is None:
             return "Signed out"
-        return str(user.displayName or user.username or "Signed in")
+        return str(user.displayName or user.email or "Signed in")

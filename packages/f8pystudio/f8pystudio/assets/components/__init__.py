@@ -16,7 +16,6 @@ from .component_models import (
     F8ComponentRemoteVersionEntry,
     F8ComponentRemoteVersionList,
     F8ComponentSourceKind,
-    F8ComponentSyncState,
     F8ComponentVisibility,
     component_now_iso,
 )
@@ -50,7 +49,6 @@ __all__ = [
     "F8ComponentRemoteVersionEntry",
     "F8ComponentRemoteVersionList",
     "F8ComponentSourceKind",
-    "F8ComponentSyncState",
     "F8ComponentVisibility",
     "component_now_iso",
     "component_entry",

@@ -3,6 +3,7 @@ from __future__ import annotations
 import zlib
 from pathlib import Path
 
+import msgspec
 from sqlalchemy import delete, insert, select, update
 from f8pysdk.codec import dump_json, validate_as
 from f8pysdk.specs import F8VariantRecord
@@ -21,7 +22,6 @@ from .variant_models import (
     F8VariantDraftOriginKind,
     F8VariantEntry,
     F8VariantSourceKind,
-    F8VariantSyncState,
     variant_now_iso,
 )
 
@@ -179,7 +179,6 @@ def draft_as_catalog_entry(draft: F8VariantDraftEntry) -> F8VariantEntry:
     return F8VariantEntry(
         record=draft.record,
         source=F8VariantSourceKind.local,
-        syncState=F8VariantSyncState.local_only,
         installed=True,
         hasCachedContent=True,
         isLocalDraft=True,
@@ -227,7 +226,11 @@ def _draft_db_values(draft: F8VariantDraftEntry) -> dict[str, object]:
         "kind": str(draft.record.kind.value),
         "base_node_type": str(draft.record.baseNodeType),
         "service_class": str(draft.record.serviceClass),
-        "operator_class": None if draft.record.operatorClass is None else str(draft.record.operatorClass),
+        "operator_class": (
+            None
+            if draft.record.operatorClass is None or isinstance(draft.record.operatorClass, msgspec.UnsetType)
+            else str(draft.record.operatorClass)
+        ),
         "content": _compress_content(stable_json_dumps(draft.record.spec)),
         "origin_kind": None if draft.originKind is None else draft.originKind.value,
         "publish_target_asset_id": draft.publishTargetAssetId,
@@ -244,22 +247,22 @@ def _draft_from_row(row: object) -> F8VariantDraftEntry:
     draft_id = mapping_str(row_mapping, "draft_id")
     created_at = mapping_str(row_mapping, "created_at")
     updated_at = mapping_str(row_mapping, "updated_at")
-    record = validate_as(
-        F8VariantRecord,
-        {
-            "variantId": draft_id,
-            "kind": mapping_str(row_mapping, "kind"),
-            "baseNodeType": mapping_str(row_mapping, "base_node_type"),
-            "serviceClass": mapping_str(row_mapping, "service_class"),
-            "operatorClass": mapping_optional_str(row_mapping, "operator_class"),
-            "name": mapping_str(row_mapping, "name"),
-            "description": mapping_str(row_mapping, "description"),
-            "tags": json_string_list_loads(row_mapping.get("tags_json")),
-            "spec": json_object_loads(_decompress_content(row_mapping.get("content"))),
-            "createdAt": created_at,
-            "updatedAt": updated_at,
-        },
-    )
+    record_payload = {
+        "variantId": draft_id,
+        "kind": mapping_str(row_mapping, "kind"),
+        "baseNodeType": mapping_str(row_mapping, "base_node_type"),
+        "serviceClass": mapping_str(row_mapping, "service_class"),
+        "name": mapping_str(row_mapping, "name"),
+        "description": mapping_str(row_mapping, "description"),
+        "tags": json_string_list_loads(row_mapping.get("tags_json")),
+        "spec": json_object_loads(_decompress_content(row_mapping.get("content"))),
+        "createdAt": created_at,
+        "updatedAt": updated_at,
+    }
+    operator_class = _operator_class_from_row(row_mapping)
+    if not isinstance(operator_class, msgspec.UnsetType):
+        record_payload["operatorClass"] = operator_class
+    record = validate_as(F8VariantRecord, record_payload)
     origin_kind = _origin_kind_from_db_value(mapping_optional_str(row_mapping, "origin_kind"))
     return F8VariantDraftEntry(
         draftId=draft_id,
@@ -276,6 +279,13 @@ def _origin_kind_from_db_value(value: str | None) -> F8VariantDraftOriginKind | 
     if value is None:
         return None
     return F8VariantDraftOriginKind(value)
+
+
+def _operator_class_from_row(row_mapping: dict[object, object]) -> str | None | msgspec.UnsetType:
+    operator_class = mapping_optional_str(row_mapping, "operator_class")
+    if operator_class is None and mapping_str(row_mapping, "kind") == "service":
+        return msgspec.UNSET
+    return operator_class
 
 
 def _compress_content(value: str) -> bytes:

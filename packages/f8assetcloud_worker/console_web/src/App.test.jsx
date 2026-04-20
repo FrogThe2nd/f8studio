@@ -12,7 +12,7 @@ vi.mock('./authClient.js', () => ({
     useSession: () => mockUseSession(),
     signOut: mockSignOut,
     signIn: {
-      username: vi.fn(),
+      email: vi.fn(),
       social: vi.fn(),
     },
     signUp: {
@@ -112,7 +112,7 @@ describe('ConsoleRootApp session recovery', () => {
       if (url === '/v1/me') {
         return jsonResponse({
           userId: 'user-1',
-          username: 'alice',
+          name: 'Alice',
           displayName: 'Alice',
           email: 'alice@example.com',
           emailVerified: true,

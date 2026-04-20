@@ -134,7 +134,7 @@ def test_delete_variant_removes_local_history_rows(monkeypatch: pytest.MonkeyPat
     assert draft_service.draft("v-delete") is None
 
 
-def test_export_import_library_v1_entries_preserves_current_version_and_sync_base(
+def test_export_import_library_v1_entries_preserves_draft_link_metadata(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -155,10 +155,6 @@ def test_export_import_library_v1_entries_preserves_current_version_and_sync_bas
 
     exported = json.loads(export_path.read_text(encoding="utf-8"))
     assert exported["schemaVersion"] == "f8variantlib/1"
-    assert exported["entries"][0]["localVersionNumber"] is None
-    assert exported["entries"][0]["syncBaseRemoteRevision"] is None
-    assert exported["entries"][0]["syncBaseRemoteVersionNumber"] is None
-    assert exported["entries"][0]["syncBaseLocalVersionNumber"] is None
     assert exported["entries"][0]["isLocalDraft"] is True
     assert exported["entries"][0]["draftOriginKind"] == "copy_remote"
     assert exported["entries"][0]["draftOriginAssetId"] == "remote-sync"
@@ -170,10 +166,6 @@ def test_export_import_library_v1_entries_preserves_current_version_and_sync_bas
 
     imported = replaced_service.entry("v-sync", include_uninstalled=True)
     assert imported is not None
-    assert imported.localVersionNumber is None
-    assert imported.syncBaseRemoteRevision is None
-    assert imported.syncBaseRemoteVersionNumber is None
-    assert imported.syncBaseLocalVersionNumber is None
     assert imported.isLocalDraft is True
     assert imported.draftOriginKind == F8VariantDraftOriginKind.copy_remote
     assert imported.draftOriginAssetId == "remote-sync"

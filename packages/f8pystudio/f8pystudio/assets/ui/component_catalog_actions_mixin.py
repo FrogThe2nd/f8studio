@@ -500,7 +500,6 @@ class ComponentCatalogActionsMixin:
                             source=remote_entry.source,
                             visibility=remote_entry.visibility,
                             remoteRevision=remote_entry.remoteRevision,
-                            remoteVersionNumber=remote_entry.remoteVersionNumber,
                             installed=True,
                             hasCachedContent=True,
                         )

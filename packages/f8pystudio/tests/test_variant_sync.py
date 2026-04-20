@@ -24,13 +24,11 @@ from f8pystudio.assets.variants.variant_models import (
     F8VariantRemoteVersionList,
     F8VariantRemoteUser,
     F8VariantSourceKind,
-    F8VariantSyncState,
     F8VariantVisibility,
     variant_now_iso,
 )
 from f8pystudio.assets.variants.variant_sync import VariantSyncClient
 from f8pystudio.assets.db import variant_remote_cache_table
-from f8pystudio.assets.ui.asset_sync_resolution import AssetSyncDirection
 from f8pystudio.assets.ui.variant_catalog_dialog import VariantCatalogDialog, variant_row_state_for_entries
 from f8pystudio.nodegraph.graph_variant_actions import GraphVariantActionsMixin
 from f8pysdk.specs import F8ServiceSpec, F8VariantRecord
@@ -56,7 +54,6 @@ def _make_entry(*, variant_id: str, source: F8VariantSourceKind, installed: bool
         source=source,
         visibility=F8VariantVisibility.private if source == F8VariantSourceKind.remote_private else None,
         remoteRevision=remote_revision,
-        syncState=F8VariantSyncState.synced if remote_revision else F8VariantSyncState.local_only,
         installed=installed,
     )
 
@@ -119,7 +116,7 @@ class _VariantApiHandler(BaseHTTPRequestHandler):
         return False
 
     def do_POST(self) -> None:  # noqa: N802
-        if self.path == "/api/auth/sign-in/username":
+        if self.path == "/api/auth/sign-in/email":
             self.server.last_login_user_agent = str(self.headers.get("User-Agent") or "")
             self._write_json(
                 200,
@@ -154,7 +151,7 @@ class _VariantApiHandler(BaseHTTPRequestHandler):
         if self.path == "/v1/me":
             if not self._check_auth():
                 return
-            self._write_json(200, {"userId": "u1", "username": "u", "displayName": "User One"})
+            self._write_json(200, {"userId": "u1", "name": "User One", "displayName": "User One", "email": "u@example.com"})
             return
         if self.path.startswith("/v1/variants?"):
             cookie = str(self.headers.get("Cookie") or "")
@@ -192,7 +189,7 @@ class _VariantApiHandler(BaseHTTPRequestHandler):
         if self.path == "/v1/variants/conflict-1":
             if not self._check_auth():
                 return
-            self._write_json(409, {"message": "conflict", "variantId": "conflict-1", "remoteRevision": "r-remote"})
+            self._write_json(409, {"message": "conflict", "variantId": "conflict-1", "revision": "r-remote"})
             return
         self._write_json(404, {"message": "missing"})
 
@@ -256,9 +253,6 @@ class _Server(ThreadingHTTPServer):
             "ownerDisplayName": "Remote User" if visibility == "public" else "User One",
             "visibility": visibility,
             "revision": "r-public" if visibility == "public" else "r1",
-            "latestRevision": "r-public" if visibility == "public" else "r1",
-            "versionNumber": 1,
-            "latestVersionNumber": 1,
             "createdAt": str(record["createdAt"]),
             "updatedAt": str(record["updatedAt"]),
             "editable": visibility != "public",
@@ -295,8 +289,7 @@ def test_variant_sync_client_uses_cookie_sessions_and_marks_conflicts(tmp_path: 
         client.set_base_url(f"http://127.0.0.1:{server.server_port}")
         anonymous_page = client.list_variants(scope="community", base_node_type="svc.a.op")
         assert anonymous_page.entries[0].record.variantId == "public-1"
-        assert anonymous_page.entries[0].remoteVersionNumber == 1
-        auth = client.login(base_url=f"http://127.0.0.1:{server.server_port}", username="u", password="p", remember=True)
+        auth = client.login(base_url=f"http://127.0.0.1:{server.server_port}", email="u@example.com", password="p", remember=True)
 
         assert auth.user.displayName == "User One"
         assert server.last_login_user_agent == "F8Studio/1.0"
@@ -318,7 +311,6 @@ def test_variant_sync_client_uses_cookie_sessions_and_marks_conflicts(tmp_path: 
         installed = client.install_variant("public-1")
         assert installed.installed is True
         assert service.variant_exists("public-1") is True
-        assert installed.remoteVersionNumber == 1
 
         local_entry = _make_entry(variant_id="local-1", source=F8VariantSourceKind.local)
         uploaded = client.upload_entry(local_entry)
@@ -338,7 +330,7 @@ def test_variant_sync_client_uses_cookie_sessions_and_marks_conflicts(tmp_path: 
             raise AssertionError("expected conflict error")
         marked = service.entry("conflict-1", include_uninstalled=True)
         assert marked is not None
-        assert marked.syncState == F8VariantSyncState.conflict
+        assert marked.remoteRevision == "r-remote"
         client.logout()
         assert client.current_access_token() == ""
         assert client.current_session() is None
@@ -363,7 +355,7 @@ def test_variant_sync_client_can_cache_remote_content_without_installing(tmp_pat
         )
         client = VariantSyncClient(settings=settings, catalog_service=service)
         base_url = f"http://127.0.0.1:{server.server_port}"
-        _ = client.login(base_url=base_url, username="u", password="p", remember=True)
+        _ = client.login(base_url=base_url, email="u@example.com", password="p", remember=True)
 
         cached = client.cache_variant_content("public-1")
         installed_entry = service.entry("public-1", include_uninstalled=False)
@@ -394,7 +386,7 @@ def test_variant_sync_client_rejects_legacy_saved_sessions(tmp_path: Path) -> No
                 "user": {
                     "userId": "u1",
                     "displayName": "Legacy User",
-                    "username": "legacy",
+                    "email": "legacy@example.com",
                 },
                 "accessToken": "old-token-only",
                 "lastUsedAt": "2026-04-04T00:00:00+00:00",
@@ -455,7 +447,7 @@ def test_variant_logout_clears_local_session_when_remote_signout_fails(tmp_path:
         )
         client = VariantSyncClient(settings=settings, catalog_service=service)
         base_url = f"http://127.0.0.1:{server.server_port}"
-        _ = client.login(base_url=base_url, username="u", password="p", remember=True)
+        _ = client.login(base_url=base_url, email="u@example.com", password="p", remember=True)
 
         def _raise_signout_timeout(_path: str, _payload: dict[str, object], *, authorized: bool) -> dict[str, object]:
             assert authorized is True
@@ -563,8 +555,6 @@ def test_variant_sync_client_accepts_summary_variant_payloads_without_record(tmp
                     "ownerUserId": "u2",
                     "ownerDisplayName": "Remote User",
                     "revision": "r-summary",
-                    "latestRevision": "r-summary",
-                    "latestVersionNumber": 7,
                     "createdAt": now,
                     "updatedAt": now,
                     "subscribed": True,
@@ -586,7 +576,6 @@ def test_variant_sync_client_accepts_summary_variant_payloads_without_record(tmp
     assert entry.record.operatorClass is None
     assert entry.record.spec == {}
     assert entry.remoteRevision == "r-summary"
-    assert entry.remoteVersionNumber == 7
     assert entry.subscribed is True
 
 
@@ -640,7 +629,6 @@ def test_variant_refresh_scope_page_preserves_cached_content_for_matching_revisi
         update={
             "downloadedAt": "2026-04-07T00:00:00+00:00",
             "hasCachedContent": True,
-            "remoteVersionNumber": 1,
         },
     )
     service.replace_remote_entries([existing_entry])
@@ -657,11 +645,8 @@ def test_variant_refresh_scope_page_preserves_cached_content_for_matching_revisi
             "visibility": F8VariantVisibility.public,
             "ownerUserId": "u2",
             "ownerDisplayName": "Remote User",
-            "librarySlug": "community",
             "hasCachedContent": False,
             "downloadedAt": None,
-            "remoteVersionNumber": 2,
-            "syncState": F8VariantSyncState.synced,
         },
     )
 
@@ -687,7 +672,7 @@ def test_variant_refresh_scope_page_preserves_cached_content_for_matching_revisi
     assert refreshed_entry.hasCachedContent is True
     assert refreshed_entry.downloadedAt == "2026-04-07T00:00:00+00:00"
     assert refreshed_entry.record.spec == {"label": "public-1"}
-    assert refreshed_entry.remoteVersionNumber == 2
+    assert refreshed_entry.remoteRevision == "r-public"
 
 
 def test_variant_refresh_scope_page_preserves_cached_preview_without_marking_installed(tmp_path: Path, monkeypatch) -> None:
@@ -709,7 +694,6 @@ def test_variant_refresh_scope_page_preserves_cached_preview_without_marking_ins
         update={
             "downloadedAt": "2026-04-07T00:00:00+00:00",
             "hasCachedContent": True,
-            "remoteVersionNumber": 1,
         },
     )
     service.replace_remote_entries([existing_entry])
@@ -726,11 +710,8 @@ def test_variant_refresh_scope_page_preserves_cached_preview_without_marking_ins
             "visibility": F8VariantVisibility.public,
             "ownerUserId": "u2",
             "ownerDisplayName": "Remote User",
-            "librarySlug": "community",
             "hasCachedContent": False,
             "downloadedAt": None,
-            "remoteVersionNumber": 2,
-            "syncState": F8VariantSyncState.synced,
         },
     )
 
@@ -797,7 +778,6 @@ def test_variant_upload_uses_latest_local_snapshot_only(tmp_path: Path, monkeypa
         ),
         update={
             "visibility": F8VariantVisibility.private,
-            "remoteVersionNumber": 1,
             "ownerUserId": "u1",
             "ownerDisplayName": "User One",
         },
@@ -823,8 +803,6 @@ def test_variant_upload_uses_latest_local_snapshot_only(tmp_path: Path, monkeypa
             "ownerDisplayName": "User One",
             "visibility": "private",
             "revision": f"r{next_version}",
-            "latestRevision": f"r{next_version}",
-            "latestVersionNumber": next_version,
             "createdAt": str(record_payload["createdAt"]),
             "updatedAt": str(record_payload["updatedAt"]),
             "installed": True,
@@ -841,7 +819,6 @@ def test_variant_upload_uses_latest_local_snapshot_only(tmp_path: Path, monkeypa
                 "source": F8VariantSourceKind.remote_private,
                 "visibility": F8VariantVisibility.private,
                 "remoteRevision": "r1",
-                "remoteVersionNumber": 1,
                 "installed": True,
                 "hasCachedContent": True,
             },
@@ -851,7 +828,6 @@ def test_variant_upload_uses_latest_local_snapshot_only(tmp_path: Path, monkeypa
     assert len(request_payloads) == 1
     assert request_payloads[0]["record"]["spec"]["label"] == "v3"
     assert "changeSummary" not in request_payloads[0]
-    assert uploaded.remoteVersionNumber == 2
     assert uploaded.remoteRevision == "r2"
 
 
@@ -868,16 +844,13 @@ def test_variant_remote_cache_load_cleans_empty_variant_ids(tmp_path: Path) -> N
                 base_node_type="svc.a.op",
                 service_class="svc.test",
                 operator_class="op.test",
-                remote_version_number=1,
                 created_at="2026-04-04T00:00:00+00:00",
                 updated_at="2026-04-04T00:00:00+00:00",
                 source="remote_public",
                 visibility="public",
                 owner_user_id="u1",
                 owner_display_name="User One",
-                library_slug="community",
                 remote_revision="r1",
-                sync_state="synced",
                 downloaded_at=None,
                 installed=0,
                 has_cached_content=0,
@@ -909,16 +882,13 @@ def test_variant_remote_cache_row_with_spec_loads_as_installed(tmp_path: Path) -
                 base_node_type=str(entry.record.baseNodeType),
                 service_class=str(entry.record.serviceClass),
                 operator_class=str(entry.record.operatorClass),
-                remote_version_number=2,
                 created_at=str(entry.record.createdAt),
                 updated_at=str(entry.record.updatedAt),
                 source="remote_public",
                 visibility="public",
                 owner_user_id="u1",
                 owner_display_name="User One",
-                library_slug="community",
                 remote_revision="r1",
-                sync_state="synced",
                 downloaded_at="2026-04-04T00:00:00+00:00",
                 installed=1,
                 has_cached_content=1,
@@ -932,67 +902,59 @@ def test_variant_remote_cache_row_with_spec_loads_as_installed(tmp_path: Path) -
     assert loaded.record.variantId == "remote-1"
     assert loaded.installed is True
     assert loaded.hasCachedContent is True
-    assert loaded.remoteVersionNumber == 2
     assert loaded.record.spec == {"label": "remote-1"}
 
 
-def test_variant_row_state_badges_cover_remote_both_and_conflict() -> None:
+def test_variant_row_state_badges_cover_local_remote_and_both() -> None:
     local_entry = _make_entry(variant_id="asset-1", source=F8VariantSourceKind.local)
-    local_entry = copy_model(local_entry, update={"localVersionNumber": 4})
     remote_entry = _make_entry(variant_id="asset-1", source=F8VariantSourceKind.remote_public, installed=True, remote_revision="r1")
     remote_entry = copy_model(
         remote_entry,
-        update={"visibility": F8VariantVisibility.public, "remoteVersionNumber": 6},
+        update={"visibility": F8VariantVisibility.public},
     )
     both_state = variant_row_state_for_entries(
         variant_id="asset-1",
         local_entry=local_entry,
         remote_entry=remote_entry,
     )
-    conflict_remote = _make_entry(variant_id="asset-2", source=F8VariantSourceKind.remote_public, installed=True, remote_revision="r1")
-    conflict_remote = copy_model(
-        conflict_remote,
-        update={
-            "visibility": F8VariantVisibility.public,
-            "syncState": F8VariantSyncState.conflict,
-            "remoteVersionNumber": 3,
-        },
-    )
-    conflict_state = variant_row_state_for_entries(
+    installed_remote_state = variant_row_state_for_entries(
         variant_id="asset-2",
         local_entry=None,
-        remote_entry=conflict_remote,
+        remote_entry=copy_model(
+            _make_entry(variant_id="asset-2", source=F8VariantSourceKind.remote_public, installed=True, remote_revision="r1"),
+            update={"visibility": F8VariantVisibility.public},
+        ),
     )
     remote_state = variant_row_state_for_entries(
         variant_id="asset-3",
         local_entry=None,
         remote_entry=copy_model(
             _make_entry(variant_id="asset-3", source=F8VariantSourceKind.remote_public, installed=False, remote_revision="r1"),
-            update={"visibility": F8VariantVisibility.public, "remoteVersionNumber": 2},
+            update={"visibility": F8VariantVisibility.public},
         ),
     )
     synced_state = variant_row_state_for_entries(
         variant_id="asset-4",
-        local_entry=copy_model(_make_entry(variant_id="asset-4", source=F8VariantSourceKind.local), update={"localVersionNumber": 6}),
+        local_entry=_make_entry(variant_id="asset-4", source=F8VariantSourceKind.local),
         remote_entry=copy_model(
             _make_entry(variant_id="asset-4", source=F8VariantSourceKind.remote_public, installed=True, remote_revision="r1"),
-            update={"visibility": F8VariantVisibility.public, "remoteVersionNumber": 6},
+            update={"visibility": F8VariantVisibility.public},
         ),
     )
     local_changes_state = variant_row_state_for_entries(
         variant_id="asset-5",
-        local_entry=copy_model(_make_entry(variant_id="asset-5", source=F8VariantSourceKind.local), update={"localVersionNumber": 7}),
+        local_entry=_make_entry(variant_id="asset-5", source=F8VariantSourceKind.local),
         remote_entry=copy_model(
             _make_entry(variant_id="asset-5", source=F8VariantSourceKind.remote_public, installed=True, remote_revision="r1"),
-            update={"visibility": F8VariantVisibility.public, "remoteVersionNumber": 6},
+            update={"visibility": F8VariantVisibility.public},
         ),
     )
 
-    assert both_state.badge_texts() == ["both", "public", "remote newer", "L4", "R6"]
-    assert conflict_state.badge_texts() == ["both", "public", "conflict", "R3"]
-    assert remote_state.badge_texts() == ["remote", "public", "R2"]
-    assert synced_state.badge_texts() == ["both", "public", "synced", "L6", "R6"]
-    assert local_changes_state.badge_texts() == ["both", "public", "local changes", "L7", "R6"]
+    assert both_state.badge_texts() == ["both", "public"]
+    assert installed_remote_state.badge_texts() == ["both", "public"]
+    assert remote_state.badge_texts() == ["remote", "public"]
+    assert synced_state.badge_texts() == ["both", "public"]
+    assert local_changes_state.badge_texts() == ["both", "public"]
 
 
 def test_variant_manager_sync_button_is_disabled_for_owned_remote_without_draft(monkeypatch, tmp_path: Path) -> None:
@@ -1015,7 +977,6 @@ def test_variant_manager_sync_button_is_disabled_for_owned_remote_without_draft(
         ),
         update={
             "visibility": F8VariantVisibility.private,
-            "remoteVersionNumber": 1,
             "ownerUserId": "u1",
             "ownerDisplayName": "User One",
         },
@@ -1032,7 +993,7 @@ def test_variant_manager_sync_button_is_disabled_for_owned_remote_without_draft(
     monkeypatch.setattr(
         dialog._sync_client,
         "current_user",
-        lambda: F8VariantRemoteUser(userId="u1", displayName="User One", username="user-one"),
+        lambda: F8VariantRemoteUser(userId="u1", name="User One", displayName="User One", email="user-one@example.com"),
     )
     dialog._scope_tabs.setCurrentIndex(dialog._TAB_MINE)
     dialog._refresh_action_buttons(remote_entry)
@@ -1085,8 +1046,6 @@ def test_variant_publish_new_draft_keeps_linked_draft_and_restores_remote_owner(
                 "ownerUserId": "u1",
                 "ownerDisplayName": "User One",
                 "remoteRevision": "r1",
-                "remoteVersionNumber": 1,
-                "syncState": F8VariantSyncState.synced,
                 "installed": True,
                 "hasCachedContent": True,
             },
@@ -1128,7 +1087,6 @@ def test_variant_manager_load_owned_remote_only_updates_remote_cache(monkeypatch
         ),
         update={
             "visibility": F8VariantVisibility.private,
-            "remoteVersionNumber": 1,
             "ownerUserId": "u1",
             "ownerDisplayName": "User One",
         },
@@ -1146,7 +1104,7 @@ def test_variant_manager_load_owned_remote_only_updates_remote_cache(monkeypatch
     monkeypatch.setattr(
         dialog._sync_client,
         "current_user",
-        lambda: F8VariantRemoteUser(userId="u1", displayName="User One", username="user-one"),
+        lambda: F8VariantRemoteUser(userId="u1", name="User One", displayName="User One", email="user-one@example.com"),
     )
 
     def _install_variant(_variant_id: str) -> F8VariantEntry:
@@ -1191,7 +1149,6 @@ def test_variant_manager_copy_to_draft_creates_disconnected_local_draft(monkeypa
             remote_revision="r7",
         ),
         update={
-            "remoteVersionNumber": 7,
             "visibility": F8VariantVisibility.public,
             "ownerUserId": "u2",
             "ownerDisplayName": "Remote User",
@@ -1217,10 +1174,6 @@ def test_variant_manager_copy_to_draft_creates_disconnected_local_draft(monkeypa
     assert duplicated.isLocalDraft is True
     assert duplicated.draftOriginAssetId is None
     assert duplicated.draftOriginRevision is None
-    assert duplicated.syncBaseRemoteRevision is None
-    assert duplicated.syncBaseRemoteVersionNumber is None
-    assert duplicated.syncBaseLocalVersionNumber is None
-    assert duplicated.remoteVersionNumber is None
 
     dialog.close()
 
@@ -1279,7 +1232,6 @@ def test_variant_row_state_prefers_remote_owner_when_remote_head_exists() -> Non
         ),
         update={
             "visibility": F8VariantVisibility.private,
-            "remoteVersionNumber": 1,
             "ownerUserId": "u1",
             "ownerDisplayName": "User One",
         },
@@ -1311,7 +1263,6 @@ def test_variant_manager_save_over_remote_offload_seeds_remote_sync_base(monkeyp
         ),
         update={
             "visibility": F8VariantVisibility.private,
-            "remoteVersionNumber": 4,
             "ownerUserId": "u1",
             "ownerDisplayName": "User One",
         },
@@ -1335,7 +1286,7 @@ def test_variant_manager_save_over_remote_offload_seeds_remote_sync_base(monkeyp
     monkeypatch.setattr(
         dialog._sync_client,
         "current_user",
-        lambda: F8VariantRemoteUser(userId="u1", displayName="User One", username="user-one"),
+        lambda: F8VariantRemoteUser(userId="u1", name="User One", displayName="User One", email="user-one@example.com"),
     )
     monkeypatch.setattr(dialog, "_render_browser_from_state", lambda *args, **kwargs: None)
 
@@ -1343,8 +1294,6 @@ def test_variant_manager_save_over_remote_offload_seeds_remote_sync_base(monkeyp
 
     assert saved_entry.isLocalDraft is True
     assert saved_entry.record.variantId != "owned-overwrite"
-    assert saved_entry.localVersionNumber is None
-    assert saved_entry.remoteVersionNumber is None
     assert saved_entry.draftOriginAssetId == "owned-overwrite"
     assert saved_entry.draftOriginRevision == "r4"
 
@@ -1357,7 +1306,6 @@ def test_variant_manager_save_over_remote_offload_seeds_remote_sync_base(monkeyp
             update={
                 "record": copy_model(entry.record, update={"variantId": "owned-overwrite"}),
                 "remoteRevision": "r5",
-                "remoteVersionNumber": 5,
                 "installed": True,
                 "hasCachedContent": True,
             },
@@ -1401,7 +1349,6 @@ def test_variant_manager_offload_keeps_draft_and_clears_remote_cache(tmp_path: P
         ),
         update={
             "visibility": F8VariantVisibility.private,
-            "remoteVersionNumber": 2,
             "ownerUserId": "u1",
             "ownerDisplayName": "User One",
             "hasCachedContent": True,
@@ -1413,10 +1360,10 @@ def test_variant_manager_offload_keeps_draft_and_clears_remote_cache(tmp_path: P
             remote_entry,
             update={
                 "source": F8VariantSourceKind.local,
-                "localVersionNumber": 2,
-                "syncBaseRemoteRevision": "r2",
-                "syncBaseRemoteVersionNumber": 2,
-                "syncBaseLocalVersionNumber": 2,
+                "isLocalDraft": True,
+                "draftOriginKind": F8VariantDraftOriginKind.copy_remote,
+                "draftOriginAssetId": "owned-offload",
+                "draftOriginRevision": "r2",
             },
         )
     )
@@ -1464,7 +1411,6 @@ def test_variant_manager_pull_replace_does_not_mutate_local_draft(monkeypatch, t
         ),
         update={
             "visibility": F8VariantVisibility.private,
-            "remoteVersionNumber": 4,
             "ownerUserId": "u1",
             "ownerDisplayName": "User One",
             "hasCachedContent": True,
@@ -1519,7 +1465,6 @@ def test_variant_manager_mine_buttons_hide_sync_for_owned_remote_without_local(m
         ),
         update={
             "visibility": F8VariantVisibility.private,
-            "remoteVersionNumber": 3,
             "ownerUserId": "u1",
             "ownerDisplayName": "User One",
         },
@@ -1536,7 +1481,7 @@ def test_variant_manager_mine_buttons_hide_sync_for_owned_remote_without_local(m
     monkeypatch.setattr(
         dialog._sync_client,
         "current_user",
-        lambda: F8VariantRemoteUser(userId="u1", displayName="User One", username="user-one"),
+        lambda: F8VariantRemoteUser(userId="u1", name="User One", displayName="User One", email="user-one@example.com"),
     )
 
     dialog._scope_tabs.setCurrentIndex(dialog._TAB_MINE)
@@ -1566,7 +1511,6 @@ def test_variant_manager_resolve_overwrite_target_uses_local_draft_only(monkeypa
         update={
             "record": copy_model(_make_entry(variant_id="owned-name", source=F8VariantSourceKind.remote_private).record, update={"name": "Same Name"}),
             "visibility": F8VariantVisibility.private,
-            "remoteVersionNumber": 1,
             "ownerUserId": "u1",
             "ownerDisplayName": "User One",
         },
@@ -1582,7 +1526,7 @@ def test_variant_manager_resolve_overwrite_target_uses_local_draft_only(monkeypa
     monkeypatch.setattr(
         dialog._sync_client,
         "current_user",
-        lambda: F8VariantRemoteUser(userId="u1", displayName="User One", username="user-one"),
+        lambda: F8VariantRemoteUser(userId="u1", name="User One", displayName="User One", email="user-one@example.com"),
     )
     draft_service = dialog._draft_service_for_catalog()
     _ = draft_service.create_draft_from_record(
@@ -1786,7 +1730,7 @@ def test_variant_manager_history_uses_remote_version_browser(monkeypatch, tmp_pa
             installed=False,
             remote_revision="r1",
         ),
-        update={"remoteVersionNumber": 2},
+        update={},
     )
     dialog = VariantCatalogDialog(parent=None, base_node_type="svc.a.op", base_node_name="Variant", node_graph=None)
     dialog._sync_client = VariantSyncClient(settings=settings, catalog_service=service)
