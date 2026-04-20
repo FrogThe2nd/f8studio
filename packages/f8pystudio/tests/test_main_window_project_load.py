@@ -123,7 +123,7 @@ class _FakePrepareBeforeShowFailureMain(_FakePrepareBeforeShowMain):
 
 def test_auto_load_project_starts_background_worker_once(monkeypatch) -> None:
     _FakeWorker.created = []
-    monkeypatch.setattr("f8pystudio.ui.mainwin.main_window._ProjectAutoLoadWorker", _FakeWorker)
+    monkeypatch.setattr("f8pystudio.ui.mainwin.main_window_project_mixin._ProjectAutoLoadWorker", _FakeWorker)
     fake_main = _FakeMain()
 
     F8StudioMainWin._auto_load_project(fake_main)

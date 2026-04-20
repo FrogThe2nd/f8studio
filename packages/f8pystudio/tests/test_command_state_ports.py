@@ -23,6 +23,7 @@ from f8pystudio.nodegraph.operator_basenode import F8StudioOperatorBaseNode
 from f8pystudio.nodegraph.service_basenode import F8StudioServiceBaseNode
 from f8pystudio.nodegraph.runtime_compiler import compile_global_runtime_graph
 from f8pystudio.operators.patch_hub import PatchHubRuntimeNode
+from f8pystudio.operators._viz_base import viz_sampling_state_fields
 from f8pystudio.nodegraph.service_spec_sync import build_command_port
 from f8pystudio.studio_specs.registry import SERVICE_CLASS as STUDIO_SERVICE_CLASS
 
@@ -404,6 +405,75 @@ def test_runtime_compiler_attaches_pyengine_auto_sample_request_to_source_servic
     assert int(request.intervalMs) == 25
     assert bool(request.deliverLocal) is False
     assert bool(request.publishCrossService) is True
+
+
+def test_runtime_compiler_defaults_viz_sampling_mode_to_auto_when_missing() -> None:
+    service = _FakeServiceNode(
+        id="svc_engine",
+        spec=F8ServiceSpec(
+            serviceClass="f8.pyengine",
+            label="Engine",
+        ),
+    )
+    src = _FakeOperatorNode(
+        id="op_src",
+        svcId="svc_engine",
+        spec=F8OperatorSpec(
+            serviceClass="f8.pyengine",
+            operatorClass="f8.test.source",
+            label="Source",
+            dataOutPorts=[F8DataPortSpec(name="out", valueSchema=any_schema(), required=False)],
+        ),
+    )
+    dst = _FakeOperatorNode(
+        id="viz_text",
+        svcId="unused",
+        spec=F8OperatorSpec(
+            serviceClass=STUDIO_SERVICE_CLASS,
+            operatorClass="f8.viz.text",
+            label="Text Viz",
+            dataInPorts=[F8DataPortSpec(name="inputData", valueSchema=any_schema(), required=False)],
+            stateFields=[
+                F8StateSpec(
+                    name="upstreamSamplingMode",
+                    valueSchema=any_schema(),
+                    access=F8StateAccess.rw,
+                    showOnNode=False,
+                ),
+                F8StateSpec(
+                    name="upstreamSampleIntervalMs",
+                    valueSchema=number_schema(),
+                    access=F8StateAccess.rw,
+                    showOnNode=False,
+                ),
+            ],
+        ),
+    )
+    state_values = {"upstreamSampleIntervalMs": 25}
+    dst.model = SimpleNamespace(
+        properties=state_values,
+        custom_properties={},
+        get_property=lambda name: state_values[name],
+    )
+
+    src.add_output_port("out[D]").connect_to(dst.add_input_port("[D]inputData"))
+
+    graph = compile_global_runtime_graph(services=[service], operators=[src, dst], service_nodes=[])
+
+    runtime_service = next(service for service in list(graph.services or []) if str(service.serviceId) == "svc_engine")
+    requests = list(runtime_service.autoSampleRequests or [])
+    assert len(requests) == 1
+    request = requests[0]
+    assert str(request.sourceNodeId) == "op_src"
+    assert str(request.sourcePort) == "out"
+    assert int(request.intervalMs) == 25
+
+
+def test_viz_sampling_state_fields_default_to_auto() -> None:
+    fields = viz_sampling_state_fields(show_on_node=False)
+    upstream_mode_field = next(field for field in fields if str(field.name) == "upstreamSamplingMode")
+
+    assert upstream_mode_field.valueSchema.default == "auto"
 
 
 def test_runtime_compiler_lowers_patch_hub_data_fanout() -> None:

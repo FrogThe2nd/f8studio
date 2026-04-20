@@ -14,6 +14,9 @@ if ROOT not in sys.path:
 from f8pystudio.assets.variants.variant_ids import build_variant_node_type  # noqa: E402
 from f8pystudio.ui.mainwin.main_window import F8StudioMainWin  # noqa: E402
 from f8pystudio.ui.mainwin.node_library_widget import F8StudioNodeLibraryWidget  # noqa: E402
+from f8pystudio.ui.mainwin.node_library_tree_build_mixin import NodeLibraryTreeBuildMixin  # noqa: E402
+from f8pystudio.ui.mainwin.node_library_tree_interaction_mixin import NodeLibraryTreeInteractionMixin  # noqa: E402
+from f8pystudio.ui.mainwin.node_library_tree_state_mixin import NodeLibraryTreeStateMixin  # noqa: E402
 from f8pystudio.ui.support.node_category_labels import display_node_category_label  # noqa: E402
 
 
@@ -94,6 +97,30 @@ def test_library_keeps_placement_for_non_variant(monkeypatch) -> None:
     monkeypatch.setattr("f8pystudio.ui.mainwin.node_library_widget.variant_exists", lambda _vid: False)
     widget._cancel_invalid_variant_placement_if_needed()
     assert fake_graph.cancel_node_placement_calls == 0
+
+
+def test_library_unsubscribes_when_variants_changed_hits_deleted_tree(monkeypatch) -> None:
+    _ensure_app()
+    callbacks: list[object] = []
+
+    def _subscribe(callback):
+        callbacks.append(callback)
+        return lambda: callbacks.remove(callback) if callback in callbacks else None
+
+    monkeypatch.setattr("f8pystudio.ui.mainwin.node_library_widget.subscribe_variants_changed", _subscribe)
+    widget = F8StudioNodeLibraryWidget(node_graph=None)
+
+    class _DeletedTreeWidget:
+        def update(self) -> None:
+            raise RuntimeError("Internal C++ object (_F8StudioNodesTreeWidget) already deleted.")
+
+    widget._tree = _DeletedTreeWidget()  # type: ignore[assignment]
+
+    callback = callbacks[0]
+    callback()
+
+    assert callbacks == []
+    assert widget._unsubscribe_variants_changed is None
 
 
 def test_library_search_variants_checkbox_persists_user_choice(monkeypatch, tmp_path) -> None:
@@ -258,7 +285,13 @@ def test_escape_noop_when_popup_active(monkeypatch) -> None:
 
     fake_graph = _FakeMainGraph(_FakeViewer(graph_active=True, node_active=True))
     fake_main = SimpleNamespace(studio_graph=fake_graph)
-
     F8StudioMainWin._on_escape_cancel_placement(fake_main)
     assert fake_graph.cancel_graph_placement_calls == 0
     assert fake_graph.cancel_node_placement_calls == 0
+
+
+def test_node_library_tree_widget_uses_mixins_directly() -> None:
+    tree_cls = F8StudioNodeLibraryWidget(node_graph=None)._tree.__class__
+    assert tree_cls._build_search_blob is NodeLibraryTreeInteractionMixin._build_search_blob
+    assert tree_cls._start_tree_build is NodeLibraryTreeBuildMixin._start_tree_build
+    assert tree_cls._remember_item_expanded_state is NodeLibraryTreeStateMixin._remember_item_expanded_state

@@ -21,7 +21,6 @@ from f8pystudio.ui.dialogs import node_spec_edit_dialogs
 from f8pystudio.ui.dialogs.schema_builder_dialog import schema_from_json_obj
 from f8pystudio.ui.widgets import node_property_panel as npw
 from f8pystudio.ui.widgets.node_property_panel import commands as property_panel_commands
-from f8pystudio.ui.widgets.node_property_panel import editor as property_panel_editor
 from f8pystudio.ui.widgets.node_property_panel import ports as property_panel_ports
 
 
@@ -198,8 +197,6 @@ def test_open_state_field_editor_allows_missing_locked_read_only_dialog(monkeypa
         def exec_(self) -> int:
             return QtWidgets.QDialog.Rejected
 
-    monkeypatch.setattr(property_panel_editor, "_F8EditStateFieldDialog", _FakeStateDialog)
-
     spec = F8ServiceSpec(
         serviceClass="f8.test",
         label="Test",
@@ -209,6 +206,8 @@ def test_open_state_field_editor_allows_missing_locked_read_only_dialog(monkeypa
     node = _FakeStateNode(spec, missing_locked=True)
 
     class _FakeEditor:
+        _STATE_FIELD_DIALOG_CLS = _FakeStateDialog
+
         def __init__(self, backend_node: _FakeStateNode) -> None:
             self._node = backend_node
 

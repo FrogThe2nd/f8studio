@@ -56,6 +56,7 @@ class _LayoutHarness(QtWidgets.QMainWindow):
     _write_layout_bytes = F8StudioMainWin._write_layout_bytes
     _read_saved_log_level_name = F8StudioMainWin._read_saved_log_level_name
     _write_saved_log_level_name = F8StudioMainWin._write_saved_log_level_name
+    _sync_log_level_actions = F8StudioMainWin._sync_log_level_actions
     _apply_log_level = F8StudioMainWin._apply_log_level
     _restore_saved_log_level = F8StudioMainWin._restore_saved_log_level
     _on_log_level_toggled = F8StudioMainWin._on_log_level_toggled
@@ -63,6 +64,9 @@ class _LayoutHarness(QtWidgets.QMainWindow):
     _capture_default_dock_layout_state = F8StudioMainWin._capture_default_dock_layout_state
     _restore_saved_window_layout = F8StudioMainWin._restore_saved_window_layout
     _save_window_layout = F8StudioMainWin._save_window_layout
+    _add_menu_section = F8StudioMainWin._add_menu_section
+    _build_view_menu = F8StudioMainWin._build_view_menu
+    _build_log_level_menu = F8StudioMainWin._build_log_level_menu
     _setup_menu = F8StudioMainWin._setup_menu
     _on_reset_layout_triggered = F8StudioMainWin._on_reset_layout_action
     _read_saved_auto_proxy_enabled = F8StudioMainWin._read_saved_auto_proxy_enabled
@@ -92,6 +96,14 @@ class _LayoutHarness(QtWidgets.QMainWindow):
             self.auto_proxy_enabled_state = self.auto_proxy_enabled()
             self.auto_proxy_calls.append(self.auto_proxy_enabled_state)
 
+    class _FakeLogDock(QtWidgets.QDockWidget):
+        def __init__(self, title: str, parent: QtWidgets.QWidget | None = None) -> None:
+            super().__init__(title, parent)
+            self.minimum_level = logging.getLogger().getEffectiveLevel()
+
+        def set_minimum_level(self, level: int) -> None:
+            self.minimum_level = int(level)
+
     class _FakeStudioGraph:
         def __init__(self, viewer: "_LayoutHarness._FakeViewer") -> None:
             self._viewer = viewer
@@ -110,7 +122,7 @@ class _LayoutHarness(QtWidgets.QMainWindow):
         self._properties_dock.setWidget(QtWidgets.QLabel("properties", self._properties_dock))
         self.addDockWidget(QtCore.Qt.LeftDockWidgetArea, self._properties_dock)
 
-        self._log_dock = QtWidgets.QDockWidget("Service Logs", self)
+        self._log_dock = self._FakeLogDock("Service Logs", self)
         self._log_dock.setObjectName("ServiceLogsDock")
         self._log_dock.setWidget(QtWidgets.QLabel("logs", self._log_dock))
         self.addDockWidget(QtCore.Qt.BottomDockWidgetArea, self._log_dock)
@@ -141,6 +153,7 @@ class _LayoutHarness(QtWidgets.QMainWindow):
         self._open_project_action = self._create_action("Open Project", handler=lambda: None)
         self._quicksave_project_action = self._create_action("Quick Save", handler=lambda: None)
         self._save_project_as_action = self._create_action("Save Project As", handler=lambda: None)
+        self._clear_all_nodes_action = self._create_action("Clear All Nodes", handler=lambda: None)
         self._auto_save_action = self._create_action(
             "Auto Save",
             handler=lambda _checked: None,
@@ -182,6 +195,9 @@ class _LayoutHarness(QtWidgets.QMainWindow):
 
     def _layout_settings(self) -> QtCore.QSettings:
         return self._settings
+
+    def _ordered_view_docks(self) -> list[QtWidgets.QDockWidget]:
+        return list(self._dock_widgets)
 
     def _setup_view_menu(self) -> None:
         self._setup_menu()
@@ -313,5 +329,29 @@ def test_log_level_menu_applies_and_restores_saved_level(tmp_path: Path) -> None
         window_restore._setup_log_level_menu()
         assert root_logger.level == logging.DEBUG
         assert window_restore._log_level_actions[logging.DEBUG].isChecked() is True
+    finally:
+        root_logger.setLevel(original_level)
+
+
+def test_restore_saved_log_level_updates_existing_menu_selection(tmp_path: Path) -> None:
+    _ensure_app()
+    settings = _new_settings(tmp_path / "studio-layout.ini")
+    root_logger = logging.getLogger()
+    original_level = root_logger.level
+    try:
+        root_logger.setLevel(logging.WARNING)
+        writer = _LayoutHarness(settings)
+        writer._write_saved_log_level_name(level_name="INFO")
+
+        restored = _LayoutHarness(QtCore.QSettings(str(tmp_path / "studio-layout.ini"), QtCore.QSettings.IniFormat))
+        restored._setup_log_level_menu()
+
+        assert restored._log_level_actions[logging.WARNING].isChecked() is True
+
+        restored._restore_saved_log_level()
+
+        assert root_logger.level == logging.INFO
+        assert restored._log_level_actions[logging.INFO].isChecked() is True
+        assert restored._log_dock.minimum_level == logging.INFO
     finally:
         root_logger.setLevel(original_level)

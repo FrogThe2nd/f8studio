@@ -5,7 +5,7 @@ import struct
 import time
 from dataclasses import dataclass
 from multiprocessing.shared_memory import SharedMemory
-from typing import Optional, Tuple
+from typing import Optional, Tuple, cast
 
 from .core import open_shared_memory_create, open_shared_memory_readonly
 from .naming import audio_shm_name, frame_event_name
@@ -119,9 +119,10 @@ class AudioShmReader:
 
     @property
     def buf(self) -> memoryview:
-        if not self._shm:
+        shm = self._shm
+        if shm is None:
             raise RuntimeError("AudioShmReader is not open")
-        return self._shm.buf
+        return cast(memoryview, shm.buf)
 
     def wait_new_chunk(self, timeout_ms: int = 10) -> bool:
         if self._event:
@@ -199,9 +200,10 @@ class AudioShmWriter:
 
     @property
     def buf(self) -> memoryview:
-        if not self._shm:
+        shm = self._shm
+        if shm is None:
             raise RuntimeError("AudioShmWriter is not open")
-        return self._shm.buf
+        return cast(memoryview, shm.buf)
 
     def _init_header(self) -> None:
         bytes_per_sample = 4 if self.fmt == SAMPLE_FORMAT_F32LE else 2

@@ -107,11 +107,13 @@ class InMemoryTransport:
     ) -> Any:
         if cb is None:
             return None
-        self._cluster.subscribe(str(subject), cb)
+        cluster = self._cluster
+        subject_name = str(subject)
+        cluster.subscribe(subject_name, cb)
 
         class _Sub:
-            async def unsubscribe(self_inner) -> None:
-                self._cluster.unsubscribe(str(subject), cb)
+            async def unsubscribe(self) -> None:
+                cluster.unsubscribe(subject_name, cb)
 
         return _Sub()
 

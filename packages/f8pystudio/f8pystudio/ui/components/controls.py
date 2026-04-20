@@ -14,6 +14,7 @@ from qtpy import QtCore, QtGui, QtWidgets
 
 from ...ui.support.ui_control import parse_ui_control
 from ...ui.support.ui_notifications import show_warning
+from ...ui.support.qt_lifecycle import qt_object_is_valid as _qt_object_is_valid
 
 _COMBO_REOPEN_GUARD_S = 0.05
 _COMBO_POPUP_FLAGS = QtCore.Qt.Popup | QtCore.Qt.FramelessWindowHint | QtCore.Qt.NoDropShadowWindowHint
@@ -220,14 +221,21 @@ class F8OptionCombo(QtWidgets.QComboBox):
     def _on_popup_destroyed(self, _obj: Any) -> None:
         self._popup = None
 
+    def _delete_popup_later_on_destroyed(self, _obj: Any = None) -> None:
+        popup = self._popup
+        self._popup = None
+        if not _qt_object_is_valid(popup):
+            return
+        popup.deleteLater()
+
     def _ensure_popup(self) -> _F8ComboPopup:
         popup = self._popup
         if popup is not None:
             return popup
         popup = _F8ComboPopup(self)
         popup.valueSelected.connect(self._on_popup_selected)  # type: ignore[attr-defined]
-        popup.destroyed.connect(lambda _obj=None: self._on_popup_destroyed(_obj))  # type: ignore[attr-defined]
-        self.destroyed.connect(lambda _obj=None, current_popup=popup: current_popup.deleteLater())  # type: ignore[attr-defined]
+        popup.destroyed.connect(self._on_popup_destroyed)  # type: ignore[attr-defined]
+        self.destroyed.connect(self._delete_popup_later_on_destroyed)  # type: ignore[attr-defined]
         self._popup = popup
         return popup
 

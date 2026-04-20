@@ -10,6 +10,13 @@ from f8pystudio.ui.widgets.node_property_panel.editor import (
     F8StudioSingleNodePropertiesWidget,
     _NodePropEditorViewState,
 )
+from f8pystudio.ui.widgets.node_property_panel.editor_build_mixin import NodePropertyEditorBuildMixin
+from f8pystudio.ui.widgets.node_property_panel.editor_tabs_mixin import NodePropertyEditorTabsMixin
+from f8pystudio.ui.widgets.node_property_panel.editor_view_state_mixin import NodePropertyEditorViewStateMixin
+from f8pystudio.ui.widgets.node_property_panel.graph_sync_mixin import NodePropertyPanelGraphSyncMixin
+from f8pystudio.ui.widgets.node_property_panel.selection_mixin import NodePropertyPanelSelectionMixin
+from f8pystudio.ui.widgets.node_property_panel.state_fields_mixin import NodePropertyStateFieldsMixin
+from f8pystudio.ui.widgets.node_property_panel import F8StudioNodePropEditorWidget
 
 
 def _ensure_app() -> QtWidgets.QApplication:
@@ -162,3 +169,18 @@ def test_property_panel_keeps_same_tab_and_scroll_when_switching_nodes(monkeypat
         tab_scroll_positions={"Node": 128},
     )
     assert widget._scroll.verticalScrollBar().value() == previous_scroll_value
+
+
+def test_property_panel_uses_selection_and_sync_mixins_directly() -> None:
+    assert F8StudioSingleNodePropertiesWidget.set_node is NodePropertyPanelSelectionMixin.set_node
+    assert (
+        F8StudioSingleNodePropertiesWidget._on_graph_property_changed
+        is NodePropertyPanelGraphSyncMixin._on_graph_property_changed
+    )
+
+
+def test_node_prop_editor_uses_tabs_and_state_field_mixins_directly() -> None:
+    assert F8StudioNodePropEditorWidget._read_node is NodePropertyEditorBuildMixin._read_node
+    assert F8StudioNodePropEditorWidget.snapshot_view_state is NodePropertyEditorViewStateMixin.snapshot_view_state
+    assert F8StudioNodePropEditorWidget.add_tab is NodePropertyEditorTabsMixin.add_tab
+    assert F8StudioNodePropEditorWidget.open_state_field_editor is NodePropertyStateFieldsMixin.open_state_field_editor

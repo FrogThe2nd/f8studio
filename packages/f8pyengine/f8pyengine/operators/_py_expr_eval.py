@@ -4,7 +4,7 @@ import ast
 import math
 from dataclasses import dataclass
 from types import CodeType
-from typing import Any
+from typing import Any, cast
 
 try:
     import numpy as np  # type: ignore
@@ -15,7 +15,8 @@ except ImportError:
 def sigmoid(x: Any) -> Any:
     """Standard sigmoid function: 1 / (1 + exp(-x))"""
     if np is not None and isinstance(x, (np.ndarray, np.generic)):
-        return 1.0 / (1.0 + np.exp(-x))
+        x_np = cast(Any, x)
+        return 1.0 / (1.0 + np.exp(-x_np))
     try:
         val = float(x)
         return 1.0 / (1.0 + math.exp(-val))

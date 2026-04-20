@@ -9,6 +9,7 @@ from qtpy import QtCore, QtWidgets
 
 from f8pysdk.codec import dump_json
 
+from ...ui.support.qt_lifecycle import qt_runtime_error_is_object_deleted
 from ..components.component_events import subscribe_components_changed
 from ..components.component_catalog import component_entry_is_installed
 from ..components.component_models import F8ComponentEntry, F8ComponentSourceKind
@@ -167,7 +168,7 @@ class ComponentInsertDialog(QtWidgets.QDialog):
         try:
             self._reload()
         except RuntimeError as exc:
-            if "already deleted" in str(exc):
+            if qt_runtime_error_is_object_deleted(exc):
                 self._clear_components_changed_subscription()
                 return
             raise
@@ -252,7 +253,12 @@ class ComponentInsertDialog(QtWidgets.QDialog):
         return container
 
     def _selected_entry(self) -> F8ComponentEntry | None:
-        item = self._list.currentItem()
+        try:
+            item = self._list.currentItem()
+        except RuntimeError as exc:
+            if qt_runtime_error_is_object_deleted(exc):
+                return None
+            raise
         if item is None:
             return None
         component_id = str(item.data(QtCore.Qt.UserRole) or "").strip()

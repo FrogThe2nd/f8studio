@@ -6,6 +6,7 @@ from typing import Callable, Protocol, TypeAlias, cast
 
 from qtpy import QtCore, QtGui, QtWidgets
 
+from .qt_lifecycle import qt_object_is_valid as _qt_object_is_valid
 from ...editor_assist.session import (
     EditorSessionController,
     EditorSessionKey,
@@ -38,34 +39,6 @@ class MonacoEditorWidgetLike(Protocol):
 
 
 SavedCodeHandler: TypeAlias = Callable[[str], None]
-
-
-def _qt_object_is_valid(obj: QtCore.QObject) -> bool:
-    """
-    Return True if the underlying Qt/C++ instance is still alive.
-
-    PySide6 can keep the Python wrapper alive even after the C++ object was
-    deleted (eg. with WA_DeleteOnClose). Accessing such wrappers raises
-    `RuntimeError: Internal C++ object ... already deleted.`
-    """
-    try:
-        import shiboken6  # type: ignore[import-not-found]
-    except ImportError:
-        shiboken6 = None
-
-    if shiboken6 is not None:
-        try:
-            return bool(shiboken6.isValid(obj))
-        except RuntimeError:
-            return False
-        except TypeError:
-            return False
-
-    try:
-        obj.parent()
-        return True
-    except RuntimeError:
-        return False
 
 
 def _ask_save_before_close(

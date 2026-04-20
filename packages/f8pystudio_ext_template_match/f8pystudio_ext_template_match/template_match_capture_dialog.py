@@ -33,16 +33,16 @@ class TemplateRoiSelectLabel(QtWidgets.QLabel):
     def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
         self.setMinimumSize(480, 270)
-        self.setAlignment(QtCore.Qt.AlignCenter)
-        self.setFrameShape(QtWidgets.QFrame.StyledPanel)
-        self.setCursor(QtCore.Qt.CrossCursor)
+        self.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        self.setFrameShape(QtWidgets.QFrame.Shape.StyledPanel)
+        self.setCursor(QtCore.Qt.CursorShape.CrossCursor)
 
         self._orig_pix: QtGui.QPixmap | None = None
         self._scaled_pix: QtGui.QPixmap | None = None
         self._scaled_off = QtCore.QPoint(0, 0)
         self._scale = 1.0
 
-        self._rubber = QtWidgets.QRubberBand(QtWidgets.QRubberBand.Rectangle, self)
+        self._rubber = QtWidgets.QRubberBand(QtWidgets.QRubberBand.Shape.Rectangle, self)
         self._drag_start: QtCore.QPoint | None = None
         self._roi_img: QtCore.QRect | None = None
 
@@ -73,7 +73,7 @@ class TemplateRoiSelectLabel(QtWidgets.QLabel):
         self._update_scaled_pix()
 
     def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:  # type: ignore[override]
-        if event.button() != QtCore.Qt.LeftButton or self._orig_pix is None or self._scaled_pix is None:
+        if event.button() != QtCore.Qt.MouseButton.LeftButton or self._orig_pix is None or self._scaled_pix is None:
             return super().mousePressEvent(event)
         self._drag_start = event.position().toPoint()
         self._rubber.setGeometry(QtCore.QRect(self._drag_start, QtCore.QSize()))
@@ -86,7 +86,7 @@ class TemplateRoiSelectLabel(QtWidgets.QLabel):
         self._rubber.setGeometry(QtCore.QRect(self._drag_start, p).normalized())
 
     def mouseReleaseEvent(self, event: QtGui.QMouseEvent) -> None:  # type: ignore[override]
-        if event.button() != QtCore.Qt.LeftButton or self._drag_start is None or self._orig_pix is None or self._scaled_pix is None:
+        if event.button() != QtCore.Qt.MouseButton.LeftButton or self._drag_start is None or self._orig_pix is None or self._scaled_pix is None:
             return super().mouseReleaseEvent(event)
         end = event.position().toPoint()
         rect = QtCore.QRect(self._drag_start, end).normalized()
@@ -109,7 +109,12 @@ class TemplateRoiSelectLabel(QtWidgets.QLabel):
 
         w = max(1, int(self.width()))
         h = max(1, int(self.height()))
-        scaled = self._orig_pix.scaled(w, h, QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
+        scaled = self._orig_pix.scaled(
+            w,
+            h,
+            QtCore.Qt.AspectRatioMode.KeepAspectRatio,
+            QtCore.Qt.TransformationMode.SmoothTransformation,
+        )
         self._scaled_pix = scaled
         self.setPixmap(scaled)
 
@@ -160,7 +165,7 @@ def _encode_png_b64(img: QtGui.QImage, *, max_b64_bytes: int = 900_000) -> tuple
     cur = img
     for _ in range(12):
         buf = QtCore.QBuffer()
-        buf.open(QtCore.QIODevice.WriteOnly)
+        buf.open(QtCore.QIODevice.OpenModeFlag.WriteOnly)
         ok = cur.save(buf, "PNG")
         if not ok:
             raise RuntimeError("failed to encode PNG")
@@ -182,8 +187,8 @@ def _encode_png_b64(img: QtGui.QImage, *, max_b64_bytes: int = 900_000) -> tuple
         cur = cur.scaled(
             max(32, int(w * 0.85)),
             max(32, int(h * 0.85)),
-            QtCore.Qt.KeepAspectRatio,
-            QtCore.Qt.SmoothTransformation,
+            QtCore.Qt.AspectRatioMode.KeepAspectRatio,
+            QtCore.Qt.TransformationMode.SmoothTransformation,
         )
 
     raise ValueError("encoded template too large for max_b64_bytes")
@@ -312,4 +317,3 @@ class TemplateMatchCaptureDialog(QtWidgets.QDialog):
             f"Template applied ({meta.get('width')}x{meta.get('height')}, b64Bytes={meta.get('b64Bytes')})"
         )
         self.accept()
-

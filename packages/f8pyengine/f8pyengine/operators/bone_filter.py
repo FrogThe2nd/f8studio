@@ -9,6 +9,7 @@ from typing import Any
 
 from f8pysdk.specs import (
     F8DataPortSpec,
+    F8ComplexObjectTypeSchema,
     F8OperatorSchemaVersion,
     F8OperatorSpec,
     F8RuntimeNode,
@@ -103,7 +104,7 @@ def _quat_relative_angle_deg(a: tuple[float, float, float, float], b: tuple[floa
     rad = 2.0 * math.acos(clamped)
     return float(rad * 180.0 / math.pi)
 
-def _bone_schema() -> dict[str, Any]:
+def _bone_schema() -> F8ComplexObjectTypeSchema:
     return complex_object_schema(
         properties={
             "pos": array_schema(items=number_schema()),

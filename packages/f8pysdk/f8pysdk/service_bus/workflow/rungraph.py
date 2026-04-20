@@ -156,8 +156,9 @@ async def apply_rungraph_state_values(bus: "ServiceBus", graph: F8RuntimeGraph) 
     """
     Materialize per-node `stateValues` into KV (and dispatch locally).
     """
+    meta = graph.meta
     try:
-        rungraph_ts = int(graph.meta.ts or 0) if graph.meta is not None else 0
+        rungraph_ts = int(meta.ts or 0) if meta is not None and not isinstance(meta, msgspec.UnsetType) else 0
     except Exception:
         rungraph_ts = 0
 

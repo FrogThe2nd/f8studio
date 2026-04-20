@@ -194,7 +194,7 @@ def _attach_studio_auto_sample_requests(graph: F8RuntimeGraph) -> tuple[F8Runtim
             ok, normalized = _coerce_state_payload_value(item)
             if ok:
                 state_values[str(key)] = normalized
-        mode = str(state_values.get("upstreamSamplingMode", "passive") or "").strip().lower()
+        mode = str(state_values.get("upstreamSamplingMode", "auto") or "").strip().lower()
         if mode != "auto":
             continue
 

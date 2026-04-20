@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import builtins
 import inspect
-import keyword
 import logging
 import os
 import time
@@ -16,8 +15,13 @@ from f8pysdk.nats_naming import ensure_token
 from f8pysdk.nodes import ServiceNode
 from f8pysdk.shm.video import VIDEO_FORMAT_BGRA32, VIDEO_FORMAT_FLOW2_F16, VideoShmHeader, VideoShmReader
 
+from .script_runtime_values import (
+    PyScriptStatesView,
+    normalize_script_output_value,
+    normalize_script_output_value_fast,
+)
+
 logger = logging.getLogger(__name__)
-_MISSING = object()
 
 try:
     import numpy as np
@@ -127,177 +131,6 @@ class _VideoShmSubscription:
     last_error_sig: str | None = None
     last_error_ts_ms: int = 0
     error_count: int = 0
-
-
-class _PyScriptObjectView:
-    __slots__ = ("_data", "_attr_to_key")
-
-    def __init__(
-        self,
-        data: dict[str, Any],
-        *,
-        copy_data: bool = False,
-        build_attr_index: bool = False,
-    ) -> None:
-        if copy_data:
-            self._data = dict(data)
-        else:
-            self._data = data
-        self._attr_to_key: dict[str, str] | None
-        if build_attr_index:
-            self._attr_to_key = self._build_attr_to_key(self._data)
-        else:
-            self._attr_to_key = None
-
-    @staticmethod
-    def _build_attr_to_key(data: dict[str, Any]) -> dict[str, str]:
-        attr_to_key: dict[str, str] = {}
-        for raw_key in data.keys():
-            key = str(raw_key or "")
-            if key.isidentifier() and not keyword.iskeyword(key):
-                attr_to_key[key] = key
-        for raw_key in data.keys():
-            key = str(raw_key or "")
-            if not key.isidentifier() or not keyword.iskeyword(key):
-                continue
-            alias = f"{key}_"
-            if alias.isidentifier() and not keyword.iskeyword(alias) and alias not in attr_to_key:
-                attr_to_key[alias] = key
-        return attr_to_key
-
-    def __getitem__(self, key: str) -> Any:
-        return self._wrap_value(self._data[str(key)])
-
-    def get(self, key: str, default: Any = None) -> Any:
-        key_s = str(key)
-        value = self._data.get(key_s, _MISSING)
-        if value is _MISSING:
-            return default
-        return self._wrap_value(value)
-
-    def keys(self):
-        return self._data.keys()
-
-    def items(self):
-        return ((k, self._wrap_value(v)) for k, v in self._data.items())
-
-    def values(self):
-        return (self._wrap_value(v) for v in self._data.values())
-
-    def __contains__(self, key: object) -> bool:
-        return str(key or "") in self._data
-
-    def __iter__(self):
-        return iter(self._data)
-
-    def __len__(self) -> int:
-        return len(self._data)
-
-    def __repr__(self) -> str:
-        return repr(self.to_dict())
-
-    def __str__(self) -> str:
-        return str(self.to_dict())
-
-    def __getattr__(self, name: str) -> Any:
-        attr_to_key = self._attr_to_key
-        if attr_to_key is None:
-            attr_to_key = self._build_attr_to_key(self._data)
-            self._attr_to_key = attr_to_key
-        key = attr_to_key.get(str(name or ""))
-        if key is None:
-            raise AttributeError(f"Unknown attribute: {name}")
-        return self._wrap_value(self._data.get(key))
-
-    def to_dict(self) -> dict[str, Any]:
-        return self._unwrap_value(self._data)
-
-    @classmethod
-    def _wrap_value(cls, value: Any) -> Any:
-        value_t = type(value)
-        if value_t in (str, int, float, bool, type(None)):
-            return value
-        if isinstance(value, _PyScriptObjectView):
-            return value
-        if value_t is dict:
-            return cls(value)
-        if isinstance(value, list):
-            return [cls._wrap_value(item) for item in value]
-        if isinstance(value, tuple):
-            return tuple(cls._wrap_value(item) for item in value)
-        return value
-
-    @classmethod
-    def _unwrap_value(cls, value: Any) -> Any:
-        if isinstance(value, _PyScriptObjectView):
-            return {k: cls._unwrap_value(v) for k, v in value._data.items()}
-        if isinstance(value, dict):
-            return {str(k): cls._unwrap_value(v) for k, v in value.items()}
-        if isinstance(value, list):
-            return [cls._unwrap_value(item) for item in value]
-        if isinstance(value, tuple):
-            return tuple(cls._unwrap_value(item) for item in value)
-        return value
-
-
-class PyScriptStatesView(_PyScriptObjectView):
-    pass
-
-
-def _normalize_script_output_value(value: Any, *, _seen: set[int] | None = None) -> Any:
-    if isinstance(value, _PyScriptObjectView):
-        value = value.to_dict()
-    if value is None or type(value) in (str, int, float, bool):
-        return value
-    if isinstance(value, dict):
-        if _seen is None:
-            _seen = set()
-        value_id = id(value)
-        if value_id in _seen:
-            return None
-        _seen.add(value_id)
-        out: dict[str, Any] = {}
-        for key, item in value.items():
-            out[str(key)] = _normalize_script_output_value(item, _seen=_seen)
-        _seen.discard(value_id)
-        return out
-    if isinstance(value, list):
-        if _seen is None:
-            _seen = set()
-        value_id = id(value)
-        if value_id in _seen:
-            return []
-        _seen.add(value_id)
-        out_list = [_normalize_script_output_value(item, _seen=_seen) for item in value]
-        _seen.discard(value_id)
-        return out_list
-    if isinstance(value, tuple):
-        if _seen is None:
-            _seen = set()
-        value_id = id(value)
-        if value_id in _seen:
-            return ()
-        _seen.add(value_id)
-        out_tuple = tuple(_normalize_script_output_value(item, _seen=_seen) for item in value)
-        _seen.discard(value_id)
-        return out_tuple
-    if isinstance(value, set):
-        if _seen is None:
-            _seen = set()
-        value_id = id(value)
-        if value_id in _seen:
-            return []
-        _seen.add(value_id)
-        out_set = [_normalize_script_output_value(item, _seen=_seen) for item in value]
-        _seen.discard(value_id)
-        return out_set
-    return value
-
-
-def _normalize_script_output_value_fast(value: Any) -> Any:
-    if value is None or isinstance(value, (str, int, float, bool)):
-        return value
-    return _normalize_script_output_value(value)
 
 
 @dataclass(slots=True)
@@ -970,19 +803,19 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
             if isinstance(raw_outputs, dict):
                 single_out_port = self._single_data_out_port
                 if single_out_port is not None and len(raw_outputs) == 1 and single_out_port in raw_outputs:
-                    return {single_out_port: _normalize_script_output_value_fast(raw_outputs.get(single_out_port))}
+                    return {single_out_port: normalize_script_output_value_fast(raw_outputs.get(single_out_port))}
                 if len(raw_outputs) == 1:
                     for key, value in raw_outputs.items():
-                        return {str(key): _normalize_script_output_value_fast(value)}
-                return {str(k): _normalize_script_output_value_fast(v) for k, v in raw_outputs.items()}
+                        return {str(key): normalize_script_output_value_fast(value)}
+                return {str(k): normalize_script_output_value_fast(v) for k, v in raw_outputs.items()}
             return {
-                str(k): _normalize_script_output_value_fast(v)
+                str(k): normalize_script_output_value_fast(v)
                 for k, v in result.items()
                 if str(k) not in ("ok", "result", "exec", "error", "outputs")
             }
         if not self._has_out_port:
             return {}
-        return {"out": _normalize_script_output_value_fast(result)}
+        return {"out": normalize_script_output_value_fast(result)}
 
     async def _emit_outputs(self, result: Any) -> None:
         outputs = self._extract_outputs(result)
@@ -1342,4 +1175,4 @@ class PythonScriptServiceNode(ServiceNode, CommandableNode, ClosableNode):
             call_args,
             call_meta,
         )
-        return {"ok": True, "result": _normalize_script_output_value(result)}
+        return {"ok": True, "result": normalize_script_output_value(result)}

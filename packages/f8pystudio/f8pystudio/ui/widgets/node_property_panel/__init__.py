@@ -9,8 +9,6 @@ from .editor import (
     F8StudioNodePropEditorWidget,
     F8StudioPropertiesBinWidget,
     F8StudioSingleNodePropertiesWidget,
-    _is_json_state_value,
-    _reorder_tabs,
 )
 from .ports import _F8SpecPortEditor
 
@@ -27,6 +25,4 @@ __all__ = [
     "SchemaBuilderDialog",
     "_schema_from_json_obj",
     "_schema_to_json_obj",
-    "_is_json_state_value",
-    "_reorder_tabs",
 ]

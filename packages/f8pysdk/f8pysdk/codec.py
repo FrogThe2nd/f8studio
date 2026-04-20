@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import math
 import numbers
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 import msgspec
 
@@ -141,9 +141,9 @@ def copy_model(value: T, *_args: Any, **kwargs: Any) -> T:
         copied = dict(value)
         if isinstance(update_obj, dict):
             copied.update(update_obj)
-        return copied
+        return cast(T, copied)
     if isinstance(update_obj, dict) and (value is None or isinstance(value, msgspec.UnsetType)):
-        return dict(update_obj)
+        return cast(T, dict(update_obj))
     return value
 
 

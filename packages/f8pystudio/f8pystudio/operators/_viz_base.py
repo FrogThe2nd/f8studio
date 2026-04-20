@@ -23,7 +23,7 @@ def viz_sampling_state_fields(*, show_on_node: bool = False) -> list[F8StateSpec
                 "passive: no upstream auto-sampler request; auto: request upstream periodic sampling when the "
                 "source runtime supports it."
             ),
-            valueSchema=string_schema(default=UPSTREAM_SAMPLING_MODE_PASSIVE, enum=list(UPSTREAM_SAMPLING_MODE_VALUES)),
+            valueSchema=string_schema(default=UPSTREAM_SAMPLING_MODE_AUTO, enum=list(UPSTREAM_SAMPLING_MODE_VALUES)),
             access=F8StateAccess.rw,
             required=True,
             showOnNode=show_on_node,
@@ -73,10 +73,10 @@ class StudioVizRuntimeNodeBase(OperatorNode):
         except Exception:
             mode_any = None
         if mode_any is None:
-            mode_any = self._initial_state.get("upstreamSamplingMode", UPSTREAM_SAMPLING_MODE_PASSIVE)
+            mode_any = self._initial_state.get("upstreamSamplingMode", UPSTREAM_SAMPLING_MODE_AUTO)
         mode = str(mode_any or "").strip().lower()
         if mode not in UPSTREAM_SAMPLING_MODE_VALUES:
-            return UPSTREAM_SAMPLING_MODE_PASSIVE
+            return UPSTREAM_SAMPLING_MODE_AUTO
         return mode
 
     async def get_upstream_sample_interval_ms(self) -> int:

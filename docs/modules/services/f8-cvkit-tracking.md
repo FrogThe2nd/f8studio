@@ -49,6 +49,9 @@ No description.
 | --- | --- | --- | --- | --- | --- |
 | `shmName` | `rw` | `true` | `true` | `string` | Optional SHM name override (e.g. shm.xxx.video). |
 | `initSelect` | `rw` | `true` | `true` | `string / enum[first_box, closest_center, largest_area, highest_score] / default=closest_center` | Init bbox selection strategy: first_box \| closest_center \| largest_area \| highest_score. |
+| `trackerKind` | `rw` | `true` | `true` | `string / enum[csrt, kcf, mil, boosting, median_flow, mosse, tld, nano, vit] / default=csrt` | OpenCV tracker backend: csrt \| kcf \| mil \| boosting \| median_flow \| mosse \| tld \| nano \| vit. |
+| `modelDir` | `rw` | `true` | `true` | `string / default=models` | Directory containing downloaded tracker model files for nano \| vit. |
+| `autoDownloadModels` | `rw` | `true` | `true` | `boolean / default=True` | Auto-download missing tracker model files when a model-based tracker is selected. |
 | `stopTrackingCooldownMs` | `rw` | `true` | `true` | `integer / default=1000` | After stopTracking, ignore initBox for this many ms. Set to 0 to disable. |
 | `stopTrackingCooldownUntilTsMs` | `ro` | `true` | `true` | `integer` | When > 0, initBox is ignored until this timestamp (ms). |
 | `isTracking` | `ro` | `true` | `true` | `boolean` | True when tracker is running. |
@@ -61,6 +64,9 @@ No description.
 
 - `shmName` (Video SHM, `rw`): Optional SHM name override (e.g. shm.xxx.video). Schema: `string`.
 - `initSelect` (Init Select, `rw`): Init bbox selection strategy: first_box | closest_center | largest_area | highest_score. Schema: `string / enum[first_box, closest_center, largest_area, highest_score] / default=closest_center`.
+- `trackerKind` (Tracker Kind, `rw`): OpenCV tracker backend: csrt | kcf | mil | boosting | median_flow | mosse | tld | nano | vit. Schema: `string / enum[csrt, kcf, mil, boosting, median_flow, mosse, tld, nano, vit] / default=csrt`.
+- `modelDir` (Model Dir, `rw`): Directory containing downloaded tracker model files for nano | vit. Schema: `string / default=models`.
+- `autoDownloadModels` (Auto Download Models, `rw`): Auto-download missing tracker model files when a model-based tracker is selected. Schema: `boolean / default=True`.
 - `stopTrackingCooldownMs` (Stop Cooldown (ms), `rw`): After stopTracking, ignore initBox for this many ms. Set to 0 to disable. Schema: `integer / default=1000`.
 - `stopTrackingCooldownUntilTsMs` (Stop Cooldown Until (tsMs), `ro`): When > 0, initBox is ignored until this timestamp (ms). Schema: `integer`.
 - `isTracking` (Is Tracking, `ro`): True when tracker is running. Schema: `boolean`.

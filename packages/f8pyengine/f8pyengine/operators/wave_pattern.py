@@ -4,7 +4,7 @@ import logging
 import math
 import time
 from collections.abc import Callable
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 from scipy.interpolate import Akima1DInterpolator, CubicSpline, PchipInterpolator, interp1d
@@ -12,6 +12,7 @@ from scipy.interpolate import Akima1DInterpolator, CubicSpline, PchipInterpolato
 from f8pysdk.specs import (
     F8ArrayTypeSchema,
     F8DataPortSpec,
+    F8JsonValue,
     F8OperatorSchemaVersion,
     F8OperatorSpec,
     F8RuntimeNode,
@@ -365,7 +366,7 @@ class WavePatternRuntimeNode(OperatorNode):
         self._publish_pending = True
 
     def _sync_runtime_node_state_values(self) -> None:
-        current = dict(self._runtime_node.stateValues or {})
+        current = cast(dict[str, F8JsonValue], dict(self._runtime_node.stateValues or {}))
         current["points"] = _serialize_points(self._points)
         current["maxT"] = float(self._max_t)
         current["minValue"] = float(self._min_value)

@@ -28,6 +28,12 @@ int main(int argc, char** argv) {
       "service-id", "Service instance id (required unless --describe)", cxxopts::value<std::string>()->default_value(""))(
       "nats-url", "NATS server URL", cxxopts::value<std::string>()->default_value("nats://127.0.0.1:4222"))(
       "shm-name", "Override SHM name (e.g. shm.xxx.video)", cxxopts::value<std::string>()->default_value(""))(
+      "tracker-kind", "Tracker backend (csrt|kcf|mil|boosting|median_flow|mosse|tld|nano|vit)",
+      cxxopts::value<std::string>()->default_value("csrt"))(
+      "model-dir", "Directory for tracker model files used by nano/vit",
+      cxxopts::value<std::string>()->default_value("models"))(
+      "auto-download-models", "Auto-download missing tracker model files when needed",
+      cxxopts::value<bool>()->default_value("true")->implicit_value("true"))(
       "stop-cooldown-ms", "Cooldown after stopTracking (ignore initBox for N ms)",
       cxxopts::value<int>()->default_value("1000"))(
       "help", "Show help");
@@ -67,6 +73,9 @@ int main(int argc, char** argv) {
   cfg.service_id = service_id;
   cfg.nats_url = result["nats-url"].as<std::string>();
   cfg.shm_name = result["shm-name"].as<std::string>();
+  cfg.tracker_kind = result["tracker-kind"].as<std::string>();
+  cfg.model_dir = result["model-dir"].as<std::string>();
+  cfg.auto_download_models = result["auto-download-models"].as<bool>();
   cfg.stop_tracking_cooldown_ms = result["stop-cooldown-ms"].as<int>();
 
   f8::cvkit::tracking::TrackingService svc(cfg);

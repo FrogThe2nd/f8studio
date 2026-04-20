@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import zlib
 import http.cookies
@@ -281,6 +281,23 @@ class ComponentSyncClient:
                 "visibility": visibility.value,
                 "revision": revision,
             },
+            authorized=True,
+        )
+        return self._update_cached_remote_entry(_entry_from_asset_payload(payload))
+
+    def patch_component_meta(
+        self,
+        component_id: str,
+        *,
+        name: str,
+        description: str,
+        tags: list[str],
+    ) -> F8ComponentEntry:
+        """Update component metadata (name/description/tags) without creating a new content version."""
+        payload = self._request_json(
+            "PATCH",
+            f"/v1/components/{parse.quote(str(component_id))}/meta",
+            {"name": name, "description": description, "tags": tags},
             authorized=True,
         )
         return self._update_cached_remote_entry(_entry_from_asset_payload(payload))

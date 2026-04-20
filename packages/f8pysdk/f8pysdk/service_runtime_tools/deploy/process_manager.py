@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import msgspec
+
 from .._internal.error_reporting import ExceptionLogOnce, fingerprint_exception
 from ..inventory.catalog import ServiceCatalog
 from ..inventory.entry import load_service_entry
@@ -182,16 +184,20 @@ class ServiceProcessManager:
         cmd += ["--service-id", service_id, "--nats-url", nats_url]
 
         env = os.environ.copy()
-        try:
-            env.update({str(k): str(v) for k, v in (launch.env or {}).items()})
-        except (AttributeError, RuntimeError, TypeError):
-            pass
+        launch_env = launch.env
+        if isinstance(launch_env, dict):
+            try:
+                env.update({str(k): str(v) for k, v in launch_env.items()})
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                pass
         env["F8_SERVICE_ID"] = service_id
         env["F8_NATS_URL"] = nats_url
         env.setdefault("PYTHONUNBUFFERED", "1")
         env.setdefault("PYTHONIOENCODING", "utf-8")
 
-        workdir = Path(str(launch.workdir or "./")).expanduser()
+        workdir_value = launch.workdir
+        workdir_raw = "./" if workdir_value is None or isinstance(workdir_value, msgspec.UnsetType) else str(workdir_value)
+        workdir = Path(workdir_raw).expanduser()
         if not workdir.is_absolute():
             workdir = (service_dir / workdir).resolve()
         else:

@@ -54,8 +54,8 @@ class DataRouter:
         default_queue_size: int,
     ) -> None:
         self._bus = bus
-        self._cross_publish_policy = cross_publish_policy
-        self._data_delivery = data_delivery
+        self._cross_publish_policy: CrossPublishPolicy = cross_publish_policy
+        self._data_delivery: DataDeliveryMode = data_delivery
         self._default_queue_size = max(1, int(default_queue_size))
         self._intra_data_out: DataOutRoutes = {}
         self._intra_data_in: DataOutRoutes = {}

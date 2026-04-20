@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from typing import Any
+from typing import Any, TypeAlias
 
 from f8pysdk.codec import coerce_bool
 from f8pysdk.codec import parse_number
@@ -26,6 +26,7 @@ OPERATOR_CLASS = "f8.envelope"
 
 _METHODS = ("EMA", "DEMA", "SMA")
 _EPS = 1e-9
+
 def _normalize_method(value: Any, *, default: str = "EMA") -> str:
     method = str(value or "").strip().upper()
     if method in _METHODS:
@@ -72,8 +73,14 @@ class DoubleExponentialMovingAverage:
             self.ema_pt = value
             self.ema2_pt = value
         else:
-            self.ema_pt = active_alpha * value + (1.0 - active_alpha) * self.ema_pt
-            self.ema2_pt = active_alpha * self.ema_pt + (1.0 - active_alpha) * self.ema2_pt
+            ema_pt = self.ema_pt
+            ema2_pt = self.ema2_pt
+            if ema_pt is None or ema2_pt is None:
+                self.ema_pt = value
+                self.ema2_pt = value
+            else:
+                self.ema_pt = active_alpha * value + (1.0 - active_alpha) * ema_pt
+                self.ema2_pt = active_alpha * self.ema_pt + (1.0 - active_alpha) * ema2_pt
         return float(2.0 * self.ema_pt - self.ema2_pt)
 
     def reset(self) -> None:
@@ -104,6 +111,9 @@ class SimpleMovingAverage:
             self._values = self._values[-self.window :]
 
 
+EnvelopeFilter: TypeAlias = ExponentialMovingAverage | DoubleExponentialMovingAverage | SimpleMovingAverage
+
+
 class EnvelopeTracker:
     """Adaptive upper and lower envelope tracker with configurable smoothing."""
 
@@ -120,8 +130,8 @@ class EnvelopeTracker:
         self.fall_alpha = float(fall_alpha)
         self.min_span = float(min_span)
         self.sma_window = max(1, int(sma_window))
-        self.upper_filter = None
-        self.lower_filter = None
+        self.upper_filter: EnvelopeFilter | None = None
+        self.lower_filter: EnvelopeFilter | None = None
         self.upper: float | None = None
         self.lower: float | None = None
         self.method = ""
@@ -203,7 +213,7 @@ class EnvelopeTracker:
         self.upper = None
         self.lower = None
 
-    def _create_filter(self):
+    def _create_filter(self) -> EnvelopeFilter:
         if self.method == "DEMA":
             return DoubleExponentialMovingAverage(alpha=self.rise_alpha)
         if self.method == "EMA":
@@ -216,12 +226,12 @@ class EnvelopeTracker:
         if self.method != "SMA":
             return
         for filt in (self.upper_filter, self.lower_filter):
-            if filt is None:
+            if not isinstance(filt, SimpleMovingAverage):
                 continue
             filt.set_window(self.sma_window)
 
-    def _update_filter(self, filt, value: float, alpha: float) -> float:
-        if self.method == "SMA":
+    def _update_filter(self, filt: EnvelopeFilter, value: float, alpha: float) -> float:
+        if self.method == "SMA" and isinstance(filt, SimpleMovingAverage):
             filt.set_window(self.sma_window)
             return float(filt.update(value))
         return float(filt.update(value, alpha=alpha))

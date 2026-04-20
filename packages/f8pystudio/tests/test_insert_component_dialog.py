@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from qtpy import QtWidgets
+
 from f8pystudio.assets.components.component_models import (
     F8ComponentEntry,
     F8ComponentRecord,
@@ -7,10 +9,18 @@ from f8pystudio.assets.components.component_models import (
     F8ComponentVisibility,
 )
 from f8pystudio.assets.ui.component_insert_dialog import (
+    ComponentInsertDialog,
     community_component_entries,
     component_insert_badges,
     installed_component_entries,
 )
+
+
+def _ensure_app() -> QtWidgets.QApplication:
+    app = QtWidgets.QApplication.instance()
+    if app is not None:
+        return app
+    return QtWidgets.QApplication([])
 
 
 def _entry(
@@ -133,3 +143,23 @@ def test_component_insert_dialog_helpers_apply_tab_filters() -> None:
         current_user_id="user-1",
     )
     assert [entry.record.componentId for entry in subscribed_only] == ["remote-sub"]
+
+
+def test_component_insert_dialog_ignores_deleted_selection_wrapper(monkeypatch) -> None:
+    _ensure_app()
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.component_insert_dialog.subscribe_components_changed",
+        lambda _cb: (lambda: None),
+    )
+    dialog = ComponentInsertDialog(parent=None, node_graph=None)
+
+    class _DeletedListWidget:
+        def currentItem(self) -> None:
+            raise RuntimeError("Internal C++ object (PySide6.QtWidgets.QListWidget) already deleted.")
+
+    dialog._list = _DeletedListWidget()  # type: ignore[assignment]
+
+    assert dialog._selected_entry() is None
+    dialog._on_selection_changed()
+
+    dialog.close()

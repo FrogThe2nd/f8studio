@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import http.cookies
 import json
@@ -283,6 +283,23 @@ class VariantSyncClient:
                 "visibility": visibility.value,
                 "revision": revision,
             },
+            authorized=True,
+        )
+        return self._update_cached_remote_entry(_entry_from_asset_payload(payload))
+
+    def patch_variant_meta(
+        self,
+        variant_id: str,
+        *,
+        name: str,
+        description: str,
+        tags: list[str],
+    ) -> F8VariantEntry:
+        """Update variant metadata (name/description/tags) without creating a new content version."""
+        payload = self._request_json(
+            "PATCH",
+            f"/v1/variants/{parse.quote(str(variant_id))}/meta",
+            {"name": name, "description": description, "tags": tags},
             authorized=True,
         )
         return self._update_cached_remote_entry(_entry_from_asset_payload(payload))
