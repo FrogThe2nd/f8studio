@@ -380,7 +380,7 @@ class VariantCatalogSelectionMixin:
         preview_entry: F8VariantEntry,
         variant_id: str,
     ) -> F8VariantEntry:
-        logger.warning(
+        logger.info(
             "Variant manager caching remote selection for preview variant_id=%s source=%s installed=%s",
             variant_id,
             preview_entry.source.value,
@@ -396,7 +396,7 @@ class VariantCatalogSelectionMixin:
             self._show_preview_cache_failure(preview_entry=preview_entry, exc=exc)
             return preview_entry
 
-        logger.warning(
+        logger.info(
             "Variant manager cached selected variant preview variant_id=%s installed=%s has_cached_content=%s",
             str(cached_entry.record.variantId or "").strip(),
             bool(cached_entry.installed),
@@ -441,7 +441,7 @@ class VariantCatalogSelectionMixin:
         reload_variant_id = str(self._pending_asset_cache_rebuild_variant_id or pending_reload_variant_id).strip()
         self._pending_asset_cache_rebuild = False
         self._pending_asset_cache_rebuild_variant_id = ""
-        logger.warning(
+        logger.info(
             "Variant manager running deferred browser rebuild after selection handling variant_id=%s",
             reload_variant_id,
         )

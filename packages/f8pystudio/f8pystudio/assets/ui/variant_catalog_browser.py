@@ -170,7 +170,7 @@ class VariantCatalogBrowserMixin:
                 return
             raise
         if self._is_handling_selection_change:
-            logger.warning(
+            logger.info(
                 "Variant manager deferred asset-cache browser rebuild while handling selection variant_id=%s",
                 selected_variant_id,
             )
