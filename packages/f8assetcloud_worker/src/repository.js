@@ -61,7 +61,6 @@ export class AssetRepository {
       entries: items.map((row) => ({
         userId: String(row.id),
         name: stringOrDefault(row.name, String(row.email || '')),
-        displayName: stringOrDefault(row.name, String(row.email || '')),
         email: String(row.email || ''),
         emailVerified: Number(row.emailVerified || 0) !== 0,
         role: normalizeUserRole(row.role),
@@ -103,7 +102,6 @@ export class AssetRepository {
     return {
       userId: String(row.id),
       name: stringOrDefault(row.name, String(row.email || '')),
-      displayName: stringOrDefault(row.name, String(row.email || '')),
       email: String(row.email || ''),
       emailVerified: Number(row.emailVerified || 0) !== 0,
       role: normalizeUserRole(row.role),
@@ -113,6 +111,23 @@ export class AssetRepository {
       createdAt: normalizeDbTimestamp(row.createdAt),
       updatedAt: normalizeDbTimestamp(row.updatedAt),
     };
+  }
+
+  async isUserNameTaken({ name, excludeUserId = '' }) {
+    const normalizedName = String(name || '').trim();
+    if (!normalizedName) {
+      return false;
+    }
+    const row = await this._db.prepare(
+      `SELECT 1
+       FROM user
+       WHERE name = ?
+         AND (? = '' OR id != ?)
+       LIMIT 1`,
+    )
+      .bind(normalizedName, String(excludeUserId || ''), String(excludeUserId || ''))
+      .first();
+    return row !== null;
   }
 
   async getSiteSettings() {

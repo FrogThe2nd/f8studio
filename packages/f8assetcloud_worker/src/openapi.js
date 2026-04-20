@@ -46,12 +46,15 @@ const managementPurgeAllAssetsResponseSchema = z.object({
 const apiUserResponseSchema = z.object({
   userId: z.string(),
   name: z.string(),
-  displayName: z.string(),
   email: z.string(),
   emailVerified: z.boolean(),
   isAdmin: z.boolean(),
   role: roleSchema,
   canUpload: z.boolean(),
+});
+
+const currentUserUpdateRequestSchema = z.object({
+  name: z.string(),
 });
 
 const managementUserResponseSchema = apiUserResponseSchema.extend({
@@ -493,6 +496,17 @@ export function registerOpenApiRoutes(app, handlers) {
       200: jsonSuccessResponse(apiUserResponseSchema, 'Authenticated user profile'),
     }),
   }, handlers.getMe);
+
+  registerRoute(openapi, 'put', '/v1/me', {
+    tags: ['account'],
+    summary: 'Update the current authenticated user',
+    request: {
+      body: jsonRequestBody(currentUserUpdateRequestSchema, 'Current user profile update payload'),
+    },
+    responses: withCommonErrorResponses({
+      200: jsonSuccessResponse(apiUserResponseSchema, 'Updated authenticated user profile'),
+    }),
+  }, handlers.updateMe);
 
   registerRoute(openapi, 'get', '/v1/components', {
     tags: ['components'],

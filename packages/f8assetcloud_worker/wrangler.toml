@@ -15,7 +15,7 @@ binding = "ASSETS"
 
 [vars]
 # Bootstrap admin identity
-BOOTSTRAP_ADMIN_NAME = "Admin"
+BOOTSTRAP_ADMIN_NAME = "Feel8"
 BOOTSTRAP_ADMIN_EMAIL = "feel8.fun@gmail.com"
 
 # Auth email delivery

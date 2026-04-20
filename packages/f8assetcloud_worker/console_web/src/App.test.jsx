@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { mockUseSession, mockRefetch, mockSignOut } = vi.hoisted(() => ({
@@ -113,7 +113,6 @@ describe('ConsoleRootApp session recovery', () => {
         return jsonResponse({
           userId: 'user-1',
           name: 'Alice',
-          displayName: 'Alice',
           email: 'alice@example.com',
           emailVerified: true,
           role: 'user',
@@ -131,7 +130,107 @@ describe('ConsoleRootApp session recovery', () => {
 
     expect(await screen.findByText('Welcome, Alice')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Logout' })).toBeTruthy();
+    expect(screen.getByText('Account Overview')).toBeTruthy();
+    expect(screen.getAllByText('Email Verified').length).toBeGreaterThan(0);
     expect(screen.getByText(/alice@example\.com/i)).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Save Name' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Change Email' })).toBeTruthy();
+  });
+
+  it('updates the profile name through the current-user endpoint', async () => {
+    const fetchMock = vi.fn(async (input, init) => {
+      const url = typeof input === 'string' ? input : String(input.url);
+      const method = String(init?.method || 'GET').toUpperCase();
+      if (url === '/v1/auth/providers') {
+        return jsonResponse({ google: false });
+      }
+      if (url === '/v1/site-settings') {
+        return jsonResponse({ allowUserRegistration: false });
+      }
+      if (url === '/v1/me' && method === 'GET') {
+        return jsonResponse({
+          userId: 'user-1',
+          name: 'Alice',
+          email: 'alice@example.com',
+          emailVerified: true,
+          role: 'user',
+          isAdmin: false,
+        });
+      }
+      if (url === '/v1/me' && method === 'PUT') {
+        expect(JSON.parse(String(init?.body || '{}'))).toEqual({ name: 'Alice Cooper' });
+        return jsonResponse({
+          userId: 'user-1',
+          name: 'Alice Cooper',
+          email: 'alice@example.com',
+          emailVerified: true,
+          role: 'user',
+          isAdmin: false,
+        });
+      }
+      if (url === '/api/auth/list-accounts') {
+        return jsonResponse([{ providerId: 'credential', accountId: 'alice' }]);
+      }
+      throw new Error(`Unexpected fetch: ${url} (${method})`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<ConsoleRootApp />);
+
+    expect(await screen.findByText('Welcome, Alice')).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Alice Cooper' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save Name' }));
+
+    expect(await screen.findByText('Welcome, Alice Cooper')).toBeTruthy();
+    expect(screen.getByText('Name updated')).toBeTruthy();
+    expect(mockRefetch).toHaveBeenCalled();
+  });
+
+  it('submits an email change request from the profile page', async () => {
+    const fetchMock = vi.fn(async (input, init) => {
+      const url = typeof input === 'string' ? input : String(input.url);
+      const method = String(init?.method || 'GET').toUpperCase();
+      if (url === '/v1/auth/providers') {
+        return jsonResponse({ google: false });
+      }
+      if (url === '/v1/site-settings') {
+        return jsonResponse({ allowUserRegistration: false });
+      }
+      if (url === '/v1/me' && method === 'GET') {
+        return jsonResponse({
+          userId: 'user-1',
+          name: 'Alice',
+          email: 'alice@example.com',
+          emailVerified: true,
+          role: 'user',
+          isAdmin: false,
+        });
+      }
+      if (url === '/api/auth/change-email' && method === 'POST') {
+        expect(JSON.parse(String(init?.body || '{}'))).toEqual({
+          newEmail: 'alice.new@example.com',
+          callbackURL: 'http://localhost:3000/console/verify-email?verified=1',
+        });
+        return jsonResponse({ status: true });
+      }
+      if (url === '/api/auth/list-accounts') {
+        return jsonResponse([{ providerId: 'credential', accountId: 'alice' }]);
+      }
+      throw new Error(`Unexpected fetch: ${url} (${method})`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    window.history.replaceState({}, '', '/console/');
+
+    render(<ConsoleRootApp />);
+
+    expect(await screen.findByText('Welcome, Alice')).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'alice.new@example.com' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Change Email' }));
+
+    expect(await screen.findByText('If alice.new@example.com is available, a verification link has been sent there.')).toBeTruthy();
+    expect(mockRefetch).toHaveBeenCalled();
   });
 
   it('hides Google entry points on the login screen when public registration is disabled', async () => {

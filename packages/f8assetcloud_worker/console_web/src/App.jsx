@@ -226,6 +226,8 @@ function ConsoleApp() {
     allowUserRegistration: false,
   });
   const [linkedAccounts, setLinkedAccounts] = useState([]);
+  const [profileName, setProfileName] = useState('');
+  const [profileEmail, setProfileEmail] = useState('');
   const [mineAssetType, setMineAssetType] = useState('all');
   const [mineQuery, setMineQuery] = useState('');
   const [mineAssets, setMineAssets] = useState([]);
@@ -251,6 +253,12 @@ function ConsoleApp() {
   const [nextPasswordVisible, setNextPasswordVisible] = useState(false);
   const [confirmNextPasswordVisible, setConfirmNextPasswordVisible] = useState(false);
   const profileStillLoadingWithoutData = isLoggedIn && currentUser === null && !profileLoadError;
+  const currentProfileName = String(currentUser?.name || '').trim();
+  const editedProfileName = profileName.trim();
+  const profileNameChanged = editedProfileName !== currentProfileName;
+  const currentProfileEmail = String(currentUser?.email || '').trim().toLowerCase();
+  const editedProfileEmail = profileEmail.trim().toLowerCase();
+  const profileEmailChanged = editedProfileEmail !== currentProfileEmail;
 
   useEffect(() => {
     let active = true;
@@ -281,6 +289,14 @@ function ConsoleApp() {
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    setProfileName(String(currentUser?.name || ''));
+  }, [currentUser?.name]);
+
+  useEffect(() => {
+    setProfileEmail(String(currentUser?.email || ''));
+  }, [currentUser?.email]);
 
   useEffect(() => {
     if (!isLoggedIn) {
@@ -705,6 +721,77 @@ function ConsoleApp() {
     }
   }
 
+  async function onUpdateProfileName(event) {
+    event.preventDefault();
+    if (!currentUser) {
+      setStatusText('Profile is not loaded yet.');
+      return;
+    }
+    if (!editedProfileName) {
+      setStatusText('Name is required.');
+      return;
+    }
+    if (!profileNameChanged) {
+      setStatusText('No profile changes to save.');
+      return;
+    }
+    setLoading(true);
+    setStatusText('Updating name...');
+    try {
+      const updatedUser = await apiRequest('/v1/me', {
+        method: 'PUT',
+        body: JSON.stringify({ name: editedProfileName }),
+      });
+      setCurrentUser(updatedUser);
+      setProfileName(String(updatedUser?.name || ''));
+      await sessionQuery.refetch();
+      setStatusText('Name updated');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message === 'name already in use' || message === 'duplicate resource') {
+        setStatusText('Name is already in use. Choose a different name.');
+        return;
+      }
+      setStatusText(message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function onChangeEmail(event) {
+    event.preventDefault();
+    if (!currentUser) {
+      setStatusText('Profile is not loaded yet.');
+      return;
+    }
+    if (!editedProfileEmail) {
+      setStatusText('Email is required.');
+      return;
+    }
+    if (!profileEmailChanged) {
+      setStatusText('No email changes to submit.');
+      return;
+    }
+    setLoading(true);
+    setStatusText('Submitting email change...');
+    try {
+      await apiRequest('/api/auth/change-email', {
+        method: 'POST',
+        body: JSON.stringify({
+          newEmail: editedProfileEmail,
+          callbackURL: `${window.location.origin}${VERIFY_EMAIL_PATH}?verified=1`,
+        }),
+      });
+      setProfileEmail(String(currentUser.email || ''));
+      await Promise.all([sessionQuery.refetch(), loadProfile(), loadLinkedAccounts()]);
+      setStatusText(`If ${editedProfileEmail} is available, a verification link has been sent there.`);
+    } catch (error) {
+      setStatusText(error instanceof Error ? error.message : String(error));
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function onUnlinkAccount(account) {
     const providerLabel = formatAccountProvider(account.providerId);
     const confirmed = window.confirm(`Unlink ${providerLabel} from this account?`);
@@ -857,7 +944,7 @@ function ConsoleApp() {
 
   function onBeginEditUser(user) {
     setEditingUserId(user.userId);
-    setEditName(user.name || user.displayName);
+    setEditName(user.name || '');
     setEditRole(String(user.role || 'user'));
   }
 
@@ -1202,7 +1289,7 @@ function ConsoleApp() {
         <div>
           <span className="eyebrow">Feel8 Console</span>
           <h1>{pageTitle}</h1>
-          <p className="muted">Welcome, {currentUser?.displayName || currentUser?.name || currentUser?.email}</p>
+          <p className="muted">Welcome, {currentUser?.name || currentUser?.email}</p>
         </div>
         <div className="actions">
           <button type="button" onClick={() => void refreshCurrentPage()} disabled={loading}>Refresh</button>
@@ -1249,12 +1336,74 @@ function ConsoleApp() {
           {activePage === 'profile' ? (
             <section className="card panel">
               <h2>Profile</h2>
-              <div className="profile-grid">
-                <div><strong>Name:</strong> {currentUser?.name || currentUser?.displayName}</div>
-                <div><strong>Display Name:</strong> {currentUser?.displayName}</div>
-                <div><strong>Email:</strong> {currentUser?.email}</div>
-                <div><strong>Email Verified:</strong> {currentUser?.emailVerified ? 'Yes' : 'No'}</div>
-                <div><strong>Role:</strong> {formatUserRole(currentUser?.role)}</div>
+              <div className="profile-editor">
+                <div className="section-head">
+                  <div>
+                    <h3>Identity</h3>
+                    <p className="muted">Update your public author name and account email without leaving the console.</p>
+                  </div>
+                </div>
+                <form onSubmit={onUpdateProfileName} className="profile-inline-form">
+                  <label className="profile-inline-label">
+                    <span>Name</span>
+                    <input
+                      value={profileName}
+                      onChange={(event) => setProfileName(event.target.value)}
+                      autoComplete="nickname"
+                    />
+                  </label>
+                  <button type="submit" disabled={loading || !editedProfileName || !profileNameChanged}>
+                    Save Name
+                  </button>
+                </form>
+                <p className="muted profile-inline-note">Your public author name is shown on assets you publish.</p>
+                <form onSubmit={onChangeEmail} className="profile-inline-form">
+                  <label className="profile-inline-label">
+                    <span>Email</span>
+                    <input
+                      autoComplete="email"
+                      type="email"
+                      value={profileEmail}
+                      onChange={(event) => setProfileEmail(event.target.value)}
+                    />
+                  </label>
+                  <button type="submit" disabled={loading || !editedProfileEmail || !profileEmailChanged}>
+                    Change Email
+                  </button>
+                </form>
+                <p className="muted profile-inline-note">
+                  Changing email sends a verification link to the new address before the change is finalized.
+                </p>
+              </div>
+              <div className="account-card">
+                <div className="account-card-head">
+                  <div>
+                    <h3>Account Overview</h3>
+                    <p className="muted">Your current account identity and access status.</p>
+                  </div>
+                  <div className="account-card-badges">
+                    <EmailStatusBadge verified={Boolean(currentUser?.emailVerified)} />
+                    <RoleBadge role={currentUser?.role} />
+                  </div>
+                </div>
+                <div className="account-meta-grid">
+                  <div className="account-meta-item">
+                    <span className="account-meta-label">Name</span>
+                    <strong>{currentUser?.name || 'Unknown user'}</strong>
+                  </div>
+                  <div className="account-meta-item">
+                    <span className="account-meta-label">Email</span>
+                    <strong>{currentUser?.email || 'No email'}</strong>
+                  </div>
+                  <div className="account-meta-item">
+                    <span className="account-meta-label">Verification</span>
+                    <EmailStatusBadge verified={Boolean(currentUser?.emailVerified)} />
+                  </div>
+                  <div className="account-meta-item">
+                    <span className="account-meta-label">Role</span>
+                    <RoleBadge role={currentUser?.role} />
+                  </div>
+                </div>
               </div>
               <div className="auth-methods">
                 <div className="section-head">
@@ -1620,13 +1769,12 @@ function ConsoleApp() {
                   </div>
                 </div>
                 <SimpleTable
-                columns={['Name', 'Email', 'Display Name', 'Role', 'Assets', 'Created At', 'Actions']}
+                columns={['Name', 'Email', 'Role', 'Assets', 'Created At', 'Actions']}
                 rows={users.map((user) => [
                   <div className="table-primary-cell" key={`${user.userId}-name`}>
-                    <strong>{user.name || user.displayName}</strong>
+                    <strong>{user.name || user.email || 'Unknown user'}</strong>
                   </div>,
                   <span className="muted" key={`${user.userId}-email`}>{user.email || 'No email'}</span>,
-                  user.displayName,
                   <RoleBadge role={user.role} key={`${user.userId}-role`} />,
                   <span className="asset-count-pill" key={`${user.userId}-assets`}>{String(user.assetCount || 0)} assets</span>,
                   <span
@@ -1648,7 +1796,7 @@ function ConsoleApp() {
                     <button
                       type="button"
                       className="button-danger"
-                      onClick={() => void onDeleteUser(user.userId, user.name || user.displayName || user.email)}
+                      onClick={() => void onDeleteUser(user.userId, user.name || user.email)}
                       disabled={loading}
                     >
                       Delete
@@ -1673,7 +1821,7 @@ function VerifyEmailPage() {
   const [loading, setLoading] = useState(false);
   const [statusText, setStatusText] = useState(() => {
     if (searchParams.get('verified')) {
-      return 'Email verified. You can sign in now.';
+      return 'Email verified. You can continue in the console.';
     }
     const error = searchParams.get('error');
     if (error) {
@@ -1718,7 +1866,7 @@ function VerifyEmailPage() {
     try {
       await apiRequest(`/v1/auth/verify-email?token=${encodeURIComponent(submitToken.trim())}`);
       setVerified(true);
-      setStatusText('Email verified. You can sign in now.');
+      setStatusText('Email verified. You can continue in the console.');
     } catch (error) {
       setStatusText(error instanceof Error ? error.message : String(error));
     } finally {
@@ -1943,6 +2091,13 @@ function RoleBadge({ role }) {
       ? 'role-badge role-badge-readonly'
       : 'role-badge role-badge-user';
   return <span className={className}>{formatUserRole(role)}</span>;
+}
+
+function EmailStatusBadge({ verified }) {
+  const className = verified
+    ? 'status-pill status-pill-verified'
+    : 'status-pill status-pill-pending';
+  return <span className={className}>{verified ? 'Email Verified' : 'Email Unverified'}</span>;
 }
 
 function PasswordField({

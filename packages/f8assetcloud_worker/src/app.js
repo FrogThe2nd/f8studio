@@ -1,4 +1,5 @@
 ﻿import { betterAuth, generateId } from 'better-auth';
+import { APIError } from '@better-auth/core/error';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { admin } from 'better-auth/plugins';
 import { ApiException } from 'chanfana';
@@ -76,6 +77,30 @@ export function createApp() {
     getMe: async (c) => {
       const user = await requireAuthenticatedUser({ auth: c.get('auth'), request: c.req.raw });
       return toApiUser(user);
+    },
+    updateMe: async (c) => {
+      const auth = c.get('auth');
+      const repo = c.get('repo');
+      const user = await requireAuthenticatedUser({ auth, request: c.req.raw });
+      const payload = await readJsonBody(c.req.raw);
+      const name = requireUserProfileName(payload.name, {
+        currentName: user.name,
+        allowReserved: user.isAdmin,
+      });
+      if (name !== user.name) {
+        if (await repo.isUserNameTaken({ name, excludeUserId: user.userId })) {
+          throw new HttpError(409, 'name already in use');
+        }
+        await auth.api.updateUser({
+          body: { name },
+          headers: c.req.raw.headers,
+        });
+      }
+      const updated = await repo.getUserByIdWithStats(user.userId);
+      if (updated === null) {
+        throw new HttpError(404, 'user not found');
+      }
+      return toApiUser(updated);
     },
     listComponents: async (c) => {
       const viewer = await optionalAuthenticatedUser({ auth: c.get('auth'), request: c.req.raw });
@@ -381,8 +406,10 @@ async function routeManagementRequest({ env, managementUser, auth, repo, request
 
   if (request.method === 'POST' && url.pathname === `${MANAGEMENT_API_BASE_PATH}/users`) {
     const payload = await readJsonBody(request);
-    const name = requireBodyString(payload.name, 'name is required');
     const role = normalizeManagedUserRolePayload(payload);
+    const name = requireUserProfileName(payload.name, {
+      allowReserved: role === USER_ROLE_ADMIN,
+    });
     const created = await auth.api.createUser({
       body: {
         email: requireBodyString(payload.email, 'email is required'),
@@ -420,10 +447,20 @@ async function routeManagementRequest({ env, managementUser, auth, repo, request
     if (!parts.userId || parts.suffix.length !== 0) {
       return jsonResponse(404, { message: 'not found' });
     }
+    const currentTargetUser = await repo.getUserByIdWithStats(parts.userId);
+    if (currentTargetUser === null) {
+      return jsonResponse(404, { message: 'user not found' });
+    }
     const payload = await readJsonBody(request);
     const data = {};
+    const requestedRole = payload.role !== undefined || payload.isAdmin !== undefined || payload.canUpload !== undefined
+      ? normalizeManagedUserRolePayload(payload)
+      : currentTargetUser.role;
     if (payload.name !== undefined) {
-      data.name = requireBodyString(payload.name, 'name is required');
+      data.name = requireUserProfileName(payload.name, {
+        currentName: currentTargetUser.name,
+        allowReserved: requestedRole === USER_ROLE_ADMIN,
+      });
     }
     if (Object.keys(data).length > 0) {
       await auth.api.adminUpdateUser({
@@ -438,7 +475,7 @@ async function routeManagementRequest({ env, managementUser, auth, repo, request
       await auth.api.setRole({
         body: {
           userId: parts.userId,
-          role: normalizeManagedUserRolePayload(payload),
+          role: requestedRole,
         },
         headers: request.headers,
       });
@@ -659,6 +696,18 @@ function createAuth(env, { siteSettings, baseURL, trustedOrigins }) {
       usePlural: false,
       transaction: false,
     }),
+    databaseHooks: {
+      user: {
+        create: {
+          async before(user) {
+            assertReservedNameAllowedForRole({
+              name: user?.name,
+              role: user?.role,
+            });
+          },
+        },
+      },
+    },
     emailAndPassword: {
       enabled: true,
       autoSignIn: false,
@@ -678,7 +727,7 @@ function createAuth(env, { siteSettings, baseURL, trustedOrigins }) {
         await sendResetPasswordMessage({
           env,
           toEmail: appUser.email,
-          recipientName: appUser.displayName || appUser.email,
+          recipientName: appUser.name || appUser.email,
           resetUrl,
         });
       },
@@ -697,9 +746,14 @@ function createAuth(env, { siteSettings, baseURL, trustedOrigins }) {
         await sendVerifyEmailMessage({
           env,
           toEmail: appUser.email,
-          recipientName: appUser.displayName || appUser.email,
+          recipientName: appUser.name || appUser.email,
           verificationUrl,
         });
+      },
+    },
+    user: {
+      changeEmail: {
+        enabled: true,
       },
     },
     socialProviders,
@@ -939,7 +993,6 @@ function toApiUser(user) {
   return {
     userId: user.userId,
     name: user.name,
-    displayName: user.displayName,
     email: user.email,
     emailVerified: user.emailVerified,
     isAdmin: user.isAdmin,
@@ -951,11 +1004,9 @@ function toApiUser(user) {
 function toAppUser(user) {
   const email = stringOrDefault(user.email, '');
   const name = stringOrDefault(user.name, email || String(user.id || ''));
-  const displayName = name;
   return {
     userId: String(user.id),
     name,
-    displayName,
     email,
     emailVerified: Boolean(user.emailVerified),
     role: normalizeUserRole(user.role),
@@ -1058,28 +1109,60 @@ function resolveAllowedOrigin(env, origin) {
   return primaryOrigin;
 }
 
-function validateIdentityName(value) {
+function validateIdentityName(value, { allowReserved = false } = {}) {
   const text = String(value || '').trim();
   if (!text) {
     return false;
   }
   const canonical = canonicalizeIdentityName(text);
-  if (RESERVED_IDENTITY_NAMES.has(canonical)) {
+  if (RESERVED_IDENTITY_NAMES.has(canonical) && !allowReserved) {
     return false;
   }
   return isSafeDisplayText(text);
 }
 
-function validateDisplayName(value, allowedReservedValue = '') {
+function isReservedIdentityName(value) {
+  const text = String(value || '').trim();
+  if (!text) {
+    return false;
+  }
+  return RESERVED_IDENTITY_NAMES.has(canonicalizeIdentityName(text));
+}
+
+function validateDisplayName(value, { allowedReservedValue = '', allowReserved = false } = {}) {
   const text = String(value || '').trim();
   if (!text) {
     return false;
   }
   const canonical = canonicalizeIdentityName(text);
-  if (RESERVED_IDENTITY_NAMES.has(canonical) && canonical !== canonicalizeIdentityName(allowedReservedValue)) {
+  if (
+    RESERVED_IDENTITY_NAMES.has(canonical)
+    && !allowReserved
+    && canonical !== canonicalizeIdentityName(allowedReservedValue)
+  ) {
     return false;
   }
   return isSafeDisplayText(text);
+}
+
+function assertReservedNameAllowedForRole({ name, role }) {
+  if (!isReservedIdentityName(name)) {
+    return;
+  }
+  if (normalizeUserRole(role) === USER_ROLE_ADMIN) {
+    return;
+  }
+  throw APIError.fromStatus('BAD_REQUEST', {
+    message: 'reserved names are only available to admins',
+  });
+}
+
+function requireUserProfileName(value, { currentName = '', allowReserved = false } = {}) {
+  const name = requireBodyString(value, 'name is required');
+  if (!validateDisplayName(name, { allowedReservedValue: currentName, allowReserved })) {
+    throw new HttpError(400, 'name must be 2-64 visible characters and not reserved');
+  }
+  return name;
 }
 
 function isSafeDisplayText(value) {

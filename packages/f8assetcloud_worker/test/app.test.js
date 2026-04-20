@@ -341,9 +341,24 @@ test('auth flows use Better Auth cookie sessions and email actions', async (t) =
 
   const me = await jsonRequest(app, env, '/v1/me', { cookie: signedIn.cookie });
   assert.equal(me.status, 200);
-  assert.equal(me.json.displayName, 'Alice');
+  assert.equal(Object.hasOwn(me.json, 'displayName'), false);
   assert.equal(me.json.email, 'alice@example.com');
   assert.equal(me.json.emailVerified, true);
+
+  const renamed = await jsonRequest(app, env, '/v1/me', {
+    method: 'PUT',
+    cookie: signedIn.cookie,
+    payload: {
+      name: 'Alice Updated',
+    },
+  });
+  assert.equal(renamed.status, 200);
+  assert.equal(renamed.json.name, 'Alice Updated');
+  assert.equal(Object.hasOwn(renamed.json, 'displayName'), false);
+
+  const meAfterRename = await jsonRequest(app, env, '/v1/me', { cookie: signedIn.cookie });
+  assert.equal(meAfterRename.status, 200);
+  assert.equal(meAfterRename.json.name, 'Alice Updated');
 
   const changedPassword = await jsonRequest(app, env, '/v1/me/password', {
     method: 'POST',
@@ -596,6 +611,7 @@ test('openapi endpoints expose the audited worker contract', async (t) => {
   assert.ok(openapi.json.paths['/v1/auth/providers']);
   assert.ok(openapi.json.paths['/v1/site-settings']);
   assert.ok(openapi.json.paths['/v1/me']);
+  assert.ok(openapi.json.paths['/v1/me'].put);
   assert.equal(openapi.json.paths['/v1/search'], undefined);
   assert.ok(openapi.json.paths['/v1/components']);
   assert.ok(openapi.json.paths['/v1/components/{componentId}']);
@@ -626,6 +642,137 @@ test('openapi endpoints expose the audited worker contract', async (t) => {
   const docsHtml = await docsResponse.text();
   assert.equal(docsResponse.status, 200);
   assert.match(docsHtml, /openapi\.json/);
+});
+
+test('current user rename rejects duplicate names', async (t) => {
+  const env = createEnv();
+  t.after(() => env.DB.close());
+  const app = createApp();
+
+  await createVerifiedSession(app, env, {
+    name: 'Alice',
+    email: 'alice@example.com',
+  });
+  const bob = await createVerifiedSession(app, env, {
+    name: 'Bob',
+    email: 'bob@example.com',
+  });
+
+  const duplicateRename = await jsonRequest(app, env, '/v1/me', {
+    method: 'PUT',
+    cookie: bob.cookie,
+    payload: {
+      name: 'Alice',
+    },
+  });
+  assert.equal(duplicateRename.status, 409);
+  assert.equal(duplicateRename.json.message, 'name already in use');
+});
+
+test('current user rename blocks reserved names for non-admin users and allows them for admins', async (t) => {
+  const env = createEnv();
+  t.after(() => env.DB.close());
+  const app = createApp();
+
+  const alice = await createVerifiedSession(app, env, {
+    name: 'Alice',
+    email: 'alice@example.com',
+  });
+  const admin = await signInUser(app, env, {
+    email: 'admin@example.com',
+  });
+  assert.equal(admin.status, 200);
+  assert.ok(admin.cookie);
+
+  const nonAdminReservedRename = await jsonRequest(app, env, '/v1/me', {
+    method: 'PUT',
+    cookie: alice.cookie,
+    payload: {
+      name: 'root',
+    },
+  });
+  assert.equal(nonAdminReservedRename.status, 400);
+  assert.equal(nonAdminReservedRename.json.message, 'name must be 2-64 visible characters and not reserved');
+
+  const adminReservedRename = await jsonRequest(app, env, '/v1/me', {
+    method: 'PUT',
+    cookie: admin.cookie,
+    payload: {
+      name: 'root',
+    },
+  });
+  assert.equal(adminReservedRename.status, 200);
+  assert.equal(adminReservedRename.json.name, 'root');
+  assert.equal(adminReservedRename.json.role, 'admin');
+});
+
+test('public sign-up blocks reserved names while admin user creation can still provision them', async (t) => {
+  const env = createEnv();
+  t.after(() => env.DB.close());
+  const app = createApp();
+
+  const reservedSignUp = await jsonRequest(app, env, '/api/auth/sign-up/email', {
+    method: 'POST',
+    payload: {
+      name: 'root',
+      email: 'root@example.com',
+      password: TEST_PASSWORD,
+    },
+  });
+  assert.equal(reservedSignUp.status, 400);
+  assert.equal(reservedSignUp.json.message, 'reserved names are only available to admins');
+
+  const admin = await signInUser(app, env, {
+    email: 'admin@example.com',
+  });
+  assert.equal(admin.status, 200);
+  assert.ok(admin.cookie);
+
+  const reservedAdminCreate = await jsonRequest(app, env, `${MANAGEMENT_API_BASE_PATH}/users`, {
+    method: 'POST',
+    cookie: admin.cookie,
+    payload: {
+      name: 'root',
+      email: 'root-admin@example.com',
+      password: TEST_PASSWORD,
+      role: 'admin',
+    },
+  });
+  assert.equal(reservedAdminCreate.status, 200);
+  assert.equal(reservedAdminCreate.json.name, 'root');
+  assert.equal(reservedAdminCreate.json.role, 'admin');
+});
+
+test('authenticated user can request an email change and verify the new email', async (t) => {
+  const env = createEnv();
+  t.after(() => env.DB.close());
+  const app = createApp();
+
+  const alice = await createVerifiedSession(app, env, {
+    name: 'Alice',
+    email: 'alice@example.com',
+  });
+
+  const { result: changeEmail, logs } = await captureConsoleInfo(() => jsonRequest(app, env, '/api/auth/change-email', {
+    method: 'POST',
+    cookie: alice.cookie,
+    origin: 'http://worker.test',
+    payload: {
+      newEmail: 'alice.updated@example.com',
+      callbackURL: 'http://worker.test/console/verify-email?verified=1',
+    },
+  }));
+  assert.equal(changeEmail.status, 200);
+  const changeEmailToken = extractDebugToken(logs, 'verify email');
+  assert.ok(changeEmailToken);
+
+  const verified = await verifyUserEmail(app, env, changeEmailToken);
+  assert.equal(verified.status, 200);
+
+  const me = await jsonRequest(app, env, '/v1/me', { cookie: alice.cookie });
+  assert.equal(me.status, 200);
+  assert.equal(me.json.email, 'alice.updated@example.com');
+  assert.equal(me.json.emailVerified, true);
 });
 
 test('hot asset list queries use composite indexes without temp sorting', async (t) => {
@@ -1429,7 +1576,7 @@ test('management APIs support Better Auth backed user and asset management', asy
   });
   assert.equal(managementUpdatesUser.status, 200);
   assert.equal(managementUpdatesUser.json.name, 'Ops Team');
-  assert.equal(managementUpdatesUser.json.displayName, 'Ops Team');
+  assert.equal(Object.hasOwn(managementUpdatesUser.json, 'displayName'), false);
   assert.equal(managementUpdatesUser.json.role, 'user');
 
   const managementUsersAfterUpdate = await jsonRequest(app, env, `${MANAGEMENT_API_BASE_PATH}/users`, {

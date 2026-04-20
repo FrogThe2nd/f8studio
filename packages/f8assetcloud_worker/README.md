@@ -22,6 +22,12 @@ Core auth tables:
 - `account`
 - `verification`
 
+User contract:
+
+- The public worker API exposes a single human-readable user field: `name`
+- `displayName` is not part of the worker contract anymore
+- The management console and `/v1/me` payloads should be treated as `name`-only user surfaces
+
 Asset tables:
 
 - `asset_heads`
@@ -76,6 +82,7 @@ App wrappers:
 - `GET /v1/auth/verify-email?token=...`
 - `POST /v1/auth/reset-password`
 - `GET /v1/me`
+- `PUT /v1/me`
 - `POST /v1/me/password`
 
 Web UI:
