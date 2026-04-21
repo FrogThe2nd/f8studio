@@ -398,3 +398,53 @@ def test_build_asset_account_menu_formats_saved_session_time_locally(monkeypatch
     assert clear_menu is not None
     assert switch_menu.actions()[0].text() == expected
     assert clear_menu.actions()[0].text() == expected
+
+
+def test_build_asset_account_menu_hides_sessions_from_other_base_urls(monkeypatch) -> None:
+    _ensure_app()
+    parent = QtWidgets.QWidget()
+    client = _FakeSyncClient()
+    client._base_url = "http://127.0.0.1:8787"
+    client._saved_sessions = [
+        _FakeSession(
+            accountId="acct-local",
+            baseUrl="http://127.0.0.1:8787",
+            sessionCookie="cookie-local",
+            user=_FakeUser(userId="u1", name="Local User", email="local@example.com"),
+            lastUsedAt="2026-04-15T13:45:00+00:00",
+        ),
+        _FakeSession(
+            accountId="acct-prod",
+            baseUrl="https://assetcloud.feel8.fun",
+            sessionCookie="cookie-prod",
+            user=_FakeUser(userId="u2", name="Prod User", email="prod@example.com"),
+            lastUsedAt="2026-04-15T13:50:00+00:00",
+        ),
+    ]
+
+    monkeypatch.setattr(
+        asset_cloud_account_menu,
+        "format_timestamp_for_local_display",
+        lambda value: f"LOCAL<{value}>",
+    )
+
+    menu = asset_cloud_account_menu.build_asset_account_menu(
+        parent=parent,
+        sync_client=client,
+        on_changed=None,
+    )
+
+    switch_menu_action = next(action for action in menu.actions() if action.text() == "Switch Account")
+    clear_menu_action = next(action for action in menu.actions() if action.text() == "Clear Saved Session")
+    switch_menu = switch_menu_action.menu()
+    clear_menu = clear_menu_action.menu()
+
+    assert switch_menu is not None
+    assert clear_menu is not None
+    assert [action.text() for action in switch_menu.actions()] == [
+        "Local User (local@example.com) | Last used: LOCAL<2026-04-15T13:45:00+00:00>"
+    ]
+    assert [action.text() for action in clear_menu.actions() if not action.isSeparator()] == [
+        "Local User (local@example.com) | Last used: LOCAL<2026-04-15T13:45:00+00:00>",
+        "Clear All Saved Sessions",
+    ]

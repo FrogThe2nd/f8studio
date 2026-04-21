@@ -712,13 +712,47 @@ def test_component_sync_client_clears_invalid_saved_session_after_refresh_auth_f
         thread.join(timeout=5)
 
 
-def test_component_sync_client_prefers_saved_base_url_over_env(tmp_path: Path, monkeypatch) -> None:
+def test_component_sync_client_env_base_url_overrides_saved_base_url(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("F8_ASSET_CLOUD_BASE_URL", "http://127.0.0.1:8787")
     settings = QtCore.QSettings(str(tmp_path / "component-sync-env-override.ini"), QtCore.QSettings.IniFormat)
     client = ComponentSyncClient(settings=settings, catalog_service=ComponentCatalogService(db_path=tmp_path / "assets.db"))
     client.set_base_url("https://preview-assetcloud.feel8.fun/")
 
-    assert client.base_url() == "https://preview-assetcloud.feel8.fun"
+    assert client.base_url() == "http://127.0.0.1:8787"
+
+
+def test_component_sync_client_hides_current_session_when_env_base_url_differs(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("F8_ASSET_CLOUD_BASE_URL", "http://127.0.0.1:8787")
+    settings = QtCore.QSettings(str(tmp_path / "component-sync-env-filter.ini"), QtCore.QSettings.IniFormat)
+    credential_store = _MemoryCredentialStore()
+    client = ComponentSyncClient(
+        settings=settings,
+        catalog_service=ComponentCatalogService(db_path=tmp_path / "assets.db"),
+        credential_store=credential_store,
+    )
+    account_id = "https://assetcloud.feel8.fun::u@example.com"
+    credential_store.store_session_cookie(account_id=account_id, session_cookie="session=prod")
+    settings.beginGroup("assetcloud/v1")
+    settings.setValue(
+        "saved_sessions",
+        [
+            {
+                "accountId": account_id,
+                "baseUrl": "https://assetcloud.feel8.fun",
+                "user": {"userId": "u1", "name": "User One", "email": "u@example.com"},
+                "lastUsedAt": "2026-04-21T10:00:00+00:00",
+            }
+        ],
+    )
+    settings.setValue("current_account_id", account_id)
+    settings.setValue("user", {"userId": "u1", "name": "User One", "email": "u@example.com"})
+    settings.endGroup()
+    settings.sync()
+
+    assert client.base_url() == "http://127.0.0.1:8787"
+    assert client.current_session() is None
+    assert client.current_user() is None
+    assert client.current_access_token() == ""
 
 
 def test_decode_http_response_text_only_decodes_one_gzip_layer() -> None:

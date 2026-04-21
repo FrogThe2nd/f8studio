@@ -120,13 +120,16 @@ def origin_headers_for_base_url(base_url: str) -> dict[str, str]:
     }
 
 
-def resolve_asset_cloud_base_url(*, saved_base_url: str, default_base_url: str) -> str:
-    normalized_saved_base_url = str(saved_base_url or "").strip().rstrip("/")
-    if normalized_saved_base_url:
-        return normalized_saved_base_url
+def resolve_asset_cloud_base_url(*, saved_base_url: str, default_base_url: str, fallback_base_url: str = "") -> str:
     configured_base_url = str(os.environ.get(ASSET_CLOUD_BASE_URL_ENV) or "").strip().rstrip("/")
     if configured_base_url:
         return configured_base_url
+    normalized_saved_base_url = str(saved_base_url or "").strip().rstrip("/")
+    if normalized_saved_base_url:
+        return normalized_saved_base_url
+    normalized_fallback_base_url = str(fallback_base_url or "").strip().rstrip("/")
+    if normalized_fallback_base_url:
+        return normalized_fallback_base_url
     return str(default_base_url or "").strip().rstrip("/")
 
 

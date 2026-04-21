@@ -71,6 +71,17 @@ class AssetCloudSyncClient(Protocol):
     def logout(self) -> None: ...
 
 
+def _sessions_matching_base_url(
+    *,
+    saved_sessions: list[AssetCloudSessionLike],
+    base_url: str,
+) -> list[AssetCloudSessionLike]:
+    normalized_base_url = str(base_url or "").strip().rstrip("/")
+    return [
+        session for session in saved_sessions if str(session.baseUrl).strip().rstrip("/") == normalized_base_url
+    ]
+
+
 class AssetCloudSignInDialog(QtWidgets.QDialog):
     def __init__(self, *, parent: QtWidgets.QWidget | None, base_url: str, email: str) -> None:
         super().__init__(parent)
@@ -230,11 +241,12 @@ def build_asset_account_menu(
     )
 
     saved_sessions = sync_client.saved_sessions()
-    if saved_sessions:
+    visible_sessions = _sessions_matching_base_url(saved_sessions=saved_sessions, base_url=sync_client.base_url())
+    if visible_sessions:
         switch_menu = menu.addMenu("Switch Account")
         current_account_id = str(sync_client.current_account_id() or "").strip()
         ordered_sessions = _sorted_saved_sessions_for_switch_menu(
-            saved_sessions=saved_sessions,
+            saved_sessions=visible_sessions,
             current_account_id=current_account_id,
         )
         for session in ordered_sessions:
@@ -258,7 +270,7 @@ def build_asset_account_menu(
             )
 
         clear_menu = menu.addMenu("Clear Saved Session")
-        for session in saved_sessions:
+        for session in visible_sessions:
             label = _saved_session_label(session)
             action = clear_menu.addAction(label)
             action.triggered.connect(  # type: ignore[attr-defined]
@@ -268,10 +280,12 @@ def build_asset_account_menu(
                     on_changed=on_changed,
                 )
             )
-        clear_all_action = clear_menu.addAction("Clear All Saved Sessions")
-        clear_all_action.triggered.connect(  # type: ignore[attr-defined]
-            _menu_callback(parent=parent, action=sync_client.clear_all_saved_sessions, on_changed=on_changed)
-        )
+        if saved_sessions:
+            clear_menu.addSeparator()
+            clear_all_action = clear_menu.addAction("Clear All Saved Sessions")
+            clear_all_action.triggered.connect(  # type: ignore[attr-defined]
+                _menu_callback(parent=parent, action=sync_client.clear_all_saved_sessions, on_changed=on_changed)
+            )
 
     menu.addSeparator()
     logout_action = menu.addAction(icon_for(parent, StudioIcon.USER_X), "Logout Current Account")

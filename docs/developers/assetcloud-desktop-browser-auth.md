@@ -148,14 +148,15 @@ export F8_ASSET_CLOUD_BASE_URL=http://127.0.0.1:8787
 
 PyStudio base URL precedence is:
 
-1. saved `QSettings` value (`assetcloud/v1/base_url`)
-2. `F8_ASSET_CLOUD_BASE_URL`
+1. `F8_ASSET_CLOUD_BASE_URL`
+2. saved `QSettings` value (`assetcloud/v1/base_url`)
 3. the built-in default (`https://assetcloud.feel8.fun`)
 
 Important consequence:
 
-- if a user already saved a base URL in settings, simply exporting `F8_ASSET_CLOUD_BASE_URL` will **not** override it
-- clear or change the saved base URL if you want the environment variable to take effect immediately
+- exporting `F8_ASSET_CLOUD_BASE_URL` now **does** override any previously persisted `QSettings` base URL
+- this is the recommended way to force PyStudio onto production, preview, or a local worker during development
+- when this override points at a different environment, PyStudio only treats saved sessions for that same base URL as active/switchable
 
 Relevant code:
 
@@ -256,12 +257,12 @@ CORS_ALLOWED_ORIGINS="http://localhost:5173"
 
 Most likely cause:
 
-- a saved base URL already exists in `QSettings`
+- PyStudio was launched from a shell or launcher that does not actually include the environment variable
 
 Fix:
 
-- clear or overwrite the saved base URL from the app
-- or reset the relevant local settings before retesting
+- verify the process environment really contains `F8_ASSET_CLOUD_BASE_URL`
+- restart PyStudio from the same shell/session where you exported it
 
 ### The browser reaches the website but desktop sign-in does not finish
 
@@ -278,7 +279,7 @@ Check:
 
 - whether the worker returned a rotated session cookie
 - whether PyStudio persisted the rotated cookie for the correct account
-- whether the saved base URL matches the site you actually used to sign in
+- whether the effective PyStudio base URL matches the site you actually used to sign in
 
 Recent client changes already:
 

@@ -73,6 +73,7 @@ class VariantSyncClient:
         return resolve_asset_cloud_base_url(
             saved_base_url=self._value_str("base_url"),
             default_base_url=self._DEFAULT_BASE_URL,
+            fallback_base_url=self._current_session_base_url(),
         )
 
     @classmethod
@@ -119,21 +120,28 @@ class VariantSyncClient:
         account_id = self.current_account_id()
         if not account_id:
             return None
-        for session in self.saved_sessions():
-            if session.accountId == account_id:
-                return session
-        self._clear_current_auth_state()
-        return None
+        session = self._saved_session_by_id(account_id)
+        if session is None:
+            self._clear_current_auth_state()
+            return None
+        if not self._session_matches_current_base_url(session):
+            return None
+        return session
 
     def current_access_token(self) -> str:
         current_account_id = self.current_account_id()
+        session = self.current_session()
+        if session is None:
+            if self._access_token and self._access_token_account_id == current_account_id:
+                self._access_token = ""
+                self._access_token_account_id = ""
+            return ""
         if self._access_token and self._access_token_account_id == current_account_id:
             return self._access_token
         if self._access_token and self._access_token_account_id != current_account_id:
             self._access_token = ""
             self._access_token_account_id = ""
-        session = self.current_session()
-        if session is not None and str(session.sessionCookie).strip():
+        if str(session.sessionCookie).strip():
             self._access_token = str(session.sessionCookie).strip()
             self._access_token_account_id = str(session.accountId)
             return self._access_token
@@ -410,6 +418,10 @@ class VariantSyncClient:
         session = self._saved_session_by_id(account_id)
         if session is None:
             raise F8VariantRemoteAuthError("Saved account session was not found.")
+        if not self._session_matches_current_base_url(session):
+            raise F8VariantRemoteAuthError(
+                f"Saved account session is for {session.baseUrl}, but the current Asset Cloud is {self.base_url()}."
+            )
         self._set_value(self._CURRENT_ACCOUNT_ID_KEY, session.accountId)
         self.set_base_url(session.baseUrl)
         self._set_value("email", str(session.user.email or ""))
@@ -822,6 +834,23 @@ class VariantSyncClient:
             if session.accountId == normalized_account_id:
                 return session
         return None
+
+    def _session_matches_current_base_url(self, session: F8VariantRemoteSession) -> bool:
+        return str(session.baseUrl).strip().rstrip("/") == self.base_url()
+
+    def _current_session_base_url(self) -> str:
+        current_account_id = self.current_account_id()
+        if not current_account_id:
+            return ""
+        for item in self._value_list(self._SAVED_SESSIONS_KEY):
+            if not isinstance(item, dict):
+                continue
+            payload = json_object_from_value(item)
+            account_id = str(payload.get("accountId") or "").strip()
+            if account_id != current_account_id:
+                continue
+            return str(payload.get("baseUrl") or "").strip().rstrip("/")
+        return ""
 
     def _clear_current_auth_state(self) -> None:
         self._access_token = ""
