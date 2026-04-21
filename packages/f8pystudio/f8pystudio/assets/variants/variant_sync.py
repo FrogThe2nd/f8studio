@@ -47,7 +47,7 @@ logger = logging.getLogger(__name__)
 
 
 class VariantSyncClient:
-    _SETTINGS_GROUP: str = "variants/remote_sync/v1"
+    _SETTINGS_GROUP: str = "assetcloud/v1"
     _DEFAULT_BASE_URL: str = "https://assetcloud.feel8.fun"
     _USER_AGENT: str = "F8Studio/1.0"
     _SAVED_SESSIONS_KEY: str = "saved_sessions"

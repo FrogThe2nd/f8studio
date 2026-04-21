@@ -344,7 +344,7 @@ def test_component_sync_client_supports_anonymous_public_install_and_cookie_sess
         auth = client.login(base_url=f"http://127.0.0.1:{server.server_port}", email="u@example.com", password="p", remember=True)
         assert auth.user.name == "User One"
         assert server.last_login_user_agent == "F8Studio/1.0"
-        settings.beginGroup("variants/remote_sync/v1")
+        settings.beginGroup("assetcloud/v1")
         saved_sessions_raw = settings.value("saved_sessions", [])
         stored_session_cookie = settings.value("session_cookie", "")
         settings.endGroup()
@@ -443,7 +443,7 @@ def test_component_sync_client_uses_env_base_url_when_settings_are_empty(tmp_pat
 
 def test_component_sync_client_drops_saved_sessions_missing_keyring_cookie(tmp_path: Path, caplog) -> None:
     settings = QtCore.QSettings(str(tmp_path / "component-sync-missing-keyring.ini"), QtCore.QSettings.IniFormat)
-    settings.beginGroup("variants/remote_sync/v1")
+    settings.beginGroup("assetcloud/v1")
     settings.setValue(
         "saved_sessions",
         [

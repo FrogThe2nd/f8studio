@@ -295,7 +295,7 @@ def test_variant_sync_client_uses_cookie_sessions_and_marks_conflicts(tmp_path: 
         assert server.last_login_user_agent == "F8Studio/1.0"
         assert len(client.saved_sessions()) == 1
         assert client.current_session() is not None
-        settings.beginGroup("variants/remote_sync/v1")
+        settings.beginGroup("assetcloud/v1")
         saved_sessions_raw = settings.value("saved_sessions", [])
         stored_session_cookie = settings.value("session_cookie", "")
         settings.endGroup()
@@ -397,7 +397,7 @@ def test_variant_sync_client_uses_env_base_url_when_settings_are_empty(tmp_path:
 
 def test_variant_sync_client_drops_saved_sessions_missing_keyring_cookie(tmp_path: Path, caplog) -> None:
     settings = QtCore.QSettings(str(tmp_path / "variant-sync-missing-keyring.ini"), QtCore.QSettings.IniFormat)
-    settings.beginGroup("variants/remote_sync/v1")
+    settings.beginGroup("assetcloud/v1")
     settings.setValue(
         "saved_sessions",
         [
