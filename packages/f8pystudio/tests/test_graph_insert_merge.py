@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 import pytest
 from NodeGraphQt import NodeGraph
+from qtpy import QtWidgets
 
 from f8pystudio.nodegraph.layers import F8LayerDef, normalize_layer_defs
 from f8pystudio.nodegraph.node_graph import (
@@ -15,6 +16,7 @@ from f8pystudio.nodegraph.node_graph import (
     GraphBounds,
     GraphInsertRequest,
 )
+from f8pystudio.render_nodes.backdrop import BackdropRenderNode
 
 
 class _FakeNode:
@@ -59,14 +61,24 @@ class _FakeViewer:
         self.refresh_calls.append(bool(force))
 
 
+def _ensure_app() -> QtWidgets.QApplication:
+    app = QtWidgets.QApplication.instance()
+    if app is not None:
+        return app
+    return QtWidgets.QApplication([])
+
+
 def _new_graph_stub() -> F8StudioGraph:
     graph = F8StudioGraph.__new__(F8StudioGraph)
     graph._loading_session = False
     graph._viewer = None
+    graph._undo_calls: list[tuple[str, str]] = []
     graph._session_layer_defs = normalize_layer_defs(())
     graph._active_layer_ids = ("base",)
     graph.layers_changed = type("_Signal", (), {"emit": staticmethod(lambda *args: None)})()
     graph.active_layers_changed = type("_Signal", (), {"emit": staticmethod(lambda *args: None)})()
+    graph.begin_undo = lambda name: graph._undo_calls.append(("begin", str(name)))  # type: ignore[method-assign]
+    graph.end_undo = lambda: graph._undo_calls.append(("end", ""))  # type: ignore[method-assign]
     graph._inject_node_ids = lambda layout: None  # type: ignore[method-assign]
     graph._restore_missing_session_nodes = lambda layout: layout  # type: ignore[method-assign]
     graph._coerce_missing_session_nodes = lambda layout: layout  # type: ignore[method-assign]
@@ -231,6 +243,7 @@ def test_apply_insert_graph_remaps_ids_connections_identity_and_offsets() -> Non
 
     assert result.id_remap_plan.mapping["svcA"] == "svcA_2"
     assert result.inserted_node_ids == ["svcA_2", "op1"]
+    assert graph._undo_calls == [('begin', 'insert graph: "x.json"'), ("end", "")]
 
 
 def test_apply_insert_graph_preserves_view_and_redraws_inserted_nodes() -> None:
@@ -329,3 +342,39 @@ def test_apply_insert_graph_remaps_conflicting_layer_ids() -> None:
     inserted_layer_ids = inserted_node["f8_ui_state"]["layerIds"]
     assert inserted_layer_ids == ["logic_2"]
     assert [layer.id for layer in graph._session_layer_defs] == ["base", "logic", "logic_2"]
+
+
+def test_apply_insert_graph_adds_single_real_undo_command_for_component_insert() -> None:
+    _ensure_app()
+    source_graph = F8StudioGraph()
+    target_graph = F8StudioGraph()
+    for graph in (source_graph, target_graph):
+        graph.node_factory.clear_registered_nodes()
+        graph.node_factory.register_node(BackdropRenderNode)
+
+    node_type = str(BackdropRenderNode.type_ or "")
+    _ = source_graph.create_node(node_type, name="Source A", selected=False, push_undo=False, pos=(10.0, 20.0))
+    _ = source_graph.create_node(node_type, name="Source B", selected=False, push_undo=False, pos=(140.0, 170.0))
+    payload = source_graph.serialize_publish_session()
+
+    request = target_graph.prepare_insert_graph_from_component(payload, component_name="Reusable Region")
+    baseline_count = int(target_graph._undo_stack.count())
+    baseline_index = int(target_graph._undo_stack.index())
+
+    result = target_graph.apply_insert_graph(request, anchor_x=260.0, anchor_y=320.0)
+
+    assert len(result.inserted_node_ids) == 2
+    assert int(target_graph._undo_stack.count()) == baseline_count + 1
+    assert int(target_graph._undo_stack.index()) == baseline_index + 1
+    assert str(target_graph._undo_stack.undoText() or "") == 'insert component: "Reusable Region"'
+    assert all(target_graph.get_node_by_id(node_id) is not None for node_id in result.inserted_node_ids)
+
+    target_graph._undo_stack.undo()
+
+    assert all(target_graph.get_node_by_id(node_id) is None for node_id in result.inserted_node_ids)
+    assert int(target_graph._undo_stack.index()) == baseline_index
+
+    target_graph._undo_stack.redo()
+
+    assert all(target_graph.get_node_by_id(node_id) is not None for node_id in result.inserted_node_ids)
+    assert int(target_graph._undo_stack.index()) == baseline_index + 1

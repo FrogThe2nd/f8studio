@@ -94,6 +94,10 @@ class _GraphInsertHost(Protocol):
 
     def active_layer_ids(self) -> tuple[str, ...]: ...
 
+    def begin_undo(self, name: str) -> None: ...
+
+    def end_undo(self) -> None: ...
+
     def deserialize_session(self, layout_data: JsonObject, *, clear_session: bool, clear_undo_stack: bool) -> None: ...
 
     def set_session_layer_defs(
@@ -113,6 +117,21 @@ class _GraphInsertHost(Protocol):
 
 class GraphInsertFlowMixin:
     _loading_session: bool | None = None
+
+    @staticmethod
+    def _insert_undo_label(source_path: str) -> str:
+        normalized_source_path = str(source_path or "").strip()
+        component_prefix = "component:"
+        if normalized_source_path.startswith(component_prefix):
+            component_name = normalized_source_path[len(component_prefix) :].strip()
+            if component_name:
+                return f'insert component: "{component_name}"'
+            return "insert component"
+        if normalized_source_path:
+            file_name = os.path.basename(normalized_source_path)
+            if file_name:
+                return f'insert graph: "{file_name}"'
+        return "insert graph"
 
     @staticmethod
     def _json_object_or_none(value: object) -> JsonObject | None:
@@ -286,31 +305,36 @@ class GraphInsertFlowMixin:
             for layer_id in extract_node_layer_ids_from_ui_state(node_data.get("f8_ui_state")):
                 activate_layer_ids.add(layer_id)
 
-        prev_loading = bool(host._loading_session)
-        host._loading_session = True
+        undo_label = self._insert_undo_label(request.source_path)
+        host.begin_undo(undo_label)
         try:
-            deserialize_layout = dict(remapped_layout)
-            _ = deserialize_layout.pop("f8_layers", None)
-            host.deserialize_session(deserialize_layout, clear_session=False, clear_undo_stack=False)
-        finally:
-            host._loading_session = prev_loading
-        host.set_session_layer_defs(
-            merged_layer_defs,
-            preserve_active=True,
-            activate_layer_ids=tuple(sorted(activate_layer_ids)),
-        )
-        inserted_node_ids = [remap_plan.mapping.get(src, src) for src in import_node_ids]
-        host._rebind_container_children()
-        host._refresh_all_inline_state_read_only()
-        self._refresh_inserted_node_views(inserted_node_ids)
-        all_nodes = list(host.all_nodes() or [])
-        selected_ids = set(inserted_node_ids)
-        for node in all_nodes:
+            prev_loading = bool(host._loading_session)
+            host._loading_session = True
             try:
-                node.set_property("selected", bool(str(node.id or "") in selected_ids), push_undo=False)
-            except (AttributeError, RuntimeError, TypeError):
-                continue
-        self._refresh_viewer_after_insert()
+                deserialize_layout = dict(remapped_layout)
+                _ = deserialize_layout.pop("f8_layers", None)
+                host.deserialize_session(deserialize_layout, clear_session=False, clear_undo_stack=False)
+            finally:
+                host._loading_session = prev_loading
+            host.set_session_layer_defs(
+                merged_layer_defs,
+                preserve_active=True,
+                activate_layer_ids=tuple(sorted(activate_layer_ids)),
+            )
+            inserted_node_ids = [remap_plan.mapping.get(src, src) for src in import_node_ids]
+            host._rebind_container_children()
+            host._refresh_all_inline_state_read_only()
+            self._refresh_inserted_node_views(inserted_node_ids)
+            all_nodes = list(host.all_nodes() or [])
+            selected_ids = set(inserted_node_ids)
+            for node in all_nodes:
+                try:
+                    node.set_property("selected", bool(str(node.id or "") in selected_ids), push_undo=False)
+                except (AttributeError, RuntimeError, TypeError):
+                    continue
+            self._refresh_viewer_after_insert()
+        finally:
+            host.end_undo()
 
         total_dropped = int(request.dropped_invalid_connections) + int(dropped_invalid_connections)
         if total_dropped > 0:
