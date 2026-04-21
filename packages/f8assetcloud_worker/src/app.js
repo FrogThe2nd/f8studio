@@ -571,7 +571,6 @@ async function routeManagementRequest({ env, managementUser, auth, repo, request
       assetType: 'component',
       ownerUserId: url.searchParams.get('ownerUserId') || '',
       query: url.searchParams.get('q') || '',
-      includeDeleted: url.searchParams.get('includeDeleted') || '',
       cursor: url.searchParams.get('cursor') || '',
     });
     return jsonResponse(200, result);
@@ -582,7 +581,6 @@ async function routeManagementRequest({ env, managementUser, auth, repo, request
       assetType: 'variant',
       ownerUserId: url.searchParams.get('ownerUserId') || '',
       query: url.searchParams.get('q') || '',
-      includeDeleted: url.searchParams.get('includeDeleted') || '',
       cursor: url.searchParams.get('cursor') || '',
       kind: url.searchParams.get('kind') || '',
       baseNodeType: url.searchParams.get('baseNodeType') || '',
@@ -597,7 +595,6 @@ async function routeManagementRequest({ env, managementUser, auth, repo, request
     }
     const asset = await repo.getManagedAsset({
       assetId: componentId,
-      includeDeleted: url.searchParams.get('includeDeleted') || '',
       assetTypeHint: 'component',
     });
     if (asset === null) {
@@ -613,7 +610,6 @@ async function routeManagementRequest({ env, managementUser, auth, repo, request
     }
     const asset = await repo.getManagedAsset({
       assetId: variantId,
-      includeDeleted: url.searchParams.get('includeDeleted') || '',
       assetTypeHint: 'variant',
     });
     if (asset === null) {
@@ -628,12 +624,6 @@ async function routeManagementRequest({ env, managementUser, auth, repo, request
       return jsonResponse(404, { message: 'not found' });
     }
     const payload = await readJsonBody(request);
-    if (payload.restore === true) {
-      const restored = await repo.adminRestoreAsset({ assetId: componentId, assetTypeHint: 'component' });
-      if (!restored) {
-        return jsonResponse(404, { message: 'asset not found' });
-      }
-    }
     if (payload.visibility !== undefined) {
       const updated = await repo.adminUpdateAssetVisibility({
         assetId: componentId,
@@ -658,12 +648,6 @@ async function routeManagementRequest({ env, managementUser, auth, repo, request
       return jsonResponse(404, { message: 'not found' });
     }
     const payload = await readJsonBody(request);
-    if (payload.restore === true) {
-      const restored = await repo.adminRestoreAsset({ assetId: variantId, assetTypeHint: 'variant' });
-      if (!restored) {
-        return jsonResponse(404, { message: 'asset not found' });
-      }
-    }
     if (payload.visibility !== undefined) {
       const updated = await repo.adminUpdateAssetVisibility({
         assetId: variantId,
@@ -675,7 +659,7 @@ async function routeManagementRequest({ env, managementUser, auth, repo, request
       }
       return jsonResponse(200, updated);
     }
-    const current = await repo.getManagedAsset({ assetId: variantId, includeDeleted: true, assetTypeHint: 'variant' });
+    const current = await repo.getManagedAsset({ assetId: variantId, assetTypeHint: 'variant' });
     if (current === null) {
       return jsonResponse(404, { message: 'asset not found' });
     }

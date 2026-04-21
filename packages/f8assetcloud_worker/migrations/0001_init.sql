@@ -73,22 +73,21 @@ CREATE TABLE asset_heads (
   name TEXT NOT NULL,
   description TEXT NOT NULL,
   tags_json TEXT NOT NULL,
-  deleted_at TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   FOREIGN KEY (owner_user_id) REFERENCES user(id)
 );
 
 CREATE INDEX idx_asset_heads_type_visibility_name
-  ON asset_heads(asset_type, visibility, deleted_at, LOWER(name), asset_id);
+  ON asset_heads(asset_type, visibility, LOWER(name), asset_id);
 CREATE INDEX idx_asset_heads_type_owner_name
-  ON asset_heads(asset_type, owner_user_id, deleted_at, LOWER(name), asset_id);
-CREATE INDEX idx_asset_heads_type_deleted_updated
-  ON asset_heads(asset_type, deleted_at, updated_at DESC, asset_id);
-CREATE INDEX idx_asset_heads_deleted_updated
-  ON asset_heads(deleted_at, updated_at DESC, asset_id);
-CREATE INDEX idx_asset_heads_owner_deleted_updated
-  ON asset_heads(owner_user_id, deleted_at, updated_at DESC, asset_id);
+  ON asset_heads(asset_type, owner_user_id, LOWER(name), asset_id);
+CREATE INDEX idx_asset_heads_type_updated
+  ON asset_heads(asset_type, updated_at DESC, asset_id);
+CREATE INDEX idx_asset_heads_updated
+  ON asset_heads(updated_at DESC, asset_id);
+CREATE INDEX idx_asset_heads_owner_updated
+  ON asset_heads(owner_user_id, updated_at DESC, asset_id);
 
 CREATE TABLE variant_details (
   asset_id TEXT PRIMARY KEY,
@@ -152,3 +151,18 @@ CREATE TABLE bootstrap_admin_state (
   synced_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (user_id) REFERENCES user(id)
 );
+
+CREATE TABLE desktop_authorization_codes (
+  code TEXT PRIMARY KEY,
+  client_id TEXT NOT NULL,
+  redirect_uri TEXT NOT NULL,
+  code_challenge TEXT NOT NULL,
+  code_challenge_method TEXT NOT NULL,
+  session_cookie TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,
+  used_at INTEGER
+);
+
+CREATE INDEX idx_desktop_authorization_codes_expires_at
+  ON desktop_authorization_codes(expires_at);

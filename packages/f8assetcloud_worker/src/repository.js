@@ -46,7 +46,6 @@ export class AssetRepository {
       LEFT JOIN (
         SELECT owner_user_id, COUNT(*) AS asset_count
         FROM asset_heads
-        WHERE deleted_at IS NULL
         GROUP BY owner_user_id
       ) assets ON assets.owner_user_id = u.id
       WHERE ${filters.join(' AND ')}
@@ -89,7 +88,6 @@ export class AssetRepository {
        LEFT JOIN (
          SELECT owner_user_id, COUNT(*) AS asset_count
          FROM asset_heads
-         WHERE deleted_at IS NULL
          GROUP BY owner_user_id
        ) assets ON assets.owner_user_id = u.id
        WHERE u.id = ?`,
@@ -189,7 +187,7 @@ export class AssetRepository {
     };
   }
 
-  async listManagedAssets({ assetType, ownerUserId, query, includeDeleted, cursor, kind = '', baseNodeType = '' }) {
+  async listManagedAssets({ assetType, ownerUserId, query, cursor, kind = '', baseNodeType = '' }) {
     const filters = ['1 = 1'];
     const bindings = [];
     const normalizedAssetType = String(assetType || '').trim();
@@ -201,9 +199,6 @@ export class AssetRepository {
     if (ownerFilter) {
       filters.push('h.owner_user_id = ?');
       bindings.push(ownerFilter);
-    }
-    if (!toBoolean(includeDeleted)) {
-      filters.push('h.deleted_at IS NULL');
     }
     if (String(query || '').trim()) {
       const match = `%${escapeLikePattern(String(query).trim().toLowerCase())}%`;
@@ -282,8 +277,8 @@ export class AssetRepository {
     };
   }
 
-  async getManagedAsset({ assetId, includeDeleted, assetTypeHint = '' }) {
-    const head = await this._findAssetHeadRow(assetId, { includeDeleted: toBoolean(includeDeleted), assetTypeHint });
+  async getManagedAsset({ assetId, assetTypeHint = '' }) {
+    const head = await this._findAssetHeadRow(assetId, { assetTypeHint });
     if (head === null) {
       return null;
     }
@@ -298,46 +293,38 @@ export class AssetRepository {
   }
 
   async adminDeleteAsset({ assetId, assetTypeHint = '' }) {
-    const existing = await this._findAssetHeadRow(assetId, { includeDeleted: true, assetTypeHint });
+    const existing = await this._findAssetHeadRow(assetId, { assetTypeHint });
     if (existing === null) {
       return false;
     }
     if (assetTypeHint && String(existing.asset_type) !== String(assetTypeHint)) {
       return false;
     }
-    const timestamp = nowIso();
-    await this._db.prepare(
-      `UPDATE asset_heads
-       SET deleted_at = ?,
-           updated_at = ?
-       WHERE asset_id = ?`,
-    )
-      .bind(timestamp, timestamp, String(assetId))
-      .run();
-    return true;
-  }
+    const assetIdStr = String(assetId);
 
-  async adminRestoreAsset({ assetId, assetTypeHint = '' }) {
-    const existing = await this._findAssetHeadRow(assetId, { includeDeleted: true, assetTypeHint });
-    if (existing === null) {
-      return false;
-    }
-    if (assetTypeHint && String(existing.asset_type) !== String(assetTypeHint)) {
-      return false;
-    }
-    await this._db.prepare(
-      `UPDATE asset_heads
-       SET deleted_at = NULL,
-           updated_at = ?
-       WHERE asset_id = ?`,
-    )
-      .bind(nowIso(), String(assetId))
+    await this._db.prepare('DELETE FROM asset_subscriptions WHERE asset_id = ?')
+      .bind(assetIdStr)
       .run();
+
+    await this._db.prepare('DELETE FROM asset_versions WHERE asset_id = ?')
+      .bind(assetIdStr)
+      .run();
+
+    if (await this._hasVariantDetailsTable()) {
+      await this._db.prepare('DELETE FROM variant_details WHERE asset_id = ?')
+        .bind(assetIdStr)
+        .run();
+    }
+
+    await this._db.prepare('DELETE FROM asset_heads WHERE asset_id = ?')
+      .bind(assetIdStr)
+      .run();
+
     return true;
   }
 
   async adminUpdateAssetVisibility({ assetId, visibility, assetTypeHint = '' }) {
-    const existing = await this._findAssetHeadRow(assetId, { includeDeleted: true, assetTypeHint });
+    const existing = await this._findAssetHeadRow(assetId, { assetTypeHint });
     if (existing === null) {
       return null;
     }
@@ -485,7 +472,7 @@ export class AssetRepository {
   }
 
   async _createAsset({ normalized, userId }) {
-    const existing = await this._findAssetHeadRow(normalized.assetId, { includeDeleted: false });
+    const existing = await this._findAssetHeadRow(normalized.assetId);
     if (existing !== null) {
       throw new AssetValidationError('assetId already exists');
     }
@@ -494,8 +481,8 @@ export class AssetRepository {
     await this._db.prepare(
       `INSERT INTO asset_heads (
          asset_id, asset_type, owner_user_id, visibility, current_version_number,
-         name, description, tags_json, deleted_at, created_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
+         name, description, tags_json, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
       .bind(
         normalized.assetId,
@@ -546,7 +533,6 @@ export class AssetRepository {
            name = ?,
            description = ?,
            tags_json = ?,
-           deleted_at = NULL,
            updated_at = ?
        WHERE asset_id = ?`,
     )
@@ -588,10 +574,24 @@ export class AssetRepository {
 
   async _deleteOwnedAsset({ assetId, assetType, userId }) {
     await this._requireOwnedAsset({ assetId, assetType, userId });
-    await this._db.prepare(
-      `UPDATE asset_heads SET deleted_at = ?, updated_at = ? WHERE asset_id = ?`,
-    )
-      .bind(nowIso(), nowIso(), String(assetId))
+    const assetIdStr = String(assetId);
+
+    await this._db.prepare('DELETE FROM asset_subscriptions WHERE asset_id = ?')
+      .bind(assetIdStr)
+      .run();
+
+    await this._db.prepare('DELETE FROM asset_versions WHERE asset_id = ?')
+      .bind(assetIdStr)
+      .run();
+
+    if (await this._hasVariantDetailsTable()) {
+      await this._db.prepare('DELETE FROM variant_details WHERE asset_id = ?')
+        .bind(assetIdStr)
+        .run();
+    }
+
+    await this._db.prepare('DELETE FROM asset_heads WHERE asset_id = ?')
+      .bind(assetIdStr)
       .run();
   }
 
@@ -630,7 +630,7 @@ export class AssetRepository {
   }
 
   async _listTypedAssetSummaries({ assetType, userId, query, cursor, visibility, owner, extraFilters }) {
-    const filters = ['h.deleted_at IS NULL', 'h.asset_type = ?'];
+    const filters = ['h.asset_type = ?'];
     const bindings = [assetType];
     applyVisibilityOwnerFilters({ filters, bindings, userId, visibility, owner });
     applyAssetQueryFilters({ filters, bindings, query, assetType, extraFilters });
@@ -892,8 +892,7 @@ export class AssetRepository {
       .run();
   }
 
-  async _findAssetHeadRow(assetId, { includeDeleted = false, assetTypeHint = '' } = {}) {
-    const deletedFilter = includeDeleted ? '' : 'AND h.deleted_at IS NULL';
+  async _findAssetHeadRow(assetId, { assetTypeHint = '' } = {}) {
     const row = assetTypeHint === 'variant'
       ? await this._db.prepare(
         `SELECT
@@ -909,7 +908,7 @@ export class AssetRepository {
            ON v.asset_id = h.asset_id AND v.version_number = h.current_version_number
          LEFT JOIN variant_details vd ON vd.asset_id = h.asset_id
          LEFT JOIN user u ON u.id = h.owner_user_id
-         WHERE h.asset_id = ? ${deletedFilter}`,
+         WHERE h.asset_id = ?`,
       )
         .bind(String(assetId))
         .first()
@@ -922,7 +921,7 @@ export class AssetRepository {
          JOIN asset_versions v
            ON v.asset_id = h.asset_id AND v.version_number = h.current_version_number
          LEFT JOIN user u ON u.id = h.owner_user_id
-         WHERE h.asset_id = ? ${deletedFilter}`,
+         WHERE h.asset_id = ?`,
       )
         .bind(String(assetId))
         .first();
@@ -1423,7 +1422,6 @@ function genericAssetSummary(row) {
     tags: normalizeTags(parseJsonArray(row.tags_json)),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
-    deletedAt: nullableString(row.deleted_at),
   };
 }
 

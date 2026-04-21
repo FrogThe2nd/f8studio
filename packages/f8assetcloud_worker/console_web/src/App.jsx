@@ -135,7 +135,7 @@ function managementCollectionPathForAssetType(assetType) {
   throw new Error(`Unsupported asset type: ${normalizedAssetType || 'unknown'}`);
 }
 
-export function buildManagedAssetListPath(assetType, { ownerUserId = '', query = '', includeDeleted = false } = {}) {
+export function buildManagedAssetListPath(assetType, { ownerUserId = '', query = '' } = {}) {
   const params = new URLSearchParams();
   const normalizedOwnerUserId = String(ownerUserId || '').trim();
   const normalizedQuery = String(query || '').trim();
@@ -145,22 +145,18 @@ export function buildManagedAssetListPath(assetType, { ownerUserId = '', query =
   if (normalizedQuery) {
     params.set('q', normalizedQuery);
   }
-  if (includeDeleted) {
-    params.set('includeDeleted', 'true');
-  }
   const basePath = managementCollectionPathForAssetType(assetType);
   const queryString = params.toString();
   return queryString ? `${basePath}?${queryString}` : basePath;
 }
 
-export function buildManagedAssetDetailPath(asset, { includeDeleted = false } = {}) {
+export function buildManagedAssetDetailPath(asset) {
   const assetType = String(asset?.assetType || '').trim();
   const assetId = String(asset?.assetId || '').trim();
   if (!assetId) {
     throw new Error('Managed asset path requires assetId.');
   }
-  const basePath = `${managementCollectionPathForAssetType(assetType)}/${encodeURIComponent(assetId)}`;
-  return includeDeleted ? `${basePath}?includeDeleted=true` : basePath;
+  return `${managementCollectionPathForAssetType(assetType)}/${encodeURIComponent(assetId)}`;
 }
 
 export function buildAssetListPath(assetType, { owner = '', query = '' } = {}) {
@@ -421,7 +417,6 @@ function ConsoleApp() {
           assetType: mineAssetType,
           ownerUserId: currentUser.userId,
           query: mineQuery,
-          includeDeleted: true,
         })
       : await loadPublicAssetResults({
           assetType: mineAssetType,
@@ -436,7 +431,6 @@ function ConsoleApp() {
       ? await loadManagedAssetResults({
           assetType: allAssetType,
           query: allQuery,
-          includeDeleted: true,
         })
       : await loadPublicAssetResults({
           assetType: allAssetType,
@@ -446,7 +440,7 @@ function ConsoleApp() {
     setAllAssets(result);
   }
 
-  async function loadManagedAssetResults({ assetType, ownerUserId = '', query, includeDeleted = false }) {
+  async function loadManagedAssetResults({ assetType, ownerUserId = '', query }) {
     const normalizedType = String(assetType || '').trim() || 'all';
     const assetTypes = normalizedType === 'all' ? ASSET_TYPE_OPTIONS : [normalizedType];
     const results = await Promise.all(assetTypes.map(async (type) => {
@@ -454,7 +448,6 @@ function ConsoleApp() {
         buildManagedAssetListPath(type, {
           ownerUserId,
           query,
-          includeDeleted,
         }),
       );
       return Array.isArray(response.entries) ? response.entries : [];
@@ -840,7 +833,7 @@ function ConsoleApp() {
     setLoading(true);
     try {
       const endpoint = currentUser?.isAdmin
-        ? buildManagedAssetDetailPath(asset, { includeDeleted: true })
+        ? buildManagedAssetDetailPath(asset)
         : asset.assetType === 'variant'
           ? `/v1/variants/${encodeURIComponent(asset.assetId)}`
           : `/v1/components/${encodeURIComponent(asset.assetId)}`;
@@ -857,7 +850,7 @@ function ConsoleApp() {
   async function onDownloadAsset(asset) {
     try {
       const endpoint = currentUser?.isAdmin
-        ? buildManagedAssetDetailPath(asset, { includeDeleted: Boolean(asset.deletedAt) })
+        ? buildManagedAssetDetailPath(asset)
         : asset.assetType === 'variant'
           ? `/v1/variants/${encodeURIComponent(asset.assetId)}/content`
           : `/v1/components/${encodeURIComponent(asset.assetId)}/content`;
@@ -867,25 +860,6 @@ function ConsoleApp() {
       setStatusText(`Downloaded content for ${asset.assetId}`);
     } catch (error) {
       setStatusText(error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  async function onRestoreAsset(asset) {
-    if (!currentUser?.isAdmin) {
-      return;
-    }
-    setLoading(true);
-    try {
-      await apiRequest(buildManagedAssetDetailPath(asset, { includeDeleted: true }), {
-        method: 'PUT',
-        body: JSON.stringify({ restore: true }),
-      });
-      await refreshCurrentPage();
-      setStatusText(`Restored ${asset.assetId}`);
-    } catch (error) {
-      setStatusText(error instanceof Error ? error.message : String(error));
-    } finally {
-      setLoading(false);
     }
   }
 
@@ -1525,26 +1499,15 @@ function ConsoleApp() {
                 </div>
               </div>
               <SimpleTable
-                columns={hasManagementAccess ? ['Asset ID', 'Type', 'Visibility', 'Revision', 'Deleted', 'Actions'] : ['Asset ID', 'Type', 'Visibility', 'Revision', 'Actions']}
+                columns={hasManagementAccess ? ['Asset ID', 'Type', 'Visibility', 'Revision', 'Actions'] : ['Asset ID', 'Type', 'Visibility', 'Revision', 'Actions']}
                 rows={mineAssets.map((asset) => [
                   asset.assetId,
                   asset.assetType,
                   asset.visibility,
                   asset.revision,
-                  ...(hasManagementAccess ? [
-                    asset.deletedAt ? (
-                      <span title={formatTimestampTooltip(asset.deletedAt)}>
-                        {formatTimestampForDisplay(asset.deletedAt)}
-                      </span>
-                    ) : 'No'
-                  ] : []),
                   <div className="inline-form" key={`${asset.assetId}-actions`}>
                     <button type="button" onClick={() => void onDownloadAsset(asset)} disabled={loading}>Download Content</button>
-                    {asset.deletedAt ? (
-                      <button type="button" className="button-secondary" onClick={() => void onRestoreAsset(asset)} disabled={loading || !hasManagementAccess}>Restore</button>
-                    ) : (
-                      <button type="button" onClick={() => void onDeleteOwnAsset(asset)} disabled={loading}>Delete</button>
-                    )}
+                    <button type="button" onClick={() => void onDeleteOwnAsset(asset)} disabled={loading}>Delete</button>
                   </div>,
                 ])}
                 emptyText="No assets"
@@ -1571,7 +1534,7 @@ function ConsoleApp() {
                 </div>
               </div>
               <SimpleTable
-                columns={hasManagementAccess ? ['Asset ID', 'Type', 'Owner', 'Visibility', 'Deleted', 'Actions'] : ['Asset ID', 'Type', 'Owner', 'Subscribed', 'Actions']}
+                columns={hasManagementAccess ? ['Asset ID', 'Type', 'Owner', 'Visibility', 'Actions'] : ['Asset ID', 'Type', 'Owner', 'Subscribed', 'Actions']}
                 rows={allAssets.map((asset) => [
                   asset.assetId,
                   asset.assetType,
@@ -1579,18 +1542,9 @@ function ConsoleApp() {
                   ...(hasManagementAccess
                     ? [
                         asset.visibility,
-                        asset.deletedAt ? (
-                          <span title={formatTimestampTooltip(asset.deletedAt)}>
-                            {formatTimestampForDisplay(asset.deletedAt)}
-                          </span>
-                        ) : 'No',
                         <div className="inline-form" key={`${asset.assetId}-manage`}>
                           <button type="button" onClick={() => void onDownloadAsset(asset)} disabled={loading}>Download Content</button>
-                          {asset.deletedAt ? (
-                            <button type="button" className="button-secondary" onClick={() => void onRestoreAsset(asset)} disabled={loading}>Restore</button>
-                          ) : (
-                            <button type="button" className="button-danger" onClick={() => void onDeleteOwnAsset(asset)} disabled={loading}>Delete</button>
-                          )}
+                          <button type="button" className="button-danger" onClick={() => void onDeleteOwnAsset(asset)} disabled={loading}>Delete</button>
                         </div>,
                       ]
                     : [
