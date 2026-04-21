@@ -2258,6 +2258,58 @@ def test_variant_catalog_render_reuses_single_source_snapshot(monkeypatch) -> No
     dialog.close()
 
 
+def test_variant_dialog_skips_redundant_preview_refresh_for_same_selection(monkeypatch) -> None:
+    _ensure_app()
+    monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(VariantCatalogDialog, "_render_browser_from_state", lambda self, *_args, **_kwargs: None)
+    dialog = VariantCatalogDialog(
+        parent=None,
+        base_node_type="svc.preview.variant",
+        base_node_name="Preview Variant",
+        node_graph=None,
+    )
+    entry = F8VariantEntry(
+        record=F8VariantRecord(
+            variantId="variant-preview",
+            kind=F8VariantKind.service,
+            baseNodeType="svc.preview.service",
+            serviceClass="svc.preview.service",
+            operatorClass=None,
+            name="Variant Preview",
+            description="",
+            tags=[],
+            spec={"label": "Variant Preview"},
+            createdAt=variant_now_iso(),
+            updatedAt=variant_now_iso(),
+        ),
+        source=F8VariantSourceKind.local,
+        installed=True,
+        hasCachedContent=True,
+    )
+
+    dialog._entries = [entry]
+    item = QtWidgets.QListWidgetItem()
+    item.setData(QtCore.Qt.ItemDataRole.UserRole, "variant-preview")
+    dialog._list.addItem(item)
+
+    preview_calls: list[str] = []
+    monkeypatch.setattr(
+        dialog._preview,
+        "show_variant_record",
+        lambda record: preview_calls.append(str(record.variantId)),
+    )
+
+    dialog._list.setCurrentRow(0)
+    assert preview_calls == ["variant-preview"]
+
+    dialog._on_selection_changed()
+    dialog._on_selection_changed()
+
+    assert preview_calls == ["variant-preview"]
+
+    dialog.close()
+
+
 def test_variant_catalog_browser_coalesces_asset_cache_rebuilds(monkeypatch) -> None:
     _ensure_app()
     callbacks: list[object] = []

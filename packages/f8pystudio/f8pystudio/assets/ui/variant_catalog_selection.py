@@ -62,6 +62,7 @@ class VariantCatalogSelectionMixin:
         self._active_preview_variant_id = ""
         self._active_preview_entry: F8VariantEntry | None = None
         self._active_preview_started_at = 0.0
+        self._current_preview_signature: tuple[object, ...] | None = None
 
     def _selected_entry(self) -> F8VariantEntry | None:
         try:
@@ -347,6 +348,7 @@ class VariantCatalogSelectionMixin:
     def _refresh_selected_preview(self) -> str:
         selected_entry = self._selected_entry()
         if selected_entry is None:
+            self._current_preview_signature = None
             self._raw.setPlainText("")
             self._preview.clear_preview("Select a variant to preview.")
             self._refresh_action_buttons(None)
@@ -356,7 +358,9 @@ class VariantCatalogSelectionMixin:
             selected_entry=selected_entry,
             variant_id=pending_reload_variant_id,
         )
-        self._show_selection_preview(preview_entry=preview_entry)
+        preview_signature = self._preview_signature_for_entry(preview_entry)
+        if preview_signature != self._current_preview_signature:
+            self._show_selection_preview(preview_entry=preview_entry)
         self._refresh_action_buttons(selected_entry)
         return pending_reload_variant_id
 
@@ -383,6 +387,7 @@ class VariantCatalogSelectionMixin:
 
     def _show_deferred_remote_preview(self, *, preview_entry: F8VariantEntry) -> None:
         variant_id = str(preview_entry.record.variantId or "").strip()
+        self._current_preview_signature = self._preview_signature_for_entry(preview_entry)
         self._raw.setPlainText(
             json.dumps(
                 dump_json(preview_entry, mode="json"),
@@ -521,6 +526,7 @@ class VariantCatalogSelectionMixin:
         preview_entry: F8VariantEntry,
         exc: Exception,
     ) -> None:
+        self._current_preview_signature = None
         self._raw.setPlainText(
             json.dumps(
                 {
@@ -535,6 +541,7 @@ class VariantCatalogSelectionMixin:
         self._preview.clear_preview(f"Failed to preview variant.\n{exc}")
 
     def _show_preview_entry(self, entry: F8VariantEntry) -> None:
+        self._current_preview_signature = self._preview_signature_for_entry(entry)
         self._raw.setPlainText(
             json.dumps(
                 dump_json(entry, mode="json"),
@@ -544,6 +551,20 @@ class VariantCatalogSelectionMixin:
             )
         )
         self._preview.show_variant_record(entry.record)
+
+    @staticmethod
+    def _preview_signature_for_entry(entry: F8VariantEntry) -> tuple[object, ...]:
+        return (
+            str(entry.record.variantId or "").strip(),
+            str(entry.source.value),
+            str(entry.remoteRevision or ""),
+            str(entry.downloadedAt or ""),
+            bool(variant_entry_has_cached_content(entry)),
+            bool(entry.installed),
+            str(entry.record.updatedAt or ""),
+            str(entry.record.createdAt or ""),
+            str(entry.record.name or ""),
+        )
 
     def _run_pending_reload(self, *, pending_reload_variant_id: str) -> None:
         if not self._pending_asset_cache_rebuild:

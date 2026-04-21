@@ -1810,6 +1810,55 @@ def test_component_dialog_remote_preview_is_deferred_until_requested(monkeypatch
     dialog.close()
 
 
+def test_component_dialog_skips_redundant_preview_refresh_for_same_selection(monkeypatch, tmp_path: Path) -> None:
+    _ = _ensure_app()
+    settings = QtCore.QSettings(str(tmp_path / "component-selection-preview-skip.ini"), QtCore.QSettings.IniFormat)
+    service = ComponentCatalogService(db_path=tmp_path / "assets.db")
+    monkeypatch.setattr(ComponentCatalogDialog, "_refresh_remote_catalog_if_needed", lambda self: None)
+
+    dialog = ComponentCatalogDialog(parent=None, node_graph=None)
+    dialog._sync_client = ComponentSyncClient(settings=settings, catalog_service=service)
+    entry = F8ComponentEntry(
+        record=F8ComponentRecord(
+            componentId="local-preview",
+            name="Local Preview",
+            description="",
+            schemaVersion="f8studio-session/1",
+            content={
+                "schemaVersion": "f8studio-session/1",
+                "layout": {"nodes": {}, "connections": []},
+            },
+            createdAt="2026-04-21T00:00:00+00:00",
+            updatedAt="2026-04-21T00:00:00+00:00",
+        ),
+        source=F8ComponentSourceKind.local,
+        installed=True,
+        hasCachedContent=True,
+    )
+
+    dialog._entries = [entry]
+    item = QtWidgets.QListWidgetItem()
+    item.setData(QtCore.Qt.ItemDataRole.UserRole, entry.record.componentId)
+    dialog._list.addItem(item)
+
+    preview_calls: list[str] = []
+    monkeypatch.setattr(
+        dialog._preview,
+        "show_component_payload",
+        lambda payload: preview_calls.append(str(payload.get("schemaVersion", ""))),
+    )
+
+    dialog._list.setCurrentRow(0)
+    assert preview_calls == ["f8studio-session/1"]
+
+    dialog._on_selection_changed()
+    dialog._on_selection_changed()
+
+    assert preview_calls == ["f8studio-session/1"]
+
+    dialog.close()
+
+
 def test_graph_component_actions_overwrite_choices_only_include_drafts(monkeypatch) -> None:
     _ensure_app()
     captured_choice_ids: list[str] = []
