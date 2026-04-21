@@ -41,6 +41,7 @@ class ComponentCatalogBrowserMixin:
         self._queued_remote_refresh_log_label: str = "queued"
         self._catalog_local_entries_snapshot: list[F8ComponentEntry] = []
         self._catalog_remote_entries_snapshot: list[F8ComponentEntry] = []
+        self._last_list_render_signature: tuple[object, ...] | None = None
         self._scheduled_asset_cache_rebuild_component_id = ""
         self._asset_cache_rebuild_timer = QtCore.QTimer(self)
         self._asset_cache_rebuild_timer.setSingleShot(True)
@@ -202,6 +203,41 @@ class ComponentCatalogBrowserMixin:
 
     def _remote_entries_snapshot(self) -> list[F8ComponentEntry]:
         return list(self._catalog_remote_entries_snapshot)
+
+    def _list_render_signature(self) -> tuple[object, ...]:
+        current_tab = int(self._scope_tabs.currentIndex())
+        entry_signatures: list[tuple[object, ...]] = []
+        for entry in self._entries:
+            row_state = self._row_state_for_entry(entry)
+            entry_signatures.append(
+                (
+                    str(entry.record.componentId or "").strip(),
+                    str(entry.record.name or ""),
+                    str(entry.record.updatedAt or ""),
+                    str(entry.source.value),
+                    None if entry.visibility is None else str(entry.visibility.value),
+                    str(entry.ownerUserId or ""),
+                    str(entry.ownerDisplayName or ""),
+                    str(entry.remoteRevision or ""),
+                    str(entry.downloadedAt or ""),
+                    bool(entry.installed),
+                    bool(entry.hasCachedContent),
+                    bool(entry.subscribed),
+                    bool(entry.isLocalDraft),
+                    str(entry.draftOriginAssetId or ""),
+                    str(entry.draftOriginRevision or ""),
+                    row_state.has_local_head,
+                    row_state.has_remote_head,
+                    row_state.has_cached_remote_content,
+                    row_state.visibility,
+                    row_state.owner_display_name,
+                    row_state.subscribed,
+                    str(row_state.presence.value),
+                    self._linked_draft_reference_text(entry),
+                    self._linked_draft_badge_text(entry),
+                )
+            )
+        return (current_tab, tuple(entry_signatures))
 
     def _rebuild_browser_after_draft_changed(
         self,
@@ -680,6 +716,7 @@ class ComponentCatalogBrowserMixin:
         self._refresh_catalog_source_snapshot()
         self._row_states_by_component_id = self._build_row_states()
         self._entries = self._entries_for_current_tab()
+        list_render_signature = self._list_render_signature()
         logger.debug(
             "Component manager render tab=%s count=%d entries=%s",
             self._scope_tabs.tabText(self._scope_tabs.currentIndex()),
@@ -695,16 +732,19 @@ class ComponentCatalogBrowserMixin:
                 for entry in self._entries[:10]
             ],
         )
+        should_rebuild_list = list_render_signature != self._last_list_render_signature
         self._list.blockSignals(True)
         try:
-            self._list.clear()
-            for entry in self._entries:
-                item = QtWidgets.QListWidgetItem()
-                item.setData(QtCore.Qt.UserRole, entry.record.componentId)
-                row_widget = self._build_list_row(entry)
-                item.setSizeHint(row_widget.sizeHint())
-                self._list.addItem(item)
-                self._list.setItemWidget(item, row_widget)
+            if should_rebuild_list:
+                self._list.clear()
+                for entry in self._entries:
+                    item = QtWidgets.QListWidgetItem()
+                    item.setData(QtCore.Qt.UserRole, entry.record.componentId)
+                    row_widget = self._build_list_row(entry)
+                    item.setSizeHint(row_widget.sizeHint())
+                    self._list.addItem(item)
+                    self._list.setItemWidget(item, row_widget)
+                self._last_list_render_signature = list_render_signature
             if selected_component_id:
                 self._restore_selection(selected_component_id)
         finally:
@@ -718,9 +758,10 @@ class ComponentCatalogBrowserMixin:
         self._on_selection_changed()
         self._schedule_auto_load_more_if_needed()
         logger.info(
-            "Component manager cached render tab=%s count=%d elapsed=%.3fs",
+            "Component manager cached render tab=%s count=%d rebuilt_list=%s elapsed=%.3fs",
             self._scope_tabs.tabText(self._scope_tabs.currentIndex()),
             len(self._entries),
+            should_rebuild_list,
             time.perf_counter() - render_started_at,
         )
 

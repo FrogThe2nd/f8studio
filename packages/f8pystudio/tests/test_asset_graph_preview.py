@@ -2190,6 +2190,52 @@ def test_component_catalog_render_reuses_single_source_snapshot(monkeypatch) -> 
     dialog.close()
 
 
+def test_component_catalog_render_skips_list_rebuild_when_signature_is_unchanged(monkeypatch) -> None:
+    _ensure_app()
+    monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(ComponentCatalogDialog, "_schedule_initial_remote_refresh_if_needed", lambda self: None)
+    dialog = ComponentCatalogDialog(parent=None, node_graph=None)
+    entry = F8ComponentEntry(
+        record=F8ComponentRecord(
+            componentId="component-list-row",
+            name="Component List Row",
+            description="",
+            schemaVersion="f8studio-session/1",
+            content={},
+            createdAt="2026-04-21T00:00:00+00:00",
+            updatedAt="2026-04-21T00:00:00+00:00",
+        ),
+        source=F8ComponentSourceKind.local,
+        installed=True,
+        hasCachedContent=True,
+        isLocalDraft=True,
+    )
+
+    monkeypatch.setattr(
+        dialog,
+        "_refresh_catalog_source_snapshot",
+        lambda: (
+            setattr(dialog, "_catalog_local_entries_snapshot", [entry]),
+            setattr(dialog, "_catalog_remote_entries_snapshot", []),
+        ),
+    )
+    monkeypatch.setattr(dialog, "_on_selection_changed", lambda: None)
+    build_calls: list[str] = []
+    original_build_list_row = dialog._build_list_row
+    monkeypatch.setattr(
+        dialog,
+        "_build_list_row",
+        lambda current_entry: build_calls.append(str(current_entry.record.componentId)) or original_build_list_row(current_entry),
+    )
+
+    dialog._render_browser_from_state()
+    dialog._render_browser_from_state()
+
+    assert build_calls == ["component-list-row"]
+
+    dialog.close()
+
+
 def test_variant_catalog_dialog_defers_initial_remote_refresh(monkeypatch, tmp_path: Path) -> None:
     _ensure_app()
     refresh_calls: list[str] = []
@@ -2218,6 +2264,61 @@ def test_variant_catalog_dialog_defers_initial_remote_refresh(monkeypatch, tmp_p
     assert refresh_calls == []
     refresh_callbacks = [callback for callback in scheduled_callbacks if getattr(callback, "__name__", "") == "_run_initial_remote_refresh"]
     assert len(refresh_callbacks) == 1
+
+    dialog.close()
+
+
+def test_variant_catalog_render_skips_list_rebuild_when_signature_is_unchanged(monkeypatch) -> None:
+    _ensure_app()
+    monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(VariantCatalogDialog, "_schedule_initial_remote_refresh_if_needed", lambda self: None)
+    dialog = VariantCatalogDialog(
+        parent=None,
+        base_node_type="svc.preview.variant",
+        base_node_name="Preview Variant",
+        node_graph=None,
+    )
+    entry = F8VariantEntry(
+        record=F8VariantRecord(
+            variantId="variant-list-row",
+            kind=F8VariantKind.service,
+            baseNodeType="svc.preview.variant",
+            serviceClass="svc.preview.variant",
+            operatorClass=None,
+            name="Variant List Row",
+            description="",
+            tags=[],
+            spec={},
+            createdAt=variant_now_iso(),
+            updatedAt=variant_now_iso(),
+        ),
+        source=F8VariantSourceKind.local,
+        installed=True,
+        hasCachedContent=True,
+        isLocalDraft=True,
+    )
+
+    monkeypatch.setattr(
+        dialog,
+        "_refresh_catalog_source_snapshot",
+        lambda: (
+            setattr(dialog, "_catalog_local_entries_snapshot", [entry]),
+            setattr(dialog, "_catalog_remote_entries_snapshot", []),
+        ),
+    )
+    monkeypatch.setattr(dialog, "_on_selection_changed", lambda: None)
+    build_calls: list[str] = []
+    original_build_list_row = dialog._build_list_row
+    monkeypatch.setattr(
+        dialog,
+        "_build_list_row",
+        lambda current_entry: build_calls.append(str(current_entry.record.variantId)) or original_build_list_row(current_entry),
+    )
+
+    dialog._render_browser_from_state()
+    dialog._render_browser_from_state()
+
+    assert build_calls == ["variant-list-row"]
 
     dialog.close()
 
