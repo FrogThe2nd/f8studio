@@ -197,6 +197,7 @@ class AssetGraphPreviewPane(QtWidgets.QWidget):
         self._pending_request_id = 0
         self._current_request_id = 0
         self._deferred_component_payload: JsonObject | None = None
+        self._deferred_callback: Callable[[], None] | None = None
         self._node_factory_signature: tuple[tuple[str, int], ...] = ()
         self._preview_split_initialized = False
         self._preview_split_user_resized = False
@@ -361,6 +362,7 @@ class AssetGraphPreviewPane(QtWidgets.QWidget):
         self._pending_variant_record = None
         self._pending_request_id = 0
         self._deferred_component_payload = None
+        self._deferred_callback = None
         if self._preview_request_timer.isActive():
             self._preview_request_timer.stop()
 
@@ -374,6 +376,22 @@ class AssetGraphPreviewPane(QtWidgets.QWidget):
         self._cancel_pending_preview_request()
         self._clear_graph()
         self._deferred_component_payload = payload
+        self._deferred_callback = None
+        self._deferred_label.setText(str(message or "Preview loading deferred."))
+        self._deferred_button.setText(str(button_text or "Load preview manually"))
+        self._stack.setCurrentWidget(self._deferred_page)
+
+    def show_deferred_action(
+        self,
+        *,
+        message: str,
+        button_text: str = "Load preview manually",
+        callback: Callable[[], None],
+    ) -> None:
+        self._cancel_pending_preview_request()
+        self._clear_graph()
+        self._deferred_component_payload = None
+        self._deferred_callback = callback
         self._deferred_label.setText(str(message or "Preview loading deferred."))
         self._deferred_button.setText(str(button_text or "Load preview manually"))
         self._stack.setCurrentWidget(self._deferred_page)
@@ -381,8 +399,17 @@ class AssetGraphPreviewPane(QtWidgets.QWidget):
     def _load_deferred_preview(self) -> None:
         payload = self._deferred_component_payload
         if payload is None:
+            callback = self._deferred_callback
+            if callback is None:
+                return
+            callback()
             return
         self.show_component_payload(payload)
+
+    def show_loading_message(self, message: str) -> None:
+        self._cancel_pending_preview_request()
+        self._clear_graph()
+        self._show_loading(message)
 
     def _finalize_loaded_preview(self, *, request_id: int) -> None:
         if request_id != self._current_request_id:

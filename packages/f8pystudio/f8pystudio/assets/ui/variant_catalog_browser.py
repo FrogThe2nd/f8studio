@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 import logging
+import time
 from typing import Any
 
 from qtpy import QtCore, QtWidgets
@@ -11,9 +12,11 @@ from f8pysdk.codec import dump_json, validate_as
 from ...ui.support.qt_lifecycle import qt_runtime_error_is_object_deleted
 from ...ui.support.ui_icons import StudioIcon, icon_for
 from ...ui.support.ui_notifications import show_warning
+from ..variants.variant_models import F8VariantEntry, F8VariantRemoteAuthError, F8VariantSourceKind
+from ..variants.variant_sync import VariantRemoteScopeRefreshRequest, VariantRemoteScopeRefreshResult
 from ..variants.variant_events import subscribe_variants_changed
-from ..variants.variant_models import F8VariantEntry, F8VariantSourceKind
 from .asset_cloud_account_menu import build_asset_account_menu, prompt_asset_cloud_sign_in
+from .background_tasks import BackgroundCallWorker
 
 logger = logging.getLogger(__name__)
 
@@ -49,12 +52,22 @@ class VariantCatalogBrowserMixin:
     def _initialize_browser_state(self) -> None:
         tabs = (self._TAB_DRAFTS, self._TAB_MINE, self._TAB_COMMUNITY, self._TAB_INSTALLED)
         self._initial_remote_refresh_done = False
+        self._initial_remote_refresh_scheduled = False
+        self._initial_cached_render_started_at = 0.0
         self._tab_queries: dict[int, str] = {tab: "" for tab in tabs}
         self._tab_filters: dict[int, str] = {tab: "all" for tab in tabs}
         self._remote_next_cursor_by_scope: dict[str, str | None] = {"mine": None, "community": None}
         self._remote_loaded_query_by_scope: dict[str, str] = {"mine": "", "community": ""}
         self._remote_loaded_base_by_scope: dict[str, str] = {"mine": "", "community": ""}
         self._is_loading_remote_scope = False
+        self._active_remote_refresh_request_id = 0
+        self._remote_refresh_worker: BackgroundCallWorker | None = None
+        self._active_remote_refresh_error_title = "Refresh failed"
+        self._active_remote_refresh_log_label = "unknown"
+        self._active_remote_refresh_started_at = 0.0
+        self._queued_remote_refresh_requests: list[VariantRemoteScopeRefreshRequest] | None = None
+        self._queued_remote_refresh_error_title: str = "Refresh failed"
+        self._queued_remote_refresh_log_label: str = "queued"
         self._asset_cache_changed_unsubscribe: Callable[[], None] | None = subscribe_variants_changed(
             self._on_asset_cache_changed
         )
@@ -68,6 +81,9 @@ class VariantCatalogBrowserMixin:
 
     def _on_destroyed(self, _obj: Any) -> None:
         self._clear_asset_cache_changed_subscription()
+        self._active_remote_refresh_request_id += 1
+        self._queued_remote_refresh_requests = None
+        self._remote_refresh_worker = None
 
     def _rebuild_browser_from_asset_cache(self) -> None:
         self._render_browser_from_state()
@@ -231,6 +247,9 @@ class VariantCatalogBrowserMixin:
         *_args: Any,
         preserve_variant_id: str | None = None,
     ) -> None:
+        render_started_at = time.perf_counter()
+        if self._initial_cached_render_started_at <= 0.0:
+            self._initial_cached_render_started_at = render_started_at
         selected_variant_id = str(
             self._selected_variant_id() if preserve_variant_id is None else preserve_variant_id or ""
         ).strip()
@@ -239,7 +258,7 @@ class VariantCatalogBrowserMixin:
             self._scope_tabs.tabText(self._scope_tabs.currentIndex()),
             selected_variant_id,
         )
-        self._refresh_remote_catalog_if_needed()
+        self._schedule_initial_remote_refresh_if_needed()
         self._sync_node_type_combo_ui()
         self._row_states_by_variant_id = self._build_row_states()
         self._entries = self._entries_for_current_tab()
@@ -283,6 +302,13 @@ class VariantCatalogBrowserMixin:
         self._sync_auth_controls_ui()
         self._on_selection_changed()
         self._schedule_auto_load_more_if_needed()
+        logger.info(
+            "Variant manager cached render tab=%s base=%s count=%d elapsed=%.3fs",
+            self._scope_tabs.tabText(self._scope_tabs.currentIndex()),
+            self._base_node_type,
+            len(self._entries),
+            time.perf_counter() - render_started_at,
+        )
 
     def _restore_selection(self, variant_id: str) -> None:
         normalized_variant_id = str(variant_id or "").strip()
@@ -302,45 +328,27 @@ class VariantCatalogBrowserMixin:
         if self._initial_remote_refresh_done:
             return
         self._initial_remote_refresh_done = True
-        try:
-            community_page = self._sync_client.refresh_scope_page(
-                scope="community",
-                base_node_type=self._base_node_type,
-                query=self._tab_queries[self._TAB_COMMUNITY],
-                cursor="",
-                append=False,
-            )
-            self._record_remote_scope_refresh(
-                scope="community",
-                query=self._tab_queries[self._TAB_COMMUNITY],
-                base_node_type=self._base_node_type,
-                next_cursor=community_page.nextCursor,
-            )
-            if self._sync_client.current_access_token() or self._sync_client.current_session() is not None:
-                try:
-                    self._sync_client.refresh_auth()
-                except Exception:
-                    logger.exception("Variant manager initial auth refresh failed")
-                if self._sync_client.current_access_token():
-                    mine_page = self._sync_client.refresh_scope_page(
-                        scope="mine",
-                        base_node_type=self._base_node_type,
-                        query=self._tab_queries[self._TAB_MINE],
-                        cursor="",
-                        append=False,
-                    )
-                    self._record_remote_scope_refresh(
-                        scope="mine",
-                        query=self._tab_queries[self._TAB_MINE],
-                        base_node_type=self._base_node_type,
-                        next_cursor=mine_page.nextCursor,
-                    )
-        except Exception:
-            logger.exception("Variant manager initial remote refresh failed")
+        self._request_catalog_refresh(
+            requests=self._full_catalog_refresh_requests(),
+            error_title="Initial refresh failed",
+            log_label="initial_open",
+        )
+
+    def _schedule_initial_remote_refresh_if_needed(self) -> None:
+        if self._initial_remote_refresh_done or self._initial_remote_refresh_scheduled:
+            return
+        self._initial_remote_refresh_scheduled = True
+        QtCore.QTimer.singleShot(0, self._run_initial_remote_refresh)
+
+    def _run_initial_remote_refresh(self) -> None:
+        self._initial_remote_refresh_scheduled = False
+        if self._initial_remote_refresh_done:
+            return
+        self._refresh_remote_catalog_if_needed()
 
     def _sync_auth_controls_ui(self) -> None:
         logged_in = self._sync_client.current_user() is not None and bool(self._sync_client.current_access_token())
-        self._btn_refresh.setEnabled(True)
+        self._btn_refresh.setEnabled(not self._is_loading_remote_scope)
         self._account_button.setIcon(icon_for(self._account_button, StudioIcon.USER if logged_in else StudioIcon.USER_OFF))
 
     def _on_list_scrolled(self, _value: int) -> None:
@@ -459,6 +467,12 @@ class VariantCatalogBrowserMixin:
         self._on_account_state_changed()
 
     def _apply_signed_out_auth_state(self) -> None:
+        self._sanitize_remote_entries_for_signed_out_user()
+        self._remote_next_cursor_by_scope["mine"] = None
+        self._remote_loaded_query_by_scope["mine"] = ""
+        self._remote_loaded_base_by_scope["mine"] = ""
+
+    def _sanitize_remote_entries_for_signed_out_user(self) -> None:
         sanitized_remote_entries: list[F8VariantEntry] = []
         for entry in self._sync_client._catalog_service._remote_provider.load_entries():
             if entry.source == F8VariantSourceKind.remote_private:
@@ -476,37 +490,6 @@ class VariantCatalogBrowserMixin:
                 )
             )
         self._sync_client._catalog_service._remote_provider.save_entries(sanitized_remote_entries)
-        self._remote_next_cursor_by_scope["mine"] = None
-        self._remote_loaded_query_by_scope["mine"] = ""
-        self._remote_loaded_base_by_scope["mine"] = ""
-
-    def _refresh_remote_catalog_for_auth_change(self) -> None:
-        community_page = self._sync_client.refresh_scope_page(
-            scope="community",
-            base_node_type=self._base_node_type,
-            query=self._tab_queries[self._TAB_COMMUNITY],
-            cursor="",
-            append=False,
-        )
-        self._record_remote_scope_refresh(
-            scope="community",
-            query=self._tab_queries[self._TAB_COMMUNITY],
-            base_node_type=self._base_node_type,
-            next_cursor=community_page.nextCursor,
-        )
-        mine_page = self._sync_client.refresh_scope_page(
-            scope="mine",
-            base_node_type=self._base_node_type,
-            query=self._tab_queries[self._TAB_MINE],
-            cursor="",
-            append=False,
-        )
-        self._record_remote_scope_refresh(
-            scope="mine",
-            query=self._tab_queries[self._TAB_MINE],
-            base_node_type=self._base_node_type,
-            next_cursor=mine_page.nextCursor,
-        )
 
     def _on_account_state_changed(self) -> None:
         selected_variant_id = self._selected_variant_id()
@@ -516,27 +499,31 @@ class VariantCatalogBrowserMixin:
             self._rebuild_browser_after_auth_state_changed(
                 preserve_variant_id=selected_variant_id
             )
+            self._request_catalog_refresh(
+                requests=[
+                    VariantRemoteScopeRefreshRequest(
+                        scope="community",
+                        base_node_type=self._base_node_type,
+                        query=self._tab_queries[self._TAB_COMMUNITY],
+                    )
+                ],
+                error_title="Refresh failed",
+                log_label="signed_out_refresh",
+            )
             return
-        try:
-            self._refresh_remote_catalog_for_auth_change()
-        except Exception:
-            logger.exception("Variant manager account state refresh failed")
+        self._sanitize_remote_entries_for_signed_out_user()
         self._rebuild_browser_after_auth_state_changed(
             preserve_variant_id=selected_variant_id
+        )
+        self._request_catalog_refresh(
+            requests=self._full_catalog_refresh_requests(),
+            error_title="Refresh failed",
+            log_label="account_change",
         )
 
     def _ensure_logged_in(self) -> bool:
         if self._sync_client.current_user() is not None and self._sync_client.current_access_token():
             return True
-        if self._sync_client.current_session() is not None:
-            try:
-                self._sync_client.refresh_auth()
-                self._rebuild_browser_after_auth_state_changed(
-                    preserve_variant_id=self._selected_variant_id()
-                )
-                return True
-            except Exception:
-                logger.exception("Variant manager remembered account refresh failed")
         self._on_login_clicked()
         return self._sync_client.current_user() is not None and bool(self._sync_client.current_access_token())
 
@@ -623,13 +610,10 @@ class VariantCatalogBrowserMixin:
         return self._base_node_type
 
     def _refresh_current_remote_scope(self, *, reset: bool) -> None:
-        if self._is_loading_remote_scope:
-            return
-        selected_variant_id = self._selected_variant_id()
         remote_scope = self._remote_scope_for_current_tab()
         if remote_scope is None:
             self._rebuild_browser_after_remote_scope_state_changed(
-                preserve_variant_id=selected_variant_id
+                preserve_variant_id=self._selected_variant_id()
             )
             return
         current_query = self._current_query()
@@ -644,78 +628,218 @@ class VariantCatalogBrowserMixin:
             append = bool(cursor)
             if not append:
                 return
-        self._is_loading_remote_scope = True
-        self._sync_auth_controls_ui()
-        try:
-            page = self._sync_client.refresh_scope_page(
-                scope=remote_scope,
-                base_node_type=current_base,
-                query=current_query,
-                cursor=cursor,
-                append=append,
-            )
-        except Exception as exc:
-            show_warning(self, "Refresh failed", str(exc))
-            return
-        finally:
-            self._is_loading_remote_scope = False
-        self._record_remote_scope_refresh(
-            scope=remote_scope,
-            query=current_query,
-            base_node_type=current_base,
-            next_cursor=page.nextCursor,
-        )
-        logger.debug(
-            "Variant manager remote scope refreshed scope=%s reset=%s query=%s cursor=%s fetched=%d next_cursor=%s",
-            remote_scope,
-            reset,
-            current_query,
-            cursor,
-            len(page.entries),
-            page.nextCursor,
-        )
-        self._rebuild_browser_after_remote_scope_state_changed(
-            preserve_variant_id=selected_variant_id
+        self._request_catalog_refresh(
+            requests=[
+                VariantRemoteScopeRefreshRequest(
+                    scope=remote_scope,
+                    base_node_type=current_base,
+                    query=current_query,
+                    cursor=cursor,
+                    append=append,
+                )
+            ],
+            error_title="Refresh failed",
+            log_label="scope_refresh",
         )
 
     def _on_refresh_clicked(self) -> None:
-        selected_variant_id = self._selected_variant_id()
         remote_scope = self._remote_scope_for_current_tab()
-        current_base = self._get_current_base_node_type()
         if remote_scope is None:
-            try:
-                self._sync_client.refresh_scope(
-                    scope="community",
-                    base_node_type=current_base,
-                    query=self._tab_queries[self._TAB_COMMUNITY],
-                )
-                self._record_remote_scope_refresh(
-                    scope="community",
-                    query=self._tab_queries[self._TAB_COMMUNITY],
-                    base_node_type=current_base,
-                    next_cursor=None,
-                )
-                if self._sync_client.current_access_token() or self._sync_client.current_session() is not None:
-                    if self._ensure_logged_in():
-                        self._sync_client.refresh_scope(
-                            scope="mine",
-                            base_node_type=current_base,
-                            query=self._tab_queries[self._TAB_MINE],
-                        )
-                        self._record_remote_scope_refresh(
-                            scope="mine",
-                            query=self._tab_queries[self._TAB_MINE],
-                            base_node_type=current_base,
-                            next_cursor=None,
-                        )
-            except Exception as exc:
-                show_warning(self, "Refresh failed", str(exc))
-                return
-            self._rebuild_browser_after_remote_scope_state_changed(
-                preserve_variant_id=selected_variant_id
+            self._request_catalog_refresh(
+                requests=self._full_catalog_refresh_requests(),
+                error_title="Refresh failed",
+                log_label="manual_refresh",
             )
             return
         self._refresh_current_remote_scope(reset=True)
+
+    def _full_catalog_refresh_requests(self) -> list[VariantRemoteScopeRefreshRequest]:
+        current_base = self._base_node_type
+        requests = [
+            VariantRemoteScopeRefreshRequest(
+                scope="community",
+                base_node_type=current_base,
+                query=self._tab_queries[self._TAB_COMMUNITY],
+                cursor="",
+                append=False,
+            )
+        ]
+        if self._sync_client.current_access_token() or self._sync_client.current_session() is not None:
+            requests.append(
+                VariantRemoteScopeRefreshRequest(
+                    scope="mine",
+                    base_node_type=current_base,
+                    query=self._tab_queries[self._TAB_MINE],
+                    cursor="",
+                    append=False,
+                )
+            )
+        return requests
+
+    def _request_catalog_refresh(
+        self,
+        *,
+        requests: list[VariantRemoteScopeRefreshRequest],
+        error_title: str,
+        log_label: str,
+    ) -> None:
+        if not requests:
+            return
+        if self._remote_refresh_worker is not None:
+            self._queued_remote_refresh_requests = requests
+            self._queued_remote_refresh_error_title = error_title
+            self._queued_remote_refresh_log_label = log_label
+            return
+        self._start_catalog_refresh(requests=requests, error_title=error_title, log_label=log_label)
+
+    def _start_catalog_refresh(
+        self,
+        *,
+        requests: list[VariantRemoteScopeRefreshRequest],
+        error_title: str,
+        log_label: str,
+    ) -> None:
+        self._active_remote_refresh_request_id += 1
+        request_id = self._active_remote_refresh_request_id
+        background_client = self._sync_client.clone_for_background()
+        started_at = time.perf_counter()
+        self._remote_refresh_worker = BackgroundCallWorker(
+            request_id=request_id,
+            task=lambda: background_client.collect_remote_scope_refreshes(requests, retry_on_auth_failure=False),
+        )
+        self._is_loading_remote_scope = True
+        self._sync_auth_controls_ui()
+        logger.info(
+            "Variant manager queued background refresh request_id=%s label=%s scopes=%s base=%s",
+            request_id,
+            log_label,
+            [request.scope for request in requests],
+            self._base_node_type,
+        )
+        self._active_remote_refresh_error_title = error_title
+        self._active_remote_refresh_log_label = log_label
+        self._active_remote_refresh_started_at = started_at
+        worker = self._remote_refresh_worker
+        worker.succeeded.connect(self._handle_catalog_refresh_succeeded)  # type: ignore[attr-defined]
+        worker.failed.connect(self._handle_catalog_refresh_failed)  # type: ignore[attr-defined]
+        worker.start()
+
+    def _handle_catalog_refresh_succeeded(
+        self,
+        finished_request_id: int,
+        result: object,
+        elapsed_seconds: float,
+    ) -> None:
+        self._on_catalog_refresh_succeeded(
+            finished_request_id=int(finished_request_id),
+            result=result,
+            elapsed_seconds=float(elapsed_seconds),
+            error_title=self._active_remote_refresh_error_title,
+            log_label=self._active_remote_refresh_log_label,
+            started_at=self._active_remote_refresh_started_at,
+        )
+
+    def _handle_catalog_refresh_failed(
+        self,
+        finished_request_id: int,
+        exc: object,
+        elapsed_seconds: float,
+    ) -> None:
+        self._on_catalog_refresh_failed(
+            finished_request_id=int(finished_request_id),
+            exc=exc,
+            elapsed_seconds=float(elapsed_seconds),
+            error_title=self._active_remote_refresh_error_title,
+            log_label=self._active_remote_refresh_log_label,
+        )
+
+    def _on_catalog_refresh_succeeded(
+        self,
+        *,
+        finished_request_id: int,
+        result: object,
+        elapsed_seconds: float,
+        error_title: str,
+        log_label: str,
+        started_at: float,
+    ) -> None:
+        if finished_request_id != self._active_remote_refresh_request_id:
+            return
+        self._remote_refresh_worker = None
+        self._is_loading_remote_scope = False
+        self._sync_auth_controls_ui()
+        if not isinstance(result, VariantRemoteScopeRefreshResult):
+            show_warning(self, error_title, "Unexpected variant refresh result type.")
+            self._start_queued_catalog_refresh_if_any()
+            return
+        for request in result.requests:
+            page = result.pages_by_scope.get(request.scope)
+            if page is None:
+                continue
+            self._record_remote_scope_refresh(
+                scope=request.scope,
+                query=request.query,
+                base_node_type=request.base_node_type,
+                next_cursor=page.nextCursor,
+            )
+        self._sync_client.apply_remote_entries(result.remote_entries)
+        logger.info(
+            "Variant manager refresh applied label=%s request_id=%s network=%.3fs total=%.3fs",
+            log_label,
+            finished_request_id,
+            elapsed_seconds,
+            time.perf_counter() - started_at,
+        )
+        if log_label == "initial_open" and self._initial_cached_render_started_at > 0.0:
+            logger.info(
+                "Variant manager initial open fully refreshed elapsed=%.3fs",
+                time.perf_counter() - self._initial_cached_render_started_at,
+            )
+        self._start_queued_catalog_refresh_if_any()
+
+    def _on_catalog_refresh_failed(
+        self,
+        *,
+        finished_request_id: int,
+        exc: object,
+        elapsed_seconds: float,
+        error_title: str,
+        log_label: str,
+    ) -> None:
+        if finished_request_id != self._active_remote_refresh_request_id:
+            return
+        self._remote_refresh_worker = None
+        self._is_loading_remote_scope = False
+        self._sync_auth_controls_ui()
+        if isinstance(exc, F8VariantRemoteAuthError):
+            current_account_id = str(self._sync_client.current_account_id() or "").strip()
+            if current_account_id:
+                self._sync_client.clear_saved_session(current_account_id)
+            self._apply_signed_out_auth_state()
+            self._rebuild_browser_after_auth_state_changed(
+                preserve_variant_id=self._selected_variant_id()
+            )
+        logger.warning(
+            "Variant manager refresh failed label=%s request_id=%s elapsed=%.3fs error=%s",
+            log_label,
+            finished_request_id,
+            elapsed_seconds,
+            str(exc),
+        )
+        if isinstance(exc, Exception):
+            show_warning(self, error_title, str(exc))
+        self._start_queued_catalog_refresh_if_any()
+
+    def _start_queued_catalog_refresh_if_any(self) -> None:
+        requests = self._queued_remote_refresh_requests
+        if requests is None:
+            return
+        error_title = self._queued_remote_refresh_error_title
+        log_label = self._queued_remote_refresh_log_label
+        self._queued_remote_refresh_requests = None
+        self._queued_remote_refresh_error_title = "Refresh failed"
+        self._queued_remote_refresh_log_label = "queued"
+        self._start_catalog_refresh(requests=requests, error_title=error_title, log_label=log_label)
 
     def _auth_status_text(self) -> str:
         user = self._sync_client.current_user()

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 import zlib
 import http.cookies
 import json
@@ -48,6 +49,21 @@ from .component_models import (
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class ComponentRemoteScopeRefreshRequest:
+    scope: str
+    query: str = ""
+    cursor: str = ""
+    append: bool = False
+
+
+@dataclass(frozen=True)
+class ComponentRemoteScopeRefreshResult:
+    requests: tuple[ComponentRemoteScopeRefreshRequest, ...]
+    pages_by_scope: dict[str, F8ComponentRemoteListPage]
+    remote_entries: list[F8ComponentEntry]
+
+
 class ComponentSyncClient:
     _SETTINGS_GROUP: str = "assetcloud/v1"
     _DEFAULT_BASE_URL: str = "https://assetcloud.feel8.fun"
@@ -76,6 +92,13 @@ class ComponentSyncClient:
             saved_base_url=self._value_str("base_url"),
             default_base_url=self._DEFAULT_BASE_URL,
             fallback_base_url=self._current_session_base_url(),
+        )
+
+    def clone_for_background(self) -> ComponentSyncClient:
+        return ComponentSyncClient(
+            settings=self._settings,
+            catalog_service=self._catalog_service,
+            credential_store=self._credential_store,
         )
 
     @classmethod
@@ -238,11 +261,32 @@ class ComponentSyncClient:
             self._clear_current_auth_state()
 
     def list_components(self, *, scope: str, query: str = "", cursor: str = "") -> F8ComponentRemoteListPage:
+        return self.list_components_for_refresh(
+            scope=scope,
+            query=query,
+            cursor=cursor,
+            retry_on_auth_failure=True,
+        )
+
+    def list_components_for_refresh(
+        self,
+        *,
+        scope: str,
+        query: str = "",
+        cursor: str = "",
+        retry_on_auth_failure: bool,
+    ) -> F8ComponentRemoteListPage:
         params = _list_params_for_scope(scope=scope, query=query, cursor=cursor)
         encoded = parse.urlencode({key: value for key, value in params.items() if value})
         suffix = f"?{encoded}" if encoded else ""
         authorized = str(scope or "").strip() != "community" or bool(self.current_access_token())
-        payload = self._request_json("GET", f"/v1/components{suffix}", None, authorized=authorized)
+        payload = self._request_json(
+            "GET",
+            f"/v1/components{suffix}",
+            None,
+            authorized=authorized,
+            retry_on_auth_failure=retry_on_auth_failure,
+        )
         return _page_from_asset_payload(payload)
 
     def refresh_scope(self, *, scope: str, query: str = "") -> list[F8ComponentEntry]:
@@ -250,30 +294,52 @@ class ComponentSyncClient:
         return page.entries
 
     def refresh_scope_page(self, *, scope: str, query: str = "", cursor: str = "", append: bool = False) -> F8ComponentRemoteListPage:
-        page = self.list_components(scope=scope, query=query, cursor=cursor)
-        current = self._catalog_service.load_remote_entries()
-        preserved = [entry for entry in current if not _entry_matches_scope(entry, scope=scope, user=self.current_user())]
-        existing_scope_entries = [entry for entry in current if _entry_matches_scope(entry, scope=scope, user=self.current_user())]
-        existing_scope_by_id: dict[str, F8ComponentEntry] = {
-            str(entry.record.componentId): entry for entry in existing_scope_entries if str(entry.record.componentId).strip()
-        }
-        refreshed: list[F8ComponentEntry] = []
-        for entry in page.entries:
-            existing_entry = existing_scope_by_id.get(str(entry.record.componentId))
-            if existing_entry is not None:
-                entry = _merge_component_entries(existing_entry, entry)
-            refreshed.append(entry)
-        if append:
-            merged_scope_entries: dict[str, F8ComponentEntry] = {
-                str(entry.record.componentId): entry for entry in existing_scope_entries
-            }
-            for entry in refreshed:
-                merged_scope_entries[str(entry.record.componentId)] = entry
-            combined_scope_entries = list(merged_scope_entries.values())
-        else:
-            combined_scope_entries = refreshed
-        self._catalog_service.replace_remote_entries(preserved + combined_scope_entries)
-        return page
+        result = self.collect_remote_scope_refreshes(
+            [ComponentRemoteScopeRefreshRequest(scope=scope, query=query, cursor=cursor, append=append)],
+            retry_on_auth_failure=True,
+        )
+        self.apply_remote_entries(result.remote_entries)
+        return result.pages_by_scope[scope]
+
+    def collect_remote_scope_refreshes(
+        self,
+        requests: list[ComponentRemoteScopeRefreshRequest],
+        *,
+        retry_on_auth_failure: bool,
+    ) -> ComponentRemoteScopeRefreshResult:
+        current_entries = self._catalog_service.load_remote_entries()
+        current_user = self.current_user()
+        pages_by_scope: dict[str, F8ComponentRemoteListPage] = {}
+        for request_spec in requests:
+            if retry_on_auth_failure:
+                page = self.list_components(
+                    scope=request_spec.scope,
+                    query=request_spec.query,
+                    cursor=request_spec.cursor,
+                )
+            else:
+                page = self.list_components_for_refresh(
+                    scope=request_spec.scope,
+                    query=request_spec.query,
+                    cursor=request_spec.cursor,
+                    retry_on_auth_failure=False,
+                )
+            current_entries = _merge_refreshed_component_scope_entries(
+                current_entries=current_entries,
+                page=page,
+                scope=request_spec.scope,
+                append=request_spec.append,
+                user=current_user,
+            )
+            pages_by_scope[request_spec.scope] = page
+        return ComponentRemoteScopeRefreshResult(
+            requests=tuple(requests),
+            pages_by_scope=pages_by_scope,
+            remote_entries=current_entries,
+        )
+
+    def apply_remote_entries(self, remote_entries: list[F8ComponentEntry]) -> None:
+        self._catalog_service.replace_remote_entries(remote_entries)
 
     def install_component(self, component_id: str) -> F8ComponentEntry:
         return self.hydrate_component(component_id)
@@ -302,6 +368,14 @@ class ComponentSyncClient:
         cached_entry = _hydrate_component_entry(detail_entry, record)
         cached_entry = copy_model(cached_entry, update={"installed": False, "hasCachedContent": True})
         return self._catalog_service.cache_remote_entry(cached_entry)
+
+    def load_component_preview_entry(self, entry: F8ComponentEntry) -> F8ComponentEntry:
+        component_id = str(entry.record.componentId or "").strip()
+        if not component_id:
+            raise F8ComponentRemoteRequestError("Component preview is missing componentId.")
+        record = self.get_component_content(component_id)
+        cached_entry = _hydrate_component_entry(entry, record)
+        return copy_model(cached_entry, update={"installed": False, "hasCachedContent": True})
 
     def hydrate_component(self, component_id: str) -> F8ComponentEntry:
         cached_entry = self.cache_component_content(component_id)
@@ -470,9 +544,11 @@ class ComponentSyncClient:
             )
         self._set_value(self._CURRENT_ACCOUNT_ID_KEY, session.accountId)
         self.set_base_url(session.baseUrl)
+        self._set_value("user", _remote_user_payload(session.user))
         self._set_value("email", str(session.user.email or ""))
-        self._access_token = ""
-        return self.refresh_auth()
+        self._access_token = str(session.sessionCookie).strip()
+        self._access_token_account_id = str(session.accountId)
+        return F8ComponentRemoteAuth(sessionCookie=self._access_token, user=session.user)
 
     def clear_saved_session(self, account_id: str) -> None:
         normalized_account_id = str(account_id or "").strip()
@@ -507,11 +583,19 @@ class ComponentSyncClient:
             return "Saved cloud session expired and was cleared. Please sign in again."
         return f"Saved cloud session expired for {identity} and was cleared. Please sign in again."
 
-    def _request_json(self, method: str, path: str, payload: JsonObject | None, *, authorized: bool) -> JsonObject:
+    def _request_json(
+        self,
+        method: str,
+        path: str,
+        payload: JsonObject | None,
+        *,
+        authorized: bool,
+        retry_on_auth_failure: bool = True,
+    ) -> JsonObject:
         try:
             return self._request_json_once(method, path, payload, authorized=authorized)
         except F8ComponentRemoteAuthError:
-            if not authorized:
+            if not authorized or not retry_on_auth_failure:
                 raise
             _ = self.refresh_auth()
             return self._request_json_once(method, path, payload, authorized=True)
@@ -1012,6 +1096,37 @@ def _merge_component_entries(existing_entry: F8ComponentEntry, incoming_entry: F
             "downloadedAt": incoming_entry.downloadedAt or existing_entry.downloadedAt,
         },
     )
+
+
+def _merge_refreshed_component_scope_entries(
+    *,
+    current_entries: list[F8ComponentEntry],
+    page: F8ComponentRemoteListPage,
+    scope: str,
+    append: bool,
+    user: F8ComponentRemoteUser | None,
+) -> list[F8ComponentEntry]:
+    preserved = [entry for entry in current_entries if not _entry_matches_scope(entry, scope=scope, user=user)]
+    existing_scope_entries = [entry for entry in current_entries if _entry_matches_scope(entry, scope=scope, user=user)]
+    existing_scope_by_id: dict[str, F8ComponentEntry] = {
+        str(entry.record.componentId): entry for entry in existing_scope_entries if str(entry.record.componentId).strip()
+    }
+    refreshed: list[F8ComponentEntry] = []
+    for entry in page.entries:
+        existing_entry = existing_scope_by_id.get(str(entry.record.componentId))
+        if existing_entry is not None:
+            entry = _merge_component_entries(existing_entry, entry)
+        refreshed.append(entry)
+    if append:
+        merged_scope_entries: dict[str, F8ComponentEntry] = {
+            str(entry.record.componentId): entry for entry in existing_scope_entries
+        }
+        for entry in refreshed:
+            merged_scope_entries[str(entry.record.componentId)] = entry
+        combined_scope_entries = list(merged_scope_entries.values())
+    else:
+        combined_scope_entries = refreshed
+    return preserved + combined_scope_entries
 
 
 def _hydrate_component_entry(entry: F8ComponentEntry, record: F8ComponentRecord) -> F8ComponentEntry:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 import http.cookies
 import json
 import logging
@@ -46,6 +47,23 @@ from f8pysdk.specs import F8VariantKind, F8VariantRecord
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class VariantRemoteScopeRefreshRequest:
+    scope: str
+    kind: str = ""
+    base_node_type: str = ""
+    query: str = ""
+    cursor: str = ""
+    append: bool = False
+
+
+@dataclass(frozen=True)
+class VariantRemoteScopeRefreshResult:
+    requests: tuple[VariantRemoteScopeRefreshRequest, ...]
+    pages_by_scope: dict[str, F8VariantRemoteListPage]
+    remote_entries: list[F8VariantEntry]
+
+
 class VariantSyncClient:
     _SETTINGS_GROUP: str = "assetcloud/v1"
     _DEFAULT_BASE_URL: str = "https://assetcloud.feel8.fun"
@@ -74,6 +92,13 @@ class VariantSyncClient:
             saved_base_url=self._value_str("base_url"),
             default_base_url=self._DEFAULT_BASE_URL,
             fallback_base_url=self._current_session_base_url(),
+        )
+
+    def clone_for_background(self) -> VariantSyncClient:
+        return VariantSyncClient(
+            settings=self._settings,
+            catalog_service=self._catalog_service,
+            credential_store=self._credential_store,
         )
 
     @classmethod
@@ -250,6 +275,25 @@ class VariantSyncClient:
         query: str = "",
         cursor: str = "",
     ) -> F8VariantRemoteListPage:
+        return self.list_variants_for_refresh(
+            scope=scope,
+            kind=kind,
+            base_node_type=base_node_type,
+            query=query,
+            cursor=cursor,
+            retry_on_auth_failure=True,
+        )
+
+    def list_variants_for_refresh(
+        self,
+        *,
+        scope: str,
+        kind: str = "",
+        base_node_type: str = "",
+        query: str = "",
+        cursor: str = "",
+        retry_on_auth_failure: bool,
+    ) -> F8VariantRemoteListPage:
         normalized_scope = str(scope or "").strip()
         params = _list_params_for_scope(
             scope=normalized_scope,
@@ -272,7 +316,13 @@ class VariantSyncClient:
             self.base_url(),
             suffix,
         )
-        payload = self._request_json("GET", f"/v1/variants{suffix}", None, authorized=authorized)
+        payload = self._request_json(
+            "GET",
+            f"/v1/variants{suffix}",
+            None,
+            authorized=authorized,
+            retry_on_auth_failure=retry_on_auth_failure,
+        )
         page = _page_from_asset_payload(payload)
         logger.debug(
             "Variant cloud list response scope=%s count=%d next_cursor=%s variant_ids=%s",
@@ -306,6 +356,13 @@ class VariantSyncClient:
         record = self.get_variant_content(variant_id)
         cached_entry = copy_model(detail_entry, update={"record": record, "installed": False, "hasCachedContent": True})
         return self._catalog_service.cache_remote_entry(cached_entry)
+
+    def load_variant_preview_entry(self, entry: F8VariantEntry) -> F8VariantEntry:
+        variant_id = str(entry.record.variantId or "").strip()
+        if not variant_id:
+            raise F8VariantRemoteRequestError("Variant preview is missing variantId.")
+        record = self.get_variant_content(variant_id)
+        return copy_model(entry, update={"record": record, "installed": False, "hasCachedContent": True})
 
     def hydrate_variant(self, variant_id: str) -> F8VariantEntry:
         cached_entry = self.cache_variant_content(variant_id)
@@ -424,9 +481,11 @@ class VariantSyncClient:
             )
         self._set_value(self._CURRENT_ACCOUNT_ID_KEY, session.accountId)
         self.set_base_url(session.baseUrl)
+        self._set_value("user", _remote_user_payload(session.user))
         self._set_value("email", str(session.user.email or ""))
-        self._access_token = ""
-        return self.refresh_auth()
+        self._access_token = str(session.sessionCookie).strip()
+        self._access_token_account_id = str(session.accountId)
+        return F8VariantRemoteAuth(sessionCookie=self._access_token, user=session.user)
 
     def clear_saved_session(self, account_id: str) -> None:
         account_id = str(account_id or "").strip()
@@ -482,61 +541,65 @@ class VariantSyncClient:
         cursor: str = "",
         append: bool = False,
     ) -> F8VariantRemoteListPage:
-        page = self.list_variants(
-            scope=scope,
-            kind=kind,
-            base_node_type=base_node_type,
-            query=query,
-            cursor=cursor,
+        result = self.collect_remote_scope_refreshes(
+            [
+                VariantRemoteScopeRefreshRequest(
+                    scope=scope,
+                    kind=kind,
+                    base_node_type=base_node_type,
+                    query=query,
+                    cursor=cursor,
+                    append=append,
+                )
+            ],
+            retry_on_auth_failure=True,
         )
-        current = self._catalog_service.load_remote_entries()
-        logger.debug(
-            "Variant cloud refresh scope=%s cursor=%s append=%s current_remote_cache=%d fetched=%d",
-            scope,
-            cursor,
-            append,
-            len(current),
-            len(page.entries),
+        self.apply_remote_entries(result.remote_entries)
+        return result.pages_by_scope[scope]
+
+    def collect_remote_scope_refreshes(
+        self,
+        requests: list[VariantRemoteScopeRefreshRequest],
+        *,
+        retry_on_auth_failure: bool,
+    ) -> VariantRemoteScopeRefreshResult:
+        current_entries = self._catalog_service.load_remote_entries()
+        current_user = self.current_user()
+        pages_by_scope: dict[str, F8VariantRemoteListPage] = {}
+        for request_spec in requests:
+            if retry_on_auth_failure:
+                page = self.list_variants(
+                    scope=request_spec.scope,
+                    kind=request_spec.kind,
+                    base_node_type=request_spec.base_node_type,
+                    query=request_spec.query,
+                    cursor=request_spec.cursor,
+                )
+            else:
+                page = self.list_variants_for_refresh(
+                    scope=request_spec.scope,
+                    kind=request_spec.kind,
+                    base_node_type=request_spec.base_node_type,
+                    query=request_spec.query,
+                    cursor=request_spec.cursor,
+                    retry_on_auth_failure=False,
+                )
+            current_entries = _merge_refreshed_variant_scope_entries(
+                current_entries=current_entries,
+                page=page,
+                scope=request_spec.scope,
+                append=request_spec.append,
+                user=current_user,
+            )
+            pages_by_scope[request_spec.scope] = page
+        return VariantRemoteScopeRefreshResult(
+            requests=tuple(requests),
+            pages_by_scope=pages_by_scope,
+            remote_entries=current_entries,
         )
-        preserved = [
-            entry
-            for entry in current
-            if not _entry_matches_scope(entry, scope=scope, user=self.current_user())
-        ]
-        existing_scope_entries = [
-            entry
-            for entry in current
-            if _entry_matches_scope(entry, scope=scope, user=self.current_user())
-        ]
-        existing_scope_by_id: dict[str, F8VariantEntry] = {
-            str(entry.record.variantId): entry for entry in existing_scope_entries if str(entry.record.variantId).strip()
-        }
-        refreshed: list[F8VariantEntry] = []
-        for entry in page.entries:
-            existing_entry = existing_scope_by_id.get(str(entry.record.variantId))
-            if existing_entry is not None:
-                entry = _merge_variant_entries(existing_entry, entry)
-            refreshed.append(entry)
-        if append:
-            merged_scope_entries: dict[str, F8VariantEntry] = {
-                str(entry.record.variantId): entry for entry in existing_scope_entries
-            }
-            for entry in refreshed:
-                merged_scope_entries[str(entry.record.variantId)] = entry
-            combined_scope_entries = list(merged_scope_entries.values())
-        else:
-            combined_scope_entries = refreshed
-        self._catalog_service.replace_remote_entries(preserved + combined_scope_entries)
-        logger.debug(
-            "Variant cloud refresh applied scope=%s preserved=%d refreshed=%d scope_total=%d new_remote_cache=%d next_cursor=%s",
-            scope,
-            len(preserved),
-            len(refreshed),
-            len(combined_scope_entries),
-            len(preserved) + len(combined_scope_entries),
-            page.nextCursor,
-        )
-        return page
+
+    def apply_remote_entries(self, remote_entries: list[F8VariantEntry]) -> None:
+        self._catalog_service.replace_remote_entries(remote_entries)
 
     def upload_entry(self, entry: F8VariantEntry) -> F8VariantEntry:
         _require_variant_record_for_upload(entry.record)
@@ -565,11 +628,19 @@ class VariantSyncClient:
         resolved_session_cookie = str(refreshed_session_cookie or session_cookie).strip()
         return user, resolved_session_cookie
 
-    def _request_json(self, method: str, path: str, payload: JsonObject | None, *, authorized: bool) -> JsonObject:
+    def _request_json(
+        self,
+        method: str,
+        path: str,
+        payload: JsonObject | None,
+        *,
+        authorized: bool,
+        retry_on_auth_failure: bool = True,
+    ) -> JsonObject:
         try:
             return self._request_json_once(method, path, payload, authorized=authorized)
         except F8VariantRemoteAuthError:
-            if not authorized:
+            if not authorized or not retry_on_auth_failure:
                 raise
             _ = self.refresh_auth()
             return self._request_json_once(method, path, payload, authorized=True)
@@ -1093,6 +1164,37 @@ def _merge_variant_entries(existing_entry: F8VariantEntry, incoming_entry: F8Var
             "downloadedAt": incoming_entry.downloadedAt or existing_entry.downloadedAt,
         },
     )
+
+
+def _merge_refreshed_variant_scope_entries(
+    *,
+    current_entries: list[F8VariantEntry],
+    page: F8VariantRemoteListPage,
+    scope: str,
+    append: bool,
+    user: F8VariantRemoteUser | None,
+) -> list[F8VariantEntry]:
+    preserved = [entry for entry in current_entries if not _entry_matches_scope(entry, scope=scope, user=user)]
+    existing_scope_entries = [entry for entry in current_entries if _entry_matches_scope(entry, scope=scope, user=user)]
+    existing_scope_by_id: dict[str, F8VariantEntry] = {
+        str(entry.record.variantId): entry for entry in existing_scope_entries if str(entry.record.variantId).strip()
+    }
+    refreshed: list[F8VariantEntry] = []
+    for entry in page.entries:
+        existing_entry = existing_scope_by_id.get(str(entry.record.variantId))
+        if existing_entry is not None:
+            entry = _merge_variant_entries(existing_entry, entry)
+        refreshed.append(entry)
+    if append:
+        merged_scope_entries: dict[str, F8VariantEntry] = {
+            str(entry.record.variantId): entry for entry in existing_scope_entries
+        }
+        for entry in refreshed:
+            merged_scope_entries[str(entry.record.variantId)] = entry
+        combined_scope_entries = list(merged_scope_entries.values())
+    else:
+        combined_scope_entries = refreshed
+    return preserved + combined_scope_entries
 
 
 def _remote_user_from_payload(payload: JsonObject) -> F8VariantRemoteUser:

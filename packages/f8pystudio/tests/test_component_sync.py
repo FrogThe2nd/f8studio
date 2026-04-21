@@ -540,6 +540,55 @@ def test_component_sync_client_refresh_auth_preserves_switched_account_cookie(tm
         thread.join(timeout=5)
 
 
+def test_component_sync_client_switch_account_is_local_only(tmp_path: Path, monkeypatch) -> None:
+    settings = QtCore.QSettings(str(tmp_path / "component-switch-local.ini"), QtCore.QSettings.IniFormat)
+    credential_store = _MemoryCredentialStore()
+    service = ComponentCatalogService(db_path=tmp_path / "assets.db")
+    client = ComponentSyncClient(settings=settings, catalog_service=service, credential_store=credential_store)
+    base_url = "https://assetcloud.test"
+    account_id_1 = f"{base_url}::u1@example.com"
+    account_id_2 = f"{base_url}::u2@example.com"
+    credential_store.store_session_cookie(account_id=account_id_1, session_cookie="session=active-1")
+    credential_store.store_session_cookie(account_id=account_id_2, session_cookie="session=active-2")
+    settings.beginGroup("assetcloud/v1")
+    settings.setValue(
+        "saved_sessions",
+        [
+            {
+                "accountId": account_id_1,
+                "baseUrl": base_url,
+                "user": {"userId": "u1", "name": "User One", "email": "u1@example.com"},
+                "lastUsedAt": "2026-04-21T10:00:00+00:00",
+            },
+            {
+                "accountId": account_id_2,
+                "baseUrl": base_url,
+                "user": {"userId": "u2", "name": "User Two", "email": "u2@example.com"},
+                "lastUsedAt": "2026-04-21T10:05:00+00:00",
+            },
+        ],
+    )
+    settings.setValue("current_account_id", account_id_1)
+    settings.setValue("user", {"userId": "u1", "name": "User One", "email": "u1@example.com"})
+    settings.endGroup()
+
+    monkeypatch.setattr(
+        client,
+        "_request_json_response",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("switch_account should not hit the network")),
+    )
+
+    auth = client.switch_account(account_id_2)
+
+    assert auth.sessionCookie == "session=active-2"
+    assert auth.user.email == "u2@example.com"
+    assert client.current_account_id() == account_id_2
+    assert client.current_user() is not None
+    assert client.current_user().email == "u2@example.com"
+    assert client.current_access_token() == "session=active-2"
+    assert client.base_url() == base_url
+
+
 def test_component_sync_client_persists_rotated_session_cookie_from_refresh_auth(tmp_path: Path) -> None:
     server = _Server(("127.0.0.1", 0))
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -851,6 +900,61 @@ def test_component_sync_client_accepts_flat_content_payloads(tmp_path: Path, mon
     assert record.componentId == "public-1"
     assert record.schemaVersion == "f8studio-session/1"
     assert record.content["schemaVersion"] == "f8studio-session/1"
+
+
+def test_component_sync_client_preview_load_uses_content_endpoint_only(tmp_path: Path, monkeypatch) -> None:
+    settings = QtCore.QSettings(str(tmp_path / "component-sync-preview-only.ini"), QtCore.QSettings.IniFormat)
+    service = ComponentCatalogService(db_path=tmp_path / "assets.db")
+    client = ComponentSyncClient(settings=settings, catalog_service=service)
+    calls: list[str] = []
+    preview_entry = F8ComponentEntry(
+        record=F8ComponentRecord(
+            componentId="public-1",
+            name="Preview Only",
+            description="Remote summary",
+            tags=["preview"],
+            schemaVersion="f8studio-session/1",
+            content={},
+        ),
+        source=F8ComponentSourceKind.remote_public,
+        installed=False,
+        hasCachedContent=False,
+    )
+
+    def _request_json(
+        method: str,
+        path: str,
+        payload: dict[str, object] | None,
+        *,
+        authorized: bool,
+        retry_on_auth_failure: bool = True,
+    ) -> dict[str, object]:
+        del method, payload, authorized, retry_on_auth_failure
+        calls.append(path)
+        now = component_now_iso()
+        assert path == "/v1/components/public-1/content"
+        return {
+            "componentId": "public-1",
+            "name": "Preview Only",
+            "description": "Remote summary",
+            "tags": ["preview"],
+            "schemaVersion": "f8studio-session/1",
+            "content": {
+                "schemaVersion": "f8studio-session/1",
+                "layout": {"nodes": {}, "connections": []},
+            },
+            "createdAt": now,
+            "updatedAt": now,
+        }
+
+    monkeypatch.setattr(client, "_request_json", _request_json)
+
+    hydrated = client.load_component_preview_entry(preview_entry)
+
+    assert calls == ["/v1/components/public-1/content"]
+    assert hydrated.installed is False
+    assert hydrated.hasCachedContent is True
+    assert hydrated.record.content["schemaVersion"] == "f8studio-session/1"
 
 
 def test_component_sync_client_rejects_upload_without_full_content(tmp_path: Path) -> None:
@@ -1569,11 +1673,15 @@ def test_component_catalog_disables_load_offload_for_local_draft(monkeypatch, tm
     dialog.close()
 
 
-def test_component_dialog_defers_asset_cache_rebuild_while_selection_is_handled(monkeypatch, tmp_path: Path) -> None:
+def test_component_dialog_remote_preview_is_deferred_until_requested(monkeypatch, tmp_path: Path) -> None:
     _ = _ensure_app()
     settings = QtCore.QSettings(str(tmp_path / "component-selection-rebuild.ini"), QtCore.QSettings.IniFormat)
     service = ComponentCatalogService(db_path=tmp_path / "assets.db")
     monkeypatch.setattr(ComponentCatalogDialog, "_refresh_remote_catalog_if_needed", lambda self: None)
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.background_tasks.BackgroundCallWorker.start",
+        lambda self: self._run(),
+    )
 
     dialog = ComponentCatalogDialog(parent=None, node_graph=None)
     dialog._sync_client = ComponentSyncClient(settings=settings, catalog_service=service)
@@ -1631,18 +1739,23 @@ def test_component_dialog_defers_asset_cache_rebuild_while_selection_is_handled(
         lambda *, entry: preview_calls.append(str(entry.record.componentId)),
     )
 
-    def _cache_component_content(component_id: str) -> F8ComponentEntry:
-        assert component_id == "remote-selection-preview"
-        assert dialog._is_handling_selection_change is True
-        dialog._on_asset_cache_changed()
+    def _load_component_preview_entry(preview_entry: F8ComponentEntry) -> F8ComponentEntry:
+        assert preview_entry.record.componentId == "remote-selection-preview"
         return cached_entry
 
-    monkeypatch.setattr(dialog._sync_client, "cache_component_content", _cache_component_content)
+    monkeypatch.setattr(dialog._sync_client, "load_component_preview_entry", _load_component_preview_entry)
+    monkeypatch.setattr(dialog._sync_client, "clone_for_background", lambda: dialog._sync_client)
 
     dialog._on_selection_changed()
 
+    assert dialog._preview.current_status_text() == "Remote preview is available on demand."
+    assert preview_calls == []
+    assert rebuild_calls == []
+
+    dialog._preview._load_deferred_preview()  # type: ignore[attr-defined]
+
     assert preview_calls == ["remote-selection-preview"]
-    assert rebuild_calls == ["remote-selection-preview"]
+    assert rebuild_calls == []
     assert dialog._is_handling_selection_change is False
     assert dialog._pending_asset_cache_rebuild is False
     assert dialog._pending_asset_cache_rebuild_component_id == ""

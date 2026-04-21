@@ -547,6 +547,59 @@ def test_variant_sync_client_persists_rotated_session_cookie_from_refresh_auth(t
         thread.join(timeout=5)
 
 
+def test_variant_sync_client_switch_account_is_local_only(tmp_path: Path, monkeypatch) -> None:
+    settings = QtCore.QSettings(str(tmp_path / "variant-switch-local.ini"), QtCore.QSettings.IniFormat)
+    db_path = tmp_path / "assets.db"
+    credential_store = _MemoryCredentialStore()
+    service = VariantCatalogService(
+        local_provider=LocalVariantProvider(db_path=db_path),
+        remote_provider=RemoteCacheProvider(db_path=db_path),
+    )
+    client = VariantSyncClient(settings=settings, catalog_service=service, credential_store=credential_store)
+    base_url = "https://assetcloud.test"
+    account_id_1 = f"{base_url}::u1@example.com"
+    account_id_2 = f"{base_url}::u2@example.com"
+    credential_store.store_session_cookie(account_id=account_id_1, session_cookie="session=active-1")
+    credential_store.store_session_cookie(account_id=account_id_2, session_cookie="session=active-2")
+    settings.beginGroup("assetcloud/v1")
+    settings.setValue(
+        "saved_sessions",
+        [
+            {
+                "accountId": account_id_1,
+                "baseUrl": base_url,
+                "user": {"userId": "u1", "name": "User One", "email": "u1@example.com"},
+                "lastUsedAt": "2026-04-21T10:00:00+00:00",
+            },
+            {
+                "accountId": account_id_2,
+                "baseUrl": base_url,
+                "user": {"userId": "u2", "name": "User Two", "email": "u2@example.com"},
+                "lastUsedAt": "2026-04-21T10:05:00+00:00",
+            },
+        ],
+    )
+    settings.setValue("current_account_id", account_id_1)
+    settings.setValue("user", {"userId": "u1", "name": "User One", "email": "u1@example.com"})
+    settings.endGroup()
+
+    monkeypatch.setattr(
+        client,
+        "_request_json_response",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("switch_account should not hit the network")),
+    )
+
+    auth = client.switch_account(account_id_2)
+
+    assert auth.sessionCookie == "session=active-2"
+    assert auth.user.email == "u2@example.com"
+    assert client.current_account_id() == account_id_2
+    assert client.current_user() is not None
+    assert client.current_user().email == "u2@example.com"
+    assert client.current_access_token() == "session=active-2"
+    assert client.base_url() == base_url
+
+
 def test_variant_sync_client_can_cache_remote_content_without_installing(tmp_path: Path) -> None:
     server = _Server(("127.0.0.1", 0))
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -826,6 +879,58 @@ def test_variant_sync_client_accepts_flat_content_payloads(tmp_path: Path, monke
     assert record.spec == {"label": "Flat Variant"}
 
 
+def test_variant_sync_client_preview_load_uses_content_endpoint_only(tmp_path: Path, monkeypatch) -> None:
+    settings = QtCore.QSettings(str(tmp_path / "variant-sync-preview-only.ini"), QtCore.QSettings.IniFormat)
+    db_path = tmp_path / "assets.db"
+    service = VariantCatalogService(
+        local_provider=LocalVariantProvider(db_path=db_path),
+        remote_provider=RemoteCacheProvider(db_path=db_path),
+    )
+    client = VariantSyncClient(settings=settings, catalog_service=service)
+    calls: list[str] = []
+    preview_entry = _make_entry(
+        variant_id="public-1",
+        source=F8VariantSourceKind.remote_public,
+        installed=False,
+        remote_revision="r-public",
+    )
+
+    def _request_json(
+        method: str,
+        path: str,
+        payload: dict[str, object] | None,
+        *,
+        authorized: bool,
+        retry_on_auth_failure: bool = True,
+    ) -> dict[str, object]:
+        del method, payload, authorized, retry_on_auth_failure
+        calls.append(path)
+        now = variant_now_iso()
+        assert path == "/v1/variants/public-1/content"
+        return {
+            "variantId": "public-1",
+            "kind": "operator",
+            "baseNodeType": "svc.a.op",
+            "serviceClass": "svc.test",
+            "operatorClass": "op.test",
+            "name": "Preview Variant",
+            "description": "",
+            "tags": ["preview"],
+            "spec": {"label": "Preview Variant"},
+            "createdAt": now,
+            "updatedAt": now,
+        }
+
+    monkeypatch.setattr(client, "_request_json", _request_json)
+
+    hydrated = client.load_variant_preview_entry(preview_entry)
+
+    assert calls == ["/v1/variants/public-1/content"]
+    assert hydrated.installed is False
+    assert hydrated.hasCachedContent is True
+    assert hydrated.record.spec == {"label": "Preview Variant"}
+
+
 def test_variant_sync_client_accepts_summary_variant_payloads_without_record(tmp_path: Path, monkeypatch) -> None:
     settings = QtCore.QSettings(str(tmp_path / "variant-sync-summary.ini"), QtCore.QSettings.IniFormat)
     db_path = tmp_path / "assets.db"
@@ -835,8 +940,15 @@ def test_variant_sync_client_accepts_summary_variant_payloads_without_record(tmp
     )
     client = VariantSyncClient(settings=settings, catalog_service=service)
 
-    def _request_json(method: str, path: str, payload: dict[str, object] | None, *, authorized: bool) -> dict[str, object]:
-        del method, path, payload, authorized
+    def _request_json(
+        method: str,
+        path: str,
+        payload: dict[str, object] | None,
+        *,
+        authorized: bool,
+        retry_on_auth_failure: bool = True,
+    ) -> dict[str, object]:
+        del method, path, payload, authorized, retry_on_auth_failure
         now = variant_now_iso()
         return {
             "entries": [

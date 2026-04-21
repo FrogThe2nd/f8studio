@@ -80,6 +80,13 @@ def _wait_for_preview_completion(pane: AssetGraphPreviewPane) -> None:
     QtWidgets.QApplication.processEvents()
 
 
+def _run_background_workers_immediately(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.background_tasks.BackgroundCallWorker.start",
+        lambda self: self._run(),
+    )
+
+
 @dataclass
 class _FakeComponentSaveSelectedNode:
     id: str
@@ -984,8 +991,9 @@ def test_component_dialog_browser_rebuild_distinguishes_pure_vs_preserve(monkeyp
     dialog.close()
 
 
-def test_component_selection_preview_caches_without_installing(monkeypatch, tmp_path: Path) -> None:
+def test_component_selection_preview_loads_on_demand_without_installing(monkeypatch, tmp_path: Path) -> None:
     _ensure_app()
+    _run_background_workers_immediately(monkeypatch)
     monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None))
     original_render_browser_from_state = ComponentCatalogDialog._render_browser_from_state
     monkeypatch.setattr(ComponentCatalogDialog, "_render_browser_from_state", lambda self, *_args, **_kwargs: None)
@@ -1026,13 +1034,14 @@ def test_component_selection_preview_caches_without_installing(monkeypatch, tmp_
             "hasCachedContent": True,
         },
     )
-    cache_calls: list[str] = []
     hydrate_calls: list[str] = []
+    preview_calls: list[str] = []
     monkeypatch.setattr(
         dialog._sync_client,
-        "cache_component_content",
-        lambda component_id: cache_calls.append(str(component_id)) or cached_entry,
+        "load_component_preview_entry",
+        lambda preview_entry: preview_calls.append(str(preview_entry.record.componentId)) or cached_entry,
     )
+    monkeypatch.setattr(dialog._sync_client, "clone_for_background", lambda: dialog._sync_client)
     monkeypatch.setattr(
         dialog._sync_client,
         "hydrate_component",
@@ -1046,7 +1055,12 @@ def test_component_selection_preview_caches_without_installing(monkeypatch, tmp_
     dialog._list.setCurrentRow(0)
     QtWidgets.QApplication.processEvents()
 
-    assert cache_calls == ["component-preview-cache"]
+    assert dialog._preview.current_status_text() == "Remote preview is available on demand."
+    assert preview_calls == []
+    dialog._preview._load_deferred_preview()  # type: ignore[attr-defined]
+    QtWidgets.QApplication.processEvents()
+
+    assert preview_calls == ["component-preview-cache"]
     assert hydrate_calls == []
     assert dialog._sync_client._catalog_service.entry("component-preview-cache", include_uninstalled=False) is None
 
@@ -2115,6 +2129,38 @@ def test_component_catalog_dialog_defers_initial_remote_refresh(monkeypatch, tmp
     dialog.close()
 
 
+def test_variant_catalog_dialog_defers_initial_remote_refresh(monkeypatch, tmp_path: Path) -> None:
+    _ensure_app()
+    refresh_calls: list[str] = []
+    scheduled_callbacks: list[object] = []
+
+    monkeypatch.setattr("f8pystudio.assets.db.asset_db.assets_db_path", lambda: tmp_path / "assets.db")
+    monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(
+        VariantCatalogDialog,
+        "_refresh_remote_catalog_if_needed",
+        lambda self: refresh_calls.append("refresh"),
+    )
+    monkeypatch.setattr(
+        QtCore.QTimer,
+        "singleShot",
+        staticmethod(lambda _delay_ms, callback: scheduled_callbacks.append(callback)),
+    )
+
+    dialog = VariantCatalogDialog(
+        parent=None,
+        base_node_type="svc.preview.variant",
+        base_node_name="Preview Variant",
+        node_graph=None,
+    )
+
+    assert refresh_calls == []
+    refresh_callbacks = [callback for callback in scheduled_callbacks if getattr(callback, "__name__", "") == "_run_initial_remote_refresh"]
+    assert len(refresh_callbacks) == 1
+
+    dialog.close()
+
+
 def test_component_catalog_ignores_deleted_selection_wrapper() -> None:
     _ensure_app()
     dialog = ComponentCatalogDialog(parent=None, node_graph=None)
@@ -2133,6 +2179,7 @@ def test_component_catalog_ignores_deleted_selection_wrapper() -> None:
 
 def test_variant_dialog_hydration_failure_updates_raw_and_preview(monkeypatch) -> None:
     _ensure_app()
+    _run_background_workers_immediately(monkeypatch)
     monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", lambda _cb: (lambda: None))
     monkeypatch.setattr(VariantCatalogDialog, "_render_browser_from_state", lambda self, *_args, **_kwargs: None)
     dialog = VariantCatalogDialog(
@@ -2162,12 +2209,18 @@ def test_variant_dialog_hydration_failure_updates_raw_and_preview(monkeypatch) -
     item = QtWidgets.QListWidgetItem()
     item.setData(QtCore.Qt.ItemDataRole.UserRole, "variant-remote")
     dialog._list.addItem(item)
-    dialog._sync_client.cache_variant_content = lambda _variant_id: (_ for _ in ()).throw(ValueError("boom"))  # type: ignore[method-assign]
+    dialog._sync_client.load_variant_preview_entry = lambda _entry: (_ for _ in ()).throw(ValueError("boom"))  # type: ignore[method-assign]
+    dialog._sync_client.clone_for_background = lambda: dialog._sync_client  # type: ignore[method-assign]
 
     dialog._list.setCurrentRow(0)
-    _wait_for_preview_completion(dialog._preview)
+    QtWidgets.QApplication.processEvents()
 
-    assert "cache_variant_content" in dialog._raw.toPlainText()
+    assert dialog._preview.current_status_text() == "Remote preview is available on demand."
+
+    dialog._preview._load_deferred_preview()  # type: ignore[attr-defined]
+    QtWidgets.QApplication.processEvents()
+
+    assert "load_variant_preview_entry" in dialog._raw.toPlainText()
     assert "boom" in dialog._preview.current_status_text()
 
     dialog.close()
@@ -2215,15 +2268,10 @@ def test_variant_dialog_install_allows_anonymous_public_variant(monkeypatch) -> 
     dialog.close()
 
 
-def test_variant_dialog_defers_reload_during_selection_cache(monkeypatch) -> None:
+def test_variant_dialog_remote_preview_loads_on_demand(monkeypatch) -> None:
     _ensure_app()
-    callbacks: list[object] = []
-
-    def _subscribe(callback):
-        callbacks.append(callback)
-        return lambda: callbacks.remove(callback)
-
-    monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", _subscribe)
+    _run_background_workers_immediately(monkeypatch)
+    monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", lambda _cb: (lambda: None))
     dialog = VariantCatalogDialog(
         parent=None,
         base_node_type="svc.preview.variant",
@@ -2252,30 +2300,23 @@ def test_variant_dialog_defers_reload_during_selection_cache(monkeypatch) -> Non
     item.setData(QtCore.Qt.ItemDataRole.UserRole, "variant-remote")
     dialog._list.addItem(item)
 
-    events: list[str] = []
-    def _recording_reload(*args, **kwargs) -> None:
-        del args, kwargs
-        events.append("reload")
-
     cached_entry = copy_model(entry, update={"installed": False, "hasCachedContent": True})
-    dialog._selected_remote_entry = lambda: cached_entry  # type: ignore[method-assign]
-    dialog._remote_entry_for_variant_id = lambda _variant_id: cached_entry  # type: ignore[method-assign]
-
-    def _cache_variant_content(_variant_id: str) -> F8VariantEntry:
-        events.append("cache:start")
-        callback = callbacks[0]
-        callback()
-        events.append("cache:end")
-        return cached_entry
-
-    dialog._render_browser_from_state = _recording_reload  # type: ignore[method-assign]
-    dialog._sync_client.cache_variant_content = _cache_variant_content  # type: ignore[method-assign]
-    events.clear()
+    preview_calls: list[str] = []
+    dialog._sync_client.load_variant_preview_entry = (  # type: ignore[method-assign]
+        lambda preview_entry: preview_calls.append(str(preview_entry.record.variantId)) or cached_entry
+    )
+    dialog._sync_client.clone_for_background = lambda: dialog._sync_client  # type: ignore[method-assign]
 
     dialog._list.setCurrentRow(0)
     QtWidgets.QApplication.processEvents()
 
-    assert events[:3] == ["cache:start", "cache:end", "reload"]
+    assert dialog._preview.current_status_text() == "Remote preview is available on demand."
+    assert preview_calls == []
+
+    dialog._preview._load_deferred_preview()  # type: ignore[attr-defined]
+    QtWidgets.QApplication.processEvents()
+
+    assert preview_calls == ["variant-remote"]
     assert dialog._selected_variant_id() == "variant-remote"
     assert dialog._btn_install.isEnabled() is False
     assert dialog._btn_create.isEnabled() is False

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import Any
 
 from qtpy import QtCore, QtWidgets
@@ -10,6 +11,7 @@ from f8pysdk.codec import dump_json
 
 from ...ui.support.qt_lifecycle import qt_runtime_error_is_object_deleted
 from ...ui.support.ui_icons import StudioIcon, icon_for
+from .background_tasks import BackgroundCallWorker
 from ..variants.variant_catalog import variant_entry_has_cached_content, variant_entry_is_installed
 from ..variants.variant_models import F8VariantEntry, F8VariantRecord, F8VariantSourceKind, F8VariantVisibility
 
@@ -55,6 +57,11 @@ class VariantCatalogSelectionMixin:
         self._is_handling_selection_change = False
         self._pending_asset_cache_rebuild = False
         self._pending_asset_cache_rebuild_variant_id = ""
+        self._active_preview_request_id = 0
+        self._preview_worker: BackgroundCallWorker | None = None
+        self._active_preview_variant_id = ""
+        self._active_preview_entry: F8VariantEntry | None = None
+        self._active_preview_started_at = 0.0
 
     def _selected_entry(self) -> F8VariantEntry | None:
         try:
@@ -349,13 +356,7 @@ class VariantCatalogSelectionMixin:
             selected_entry=selected_entry,
             variant_id=pending_reload_variant_id,
         )
-        if self._preview_requires_cache(preview_entry):
-            preview_entry = self._cache_preview_entry(
-                preview_entry=preview_entry,
-                variant_id=pending_reload_variant_id,
-            )
-        else:
-            self._show_preview_entry(preview_entry)
+        self._show_selection_preview(preview_entry=preview_entry)
         self._refresh_action_buttons(selected_entry)
         return pending_reload_variant_id
 
@@ -374,36 +375,142 @@ class VariantCatalogSelectionMixin:
     def _preview_requires_cache(entry: F8VariantEntry) -> bool:
         return entry.source != F8VariantSourceKind.local and not variant_entry_has_cached_content(entry)
 
-    def _cache_preview_entry(
+    def _show_selection_preview(self, *, preview_entry: F8VariantEntry) -> None:
+        if self._preview_requires_cache(preview_entry):
+            self._show_deferred_remote_preview(preview_entry=preview_entry)
+            return
+        self._show_preview_entry(preview_entry)
+
+    def _show_deferred_remote_preview(self, *, preview_entry: F8VariantEntry) -> None:
+        variant_id = str(preview_entry.record.variantId or "").strip()
+        self._raw.setPlainText(
+            json.dumps(
+                dump_json(preview_entry, mode="json"),
+                ensure_ascii=False,
+                indent=2,
+                default=str,
+            )
+        )
+        self._preview.show_deferred_action(
+            message="Remote preview is available on demand.",
+            button_text="Load preview",
+            callback=lambda variant_id=variant_id, entry=preview_entry: self._load_remote_preview(
+                variant_id=variant_id,
+                entry=entry,
+            ),
+        )
+
+    def _load_remote_preview(self, *, variant_id: str, entry: F8VariantEntry) -> None:
+        normalized_variant_id = str(variant_id or "").strip()
+        if not normalized_variant_id:
+            return
+        if normalized_variant_id != self._selected_variant_id():
+            return
+        self._active_preview_request_id += 1
+        request_id = self._active_preview_request_id
+        background_client = self._sync_client.clone_for_background()
+        started_at = time.perf_counter()
+        self._preview.show_loading_message("Loading remote preview…")
+        worker = BackgroundCallWorker(
+            request_id=request_id,
+            task=lambda: background_client.load_variant_preview_entry(entry),
+        )
+        self._preview_worker = worker
+        self._active_preview_variant_id = normalized_variant_id
+        self._active_preview_entry = entry
+        self._active_preview_started_at = started_at
+        worker.succeeded.connect(self._handle_remote_preview_loaded)  # type: ignore[attr-defined]
+        worker.failed.connect(self._handle_remote_preview_failed)  # type: ignore[attr-defined]
+        worker.start()
+
+    def _handle_remote_preview_loaded(
+        self,
+        finished_request_id: int,
+        result: object,
+        elapsed_seconds: float,
+    ) -> None:
+        self._on_remote_preview_loaded(
+            finished_request_id=int(finished_request_id),
+            variant_id=self._active_preview_variant_id,
+            result=result,
+            elapsed_seconds=float(elapsed_seconds),
+            started_at=self._active_preview_started_at,
+        )
+
+    def _handle_remote_preview_failed(
+        self,
+        finished_request_id: int,
+        exc: object,
+        elapsed_seconds: float,
+    ) -> None:
+        fallback_entry = self._active_preview_entry
+        if fallback_entry is None:
+            return
+        self._on_remote_preview_failed(
+            finished_request_id=int(finished_request_id),
+            variant_id=self._active_preview_variant_id,
+            entry=fallback_entry,
+            exc=exc,
+            elapsed_seconds=float(elapsed_seconds),
+        )
+
+    def _on_remote_preview_loaded(
         self,
         *,
-        preview_entry: F8VariantEntry,
+        finished_request_id: int,
         variant_id: str,
-    ) -> F8VariantEntry:
+        result: object,
+        elapsed_seconds: float,
+        started_at: float,
+    ) -> None:
+        if finished_request_id != self._active_preview_request_id:
+            return
+        self._preview_worker = None
+        self._active_preview_entry = None
+        if str(self._selected_variant_id() or "").strip() != str(variant_id):
+            return
+        if not isinstance(result, F8VariantEntry):
+            self._preview.clear_preview("Failed to preview variant.\nUnexpected preview payload.")
+            return
+        cached_entry = self._sync_client._catalog_service.cache_remote_entry(result)
         logger.info(
-            "Variant manager caching remote selection for preview variant_id=%s source=%s installed=%s",
+            "Variant manager remote preview loaded variant_id=%s network=%.3fs total=%.3fs",
             variant_id,
-            preview_entry.source.value,
-            bool(preview_entry.installed),
-        )
-        try:
-            cached_entry = self._sync_client.cache_variant_content(str(preview_entry.record.variantId))
-        except Exception as exc:
-            logger.exception(
-                "Variant manager failed to cache selected variant preview variant_id=%s",
-                variant_id,
-            )
-            self._show_preview_cache_failure(preview_entry=preview_entry, exc=exc)
-            return preview_entry
-
-        logger.info(
-            "Variant manager cached selected variant preview variant_id=%s installed=%s has_cached_content=%s",
-            str(cached_entry.record.variantId or "").strip(),
-            bool(cached_entry.installed),
-            bool(cached_entry.hasCachedContent),
+            elapsed_seconds,
+            time.perf_counter() - started_at,
         )
         self._show_preview_entry(cached_entry)
-        return cached_entry
+
+    def _on_remote_preview_failed(
+        self,
+        *,
+        finished_request_id: int,
+        variant_id: str,
+        entry: F8VariantEntry,
+        exc: object,
+        elapsed_seconds: float,
+    ) -> None:
+        if finished_request_id != self._active_preview_request_id:
+            return
+        self._preview_worker = None
+        self._active_preview_entry = None
+        if str(self._selected_variant_id() or "").strip() != str(variant_id):
+            return
+        if isinstance(exc, Exception):
+            logger.error(
+                "Variant manager failed to load remote preview variant_id=%s",
+                variant_id,
+                exc_info=(type(exc), exc, exc.__traceback__),
+            )
+            self._show_preview_cache_failure(preview_entry=entry, exc=exc)
+        else:
+            self._preview.clear_preview(f"Failed to preview variant.\n{exc}")
+        logger.warning(
+            "Variant manager remote preview failed variant_id=%s elapsed=%.3fs error=%s",
+            variant_id,
+            elapsed_seconds,
+            str(exc),
+        )
 
     def _show_preview_cache_failure(
         self,
@@ -415,7 +522,7 @@ class VariantCatalogSelectionMixin:
             json.dumps(
                 {
                     "variantId": str(preview_entry.record.variantId),
-                    "operation": "cache_variant_content",
+                    "operation": "load_variant_preview_entry",
                     "error": str(exc),
                 },
                 ensure_ascii=False,

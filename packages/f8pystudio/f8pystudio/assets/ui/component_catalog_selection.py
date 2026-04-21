@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import Any
 
 from qtpy import QtCore, QtWidgets
@@ -11,6 +12,7 @@ from f8pysdk.codec import dump_json
 from ...ui.support.qt_lifecycle import qt_runtime_error_is_object_deleted
 from ...nodegraph.session_schema import extract_layout
 from ...ui.support.ui_icons import StudioIcon, icon_for
+from .background_tasks import BackgroundCallWorker
 from ..components.component_catalog import (
     component_entry_can_hydrate,
     component_entry_has_cached_content,
@@ -30,6 +32,11 @@ class ComponentCatalogSelectionMixin:
         self._is_handling_selection_change = False
         self._pending_asset_cache_rebuild = False
         self._pending_asset_cache_rebuild_component_id = ""
+        self._active_preview_request_id = 0
+        self._preview_worker: BackgroundCallWorker | None = None
+        self._active_preview_component_id = ""
+        self._active_preview_entry: F8ComponentEntry | None = None
+        self._active_preview_started_at = 0.0
 
     def _selected_entry(self) -> F8ComponentEntry | None:
         try:
@@ -273,35 +280,158 @@ class ComponentCatalogSelectionMixin:
             return ""
 
         pending_reload_component_id = str(selected_entry.record.componentId or "").strip()
-        preview_entry, hydration_error = self._hydrate_selection_entry(selected_entry=selected_entry)
-        if preview_entry is None:
-            self._show_hydration_failure(
-                selected_entry=selected_entry,
-                hydration_error=hydration_error,
-            )
-        else:
-            self._show_component_preview(entry=preview_entry)
+        self._show_selection_preview(selected_entry=selected_entry)
         self._refresh_action_buttons(selected_entry)
         return pending_reload_component_id
 
-    def _hydrate_selection_entry(
+    def _show_selection_preview(self, *, selected_entry: F8ComponentEntry) -> None:
+        if not component_entry_can_hydrate(selected_entry):
+            self._show_component_preview(entry=selected_entry)
+            return
+        if component_entry_has_cached_content(selected_entry):
+            self._show_component_preview(entry=selected_entry)
+            return
+        component_id = str(selected_entry.record.componentId or "").strip()
+        self._show_deferred_remote_preview(entry=selected_entry, component_id=component_id)
+
+    def _show_deferred_remote_preview(
         self,
         *,
-        selected_entry: F8ComponentEntry,
-    ) -> tuple[F8ComponentEntry | None, str]:
-        if not component_entry_can_hydrate(selected_entry):
-            return selected_entry, ""
-        if component_entry_has_cached_content(selected_entry):
-            return selected_entry, ""
-        component_id = str(selected_entry.record.componentId or "").strip()
-        try:
-            return self._sync_client.cache_component_content(component_id), ""
-        except Exception as exc:
-            logger.exception(
-                "Component manager failed to cache selected component preview component_id=%s",
-                component_id,
+        entry: F8ComponentEntry,
+        component_id: str,
+    ) -> None:
+        self._raw.setPlainText(
+            json.dumps(
+                dump_json(entry, mode="json"),
+                ensure_ascii=False,
+                indent=2,
+                default=str,
             )
-            return None, str(exc)
+        )
+        self._preview.show_deferred_action(
+            message="Remote preview is available on demand.",
+            button_text="Load preview",
+            callback=lambda component_id=component_id, entry=entry: self._load_remote_preview(
+                component_id=component_id,
+                entry=entry,
+            ),
+        )
+
+    def _load_remote_preview(self, *, component_id: str, entry: F8ComponentEntry) -> None:
+        normalized_component_id = str(component_id or "").strip()
+        if not normalized_component_id:
+            return
+        selected_component_id = self._selected_component_id()
+        if normalized_component_id != selected_component_id:
+            return
+        self._active_preview_request_id += 1
+        request_id = self._active_preview_request_id
+        background_client = self._sync_client.clone_for_background()
+        started_at = time.perf_counter()
+        self._preview.show_loading_message("Loading remote preview…")
+        worker = BackgroundCallWorker(
+            request_id=request_id,
+            task=lambda: background_client.load_component_preview_entry(entry),
+        )
+        self._preview_worker = worker
+        self._active_preview_component_id = normalized_component_id
+        self._active_preview_entry = entry
+        self._active_preview_started_at = started_at
+        worker.succeeded.connect(self._handle_remote_preview_loaded)  # type: ignore[attr-defined]
+        worker.failed.connect(self._handle_remote_preview_failed)  # type: ignore[attr-defined]
+        worker.start()
+
+    def _handle_remote_preview_loaded(
+        self,
+        finished_request_id: int,
+        result: object,
+        elapsed_seconds: float,
+    ) -> None:
+        self._on_remote_preview_loaded(
+            finished_request_id=int(finished_request_id),
+            component_id=self._active_preview_component_id,
+            result=result,
+            elapsed_seconds=float(elapsed_seconds),
+            started_at=self._active_preview_started_at,
+        )
+
+    def _handle_remote_preview_failed(
+        self,
+        finished_request_id: int,
+        exc: object,
+        elapsed_seconds: float,
+    ) -> None:
+        fallback_entry = self._active_preview_entry
+        if fallback_entry is None:
+            return
+        self._on_remote_preview_failed(
+            finished_request_id=int(finished_request_id),
+            component_id=self._active_preview_component_id,
+            entry=fallback_entry,
+            exc=exc,
+            elapsed_seconds=float(elapsed_seconds),
+        )
+
+    def _on_remote_preview_loaded(
+        self,
+        *,
+        finished_request_id: int,
+        component_id: str,
+        result: object,
+        elapsed_seconds: float,
+        started_at: float,
+    ) -> None:
+        if finished_request_id != self._active_preview_request_id:
+            return
+        self._preview_worker = None
+        self._active_preview_entry = None
+        if str(self._selected_component_id() or "").strip() != str(component_id):
+            return
+        if not isinstance(result, F8ComponentEntry):
+            self._preview.clear_preview("Failed to preview component.\nUnexpected preview payload.")
+            return
+        cached_entry = self._sync_client._catalog_service.cache_remote_entry(result)
+        logger.info(
+            "Component manager remote preview loaded component_id=%s network=%.3fs total=%.3fs",
+            component_id,
+            elapsed_seconds,
+            time.perf_counter() - started_at,
+        )
+        self._show_component_preview(entry=cached_entry)
+
+    def _on_remote_preview_failed(
+        self,
+        *,
+        finished_request_id: int,
+        component_id: str,
+        entry: F8ComponentEntry,
+        exc: object,
+        elapsed_seconds: float,
+    ) -> None:
+        if finished_request_id != self._active_preview_request_id:
+            return
+        self._preview_worker = None
+        self._active_preview_entry = None
+        if str(self._selected_component_id() or "").strip() != str(component_id):
+            return
+        if isinstance(exc, Exception):
+            logger.error(
+                "Component manager failed to load remote preview component_id=%s",
+                component_id,
+                exc_info=(type(exc), exc, exc.__traceback__),
+            )
+            self._show_hydration_failure(
+                selected_entry=entry,
+                hydration_error=str(exc),
+            )
+        else:
+            self._preview.clear_preview(f"Failed to preview component.\n{exc}")
+        logger.warning(
+            "Component manager remote preview failed component_id=%s elapsed=%.3fs error=%s",
+            component_id,
+            elapsed_seconds,
+            str(exc),
+        )
 
     def _show_hydration_failure(
         self,
@@ -313,7 +443,7 @@ class ComponentCatalogSelectionMixin:
             json.dumps(
                 {
                     "componentId": str(selected_entry.record.componentId),
-                    "operation": "cache_component_content",
+                    "operation": "load_component_preview_entry",
                     "error": hydration_error,
                 },
                 ensure_ascii=False,
