@@ -1474,6 +1474,11 @@ def test_variant_dialog_node_type_combo_tracks_current_tab_entries(monkeypatch, 
     dialog._render_browser_from_state()
     QtWidgets.QApplication.processEvents()
 
+    assert dialog._toolbar.isAncestorOf(dialog._node_type_combo) is False
+    assert dialog._list_column.isAncestorOf(dialog._node_type_combo) is True
+    assert dialog._list_column.isAncestorOf(dialog._node_type_label) is True
+    assert dialog._list_column.isAncestorOf(dialog._list) is True
+
     assert [dialog._node_type_combo.itemText(index) for index in range(dialog._node_type_combo.count())] == [
         "All Types",
         "svc.draft.node",
@@ -2274,6 +2279,7 @@ def test_variant_dialog_defers_reload_during_selection_cache(monkeypatch) -> Non
     assert dialog._selected_variant_id() == "variant-remote"
     assert dialog._btn_install.isEnabled() is False
     assert dialog._btn_create.isEnabled() is False
+    assert dialog._btn_create.isHidden() is True
 
     dialog.close()
 
@@ -2534,8 +2540,51 @@ def test_variant_dialog_installed_uses_remove_from_installed(monkeypatch) -> Non
         "Remove from Installed",
         "Pull",
         "History",
-        "Create on canvas",
     ]
+
+    dialog.close()
+
+
+def test_variant_catalog_row_without_description_stays_compact_and_shows_remote_revision(monkeypatch) -> None:
+    _ensure_app()
+    monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(VariantCatalogDialog, "_render_browser_from_state", lambda self, *_args, **_kwargs: None)
+
+    dialog = VariantCatalogDialog(
+        parent=None,
+        base_node_type="svc.preview.service",
+        base_node_name="Preview Service",
+        node_graph=None,
+    )
+    entry = F8VariantEntry(
+        record=F8VariantRecord(
+            variantId="compact-revision-row",
+            kind=F8VariantKind.service,
+            baseNodeType="svc.preview.service",
+            serviceClass="svc.preview.service",
+            operatorClass=None,
+            name="Compact Revision Row",
+            description="This description should not appear in the row.",
+            tags=[],
+            spec={"label": "Compact Revision Row"},
+            createdAt=variant_now_iso(),
+            updatedAt=variant_now_iso(),
+        ),
+        source=F8VariantSourceKind.remote_private,
+        visibility=F8VariantVisibility.private,
+        ownerUserId="u1",
+        ownerDisplayName="User One",
+        remoteRevision="r1",
+        installed=True,
+        hasCachedContent=True,
+    )
+
+    row_widget = dialog._build_list_row(entry)
+    row_labels = [label.text() for label in row_widget.findChildren(QtWidgets.QLabel)]
+
+    assert row_widget.sizeHint().height() <= 56
+    assert "This description should not appear in the row." not in row_labels
+    assert "r1" in row_labels
 
     dialog.close()
 

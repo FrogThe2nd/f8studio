@@ -307,8 +307,8 @@ class VariantCatalogEntriesMixin:
             "}"
         )
         root = QtWidgets.QVBoxLayout(container)
-        root.setContentsMargins(10, 8, 10, 8)
-        root.setSpacing(6)
+        root.setContentsMargins(10, 6, 10, 6)
+        root.setSpacing(4)
 
         title_row = QtWidgets.QHBoxLayout()
         title_row.setContentsMargins(0, 0, 0, 0)
@@ -384,14 +384,11 @@ class VariantCatalogEntriesMixin:
         visibility_badge = self._build_visibility_badge(container, row_state)
         if visibility_badge is not None:
             meta_row.addWidget(visibility_badge, 0)
+        revision_badge = self._build_revision_badge(container, entry.remoteRevision)
+        if revision_badge is not None:
+            meta_row.addWidget(revision_badge, 0)
         meta_row.addStretch(1)
         root.addLayout(meta_row)
-
-        if entry.record.description:
-            description_label = QtWidgets.QLabel(str(entry.record.description), container)
-            description_label.setWordWrap(True)
-            description_label.setStyleSheet("color: palette(mid);")
-            root.addWidget(description_label)
         return container
 
     @staticmethod
@@ -425,4 +422,12 @@ class VariantCatalogEntriesMixin:
         badge = self._build_text_badge(parent, "")
         badge.setPixmap(icon_for(parent, token).pixmap(12, 12))
         badge.setToolTip(tooltip)
+        return badge
+
+    def _build_revision_badge(self, parent: QtWidgets.QWidget, remote_revision: str | None) -> QtWidgets.QLabel | None:
+        revision_text = str(remote_revision or "").strip()
+        if not revision_text:
+            return None
+        badge = self._build_text_badge(parent, revision_text)
+        badge.setToolTip(f"Remote revision: {revision_text}")
         return badge

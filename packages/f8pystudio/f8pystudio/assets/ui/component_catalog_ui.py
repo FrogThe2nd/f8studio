@@ -248,6 +248,9 @@ class ComponentCatalogUiMixin:
         visibility_badge = self._build_visibility_badge(container, row_state)
         if visibility_badge is not None:
             meta_row.addWidget(visibility_badge, 0)
+        revision_badge = self._build_revision_badge(container, entry.remoteRevision)
+        if revision_badge is not None:
+            meta_row.addWidget(revision_badge, 0)
         meta_row.addStretch(1)
         root.addLayout(meta_row)
         return container
@@ -283,6 +286,14 @@ class ComponentCatalogUiMixin:
         badge = self._build_text_badge(parent, "")
         badge.setPixmap(icon_for(parent, token).pixmap(12, 12))
         badge.setToolTip(tooltip)
+        return badge
+
+    def _build_revision_badge(self, parent: QtWidgets.QWidget, remote_revision: str | None) -> QtWidgets.QLabel | None:
+        revision_text = str(remote_revision or "").strip()
+        if not revision_text:
+            return None
+        badge = self._build_text_badge(parent, revision_text)
+        badge.setToolTip(f"Remote revision: {revision_text}")
         return badge
 
     @classmethod

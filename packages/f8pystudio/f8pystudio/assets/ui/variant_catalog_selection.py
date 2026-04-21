@@ -320,8 +320,8 @@ class VariantCatalogSelectionMixin:
         )
         self._set_button_state(
             self._btn_create,
-            visible=has_selection and current_tab == self._TAB_INSTALLED,
-            enabled=selected is not None and variant_entry_is_installed(selected),
+            visible=False,
+            enabled=False,
             tooltip="Create on canvas",
             icon_token=StudioIcon.CIRCLE_PLUS,
         )
@@ -450,7 +450,7 @@ class VariantCatalogSelectionMixin:
         )
 
     def _on_item_double_clicked(self, _item: QtWidgets.QListWidgetItem) -> None:
-        self._on_create_clicked()
+        return
 
     def _on_list_context_menu_requested(self, pos: QtCore.QPoint) -> None:
         item = self._list.itemAt(pos)
@@ -520,8 +520,4 @@ class VariantCatalogSelectionMixin:
             history_action = menu.addAction("History")
             history_action.setEnabled(local_entry is not None or remote_entry is not None)
             history_action.triggered.connect(self._on_history_clicked)  # type: ignore[attr-defined]
-        if current_tab != self._TAB_DRAFTS and variant_entry_is_installed(selected_entry):
-            menu.addSeparator()
-            create_action = menu.addAction("Create on canvas")
-            create_action.triggered.connect(self._on_create_clicked)  # type: ignore[attr-defined]
         menu.exec(self._list.viewport().mapToGlobal(pos))

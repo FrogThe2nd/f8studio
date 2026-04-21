@@ -1477,3 +1477,33 @@ def test_component_catalog_row_without_description_stays_compact(monkeypatch) ->
     assert "This description should not appear in the row." not in row_labels
 
     dialog.close()
+
+
+def test_component_catalog_row_shows_remote_revision_badge(monkeypatch) -> None:
+    _ = _ensure_app()
+    monkeypatch.setattr(ComponentCatalogDialog, "_render_browser_from_state", lambda self, *_args: None)
+
+    dialog = ComponentCatalogDialog(parent=None, node_graph=None)
+    entry = F8ComponentEntry(
+        record=F8ComponentRecord(
+            componentId="revision-row",
+            name="Revision Row",
+            description="",
+            schemaVersion="f8studio-session/1",
+            content={"schemaVersion": "f8studio-session/1", "layout": {"nodes": {}, "connections": []}},
+        ),
+        source=F8ComponentSourceKind.remote_private,
+        visibility=F8ComponentVisibility.private,
+        ownerUserId="u1",
+        ownerDisplayName="User One",
+        remoteRevision="r1",
+        installed=True,
+        hasCachedContent=True,
+    )
+
+    row_widget = dialog._build_list_row(entry)
+    row_labels = [label.text() for label in row_widget.findChildren(QtWidgets.QLabel)]
+
+    assert "r1" in row_labels
+
+    dialog.close()

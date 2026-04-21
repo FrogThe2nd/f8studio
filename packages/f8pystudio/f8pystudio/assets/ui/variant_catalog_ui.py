@@ -78,6 +78,7 @@ class VariantCatalogUiMixin:
         self._filter_combo = QtWidgets.QComboBox(self)
         self._filter_combo.currentIndexChanged.connect(self._on_filter_changed)  # type: ignore[attr-defined]
 
+        self._node_type_label = QtWidgets.QLabel("Node Type:", self)
         self._node_type_combo = QtWidgets.QComboBox(self)
         self._node_type_combo.currentIndexChanged.connect(self._on_node_type_filter_changed)  # type: ignore[attr-defined]
         if self._is_global_mode:
@@ -90,10 +91,6 @@ class VariantCatalogUiMixin:
         self._toolbar.setIconSize(QtCore.QSize(16, 16))
         self._toolbar.addWidget(self._scope_tabs)
         self._toolbar.addSeparator()
-        if self._is_global_mode:
-            self._toolbar.addWidget(QtWidgets.QLabel("Node Type:", self))
-            self._toolbar.addWidget(self._node_type_combo)
-            self._toolbar.addSeparator()
         self._toolbar.addWidget(self._search_input)
         self._toolbar.addWidget(self._search_btn)
         self._toolbar.addWidget(self._filter_combo)
@@ -195,8 +192,22 @@ class VariantCatalogUiMixin:
         self._detail_tabs.addTab(self._preview, "Preview")
         self._detail_tabs.addTab(self._raw, "Raw")
 
+        self._list_column = QtWidgets.QWidget(self)
+        list_column_layout = QtWidgets.QVBoxLayout(self._list_column)
+        list_column_layout.setContentsMargins(0, 0, 0, 0)
+        list_column_layout.setSpacing(6)
+        self._node_type_filter_row = QtWidgets.QWidget(self._list_column)
+        node_type_filter_layout = QtWidgets.QHBoxLayout(self._node_type_filter_row)
+        node_type_filter_layout.setContentsMargins(0, 0, 0, 0)
+        node_type_filter_layout.setSpacing(6)
+        node_type_filter_layout.addWidget(self._node_type_label, 0)
+        node_type_filter_layout.addWidget(self._node_type_combo, 1)
+        self._node_type_filter_row.setVisible(self._is_global_mode)
+        list_column_layout.addWidget(self._node_type_filter_row, 0)
+        list_column_layout.addWidget(self._list, 1)
+
         split = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal, self)
-        split.addWidget(self._list)
+        split.addWidget(self._list_column)
         split.addWidget(self._detail_tabs)
         split.setStretchFactor(0, 4)
         split.setStretchFactor(1, 6)
