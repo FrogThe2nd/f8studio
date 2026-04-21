@@ -185,7 +185,7 @@ class _ComponentApiHandler(BaseHTTPRequestHandler):
         if self.path == "/v1/me":
             if not self._check_auth():
                 return
-            self._write_json(200, {"userId": "u1", "name": "User One", "displayName": "User One", "email": "u@example.com"})
+            self._write_json(200, {"userId": "u1", "name": "User One", "email": "u@example.com"})
             return
         if self.path == "/v1/components/public-1":
             self._write_json(200, self.server.public_asset)
@@ -342,7 +342,7 @@ def test_component_sync_client_supports_anonymous_public_install_and_cookie_sess
         assert public_version.record.componentId == "public-1"
 
         auth = client.login(base_url=f"http://127.0.0.1:{server.server_port}", email="u@example.com", password="p", remember=True)
-        assert auth.user.displayName == "User One"
+        assert auth.user.name == "User One"
         assert server.last_login_user_agent == "F8Studio/1.0"
 
         refreshed_page = client.list_components(scope="community")
@@ -422,37 +422,6 @@ def test_component_sync_client_can_cache_content_without_installing(tmp_path: Pa
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
-
-
-def test_component_sync_client_rejects_legacy_saved_sessions(tmp_path: Path) -> None:
-    settings = QtCore.QSettings(str(tmp_path / "component-sync-legacy.ini"), QtCore.QSettings.IniFormat)
-    settings.beginGroup("variants/remote_sync/v1")
-    settings.setValue(
-        "saved_sessions",
-        [
-            {
-                "accountId": "legacy-account",
-                "baseUrl": "https://assetcloud.feel8.fun",
-                "user": {
-                    "userId": "u1",
-                    "displayName": "Legacy User",
-                    "email": "legacy@example.com",
-                },
-                "accessToken": "old-token-only",
-                "lastUsedAt": "2026-04-04T00:00:00+00:00",
-            }
-        ],
-    )
-    settings.setValue("current_account_id", "legacy-account")
-    settings.endGroup()
-    settings.sync()
-
-    client = ComponentSyncClient(settings=settings, catalog_service=ComponentCatalogService(db_path=tmp_path / "assets.db"))
-
-    with pytest.raises(ValueError, match="sessionCookie"):
-        client.saved_sessions()
-    with pytest.raises(ValueError, match="sessionCookie"):
-        client.current_session()
 
 
 def test_component_sync_client_uses_env_base_url_when_settings_are_empty(tmp_path: Path, monkeypatch) -> None:
@@ -812,7 +781,7 @@ def test_component_catalog_load_owned_remote_keeps_remote_only_cache(monkeypatch
     monkeypatch.setattr(
         dialog._sync_client,
         "current_user",
-        lambda: F8ComponentRemoteUser(userId="u1", name="User One", displayName="User One", email="user-one@example.com"),
+        lambda: F8ComponentRemoteUser(userId="u1", name="User One", email="user-one@example.com"),
     )
     monkeypatch.setattr(
         dialog._sync_client,
@@ -1000,7 +969,7 @@ def test_component_publish_metadata_only_uses_patch_meta(monkeypatch, tmp_path: 
     monkeypatch.setattr(
         dialog._sync_client,
         "current_user",
-        lambda: F8ComponentRemoteUser(userId="u1", name="User One", displayName="User One", email="user-one@example.com"),
+        lambda: F8ComponentRemoteUser(userId="u1", name="User One", email="user-one@example.com"),
     )
     monkeypatch.setattr(dialog, "_render_browser_from_state", lambda *args, **kwargs: None)
     patch_calls: list[tuple[str, str, str, list[str]]] = []
@@ -1226,7 +1195,7 @@ def test_component_catalog_delete_removes_local_and_owned_remote(monkeypatch, tm
     monkeypatch.setattr(
         dialog._sync_client,
         "current_user",
-        lambda: F8ComponentRemoteUser(userId="u1", name="User One", displayName="User One", email="user-one@example.com"),
+        lambda: F8ComponentRemoteUser(userId="u1", name="User One", email="user-one@example.com"),
     )
     monkeypatch.setattr(
         dialog._sync_client,

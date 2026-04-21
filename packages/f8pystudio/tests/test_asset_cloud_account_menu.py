@@ -17,8 +17,7 @@ def _ensure_app() -> QtWidgets.QApplication:
 @dataclass
 class _FakeUser:
     userId: str
-    name: str | None
-    displayName: str
+    name: str
     email: str | None
 
 
@@ -58,7 +57,7 @@ class _FakeSyncClient:
 
     def login(self, *, base_url: str, email: str, password: str, remember: bool) -> object:
         self.login_calls.append((str(base_url), str(email), str(password), bool(remember)))
-        self._current_user = _FakeUser(userId="u1", name="Alice", displayName="Alice", email=email)
+        self._current_user = _FakeUser(userId="u1", name="Alice", email=email)
         return object()
 
     def saved_sessions(self) -> list[_FakeSession]:
@@ -147,7 +146,7 @@ def test_logout_current_account_shows_goodbye_message(monkeypatch) -> None:
     _ensure_app()
     parent = QtWidgets.QWidget()
     client = _FakeSyncClient()
-    client._current_user = _FakeUser(userId="u1", name="Alice", displayName="Alice", email="alice@example.com")
+    client._current_user = _FakeUser(userId="u1", name="Alice", email="alice@example.com")
     info_messages: list[tuple[str, str]] = []
     on_changed_calls: list[str] = []
 
@@ -177,13 +176,13 @@ def test_build_asset_account_menu_formats_saved_session_time_locally(monkeypatch
     _ensure_app()
     parent = QtWidgets.QWidget()
     client = _FakeSyncClient()
-    client._current_user = _FakeUser(userId="u1", name="Alice", displayName="Alice", email="alice@example.com")
+    client._current_user = _FakeUser(userId="u1", name="Alice", email="alice@example.com")
     client._saved_sessions = [
         _FakeSession(
             accountId="acct-1",
             baseUrl="https://assetcloud.feel8.fun",
             sessionCookie="cookie",
-            user=_FakeUser(userId="u1", name="Alice", displayName="Alice", email="alice@example.com"),
+            user=_FakeUser(userId="u1", name="Alice", email="alice@example.com"),
             lastUsedAt="2026-04-15T13:45:00+00:00",
         )
     ]

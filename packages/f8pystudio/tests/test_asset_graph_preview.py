@@ -1403,7 +1403,7 @@ def test_variant_dialog_node_type_combo_tracks_current_tab_entries(monkeypatch, 
     monkeypatch.setattr(
         dialog._sync_client,
         "current_user",
-        lambda: F8VariantRemoteUser(userId="u1", name="User One", displayName="User One", email="user-one@example.com"),
+        lambda: F8VariantRemoteUser(userId="u1", name="User One", email="user-one@example.com"),
     )
     monkeypatch.setattr(dialog._sync_client, "current_access_token", lambda: "token")
 
@@ -1616,7 +1616,7 @@ def test_component_catalog_context_menu_shows_current_mine_actions(monkeypatch) 
     monkeypatch.setattr(
         dialog._sync_client,
         "current_user",
-        lambda: F8ComponentRemoteUser(userId="u1", name="User One", displayName="User One", email="user-one@example.com"),
+        lambda: F8ComponentRemoteUser(userId="u1", name="User One", email="user-one@example.com"),
     )
     item = QtWidgets.QListWidgetItem()
     item.setData(QtCore.Qt.ItemDataRole.UserRole, "component-mine-remote")
@@ -1666,7 +1666,7 @@ def test_component_dialog_mine_toolbar_uses_open_draft_and_load(monkeypatch) -> 
     monkeypatch.setattr(
         dialog._sync_client,
         "current_user",
-        lambda: F8ComponentRemoteUser(userId="u1", name="User One", displayName="User One", email="user-one@example.com"),
+        lambda: F8ComponentRemoteUser(userId="u1", name="User One", email="user-one@example.com"),
     )
     item = QtWidgets.QListWidgetItem()
     item.setData(QtCore.Qt.ItemDataRole.UserRole, "component-mine-toolbar")
@@ -2441,7 +2441,7 @@ def test_variant_dialog_mine_toolbar_uses_open_draft_and_load(monkeypatch) -> No
     monkeypatch.setattr(
         dialog._sync_client,
         "current_user",
-        lambda: F8VariantRemoteUser(userId="u1", name="User One", displayName="User One", email="user-one@example.com"),
+        lambda: F8VariantRemoteUser(userId="u1", name="User One", email="user-one@example.com"),
     )
     item = QtWidgets.QListWidgetItem()
     item.setData(QtCore.Qt.ItemDataRole.UserRole, "variant-mine-toolbar")

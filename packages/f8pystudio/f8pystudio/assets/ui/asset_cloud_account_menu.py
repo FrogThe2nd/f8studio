@@ -12,8 +12,7 @@ from ...ui.support.ui_notifications import show_info, show_warning
 
 class AssetCloudUserLike(Protocol):
     userId: str
-    name: str | None
-    displayName: str
+    name: str
     email: str | None
 
 
@@ -127,7 +126,7 @@ def build_asset_account_menu(
     current_user = sync_client.current_user()
     current_text = "Cloud: signed out"
     if current_user is not None:
-        current_text = f"Cloud: {current_user.displayName} @ {sync_client.base_url()}"
+        current_text = f"Cloud: {_user_greeting_name(current_user)} @ {sync_client.base_url()}"
     header = menu.addAction(current_text)
     header.setEnabled(False)
     menu.addSeparator()
@@ -225,9 +224,9 @@ def _logout_current_account(
 def _user_greeting_name(user: AssetCloudUserLike | None) -> str:
     if user is None:
         return ""
-    display_name = str(user.displayName or "").strip()
-    if display_name:
-        return display_name
+    name = str(user.name).strip()
+    if name:
+        return name
     email = str(user.email or "").strip()
     if email:
         return email

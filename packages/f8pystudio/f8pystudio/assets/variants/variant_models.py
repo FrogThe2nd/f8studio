@@ -67,8 +67,7 @@ class F8VariantLocalVersionSummary(Struct, kw_only=True):
 
 class F8VariantRemoteUser(Struct, kw_only=True):
     userId: str
-    name: str | None = None
-    displayName: str
+    name: str
     email: str | None = None
 
 

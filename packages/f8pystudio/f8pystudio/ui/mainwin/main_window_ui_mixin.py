@@ -650,7 +650,7 @@ class MainWindowUiMixin:
                 self._update_asset_cloud_account_button(
                     button,
                     email=None,
-                    display_name=None,
+                    account_name=None,
                     signed_in=False,
                 )
                 return
@@ -660,7 +660,7 @@ class MainWindowUiMixin:
         self._update_asset_cloud_account_button(
             button,
             email=None if user is None else str(user.email or ""),
-            display_name=None if user is None else str(user.displayName or ""),
+            account_name=None if user is None else str(user.name or ""),
             signed_in=user is not None,
         )
 
@@ -956,7 +956,7 @@ class MainWindowUiMixin:
         button: QtWidgets.QToolButton,
         *,
         email: str | None,
-        display_name: str | None,
+        account_name: str | None,
         signed_in: bool,
     ) -> None:
         if not signed_in:
@@ -967,8 +967,8 @@ class MainWindowUiMixin:
 
         button.setText("")
         button.setIcon(icon_for(button, StudioIcon.USER))
-        account_name = str(display_name or email or "")
-        if account_name:
-            button.setToolTip(f"Manage Feel8 asset cloud account ({account_name})")
+        tooltip_account_name = str(account_name or email or "")
+        if tooltip_account_name:
+            button.setToolTip(f"Manage Feel8 asset cloud account ({tooltip_account_name})")
             return
         button.setToolTip("Manage Feel8 asset cloud account")

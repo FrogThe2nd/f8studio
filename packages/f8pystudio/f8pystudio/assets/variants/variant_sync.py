@@ -114,11 +114,7 @@ class VariantSyncClient:
         raw = self._value_json_object("user")
         if not raw:
             return None
-        try:
-            return _remote_user_from_payload(raw)
-        except Exception:
-            logger.exception("Failed to load saved variant sync user")
-            return None
+        return _remote_user_from_payload(raw)
 
     def login(self, *, base_url: str, email: str, password: str, remember: bool) -> F8VariantRemoteAuth:
         self.set_base_url(base_url)
@@ -687,7 +683,7 @@ class VariantSyncClient:
                 out.append(current)
         if not replaced:
             out.append(session)
-        out.sort(key=lambda item: (item.baseUrl.lower(), (item.user.displayName or "").lower(), item.user.userId))
+        out.sort(key=lambda item: (item.baseUrl.lower(), str(item.user.name).lower(), item.user.userId))
         self._set_value(self._SAVED_SESSIONS_KEY, [_remote_session_payload(item) for item in out])
 
     def _saved_session_by_id(self, account_id: str) -> F8VariantRemoteSession | None:
@@ -944,16 +940,22 @@ def _merge_variant_entries(existing_entry: F8VariantEntry, incoming_entry: F8Var
 
 
 def _remote_user_from_payload(payload: JsonObject) -> F8VariantRemoteUser:
-    return validate_as(F8VariantRemoteUser, payload)
+    user_id = _payload_str(payload, "userId")
+    name = _payload_str(payload, "name")
+    return F8VariantRemoteUser(
+        userId=user_id,
+        name=name,
+        email=_payload_optional_str(payload, "email"),
+    )
 
 
 def _remote_user_payload(user: F8VariantRemoteUser) -> JsonObject:
-    return {
+    payload: JsonObject = {
         "userId": str(user.userId),
-        "name": None if user.name is None else str(user.name),
-        "displayName": str(user.displayName),
+        "name": str(user.name),
         "email": None if user.email is None else str(user.email),
     }
+    return payload
 
 
 def _remote_session_from_payload(payload: JsonObject) -> F8VariantRemoteSession:

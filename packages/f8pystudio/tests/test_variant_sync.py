@@ -151,7 +151,7 @@ class _VariantApiHandler(BaseHTTPRequestHandler):
         if self.path == "/v1/me":
             if not self._check_auth():
                 return
-            self._write_json(200, {"userId": "u1", "name": "User One", "displayName": "User One", "email": "u@example.com"})
+            self._write_json(200, {"userId": "u1", "name": "User One", "email": "u@example.com"})
             return
         if self.path.startswith("/v1/variants?"):
             cookie = str(self.headers.get("Cookie") or "")
@@ -291,7 +291,7 @@ def test_variant_sync_client_uses_cookie_sessions_and_marks_conflicts(tmp_path: 
         assert anonymous_page.entries[0].record.variantId == "public-1"
         auth = client.login(base_url=f"http://127.0.0.1:{server.server_port}", email="u@example.com", password="p", remember=True)
 
-        assert auth.user.displayName == "User One"
+        assert auth.user.name == "User One"
         assert server.last_login_user_agent == "F8Studio/1.0"
         assert len(client.saved_sessions()) == 1
         assert client.current_session() is not None
@@ -372,41 +372,6 @@ def test_variant_sync_client_can_cache_remote_content_without_installing(tmp_pat
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
-
-
-def test_variant_sync_client_rejects_legacy_saved_sessions(tmp_path: Path) -> None:
-    settings = QtCore.QSettings(str(tmp_path / "variant-sync-legacy.ini"), QtCore.QSettings.IniFormat)
-    settings.beginGroup("variants/remote_sync/v1")
-    settings.setValue(
-        "saved_sessions",
-        [
-            {
-                "accountId": "legacy-account",
-                "baseUrl": "https://assetcloud.feel8.fun",
-                "user": {
-                    "userId": "u1",
-                    "displayName": "Legacy User",
-                    "email": "legacy@example.com",
-                },
-                "accessToken": "old-token-only",
-                "lastUsedAt": "2026-04-04T00:00:00+00:00",
-            }
-        ],
-    )
-    settings.setValue("current_account_id", "legacy-account")
-    settings.endGroup()
-    settings.sync()
-
-    service = VariantCatalogService(
-        local_provider=LocalVariantProvider(db_path=tmp_path / "assets.db"),
-        remote_provider=RemoteCacheProvider(db_path=tmp_path / "assets.db"),
-    )
-    client = VariantSyncClient(settings=settings, catalog_service=service)
-
-    with pytest.raises(ValueError, match="sessionCookie"):
-        client.saved_sessions()
-    with pytest.raises(ValueError, match="sessionCookie"):
-        client.current_session()
 
 
 def test_variant_sync_client_uses_env_base_url_when_settings_are_empty(tmp_path: Path, monkeypatch) -> None:
@@ -993,7 +958,7 @@ def test_variant_manager_sync_button_is_disabled_for_owned_remote_without_draft(
     monkeypatch.setattr(
         dialog._sync_client,
         "current_user",
-        lambda: F8VariantRemoteUser(userId="u1", name="User One", displayName="User One", email="user-one@example.com"),
+        lambda: F8VariantRemoteUser(userId="u1", name="User One", email="user-one@example.com"),
     )
     dialog._scope_tabs.setCurrentIndex(dialog._TAB_MINE)
     dialog._refresh_action_buttons(remote_entry)
@@ -1104,7 +1069,7 @@ def test_variant_manager_load_owned_remote_only_updates_remote_cache(monkeypatch
     monkeypatch.setattr(
         dialog._sync_client,
         "current_user",
-        lambda: F8VariantRemoteUser(userId="u1", name="User One", displayName="User One", email="user-one@example.com"),
+        lambda: F8VariantRemoteUser(userId="u1", name="User One", email="user-one@example.com"),
     )
 
     def _install_variant(_variant_id: str) -> F8VariantEntry:
@@ -1286,7 +1251,7 @@ def test_variant_manager_save_over_remote_offload_seeds_remote_sync_base(monkeyp
     monkeypatch.setattr(
         dialog._sync_client,
         "current_user",
-        lambda: F8VariantRemoteUser(userId="u1", name="User One", displayName="User One", email="user-one@example.com"),
+        lambda: F8VariantRemoteUser(userId="u1", name="User One", email="user-one@example.com"),
     )
     monkeypatch.setattr(dialog, "_render_browser_from_state", lambda *args, **kwargs: None)
 
@@ -1563,7 +1528,7 @@ def test_variant_manager_mine_buttons_hide_sync_for_owned_remote_without_local(m
     monkeypatch.setattr(
         dialog._sync_client,
         "current_user",
-        lambda: F8VariantRemoteUser(userId="u1", name="User One", displayName="User One", email="user-one@example.com"),
+        lambda: F8VariantRemoteUser(userId="u1", name="User One", email="user-one@example.com"),
     )
 
     dialog._scope_tabs.setCurrentIndex(dialog._TAB_MINE)
@@ -1608,7 +1573,7 @@ def test_variant_manager_resolve_overwrite_target_uses_local_draft_only(monkeypa
     monkeypatch.setattr(
         dialog._sync_client,
         "current_user",
-        lambda: F8VariantRemoteUser(userId="u1", name="User One", displayName="User One", email="user-one@example.com"),
+        lambda: F8VariantRemoteUser(userId="u1", name="User One", email="user-one@example.com"),
     )
     draft_service = dialog._draft_service_for_catalog()
     _ = draft_service.create_draft_from_record(

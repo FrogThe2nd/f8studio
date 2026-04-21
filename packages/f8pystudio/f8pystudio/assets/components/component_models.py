@@ -70,8 +70,7 @@ class F8ComponentCatalogSnapshot(Struct, kw_only=True):
 
 class F8ComponentRemoteUser(Struct, kw_only=True):
     userId: str
-    name: str | None = None
-    displayName: str
+    name: str
     email: str | None = None
 
 

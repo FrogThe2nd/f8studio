@@ -382,7 +382,7 @@ class VariantCatalogBrowserMixin:
         user = self._sync_client.current_user()
         if user is None:
             return "Accounts"
-        return str(user.displayName or user.email or "Accounts")
+        return str(user.name or user.email or "Accounts")
 
     def _current_query(self) -> str:
         return str(self._tab_queries.get(self._scope_tabs.currentIndex(), "")).strip()
@@ -721,4 +721,4 @@ class VariantCatalogBrowserMixin:
         user = self._sync_client.current_user()
         if user is None:
             return "Signed out"
-        return str(user.displayName or user.email or "Signed in")
+        return str(user.name or user.email or "Signed in")

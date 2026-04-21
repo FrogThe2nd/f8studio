@@ -113,12 +113,7 @@ class ComponentSyncClient:
         raw = self._value_json_object("user")
         if not raw:
             return None
-        try:
-            return _remote_user_from_payload(raw)
-        except Exception:
-            logger.exception("Failed to load saved component cloud user; clearing incompatible settings.")
-            self._set_value("user", {})
-            return None
+        return _remote_user_from_payload(raw)
 
     def login(self, *, base_url: str, email: str, password: str, remember: bool) -> F8ComponentRemoteAuth:
         self.set_base_url(base_url)
@@ -577,7 +572,7 @@ class ComponentSyncClient:
                 out.append(current)
         if not replaced:
             out.append(session)
-        out.sort(key=lambda item: (item.baseUrl.lower(), (item.user.displayName or "").lower(), item.user.userId))
+        out.sort(key=lambda item: (item.baseUrl.lower(), str(item.user.name).lower(), item.user.userId))
         self._set_value(self._SAVED_SESSIONS_KEY, [_remote_session_payload(item) for item in out])
 
     def _update_cached_remote_entry(self, entry: F8ComponentEntry) -> F8ComponentEntry:
@@ -894,16 +889,22 @@ def _entry_matches_scope(entry: F8ComponentEntry, *, scope: str, user: F8Compone
         return entry.source == F8ComponentSourceKind.remote_private or str(entry.ownerUserId or "") == str(user.userId)
     return False
 def _remote_user_from_payload(payload: JsonObject) -> F8ComponentRemoteUser:
-    return validate_as(F8ComponentRemoteUser, payload)
+    user_id = _payload_str(payload, "userId")
+    name = _payload_str(payload, "name")
+    return F8ComponentRemoteUser(
+        userId=user_id,
+        name=name,
+        email=_payload_optional_str(payload, "email"),
+    )
 
 
 def _remote_user_payload(user: F8ComponentRemoteUser) -> JsonObject:
-    return {
+    payload: JsonObject = {
         "userId": str(user.userId),
-        "name": None if user.name is None else str(user.name),
-        "displayName": str(user.displayName),
+        "name": str(user.name),
         "email": None if user.email is None else str(user.email),
     }
+    return payload
 
 
 def _remote_session_from_payload(payload: JsonObject) -> F8ComponentRemoteSession:
