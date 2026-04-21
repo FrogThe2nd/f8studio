@@ -1859,6 +1859,65 @@ def test_component_dialog_skips_redundant_preview_refresh_for_same_selection(mon
     dialog.close()
 
 
+def test_component_dialog_skips_redundant_action_button_updates_for_same_selection(monkeypatch, tmp_path: Path) -> None:
+    _ = _ensure_app()
+    settings = QtCore.QSettings(str(tmp_path / "component-selection-buttons-skip.ini"), QtCore.QSettings.IniFormat)
+    service = ComponentCatalogService(db_path=tmp_path / "assets.db")
+    monkeypatch.setattr(ComponentCatalogDialog, "_refresh_remote_catalog_if_needed", lambda self: None)
+
+    entry = service.upsert_local_entry(
+        F8ComponentEntry(
+            record=F8ComponentRecord(
+                componentId="local-button-state",
+                name="Local Button State",
+                description="",
+                schemaVersion="f8studio-session/1",
+                content={
+                    "schemaVersion": "f8studio-session/1",
+                    "layout": {"nodes": {}, "connections": []},
+                },
+                createdAt="2026-04-21T00:00:00+00:00",
+                updatedAt="2026-04-21T00:00:00+00:00",
+            ),
+            source=F8ComponentSourceKind.local,
+            installed=True,
+            hasCachedContent=True,
+        )
+    )
+
+    dialog = ComponentCatalogDialog(parent=None, node_graph=None)
+    dialog._sync_client = ComponentSyncClient(settings=settings, catalog_service=service)
+    dialog._entries = [entry]
+    item = QtWidgets.QListWidgetItem()
+    item.setData(QtCore.Qt.ItemDataRole.UserRole, entry.record.componentId)
+    dialog._list.addItem(item)
+
+    dialog._list.setCurrentRow(0)
+    assert dialog._current_action_button_signature is not None
+
+    button_state_calls: list[str] = []
+
+    def _record_button_state(
+        button: QtWidgets.QPushButton,
+        *,
+        visible: bool,
+        enabled: bool,
+        tooltip: str,
+        icon_token: object,
+    ) -> None:
+        del visible, enabled, tooltip, icon_token
+        button_state_calls.append(button.objectName())
+
+    monkeypatch.setattr(ComponentCatalogDialog, "_set_button_state", staticmethod(_record_button_state))
+
+    dialog._on_selection_changed()
+    dialog._on_selection_changed()
+
+    assert button_state_calls == []
+
+    dialog.close()
+
+
 def test_graph_component_actions_overwrite_choices_only_include_drafts(monkeypatch) -> None:
     _ensure_app()
     captured_choice_ids: list[str] = []

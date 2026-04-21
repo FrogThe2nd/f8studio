@@ -2128,6 +2128,57 @@ def test_variant_manager_disables_load_offload_for_local_draft(monkeypatch, tmp_
     dialog.close()
 
 
+def test_variant_dialog_skips_redundant_action_button_updates_for_same_selection(monkeypatch, tmp_path: Path) -> None:
+    _ = _ensure_app()
+    settings = QtCore.QSettings(str(tmp_path / "variant-selection-buttons-skip.ini"), QtCore.QSettings.IniFormat)
+    db_path = tmp_path / "assets.db"
+    service = VariantCatalogService(
+        local_provider=LocalVariantProvider(db_path=db_path),
+        remote_provider=RemoteCacheProvider(db_path=db_path),
+    )
+    monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(VariantCatalogDialog, "_render_browser_from_state", lambda self, *_args, **_kwargs: None)
+
+    entry = service.upsert_local_entry(_make_entry(variant_id="variant-button-state", source=F8VariantSourceKind.local))
+
+    dialog = VariantCatalogDialog(
+        parent=None,
+        base_node_type="svc.a.op",
+        base_node_name="Variant",
+        node_graph=None,
+    )
+    dialog._sync_client = VariantSyncClient(settings=settings, catalog_service=service)
+    dialog._entries = [entry]
+    item = QtWidgets.QListWidgetItem()
+    item.setData(QtCore.Qt.ItemDataRole.UserRole, entry.record.variantId)
+    dialog._list.addItem(item)
+
+    dialog._list.setCurrentRow(0)
+    assert dialog._current_action_button_signature is not None
+
+    button_state_calls: list[str] = []
+
+    def _record_button_state(
+        button: QtWidgets.QPushButton,
+        *,
+        visible: bool,
+        enabled: bool,
+        tooltip: str,
+        icon_token: object,
+    ) -> None:
+        del visible, enabled, tooltip, icon_token
+        button_state_calls.append(button.objectName())
+
+    monkeypatch.setattr(VariantCatalogDialog, "_set_button_state", staticmethod(_record_button_state))
+
+    dialog._on_selection_changed()
+    dialog._on_selection_changed()
+
+    assert button_state_calls == []
+
+    dialog.close()
+
+
 def test_graph_variant_actions_name_conflicts_only_use_local_drafts(monkeypatch) -> None:
     draft_entry = copy_model(
         _make_entry(variant_id="graph-draft", source=F8VariantSourceKind.local),

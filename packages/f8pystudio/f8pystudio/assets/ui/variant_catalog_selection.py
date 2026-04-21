@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from dataclasses import dataclass
 from typing import Any
 
 from qtpy import QtCore, QtWidgets
@@ -16,6 +17,14 @@ from ..variants.variant_catalog import variant_entry_has_cached_content, variant
 from ..variants.variant_models import F8VariantEntry, F8VariantRecord, F8VariantSourceKind, F8VariantVisibility
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class _VariantActionButtonState:
+    visible: bool
+    enabled: bool
+    tooltip: str
+    icon_token: StudioIcon
 
 
 class VariantCatalogSelectionMixin:
@@ -63,6 +72,7 @@ class VariantCatalogSelectionMixin:
         self._active_preview_entry: F8VariantEntry | None = None
         self._active_preview_started_at = 0.0
         self._current_preview_signature: tuple[object, ...] | None = None
+        self._current_action_button_signature: tuple[object, ...] | None = None
 
     def _selected_entry(self) -> F8VariantEntry | None:
         try:
@@ -137,8 +147,8 @@ class VariantCatalogSelectionMixin:
                 remote_entry = fallback_remote_entry
         return active_entry, local_entry, remote_entry
 
+    @staticmethod
     def _set_button_state(
-        self,
         button: QtWidgets.QPushButton,
         *,
         visible: bool,
@@ -150,6 +160,20 @@ class VariantCatalogSelectionMixin:
         button.setEnabled(visible and enabled)
         button.setToolTip(tooltip)
         button.setIcon(icon_for(button, icon_token))
+
+    @classmethod
+    def _apply_button_state(
+        cls,
+        button: QtWidgets.QPushButton,
+        state: _VariantActionButtonState,
+    ) -> None:
+        cls._set_button_state(
+            button,
+            visible=state.visible,
+            enabled=state.enabled,
+            tooltip=state.tooltip,
+            icon_token=state.icon_token,
+        )
 
     @staticmethod
     def _is_local_draft_entry(entry: F8VariantEntry | None) -> bool:
@@ -252,15 +276,13 @@ class VariantCatalogSelectionMixin:
         has_selection = selected is not None
         can_load, can_offload = self._load_action_availability(local_entry=local_entry, remote_entry=remote_entry)
         tooltip = self._load_action_tooltip(can_offload=can_offload, local_entry=local_entry)
-        self._set_button_state(
-            self._btn_install,
+        install_state = _VariantActionButtonState(
             visible=has_selection and current_tab in {self._TAB_MINE, self._TAB_INSTALLED} and can_load,
             enabled=can_load,
             tooltip=tooltip,
             icon_token=StudioIcon.CLOUD_DOWN,
         )
-        self._set_button_state(
-            self._btn_upload,
+        upload_state = _VariantActionButtonState(
             visible=has_selection and current_tab in {self._TAB_DRAFTS, self._TAB_INSTALLED},
             enabled=(
                 (current_tab == self._TAB_DRAFTS and local_entry is not None)
@@ -276,22 +298,19 @@ class VariantCatalogSelectionMixin:
             and not self._is_owned_remote_entry(selected)
         )
         subscribe_text = "Unsubscribe" if selected is not None and selected.subscribed else "Subscribe"
-        self._set_button_state(
-            self._btn_subscribe,
+        subscribe_state = _VariantActionButtonState(
             visible=current_tab == self._TAB_COMMUNITY and can_subscribe,
             enabled=can_subscribe,
             tooltip=subscribe_text,
             icon_token=StudioIcon.HEART_ON if selected is not None and selected.subscribed else StudioIcon.HEART_OFF,
         )
-        self._set_button_state(
-            self._btn_copy_local,
+        copy_local_state = _VariantActionButtonState(
             visible=has_selection and current_tab != self._TAB_DRAFTS,
             enabled=has_selection,
             tooltip="Copy to Draft" if current_tab != self._TAB_MINE else "Open Draft",
             icon_token=StudioIcon.SAVE_AS,
         )
-        self._set_button_state(
-            self._btn_delete,
+        delete_state = _VariantActionButtonState(
             visible=has_selection and current_tab != self._TAB_COMMUNITY,
             enabled=(
                 (current_tab == self._TAB_DRAFTS and local_entry is not None)
@@ -302,8 +321,7 @@ class VariantCatalogSelectionMixin:
             tooltip="Remove from Installed" if current_tab == self._TAB_INSTALLED else "Delete",
             icon_token=StudioIcon.TRASH,
         )
-        self._set_button_state(
-            self._btn_edit,
+        edit_state = _VariantActionButtonState(
             visible=has_selection and current_tab == self._TAB_DRAFTS,
             enabled=current_tab == self._TAB_DRAFTS and local_entry is not None,
             tooltip="Edit Draft Metadata",
@@ -312,27 +330,50 @@ class VariantCatalogSelectionMixin:
         visibility_label = "Make Public"
         if remote_entry is not None and remote_entry.visibility == F8VariantVisibility.public:
             visibility_label = "Make Private"
-        self._set_button_state(
-            self._btn_visibility,
+        visibility_state = _VariantActionButtonState(
             visible=has_selection and current_tab == self._TAB_MINE,
             enabled=remote_entry is not None and self._is_owned_remote_entry(remote_entry),
             tooltip=visibility_label,
             icon_token=StudioIcon.PRIVATE if visibility_label == "Make Private" else StudioIcon.PUBLIC,
         )
-        self._set_button_state(
-            self._btn_history,
+        history_state = _VariantActionButtonState(
             visible=has_selection and current_tab != self._TAB_COMMUNITY,
             enabled=((current_tab == self._TAB_DRAFTS) and bool(local_entry is not None and local_entry.draftOriginAssetId)) or local_entry is not None or remote_entry is not None,
             tooltip="History",
             icon_token=StudioIcon.ARTICLE,
         )
-        self._set_button_state(
-            self._btn_create,
+        create_state = _VariantActionButtonState(
             visible=False,
             enabled=False,
             tooltip="Create on canvas",
             icon_token=StudioIcon.CIRCLE_PLUS,
         )
+
+        action_button_signature = (
+            current_tab,
+            install_state,
+            upload_state,
+            subscribe_state,
+            copy_local_state,
+            delete_state,
+            edit_state,
+            visibility_state,
+            history_state,
+            create_state,
+        )
+        if action_button_signature == self._current_action_button_signature:
+            return
+        self._current_action_button_signature = action_button_signature
+
+        self._apply_button_state(self._btn_install, install_state)
+        self._apply_button_state(self._btn_upload, upload_state)
+        self._apply_button_state(self._btn_subscribe, subscribe_state)
+        self._apply_button_state(self._btn_copy_local, copy_local_state)
+        self._apply_button_state(self._btn_delete, delete_state)
+        self._apply_button_state(self._btn_edit, edit_state)
+        self._apply_button_state(self._btn_visibility, visibility_state)
+        self._apply_button_state(self._btn_history, history_state)
+        self._apply_button_state(self._btn_create, create_state)
 
     def _on_selection_changed(self) -> None:
         if self._is_handling_selection_change:
