@@ -230,9 +230,19 @@ class AssetGraphPreviewPane(QtWidgets.QWidget):
         return str(self._status.text() or "")
 
     def clear_preview(self, message: str = _DEFAULT_EMPTY_MESSAGE) -> None:
+        normalized_message = str(message or _DEFAULT_EMPTY_MESSAGE)
+        if (
+            self._stack.currentWidget() is self._status
+            and str(self._status.text() or "") == normalized_message
+            and self._pending_request_kind is None
+            and not self._preview_request_timer.isActive()
+            and self._deferred_component_payload is None
+            and self._deferred_callback is None
+        ):
+            return
         self._cancel_pending_preview_request()
         self._clear_graph()
-        self._show_status(message)
+        self._show_status(normalized_message)
 
     def show_component_payload(self, payload: JsonObject) -> None:
         self._deferred_component_payload = None
@@ -327,11 +337,17 @@ class AssetGraphPreviewPane(QtWidgets.QWidget):
         self._inspector.set_node(None, force_clear=True)
 
     def _show_status(self, message: str) -> None:
-        self._status.setText(str(message or _DEFAULT_EMPTY_MESSAGE))
+        normalized_message = str(message or _DEFAULT_EMPTY_MESSAGE)
+        if self._stack.currentWidget() is self._status and str(self._status.text() or "") == normalized_message:
+            return
+        self._status.setText(normalized_message)
         self._stack.setCurrentWidget(self._status)
 
     def _show_loading(self, message: str) -> None:
-        self._loading_label.setText(str(message or _LOADING_MESSAGE))
+        normalized_message = str(message or _LOADING_MESSAGE)
+        if self._stack.currentWidget() is self._loading_page and str(self._loading_label.text() or "") == normalized_message:
+            return
+        self._loading_label.setText(normalized_message)
         self._stack.setCurrentWidget(self._loading_page)
 
     def _show_graph(self) -> None:
@@ -373,12 +389,24 @@ class AssetGraphPreviewPane(QtWidgets.QWidget):
         message: str,
         button_text: str = "Load preview manually",
     ) -> None:
+        normalized_message = str(message or "Preview loading deferred.")
+        normalized_button_text = str(button_text or "Load preview manually")
+        if (
+            self._stack.currentWidget() is self._deferred_page
+            and self._deferred_component_payload is payload
+            and self._deferred_callback is None
+            and str(self._deferred_label.text() or "") == normalized_message
+            and str(self._deferred_button.text() or "") == normalized_button_text
+            and self._pending_request_kind is None
+            and not self._preview_request_timer.isActive()
+        ):
+            return
         self._cancel_pending_preview_request()
         self._clear_graph()
         self._deferred_component_payload = payload
         self._deferred_callback = None
-        self._deferred_label.setText(str(message or "Preview loading deferred."))
-        self._deferred_button.setText(str(button_text or "Load preview manually"))
+        self._deferred_label.setText(normalized_message)
+        self._deferred_button.setText(normalized_button_text)
         self._stack.setCurrentWidget(self._deferred_page)
 
     def show_deferred_action(
@@ -388,12 +416,24 @@ class AssetGraphPreviewPane(QtWidgets.QWidget):
         button_text: str = "Load preview manually",
         callback: Callable[[], None],
     ) -> None:
+        normalized_message = str(message or "Preview loading deferred.")
+        normalized_button_text = str(button_text or "Load preview manually")
+        if (
+            self._stack.currentWidget() is self._deferred_page
+            and self._deferred_component_payload is None
+            and self._deferred_callback is callback
+            and str(self._deferred_label.text() or "") == normalized_message
+            and str(self._deferred_button.text() or "") == normalized_button_text
+            and self._pending_request_kind is None
+            and not self._preview_request_timer.isActive()
+        ):
+            return
         self._cancel_pending_preview_request()
         self._clear_graph()
         self._deferred_component_payload = None
         self._deferred_callback = callback
-        self._deferred_label.setText(str(message or "Preview loading deferred."))
-        self._deferred_button.setText(str(button_text or "Load preview manually"))
+        self._deferred_label.setText(normalized_message)
+        self._deferred_button.setText(normalized_button_text)
         self._stack.setCurrentWidget(self._deferred_page)
 
     def _load_deferred_preview(self) -> None:
@@ -407,9 +447,19 @@ class AssetGraphPreviewPane(QtWidgets.QWidget):
         self.show_component_payload(payload)
 
     def show_loading_message(self, message: str) -> None:
+        normalized_message = str(message or _LOADING_MESSAGE)
+        if (
+            self._stack.currentWidget() is self._loading_page
+            and str(self._loading_label.text() or "") == normalized_message
+            and self._pending_request_kind is None
+            and not self._preview_request_timer.isActive()
+            and self._deferred_component_payload is None
+            and self._deferred_callback is None
+        ):
+            return
         self._cancel_pending_preview_request()
         self._clear_graph()
-        self._show_loading(message)
+        self._show_loading(normalized_message)
 
     def _finalize_loaded_preview(self, *, request_id: int) -> None:
         if request_id != self._current_request_id:

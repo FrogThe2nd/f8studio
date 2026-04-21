@@ -722,6 +722,63 @@ def test_component_preview_shows_loading_placeholder_before_graph_build(monkeypa
     host_graph.widget.close()
 
 
+def test_preview_loading_message_skips_redundant_ui_reset(monkeypatch) -> None:
+    _ensure_app()
+    service_node_cls = _make_service_node_class()
+    host_graph = _build_host_graph(service_node_cls)
+    pane = AssetGraphPreviewPane(parent=None, host_graph=host_graph)
+    clear_calls: list[str] = []
+    original_clear_graph = pane._clear_graph
+
+    def _record_clear_graph() -> None:
+        clear_calls.append("clear")
+        original_clear_graph()
+
+    monkeypatch.setattr(pane, "_clear_graph", _record_clear_graph)
+
+    pane.show_loading_message("Loading remote preview…")
+    pane.show_loading_message("Loading remote preview…")
+
+    assert clear_calls == ["clear"]
+
+    pane.close()
+    host_graph.widget.close()
+
+
+def test_preview_deferred_action_skips_redundant_ui_reset(monkeypatch) -> None:
+    _ensure_app()
+    service_node_cls = _make_service_node_class()
+    host_graph = _build_host_graph(service_node_cls)
+    pane = AssetGraphPreviewPane(parent=None, host_graph=host_graph)
+    clear_calls: list[str] = []
+    original_clear_graph = pane._clear_graph
+
+    def _record_clear_graph() -> None:
+        clear_calls.append("clear")
+        original_clear_graph()
+
+    def _load_preview() -> None:
+        return None
+
+    monkeypatch.setattr(pane, "_clear_graph", _record_clear_graph)
+
+    pane.show_deferred_action(
+        message="Remote preview is available on demand.",
+        button_text="Load preview",
+        callback=_load_preview,
+    )
+    pane.show_deferred_action(
+        message="Remote preview is available on demand.",
+        button_text="Load preview",
+        callback=_load_preview,
+    )
+
+    assert clear_calls == ["clear"]
+
+    pane.close()
+    host_graph.widget.close()
+
+
 def test_preview_sync_registered_nodes_reuses_cached_factory_registration(monkeypatch) -> None:
     _ensure_app()
     service_node_cls = _make_service_node_class()

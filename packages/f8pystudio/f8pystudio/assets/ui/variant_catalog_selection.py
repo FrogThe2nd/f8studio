@@ -80,6 +80,7 @@ class VariantCatalogSelectionMixin:
         self._active_preview_started_at = 0.0
         self._current_preview_signature: tuple[object, ...] | None = None
         self._current_action_button_signature: tuple[object, ...] | None = None
+        self._current_raw_preview_text: str | None = None
 
     def _selected_entry(self) -> F8VariantEntry | None:
         try:
@@ -148,7 +149,15 @@ class VariantCatalogSelectionMixin:
         local_entry = self._local_entry_for_variant_id(variant_id)
         if local_entry is None and active_entry.source == F8VariantSourceKind.local:
             local_entry = active_entry
+        if local_entry is None and selected_entry_override is None:
+            fallback_local_entry = self._selected_local_entry()
+            if fallback_local_entry is not None and str(fallback_local_entry.record.variantId or "").strip() == variant_id:
+                local_entry = fallback_local_entry
         remote_entry = self._remote_entry_for_variant_id(variant_id)
+        if remote_entry is None and selected_entry_override is None:
+            fallback_remote_entry = self._selected_remote_entry()
+            if fallback_remote_entry is not None and str(fallback_remote_entry.record.variantId or "").strip() == variant_id:
+                remote_entry = fallback_remote_entry
         return _ResolvedVariantSelection(
             selected_entry=active_entry,
             local_entry=local_entry,
@@ -407,7 +416,7 @@ class VariantCatalogSelectionMixin:
         selected_entry = self._selected_entry()
         if selected_entry is None:
             self._current_preview_signature = None
-            self._raw.setPlainText("")
+            self._set_raw_preview_text("")
             self._preview.clear_preview("Select a variant to preview.")
             self._refresh_action_buttons(None)
             return ""
@@ -449,7 +458,7 @@ class VariantCatalogSelectionMixin:
     def _show_deferred_remote_preview(self, *, preview_entry: F8VariantEntry) -> None:
         variant_id = str(preview_entry.record.variantId or "").strip()
         self._current_preview_signature = self._preview_signature_for_entry(preview_entry)
-        self._raw.setPlainText(
+        self._set_raw_preview_text(
             json.dumps(
                 dump_json(preview_entry, mode="json"),
                 ensure_ascii=False,
@@ -588,7 +597,7 @@ class VariantCatalogSelectionMixin:
         exc: Exception,
     ) -> None:
         self._current_preview_signature = None
-        self._raw.setPlainText(
+        self._set_raw_preview_text(
             json.dumps(
                 {
                     "variantId": str(preview_entry.record.variantId),
@@ -603,7 +612,7 @@ class VariantCatalogSelectionMixin:
 
     def _show_preview_entry(self, entry: F8VariantEntry) -> None:
         self._current_preview_signature = self._preview_signature_for_entry(entry)
-        self._raw.setPlainText(
+        self._set_raw_preview_text(
             json.dumps(
                 dump_json(entry, mode="json"),
                 ensure_ascii=False,
@@ -640,6 +649,13 @@ class VariantCatalogSelectionMixin:
         self._rebuild_browser_after_installed_state_changed(
             preserve_variant_id=reload_variant_id
         )
+
+    def _set_raw_preview_text(self, text: str) -> None:
+        normalized_text = str(text)
+        if normalized_text == self._current_raw_preview_text:
+            return
+        self._current_raw_preview_text = normalized_text
+        self._raw.setPlainText(normalized_text)
 
     def _on_item_double_clicked(self, _item: QtWidgets.QListWidgetItem) -> None:
         return

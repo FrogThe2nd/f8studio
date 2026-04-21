@@ -55,6 +55,7 @@ class ComponentCatalogSelectionMixin:
         self._active_preview_started_at = 0.0
         self._current_preview_signature: tuple[object, ...] | None = None
         self._current_action_button_signature: tuple[object, ...] | None = None
+        self._current_raw_preview_text: str | None = None
 
     def _selected_entry(self) -> F8ComponentEntry | None:
         try:
@@ -122,7 +123,15 @@ class ComponentCatalogSelectionMixin:
         local_entry = self._local_entry_for_component_id(component_id)
         if local_entry is None and active_entry.source == F8ComponentSourceKind.local:
             local_entry = active_entry
+        if local_entry is None and selected_entry_override is None:
+            fallback_local_entry = self._selected_local_entry()
+            if fallback_local_entry is not None and str(fallback_local_entry.record.componentId or "").strip() == component_id:
+                local_entry = fallback_local_entry
         remote_entry = self._remote_entry_for_component_id(component_id)
+        if remote_entry is None and selected_entry_override is None:
+            fallback_remote_entry = self._selected_remote_entry()
+            if fallback_remote_entry is not None and str(fallback_remote_entry.record.componentId or "").strip() == component_id:
+                remote_entry = fallback_remote_entry
         return _ResolvedComponentSelection(
             selected_entry=active_entry,
             local_entry=local_entry,
@@ -324,7 +333,7 @@ class ComponentCatalogSelectionMixin:
         selected_entry = self._selected_entry()
         if selected_entry is None:
             self._current_preview_signature = None
-            self._raw.setPlainText("")
+            self._set_raw_preview_text("")
             self._preview.clear_preview("Select a component to preview.")
             self._refresh_action_buttons(None)
             return ""
@@ -354,7 +363,7 @@ class ComponentCatalogSelectionMixin:
         component_id: str,
     ) -> None:
         self._current_preview_signature = self._preview_signature_for_entry(entry)
-        self._raw.setPlainText(
+        self._set_raw_preview_text(
             json.dumps(
                 dump_json(entry, mode="json"),
                 ensure_ascii=False,
@@ -497,7 +506,7 @@ class ComponentCatalogSelectionMixin:
         hydration_error: str,
     ) -> None:
         self._current_preview_signature = None
-        self._raw.setPlainText(
+        self._set_raw_preview_text(
             json.dumps(
                 {
                     "componentId": str(selected_entry.record.componentId),
@@ -512,7 +521,7 @@ class ComponentCatalogSelectionMixin:
 
     def _show_component_preview(self, *, entry: F8ComponentEntry) -> None:
         self._current_preview_signature = self._preview_signature_for_entry(entry)
-        self._raw.setPlainText(
+        self._set_raw_preview_text(
             json.dumps(
                 dump_json(entry, mode="json"),
                 ensure_ascii=False,
@@ -555,6 +564,13 @@ class ComponentCatalogSelectionMixin:
         self._rebuild_browser_after_installed_state_changed(
             preserve_component_id=reload_component_id
         )
+
+    def _set_raw_preview_text(self, text: str) -> None:
+        normalized_text = str(text)
+        if normalized_text == self._current_raw_preview_text:
+            return
+        self._current_raw_preview_text = normalized_text
+        self._raw.setPlainText(normalized_text)
 
     @staticmethod
     def _set_button_state(
