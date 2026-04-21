@@ -344,6 +344,15 @@ def test_component_sync_client_supports_anonymous_public_install_and_cookie_sess
         auth = client.login(base_url=f"http://127.0.0.1:{server.server_port}", email="u@example.com", password="p", remember=True)
         assert auth.user.name == "User One"
         assert server.last_login_user_agent == "F8Studio/1.0"
+        settings.beginGroup("variants/remote_sync/v1")
+        saved_sessions_raw = settings.value("saved_sessions", [])
+        stored_session_cookie = settings.value("session_cookie", "")
+        settings.endGroup()
+        assert str(stored_session_cookie or "") == ""
+        assert isinstance(saved_sessions_raw, list)
+        assert len(saved_sessions_raw) == 1
+        assert isinstance(saved_sessions_raw[0], dict)
+        assert "sessionCookie" not in saved_sessions_raw[0]
 
         refreshed_page = client.list_components(scope="community")
         assert refreshed_page.entries[0].record.componentId == "public-1"
@@ -430,6 +439,46 @@ def test_component_sync_client_uses_env_base_url_when_settings_are_empty(tmp_pat
     client = ComponentSyncClient(settings=settings, catalog_service=ComponentCatalogService(db_path=tmp_path / "assets.db"))
 
     assert client.base_url() == "http://127.0.0.1:8787"
+
+
+def test_component_sync_client_drops_saved_sessions_missing_keyring_cookie(tmp_path: Path, caplog) -> None:
+    settings = QtCore.QSettings(str(tmp_path / "component-sync-missing-keyring.ini"), QtCore.QSettings.IniFormat)
+    settings.beginGroup("variants/remote_sync/v1")
+    settings.setValue(
+        "saved_sessions",
+        [
+            {
+                "accountId": "acct-missing-cookie",
+                "baseUrl": "https://assetcloud.feel8.fun",
+                "user": {
+                    "userId": "u1",
+                    "name": "User One",
+                    "email": "u@example.com",
+                },
+                "lastUsedAt": "2026-04-20T00:00:00+00:00",
+            }
+        ],
+    )
+    settings.setValue("current_account_id", "acct-missing-cookie")
+    settings.setValue(
+        "user",
+        {
+            "userId": "u1",
+            "name": "User One",
+            "email": "u@example.com",
+        },
+    )
+    settings.endGroup()
+    settings.sync()
+
+    client = ComponentSyncClient(settings=settings, catalog_service=ComponentCatalogService(db_path=tmp_path / "assets.db"))
+
+    with caplog.at_level(logging.WARNING):
+        assert client.saved_sessions() == []
+
+    assert client.current_session() is None
+    assert client.current_user() is None
+    assert "Dropping saved component session with missing keyring cookie" in caplog.text
 
 
 def test_component_sync_client_prefers_saved_base_url_over_env(tmp_path: Path, monkeypatch) -> None:

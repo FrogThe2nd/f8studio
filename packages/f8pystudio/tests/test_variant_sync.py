@@ -295,6 +295,15 @@ def test_variant_sync_client_uses_cookie_sessions_and_marks_conflicts(tmp_path: 
         assert server.last_login_user_agent == "F8Studio/1.0"
         assert len(client.saved_sessions()) == 1
         assert client.current_session() is not None
+        settings.beginGroup("variants/remote_sync/v1")
+        saved_sessions_raw = settings.value("saved_sessions", [])
+        stored_session_cookie = settings.value("session_cookie", "")
+        settings.endGroup()
+        assert str(stored_session_cookie or "") == ""
+        assert isinstance(saved_sessions_raw, list)
+        assert len(saved_sessions_raw) == 1
+        assert isinstance(saved_sessions_raw[0], dict)
+        assert "sessionCookie" not in saved_sessions_raw[0]
         page = client.list_variants(scope="community", base_node_type="svc.a.op")
         assert page.entries[0].record.variantId == "public-1"
         assert client.current_access_token() == "session=active-1"
@@ -384,6 +393,50 @@ def test_variant_sync_client_uses_env_base_url_when_settings_are_empty(tmp_path:
     client = VariantSyncClient(settings=settings, catalog_service=service)
 
     assert client.base_url() == "http://127.0.0.1:8787"
+
+
+def test_variant_sync_client_drops_saved_sessions_missing_keyring_cookie(tmp_path: Path, caplog) -> None:
+    settings = QtCore.QSettings(str(tmp_path / "variant-sync-missing-keyring.ini"), QtCore.QSettings.IniFormat)
+    settings.beginGroup("variants/remote_sync/v1")
+    settings.setValue(
+        "saved_sessions",
+        [
+            {
+                "accountId": "acct-missing-cookie",
+                "baseUrl": "https://assetcloud.feel8.fun",
+                "user": {
+                    "userId": "u1",
+                    "name": "User One",
+                    "email": "u@example.com",
+                },
+                "lastUsedAt": "2026-04-20T00:00:00+00:00",
+            }
+        ],
+    )
+    settings.setValue("current_account_id", "acct-missing-cookie")
+    settings.setValue(
+        "user",
+        {
+            "userId": "u1",
+            "name": "User One",
+            "email": "u@example.com",
+        },
+    )
+    settings.endGroup()
+    settings.sync()
+
+    service = VariantCatalogService(
+        local_provider=LocalVariantProvider(db_path=tmp_path / "assets.db"),
+        remote_provider=RemoteCacheProvider(db_path=tmp_path / "assets.db"),
+    )
+    client = VariantSyncClient(settings=settings, catalog_service=service)
+
+    with caplog.at_level(logging.WARNING):
+        assert client.saved_sessions() == []
+
+    assert client.current_session() is None
+    assert client.current_user() is None
+    assert "Dropping saved variant session with missing keyring cookie" in caplog.text
 
 
 def test_variant_sync_client_prefers_saved_base_url_over_env(tmp_path: Path, monkeypatch) -> None:

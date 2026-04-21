@@ -16,12 +16,15 @@ from f8pysdk.specs import coerce_spec_payload
 
 from ..common import (
     JsonObject,
+    AssetCloudCredentialStore,
     decode_http_response_text,
+    default_asset_cloud_credential_store,
     json_object_from_value,
     json_object_loads,
     origin_headers_for_base_url,
     redact_http_body_for_log,
     resolve_asset_cloud_base_url,
+    saved_session_account_ids_from_raw,
 )
 from .variant_catalog import VariantCatalogService, variant_entry_has_cached_content, variant_entry_is_installed
 from .variant_models import (
@@ -50,11 +53,19 @@ class VariantSyncClient:
     _SAVED_SESSIONS_KEY: str = "saved_sessions"
     _CURRENT_ACCOUNT_ID_KEY: str = "current_account_id"
 
-    def __init__(self, *, settings: QtCore.QSettings | None = None, catalog_service: VariantCatalogService | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        settings: QtCore.QSettings | None = None,
+        catalog_service: VariantCatalogService | None = None,
+        credential_store: AssetCloudCredentialStore | None = None,
+    ) -> None:
         self._settings: QtCore.QSettings
         self._settings = QtCore.QSettings() if settings is None else settings
         self._catalog_service: VariantCatalogService
         self._catalog_service = VariantCatalogService() if catalog_service is None else catalog_service
+        self._credential_store: AssetCloudCredentialStore
+        self._credential_store = default_asset_cloud_credential_store() if credential_store is None else credential_store
         self._access_token: str = ""
 
     def base_url(self) -> str:
@@ -70,9 +81,6 @@ class VariantSyncClient:
     def set_base_url(self, base_url: str) -> None:
         self._set_value("base_url", str(base_url or "").strip().rstrip("/"))
 
-    def remembered_session_cookie(self) -> str:
-        return self._value_str("session_cookie")
-
     def remembered_email(self) -> str:
         return self._value_str("email")
 
@@ -81,8 +89,26 @@ class VariantSyncClient:
         if not raw:
             return []
         out: list[F8VariantRemoteSession] = []
+        sanitized_payloads: list[JsonObject] = []
+        changed = False
         for item in raw:
-            out.append(_remote_session_from_payload(json_object_from_value(item)))
+            if not isinstance(item, dict):
+                changed = True
+                continue
+            payload = json_object_from_value(item)
+            try:
+                session = _remote_session_from_payload(
+                    payload,
+                    credential_store=self._credential_store,
+                )
+            except ValueError as exc:
+                changed = True
+                logger.warning("Dropping saved variant session with missing keyring cookie: %s", str(exc))
+                continue
+            out.append(session)
+            sanitized_payloads.append(_remote_session_payload(session))
+        if changed:
+            self._set_value(self._SAVED_SESSIONS_KEY, sanitized_payloads)
         return out
 
     def current_account_id(self) -> str:
@@ -105,12 +131,11 @@ class VariantSyncClient:
         if session is not None and str(session.sessionCookie).strip():
             self._access_token = str(session.sessionCookie).strip()
             return self._access_token
-        stored_cookie = self._value_str("session_cookie")
-        if stored_cookie:
-            self._access_token = stored_cookie
         return self._access_token
 
     def current_user(self) -> F8VariantRemoteUser | None:
+        if self.current_account_id() and self.current_session() is None:
+            return None
         raw = self._value_json_object("user")
         if not raw:
             return None
@@ -134,13 +159,9 @@ class VariantSyncClient:
     def refresh_auth(self) -> F8VariantRemoteAuth:
         session = self.current_session()
         if session is None:
-            session_cookie = self.remembered_session_cookie()
-            base_url = self.base_url()
-        else:
-            session_cookie = str(session.sessionCookie)
-            base_url = str(session.baseUrl)
-        if not session_cookie:
             raise F8VariantRemoteAuthError("No saved cloud session is available.")
+        session_cookie = str(session.sessionCookie)
+        base_url = str(session.baseUrl)
         self.set_base_url(base_url)
         user = self._fetch_current_user(session_cookie)
         auth = F8VariantRemoteAuth(sessionCookie=self._access_token, user=user)
@@ -357,11 +378,15 @@ class VariantSyncClient:
         if not account_id:
             return
         remaining = [session for session in self.saved_sessions() if session.accountId != account_id]
+        self._credential_store.delete_session_cookie(account_id=account_id)
         self._set_value(self._SAVED_SESSIONS_KEY, [_remote_session_payload(session) for session in remaining])
         if self.current_account_id() == account_id:
             self._clear_current_auth_state()
 
     def clear_all_saved_sessions(self) -> None:
+        raw_sessions = self._value_list(self._SAVED_SESSIONS_KEY)
+        for account_id in saved_session_account_ids_from_raw(raw_sessions):
+            self._credential_store.delete_session_cookie(account_id=account_id)
         self._set_value(self._SAVED_SESSIONS_KEY, [])
         self._clear_current_auth_state()
 
@@ -659,7 +684,6 @@ class VariantSyncClient:
         self._set_value("user", _remote_user_payload(auth.user))
         self._set_value("email", str(auth.user.email or ""))
         session_cookie = str(auth.sessionCookie)
-        self._set_value("session_cookie", session_cookie)
         session = F8VariantRemoteSession(
             accountId=_account_id_for(base_url=base_url, user=auth.user),
             baseUrl=str(base_url).strip().rstrip("/"),
@@ -667,6 +691,7 @@ class VariantSyncClient:
             user=auth.user,
             lastUsedAt=QtCore.QDateTime.currentDateTimeUtc().toString(QtCore.Qt.DateFormat.ISODate),
         )
+        self._credential_store.store_session_cookie(account_id=session.accountId, session_cookie=session_cookie)
         self._upsert_saved_session(session)
         self._set_value(self._CURRENT_ACCOUNT_ID_KEY, session.accountId)
         if not remember:
@@ -684,7 +709,10 @@ class VariantSyncClient:
         if not replaced:
             out.append(session)
         out.sort(key=lambda item: (item.baseUrl.lower(), str(item.user.name).lower(), item.user.userId))
-        self._set_value(self._SAVED_SESSIONS_KEY, [_remote_session_payload(item) for item in out])
+        self._set_value(
+            self._SAVED_SESSIONS_KEY,
+            [_remote_session_payload(item) for item in out],
+        )
 
     def _saved_session_by_id(self, account_id: str) -> F8VariantRemoteSession | None:
         normalized_account_id = str(account_id or "").strip()
@@ -698,10 +726,8 @@ class VariantSyncClient:
     def _clear_current_auth_state(self) -> None:
         self._access_token = ""
         self._set_value(self._CURRENT_ACCOUNT_ID_KEY, "")
-        self._set_value("session_cookie", "")
         self._set_value("user", {})
         self._set_value("email", "")
-
 
 class _HttpResponseLike(Protocol):
     status: int
@@ -958,15 +984,20 @@ def _remote_user_payload(user: F8VariantRemoteUser) -> JsonObject:
     return payload
 
 
-def _remote_session_from_payload(payload: JsonObject) -> F8VariantRemoteSession:
+def _remote_session_from_payload(
+    payload: JsonObject,
+    *,
+    credential_store: AssetCloudCredentialStore,
+) -> F8VariantRemoteSession:
+    account_id = _payload_str(payload, "accountId")
     user_payload = payload.get("user")
     if not isinstance(user_payload, dict):
         raise ValueError("Saved variant session is missing user.")
-    session_cookie = _saved_session_cookie_from_payload(payload)
+    session_cookie = credential_store.load_session_cookie(account_id=account_id)
     if not session_cookie:
-        raise ValueError("Saved variant session is missing sessionCookie.")
+        raise ValueError("Saved variant session is missing session cookie in keyring.")
     return F8VariantRemoteSession(
-        accountId=_payload_str(payload, "accountId"),
+        accountId=account_id,
         baseUrl=_payload_str(payload, "baseUrl"),
         sessionCookie=session_cookie,
         user=_remote_user_from_payload(json_object_from_value(cast(object, user_payload))),
@@ -978,17 +1009,9 @@ def _remote_session_payload(session: F8VariantRemoteSession) -> JsonObject:
     return {
         "accountId": str(session.accountId),
         "baseUrl": str(session.baseUrl),
-        "sessionCookie": str(session.sessionCookie),
         "user": _remote_user_payload(session.user),
         "lastUsedAt": str(session.lastUsedAt),
     }
-
-
-def _saved_session_cookie_from_payload(payload: JsonObject) -> str:
-    value = payload.get("sessionCookie")
-    if isinstance(value, str) and value.strip():
-        return value.strip()
-    return ""
 
 
 def _session_cookie_from_headers(headers: object) -> str:

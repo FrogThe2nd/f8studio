@@ -14,12 +14,15 @@ from f8pysdk.codec import copy_model, validate_as
 from ...nodegraph.session_schema import SESSION_SCHEMA_VERSION
 
 from ..common import (
+    AssetCloudCredentialStore,
     JsonObject,
     decode_http_response_text,
+    default_asset_cloud_credential_store,
     json_object_from_value,
     json_object_loads,
     origin_headers_for_base_url,
     resolve_asset_cloud_base_url,
+    saved_session_account_ids_from_raw,
 )
 from .component_catalog import (
     ComponentCatalogService,
@@ -52,11 +55,19 @@ class ComponentSyncClient:
     _SAVED_SESSIONS_KEY: str = "saved_sessions"
     _CURRENT_ACCOUNT_ID_KEY: str = "current_account_id"
 
-    def __init__(self, *, settings: QtCore.QSettings | None = None, catalog_service: ComponentCatalogService | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        settings: QtCore.QSettings | None = None,
+        catalog_service: ComponentCatalogService | None = None,
+        credential_store: AssetCloudCredentialStore | None = None,
+    ) -> None:
         self._settings: QtCore.QSettings
         self._settings = QtCore.QSettings() if settings is None else settings
         self._catalog_service: ComponentCatalogService
         self._catalog_service = ComponentCatalogService() if catalog_service is None else catalog_service
+        self._credential_store: AssetCloudCredentialStore
+        self._credential_store = default_asset_cloud_credential_store() if credential_store is None else credential_store
         self._access_token: str = ""
 
     def base_url(self) -> str:
@@ -80,8 +91,26 @@ class ComponentSyncClient:
         if not raw:
             return []
         out: list[F8ComponentRemoteSession] = []
+        sanitized_payloads: list[JsonObject] = []
+        changed = False
         for item in raw:
-            out.append(_remote_session_from_payload(json_object_from_value(item)))
+            if not isinstance(item, dict):
+                changed = True
+                continue
+            payload = json_object_from_value(item)
+            try:
+                session = _remote_session_from_payload(
+                    payload,
+                    credential_store=self._credential_store,
+                )
+            except ValueError as exc:
+                changed = True
+                logger.warning("Dropping saved component session with missing keyring cookie: %s", str(exc))
+                continue
+            out.append(session)
+            sanitized_payloads.append(_remote_session_payload(session))
+        if changed:
+            self._set_value(self._SAVED_SESSIONS_KEY, sanitized_payloads)
         return out
 
     def current_account_id(self) -> str:
@@ -104,12 +133,11 @@ class ComponentSyncClient:
         if session is not None and str(session.sessionCookie).strip():
             self._access_token = str(session.sessionCookie).strip()
             return self._access_token
-        stored_cookie = self._value_str("session_cookie")
-        if stored_cookie:
-            self._access_token = stored_cookie
         return self._access_token
 
     def current_user(self) -> F8ComponentRemoteUser | None:
+        if self.current_account_id() and self.current_session() is None:
+            return None
         raw = self._value_json_object("user")
         if not raw:
             return None
@@ -132,15 +160,10 @@ class ComponentSyncClient:
 
     def refresh_auth(self) -> F8ComponentRemoteAuth:
         session = self.current_session()
-        session_cookie = ""
-        base_url = self.base_url()
-        if session is not None:
-            session_cookie = str(session.sessionCookie)
-            base_url = str(session.baseUrl)
-        else:
-            session_cookie = self._value_str("session_cookie")
-        if not session_cookie:
+        if session is None:
             raise F8ComponentRemoteAuthError("No saved cloud session is available.")
+        session_cookie = str(session.sessionCookie)
+        base_url = str(session.baseUrl)
         self.set_base_url(base_url)
         user = self._fetch_current_user(session_cookie)
         auth = F8ComponentRemoteAuth(sessionCookie=self._access_token, user=user)
@@ -401,11 +424,15 @@ class ComponentSyncClient:
         if not normalized_account_id:
             return
         remaining = [session for session in self.saved_sessions() if session.accountId != normalized_account_id]
+        self._credential_store.delete_session_cookie(account_id=normalized_account_id)
         self._set_value(self._SAVED_SESSIONS_KEY, [_remote_session_payload(session) for session in remaining])
         if self.current_account_id() == normalized_account_id:
             self._clear_current_auth_state()
 
     def clear_all_saved_sessions(self) -> None:
+        raw_sessions = self._value_list(self._SAVED_SESSIONS_KEY)
+        for account_id in saved_session_account_ids_from_raw(raw_sessions):
+            self._credential_store.delete_session_cookie(account_id=account_id)
         self._set_value(self._SAVED_SESSIONS_KEY, [])
         self._clear_current_auth_state()
 
@@ -548,7 +575,6 @@ class ComponentSyncClient:
         self._set_value("user", _remote_user_payload(auth.user))
         self._set_value("email", str(auth.user.email or ""))
         session_cookie = str(auth.sessionCookie)
-        self._set_value("session_cookie", session_cookie)
         session = F8ComponentRemoteSession(
             accountId=_account_id_for(base_url=base_url, user=auth.user),
             baseUrl=str(base_url).strip().rstrip("/"),
@@ -556,6 +582,7 @@ class ComponentSyncClient:
             user=auth.user,
             lastUsedAt=QtCore.QDateTime.currentDateTimeUtc().toString(QtCore.Qt.DateFormat.ISODate),
         )
+        self._credential_store.store_session_cookie(account_id=session.accountId, session_cookie=session_cookie)
         self._upsert_saved_session(session)
         self._set_value(self._CURRENT_ACCOUNT_ID_KEY, session.accountId)
         if not remember:
@@ -626,7 +653,6 @@ class ComponentSyncClient:
     def _clear_current_auth_state(self) -> None:
         self._access_token = ""
         self._set_value(self._CURRENT_ACCOUNT_ID_KEY, "")
-        self._set_value("session_cookie", "")
         self._set_value("user", {})
         self._set_value("email", "")
 
@@ -907,15 +933,20 @@ def _remote_user_payload(user: F8ComponentRemoteUser) -> JsonObject:
     return payload
 
 
-def _remote_session_from_payload(payload: JsonObject) -> F8ComponentRemoteSession:
+def _remote_session_from_payload(
+    payload: JsonObject,
+    *,
+    credential_store: AssetCloudCredentialStore,
+) -> F8ComponentRemoteSession:
+    account_id = _payload_str(payload, "accountId")
     user_payload = payload.get("user")
     if not isinstance(user_payload, dict):
         raise ValueError("Saved component session is missing user.")
-    session_cookie = _saved_session_cookie_from_payload(payload)
+    session_cookie = credential_store.load_session_cookie(account_id=account_id)
     if not session_cookie:
-        raise ValueError("Saved component session is missing sessionCookie.")
+        raise ValueError("Saved component session is missing session cookie in keyring.")
     return F8ComponentRemoteSession(
-        accountId=_payload_str(payload, "accountId"),
+        accountId=account_id,
         baseUrl=_payload_str(payload, "baseUrl"),
         sessionCookie=session_cookie,
         user=_remote_user_from_payload(json_object_from_value(cast(object, user_payload))),
@@ -927,17 +958,9 @@ def _remote_session_payload(session: F8ComponentRemoteSession) -> JsonObject:
     return {
         "accountId": str(session.accountId),
         "baseUrl": str(session.baseUrl),
-        "sessionCookie": str(session.sessionCookie),
         "user": _remote_user_payload(session.user),
         "lastUsedAt": str(session.lastUsedAt),
     }
-
-
-def _saved_session_cookie_from_payload(payload: JsonObject) -> str:
-    value = payload.get("sessionCookie")
-    if isinstance(value, str) and value.strip():
-        return value.strip()
-    return ""
 
 
 def _session_cookie_from_headers(headers: object) -> str:
