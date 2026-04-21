@@ -41,6 +41,7 @@ class ComponentCatalogDialog(
             db_path=self._sync_client._catalog_service.db_path
         )
         self._initialize_browser_state()
+        self._initialize_selection_state()
         self._initialize_ui(node_graph=node_graph)
         self._render_browser_initial_state()
 

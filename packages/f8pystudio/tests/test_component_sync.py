@@ -1304,6 +1304,87 @@ def test_component_catalog_disables_load_offload_for_local_draft(monkeypatch, tm
     dialog.close()
 
 
+def test_component_dialog_defers_asset_cache_rebuild_while_selection_is_handled(monkeypatch, tmp_path: Path) -> None:
+    _ = _ensure_app()
+    settings = QtCore.QSettings(str(tmp_path / "component-selection-rebuild.ini"), QtCore.QSettings.IniFormat)
+    service = ComponentCatalogService(db_path=tmp_path / "assets.db")
+    monkeypatch.setattr(ComponentCatalogDialog, "_refresh_remote_catalog_if_needed", lambda self: None)
+
+    dialog = ComponentCatalogDialog(parent=None, node_graph=None)
+    dialog._sync_client = ComponentSyncClient(settings=settings, catalog_service=service)
+    entry = F8ComponentEntry(
+        record=F8ComponentRecord(
+            componentId="remote-selection-preview",
+            name="Remote Selection Preview",
+            description="",
+            schemaVersion="f8studio-session/1",
+            content={},
+            createdAt="2026-04-21T00:00:00+00:00",
+            updatedAt="2026-04-21T00:00:00+00:00",
+        ),
+        source=F8ComponentSourceKind.remote_private,
+        visibility=F8ComponentVisibility.private,
+        ownerUserId="u1",
+        ownerDisplayName="User One",
+        remoteRevision="r1",
+        installed=False,
+        hasCachedContent=False,
+    )
+    cached_entry = copy_model(
+        entry,
+        update={
+            "record": copy_model(
+                entry.record,
+                update={
+                    "content": {
+                        "schemaVersion": "f8studio-session/1",
+                        "layout": {"nodes": {}, "connections": []},
+                    }
+                },
+            ),
+            "hasCachedContent": True,
+        },
+    )
+
+    dialog._entries = [entry]
+    item = QtWidgets.QListWidgetItem()
+    item.setData(QtCore.Qt.ItemDataRole.UserRole, entry.record.componentId)
+    dialog._list.addItem(item)
+    dialog._list.setCurrentRow(0)
+
+    rebuild_calls: list[str] = []
+    preview_calls: list[str] = []
+
+    monkeypatch.setattr(
+        dialog,
+        "_rebuild_browser_after_installed_state_changed",
+        lambda *, preserve_component_id=None: rebuild_calls.append(str(preserve_component_id or "")),
+    )
+    monkeypatch.setattr(
+        dialog,
+        "_show_component_preview",
+        lambda *, entry: preview_calls.append(str(entry.record.componentId)),
+    )
+
+    def _cache_component_content(component_id: str) -> F8ComponentEntry:
+        assert component_id == "remote-selection-preview"
+        assert dialog._is_handling_selection_change is True
+        dialog._on_asset_cache_changed()
+        return cached_entry
+
+    monkeypatch.setattr(dialog._sync_client, "cache_component_content", _cache_component_content)
+
+    dialog._on_selection_changed()
+
+    assert preview_calls == ["remote-selection-preview"]
+    assert rebuild_calls == ["remote-selection-preview"]
+    assert dialog._is_handling_selection_change is False
+    assert dialog._pending_asset_cache_rebuild is False
+    assert dialog._pending_asset_cache_rebuild_component_id == ""
+
+    dialog.close()
+
+
 def test_graph_component_actions_overwrite_choices_only_include_drafts(monkeypatch) -> None:
     _ensure_app()
     captured_choice_ids: list[str] = []

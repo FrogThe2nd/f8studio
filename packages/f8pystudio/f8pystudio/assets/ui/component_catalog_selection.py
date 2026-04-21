@@ -26,6 +26,11 @@ AUTO_PREVIEW_NODE_THRESHOLD = 10
 class ComponentCatalogSelectionMixin:
     LINKED_DRAFT_LABEL: str
 
+    def _initialize_selection_state(self) -> None:
+        self._is_handling_selection_change = False
+        self._pending_asset_cache_rebuild = False
+        self._pending_asset_cache_rebuild_component_id = ""
+
     def _selected_entry(self) -> F8ComponentEntry | None:
         try:
             item = self._list.currentItem()
@@ -249,13 +254,25 @@ class ComponentCatalogSelectionMixin:
         # 'Create on canvas' (_btn_create) removed per catalog UX alignment.
 
     def _on_selection_changed(self) -> None:
+        if self._is_handling_selection_change:
+            return
+        self._is_handling_selection_change = True
+        pending_reload_component_id = ""
+        try:
+            pending_reload_component_id = self._refresh_selected_preview()
+        finally:
+            self._is_handling_selection_change = False
+        self._run_pending_reload(pending_reload_component_id=pending_reload_component_id)
+
+    def _refresh_selected_preview(self) -> str:
         selected_entry = self._selected_entry()
         if selected_entry is None:
             self._raw.setPlainText("")
             self._preview.clear_preview("Select a component to preview.")
             self._refresh_action_buttons(None)
-            return
+            return ""
 
+        pending_reload_component_id = str(selected_entry.record.componentId or "").strip()
         preview_entry, hydration_error = self._hydrate_selection_entry(selected_entry=selected_entry)
         if preview_entry is None:
             self._show_hydration_failure(
@@ -265,6 +282,7 @@ class ComponentCatalogSelectionMixin:
         else:
             self._show_component_preview(entry=preview_entry)
         self._refresh_action_buttons(selected_entry)
+        return pending_reload_component_id
 
     def _hydrate_selection_entry(
         self,
@@ -322,6 +340,18 @@ class ComponentCatalogSelectionMixin:
             )
             return
         self._preview.show_component_payload(entry.record.content)
+
+    def _run_pending_reload(self, *, pending_reload_component_id: str) -> None:
+        if not self._pending_asset_cache_rebuild:
+            return
+        reload_component_id = str(
+            self._pending_asset_cache_rebuild_component_id or pending_reload_component_id
+        ).strip()
+        self._pending_asset_cache_rebuild = False
+        self._pending_asset_cache_rebuild_component_id = ""
+        self._rebuild_browser_after_installed_state_changed(
+            preserve_component_id=reload_component_id
+        )
 
     @staticmethod
     def _set_button_state(

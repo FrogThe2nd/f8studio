@@ -488,8 +488,20 @@ class ComponentCatalogBrowserMixin:
 
     def _on_asset_cache_changed(self) -> None:
         try:
+            selected_component_id = self._selected_component_id()
+        except RuntimeError as exc:
+            if qt_runtime_error_is_object_deleted(exc):
+                self._clear_asset_cache_changed_subscription()
+                return
+            raise
+        if self._is_handling_selection_change:
+            self._pending_asset_cache_rebuild = True
+            if selected_component_id:
+                self._pending_asset_cache_rebuild_component_id = selected_component_id
+            return
+        try:
             self._rebuild_browser_from_asset_cache_preserving_selection(
-                preserve_component_id=self._selected_component_id()
+                preserve_component_id=selected_component_id
             )
         except RuntimeError as exc:
             if qt_runtime_error_is_object_deleted(exc):
