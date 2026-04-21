@@ -120,6 +120,133 @@ def test_assets_database_uses_simplified_remote_cache_schema(tmp_path: Path) -> 
     assert "sync_state" not in variant_columns
 
 
+def test_assets_database_rebuilds_legacy_remote_cache_tables(tmp_path: Path) -> None:
+    db_path = tmp_path / "assets.db"
+    with closing(sqlite3.connect(db_path)) as conn:
+        conn.execute(
+            """
+            CREATE TABLE project_heads (
+                project_id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT NOT NULL,
+                tags_json TEXT NOT NULL,
+                latest_version_number INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE component_remote_cache (
+                component_id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT NOT NULL,
+                tags_json TEXT NOT NULL,
+                schema_version TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                source TEXT NOT NULL,
+                visibility TEXT,
+                owner_user_id TEXT,
+                owner_display_name TEXT,
+                remote_revision TEXT,
+                downloaded_at TEXT,
+                installed INTEGER NOT NULL,
+                has_cached_content INTEGER NOT NULL,
+                subscribed INTEGER NOT NULL,
+                sync_state TEXT NOT NULL,
+                library_slug TEXT,
+                content BLOB NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE variant_remote_cache (
+                variant_id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT NOT NULL,
+                tags_json TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                base_node_type TEXT NOT NULL,
+                service_class TEXT NOT NULL,
+                operator_class TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                source TEXT NOT NULL,
+                visibility TEXT,
+                owner_user_id TEXT,
+                owner_display_name TEXT,
+                remote_revision TEXT,
+                downloaded_at TEXT,
+                installed INTEGER NOT NULL,
+                has_cached_content INTEGER NOT NULL,
+                subscribed INTEGER NOT NULL,
+                sync_state TEXT NOT NULL,
+                library_slug TEXT,
+                content BLOB NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO project_heads (
+                project_id,
+                name,
+                description,
+                tags_json,
+                latest_version_number,
+                created_at,
+                updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "legacy-project",
+                "Legacy Project",
+                "Legacy assets db backup smoke test",
+                json.dumps(["legacy"]),
+                1,
+                "2026-04-20T00:00:00Z",
+                "2026-04-20T00:00:00Z",
+            ),
+        )
+        conn.commit()
+
+    db = AssetsDatabase(path=db_path)
+    backup_path = db_path.with_name("assets.db.20260420T120000Z")
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(AssetsDatabase, "_schema_backup_timestamp", lambda self: "20260420T120000Z")
+    db = AssetsDatabase(path=db_path)
+    try:
+        db.ensure_initialized()
+    finally:
+        monkeypatch.undo()
+
+    with closing(sqlite3.connect(db.path)) as conn:
+        component_columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(component_remote_cache)").fetchall()}
+        variant_columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(variant_remote_cache)").fetchall()}
+        active_project_rows = conn.execute("SELECT COUNT(*) FROM project_heads").fetchone()
+
+    assert backup_path.exists()
+    with closing(sqlite3.connect(backup_path)) as conn:
+        backup_component_columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(component_remote_cache)").fetchall()}
+        backup_variant_columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(variant_remote_cache)").fetchall()}
+        backup_project_names = [str(row[0]) for row in conn.execute("SELECT name FROM project_heads").fetchall()]
+
+    assert "library_slug" not in component_columns
+    assert "library_slug" not in variant_columns
+    assert "sync_state" not in component_columns
+    assert "sync_state" not in variant_columns
+    assert active_project_rows is not None
+    assert int(active_project_rows[0]) == 0
+    assert "library_slug" in backup_component_columns
+    assert "library_slug" in backup_variant_columns
+    assert "sync_state" in backup_component_columns
+    assert "sync_state" in backup_variant_columns
+    assert backup_project_names == ["Legacy Project"]
+
+
 def test_component_catalog_uses_draft_only_local_component_schema(tmp_path: Path) -> None:
     service = ComponentCatalogService(db_path=tmp_path / "assets.db")
     local_entry = _component_entry(component_id="local-head-only", source=F8ComponentSourceKind.local, installed=True)
