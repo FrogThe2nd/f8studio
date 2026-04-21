@@ -191,6 +191,25 @@ Variable precedence:
 - `wrangler.toml` `[vars]` provides checked-in defaults for deploys and local dev.
 - `.dev.vars` overrides those values during `wrangler dev`, so local debugging should usually be adjusted there.
 
+## Desktop browser sign-in notes
+
+PyStudio desktop sign-in uses the system browser plus a temporary loopback callback (`http://127.0.0.1:<port>/callback`).
+
+Key variables for switching environments:
+
+- PyStudio: `F8_ASSET_CLOUD_BASE_URL`
+- Worker / Better Auth: `AUTH_BASE_URL`
+- Cross-origin local dev: `CORS_ALLOWED_ORIGINS`
+
+Friendly callback pages now live at:
+
+- `/console/auth-complete`
+- `/console/auth-error`
+
+For the full flow and configuration matrix, see:
+
+- `../../docs/developers/assetcloud-desktop-browser-auth.md`
+
 ## Local development
 
 ```bash

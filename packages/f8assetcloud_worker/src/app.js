@@ -15,8 +15,10 @@ import { decompressGzip, isPlainObject, stringOrDefault, toBoolean } from './uti
 
 const AUTH_BASE_PATH = '/api/auth';
 const CONSOLE_BASE_PATH = '/console';
+const DESKTOP_AUTH_BASE_PATH = '/v1/auth/desktop';
 const MANAGEMENT_API_BASE_PATH = '/v1/management';
 const PURGE_ALL_ASSETS_CONFIRMATION_TEXT = 'DELETE ALL ASSETS';
+const DESKTOP_AUTHORIZATION_CODE_TTL_SECONDS = 300;
 const USER_ROLE_ADMIN = 'admin';
 const USER_ROLE_USER = 'user';
 const USER_ROLE_READONLY = 'readonly';
@@ -191,6 +193,39 @@ export function createApp() {
       headers: c.req.raw.headers,
     });
     return c.json({ reset: true });
+  });
+
+  app.get(`${DESKTOP_AUTH_BASE_PATH}/authorize`, async (c) => {
+    const auth = c.get('auth');
+    const siteSettings = await c.get('repo').getSiteSettings();
+    return routeDesktopAuthorizeGet({
+      auth,
+      db: c.env.DB,
+      env: c.env,
+      request: c.req.raw,
+      siteSettings,
+    });
+  });
+
+  app.post(`${DESKTOP_AUTH_BASE_PATH}/authorize`, async (c) => {
+    const auth = c.get('auth');
+    const siteSettings = await c.get('repo').getSiteSettings();
+    return routeDesktopAuthorizePost({
+      auth,
+      db: c.env.DB,
+      env: c.env,
+      request: c.req.raw,
+      siteSettings,
+    });
+  });
+
+  app.post(`${DESKTOP_AUTH_BASE_PATH}/token`, async (c) => {
+    const auth = c.get('auth');
+    return routeDesktopTokenPost({
+      auth,
+      db: c.env.DB,
+      request: c.req.raw,
+    });
   });
 
   app.post('/v1/me/password', async (c) => {
@@ -674,6 +709,144 @@ async function routeManagementRequest({ env, managementUser, auth, repo, request
   return jsonResponse(404, { message: 'not found' });
 }
 
+async function routeDesktopAuthorizeGet({ auth, db, env, request, siteSettings }) {
+  const requestUrl = new URL(request.url);
+  const authorizeRequest = parseDesktopAuthorizeRequestFromUrl(requestUrl);
+  const socialProvider = desktopAuthorizeSocialProvider(requestUrl);
+  const errorMessage = desktopAuthorizeErrorMessage(requestUrl);
+  const session = await auth.api.getSession({
+    headers: request.headers,
+  });
+  if (session !== null && session.session && session.user) {
+    const rawCookieHeader = String(request.headers.get('cookie') || '').trim();
+    const sessionCookie = extractSessionCookieFromCookieHeader({
+      cookieHeader: rawCookieHeader,
+      sessionToken: String(session.session.token || ''),
+    }) || rawCookieHeader;
+    if (!sessionCookie) {
+      throw new HttpError(400, 'authenticated browser session is missing the session cookie');
+    }
+    return redirectWithDesktopAuthorizationCode({
+      db,
+      desktopRequest: authorizeRequest,
+      sessionCookie,
+    });
+  }
+  if (socialProvider) {
+    if (socialProvider !== 'google') {
+      throw new HttpError(400, `unsupported social provider: ${socialProvider}`);
+    }
+    if (!hasGoogleProvider(env)) {
+      throw new HttpError(400, 'Google sign-in is not configured');
+    }
+    return startDesktopSocialSignIn({
+      auth,
+      request,
+      providerId: socialProvider,
+      callbackURL: desktopAuthorizeResumeUrl(requestUrl),
+      errorCallbackURL: desktopAuthorizeErrorCallbackUrl(requestUrl),
+    });
+  }
+  return htmlResponse(
+    200,
+    buildDesktopAuthorizeHtml({
+      request: authorizeRequest,
+      allowGoogle: hasGoogleProvider(env),
+      allowRegistration: Boolean(siteSettings?.allowUserRegistration),
+      errorMessage,
+      email: '',
+    }),
+  );
+}
+
+async function routeDesktopAuthorizePost({ auth, db, env, request, siteSettings }) {
+  const form = await request.formData();
+  const authorizeRequest = parseDesktopAuthorizeRequestFromForm(form);
+  const email = requireFormString(form.get('email'), 'email is required');
+  const password = requireFormString(form.get('password'), 'password is required');
+  try {
+    const sessionCookie = await signInDesktopBrowserUser({
+      auth,
+      authorizeUrl: request.url,
+      request,
+      email,
+      password,
+    });
+    return redirectWithDesktopAuthorizationCode({
+      db,
+      desktopRequest: authorizeRequest,
+      sessionCookie,
+    });
+  } catch (error) {
+    if (error instanceof HttpError) {
+      return htmlResponse(
+        error.status,
+        buildDesktopAuthorizeHtml({
+          request: authorizeRequest,
+          allowGoogle: hasGoogleProvider(env),
+          allowRegistration: Boolean(siteSettings?.allowUserRegistration),
+          errorMessage: error.message,
+          email,
+        }),
+      );
+    }
+    throw error;
+  }
+}
+
+async function routeDesktopTokenPost({ auth, db, request }) {
+  const payload = await readJsonBody(request);
+  const code = requireBodyString(payload.code, 'code is required');
+  const clientId = requireBodyString(payload.clientId ?? payload.client_id, 'clientId is required');
+  const redirectUri = requireBodyString(payload.redirectUri ?? payload.redirect_uri, 'redirectUri is required');
+  const codeVerifier = requireBodyString(payload.codeVerifier ?? payload.code_verifier, 'codeVerifier is required');
+  requireLoopbackRedirectUri(redirectUri);
+  const record = await loadDesktopAuthorizationCodeRecord(db, code);
+  if (record === null) {
+    throw new HttpError(400, 'authorization code is invalid or has expired');
+  }
+  if (record.usedAt !== null) {
+    throw new HttpError(400, 'authorization code has already been used');
+  }
+  if (record.expiresAt <= Date.now()) {
+    throw new HttpError(400, 'authorization code has expired');
+  }
+  if (record.clientId !== clientId) {
+    throw new HttpError(400, 'clientId does not match the authorization request');
+  }
+  if (record.redirectUri !== redirectUri) {
+    throw new HttpError(400, 'redirectUri does not match the authorization request');
+  }
+  if (record.codeChallengeMethod !== 'S256') {
+    throw new HttpError(400, 'unsupported code_challenge_method');
+  }
+  const computedChallenge = await computePkceCodeChallenge(codeVerifier);
+  if (computedChallenge !== record.codeChallenge) {
+    throw new HttpError(400, 'codeVerifier is invalid');
+  }
+  const sessionHeaders = new Headers();
+  sessionHeaders.set('cookie', record.sessionCookie);
+  const session = await auth.api.getSession({
+    headers: sessionHeaders,
+  });
+  if (session === null || !session.user) {
+    throw new HttpError(401, 'browser session is no longer valid');
+  }
+  const usedAt = Date.now();
+  const updateResult = await db.prepare(
+    'UPDATE desktop_authorization_codes SET used_at = ? WHERE code = ? AND used_at IS NULL',
+  )
+    .bind(usedAt, code)
+    .run();
+  if (Number(updateResult.meta?.changes || 0) < 1) {
+    throw new HttpError(400, 'authorization code has already been used');
+  }
+  return jsonResponse(200, {
+    sessionCookie: record.sessionCookie,
+    user: toApiUser(toAppUser(session.user)),
+  });
+}
+
 function createAuth(env, { siteSettings, baseURL, trustedOrigins }) {
   const db = drizzle(env.DB);
   const socialProviders = {};
@@ -1030,6 +1203,506 @@ function getAuthSecret(env) {
 
 function hasGoogleProvider(env) {
   return Boolean(String(env.GOOGLE_CLIENT_ID || '').trim() && String(env.GOOGLE_CLIENT_SECRET || '').trim());
+}
+
+function parseDesktopAuthorizeRequestFromUrl(url) {
+  const clientId = requireQueryString(url.searchParams.get('client_id') || url.searchParams.get('clientId'), 'client_id is required');
+  const redirectUri = requireLoopbackRedirectUri(
+    requireQueryString(url.searchParams.get('redirect_uri') || url.searchParams.get('redirectUri'), 'redirect_uri is required'),
+  );
+  const state = requireQueryString(url.searchParams.get('state'), 'state is required');
+  const codeChallenge = requireQueryString(
+    url.searchParams.get('code_challenge') || url.searchParams.get('codeChallenge'),
+    'code_challenge is required',
+  );
+  const codeChallengeMethod = requireQueryString(
+    url.searchParams.get('code_challenge_method') || url.searchParams.get('codeChallengeMethod'),
+    'code_challenge_method is required',
+  );
+  if (codeChallengeMethod !== 'S256') {
+    throw new HttpError(400, 'code_challenge_method must be S256');
+  }
+  return {
+    clientId,
+    redirectUri,
+    state,
+    codeChallenge,
+    codeChallengeMethod,
+  };
+}
+
+function parseDesktopAuthorizeRequestFromForm(form) {
+  const clientId = requireFormString(form.get('client_id') || form.get('clientId'), 'client_id is required');
+  const redirectUri = requireLoopbackRedirectUri(
+    requireFormString(form.get('redirect_uri') || form.get('redirectUri'), 'redirect_uri is required'),
+  );
+  const state = requireFormString(form.get('state'), 'state is required');
+  const codeChallenge = requireFormString(
+    form.get('code_challenge') || form.get('codeChallenge'),
+    'code_challenge is required',
+  );
+  const codeChallengeMethod = requireFormString(
+    form.get('code_challenge_method') || form.get('codeChallengeMethod'),
+    'code_challenge_method is required',
+  );
+  if (codeChallengeMethod !== 'S256') {
+    throw new HttpError(400, 'code_challenge_method must be S256');
+  }
+  return {
+    clientId,
+    redirectUri,
+    state,
+    codeChallenge,
+    codeChallengeMethod,
+  };
+}
+
+function requireLoopbackRedirectUri(value) {
+  const redirectUri = String(value || '').trim();
+  if (!redirectUri) {
+    throw new HttpError(400, 'redirect_uri is required');
+  }
+  let parsed;
+  try {
+    parsed = new URL(redirectUri);
+  } catch (error) {
+    throw new HttpError(400, 'redirect_uri must be a valid URL');
+  }
+  const hostname = String(parsed.hostname || '').trim().toLowerCase();
+  const allowedHost = hostname === '127.0.0.1' || hostname === 'localhost' || hostname === '::1';
+  if (parsed.protocol !== 'http:' || !allowedHost) {
+    throw new HttpError(400, 'redirect_uri must use http://127.0.0.1, http://localhost, or http://[::1]');
+  }
+  return parsed.toString();
+}
+
+function requireFormString(value, message) {
+  if (typeof value !== 'string') {
+    throw new HttpError(400, message);
+  }
+  const text = value.trim();
+  if (!text) {
+    throw new HttpError(400, message);
+  }
+  return text;
+}
+
+async function signInDesktopBrowserUser({ auth, authorizeUrl, request, email, password }) {
+  const headers = new Headers();
+  headers.set('Accept', 'application/json');
+  headers.set('Content-Type', 'application/json');
+  headers.set('Origin', new URL(request.url).origin);
+  headers.set('Referer', authorizeUrl);
+  copyHeaderIfPresent(request.headers, headers, 'User-Agent');
+  copyHeaderIfPresent(request.headers, headers, 'Accept-Language');
+  const signInRequest = new Request(new URL(`${AUTH_BASE_PATH}/sign-in/email`, request.url), {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      email,
+      password,
+    }),
+  });
+  const signInResponse = await auth.handler(signInRequest);
+  const responseText = await signInResponse.text();
+  if (!signInResponse.ok) {
+    let message = `sign-in failed with HTTP ${signInResponse.status}`;
+    if (responseText) {
+      try {
+        const parsed = JSON.parse(responseText);
+        message = errorMessageFromPayload(parsed) || message;
+      } catch {
+        message = responseText;
+      }
+    }
+    throw new HttpError(signInResponse.status, message);
+  }
+  const sessionCookie = extractCookieFromSetCookie(signInResponse.headers.get('set-cookie') || '');
+  if (!sessionCookie) {
+    throw new HttpError(500, 'sign-in succeeded but no session cookie was returned');
+  }
+  return sessionCookie;
+}
+
+async function startDesktopSocialSignIn({ auth, request, providerId, callbackURL, errorCallbackURL }) {
+  const headers = new Headers();
+  headers.set('Accept', 'application/json');
+  headers.set('Content-Type', 'application/json');
+  headers.set('Origin', new URL(request.url).origin);
+  headers.set('Referer', request.url);
+  copyHeaderIfPresent(request.headers, headers, 'User-Agent');
+  copyHeaderIfPresent(request.headers, headers, 'Accept-Language');
+  const socialRequest = new Request(new URL(`${AUTH_BASE_PATH}/sign-in/social`, request.url), {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      provider: providerId,
+      callbackURL,
+      errorCallbackURL,
+    }),
+  });
+  const socialResponse = await auth.handler(socialRequest);
+  const responseText = await socialResponse.text();
+  if (!socialResponse.ok) {
+    let message = `social sign-in failed with HTTP ${socialResponse.status}`;
+    if (responseText) {
+      try {
+        const parsed = JSON.parse(responseText);
+        message = errorMessageFromPayload(parsed) || message;
+      } catch {
+        message = responseText;
+      }
+    }
+    throw new HttpError(socialResponse.status, message);
+  }
+  let authorizationUrl = String(socialResponse.headers.get('location') || '').trim();
+  if (!authorizationUrl) {
+    try {
+      const payload = JSON.parse(responseText);
+      if (payload && typeof payload.url === 'string') {
+        authorizationUrl = String(payload.url).trim();
+      }
+    } catch {
+      authorizationUrl = '';
+    }
+  }
+  if (!authorizationUrl) {
+    throw new HttpError(500, 'social sign-in did not return an authorization URL');
+  }
+  const redirectHeaders = new Headers();
+  const setCookie = socialResponse.headers.get('set-cookie');
+  if (setCookie) {
+    redirectHeaders.set('set-cookie', setCookie);
+  }
+  redirectHeaders.set('Cache-Control', 'no-store');
+  redirectHeaders.set('Location', authorizationUrl);
+  return new Response(null, {
+    status: 302,
+    headers: redirectHeaders,
+  });
+}
+
+async function redirectWithDesktopAuthorizationCode({ db, desktopRequest, sessionCookie }) {
+  await purgeExpiredDesktopAuthorizationCodes(db);
+  const now = Date.now();
+  const code = generateId(48);
+  const expiresAt = now + DESKTOP_AUTHORIZATION_CODE_TTL_SECONDS * 1000;
+  await db.prepare(
+    `INSERT INTO desktop_authorization_codes
+      (code, client_id, redirect_uri, code_challenge, code_challenge_method, session_cookie, created_at, expires_at, used_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+  )
+    .bind(
+      code,
+      desktopRequest.clientId,
+      desktopRequest.redirectUri,
+      desktopRequest.codeChallenge,
+      desktopRequest.codeChallengeMethod,
+      sessionCookie,
+      now,
+      expiresAt,
+    )
+    .run();
+  const redirectUrl = new URL(desktopRequest.redirectUri);
+  redirectUrl.searchParams.set('code', code);
+  redirectUrl.searchParams.set('state', desktopRequest.state);
+  return Response.redirect(redirectUrl.toString(), 302);
+}
+
+async function loadDesktopAuthorizationCodeRecord(db, code) {
+  await purgeExpiredDesktopAuthorizationCodes(db);
+  const row = await db.prepare(
+    `SELECT
+      code,
+      client_id,
+      redirect_uri,
+      code_challenge,
+      code_challenge_method,
+      session_cookie,
+      created_at,
+      expires_at,
+      used_at
+    FROM desktop_authorization_codes
+    WHERE code = ?`,
+  )
+    .bind(code)
+    .first();
+  if (row === null) {
+    return null;
+  }
+  return {
+    code: String(row.code || ''),
+    clientId: String(row.client_id || ''),
+    redirectUri: String(row.redirect_uri || ''),
+    codeChallenge: String(row.code_challenge || ''),
+    codeChallengeMethod: String(row.code_challenge_method || ''),
+    sessionCookie: String(row.session_cookie || ''),
+    createdAt: Number(row.created_at || 0),
+    expiresAt: Number(row.expires_at || 0),
+    usedAt: row.used_at === null || row.used_at === undefined ? null : Number(row.used_at),
+  };
+}
+
+async function purgeExpiredDesktopAuthorizationCodes(db) {
+  await db.prepare('DELETE FROM desktop_authorization_codes WHERE expires_at < ?')
+    .bind(Date.now())
+    .run();
+}
+
+function extractCookieFromSetCookie(setCookieHeader) {
+  const text = String(setCookieHeader || '').trim();
+  if (!text) {
+    return '';
+  }
+  const firstPart = text.split(';')[0];
+  return String(firstPart || '').trim();
+}
+
+function extractSessionCookieFromCookieHeader({ cookieHeader, sessionToken }) {
+  const token = String(sessionToken || '').trim();
+  if (!token) {
+    return '';
+  }
+  const rawHeader = String(cookieHeader || '');
+  if (!rawHeader.trim()) {
+    return '';
+  }
+  const cookies = rawHeader.split(';');
+  for (const item of cookies) {
+    const trimmed = item.trim();
+    if (!trimmed) {
+      continue;
+    }
+    const separatorIndex = trimmed.indexOf('=');
+    if (separatorIndex <= 0) {
+      continue;
+    }
+    const value = trimmed.slice(separatorIndex + 1).trim();
+    if (value === token) {
+      return trimmed;
+    }
+  }
+  return '';
+}
+
+async function computePkceCodeChallenge(codeVerifier) {
+  const digest = await crypto.subtle.digest(
+    'SHA-256',
+    textEncoder.encode(String(codeVerifier || '')),
+  );
+  return Buffer.from(digest)
+    .toString('base64')
+    .replaceAll('+', '-')
+    .replaceAll('/', '_')
+    .replace(/=+$/g, '');
+}
+
+function copyHeaderIfPresent(sourceHeaders, targetHeaders, headerName) {
+  const value = sourceHeaders.get(headerName);
+  if (value) {
+    targetHeaders.set(headerName, value);
+  }
+}
+
+function desktopAuthorizeSocialProvider(url) {
+  const normalizedProvider = String(url.searchParams.get('social_provider') || '').trim().toLowerCase();
+  const shouldStart = String(url.searchParams.get('social_start') || '').trim();
+  if (!normalizedProvider || shouldStart !== '1') {
+    return '';
+  }
+  return normalizedProvider;
+}
+
+function desktopAuthorizeResumeUrl(url) {
+  const resumeUrl = new URL(url.toString());
+  resumeUrl.searchParams.delete('social_provider');
+  resumeUrl.searchParams.delete('social_start');
+  resumeUrl.searchParams.delete('error');
+  resumeUrl.searchParams.delete('error_description');
+  return resumeUrl.toString();
+}
+
+function desktopAuthorizeErrorCallbackUrl(url) {
+  const errorUrl = new URL(desktopAuthorizeResumeUrl(url));
+  return errorUrl.toString();
+}
+
+function desktopAuthorizeErrorMessage(url) {
+  const error = String(url.searchParams.get('error') || '').trim();
+  if (!error) {
+    return '';
+  }
+  const description = String(url.searchParams.get('error_description') || '').trim();
+  if (description) {
+    return `${error}: ${description}`;
+  }
+  return error;
+}
+
+function errorMessageFromPayload(payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return '';
+  }
+  if (typeof payload.message === 'string' && payload.message.trim()) {
+    return payload.message.trim();
+  }
+  if (typeof payload.error === 'string' && payload.error.trim()) {
+    return payload.error.trim();
+  }
+  if (typeof payload.code === 'string' && payload.code.trim()) {
+    return payload.code.trim();
+  }
+  return '';
+}
+
+function buildDesktopAuthorizeHtml({ request, allowGoogle, allowRegistration, errorMessage, email }) {
+  const escapedClientId = escapeHtml(request.clientId);
+  const escapedRedirectUri = escapeHtml(request.redirectUri);
+  const escapedState = escapeHtml(request.state);
+  const escapedCodeChallenge = escapeHtml(request.codeChallenge);
+  const escapedCodeChallengeMethod = escapeHtml(request.codeChallengeMethod);
+  const escapedEmail = escapeHtml(email);
+  const escapedError = escapeHtml(errorMessage);
+  const googleButton = allowGoogle
+    ? `<form method="get" action="${DESKTOP_AUTH_BASE_PATH}/authorize" class="social-form">
+        <input type="hidden" name="client_id" value="${escapedClientId}" />
+        <input type="hidden" name="redirect_uri" value="${escapedRedirectUri}" />
+        <input type="hidden" name="state" value="${escapedState}" />
+        <input type="hidden" name="code_challenge" value="${escapedCodeChallenge}" />
+        <input type="hidden" name="code_challenge_method" value="${escapedCodeChallengeMethod}" />
+        <input type="hidden" name="social_provider" value="google" />
+        <input type="hidden" name="social_start" value="1" />
+        <button type="submit" class="secondary">Continue with Google</button>
+      </form>`
+    : '';
+  const registrationHint = allowRegistration
+    ? '<p class="muted">Use your Feel8 Asset Cloud account to continue in PyStudio.</p>'
+    : '<p class="muted">Registration is currently disabled. Sign in with an existing account.</p>';
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sign in to Feel8 Asset Cloud</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #0b1220;
+        color: #edf2ff;
+      }
+      main {
+        width: min(92vw, 460px);
+        padding: 28px;
+        border: 1px solid #30456b;
+        border-radius: 16px;
+        background: #111b2e;
+        box-shadow: 0 24px 64px rgba(0, 0, 0, 0.35);
+      }
+      h1 {
+        margin: 0 0 8px;
+        font-size: 1.6rem;
+      }
+      p {
+        margin: 0 0 12px;
+      }
+      .muted {
+        color: #9fb0cc;
+      }
+      .error {
+        margin: 16px 0;
+        padding: 10px 12px;
+        border-radius: 10px;
+        background: rgba(239, 68, 68, 0.16);
+        border: 1px solid rgba(248, 113, 113, 0.45);
+        color: #fecaca;
+      }
+      form {
+        display: grid;
+        gap: 14px;
+        margin-top: 18px;
+      }
+      label {
+        display: grid;
+        gap: 6px;
+        font-size: 0.95rem;
+      }
+      input {
+        border: 1px solid #41577f;
+        border-radius: 10px;
+        background: #0b1426;
+        color: inherit;
+        padding: 12px 14px;
+        font: inherit;
+      }
+      button {
+        border: 0;
+        border-radius: 10px;
+        padding: 12px 16px;
+        font: inherit;
+        font-weight: 600;
+        background: #5aa9ff;
+        color: #04111f;
+        cursor: pointer;
+      }
+      button.secondary {
+        background: #e5eefc;
+        color: #0b1426;
+      }
+      .social-form {
+        margin-top: 14px;
+      }
+      code {
+        background: #09111f;
+        padding: 2px 6px;
+        border-radius: 6px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Continue to PyStudio</h1>
+      <p class="muted">Sign in here and we’ll send your browser back to the running desktop app.</p>
+      ${registrationHint}
+      ${escapedError ? `<div class="error">${escapedError}</div>` : ''}
+      <form method="post" action="${DESKTOP_AUTH_BASE_PATH}/authorize">
+        <input type="hidden" name="client_id" value="${escapedClientId}" />
+        <input type="hidden" name="redirect_uri" value="${escapedRedirectUri}" />
+        <input type="hidden" name="state" value="${escapedState}" />
+        <input type="hidden" name="code_challenge" value="${escapedCodeChallenge}" />
+        <input type="hidden" name="code_challenge_method" value="${escapedCodeChallengeMethod}" />
+        <label>
+          Email
+          <input type="email" name="email" value="${escapedEmail}" autocomplete="email" required />
+        </label>
+        <label>
+          Password
+          <input type="password" name="password" autocomplete="current-password" required />
+        </label>
+        <button type="submit">Sign in to Asset Cloud</button>
+      </form>
+      ${googleButton}
+      <p class="muted">Desktop callback: <code>${escapedRedirectUri}</code></p>
+    </main>
+  </body>
+</html>`;
+}
+
+function htmlResponse(status, html) {
+  return new Response(html, {
+    status,
+    headers: {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-store',
+    },
+  });
 }
 
 function getOrCreateDbCache(cacheByDb, db) {

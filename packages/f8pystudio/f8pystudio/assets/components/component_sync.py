@@ -69,6 +69,7 @@ class ComponentSyncClient:
         self._credential_store: AssetCloudCredentialStore
         self._credential_store = default_asset_cloud_credential_store() if credential_store is None else credential_store
         self._access_token: str = ""
+        self._access_token_account_id: str = ""
 
     def base_url(self) -> str:
         return resolve_asset_cloud_base_url(
@@ -127,11 +128,16 @@ class ComponentSyncClient:
         return None
 
     def current_access_token(self) -> str:
-        if self._access_token:
+        current_account_id = self.current_account_id()
+        if self._access_token and self._access_token_account_id == current_account_id:
             return self._access_token
+        if self._access_token and self._access_token_account_id != current_account_id:
+            self._access_token = ""
+            self._access_token_account_id = ""
         session = self.current_session()
         if session is not None and str(session.sessionCookie).strip():
             self._access_token = str(session.sessionCookie).strip()
+            self._access_token_account_id = str(session.accountId)
             return self._access_token
         return self._access_token
 
@@ -153,7 +159,38 @@ class ComponentSyncClient:
         )
         if not session_cookie:
             raise F8ComponentRemoteAuthError("Component sign-in succeeded but no session cookie was returned.")
-        user = self._fetch_current_user(session_cookie)
+        user, current_session_cookie = self._fetch_current_user(session_cookie)
+        auth = F8ComponentRemoteAuth(sessionCookie=current_session_cookie, user=user)
+        self._set_auth(auth, base_url=base_url, remember=remember)
+        return auth
+
+    def exchange_browser_auth_code(
+        self,
+        *,
+        base_url: str,
+        client_id: str,
+        code: str,
+        redirect_uri: str,
+        code_verifier: str,
+        remember: bool,
+    ) -> F8ComponentRemoteAuth:
+        self.set_base_url(base_url)
+        payload = self._request_json(
+            "POST",
+            "/v1/auth/desktop/token",
+            {
+                "clientId": str(client_id),
+                "code": str(code),
+                "redirectUri": str(redirect_uri),
+                "codeVerifier": str(code_verifier),
+            },
+            authorized=False,
+        )
+        session_cookie = _payload_str(payload, "sessionCookie")
+        user_payload = payload.get("user")
+        if not isinstance(user_payload, dict):
+            raise F8ComponentRemoteAuthError("Desktop sign-in succeeded but user payload was missing.")
+        user = _remote_user_from_payload(json_object_from_value(cast(object, user_payload)))
         auth = F8ComponentRemoteAuth(sessionCookie=session_cookie, user=user)
         self._set_auth(auth, base_url=base_url, remember=remember)
         return auth
@@ -165,8 +202,14 @@ class ComponentSyncClient:
         session_cookie = str(session.sessionCookie)
         base_url = str(session.baseUrl)
         self.set_base_url(base_url)
-        user = self._fetch_current_user(session_cookie)
-        auth = F8ComponentRemoteAuth(sessionCookie=self._access_token, user=user)
+        try:
+            user, current_session_cookie = self._fetch_current_user(session_cookie)
+        except F8ComponentRemoteAuthError as exc:
+            self._handle_invalid_saved_session(session=session, reason=str(exc))
+            raise F8ComponentRemoteAuthError(
+                self._expired_session_message(session)
+            ) from exc
+        auth = F8ComponentRemoteAuth(sessionCookie=current_session_cookie, user=user)
         self._set_auth(auth, base_url=base_url, remember=True)
         return auth
 
@@ -436,6 +479,22 @@ class ComponentSyncClient:
         self._set_value(self._SAVED_SESSIONS_KEY, [])
         self._clear_current_auth_state()
 
+    def _handle_invalid_saved_session(self, *, session: F8ComponentRemoteSession, reason: str) -> None:
+        logger.warning(
+            "Component saved session became unauthorized and was cleared account_id=%s email=%s base_url=%s reason=%s",
+            str(session.accountId),
+            str(session.user.email or session.user.userId),
+            str(session.baseUrl),
+            str(reason),
+        )
+        self.clear_saved_session(session.accountId)
+
+    def _expired_session_message(self, session: F8ComponentRemoteSession) -> str:
+        identity = str(session.user.email or session.user.userId or session.accountId).strip()
+        if not identity:
+            return "Saved cloud session expired and was cleared. Please sign in again."
+        return f"Saved cloud session expired for {identity} and was cleared. Please sign in again."
+
     def _request_json(self, method: str, path: str, payload: JsonObject | None, *, authorized: bool) -> JsonObject:
         try:
             return self._request_json_once(method, path, payload, authorized=authorized)
@@ -445,11 +504,12 @@ class ComponentSyncClient:
             _ = self.refresh_auth()
             return self._request_json_once(method, path, payload, authorized=True)
 
-    def _fetch_current_user(self, session_cookie: str) -> F8ComponentRemoteUser:
-        payload, _ = self._request_json_response("GET", "/v1/me", None, authorized=False, session_cookie_override=session_cookie)
+    def _fetch_current_user(self, session_cookie: str) -> tuple[F8ComponentRemoteUser, str]:
+        payload, refreshed_session_cookie = self._request_json_response("GET", "/v1/me", None, authorized=False, session_cookie_override=session_cookie)
         user = _remote_user_from_payload(payload)
         self._set_value("user", _remote_user_payload(user))
-        return user
+        resolved_session_cookie = str(refreshed_session_cookie or session_cookie).strip()
+        return user, resolved_session_cookie
 
     def _request_json_once(self, method: str, path: str, payload: JsonObject | None, *, authorized: bool) -> JsonObject:
         payload_obj, _ = self._request_json_response(method, path, payload, authorized=authorized)
@@ -504,6 +564,18 @@ class ComponentSyncClient:
                 session_cookie = _session_cookie_from_headers(response_like.headers)
                 if session_cookie:
                     self._access_token = session_cookie
+                    account_id_for_cookie = ""
+                    if authorized:
+                        account_id_for_cookie = self.current_account_id()
+                        if account_id_for_cookie:
+                            self._access_token_account_id = account_id_for_cookie
+                    elif session_cookie_override:
+                        account_id_for_cookie = self._account_id_for_session_cookie(session_cookie_override)
+                    if account_id_for_cookie:
+                        self._persist_session_cookie_for_account(
+                            account_id=account_id_for_cookie,
+                            session_cookie=session_cookie,
+                        )
                 if not raw_body:
                     return {}, session_cookie
                 try:
@@ -548,6 +620,33 @@ class ComponentSyncClient:
         except error.URLError as exc:
             raise F8ComponentRemoteRequestError(f"{method} {path} failed: {str(exc.reason or exc)}") from exc
 
+    def _persist_session_cookie_for_account(self, *, account_id: str, session_cookie: str) -> None:
+        normalized_account_id = str(account_id or "").strip()
+        normalized_session_cookie = str(session_cookie or "").strip()
+        if not normalized_account_id or not normalized_session_cookie:
+            return
+        stored_session_cookie = self._credential_store.load_session_cookie(account_id=normalized_account_id)
+        if stored_session_cookie == normalized_session_cookie:
+            return
+        self._credential_store.store_session_cookie(
+            account_id=normalized_account_id,
+            session_cookie=normalized_session_cookie,
+        )
+
+    def _account_id_for_session_cookie(self, session_cookie: str) -> str:
+        normalized_session_cookie = str(session_cookie or "").strip()
+        if not normalized_session_cookie:
+            return ""
+        if self._access_token_account_id and self._access_token == normalized_session_cookie:
+            return str(self._access_token_account_id)
+        current_session = self.current_session()
+        if current_session is not None and str(current_session.sessionCookie).strip() == normalized_session_cookie:
+            return str(current_session.accountId)
+        for session in self.saved_sessions():
+            if str(session.sessionCookie).strip() == normalized_session_cookie:
+                return str(session.accountId)
+        return ""
+
     def _post_json(self, path: str, payload: JsonObject, *, authorized: bool) -> JsonObject:
         return self._request_json("POST", path, payload, authorized=authorized)
 
@@ -571,9 +670,6 @@ class ComponentSyncClient:
         return None
 
     def _set_auth(self, auth: F8ComponentRemoteAuth, *, base_url: str, remember: bool) -> None:
-        self._access_token = str(auth.sessionCookie)
-        self._set_value("user", _remote_user_payload(auth.user))
-        self._set_value("email", str(auth.user.email or ""))
         session_cookie = str(auth.sessionCookie)
         session = F8ComponentRemoteSession(
             accountId=_account_id_for(base_url=base_url, user=auth.user),
@@ -582,6 +678,10 @@ class ComponentSyncClient:
             user=auth.user,
             lastUsedAt=QtCore.QDateTime.currentDateTimeUtc().toString(QtCore.Qt.DateFormat.ISODate),
         )
+        self._access_token = session_cookie
+        self._access_token_account_id = str(session.accountId)
+        self._set_value("user", _remote_user_payload(auth.user))
+        self._set_value("email", str(auth.user.email or ""))
         self._credential_store.store_session_cookie(account_id=session.accountId, session_cookie=session_cookie)
         self._upsert_saved_session(session)
         self._set_value(self._CURRENT_ACCOUNT_ID_KEY, session.accountId)
@@ -652,6 +752,7 @@ class ComponentSyncClient:
 
     def _clear_current_auth_state(self) -> None:
         self._access_token = ""
+        self._access_token_account_id = ""
         self._set_value(self._CURRENT_ACCOUNT_ID_KEY, "")
         self._set_value("user", {})
         self._set_value("email", "")

@@ -18,6 +18,7 @@ from f8pystudio.assets.components.component_models import (
     F8ComponentDraftOriginKind,
     F8ComponentEntry,
     F8ComponentRemoteUser,
+    F8ComponentRemoteAuthError,
     F8ComponentRemoteRequestError,
     F8ComponentRecord,
     F8ComponentSourceKind,
@@ -60,6 +61,20 @@ def _ensure_app() -> QtWidgets.QApplication:
     if app is None:
         app = QtWidgets.QApplication([])
     return app
+
+
+class _MemoryCredentialStore:
+    def __init__(self) -> None:
+        self._cookies_by_account_id: dict[str, str] = {}
+
+    def load_session_cookie(self, *, account_id: str) -> str:
+        return str(self._cookies_by_account_id.get(str(account_id), ""))
+
+    def store_session_cookie(self, *, account_id: str, session_cookie: str) -> None:
+        self._cookies_by_account_id[str(account_id)] = str(session_cookie)
+
+    def delete_session_cookie(self, *, account_id: str) -> None:
+        self._cookies_by_account_id.pop(str(account_id), None)
 
 
 class _GraphComponentSaveHost(GraphComponentActionsMixin):
@@ -123,9 +138,20 @@ class _ComponentApiHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _check_auth(self) -> bool:
+    def _session_cookie(self) -> str:
         cookie = str(self.headers.get("Cookie") or "")
+        if "session=rotated-2" in cookie:
+            return "session=rotated-2"
+        if "session=active-2" in cookie:
+            return "session=active-2"
+        if "session=rotated-1" in cookie:
+            return "session=rotated-1"
         if "session=active-1" in cookie:
+            return "session=active-1"
+        return ""
+
+    def _check_auth(self) -> bool:
+        if self._session_cookie():
             return True
         self._write_json(401, {"message": "expired"})
         return False
@@ -137,6 +163,17 @@ class _ComponentApiHandler(BaseHTTPRequestHandler):
                 200,
                 {"ok": True},
                 set_cookie="session=active-1; Path=/; HttpOnly",
+            )
+            return
+        if self.path == "/v1/auth/desktop/token":
+            payload = self._read_json()
+            self.server.last_desktop_token_payload = payload
+            self._write_json(
+                200,
+                {
+                    "sessionCookie": "session=active-1",
+                    "user": {"userId": "u1", "name": "User One", "email": "u@example.com"},
+                },
             )
             return
         if self.path == "/api/auth/sign-out":
@@ -185,7 +222,12 @@ class _ComponentApiHandler(BaseHTTPRequestHandler):
         if self.path == "/v1/me":
             if not self._check_auth():
                 return
-            self._write_json(200, {"userId": "u1", "name": "User One", "email": "u@example.com"})
+            session_cookie = self._session_cookie()
+            set_cookie = self.server.rotate_me_cookie or None
+            if session_cookie in {"session=active-2", "session=rotated-2"}:
+                self._write_json(200, {"userId": "u2", "name": "User Two", "email": "u2@example.com"}, set_cookie=set_cookie)
+                return
+            self._write_json(200, {"userId": "u1", "name": "User One", "email": "u@example.com"}, set_cookie=set_cookie)
             return
         if self.path == "/v1/components/public-1":
             self._write_json(200, self.server.public_asset)
@@ -263,6 +305,8 @@ class _Server(ThreadingHTTPServer):
         self.public_asset_summary = self.asset_summary_payload(self.public_record, visibility="public")
         self.private_asset_summary = self.asset_summary_payload(self.private_record, visibility="private")
         self.last_create_payload: dict[str, object] = {}
+        self.last_desktop_token_payload: dict[str, object] = {}
+        self.rotate_me_cookie = ""
         self.deleted_component_ids: list[str] = []
 
     @staticmethod
@@ -407,6 +451,147 @@ def test_component_sync_client_supports_anonymous_public_install_and_cookie_sess
         thread.join(timeout=5)
 
 
+def test_component_sync_client_can_exchange_browser_authorization_code(tmp_path: Path) -> None:
+    server = _Server(("127.0.0.1", 0))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        settings = QtCore.QSettings(str(tmp_path / "component-browser-auth.ini"), QtCore.QSettings.IniFormat)
+        service = ComponentCatalogService(db_path=tmp_path / "assets.db")
+        client = ComponentSyncClient(settings=settings, catalog_service=service)
+        base_url = f"http://127.0.0.1:{server.server_port}"
+
+        auth = client.exchange_browser_auth_code(
+            base_url=base_url,
+            client_id="pystudio",
+            code="desktop-code-1",
+            redirect_uri="http://127.0.0.1:41234/callback",
+            code_verifier="desktop-verifier-1",
+            remember=True,
+        )
+
+        assert auth.user.name == "User One"
+        assert client.current_access_token() == "session=active-1"
+        assert server.last_desktop_token_payload == {
+            "clientId": "pystudio",
+            "code": "desktop-code-1",
+            "redirectUri": "http://127.0.0.1:41234/callback",
+            "codeVerifier": "desktop-verifier-1",
+        }
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_component_sync_client_refresh_auth_preserves_switched_account_cookie(tmp_path: Path) -> None:
+    server = _Server(("127.0.0.1", 0))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        settings = QtCore.QSettings(str(tmp_path / "component-switch.ini"), QtCore.QSettings.IniFormat)
+        credential_store = _MemoryCredentialStore()
+        service = ComponentCatalogService(db_path=tmp_path / "assets.db")
+        client = ComponentSyncClient(settings=settings, catalog_service=service, credential_store=credential_store)
+        base_url = f"http://127.0.0.1:{server.server_port}"
+        account_id_1 = f"{base_url}::u@example.com"
+        account_id_2 = f"{base_url}::u2@example.com"
+        credential_store.store_session_cookie(account_id=account_id_1, session_cookie="session=active-1")
+        credential_store.store_session_cookie(account_id=account_id_2, session_cookie="session=active-2")
+        settings.beginGroup("assetcloud/v1")
+        settings.setValue(
+            "saved_sessions",
+            [
+                {
+                    "accountId": account_id_1,
+                    "baseUrl": base_url,
+                    "user": {"userId": "u1", "name": "User One", "email": "u@example.com"},
+                    "lastUsedAt": "2026-04-21T10:00:00+00:00",
+                },
+                {
+                    "accountId": account_id_2,
+                    "baseUrl": base_url,
+                    "user": {"userId": "u2", "name": "User Two", "email": "u2@example.com"},
+                    "lastUsedAt": "2026-04-21T10:05:00+00:00",
+                },
+            ],
+        )
+        settings.setValue("current_account_id", account_id_1)
+        settings.setValue("user", {"userId": "u1", "name": "User One", "email": "u@example.com"})
+        settings.endGroup()
+
+        assert client.current_access_token() == "session=active-1"
+
+        settings.beginGroup("assetcloud/v1")
+        settings.setValue("current_account_id", account_id_2)
+        settings.setValue("user", {"userId": "u2", "name": "User Two", "email": "u2@example.com"})
+        settings.endGroup()
+
+        assert client.current_access_token() == "session=active-2"
+
+        auth = client.refresh_auth()
+        assert auth.sessionCookie == "session=active-2"
+        assert auth.user.email == "u2@example.com"
+        assert client.current_access_token() == "session=active-2"
+        assert credential_store.load_session_cookie(account_id=account_id_2) == "session=active-2"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_component_sync_client_persists_rotated_session_cookie_from_refresh_auth(tmp_path: Path) -> None:
+    server = _Server(("127.0.0.1", 0))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        settings = QtCore.QSettings(str(tmp_path / "component-rotated-cookie.ini"), QtCore.QSettings.IniFormat)
+        db_path = tmp_path / "assets.db"
+        credential_store = _MemoryCredentialStore()
+        service = ComponentCatalogService(db_path=db_path)
+        client = ComponentSyncClient(settings=settings, catalog_service=service, credential_store=credential_store)
+        base_url = f"http://127.0.0.1:{server.server_port}"
+        account_id = f"{base_url}::u@example.com"
+        credential_store.store_session_cookie(account_id=account_id, session_cookie="session=active-1")
+        settings.beginGroup("assetcloud/v1")
+        settings.setValue(
+            "saved_sessions",
+            [
+                {
+                    "accountId": account_id,
+                    "baseUrl": base_url,
+                    "user": {"userId": "u1", "name": "User One", "email": "u@example.com"},
+                    "lastUsedAt": "2026-04-21T10:00:00+00:00",
+                }
+            ],
+        )
+        settings.setValue("current_account_id", account_id)
+        settings.setValue("user", {"userId": "u1", "name": "User One", "email": "u@example.com"})
+        settings.endGroup()
+
+        server.rotate_me_cookie = "session=rotated-1; Path=/; HttpOnly"
+        auth = client.refresh_auth()
+
+        assert auth.sessionCookie == "session=rotated-1"
+        assert client.current_access_token() == "session=rotated-1"
+        assert credential_store.load_session_cookie(account_id=account_id) == "session=rotated-1"
+
+        restarted_client = ComponentSyncClient(
+            settings=settings,
+            catalog_service=service,
+            credential_store=credential_store,
+        )
+
+        assert restarted_client.current_access_token() == "session=rotated-1"
+        refreshed_auth = restarted_client.refresh_auth()
+        assert refreshed_auth.user.email == "u@example.com"
+        assert restarted_client.current_access_token() == "session=rotated-1"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
 def test_component_sync_client_can_cache_content_without_installing(tmp_path: Path) -> None:
     server = _Server(("127.0.0.1", 0))
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -479,6 +664,52 @@ def test_component_sync_client_drops_saved_sessions_missing_keyring_cookie(tmp_p
     assert client.current_session() is None
     assert client.current_user() is None
     assert "Dropping saved component session with missing keyring cookie" in caplog.text
+
+
+def test_component_sync_client_clears_invalid_saved_session_after_refresh_auth_failure(tmp_path: Path, caplog) -> None:
+    server = _Server(("127.0.0.1", 0))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        settings = QtCore.QSettings(str(tmp_path / "component-sync-expired.ini"), QtCore.QSettings.IniFormat)
+        service = ComponentCatalogService(db_path=tmp_path / "assets.db")
+        credential_store = _MemoryCredentialStore()
+        client = ComponentSyncClient(settings=settings, catalog_service=service, credential_store=credential_store)
+        base_url = f"http://127.0.0.1:{server.server_port}"
+        account_id = f"{base_url}::u@example.com"
+        credential_store.store_session_cookie(account_id=account_id, session_cookie="session=expired")
+        settings.beginGroup("assetcloud/v1")
+        settings.setValue(
+            "saved_sessions",
+            [
+                {
+                    "accountId": account_id,
+                    "baseUrl": base_url,
+                    "user": {"userId": "u1", "name": "User One", "email": "u@example.com"},
+                    "lastUsedAt": "2026-04-21T10:00:00+00:00",
+                }
+            ],
+        )
+        settings.setValue("current_account_id", account_id)
+        settings.setValue("user", {"userId": "u1", "name": "User One", "email": "u@example.com"})
+        settings.endGroup()
+
+        with caplog.at_level(logging.WARNING):
+            with pytest.raises(F8ComponentRemoteAuthError, match="was cleared"):
+                client.refresh_auth()
+
+        assert client.current_access_token() == ""
+        assert client.current_session() is None
+        assert client.current_user() is None
+        assert client.saved_sessions() == []
+        assert credential_store.load_session_cookie(account_id=account_id) == ""
+        assert "Component saved session became unauthorized and was cleared" in caplog.text
+        assert account_id in caplog.text
+        assert "u@example.com" in caplog.text
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
 
 
 def test_component_sync_client_prefers_saved_base_url_over_env(tmp_path: Path, monkeypatch) -> None:

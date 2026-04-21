@@ -6,6 +6,9 @@ const CONSOLE_BASE_PATH = '/console';
 const CONSOLE_CALLBACK_PATH = `${CONSOLE_BASE_PATH}/`;
 const VERIFY_EMAIL_PATH = `${CONSOLE_BASE_PATH}/verify-email`;
 const RESET_PASSWORD_PATH = `${CONSOLE_BASE_PATH}/reset-password`;
+const AUTH_COMPLETE_PATH = `${CONSOLE_BASE_PATH}/auth-complete`;
+const AUTH_ERROR_PATH = `${CONSOLE_BASE_PATH}/auth-error`;
+const AUTH_COMPLETE_REDIRECT_DELAY_MS = 2500;
 const MANAGEMENT_API_BASE_PATH = '/v1/management';
 const PURGE_ALL_ASSETS_CONFIRMATION_TEXT = 'DELETE ALL ASSETS';
 const ASSET_TYPE_OPTIONS = ['component', 'variant'];
@@ -36,6 +39,12 @@ function downloadJson(filename, data) {
 function isPlainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
+
+export const appNavigation = {
+  navigateToConsoleHome() {
+    window.location.assign(CONSOLE_CALLBACK_PATH);
+  },
+};
 
 export function formatTimestampForDisplay(value) {
   const date = parseTimestampForDisplay(value);
@@ -194,6 +203,12 @@ export function ConsoleRootApp() {
   }
   if (route === 'reset-password') {
     return <ResetPasswordPage />;
+  }
+  if (route === 'auth-complete') {
+    return <BrowserAuthCallbackPage success />;
+  }
+  if (route === 'auth-error') {
+    return <BrowserAuthCallbackPage success={false} />;
   }
   return <ConsoleApp />;
 }
@@ -2028,6 +2043,50 @@ function ResetPasswordPage() {
   );
 }
 
+function BrowserAuthCallbackPage({ success }) {
+  const searchParams = new URL(window.location.href).searchParams;
+  const error = String(searchParams.get('error') || '').trim();
+  const errorDescription = String(searchParams.get('error_description') || '').trim();
+  const title = success ? 'Desktop Sign-In Complete' : 'Desktop Sign-In Needs Attention';
+  const summary = success
+    ? 'Your browser sign-in finished. You can return to PyStudio now.'
+    : 'The browser sign-in did not finish cleanly. Return to PyStudio and try again if needed.';
+  let detailText = success ? 'PyStudio should already be completing the sign-in flow.' : 'No additional error details were provided.';
+  if (!success && error) {
+    detailText = errorDescription ? `${error}: ${errorDescription}` : error;
+  }
+
+  useEffect(() => {
+    if (!success) {
+      return undefined;
+    }
+    const timeoutId = window.setTimeout(() => {
+      appNavigation.navigateToConsoleHome();
+    }, AUTH_COMPLETE_REDIRECT_DELAY_MS);
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [success]);
+
+  return (
+    <div className="shell login-shell auth-page-shell">
+      <div className="card panel login-card auth-page-card">
+        <span className="eyebrow">Feel8 Account</span>
+        <h1>{title}</h1>
+        <p className="muted">{summary}</p>
+        <div className="auth-result">{success ? 'You can close this tab if it did not close automatically.' : 'If PyStudio still shows a login prompt, start the browser sign-in again.'}</div>
+        <p className="status">{detailText}</p>
+        {success ? <p className="muted">This page will return to the console automatically in a moment.</p> : null}
+        <div className="auth-links">
+          <a href={`${CONSOLE_BASE_PATH}/`}>Open Console</a>
+          <a href={success ? AUTH_COMPLETE_PATH : AUTH_ERROR_PATH}>Refresh This Page</a>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
 function resolveRoute(pathname) {
   const normalized = normalizePathname(pathname);
   const routePath = stripConsoleBasePath(normalized);
@@ -2036,6 +2095,12 @@ function resolveRoute(pathname) {
   }
   if (routePath === '/reset-password') {
     return 'reset-password';
+  }
+  if (routePath === '/auth-complete') {
+    return 'auth-complete';
+  }
+  if (routePath === '/auth-error') {
+    return 'auth-error';
   }
   return 'console';
 }

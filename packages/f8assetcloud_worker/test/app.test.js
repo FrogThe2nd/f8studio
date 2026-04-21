@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { gunzipSync, gzipSync } from 'node:zlib';
@@ -105,6 +106,10 @@ function extractDebugToken(logs, label) {
 function responseCookie(headers) {
   const setCookie = headers.get('set-cookie');
   return setCookie ? String(setCookie).split(';')[0] : '';
+}
+
+function pkceChallenge(value) {
+  return createHash('sha256').update(String(value || ''), 'utf8').digest('base64url');
 }
 
 function wrapBlobRowsAsDataArrays(db) {
@@ -598,6 +603,175 @@ test('providers endpoint reflects Google auth configuration', async (t) => {
   const providers = await jsonRequest(app, env, '/v1/auth/providers');
   assert.equal(providers.status, 200);
   assert.equal(providers.json.google, true);
+});
+
+test('desktop browser auth renders a sign-in page and exchanges an authorization code for a session cookie', async (t) => {
+  const env = createEnv();
+  t.after(() => env.DB.close());
+  const app = createApp();
+
+  const signedUp = await signUpUser(app, env, {
+    name: 'Desktop User',
+    email: 'desktop@example.com',
+  });
+  assert.equal(signedUp.status, 200);
+  assert.ok(signedUp.verifyToken);
+  const verified = await verifyUserEmail(app, env, signedUp.verifyToken);
+  assert.equal(verified.status, 200);
+
+  const redirectUri = 'http://127.0.0.1:41811/callback';
+  const state = 'desktop-state-1';
+  const codeVerifier = 'desktop-code-verifier-1';
+  const codeChallenge = pkceChallenge(codeVerifier);
+  const authorizePath = `/v1/auth/desktop/authorize?client_id=pystudio&redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(state)}&code_challenge=${encodeURIComponent(codeChallenge)}&code_challenge_method=S256`;
+
+  const pageResponse = await app.fetch(new Request(`http://worker.test${authorizePath}`), env, {});
+  assert.equal(pageResponse.status, 200);
+  assert.match(pageResponse.headers.get('content-type') || '', /text\/html/);
+  const pageHtml = await pageResponse.text();
+  assert.match(pageHtml, /Continue to PyStudio/);
+  assert.match(pageHtml, /name="email"/);
+
+  const authorizeBody = new URLSearchParams({
+    client_id: 'pystudio',
+    redirect_uri: redirectUri,
+    state,
+    code_challenge: codeChallenge,
+    code_challenge_method: 'S256',
+    email: 'desktop@example.com',
+    password: TEST_PASSWORD,
+  });
+  const authorizeResponse = await app.fetch(new Request('http://worker.test/v1/auth/desktop/authorize', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: authorizeBody.toString(),
+  }), env, {});
+  assert.equal(authorizeResponse.status, 302);
+  const callbackLocation = authorizeResponse.headers.get('location') || '';
+  const callbackUrl = new URL(callbackLocation);
+  assert.equal(callbackUrl.origin + callbackUrl.pathname, redirectUri);
+  assert.equal(callbackUrl.searchParams.get('state'), state);
+  const code = String(callbackUrl.searchParams.get('code') || '');
+  assert.ok(code);
+
+  const tokenResponse = await jsonRequest(app, env, '/v1/auth/desktop/token', {
+    method: 'POST',
+    payload: {
+      clientId: 'pystudio',
+      redirectUri,
+      code,
+      codeVerifier,
+    },
+  });
+  assert.equal(tokenResponse.status, 200);
+  assert.equal(tokenResponse.json.user.email, 'desktop@example.com');
+  assert.match(String(tokenResponse.json.sessionCookie || ''), /=/);
+
+  const meResponse = await jsonRequest(app, env, '/v1/me', {
+    cookie: String(tokenResponse.json.sessionCookie || ''),
+  });
+  assert.equal(meResponse.status, 200);
+  assert.equal(meResponse.json.email, 'desktop@example.com');
+
+  const secondExchange = await jsonRequest(app, env, '/v1/auth/desktop/token', {
+    method: 'POST',
+    payload: {
+      clientId: 'pystudio',
+      redirectUri,
+      code,
+      codeVerifier,
+    },
+  });
+  assert.equal(secondExchange.status, 400);
+  assert.match(String(secondExchange.json.message || ''), /already been used/i);
+});
+
+test('desktop browser auth can authorize directly from an existing browser session', async (t) => {
+  const env = createEnv();
+  t.after(() => env.DB.close());
+  const app = createApp();
+
+  const desktopUser = await createVerifiedSession(app, env, {
+    name: 'Desktop Existing Session',
+    email: 'desktop-session@example.com',
+  });
+
+  const redirectUri = 'http://127.0.0.1:41999/callback';
+  const state = 'desktop-state-existing';
+  const codeVerifier = 'desktop-code-verifier-existing';
+  const codeChallenge = pkceChallenge(codeVerifier);
+  const authorizeResponse = await app.fetch(new Request(
+    `http://worker.test/v1/auth/desktop/authorize?client_id=pystudio&redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(state)}&code_challenge=${encodeURIComponent(codeChallenge)}&code_challenge_method=S256`,
+    {
+      headers: {
+        cookie: desktopUser.cookie,
+      },
+    },
+  ), env, {});
+  assert.equal(authorizeResponse.status, 302);
+  const callbackUrl = new URL(String(authorizeResponse.headers.get('location') || ''));
+  assert.equal(callbackUrl.searchParams.get('state'), state);
+  const code = String(callbackUrl.searchParams.get('code') || '');
+  assert.ok(code);
+
+  const tokenResponse = await jsonRequest(app, env, '/v1/auth/desktop/token', {
+    method: 'POST',
+    payload: {
+      clientId: 'pystudio',
+      redirectUri,
+      code,
+      codeVerifier,
+    },
+  });
+  assert.equal(tokenResponse.status, 200);
+  assert.equal(tokenResponse.json.user.email, 'desktop-session@example.com');
+});
+
+test('desktop browser auth page shows a Google button when Google auth is configured', async (t) => {
+  const env = createEnv({
+    GOOGLE_CLIENT_ID: 'google-client-id',
+    GOOGLE_CLIENT_SECRET: 'google-client-secret',
+  });
+  t.after(() => env.DB.close());
+  const app = createApp();
+
+  const redirectUri = 'http://127.0.0.1:42001/callback';
+  const state = 'desktop-google-page-state';
+  const codeVerifier = 'desktop-google-page-verifier';
+  const codeChallenge = pkceChallenge(codeVerifier);
+  const pageResponse = await app.fetch(new Request(
+    `http://worker.test/v1/auth/desktop/authorize?client_id=pystudio&redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(state)}&code_challenge=${encodeURIComponent(codeChallenge)}&code_challenge_method=S256`,
+  ), env, {});
+  assert.equal(pageResponse.status, 200);
+  const pageHtml = await pageResponse.text();
+  assert.match(pageHtml, /Continue with Google/);
+  assert.match(pageHtml, /name="social_provider" value="google"/);
+});
+
+test('desktop browser Google sign-in start redirects to the provider and preserves desktop resume state', async (t) => {
+  const env = createEnv({
+    GOOGLE_CLIENT_ID: 'google-client-id',
+    GOOGLE_CLIENT_SECRET: 'google-client-secret',
+  });
+  t.after(() => env.DB.close());
+  const app = createApp();
+
+  const redirectUri = 'http://127.0.0.1:42002/callback';
+  const state = 'desktop-google-start-state';
+  const codeVerifier = 'desktop-google-start-verifier';
+  const codeChallenge = pkceChallenge(codeVerifier);
+  const authorizeResponse = await app.fetch(new Request(
+    `http://worker.test/v1/auth/desktop/authorize?client_id=pystudio&redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(state)}&code_challenge=${encodeURIComponent(codeChallenge)}&code_challenge_method=S256&social_provider=google&social_start=1`,
+  ), env, {});
+  assert.equal(authorizeResponse.status, 302);
+  const location = String(authorizeResponse.headers.get('location') || '');
+  assert.ok(location);
+  const providerUrl = new URL(location);
+  assert.match(providerUrl.hostname, /google/i);
+  assert.equal(providerUrl.searchParams.get('redirect_uri'), 'http://worker.test/api/auth/callback/google');
+  assert.ok(String(authorizeResponse.headers.get('set-cookie') || '').trim());
 });
 
 test('openapi endpoints expose the audited worker contract', async (t) => {

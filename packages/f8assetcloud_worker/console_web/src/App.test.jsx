@@ -23,7 +23,9 @@ vi.mock('./authClient.js', () => ({
   },
 }));
 
-import {
+import * as AppModule from './App.jsx';
+
+const {
   buildAssetListPath,
   buildManagedAssetDetailPath,
   buildManagedAssetListPath,
@@ -31,7 +33,7 @@ import {
   downloadableContentForAsset,
   formatTimestampForDisplay,
   formatTimestampTooltip,
-} from './App.jsx';
+} = AppModule;
 
 function jsonResponse(data) {
   return new Response(JSON.stringify(data), {
@@ -41,6 +43,56 @@ function jsonResponse(data) {
     },
   });
 }
+
+describe('ConsoleRootApp desktop auth callback routes', () => {
+  beforeEach(() => {
+    mockRefetch.mockReset();
+    mockSignOut.mockReset();
+    mockUseSession.mockReset();
+    mockUseSession.mockReturnValue({
+      data: null,
+      isPending: false,
+      refetch: mockRefetch,
+    });
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it('renders a friendly completion page for desktop browser sign-in and redirects back to the console', async () => {
+    vi.useFakeTimers();
+    window.history.replaceState({}, '', '/console/auth-complete');
+    const assignSpy = vi.spyOn(AppModule.appNavigation, 'navigateToConsoleHome').mockImplementation(() => {});
+
+    render(<ConsoleRootApp />);
+
+    expect(screen.getByText('Desktop Sign-In Complete')).toBeTruthy();
+    expect(screen.getByText('Your browser sign-in finished. You can return to PyStudio now.')).toBeTruthy();
+    expect(screen.getByText('You can close this tab if it did not close automatically.')).toBeTruthy();
+    expect(screen.getByText('This page will return to the console automatically in a moment.')).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Open Console' }).getAttribute('href')).toBe('/console/');
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2500);
+    });
+
+    expect(assignSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('renders a helpful error page for desktop browser sign-in failures', () => {
+    window.history.replaceState({}, '', '/console/auth-error?error=access_denied&error_description=User%20cancelled');
+
+    render(<ConsoleRootApp />);
+
+    expect(screen.getByText('Desktop Sign-In Needs Attention')).toBeTruthy();
+    expect(screen.getByText('The browser sign-in did not finish cleanly. Return to PyStudio and try again if needed.')).toBeTruthy();
+    expect(screen.getByText('access_denied: User cancelled')).toBeTruthy();
+    expect(screen.getByText('If PyStudio still shows a login prompt, start the browser sign-in again.')).toBeTruthy();
+  });
+});
 
 describe('ConsoleRootApp session recovery', () => {
   beforeEach(() => {
