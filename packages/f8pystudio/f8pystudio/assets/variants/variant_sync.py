@@ -601,6 +601,9 @@ class VariantSyncClient:
     def apply_remote_entries(self, remote_entries: list[F8VariantEntry]) -> None:
         self._catalog_service.replace_remote_entries(remote_entries)
 
+    def remote_entry(self, variant_id: str) -> F8VariantEntry | None:
+        return self._catalog_service.remote_entry(variant_id)
+
     def upload_entry(self, entry: F8VariantEntry) -> F8VariantEntry:
         _require_variant_record_for_upload(entry.record)
         try:

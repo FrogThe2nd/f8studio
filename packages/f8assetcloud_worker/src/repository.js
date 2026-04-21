@@ -339,7 +339,7 @@ export class AssetRepository {
     )
       .bind(normalizeVisibility(visibility), nowIso(), String(assetId))
       .run();
-    return this.getManagedAsset({ assetId, includeDeleted: true, assetTypeHint });
+    return this.getManagedAsset({ assetId, assetTypeHint });
   }
 
   async createVariant({ payload, user }) {

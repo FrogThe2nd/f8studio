@@ -44,7 +44,7 @@ def test_browser_callback_server_returns_authorization_code() -> None:
         assert response.status == 200
         assert "Sign-in complete" in body
         assert "window.close()" in body
-        assert "/console/auth-complete" in body
+        assert "/auth-complete" in body
 
         callback = server.wait_for_callback(timeout_seconds=1.0)
         assert callback.code == "desktop-code-1"
@@ -68,7 +68,7 @@ def test_browser_callback_server_surfaces_error_callback() -> None:
             )
         body = exc_info.value.read().decode("utf-8")
         assert "Sign-in failed" in body
-        assert "/console/auth-error" in body
+        assert "/auth-error" in body
         with pytest.raises(AssetCloudBrowserAuthError, match="User cancelled"):
             _ = server.wait_for_callback(timeout_seconds=1.0)
     finally:

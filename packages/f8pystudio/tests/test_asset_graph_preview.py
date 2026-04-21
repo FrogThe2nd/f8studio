@@ -2216,6 +2216,34 @@ def test_component_catalog_browser_coalesces_asset_cache_rebuilds(monkeypatch) -
     dialog.close()
 
 
+def test_component_catalog_browser_ignores_deleted_rebuild_timer(monkeypatch) -> None:
+    _ensure_app()
+    callbacks: list[object] = []
+
+    def _subscribe(callback):
+        callbacks.append(callback)
+        return lambda: callbacks.remove(callback) if callback in callbacks else None
+
+    class _DeletedTimer:
+        def isActive(self) -> bool:
+            raise RuntimeError("Internal C++ object (PySide6.QtCore.QTimer) already deleted.")
+
+        def start(self, _interval: int) -> None:
+            raise AssertionError("start should not run after deleted timer access")
+
+    monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", _subscribe)
+    monkeypatch.setattr(ComponentCatalogDialog, "_render_browser_from_state", lambda self, *_args, **_kwargs: None)
+    dialog = ComponentCatalogDialog(parent=None, node_graph=None)
+    dialog._asset_cache_rebuild_timer = _DeletedTimer()  # type: ignore[assignment]
+
+    callback = callbacks[0]
+    callback()
+
+    assert callbacks == []
+
+    dialog.close()
+
+
 def test_component_catalog_render_reuses_single_source_snapshot(monkeypatch) -> None:
     _ensure_app()
     monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None))
@@ -2499,6 +2527,39 @@ def test_variant_catalog_browser_coalesces_asset_cache_rebuilds(monkeypatch) -> 
     QtWidgets.QApplication.processEvents()
 
     assert rebuild_calls == [""]
+
+    dialog.close()
+
+
+def test_variant_catalog_browser_ignores_deleted_rebuild_timer(monkeypatch) -> None:
+    _ensure_app()
+    callbacks: list[object] = []
+
+    def _subscribe(callback):
+        callbacks.append(callback)
+        return lambda: callbacks.remove(callback) if callback in callbacks else None
+
+    class _DeletedTimer:
+        def isActive(self) -> bool:
+            raise RuntimeError("Internal C++ object (PySide6.QtCore.QTimer) already deleted.")
+
+        def start(self, _interval: int) -> None:
+            raise AssertionError("start should not run after deleted timer access")
+
+    monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", _subscribe)
+    monkeypatch.setattr(VariantCatalogDialog, "_render_browser_from_state", lambda self, *_args, **_kwargs: None)
+    dialog = VariantCatalogDialog(
+        parent=None,
+        base_node_type="svc.preview.variant",
+        base_node_name="Preview Variant",
+        node_graph=None,
+    )
+    dialog._asset_cache_rebuild_timer = _DeletedTimer()  # type: ignore[assignment]
+
+    callback = callbacks[0]
+    callback()
+
+    assert callbacks == []
 
     dialog.close()
 

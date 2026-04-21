@@ -15,7 +15,6 @@ const TEST_AUTH_SECRET = '0123456789abcdef0123456789abcdef';
 const TEST_PASSWORD = 'password123';
 const TEST_PASSWORD_2 = 'password456';
 const TEST_PASSWORD_3 = 'password789';
-const CONSOLE_BASE_PATH = '/console';
 const MANAGEMENT_API_BASE_PATH = '/v1/management';
 
 const migrationsDir = path.join(import.meta.dirname, '..', 'migrations');
@@ -933,7 +932,7 @@ test('authenticated user can request an email change and verify the new email', 
     origin: 'http://worker.test',
     payload: {
       newEmail: 'alice.updated@example.com',
-      callbackURL: 'http://worker.test/console/verify-email?verified=1',
+      callbackURL: 'http://worker.test/verify-email?verified=1',
     },
   }));
   assert.equal(changeEmail.status, 200);
@@ -970,7 +969,7 @@ test('hot asset list queries use composite indexes without temp sorting', async 
      LEFT JOIN user u ON u.id = h.owner_user_id
      LEFT JOIN asset_subscriptions s
        ON s.asset_id = h.asset_id AND s.subscriber_user_id = ?
-     WHERE h.deleted_at IS NULL AND h.asset_type = ? AND h.visibility = 'public'
+     WHERE h.asset_type = ? AND h.visibility = 'public'
      ORDER BY LOWER(h.name), h.asset_id
      LIMIT ? OFFSET ?`,
   )
@@ -994,14 +993,14 @@ test('hot asset list queries use composite indexes without temp sorting', async 
      JOIN asset_versions v
        ON v.asset_id = h.asset_id AND v.version_number = h.current_version_number
      LEFT JOIN user u ON u.id = h.owner_user_id
-     WHERE h.deleted_at IS NULL
+     WHERE 1 = 1
      ORDER BY h.updated_at DESC, h.asset_id
      LIMIT ? OFFSET ?`,
   )
     .bind(101, 0)
     .all();
   const managementPlanDetails = (managementPlan.results || []).map((row) => String(row.detail || ''));
-  assert.ok(managementPlanDetails.some((detail) => detail.includes('idx_asset_heads_deleted_updated')));
+  assert.ok(managementPlanDetails.some((detail) => detail.includes('idx_asset_heads_updated')));
   assert.equal(managementPlanDetails.some((detail) => detail.includes('USE TEMP B-TREE FOR ORDER BY')), false);
 });
 
@@ -1816,22 +1815,10 @@ test('management APIs support Better Auth backed user and asset management', asy
     false,
   );
 
-  const includeDeleted = await jsonRequest(app, env, `${MANAGEMENT_API_BASE_PATH}/variants?includeDeleted=true`, {
+  const deletedManagementDetail = await jsonRequest(app, env, `${MANAGEMENT_API_BASE_PATH}/variants/alice-private-asset`, {
     cookie: managementLogin.cookie,
   });
-  assert.equal(includeDeleted.status, 200);
-  assert.equal(
-    includeDeleted.json.entries.some((entry) => entry.assetId === 'alice-private-asset' && entry.deletedAt !== null),
-    true,
-  );
-
-  const managementRestoresAsset = await jsonRequest(app, env, `${MANAGEMENT_API_BASE_PATH}/variants/alice-private-asset`, {
-    method: 'PUT',
-    cookie: managementLogin.cookie,
-    payload: { restore: true },
-  });
-  assert.equal(managementRestoresAsset.status, 200);
-  assert.equal(managementRestoresAsset.json.deletedAt, null);
+  assert.equal(deletedManagementDetail.status, 404);
 
   const managementLocksAliceUploads = await jsonRequest(app, env, `${MANAGEMENT_API_BASE_PATH}/users/${alice.userId}`, {
     method: 'PUT',
@@ -1875,6 +1862,15 @@ test('management APIs support Better Auth backed user and asset management', asy
   assert.equal(deleteAliceBlocked.status, 409);
 
   const managementSelf = String(managementLogin.json.user.id);
+  const selfDemotion = await jsonRequest(app, env, `${MANAGEMENT_API_BASE_PATH}/users/${managementSelf}`, {
+    method: 'PUT',
+    cookie: managementLogin.cookie,
+    payload: {
+      role: 'user',
+    },
+  });
+  assert.equal(selfDemotion.status, 400);
+
   const selfDelete = await jsonRequest(app, env, `${MANAGEMENT_API_BASE_PATH}/users/${managementSelf}`, {
     method: 'DELETE',
     cookie: managementLogin.cookie,
@@ -2006,13 +2002,13 @@ test('management can permanently purge all assets', async (t) => {
   assert.equal(purge.json.deletedAssetSubscriptions, 2);
   assert.equal(purge.json.deletedVariantDetails, 1);
 
-  const managedVariants = await jsonRequest(app, env, `${MANAGEMENT_API_BASE_PATH}/variants?includeDeleted=true`, {
+  const managedVariants = await jsonRequest(app, env, `${MANAGEMENT_API_BASE_PATH}/variants`, {
     cookie: managementLogin.cookie,
   });
   assert.equal(managedVariants.status, 200);
   assert.deepEqual(managedVariants.json.entries, []);
 
-  const managedComponents = await jsonRequest(app, env, `${MANAGEMENT_API_BASE_PATH}/components?includeDeleted=true`, {
+  const managedComponents = await jsonRequest(app, env, `${MANAGEMENT_API_BASE_PATH}/components`, {
     cookie: managementLogin.cookie,
   });
   assert.equal(managedComponents.status, 200);
@@ -2034,21 +2030,32 @@ test('management can permanently purge all assets', async (t) => {
   assert.equal(aliceEntry.assetCount, 0);
 });
 
-test('console entry page is served as html', async (t) => {
+test('root portal entry page is served as html', async (t) => {
   const env = createEnv();
   t.after(() => env.DB.close());
   const app = createApp();
 
   const rootResponse = await app.fetch(new Request('http://worker.test/'), env, {});
-  assert.equal(rootResponse.status, 302);
-  assert.equal(rootResponse.headers.get('Location'), `http://worker.test${CONSOLE_BASE_PATH}/`);
+  assert.equal(rootResponse.status, 200);
+  assert.match(rootResponse.headers.get('Content-Type') || '', /text\/html/);
 
-  const response = await app.fetch(new Request(`http://worker.test${CONSOLE_BASE_PATH}`), env, {});
-  assert.equal(response.status, 200);
-  assert.match(response.headers.get('Content-Type') || '', /text\/html/);
-
-  const html = await response.text();
+  const html = await rootResponse.text();
   assert.match(html, /Feel8 Asset Cloud/);
+});
+
+test('/console routes are no longer served by the worker portal', async (t) => {
+  const env = createEnv();
+  t.after(() => env.DB.close());
+  const app = createApp();
+
+  const consoleRootResponse = await app.fetch(new Request('http://worker.test/console'), env, {});
+  assert.equal(consoleRootResponse.status, 404);
+
+  const consoleLoginResponse = await app.fetch(new Request('http://worker.test/console/login'), env, {});
+  assert.equal(consoleLoginResponse.status, 404);
+
+  const consoleAssetResponse = await app.fetch(new Request('http://worker.test/console/assets/mine'), env, {});
+  assert.equal(consoleAssetResponse.status, 404);
 });
 
 test('auth helper pages are served as html', async (t) => {
@@ -2056,17 +2063,38 @@ test('auth helper pages are served as html', async (t) => {
   t.after(() => env.DB.close());
   const app = createApp();
 
-  const verifyResponse = await app.fetch(new Request(`http://worker.test${CONSOLE_BASE_PATH}/verify-email?token=test-token`), env, {});
+  const verifyResponse = await app.fetch(new Request('http://worker.test/verify-email?token=test-token'), env, {});
   assert.equal(verifyResponse.status, 200);
   assert.match(verifyResponse.headers.get('Content-Type') || '', /text\/html/);
   const verifyHtml = await verifyResponse.text();
   assert.match(verifyHtml, /Feel8 Asset Cloud/);
 
-  const resetResponse = await app.fetch(new Request(`http://worker.test${CONSOLE_BASE_PATH}/reset-password?token=test-token`), env, {});
+  const resetResponse = await app.fetch(new Request('http://worker.test/reset-password?token=test-token'), env, {});
   assert.equal(resetResponse.status, 200);
   assert.match(resetResponse.headers.get('Content-Type') || '', /text\/html/);
   const resetHtml = await resetResponse.text();
   assert.match(resetHtml, /Feel8 Asset Cloud/);
+});
+
+test('portal client routes under root are served as html', async (t) => {
+  const env = createEnv();
+  t.after(() => env.DB.close());
+  const app = createApp();
+
+  const myAssetsResponse = await app.fetch(new Request('http://worker.test/assets/mine'), env, {});
+  assert.equal(myAssetsResponse.status, 200);
+  assert.match(myAssetsResponse.headers.get('Content-Type') || '', /text\/html/);
+  assert.match(await myAssetsResponse.text(), /Feel8 Asset Cloud/);
+
+  const browseResponse = await app.fetch(new Request('http://worker.test/browse'), env, {});
+  assert.equal(browseResponse.status, 200);
+  assert.match(browseResponse.headers.get('Content-Type') || '', /text\/html/);
+  assert.match(await browseResponse.text(), /Feel8 Asset Cloud/);
+
+  const publicAssetResponse = await app.fetch(new Request('http://worker.test/assets/public-demo-asset'), env, {});
+  assert.equal(publicAssetResponse.status, 200);
+  assert.match(publicAssetResponse.headers.get('Content-Type') || '', /text\/html/);
+  assert.match(await publicAssetResponse.text(), /Feel8 Asset Cloud/);
 });
 
 test('worker leaves typed list responses uncompressed by default', async (t) => {
@@ -2230,4 +2258,125 @@ test('worker only gzips all /v1 json responses when explicitly enabled and still
   const sessionResponse = await worker.fetch(sessionRequest, env, {});
   assert.equal(sessionResponse.status, 200);
   assert.equal(sessionResponse.headers.get('Content-Encoding'), null);
+});
+
+test('type-agnostic asset resolve returns component and variant details', async (t) => {
+  const env = createEnv();
+  t.after(() => env.DB.close());
+  const app = createApp();
+
+  const alice = await createVerifiedSession(app, env, { name: 'Alice', email: 'alice@example.com' });
+
+  const createdComponent = await jsonRequest(app, env, '/v1/components', {
+    method: 'POST',
+    cookie: alice.cookie,
+    payload: componentPayload({ componentId: 'resolve-component', name: 'Resolve Component', visibility: 'public' }),
+  });
+  assert.equal(createdComponent.status, 200);
+
+  const createdVariant = await jsonRequest(app, env, '/v1/variants', {
+    method: 'POST',
+    cookie: alice.cookie,
+    payload: variantPayload({ variantId: 'resolve-variant', name: 'Resolve Variant', visibility: 'public' }),
+  });
+  assert.equal(createdVariant.status, 200);
+
+  const resolvedComponent = await jsonRequest(app, env, '/v1/assets/resolve-component');
+  assert.equal(resolvedComponent.status, 200);
+  assert.equal(resolvedComponent.json.assetType, 'component');
+  assert.equal(resolvedComponent.json.asset.componentId, 'resolve-component');
+  assert.equal(resolvedComponent.json.asset.name, 'Resolve Component');
+
+  const resolvedVariant = await jsonRequest(app, env, '/v1/assets/resolve-variant');
+  assert.equal(resolvedVariant.status, 200);
+  assert.equal(resolvedVariant.json.assetType, 'variant');
+  assert.equal(resolvedVariant.json.asset.variantId, 'resolve-variant');
+
+  const missing = await jsonRequest(app, env, '/v1/assets/does-not-exist');
+  assert.equal(missing.status, 404);
+});
+
+test('asset resolve hides private assets from anonymous and other users', async (t) => {
+  const env = createEnv();
+  t.after(() => env.DB.close());
+  const app = createApp();
+
+  const alice = await createVerifiedSession(app, env, { name: 'Alice', email: 'alice@example.com' });
+  const bob = await createVerifiedSession(app, env, { name: 'Bob', email: 'bob@example.com' });
+
+  const created = await jsonRequest(app, env, '/v1/components', {
+    method: 'POST',
+    cookie: alice.cookie,
+    payload: componentPayload({ componentId: 'private-component', name: 'Hidden', visibility: 'private' }),
+  });
+  assert.equal(created.status, 200);
+
+  const anonymous = await jsonRequest(app, env, '/v1/assets/private-component');
+  assert.equal(anonymous.status, 404);
+
+  const stranger = await jsonRequest(app, env, '/v1/assets/private-component', { cookie: bob.cookie });
+  assert.equal(stranger.status, 404);
+
+  const owner = await jsonRequest(app, env, '/v1/assets/private-component', { cookie: alice.cookie });
+  assert.equal(owner.status, 200);
+  assert.equal(owner.json.assetType, 'component');
+});
+
+test('asset download endpoints return attachment responses for public assets', async (t) => {
+  const env = createEnv();
+  t.after(() => env.DB.close());
+  const app = createApp();
+
+  const alice = await createVerifiedSession(app, env, { name: 'Alice', email: 'alice@example.com' });
+
+  const created = await jsonRequest(app, env, '/v1/components', {
+    method: 'POST',
+    cookie: alice.cookie,
+    payload: componentPayload({ componentId: 'download-component', name: 'Download Me!', visibility: 'public' }),
+  });
+  assert.equal(created.status, 200);
+
+  const downloadRequest = new Request('http://worker.test/v1/components/download-component/download');
+  const downloadResponse = await app.fetch(downloadRequest, env, {});
+  assert.equal(downloadResponse.status, 200);
+  assert.match(downloadResponse.headers.get('Content-Type') || '', /application\/json/);
+  const disposition = downloadResponse.headers.get('Content-Disposition') || '';
+  assert.match(disposition, /attachment/);
+  assert.match(disposition, /filename="download-me-v1\.json"/);
+
+  const body = JSON.parse(await downloadResponse.text());
+  assert.equal(body.componentId, 'download-component');
+  assert.equal(body.versionNumber, 1);
+  assert.ok(body.record);
+
+  const versionDownloadRequest = new Request('http://worker.test/v1/components/download-component/versions/1/download');
+  const versionDownloadResponse = await app.fetch(versionDownloadRequest, env, {});
+  assert.equal(versionDownloadResponse.status, 200);
+  assert.match(versionDownloadResponse.headers.get('Content-Disposition') || '', /filename="download-me-v1\.json"/);
+});
+
+test('asset download endpoints deny anonymous access to private assets', async (t) => {
+  const env = createEnv();
+  t.after(() => env.DB.close());
+  const app = createApp();
+
+  const alice = await createVerifiedSession(app, env, { name: 'Alice', email: 'alice@example.com' });
+
+  const created = await jsonRequest(app, env, '/v1/variants', {
+    method: 'POST',
+    cookie: alice.cookie,
+    payload: variantPayload({ variantId: 'private-variant', name: 'Private Variant', visibility: 'private' }),
+  });
+  assert.equal(created.status, 200);
+
+  const anonymousRequest = new Request('http://worker.test/v1/variants/private-variant/download');
+  const anonymousResponse = await app.fetch(anonymousRequest, env, {});
+  assert.equal(anonymousResponse.status, 404);
+
+  const ownerRequest = new Request('http://worker.test/v1/variants/private-variant/download', {
+    headers: { cookie: alice.cookie },
+  });
+  const ownerResponse = await app.fetch(ownerRequest, env, {});
+  assert.equal(ownerResponse.status, 200);
+  assert.match(ownerResponse.headers.get('Content-Disposition') || '', /filename="private-variant-v1\.json"/);
 });

@@ -203,8 +203,8 @@ Key variables for switching environments:
 
 Friendly callback pages now live at:
 
-- `/console/auth-complete`
-- `/console/auth-error`
+- `/auth-complete`
+- `/auth-error`
 
 For the full flow and configuration matrix, see:
 

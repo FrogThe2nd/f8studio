@@ -14,9 +14,9 @@ import { AssetConflictError, AssetNotFoundError, AssetPermissionError, AssetVali
 import { decompressGzip, isPlainObject, stringOrDefault, toBoolean } from './utils.js';
 
 const AUTH_BASE_PATH = '/api/auth';
-const CONSOLE_BASE_PATH = '/console';
 const DESKTOP_AUTH_BASE_PATH = '/v1/auth/desktop';
 const MANAGEMENT_API_BASE_PATH = '/v1/management';
+const PORTAL_STATIC_DIR = '/_portal';
 const PURGE_ALL_ASSETS_CONFIRMATION_TEXT = 'DELETE ALL ASSETS';
 const DESKTOP_AUTHORIZATION_CODE_TTL_SECONDS = 300;
 const USER_ROLE_ADMIN = 'admin';
@@ -76,6 +76,25 @@ export function createApp() {
       google: hasGoogleProvider(c.env),
     }),
     getSiteSettings: async (c) => c.get('repo').getSiteSettings(),
+    resolveAsset: async (c) => {
+      const auth = c.get('auth');
+      const repo = c.get('repo');
+      const viewer = await optionalAuthenticatedUser({ auth, request: c.req.raw });
+      const viewerId = viewer === null ? null : viewer.userId;
+      const assetId = c.req.param('assetId');
+      const head = await repo.getAssetById(assetId);
+      if (head === null) {
+        throw new HttpError(404, 'not found');
+      }
+      if (String(head.visibility) !== 'public' && String(head.owner_user_id) !== String(viewerId || '')) {
+        throw new HttpError(404, 'not found');
+      }
+      const assetType = String(head.asset_type);
+      const asset = assetType === 'variant'
+        ? await repo.getVariant({ variantId: assetId, userId: viewerId })
+        : await repo.getComponent({ componentId: assetId, userId: viewerId });
+      return { assetType, asset };
+    },
     getMe: async (c) => {
       const user = await requireAuthenticatedUser({ auth: c.get('auth'), request: c.req.raw });
       return toApiUser(user);
@@ -357,6 +376,22 @@ async function routeAssetRequest({ auth, repo, request, url, assetType }) {
     return jsonResponse(200, result);
   }
 
+  if (parts.length === 2 && parts[1] === 'download' && request.method === 'GET') {
+    const viewer = await optionalAuthenticatedUser({ auth, request });
+    const viewerId = viewer === null ? null : viewer.userId;
+    const head = await repo.getAssetById(assetId, assetType);
+    if (head === null || String(head.asset_type) !== assetType) {
+      return jsonResponse(404, { message: 'not found' });
+    }
+    if (String(head.visibility) !== 'public' && String(head.owner_user_id) !== String(viewerId || '')) {
+      return jsonResponse(404, { message: 'not found' });
+    }
+    const payload = assetType === 'variant'
+      ? await repo.getVariantContent({ variantId: assetId, userId: viewerId })
+      : await repo.getComponentContent({ componentId: assetId, userId: viewerId });
+    return assetDownloadResponse(payload, { head, versionNumber: payload.versionNumber });
+  }
+
   if (parts.length === 2 && parts[1] === 'visibility' && request.method === 'PUT') {
     const user = await requireAssetWriteUser({ auth, repo, request });
     const payload = await readJsonBody(request);
@@ -400,6 +435,23 @@ async function routeAssetRequest({ auth, repo, request, url, assetType }) {
       ? await repo.getVariantVersionContent({ variantId: assetId, versionNumber, userId: viewer === null ? null : viewer.userId })
       : await repo.getComponentVersionContent({ componentId: assetId, versionNumber, userId: viewer === null ? null : viewer.userId });
     return jsonResponse(200, result);
+  }
+
+  if (parts.length === 4 && parts[1] === 'versions' && parts[3] === 'download' && request.method === 'GET') {
+    const viewer = await optionalAuthenticatedUser({ auth, request });
+    const viewerId = viewer === null ? null : viewer.userId;
+    const versionNumber = parts[2];
+    const head = await repo.getAssetById(assetId, assetType);
+    if (head === null || String(head.asset_type) !== assetType) {
+      return jsonResponse(404, { message: 'not found' });
+    }
+    if (String(head.visibility) !== 'public' && String(head.owner_user_id) !== String(viewerId || '')) {
+      return jsonResponse(404, { message: 'not found' });
+    }
+    const payload = assetType === 'variant'
+      ? await repo.getVariantVersionContent({ variantId: assetId, versionNumber, userId: viewerId })
+      : await repo.getComponentVersionContent({ componentId: assetId, versionNumber, userId: viewerId });
+    return assetDownloadResponse(payload, { head, versionNumber: payload.versionNumber });
   }
 
   if (parts.length === 2 && parts[1] === 'subscribe') {
@@ -507,6 +559,9 @@ async function routeManagementRequest({ env, managementUser, auth, repo, request
       });
     }
     if (payload.role !== undefined || payload.isAdmin !== undefined || payload.canUpload !== undefined) {
+      if (parts.userId === managementUser.userId && requestedRole !== USER_ROLE_ADMIN) {
+        throw new HttpError(400, 'management user cannot remove own admin role');
+      }
       await auth.api.setRole({
         body: {
           userId: parts.userId,
@@ -635,7 +690,7 @@ async function routeManagementRequest({ env, managementUser, auth, repo, request
       }
       return jsonResponse(200, updated);
     }
-    const current = await repo.getManagedAsset({ assetId: componentId, includeDeleted: true, assetTypeHint: 'component' });
+    const current = await repo.getManagedAsset({ assetId: componentId, assetTypeHint: 'component' });
     if (current === null) {
       return jsonResponse(404, { message: 'asset not found' });
     }
@@ -1972,8 +2027,32 @@ function jsonResponse(status, payload) {
   });
 }
 
+function assetDownloadResponse(payload, { head, versionNumber }) {
+  const baseName = stringOrDefault(head && head.name, String(head ? head.asset_id : 'asset'));
+  const slug = slugifyForFilename(baseName) || 'asset';
+  const versionSuffix = Number.isFinite(Number(versionNumber)) ? `-v${Number(versionNumber)}` : '';
+  const filename = `${slug}${versionSuffix}.json`;
+  const body = JSON.stringify(payload, null, 2);
+  return new Response(body, {
+    status: 200,
+    headers: {
+      'Content-Type': 'application/json',
+      'Content-Disposition': `attachment; filename="${filename}"`,
+      'Cache-Control': 'no-store',
+    },
+  });
+}
+
+function slugifyForFilename(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80);
+}
+
 function frontendFallbackResponse() {
-  return new Response(buildConsoleFallbackHtml(), {
+  return new Response(buildPortalFallbackHtml(), {
     status: 200,
     headers: {
       'Content-Type': 'text/html; charset=utf-8',
@@ -1986,7 +2065,7 @@ function buildVerifyEmailUrl({ env, baseURL, token }) {
   const configuredBaseUrl = String(env.AUTH_VERIFY_EMAIL_BASE_URL || '').trim();
   const base = configuredBaseUrl
     ? new URL(configuredBaseUrl)
-    : new URL(`${CONSOLE_BASE_PATH}/verify-email`, baseURL);
+    : new URL('/verify-email', baseURL);
   base.searchParams.set('token', token);
   return base.toString();
 }
@@ -1995,7 +2074,7 @@ function buildResetPasswordUrl({ env, baseURL, token }) {
   const configuredBaseUrl = String(env.AUTH_RESET_PASSWORD_BASE_URL || '').trim();
   const base = configuredBaseUrl
     ? new URL(configuredBaseUrl)
-    : new URL(`${CONSOLE_BASE_PATH}/reset-password`, baseURL);
+    : new URL('/reset-password', baseURL);
   base.searchParams.set('token', token);
   return base.toString();
 }
@@ -2221,30 +2300,58 @@ async function sendAuthEmail({ env, debugLabel, debugUrl, toEmail, subject, text
 }
 
 async function serveFrontend(request, env, url) {
-  if (url.pathname === '/') {
-    return Response.redirect(new URL(`${CONSOLE_BASE_PATH}/`, request.url), 302);
+  if (!isPortalStaticAssetPath(url.pathname) && url.pathname !== '/favicon.ico' && !isPortalAppPath(url.pathname)) {
+    return jsonResponse(404, { message: 'not found' });
   }
 
   const assets = getAssetsBinding(env);
   if (assets === null) {
+    if (isPortalStaticAssetPath(url.pathname) || url.pathname === '/favicon.ico') {
+      return jsonResponse(404, { message: 'not found' });
+    }
     return frontendFallbackResponse();
   }
 
   let assetPath = '/';
-  if (url.pathname.startsWith(`${CONSOLE_BASE_PATH}/assets/`)) {
-    assetPath = url.pathname.slice(CONSOLE_BASE_PATH.length);
-  } else if (url.pathname === `${CONSOLE_BASE_PATH}/favicon.ico`) {
+  if (isPortalStaticAssetPath(url.pathname)) {
+    assetPath = url.pathname;
+  } else if (url.pathname === '/favicon.ico') {
     assetPath = '/favicon.ico';
-  } else if (!isConsoleAppPath(url.pathname)) {
-    return jsonResponse(404, { message: 'not found' });
   }
 
   const assetRequest = new Request(new URL(assetPath, 'https://assets.invalid'), request);
   return assets.fetch(assetRequest);
 }
 
-function isConsoleAppPath(pathname) {
-  return pathname === CONSOLE_BASE_PATH || pathname === `${CONSOLE_BASE_PATH}/` || pathname.startsWith(`${CONSOLE_BASE_PATH}/`);
+function isPortalAppPath(pathname) {
+  const normalizedPath = String(pathname || '');
+  if (normalizedPath === '/') {
+    return true;
+  }
+  const exactRoutes = new Set([
+    '/login',
+    '/register',
+    '/forgot-password',
+    '/reset-password',
+    '/verify-email',
+    '/auth-callback',
+    '/auth-complete',
+    '/auth-error',
+    '/browse',
+    '/profile',
+  ]);
+  if (exactRoutes.has(normalizedPath)) {
+    return true;
+  }
+  return normalizedPath.startsWith('/assets/') || normalizedPath.startsWith('/admin/');
+}
+
+function isPortalStaticAssetPath(pathname) {
+  if (!pathname.startsWith(`${PORTAL_STATIC_DIR}/`)) {
+    return false;
+  }
+  const lastSegment = pathname.split('/').pop() || '';
+  return /\.[a-z0-9]+$/i.test(lastSegment);
 }
 
 function getAssetsBinding(env) {
@@ -2258,7 +2365,7 @@ function getAssetsBinding(env) {
   return null;
 }
 
-function buildConsoleFallbackHtml() {
+function buildPortalFallbackHtml() {
   return `<!doctype html>
 <html lang="en">
   <head>
@@ -2278,7 +2385,7 @@ function buildConsoleFallbackHtml() {
       <p>Frontend assets are not available yet.</p>
       <p>Build the Vite app first:</p>
       <p><code>npm run web:build</code></p>
-      <p>Then open <code>${CONSOLE_BASE_PATH}/</code> in the browser.</p>
+      <p>Then open <code>/</code> in the browser.</p>
     </main>
   </body>
 </html>`;

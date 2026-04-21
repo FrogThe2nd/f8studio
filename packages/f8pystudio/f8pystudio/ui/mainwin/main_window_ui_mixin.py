@@ -6,8 +6,10 @@ from typing import TYPE_CHECKING, Callable, Sequence, TypeAlias
 
 from qtpy import QtCore, QtGui, QtWidgets
 
+from ...assets.subscriptions import SubscriptionSyncService
 from ...assets.ui.asset_cloud_account_menu import build_asset_account_menu
 from ...assets.variants.variant_sync import VariantSyncClient
+from ...ui.support.ui_notifications import show_info, show_warning
 from ...nodegraph.edge_rules import EDGE_KIND_DATA, EDGE_KIND_EXEC, EDGE_KIND_STATE
 from ...ui.support.qt_lifecycle import qt_runtime_error_is_object_deleted
 from ...ui.support.ui_icons import StudioIcon, icon_for
@@ -108,12 +110,17 @@ class MainWindowUiMixin:
         _service_manager_dock: QtWidgets.QDockWidget
         _service_manager: ServiceManagerWidget | None
         _asset_cloud_sync_client: VariantSyncClient | None
+        _subscription_sync_service: SubscriptionSyncService | None
         _asset_cloud_account_button: QtWidgets.QToolButton | None
         _node_library_widget: F8StudioNodeLibraryWidget | None
         _unsubscribe_asset_cache_changed: Callable[[], None] | None
         _ai_assist_sidebar: AiAssistSidebarWidget | None
         _deferred_startup_scheduled: bool
         _deferred_startup_completed: bool
+        _asset_cloud_sync_total: int
+        _asset_cloud_sync_done: int
+        _asset_cloud_last_sync_message: str
+        _asset_cloud_last_sync_timer: QtCore.QTimer | None
         _default_dock_layout_state: QtCore.QByteArray
         _auto_save_enabled: bool
         _auto_deploy_enabled: bool
@@ -276,6 +283,18 @@ class MainWindowUiMixin:
             self._asset_cloud_sync_client = sync_client
         return sync_client
 
+    def _ensure_subscription_sync_service(self) -> SubscriptionSyncService:
+        service = self._subscription_sync_service
+        if service is not None:
+            return service
+        service = SubscriptionSyncService(variant_client=self._require_asset_cloud_sync_client(), parent=self)
+        service.sync_started.connect(self._on_subscription_sync_started)  # type: ignore[attr-defined]
+        service.sync_progress.connect(self._on_subscription_sync_progress)  # type: ignore[attr-defined]
+        service.sync_item_failed.connect(self._on_subscription_sync_item_failed)  # type: ignore[attr-defined]
+        service.sync_finished.connect(self._on_subscription_sync_finished)  # type: ignore[attr-defined]
+        self._subscription_sync_service = service
+        return service
+
     @QtCore.Slot()
     def _run_deferred_startup(self) -> None:
         self._deferred_startup_scheduled = False
@@ -284,10 +303,65 @@ class MainWindowUiMixin:
         self._deferred_startup_completed = True
         self._auto_load_project()
         self._refresh_asset_cloud_account_button(load_client=False)
+        self._ensure_subscription_sync_service().start_initial_sync()
         if self._node_library_dock.isVisible():
             QtCore.QTimer.singleShot(0, self._ensure_node_library_widget)
         if self._ai_assist_dock.isVisible():
             QtCore.QTimer.singleShot(0, self._ensure_ai_assist_sidebar)
+
+    @QtCore.Slot(int)
+    def _on_subscription_sync_started(self, total: int) -> None:
+        self._asset_cloud_sync_total = int(total)
+        self._asset_cloud_sync_done = 0
+        self._asset_cloud_last_sync_message = ""
+        self._refresh_asset_cloud_account_button(load_client=False)
+
+    @QtCore.Slot(int, int)
+    def _on_subscription_sync_progress(self, done: int, total: int) -> None:
+        self._asset_cloud_sync_done = int(done)
+        self._asset_cloud_sync_total = int(total)
+        self._refresh_asset_cloud_account_button(load_client=False)
+
+    @QtCore.Slot(str, str)
+    def _on_subscription_sync_item_failed(self, asset_id: str, reason: str) -> None:
+        logger.warning(
+            "Subscription sync item failed asset_id=%s reason=%s",
+            str(asset_id),
+            str(reason),
+        )
+
+    @QtCore.Slot(int, int, int)
+    def _on_subscription_sync_finished(self, installed: int, failed: int, skipped: int) -> None:
+        del skipped
+        self._asset_cloud_sync_done = self._asset_cloud_sync_total
+        self._asset_cloud_last_sync_message = f"Synced {int(installed)}"
+        if int(failed) > 0:
+            self._asset_cloud_last_sync_message = f"Sync errors ({int(failed)})"
+        self._refresh_asset_cloud_account_button(load_client=False)
+        timer = self._asset_cloud_last_sync_timer
+        if timer is not None:
+            timer.stop()
+        else:
+            timer = QtCore.QTimer(self)
+            timer.setSingleShot(True)
+            timer.timeout.connect(self._clear_asset_cloud_last_sync_message)  # type: ignore[attr-defined]
+            self._asset_cloud_last_sync_timer = timer
+        timer.start(3500)
+
+        service = self._subscription_sync_service
+        if service is None:
+            return
+        if service.last_completed_request_kind() != "manual":
+            return
+        if int(failed) > 0:
+            show_warning(self, "Refresh subscriptions", f"Installed {int(installed)} assets.\nFailed: {int(failed)}")
+            return
+        show_info(self, "Refresh subscriptions", f"Installed {int(installed)} assets.")
+
+    @QtCore.Slot()
+    def _clear_asset_cloud_last_sync_message(self) -> None:
+        self._asset_cloud_last_sync_message = ""
+        self._refresh_asset_cloud_account_button(load_client=False)
 
     @QtCore.Slot(bool)
     def _on_node_library_dock_visibility_changed(self, visible: bool) -> None:
@@ -643,6 +717,7 @@ class MainWindowUiMixin:
         button = self._asset_cloud_account_button
         if button is None:
             return
+        sync_service = self._subscription_sync_service
 
         sync_client = self._asset_cloud_sync_client
         if sync_client is None:
@@ -662,6 +737,10 @@ class MainWindowUiMixin:
             email=None if user is None else str(user.email or ""),
             account_name=None if user is None else str(user.name or ""),
             signed_in=user is not None,
+            sync_running=False if sync_service is None else sync_service.is_running(),
+            sync_done=self._asset_cloud_sync_done,
+            sync_total=self._asset_cloud_sync_total,
+            status_message=self._asset_cloud_last_sync_message,
         )
 
     @QtCore.Slot()
@@ -674,9 +753,24 @@ class MainWindowUiMixin:
         menu = build_asset_account_menu(
             parent=self,
             sync_client=sync_client,
-            on_changed=lambda: self._refresh_asset_cloud_account_button(load_client=False),
+            on_changed=self._on_asset_cloud_account_changed,
+            on_refresh_subscriptions=self._on_refresh_subscriptions_requested,
+            refresh_subscriptions_enabled=sync_client.current_user() is not None and not self._ensure_subscription_sync_service().is_running(),
         )
         menu.exec(button.mapToGlobal(QtCore.QPoint(0, button.height())))
+
+    def _on_asset_cloud_account_changed(self) -> None:
+        service = self._subscription_sync_service
+        if service is not None:
+            service.cancel()
+        self._asset_cloud_sync_done = 0
+        self._asset_cloud_sync_total = 0
+        self._asset_cloud_last_sync_message = ""
+        self._refresh_asset_cloud_account_button(load_client=False)
+        self._ensure_subscription_sync_service().start_initial_sync()
+
+    def _on_refresh_subscriptions_requested(self) -> None:
+        self._ensure_subscription_sync_service().request_manual_refresh()
 
     @QtCore.Slot(bool)
     def _on_exec_lines_toggled(self, checked: bool) -> None:
@@ -958,6 +1052,10 @@ class MainWindowUiMixin:
         email: str | None,
         account_name: str | None,
         signed_in: bool,
+        sync_running: bool,
+        sync_done: int,
+        sync_total: int,
+        status_message: str,
     ) -> None:
         if not signed_in:
             button.setText("")
@@ -966,9 +1064,19 @@ class MainWindowUiMixin:
             return
 
         button.setText("")
-        button.setIcon(icon_for(button, StudioIcon.USER))
+        if sync_running:
+            button.setIcon(icon_for(button, StudioIcon.REFRESH))
+        elif status_message:
+            button.setIcon(icon_for(button, StudioIcon.CHECK))
+        else:
+            button.setIcon(icon_for(button, StudioIcon.USER))
         tooltip_account_name = str(account_name or email or "")
+        sync_suffix = ""
+        if sync_running:
+            sync_suffix = f" | Syncing {int(sync_done)}/{int(sync_total)}"
+        elif status_message:
+            sync_suffix = f" | {status_message}"
         if tooltip_account_name:
-            button.setToolTip(f"Manage Feel8 asset cloud account ({tooltip_account_name})")
+            button.setToolTip(f"Manage Feel8 asset cloud account ({tooltip_account_name}){sync_suffix}")
             return
-        button.setToolTip("Manage Feel8 asset cloud account")
+        button.setToolTip(f"Manage Feel8 asset cloud account{sync_suffix}")

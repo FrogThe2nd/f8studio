@@ -6,6 +6,7 @@ from typing import Callable, Iterable
 from qtpy import QtCore, QtGui, QtWidgets
 
 from ...assets.common.asset_cache_events import subscribe_asset_cache_changed
+from ...assets.subscriptions import SubscriptionSyncService
 from ...assets.variants.variant_sync import VariantSyncClient
 from ...global_hotkeys.controller import ControlPanelGlobalHotkeyController
 from ...nodegraph.node_graph import F8StudioGraph
@@ -110,7 +111,12 @@ class F8StudioMainWin(
     _ai_assist_dock: QtWidgets.QDockWidget
     _service_manager: ServiceManagerWidget | None
     _asset_cloud_sync_client: VariantSyncClient | None
+    _subscription_sync_service: SubscriptionSyncService | None
     _asset_cloud_account_button: QtWidgets.QToolButton | None
+    _asset_cloud_sync_total: int
+    _asset_cloud_sync_done: int
+    _asset_cloud_last_sync_message: str
+    _asset_cloud_last_sync_timer: QtCore.QTimer | None
     _node_library_widget: F8StudioNodeLibraryWidget | None
     _unsubscribe_asset_cache_changed: Callable[[], None] | None
     _ai_assist_sidebar: AiAssistSidebarWidget | None
@@ -141,7 +147,12 @@ class F8StudioMainWin(
         self._auto_proxy_enabled = self._read_saved_auto_proxy_enabled()
         self._performance_overlay_enabled = self._read_saved_performance_overlay_enabled()
         self._asset_cloud_sync_client = None
+        self._subscription_sync_service = None
         self._asset_cloud_account_button = None
+        self._asset_cloud_sync_total = 0
+        self._asset_cloud_sync_done = 0
+        self._asset_cloud_last_sync_message = ""
+        self._asset_cloud_last_sync_timer = None
         self._node_library_widget = None
         self._unsubscribe_asset_cache_changed = None
         self._ai_assist_sidebar = None

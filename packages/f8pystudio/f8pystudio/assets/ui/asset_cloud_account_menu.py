@@ -221,6 +221,8 @@ def build_asset_account_menu(
     parent: QtWidgets.QWidget,
     sync_client: AssetCloudSyncClient,
     on_changed: Callable[[], None] | None = None,
+    on_refresh_subscriptions: Callable[[], None] | None = None,
+    refresh_subscriptions_enabled: bool = False,
 ) -> QtWidgets.QMenu:
     menu = QtWidgets.QMenu(parent)
     current_user = sync_client.current_user()
@@ -239,6 +241,12 @@ def build_asset_account_menu(
             on_changed=on_changed,
         )
     )
+
+    refresh_action = None
+    if on_refresh_subscriptions is not None:
+        refresh_action = menu.addAction(icon_for(parent, StudioIcon.REFRESH), "Refresh subscriptions")
+        refresh_action.setEnabled(bool(refresh_subscriptions_enabled))
+        refresh_action.triggered.connect(on_refresh_subscriptions)  # type: ignore[attr-defined]
 
     saved_sessions = sync_client.saved_sessions()
     visible_sessions = _sessions_matching_base_url(saved_sessions=saved_sessions, base_url=sync_client.base_url())
@@ -287,7 +295,8 @@ def build_asset_account_menu(
                 _menu_callback(parent=parent, action=sync_client.clear_all_saved_sessions, on_changed=on_changed)
             )
 
-    menu.addSeparator()
+    if refresh_action is not None or saved_sessions:
+        menu.addSeparator()
     logout_action = menu.addAction(icon_for(parent, StudioIcon.USER_X), "Logout Current Account")
     logout_action.setEnabled(current_user is not None)
     logout_action.triggered.connect(  # type: ignore[attr-defined]

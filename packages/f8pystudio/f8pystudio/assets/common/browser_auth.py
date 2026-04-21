@@ -16,8 +16,8 @@ logger = logging.getLogger(__name__)
 
 _DESKTOP_AUTH_AUTHORIZE_PATH = "/v1/auth/desktop/authorize"
 _CALLBACK_PATH = "/callback"
-_POST_SIGN_IN_SUCCESS_PATH = "/console/auth-complete"
-_POST_SIGN_IN_ERROR_PATH = "/console/auth-error"
+_POST_SIGN_IN_SUCCESS_PATH = "/auth-complete"
+_POST_SIGN_IN_ERROR_PATH = "/auth-error"
 
 
 class AssetCloudBrowserAuthError(RuntimeError):

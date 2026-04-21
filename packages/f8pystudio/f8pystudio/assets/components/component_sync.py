@@ -341,6 +341,9 @@ class ComponentSyncClient:
     def apply_remote_entries(self, remote_entries: list[F8ComponentEntry]) -> None:
         self._catalog_service.replace_remote_entries(remote_entries)
 
+    def remote_entry(self, component_id: str) -> F8ComponentEntry | None:
+        return self._catalog_service.remote_entry(component_id)
+
     def install_component(self, component_id: str) -> F8ComponentEntry:
         return self.hydrate_component(component_id)
 
@@ -919,6 +922,8 @@ def _list_params_for_scope(*, scope: str, query: str, cursor: str) -> dict[str, 
         params["visibility"] = "public"
     elif scope == "mine":
         params["owner"] = "me"
+    elif scope == "subscribed":
+        params["owner"] = "subscribed"
     return params
 
 
@@ -1158,6 +1163,8 @@ def _entry_matches_scope(entry: F8ComponentEntry, *, scope: str, user: F8Compone
         if user is None:
             return False
         return entry.source == F8ComponentSourceKind.remote_private or str(entry.ownerUserId or "") == str(user.userId)
+    if scope == "subscribed":
+        return bool(entry.subscribed)
     return False
 def _remote_user_from_payload(payload: JsonObject) -> F8ComponentRemoteUser:
     user_id = _payload_str(payload, "userId")

@@ -92,7 +92,12 @@ class VariantCatalogBrowserMixin:
         self._queued_remote_refresh_requests = None
         self._remote_refresh_worker = None
         self._scheduled_asset_cache_rebuild_variant_id = ""
-        self._asset_cache_rebuild_timer.stop()
+        try:
+            self._asset_cache_rebuild_timer.stop()
+        except RuntimeError as exc:
+            if qt_runtime_error_is_object_deleted(exc):
+                return
+            raise
 
     def _rebuild_browser_from_asset_cache(self) -> None:
         self._render_browser_from_state()
@@ -262,9 +267,15 @@ class VariantCatalogBrowserMixin:
         normalized_variant_id = str(preserve_variant_id or "").strip()
         if normalized_variant_id:
             self._scheduled_asset_cache_rebuild_variant_id = normalized_variant_id
-        if self._asset_cache_rebuild_timer.isActive():
-            return
-        self._asset_cache_rebuild_timer.start(0)
+        try:
+            if self._asset_cache_rebuild_timer.isActive():
+                return
+            self._asset_cache_rebuild_timer.start(0)
+        except RuntimeError as exc:
+            if qt_runtime_error_is_object_deleted(exc):
+                self._clear_asset_cache_changed_subscription()
+                return
+            raise
 
     def _flush_deferred_asset_cache_rebuild(self) -> None:
         preserve_variant_id = str(self._scheduled_asset_cache_rebuild_variant_id or "").strip()

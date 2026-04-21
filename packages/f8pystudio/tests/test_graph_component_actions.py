@@ -50,18 +50,24 @@ class _FakeMetaDialog:
         name: str,
         description: str,
         tags: list[str],
+        overwrite_choices: list[object],
+        overwrite_label: str,
+        name_validator: object,
     ) -> None:
         self.parent = parent
         self.title = title
         self.name = name
         self.description = description
         self.tags = list(tags)
+        self.overwrite_choices = list(overwrite_choices)
+        self.overwrite_label = overwrite_label
+        self.name_validator = name_validator
 
     def exec(self) -> int:
         return QtWidgets.QDialog.Accepted
 
-    def values(self) -> tuple[str, str, list[str]]:
-        return (self.name, self.description, list(self.tags))
+    def values(self) -> tuple[str, str, list[str], str | None]:
+        return (self.name, self.description, list(self.tags), None)
 
 
 class _FakeComponentHost(GraphComponentActionsMixin):
@@ -189,7 +195,7 @@ def test_save_selected_nodes_as_component_trims_external_connections(monkeypatch
         selected_nodes=[_FakeSelectedNode("node_a", "Node A"), _FakeSelectedNode("node_b", "Node B")],
     )
 
-    monkeypatch.setattr("f8pystudio.nodegraph.graph_component_actions.ProjectAssetMetaDialog", _FakeMetaDialog)
+    monkeypatch.setattr("f8pystudio.nodegraph.graph_component_actions.AssetOverwriteMetaDialog", _FakeMetaDialog)
     monkeypatch.setattr("f8pystudio.nodegraph.graph_component_actions.upsert_component", lambda record: saved_records.append(record))
     monkeypatch.setattr(
         "f8pystudio.nodegraph.graph_component_actions.show_info",
@@ -208,7 +214,7 @@ def test_save_selected_nodes_as_component_trims_external_connections(monkeypatch
     assert saved_record.name == "Selection Component"
     assert set(saved_record.content["layout"]["nodes"].keys()) == {"node_a", "node_b"}
     assert saved_record.content["layout"]["connections"] == [{"out": ["node_a", "out"], "in": ["node_b", "in"]}]
-    assert info_messages == [("Component saved", "Saved component:\nSelection Component")]
+    assert info_messages == [("Component Saved", "Saved component:\nSelection Component")]
 
 
 def test_install_component_context_menu_for_nodes_adds_save_command() -> None:

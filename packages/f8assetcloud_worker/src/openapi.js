@@ -191,6 +191,11 @@ const componentContentResponseSchema = z.object({
   record: componentRecordSchema,
 });
 
+const assetResolveResponseSchema = z.object({
+  assetType: z.enum(['component', 'variant']),
+  asset: z.union([variantDetailSchema, componentDetailSchema]),
+});
+
 const variantPageResponseSchema = z.object({
   entries: z.array(variantSummarySchema),
   nextCursor: nullableStringSchema,
@@ -243,7 +248,6 @@ const adminAssetBaseSchema = z.object({
   tags: z.array(z.string()),
   createdAt: z.string(),
   updatedAt: z.string(),
-  deletedAt: nullableStringSchema,
 });
 
 const adminVariantSummarySchema = adminAssetBaseSchema.extend({
@@ -297,17 +301,12 @@ const userListQuerySchema = z.object({
 const managementComponentListQuerySchema = z.object({
   ownerUserId: z.string().optional(),
   q: z.string().optional(),
-  includeDeleted: z.enum(['true', 'false']).optional(),
   cursor: z.string().optional(),
 });
 
 const managementVariantListQuerySchema = managementComponentListQuerySchema.extend({
   kind: z.string().optional(),
   baseNodeType: z.string().optional(),
-});
-
-const managementAssetDetailQuerySchema = z.object({
-  includeDeleted: z.enum(['true', 'false']).optional(),
 });
 
 const variantCreateRequestSchema = z.object({
@@ -373,7 +372,6 @@ const managementUserUpdateRequestSchema = z.object({
 });
 
 const managementAssetUpdateRequestSchema = z.object({
-  restore: z.boolean().optional(),
   visibility: visibilitySchema.optional(),
 });
 
@@ -508,6 +506,20 @@ export function registerOpenApiRoutes(app, handlers) {
     }),
   }, handlers.updateMe);
 
+  registerRoute(openapi, 'get', '/v1/assets/:assetId', {
+    tags: ['search'],
+    summary: 'Resolve an asset by id across asset types',
+    description: 'Returns the asset type plus the full detail payload. Public assets are viewable without authentication; private assets return 404 to non-owners.',
+    request: {
+      params: z.object({
+        assetId: z.string(),
+      }),
+    },
+    responses: withCommonErrorResponses({
+      200: jsonSuccessResponse(assetResolveResponseSchema, 'Asset resolve response'),
+    }),
+  }, handlers.resolveAsset);
+
   registerRoute(openapi, 'get', '/v1/components', {
     tags: ['components'],
     summary: 'List components',
@@ -585,6 +597,19 @@ export function registerOpenApiRoutes(app, handlers) {
     }),
   }, handlers.getComponentContent);
 
+  registerRoute(openapi, 'get', '/v1/components/:componentId/download', {
+    tags: ['components'],
+    summary: 'Download component content as an attachment',
+    request: {
+      params: z.object({
+        componentId: z.string(),
+      }),
+    },
+    responses: withCommonErrorResponses({
+      200: jsonSuccessResponse(componentContentResponseSchema, 'Component content download payload'),
+    }),
+  }, handlers.routeComponentAssetRequest);
+
   registerRoute(openapi, 'put', '/v1/components/:componentId/visibility', {
     tags: ['components'],
     summary: 'Update component visibility',
@@ -652,6 +677,20 @@ export function registerOpenApiRoutes(app, handlers) {
     },
     responses: withCommonErrorResponses({
       200: jsonSuccessResponse(componentContentResponseSchema, 'Component version content'),
+    }),
+  }, handlers.routeComponentAssetRequest);
+
+  registerRoute(openapi, 'get', '/v1/components/:componentId/versions/:versionNumber/download', {
+    tags: ['components'],
+    summary: 'Download component version content as an attachment',
+    request: {
+      params: z.object({
+        componentId: z.string(),
+        versionNumber: z.string(),
+      }),
+    },
+    responses: withCommonErrorResponses({
+      200: jsonSuccessResponse(componentContentResponseSchema, 'Component version download payload'),
     }),
   }, handlers.routeComponentAssetRequest);
 
@@ -770,6 +809,19 @@ export function registerOpenApiRoutes(app, handlers) {
     }),
   }, handlers.routeVariantAssetRequest);
 
+  registerRoute(openapi, 'get', '/v1/variants/:variantId/download', {
+    tags: ['variants'],
+    summary: 'Download variant content as an attachment',
+    request: {
+      params: z.object({
+        variantId: z.string(),
+      }),
+    },
+    responses: withCommonErrorResponses({
+      200: jsonSuccessResponse(variantContentResponseSchema, 'Variant content download payload'),
+    }),
+  }, handlers.routeVariantAssetRequest);
+
   registerRoute(openapi, 'put', '/v1/variants/:variantId/visibility', {
     tags: ['variants'],
     summary: 'Update variant visibility',
@@ -837,6 +889,20 @@ export function registerOpenApiRoutes(app, handlers) {
     },
     responses: withCommonErrorResponses({
       200: jsonSuccessResponse(variantContentResponseSchema, 'Variant version content'),
+    }),
+  }, handlers.routeVariantAssetRequest);
+
+  registerRoute(openapi, 'get', '/v1/variants/:variantId/versions/:versionNumber/download', {
+    tags: ['variants'],
+    summary: 'Download variant version content as an attachment',
+    request: {
+      params: z.object({
+        variantId: z.string(),
+        versionNumber: z.string(),
+      }),
+    },
+    responses: withCommonErrorResponses({
+      200: jsonSuccessResponse(variantContentResponseSchema, 'Variant version download payload'),
     }),
   }, handlers.routeVariantAssetRequest);
 
@@ -993,7 +1059,6 @@ export function registerOpenApiRoutes(app, handlers) {
       params: z.object({
         componentId: z.string(),
       }),
-      query: managementAssetDetailQuerySchema,
     },
     responses: withCommonErrorResponses({
       200: jsonSuccessResponse(managementAssetDetailResponseSchema, 'Managed component detail'),
@@ -1045,7 +1110,6 @@ export function registerOpenApiRoutes(app, handlers) {
       params: z.object({
         variantId: z.string(),
       }),
-      query: managementAssetDetailQuerySchema,
     },
     responses: withCommonErrorResponses({
       200: jsonSuccessResponse(managementAssetDetailResponseSchema, 'Managed variant detail'),
