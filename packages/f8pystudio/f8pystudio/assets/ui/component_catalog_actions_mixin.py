@@ -8,10 +8,11 @@ from qtpy import QtCore, QtWidgets
 from f8pysdk.codec import dump_json, validate_as
 
 from ..common import new_asset_id
-from ..components.component_catalog import component_entry_is_installed
+from ..components.component_catalog import component_entry_has_cached_content, component_entry_is_installed
 from ..components.component_models import (
     F8ComponentDraftOriginKind,
     F8ComponentEntry,
+    F8ComponentRemoteRequestError,
     F8ComponentRecord,
     F8ComponentSourceKind,
     F8ComponentVisibility,
@@ -34,6 +35,76 @@ logger = logging.getLogger(__name__)
 
 
 class ComponentCatalogActionsMixin:
+    @staticmethod
+    def _is_missing_component_request_error(exc: Exception) -> bool:
+        return isinstance(exc, F8ComponentRemoteRequestError) and exc.status_code == 404
+
+    def _confirm_create_replacement_component(
+        self,
+        *,
+        draft_entry: F8ComponentEntry,
+        missing_component_id: str,
+    ) -> bool:
+        answer = QtWidgets.QMessageBox.question(
+            self,
+            "Linked cloud component missing",
+            (
+                f"The linked cloud component for draft '{draft_entry.record.name}' was not found.\n\n"
+                f"Missing asset: {missing_component_id}\n\n"
+                "Create a new cloud component and relink this draft to it?"
+            ),
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            QtWidgets.QMessageBox.Yes,
+        )
+        return answer == QtWidgets.QMessageBox.Yes
+
+    def _create_remote_component_for_draft(
+        self,
+        draft_entry: F8ComponentEntry,
+        *,
+        preferred_visibility: F8ComponentVisibility | None = None,
+    ) -> F8ComponentEntry | None:
+        visibility = preferred_visibility or self._choose_visibility()
+        if visibility is None:
+            return None
+        publish_asset_id = new_asset_id()
+        upload_record = validate_as(
+            F8ComponentRecord,
+            {
+                **dump_json(draft_entry.record, mode="json"),
+                "componentId": publish_asset_id,
+            },
+        )
+        source = (
+            F8ComponentSourceKind.remote_private
+            if visibility == F8ComponentVisibility.private
+            else F8ComponentSourceKind.remote_public
+        )
+        try:
+            published = self._sync_client.create_component(
+                F8ComponentEntry(
+                    record=upload_record,
+                    source=source,
+                    visibility=visibility,
+                    installed=True,
+                    hasCachedContent=True,
+                )
+            )
+        except Exception as exc:
+            show_warning(self, "Publish failed", str(exc))
+            return None
+        _ = self._draft_service_for_catalog().create_draft_from_record(
+            draft_entry.record,
+            origin_kind=draft_entry.draftOriginKind or F8ComponentDraftOriginKind.new,
+            publish_target_asset_id=publish_asset_id,
+            publish_base_remote_revision=published.remoteRevision,
+            draft_id=str(draft_entry.record.componentId),
+        )
+        self._rebuild_browser_after_draft_changed(
+            preserve_component_id=str(draft_entry.record.componentId)
+        )
+        return published
+
     def _on_list_context_menu_requested(self, pos: QtCore.QPoint) -> None:
         item = self._list.itemAt(pos)
         if item is not None:
@@ -463,12 +534,34 @@ class ComponentCatalogActionsMixin:
             if remote_entry is None:
                 try:
                     remote_entry = self._sync_client.get_component(target_asset_id)
+                except F8ComponentRemoteRequestError as exc:
+                    if self._is_missing_component_request_error(exc) and self._confirm_create_replacement_component(
+                        draft_entry=draft_entry,
+                        missing_component_id=target_asset_id,
+                    ):
+                        return self._create_remote_component_for_draft(draft_entry)
+                    show_warning(self, "Publish failed", str(exc))
+                    return None
                 except Exception as exc:
                     show_warning(self, "Publish failed", str(exc))
                     return None
-            remote_entry = self._ensure_component_hydrated(remote_entry, operation_name="Load component")
-            if remote_entry is None:
-                return None
+            elif not component_entry_has_cached_content(remote_entry):
+                try:
+                    remote_entry = self._sync_client.hydrate_component(target_asset_id)
+                except F8ComponentRemoteRequestError as exc:
+                    if self._is_missing_component_request_error(exc) and self._confirm_create_replacement_component(
+                        draft_entry=draft_entry,
+                        missing_component_id=target_asset_id,
+                    ):
+                        return self._create_remote_component_for_draft(
+                            draft_entry,
+                            preferred_visibility=remote_entry.visibility,
+                        )
+                    show_warning(self, "Publish failed", str(exc))
+                    return None
+                except Exception as exc:
+                    show_warning(self, "Publish failed", str(exc))
+                    return None
             content_changed = json.dumps(remote_entry.record.content, sort_keys=True, default=str) != json.dumps(
                 draft_entry.record.content,
                 sort_keys=True,
@@ -504,6 +597,17 @@ class ComponentCatalogActionsMixin:
                             hasCachedContent=True,
                         )
                     )
+            except F8ComponentRemoteRequestError as exc:
+                if self._is_missing_component_request_error(exc) and self._confirm_create_replacement_component(
+                    draft_entry=draft_entry,
+                    missing_component_id=target_asset_id,
+                ):
+                    return self._create_remote_component_for_draft(
+                        draft_entry,
+                        preferred_visibility=remote_entry.visibility,
+                    )
+                show_warning(self, "Publish failed", str(exc))
+                return None
             except Exception as exc:
                 show_warning(self, "Publish failed", str(exc))
                 return None
@@ -518,42 +622,7 @@ class ComponentCatalogActionsMixin:
                 preserve_component_id=str(draft_entry.record.componentId)
             )
             return published
-        visibility = self._choose_visibility()
-        if visibility is None:
-            return None
-        publish_asset_id = new_asset_id()
-        upload_record = validate_as(
-            F8ComponentRecord,
-            {
-                **dump_json(draft_entry.record, mode="json"),
-                "componentId": publish_asset_id,
-            },
-        )
-        source = F8ComponentSourceKind.remote_private if visibility == F8ComponentVisibility.private else F8ComponentSourceKind.remote_public
-        try:
-            published = self._sync_client.create_component(
-                F8ComponentEntry(
-                    record=upload_record,
-                    source=source,
-                    visibility=visibility,
-                    installed=True,
-                    hasCachedContent=True,
-                )
-            )
-        except Exception as exc:
-            show_warning(self, "Publish failed", str(exc))
-            return None
-        _ = self._draft_service_for_catalog().create_draft_from_record(
-            draft_entry.record,
-            origin_kind=draft_entry.draftOriginKind or F8ComponentDraftOriginKind.new,
-            publish_target_asset_id=publish_asset_id,
-            publish_base_remote_revision=published.remoteRevision,
-            draft_id=str(draft_entry.record.componentId),
-        )
-        self._rebuild_browser_after_draft_changed(
-            preserve_component_id=str(draft_entry.record.componentId)
-        )
-        return published
+        return self._create_remote_component_for_draft(draft_entry)
 
     def _on_visibility_clicked(self) -> None:
         selected_entry = self._selected_entry()

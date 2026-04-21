@@ -12,6 +12,7 @@ from ..variants.variant_catalog import variant_entry_has_cached_content, variant
 from ..variants.variant_models import (
     F8VariantDraftOriginKind,
     F8VariantEntry,
+    F8VariantRemoteRequestError,
     F8VariantSourceKind,
     F8VariantVisibility,
     variant_now_iso,
@@ -20,6 +21,76 @@ from ...ui.support.ui_notifications import show_info, show_warning
 
 
 class VariantCatalogSyncFlowsMixin:
+    @staticmethod
+    def _is_missing_variant_request_error(exc: Exception) -> bool:
+        return isinstance(exc, F8VariantRemoteRequestError) and exc.status_code == 404
+
+    def _confirm_create_replacement_variant(
+        self,
+        *,
+        draft_entry: F8VariantEntry,
+        missing_variant_id: str,
+    ) -> bool:
+        answer = QtWidgets.QMessageBox.question(
+            self,
+            "Linked cloud variant missing",
+            (
+                f"The linked cloud variant for draft '{draft_entry.record.name}' was not found.\n\n"
+                f"Missing asset: {missing_variant_id}\n\n"
+                "Create a new cloud variant and relink this draft to it?"
+            ),
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            QtWidgets.QMessageBox.Yes,
+        )
+        return answer == QtWidgets.QMessageBox.Yes
+
+    def _create_remote_variant_for_draft(
+        self,
+        draft_entry: F8VariantEntry,
+        *,
+        preferred_visibility: F8VariantVisibility | None = None,
+    ) -> F8VariantEntry | None:
+        visibility = preferred_visibility or self._choose_visibility()
+        if visibility is None:
+            return None
+        publish_asset_id = new_asset_id()
+        upload_record = validate_as(
+            F8VariantRecord,
+            {
+                **dump_json(draft_entry.record, mode="json"),
+                "variantId": publish_asset_id,
+            },
+        )
+        source = (
+            F8VariantSourceKind.remote_private
+            if visibility == F8VariantVisibility.private
+            else F8VariantSourceKind.remote_public
+        )
+        try:
+            published = self._sync_client.create_variant(
+                F8VariantEntry(
+                    record=upload_record,
+                    source=source,
+                    visibility=visibility,
+                    installed=True,
+                    hasCachedContent=True,
+                )
+            )
+        except Exception as exc:
+            show_warning(self, "Publish failed", str(exc))
+            return None
+        _ = self._save_variant_draft(
+            record=draft_entry.record,
+            origin_kind=draft_entry.draftOriginKind or F8VariantDraftOriginKind.new,
+            publish_target_asset_id=publish_asset_id,
+            publish_base_remote_revision=published.remoteRevision,
+            draft_id=str(draft_entry.record.variantId),
+        )
+        self._rebuild_browser_after_draft_changed(
+            preserve_variant_id=str(draft_entry.record.variantId)
+        )
+        return published
+
     def _load_selected_remote_variant(self) -> F8VariantEntry | None:
         remote_entry = self._selected_remote_entry()
         if remote_entry is None:
@@ -185,12 +256,31 @@ class VariantCatalogSyncFlowsMixin:
             if remote_entry is None:
                 try:
                     remote_entry = self._sync_client.get_variant(target_asset_id)
+                except F8VariantRemoteRequestError as exc:
+                    if self._is_missing_variant_request_error(exc) and self._confirm_create_replacement_variant(
+                        draft_entry=draft_entry,
+                        missing_variant_id=target_asset_id,
+                    ):
+                        return self._create_remote_variant_for_draft(draft_entry)
+                    show_warning(self, "Publish failed", str(exc))
+                    return None
                 except Exception as exc:
                     show_warning(self, "Publish failed", str(exc))
                     return None
             if not variant_entry_has_cached_content(remote_entry):
                 try:
                     remote_entry = self._sync_client.cache_variant_content(target_asset_id)
+                except F8VariantRemoteRequestError as exc:
+                    if self._is_missing_variant_request_error(exc) and self._confirm_create_replacement_variant(
+                        draft_entry=draft_entry,
+                        missing_variant_id=target_asset_id,
+                    ):
+                        return self._create_remote_variant_for_draft(
+                            draft_entry,
+                            preferred_visibility=remote_entry.visibility,
+                        )
+                    show_warning(self, "Publish failed", str(exc))
+                    return None
                 except Exception as exc:
                     show_warning(self, "Publish failed", str(exc))
                     return None
@@ -232,6 +322,17 @@ class VariantCatalogSyncFlowsMixin:
                             hasCachedContent=True,
                         )
                     )
+            except F8VariantRemoteRequestError as exc:
+                if self._is_missing_variant_request_error(exc) and self._confirm_create_replacement_variant(
+                    draft_entry=draft_entry,
+                    missing_variant_id=target_asset_id,
+                ):
+                    return self._create_remote_variant_for_draft(
+                        draft_entry,
+                        preferred_visibility=remote_entry.visibility,
+                    )
+                show_warning(self, "Publish failed", str(exc))
+                return None
             except Exception as exc:
                 show_warning(self, "Publish failed", str(exc))
                 return None
@@ -246,43 +347,4 @@ class VariantCatalogSyncFlowsMixin:
                 preserve_variant_id=str(draft_entry.record.variantId)
             )
             return published
-        visibility = self._choose_visibility()
-        if visibility is None:
-            return None
-        publish_asset_id = new_asset_id()
-        upload_record = validate_as(
-            F8VariantRecord,
-            {
-                **dump_json(draft_entry.record, mode="json"),
-                "variantId": publish_asset_id,
-            },
-        )
-        source = (
-            F8VariantSourceKind.remote_private
-            if visibility == F8VariantVisibility.private
-            else F8VariantSourceKind.remote_public
-        )
-        try:
-            published = self._sync_client.create_variant(
-                F8VariantEntry(
-                    record=upload_record,
-                    source=source,
-                    visibility=visibility,
-                    installed=True,
-                    hasCachedContent=True,
-                )
-            )
-        except Exception as exc:
-            show_warning(self, "Publish failed", str(exc))
-            return None
-        _ = self._save_variant_draft(
-            record=draft_entry.record,
-            origin_kind=draft_entry.draftOriginKind or F8VariantDraftOriginKind.new,
-            publish_target_asset_id=publish_asset_id,
-            publish_base_remote_revision=published.remoteRevision,
-            draft_id=str(draft_entry.record.variantId),
-        )
-        self._rebuild_browser_after_draft_changed(
-            preserve_variant_id=str(draft_entry.record.variantId)
-        )
-        return published
+        return self._create_remote_variant_for_draft(draft_entry)

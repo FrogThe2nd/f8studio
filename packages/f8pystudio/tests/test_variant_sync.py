@@ -1332,6 +1332,88 @@ def test_variant_manager_save_over_remote_offload_seeds_remote_sync_base(monkeyp
     dialog.close()
 
 
+def test_variant_publish_missing_linked_asset_can_create_replacement(monkeypatch, tmp_path: Path) -> None:
+    _ = _ensure_app()
+    settings = QtCore.QSettings(str(tmp_path / "variant-missing-linked.ini"), QtCore.QSettings.IniFormat)
+    db_path = tmp_path / "assets.db"
+    service = VariantCatalogService(
+        local_provider=LocalVariantProvider(db_path=db_path),
+        remote_provider=RemoteCacheProvider(db_path=db_path),
+    )
+    local_entry = service.upsert_local_entry(
+        F8VariantEntry(
+            record=_make_entry(variant_id="draft-linked-missing", source=F8VariantSourceKind.local).record,
+            source=F8VariantSourceKind.local,
+            isLocalDraft=True,
+            draftOriginKind=F8VariantDraftOriginKind.copy_remote,
+            draftOriginAssetId="missing-variant",
+            draftOriginRevision="r4",
+        )
+    )
+
+    dialog = VariantCatalogDialog(
+        parent=None,
+        base_node_type="svc.a.op",
+        base_node_name="Variant",
+        node_graph=None,
+    )
+    dialog._sync_client = VariantSyncClient(settings=settings, catalog_service=service)
+    monkeypatch.setattr(dialog, "_render_browser_from_state", lambda *args, **kwargs: None)
+    monkeypatch.setattr(dialog, "_choose_visibility", lambda: F8VariantVisibility.private)
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.variant_catalog_sync_flows.new_asset_id",
+        lambda: "replacement-variant",
+    )
+
+    question_calls: list[str] = []
+    create_calls: list[F8VariantEntry] = []
+
+    monkeypatch.setattr(
+        QtWidgets.QMessageBox,
+        "question",
+        lambda *_args, **_kwargs: question_calls.append("asked") or QtWidgets.QMessageBox.Yes,
+    )
+    monkeypatch.setattr(
+        dialog._sync_client,
+        "get_variant",
+        lambda _variant_id: (_ for _ in ()).throw(
+            F8VariantRemoteRequestError("Variant not found.", status_code=404)
+        ),
+    )
+
+    def _create_variant(entry: F8VariantEntry) -> F8VariantEntry:
+        create_calls.append(entry)
+        uploaded_entry = copy_model(
+            _make_entry(variant_id="replacement-variant", source=F8VariantSourceKind.remote_private),
+            update={
+                "record": copy_model(entry.record, update={"variantId": "replacement-variant"}),
+                "visibility": F8VariantVisibility.private,
+                "ownerUserId": "u1",
+                "ownerDisplayName": "User One",
+                "remoteRevision": "r8",
+                "installed": True,
+                "hasCachedContent": True,
+            },
+        )
+        return service.install_remote_entry(uploaded_entry)
+
+    monkeypatch.setattr(dialog._sync_client, "create_variant", _create_variant)
+
+    published = dialog._publish_variant_draft(local_entry)
+
+    assert published is not None
+    assert question_calls == ["asked"]
+    assert len(create_calls) == 1
+    assert create_calls[0].record.variantId == "replacement-variant"
+    saved_local = service.entry("draft-linked-missing", include_uninstalled=True)
+    assert saved_local is not None
+    assert saved_local.isLocalDraft is True
+    assert saved_local.draftOriginAssetId == "replacement-variant"
+    assert saved_local.draftOriginRevision == "r8"
+
+    dialog.close()
+
+
 def test_variant_manager_offload_keeps_draft_and_clears_remote_cache(tmp_path: Path) -> None:
     _ = _ensure_app()
     settings = QtCore.QSettings(str(tmp_path / "variant-offload.ini"), QtCore.QSettings.IniFormat)

@@ -1039,6 +1039,84 @@ def test_component_publish_metadata_only_uses_patch_meta(monkeypatch, tmp_path: 
     dialog.close()
 
 
+def test_component_publish_missing_linked_asset_can_create_replacement(monkeypatch, tmp_path: Path) -> None:
+    _ = _ensure_app()
+    settings = QtCore.QSettings(str(tmp_path / "component-missing-linked.ini"), QtCore.QSettings.IniFormat)
+    service = ComponentCatalogService(db_path=tmp_path / "assets.db")
+    local_entry = service.upsert_local_entry(
+        F8ComponentEntry(
+            record=F8ComponentRecord(
+                componentId="draft-linked-missing",
+                name="Draft Linked Missing",
+                schemaVersion="f8studio-session/1",
+                content={"schemaVersion": "f8studio-session/1", "layout": {"nodes": {}, "connections": []}},
+            ),
+            source=F8ComponentSourceKind.local,
+            isLocalDraft=True,
+            draftOriginKind=F8ComponentDraftOriginKind.copy_remote,
+            draftOriginAssetId="missing-component",
+            draftOriginRevision="r4",
+        )
+    )
+
+    dialog = ComponentCatalogDialog(parent=None, node_graph=None)
+    dialog._sync_client = ComponentSyncClient(settings=settings, catalog_service=service)
+    monkeypatch.setattr(dialog, "_render_browser_from_state", lambda *args, **kwargs: None)
+    monkeypatch.setattr(dialog, "_choose_visibility", lambda: F8ComponentVisibility.private)
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.component_catalog_actions_mixin.new_asset_id",
+        lambda: "replacement-component",
+    )
+
+    question_calls: list[str] = []
+    create_calls: list[F8ComponentEntry] = []
+
+    monkeypatch.setattr(
+        QtWidgets.QMessageBox,
+        "question",
+        lambda *_args, **_kwargs: question_calls.append("asked") or QtWidgets.QMessageBox.Yes,
+    )
+    monkeypatch.setattr(
+        dialog._sync_client,
+        "get_component",
+        lambda _component_id: (_ for _ in ()).throw(
+            F8ComponentRemoteRequestError("Component not found.", status_code=404)
+        ),
+    )
+
+    def _create_component(entry: F8ComponentEntry) -> F8ComponentEntry:
+        create_calls.append(entry)
+        uploaded_entry = copy_model(
+            entry,
+            update={
+                "source": F8ComponentSourceKind.remote_private,
+                "visibility": F8ComponentVisibility.private,
+                "ownerUserId": "u1",
+                "ownerDisplayName": "User One",
+                "remoteRevision": "r8",
+                "installed": True,
+                "hasCachedContent": True,
+            },
+        )
+        return service.install_remote_entry(uploaded_entry)
+
+    monkeypatch.setattr(dialog._sync_client, "create_component", _create_component)
+
+    published = dialog._publish_component_draft(local_entry)
+
+    assert published is not None
+    assert question_calls == ["asked"]
+    assert len(create_calls) == 1
+    assert create_calls[0].record.componentId == "replacement-component"
+    saved_local = service.entry("draft-linked-missing", include_uninstalled=True)
+    assert saved_local is not None
+    assert saved_local.isLocalDraft is True
+    assert saved_local.draftOriginAssetId == "replacement-component"
+    assert saved_local.draftOriginRevision == "r8"
+
+    dialog.close()
+
+
 def test_component_catalog_copy_to_draft_creates_disconnected_local_draft(monkeypatch, tmp_path: Path) -> None:
     _ = _ensure_app()
     settings = QtCore.QSettings(str(tmp_path / "component-copy-draft.ini"), QtCore.QSettings.IniFormat)
