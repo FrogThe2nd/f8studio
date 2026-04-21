@@ -2129,6 +2129,36 @@ def test_component_catalog_dialog_defers_initial_remote_refresh(monkeypatch, tmp
     dialog.close()
 
 
+def test_component_catalog_browser_coalesces_asset_cache_rebuilds(monkeypatch) -> None:
+    _ensure_app()
+    callbacks: list[object] = []
+
+    def _subscribe(callback):
+        callbacks.append(callback)
+        return lambda: callbacks.remove(callback) if callback in callbacks else None
+
+    monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", _subscribe)
+    monkeypatch.setattr(ComponentCatalogDialog, "_render_browser_from_state", lambda self, *_args, **_kwargs: None)
+    dialog = ComponentCatalogDialog(parent=None, node_graph=None)
+
+    rebuild_calls: list[str] = []
+    monkeypatch.setattr(
+        dialog,
+        "_rebuild_browser_from_asset_cache_preserving_selection",
+        lambda *, preserve_component_id=None: rebuild_calls.append(str(preserve_component_id or "")),
+    )
+
+    callback = callbacks[0]
+    callback()
+    callback()
+    QtTest.QTest.qWait(10)
+    QtWidgets.QApplication.processEvents()
+
+    assert rebuild_calls == [""]
+
+    dialog.close()
+
+
 def test_variant_catalog_dialog_defers_initial_remote_refresh(monkeypatch, tmp_path: Path) -> None:
     _ensure_app()
     refresh_calls: list[str] = []
@@ -2157,6 +2187,41 @@ def test_variant_catalog_dialog_defers_initial_remote_refresh(monkeypatch, tmp_p
     assert refresh_calls == []
     refresh_callbacks = [callback for callback in scheduled_callbacks if getattr(callback, "__name__", "") == "_run_initial_remote_refresh"]
     assert len(refresh_callbacks) == 1
+
+    dialog.close()
+
+
+def test_variant_catalog_browser_coalesces_asset_cache_rebuilds(monkeypatch) -> None:
+    _ensure_app()
+    callbacks: list[object] = []
+
+    def _subscribe(callback):
+        callbacks.append(callback)
+        return lambda: callbacks.remove(callback) if callback in callbacks else None
+
+    monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", _subscribe)
+    monkeypatch.setattr(VariantCatalogDialog, "_render_browser_from_state", lambda self, *_args, **_kwargs: None)
+    dialog = VariantCatalogDialog(
+        parent=None,
+        base_node_type="svc.preview.variant",
+        base_node_name="Preview Variant",
+        node_graph=None,
+    )
+
+    rebuild_calls: list[str] = []
+    monkeypatch.setattr(
+        dialog,
+        "_rebuild_browser_after_installed_state_changed",
+        lambda *, preserve_variant_id=None: rebuild_calls.append(str(preserve_variant_id or "")),
+    )
+
+    callback = callbacks[0]
+    callback()
+    callback()
+    QtTest.QTest.qWait(10)
+    QtWidgets.QApplication.processEvents()
+
+    assert rebuild_calls == [""]
 
     dialog.close()
 
@@ -2353,6 +2418,8 @@ def test_variant_dialog_ignores_variants_changed_after_list_deleted(monkeypatch)
 
     callback = callbacks[0]
     callback()
+    QtTest.QTest.qWait(10)
+    QtWidgets.QApplication.processEvents()
 
     assert callbacks == []
     assert dialog._asset_cache_changed_unsubscribe is None

@@ -667,6 +667,53 @@ def test_component_sync_client_can_cache_content_without_installing(tmp_path: Pa
         thread.join(timeout=5)
 
 
+def test_component_catalog_service_skips_noop_remote_replace_and_supports_silent_cache(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    service = ComponentCatalogService(db_path=tmp_path / "assets.db")
+    entry = F8ComponentEntry(
+        record=F8ComponentRecord(
+            componentId="public-1",
+            name="Public One",
+            description="",
+            tags=[],
+            schemaVersion="f8studio-session/1",
+            content={},
+            createdAt="2026-04-21T00:00:00+00:00",
+            updatedAt="2026-04-21T00:00:00+00:00",
+        ),
+        source=F8ComponentSourceKind.remote_public,
+        installed=False,
+        hasCachedContent=False,
+    )
+    change_events: list[str] = []
+    monkeypatch.setattr(
+        "f8pystudio.assets.components.component_catalog.emit_components_changed",
+        lambda: change_events.append("changed"),
+    )
+
+    service.replace_remote_entries([entry])
+    service.replace_remote_entries([entry])
+
+    assert change_events == ["changed"]
+
+    cached_entry = copy_model(
+        entry,
+        update={
+            "hasCachedContent": True,
+            "downloadedAt": "2026-04-21T00:01:00+00:00",
+        },
+    )
+    service.cache_remote_entry(cached_entry, emit_changed=False)
+
+    stored_entry = service.entry("public-1", include_uninstalled=True)
+    assert stored_entry is not None
+    assert stored_entry.hasCachedContent is True
+    assert stored_entry.installed is False
+    assert change_events == ["changed"]
+
+
 def test_component_sync_client_uses_env_base_url_when_settings_are_empty(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("F8_ASSET_CLOUD_BASE_URL", "http://127.0.0.1:8787/")
     settings = QtCore.QSettings(str(tmp_path / "component-sync-env.ini"), QtCore.QSettings.IniFormat)

@@ -223,9 +223,14 @@ class VariantCatalogService:
         del version_number
         return None
 
-    def replace_remote_entries(self, entries: list[F8VariantEntry]) -> None:
-        self._remote_provider.save_entries(entries)
-        emit_variants_changed()
+    def replace_remote_entries(self, entries: list[F8VariantEntry], *, emit_changed: bool = True) -> None:
+        normalized_entries = [_normalize_remote_variant_entry_for_storage(entry) for entry in entries]
+        current_entries = self._remote_provider.load_entries()
+        if current_entries == normalized_entries:
+            return
+        self._remote_provider.save_entries(normalized_entries)
+        if emit_changed:
+            emit_variants_changed()
 
     def load_remote_entries(self) -> list[F8VariantEntry]:
         return self._remote_provider.load_entries()
@@ -251,7 +256,7 @@ class VariantCatalogService:
         )
         return self._save_remote_entry(installed_entry)
 
-    def cache_remote_entry(self, entry: F8VariantEntry) -> F8VariantEntry:
+    def cache_remote_entry(self, entry: F8VariantEntry, *, emit_changed: bool = True) -> F8VariantEntry:
         downloaded_at = entry.downloadedAt or variant_now_iso()
         cached_entry = copy_model(
             entry,
@@ -261,23 +266,29 @@ class VariantCatalogService:
                 "downloadedAt": downloaded_at,
             },
         )
-        return self._save_remote_entry(cached_entry)
+        return self._save_remote_entry(cached_entry, emit_changed=emit_changed)
 
-    def _save_remote_entry(self, entry: F8VariantEntry) -> F8VariantEntry:
+    def _save_remote_entry(self, entry: F8VariantEntry, *, emit_changed: bool = True) -> F8VariantEntry:
+        normalized_entry = _normalize_remote_variant_entry_for_storage(entry)
         current = self._remote_provider.load_entries()
+        existing_entry: F8VariantEntry | None = None
         out: list[F8VariantEntry] = []
         found = False
         for current_entry in current:
             if str(current_entry.record.variantId) == str(entry.record.variantId):
-                out.append(entry)
+                existing_entry = current_entry
+                out.append(normalized_entry)
                 found = True
             else:
                 out.append(current_entry)
+        if existing_entry is not None and existing_entry == normalized_entry:
+            return normalized_entry
         if not found:
-            out.append(entry)
+            out.append(normalized_entry)
         self._remote_provider.save_entries(out)
-        emit_variants_changed()
-        return entry
+        if emit_changed:
+            emit_variants_changed()
+        return normalized_entry
 
     def uninstall_remote_entry(self, variant_id: str) -> F8VariantEntry | None:
         current = self._remote_provider.load_entries()
@@ -593,6 +604,22 @@ def variant_entry_can_hydrate(entry: F8VariantEntry) -> bool:
         F8VariantSourceKind.remote_public,
         F8VariantSourceKind.remote_private,
     }
+
+
+def _normalize_remote_variant_entry_for_storage(entry: F8VariantEntry) -> F8VariantEntry:
+    has_cached_content = variant_entry_has_cached_content(entry)
+    normalized_spec = entry.record.spec if has_cached_content else {}
+    normalized_record = copy_model(
+        entry.record,
+        update={"spec": normalized_spec},
+    )
+    return copy_model(
+        entry,
+        update={
+            "record": normalized_record,
+            "hasCachedContent": has_cached_content,
+        },
+    )
 
 
 def _compress_content(json_str: str) -> bytes:

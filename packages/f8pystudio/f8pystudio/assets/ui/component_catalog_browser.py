@@ -39,6 +39,10 @@ class ComponentCatalogBrowserMixin:
         self._queued_remote_refresh_requests: list[ComponentRemoteScopeRefreshRequest] | None = None
         self._queued_remote_refresh_error_title: str = "Refresh failed"
         self._queued_remote_refresh_log_label: str = "queued"
+        self._scheduled_asset_cache_rebuild_component_id = ""
+        self._asset_cache_rebuild_timer = QtCore.QTimer(self)
+        self._asset_cache_rebuild_timer.setSingleShot(True)
+        self._asset_cache_rebuild_timer.timeout.connect(self._flush_deferred_asset_cache_rebuild)  # type: ignore[attr-defined]
         self._asset_cache_changed_unsubscribe: Callable[[], None] | None = subscribe_components_changed(
             self._on_asset_cache_changed
         )
@@ -315,7 +319,7 @@ class ComponentCatalogBrowserMixin:
 
     def _sanitize_remote_entries_for_signed_out_user(self) -> None:
         sanitized_remote_entries: list[F8ComponentEntry] = []
-        for entry in self._sync_client._catalog_service._remote_provider.load_entries():
+        for entry in self._sync_client._catalog_service.load_remote_entries():
             if entry.source == F8ComponentSourceKind.remote_private:
                 continue
             if not entry.subscribed:
@@ -330,7 +334,10 @@ class ComponentCatalogBrowserMixin:
                     },
                 )
             )
-        self._sync_client._catalog_service._remote_provider.save_entries(sanitized_remote_entries)
+        self._sync_client._catalog_service.replace_remote_entries(
+            sanitized_remote_entries,
+            emit_changed=False,
+        )
 
     def _ensure_logged_in(self) -> bool:
         if self._sync_client.current_user() is not None and self._sync_client.current_access_token():
@@ -574,6 +581,8 @@ class ComponentCatalogBrowserMixin:
         self._active_remote_refresh_request_id += 1
         self._queued_remote_refresh_requests = None
         self._remote_refresh_worker = None
+        self._scheduled_asset_cache_rebuild_component_id = ""
+        self._asset_cache_rebuild_timer.stop()
 
     def _rebuild_browser_from_asset_cache(self) -> None:
         self._render_browser_from_state()
@@ -617,9 +626,26 @@ class ComponentCatalogBrowserMixin:
             if selected_component_id:
                 self._pending_asset_cache_rebuild_component_id = selected_component_id
             return
+        self._schedule_asset_cache_rebuild(preserve_component_id=selected_component_id)
+
+    def _schedule_asset_cache_rebuild(
+        self,
+        *,
+        preserve_component_id: str | None,
+    ) -> None:
+        normalized_component_id = str(preserve_component_id or "").strip()
+        if normalized_component_id:
+            self._scheduled_asset_cache_rebuild_component_id = normalized_component_id
+        if self._asset_cache_rebuild_timer.isActive():
+            return
+        self._asset_cache_rebuild_timer.start(0)
+
+    def _flush_deferred_asset_cache_rebuild(self) -> None:
+        preserve_component_id = str(self._scheduled_asset_cache_rebuild_component_id or "").strip()
+        self._scheduled_asset_cache_rebuild_component_id = ""
         try:
             self._rebuild_browser_from_asset_cache_preserving_selection(
-                preserve_component_id=selected_component_id
+                preserve_component_id=preserve_component_id
             )
         except RuntimeError as exc:
             if qt_runtime_error_is_object_deleted(exc):

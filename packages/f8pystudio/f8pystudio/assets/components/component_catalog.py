@@ -241,9 +241,14 @@ class ComponentCatalogService:
         del version_number
         return None
 
-    def replace_remote_entries(self, entries: list[F8ComponentEntry]) -> None:
-        self._remote_provider.save_entries(entries)
-        emit_components_changed()
+    def replace_remote_entries(self, entries: list[F8ComponentEntry], *, emit_changed: bool = True) -> None:
+        normalized_entries = [_normalize_remote_component_entry_for_storage(entry) for entry in entries]
+        current_entries = self._remote_provider.load_entries()
+        if current_entries == normalized_entries:
+            return
+        self._remote_provider.save_entries(normalized_entries)
+        if emit_changed:
+            emit_components_changed()
 
     def load_remote_entries(self) -> list[F8ComponentEntry]:
         return self._remote_provider.load_entries()
@@ -271,7 +276,7 @@ class ComponentCatalogService:
         )
         return self._save_remote_entry(installed_entry)
 
-    def cache_remote_entry(self, entry: F8ComponentEntry) -> F8ComponentEntry:
+    def cache_remote_entry(self, entry: F8ComponentEntry, *, emit_changed: bool = True) -> F8ComponentEntry:
         downloaded_at = entry.downloadedAt
         if component_entry_has_cached_content(entry) and not downloaded_at:
             downloaded_at = component_now_iso()
@@ -283,23 +288,29 @@ class ComponentCatalogService:
                 "downloadedAt": downloaded_at,
             },
         )
-        return self._save_remote_entry(cached_entry)
+        return self._save_remote_entry(cached_entry, emit_changed=emit_changed)
 
-    def _save_remote_entry(self, entry: F8ComponentEntry) -> F8ComponentEntry:
+    def _save_remote_entry(self, entry: F8ComponentEntry, *, emit_changed: bool = True) -> F8ComponentEntry:
+        normalized_entry = _normalize_remote_component_entry_for_storage(entry)
         current = self._remote_provider.load_entries()
+        existing_entry: F8ComponentEntry | None = None
         out: list[F8ComponentEntry] = []
         found = False
         for current_entry in current:
             if str(current_entry.record.componentId) == str(entry.record.componentId):
-                out.append(entry)
+                existing_entry = current_entry
+                out.append(normalized_entry)
                 found = True
             else:
                 out.append(current_entry)
+        if existing_entry is not None and existing_entry == normalized_entry:
+            return normalized_entry
         if not found:
-            out.append(entry)
+            out.append(normalized_entry)
         self._remote_provider.save_entries(out)
-        emit_components_changed()
-        return entry
+        if emit_changed:
+            emit_components_changed()
+        return normalized_entry
 
     def uninstall_remote_entry(self, component_id: str) -> F8ComponentEntry | None:
         current = self._remote_provider.load_entries()
@@ -436,3 +447,19 @@ def component_entry_can_hydrate(entry: F8ComponentEntry) -> bool:
         F8ComponentSourceKind.remote_public,
         F8ComponentSourceKind.remote_private,
     }
+
+
+def _normalize_remote_component_entry_for_storage(entry: F8ComponentEntry) -> F8ComponentEntry:
+    has_cached_content = component_entry_has_cached_content(entry)
+    normalized_content = entry.record.content if has_cached_content else {}
+    normalized_record = copy_model(
+        entry.record,
+        update={"content": normalized_content},
+    )
+    return copy_model(
+        entry,
+        update={
+            "record": normalized_record,
+            "hasCachedContent": has_cached_content,
+        },
+    )

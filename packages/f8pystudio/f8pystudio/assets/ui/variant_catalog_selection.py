@@ -472,7 +472,10 @@ class VariantCatalogSelectionMixin:
         if not isinstance(result, F8VariantEntry):
             self._preview.clear_preview("Failed to preview variant.\nUnexpected preview payload.")
             return
-        cached_entry = self._sync_client._catalog_service.cache_remote_entry(result)
+        cached_entry = self._sync_client._catalog_service.cache_remote_entry(
+            result,
+            emit_changed=False,
+        )
         logger.info(
             "Variant manager remote preview loaded variant_id=%s network=%.3fs total=%.3fs",
             variant_id,

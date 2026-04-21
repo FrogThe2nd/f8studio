@@ -390,7 +390,10 @@ class ComponentCatalogSelectionMixin:
         if not isinstance(result, F8ComponentEntry):
             self._preview.clear_preview("Failed to preview component.\nUnexpected preview payload.")
             return
-        cached_entry = self._sync_client._catalog_service.cache_remote_entry(result)
+        cached_entry = self._sync_client._catalog_service.cache_remote_entry(
+            result,
+            emit_changed=False,
+        )
         logger.info(
             "Component manager remote preview loaded component_id=%s network=%.3fs total=%.3fs",
             component_id,
