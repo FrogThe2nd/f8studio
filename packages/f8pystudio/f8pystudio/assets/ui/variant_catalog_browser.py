@@ -68,6 +68,8 @@ class VariantCatalogBrowserMixin:
         self._queued_remote_refresh_requests: list[VariantRemoteScopeRefreshRequest] | None = None
         self._queued_remote_refresh_error_title: str = "Refresh failed"
         self._queued_remote_refresh_log_label: str = "queued"
+        self._catalog_local_entries_snapshot: list[F8VariantEntry] = []
+        self._catalog_remote_entries_snapshot: list[F8VariantEntry] = []
         self._scheduled_asset_cache_rebuild_variant_id = ""
         self._asset_cache_rebuild_timer = QtCore.QTimer(self)
         self._asset_cache_rebuild_timer.setSingleShot(True)
@@ -96,6 +98,16 @@ class VariantCatalogBrowserMixin:
 
     def _render_browser_initial_state(self) -> None:
         self._rebuild_browser_from_asset_cache()
+
+    def _refresh_catalog_source_snapshot(self) -> None:
+        self._catalog_local_entries_snapshot = self._draft_service_for_catalog().list_catalog_entries()
+        self._catalog_remote_entries_snapshot = self._sync_client._catalog_service.load_remote_entries()
+
+    def _local_entries_snapshot(self) -> list[F8VariantEntry]:
+        return list(self._catalog_local_entries_snapshot)
+
+    def _remote_entries_snapshot(self) -> list[F8VariantEntry]:
+        return list(self._catalog_remote_entries_snapshot)
 
     def _rebuild_browser_after_draft_changed(
         self,
@@ -284,6 +296,7 @@ class VariantCatalogBrowserMixin:
             selected_variant_id,
         )
         self._schedule_initial_remote_refresh_if_needed()
+        self._refresh_catalog_source_snapshot()
         self._sync_node_type_combo_ui()
         self._row_states_by_variant_id = self._build_row_states()
         self._entries = self._entries_for_current_tab()
@@ -602,8 +615,8 @@ class VariantCatalogBrowserMixin:
             return
         current_tab = self._scope_tabs.currentIndex()
         normalized_query = self._current_query().lower()
-        local_entries = self._draft_service_for_catalog().list_catalog_entries()
-        remote_entries = self._sync_client._catalog_service._remote_provider.load_entries()
+        local_entries = self._local_entries_snapshot()
+        remote_entries = self._remote_entries_snapshot()
         if current_tab == self._TAB_DRAFTS:
             candidate_entries = local_entries
         elif current_tab in {self._TAB_MINE, self._TAB_COMMUNITY, self._TAB_INSTALLED}:

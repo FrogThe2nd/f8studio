@@ -125,18 +125,17 @@ class VariantCatalogEntriesMixin:
 
     def _entries_for_current_tab(self) -> list[F8VariantEntry]:
         current_tab = self._scope_tabs.currentIndex()
-        service = self._sync_client._catalog_service
         normalized_query = self._current_query().lower()
         current_base_type = self._get_current_base_node_type()
 
         local_entries = [
             entry
-            for entry in self._draft_service_for_catalog().list_catalog_entries()
+            for entry in self._local_entries_snapshot()
             if self._matches_base_type(entry, current_base_type=current_base_type)
         ]
         remote_entries = [
             entry
-            for entry in service._remote_provider.load_entries()
+            for entry in self._remote_entries_snapshot()
             if self._matches_base_type(entry, current_base_type=current_base_type)
         ]
         logger.debug(
@@ -190,16 +189,15 @@ class VariantCatalogEntriesMixin:
         ]
 
     def _build_row_states(self) -> dict[str, AssetCatalogRowState]:
-        service = self._sync_client._catalog_service
         current_base_type = self._get_current_base_node_type()
         local_entries = [
             entry
-            for entry in self._draft_service_for_catalog().list_catalog_entries()
+            for entry in self._local_entries_snapshot()
             if self._matches_base_type(entry, current_base_type=current_base_type)
         ]
         remote_entries = [
             entry
-            for entry in service._remote_provider.load_entries()
+            for entry in self._remote_entries_snapshot()
             if self._matches_base_type(entry, current_base_type=current_base_type)
         ]
         local_by_id = {

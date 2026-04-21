@@ -2159,6 +2159,37 @@ def test_component_catalog_browser_coalesces_asset_cache_rebuilds(monkeypatch) -
     dialog.close()
 
 
+def test_component_catalog_render_reuses_single_source_snapshot(monkeypatch) -> None:
+    _ensure_app()
+    monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None))
+    original_render_browser_from_state = ComponentCatalogDialog._render_browser_from_state
+    monkeypatch.setattr(ComponentCatalogDialog, "_render_browser_from_state", lambda self, *_args, **_kwargs: None)
+    dialog = ComponentCatalogDialog(parent=None, node_graph=None)
+    monkeypatch.setattr(ComponentCatalogDialog, "_render_browser_from_state", original_render_browser_from_state)
+
+    local_calls: list[str] = []
+    remote_calls: list[str] = []
+    original_list_catalog_entries = dialog._draft_service_for_catalog().list_catalog_entries
+    original_load_remote_entries = dialog._sync_client._catalog_service.load_remote_entries
+    monkeypatch.setattr(
+        dialog._draft_service_for_catalog(),
+        "list_catalog_entries",
+        lambda: local_calls.append("local") or original_list_catalog_entries(),
+    )
+    monkeypatch.setattr(
+        dialog._sync_client._catalog_service,
+        "load_remote_entries",
+        lambda: remote_calls.append("remote") or original_load_remote_entries(),
+    )
+
+    dialog._render_browser_from_state()
+
+    assert local_calls == ["local"]
+    assert remote_calls == ["remote"]
+
+    dialog.close()
+
+
 def test_variant_catalog_dialog_defers_initial_remote_refresh(monkeypatch, tmp_path: Path) -> None:
     _ensure_app()
     refresh_calls: list[str] = []
@@ -2187,6 +2218,42 @@ def test_variant_catalog_dialog_defers_initial_remote_refresh(monkeypatch, tmp_p
     assert refresh_calls == []
     refresh_callbacks = [callback for callback in scheduled_callbacks if getattr(callback, "__name__", "") == "_run_initial_remote_refresh"]
     assert len(refresh_callbacks) == 1
+
+    dialog.close()
+
+
+def test_variant_catalog_render_reuses_single_source_snapshot(monkeypatch) -> None:
+    _ensure_app()
+    monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", lambda _cb: (lambda: None))
+    original_render_browser_from_state = VariantCatalogDialog._render_browser_from_state
+    monkeypatch.setattr(VariantCatalogDialog, "_render_browser_from_state", lambda self, *_args, **_kwargs: None)
+    dialog = VariantCatalogDialog(
+        parent=None,
+        base_node_type="svc.preview.variant",
+        base_node_name="Preview Variant",
+        node_graph=None,
+    )
+    monkeypatch.setattr(VariantCatalogDialog, "_render_browser_from_state", original_render_browser_from_state)
+
+    local_calls: list[str] = []
+    remote_calls: list[str] = []
+    original_list_catalog_entries = dialog._draft_service_for_catalog().list_catalog_entries
+    original_load_remote_entries = dialog._sync_client._catalog_service.load_remote_entries
+    monkeypatch.setattr(
+        dialog._draft_service_for_catalog(),
+        "list_catalog_entries",
+        lambda: local_calls.append("local") or original_list_catalog_entries(),
+    )
+    monkeypatch.setattr(
+        dialog._sync_client._catalog_service,
+        "load_remote_entries",
+        lambda: remote_calls.append("remote") or original_load_remote_entries(),
+    )
+
+    dialog._render_browser_from_state()
+
+    assert local_calls == ["local"]
+    assert remote_calls == ["remote"]
 
     dialog.close()
 

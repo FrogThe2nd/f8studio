@@ -39,6 +39,8 @@ class ComponentCatalogBrowserMixin:
         self._queued_remote_refresh_requests: list[ComponentRemoteScopeRefreshRequest] | None = None
         self._queued_remote_refresh_error_title: str = "Refresh failed"
         self._queued_remote_refresh_log_label: str = "queued"
+        self._catalog_local_entries_snapshot: list[F8ComponentEntry] = []
+        self._catalog_remote_entries_snapshot: list[F8ComponentEntry] = []
         self._scheduled_asset_cache_rebuild_component_id = ""
         self._asset_cache_rebuild_timer = QtCore.QTimer(self)
         self._asset_cache_rebuild_timer.setSingleShot(True)
@@ -190,6 +192,16 @@ class ComponentCatalogBrowserMixin:
 
     def _render_browser_initial_state(self) -> None:
         self._rebuild_browser_from_asset_cache()
+
+    def _refresh_catalog_source_snapshot(self) -> None:
+        self._catalog_local_entries_snapshot = self._draft_service_for_catalog().list_catalog_entries()
+        self._catalog_remote_entries_snapshot = self._sync_client._catalog_service.load_remote_entries()
+
+    def _local_entries_snapshot(self) -> list[F8ComponentEntry]:
+        return list(self._catalog_local_entries_snapshot)
+
+    def _remote_entries_snapshot(self) -> list[F8ComponentEntry]:
+        return list(self._catalog_remote_entries_snapshot)
 
     def _rebuild_browser_after_draft_changed(
         self,
@@ -665,6 +677,7 @@ class ComponentCatalogBrowserMixin:
             self._selected_component_id() if preserve_component_id is None else preserve_component_id or ""
         ).strip()
         self._schedule_initial_remote_refresh_if_needed()
+        self._refresh_catalog_source_snapshot()
         self._row_states_by_component_id = self._build_row_states()
         self._entries = self._entries_for_current_tab()
         logger.debug(

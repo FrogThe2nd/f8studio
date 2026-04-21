@@ -13,10 +13,9 @@ class ComponentCatalogEntriesMixin:
 
     def _entries_for_current_tab(self) -> list[F8ComponentEntry]:
         current_tab = self._scope_tabs.currentIndex()
-        service = self._sync_client._catalog_service
         normalized_query = self._current_query().lower()
-        draft_entries = self._draft_service_for_catalog().list_catalog_entries()
-        remote_entries = service._remote_provider.load_entries()
+        draft_entries = self._local_entries_snapshot()
+        remote_entries = self._remote_entries_snapshot()
         if current_tab == self._TAB_DRAFTS:
             return sorted(
                 [
@@ -87,9 +86,8 @@ class ComponentCatalogEntriesMixin:
         return True
 
     def _build_row_states(self) -> dict[str, AssetCatalogRowState]:
-        service = self._sync_client._catalog_service
-        local_entries = self._draft_service_for_catalog().list_catalog_entries()
-        remote_entries = service._remote_provider.load_entries()
+        local_entries = self._local_entries_snapshot()
+        remote_entries = self._remote_entries_snapshot()
         local_by_id = {
             str(entry.record.componentId): entry
             for entry in local_entries
