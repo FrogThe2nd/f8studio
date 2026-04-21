@@ -27,6 +27,13 @@ class _VariantActionButtonState:
     icon_token: StudioIcon
 
 
+@dataclass(frozen=True, slots=True)
+class _ResolvedVariantSelection:
+    selected_entry: F8VariantEntry | None
+    local_entry: F8VariantEntry | None
+    remote_entry: F8VariantEntry | None
+
+
 class VariantCatalogSelectionMixin:
     _TAB_DRAFTS: int
     _TAB_MINE: int
@@ -128,24 +135,33 @@ class VariantCatalogSelectionMixin:
             return None
         return self._sync_client._catalog_service.remote_entry(normalized_variant_id)
 
-    def _selected_action_entries(self) -> tuple[F8VariantEntry | None, F8VariantEntry | None, F8VariantEntry | None]:
-        active_entry = self._selected_entry()
+    def _resolve_action_entries(
+        self,
+        selected_entry_override: F8VariantEntry | None = None,
+    ) -> _ResolvedVariantSelection:
+        active_entry = selected_entry_override
         if active_entry is None:
-            return None, None, None
+            active_entry = self._selected_entry()
+        if active_entry is None:
+            return _ResolvedVariantSelection(None, None, None)
         variant_id = str(active_entry.record.variantId or "").strip()
         local_entry = self._local_entry_for_variant_id(variant_id)
         if local_entry is None and active_entry.source == F8VariantSourceKind.local:
             local_entry = active_entry
-        if local_entry is None:
-            fallback_local_entry = self._selected_local_entry()
-            if fallback_local_entry is not None and str(fallback_local_entry.record.variantId or "").strip() == variant_id:
-                local_entry = fallback_local_entry
         remote_entry = self._remote_entry_for_variant_id(variant_id)
-        if remote_entry is None:
-            fallback_remote_entry = self._selected_remote_entry()
-            if fallback_remote_entry is not None and str(fallback_remote_entry.record.variantId or "").strip() == variant_id:
-                remote_entry = fallback_remote_entry
-        return active_entry, local_entry, remote_entry
+        return _ResolvedVariantSelection(
+            selected_entry=active_entry,
+            local_entry=local_entry,
+            remote_entry=remote_entry,
+        )
+
+    def _selected_action_entries(self) -> tuple[F8VariantEntry | None, F8VariantEntry | None, F8VariantEntry | None]:
+        resolved_entries = self._resolve_action_entries()
+        return (
+            resolved_entries.selected_entry,
+            resolved_entries.local_entry,
+            resolved_entries.remote_entry,
+        )
 
     @staticmethod
     def _set_button_state(
@@ -263,15 +279,16 @@ class VariantCatalogSelectionMixin:
         return f"Linked local draft exists.\nCloud asset: {asset_id}"
 
     def _refresh_action_buttons(self, selected_entry_override: F8VariantEntry | None) -> None:
-        selected, local_entry, remote_entry = self._selected_action_entries()
-        if selected_entry_override is not None:
-            selected = selected_entry_override
-            variant_id = str(selected_entry_override.record.variantId or "").strip()
-            local_entry = self._local_entry_for_variant_id(variant_id)
-            if local_entry is None and selected_entry_override.source == F8VariantSourceKind.local:
-                local_entry = selected_entry_override
-            remote_entry = self._remote_entry_for_variant_id(variant_id)
+        resolved_selection = self._resolve_action_entries(selected_entry_override)
+        self._refresh_action_buttons_for_resolved_selection(resolved_selection)
 
+    def _refresh_action_buttons_for_resolved_selection(
+        self,
+        resolved_selection: _ResolvedVariantSelection,
+    ) -> None:
+        selected = resolved_selection.selected_entry
+        local_entry = resolved_selection.local_entry
+        remote_entry = resolved_selection.remote_entry
         current_tab = self._scope_tabs.currentIndex()
         has_selection = selected is not None
         can_load, can_offload = self._load_action_availability(local_entry=local_entry, remote_entry=remote_entry)
@@ -395,14 +412,16 @@ class VariantCatalogSelectionMixin:
             self._refresh_action_buttons(None)
             return ""
         pending_reload_variant_id = str(selected_entry.record.variantId or "").strip()
+        resolved_selection = self._resolve_action_entries(selected_entry)
         preview_entry = self._selected_preview_entry(
             selected_entry=selected_entry,
             variant_id=pending_reload_variant_id,
+            local_entry=resolved_selection.local_entry,
         )
         preview_signature = self._preview_signature_for_entry(preview_entry)
         if preview_signature != self._current_preview_signature:
             self._show_selection_preview(preview_entry=preview_entry)
-        self._refresh_action_buttons(selected_entry)
+        self._refresh_action_buttons_for_resolved_selection(resolved_selection)
         return pending_reload_variant_id
 
     def _selected_preview_entry(
@@ -410,8 +429,9 @@ class VariantCatalogSelectionMixin:
         *,
         selected_entry: F8VariantEntry,
         variant_id: str,
+        local_entry: F8VariantEntry | None,
     ) -> F8VariantEntry:
-        local_entry = self._local_entry_for_variant_id(variant_id)
+        del variant_id
         if self._scope_tabs.currentIndex() != self._TAB_DRAFTS or local_entry is None:
             return selected_entry
         return local_entry

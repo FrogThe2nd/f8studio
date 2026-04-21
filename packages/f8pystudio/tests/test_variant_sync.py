@@ -2179,6 +2179,59 @@ def test_variant_dialog_skips_redundant_action_button_updates_for_same_selection
     dialog.close()
 
 
+def test_variant_dialog_selection_change_resolves_action_entries_once(monkeypatch, tmp_path: Path) -> None:
+    _ = _ensure_app()
+    settings = QtCore.QSettings(str(tmp_path / "variant-selection-resolution.ini"), QtCore.QSettings.IniFormat)
+    db_path = tmp_path / "assets.db"
+    service = VariantCatalogService(
+        local_provider=LocalVariantProvider(db_path=db_path),
+        remote_provider=RemoteCacheProvider(db_path=db_path),
+    )
+    monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(VariantCatalogDialog, "_render_browser_from_state", lambda self, *_args, **_kwargs: None)
+
+    entry = service.upsert_local_entry(_make_entry(variant_id="variant-resolution-state", source=F8VariantSourceKind.local))
+
+    dialog = VariantCatalogDialog(
+        parent=None,
+        base_node_type="svc.a.op",
+        base_node_name="Variant",
+        node_graph=None,
+    )
+    dialog._sync_client = VariantSyncClient(settings=settings, catalog_service=service)
+    dialog._entries = [entry]
+    dialog._scope_tabs.setCurrentIndex(dialog._TAB_DRAFTS)
+    item = QtWidgets.QListWidgetItem()
+    item.setData(QtCore.Qt.ItemDataRole.UserRole, entry.record.variantId)
+    dialog._list.addItem(item)
+    dialog._list.setCurrentRow(0)
+
+    original_local_entry_for_variant_id = dialog._local_entry_for_variant_id
+    original_remote_entry_for_variant_id = dialog._remote_entry_for_variant_id
+    local_lookup_calls: list[str] = []
+    remote_lookup_calls: list[str] = []
+
+    def _record_local_lookup(variant_id: str):
+        local_lookup_calls.append(str(variant_id))
+        return original_local_entry_for_variant_id(variant_id)
+
+    def _record_remote_lookup(variant_id: str):
+        remote_lookup_calls.append(str(variant_id))
+        return original_remote_entry_for_variant_id(variant_id)
+
+    monkeypatch.setattr(dialog, "_local_entry_for_variant_id", _record_local_lookup)
+    monkeypatch.setattr(dialog, "_remote_entry_for_variant_id", _record_remote_lookup)
+
+    dialog._current_preview_signature = None
+    dialog._current_action_button_signature = None
+    dialog._refresh_selected_preview()
+
+    assert local_lookup_calls == ["variant-resolution-state"]
+    assert remote_lookup_calls == ["variant-resolution-state"]
+
+    dialog.close()
+
+
 def test_graph_variant_actions_name_conflicts_only_use_local_drafts(monkeypatch) -> None:
     draft_entry = copy_model(
         _make_entry(variant_id="graph-draft", source=F8VariantSourceKind.local),

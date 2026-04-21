@@ -1918,6 +1918,66 @@ def test_component_dialog_skips_redundant_action_button_updates_for_same_selecti
     dialog.close()
 
 
+def test_component_dialog_selection_change_resolves_action_entries_once(monkeypatch, tmp_path: Path) -> None:
+    _ = _ensure_app()
+    settings = QtCore.QSettings(str(tmp_path / "component-selection-resolution.ini"), QtCore.QSettings.IniFormat)
+    service = ComponentCatalogService(db_path=tmp_path / "assets.db")
+    monkeypatch.setattr(ComponentCatalogDialog, "_refresh_remote_catalog_if_needed", lambda self: None)
+
+    entry = service.upsert_local_entry(
+        F8ComponentEntry(
+            record=F8ComponentRecord(
+                componentId="local-resolution-state",
+                name="Local Resolution State",
+                description="",
+                schemaVersion="f8studio-session/1",
+                content={
+                    "schemaVersion": "f8studio-session/1",
+                    "layout": {"nodes": {}, "connections": []},
+                },
+                createdAt="2026-04-21T00:00:00+00:00",
+                updatedAt="2026-04-21T00:00:00+00:00",
+            ),
+            source=F8ComponentSourceKind.local,
+            installed=True,
+            hasCachedContent=True,
+        )
+    )
+
+    dialog = ComponentCatalogDialog(parent=None, node_graph=None)
+    dialog._sync_client = ComponentSyncClient(settings=settings, catalog_service=service)
+    dialog._entries = [entry]
+    item = QtWidgets.QListWidgetItem()
+    item.setData(QtCore.Qt.ItemDataRole.UserRole, entry.record.componentId)
+    dialog._list.addItem(item)
+    dialog._list.setCurrentRow(0)
+
+    original_local_entry_for_component_id = dialog._local_entry_for_component_id
+    original_remote_entry_for_component_id = dialog._remote_entry_for_component_id
+    local_lookup_calls: list[str] = []
+    remote_lookup_calls: list[str] = []
+
+    def _record_local_lookup(component_id: str):
+        local_lookup_calls.append(str(component_id))
+        return original_local_entry_for_component_id(component_id)
+
+    def _record_remote_lookup(component_id: str):
+        remote_lookup_calls.append(str(component_id))
+        return original_remote_entry_for_component_id(component_id)
+
+    monkeypatch.setattr(dialog, "_local_entry_for_component_id", _record_local_lookup)
+    monkeypatch.setattr(dialog, "_remote_entry_for_component_id", _record_remote_lookup)
+
+    dialog._current_preview_signature = None
+    dialog._current_action_button_signature = None
+    dialog._refresh_selected_preview()
+
+    assert local_lookup_calls == ["local-resolution-state"]
+    assert remote_lookup_calls == ["local-resolution-state"]
+
+    dialog.close()
+
+
 def test_graph_component_actions_overwrite_choices_only_include_drafts(monkeypatch) -> None:
     _ensure_app()
     captured_choice_ids: list[str] = []

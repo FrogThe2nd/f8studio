@@ -34,6 +34,13 @@ class _ComponentActionButtonState:
     icon_token: StudioIcon
 
 
+@dataclass(frozen=True, slots=True)
+class _ResolvedComponentSelection:
+    selected_entry: F8ComponentEntry | None
+    local_entry: F8ComponentEntry | None
+    remote_entry: F8ComponentEntry | None
+
+
 class ComponentCatalogSelectionMixin:
     LINKED_DRAFT_LABEL: str
 
@@ -102,18 +109,32 @@ class ComponentCatalogSelectionMixin:
                 return entry
         return None
 
-    def _selected_action_entries(self) -> tuple[F8ComponentEntry | None, F8ComponentEntry | None, F8ComponentEntry | None]:
-        active_entry = self._selected_entry()
+    def _resolve_action_entries(
+        self,
+        selected_entry_override: F8ComponentEntry | None = None,
+    ) -> _ResolvedComponentSelection:
+        active_entry = selected_entry_override
         if active_entry is None:
-            return None, None, None
+            active_entry = self._selected_entry()
+        if active_entry is None:
+            return _ResolvedComponentSelection(None, None, None)
         component_id = str(active_entry.record.componentId or "").strip()
         local_entry = self._local_entry_for_component_id(component_id)
         if local_entry is None and active_entry.source == F8ComponentSourceKind.local:
             local_entry = active_entry
+        remote_entry = self._remote_entry_for_component_id(component_id)
+        return _ResolvedComponentSelection(
+            selected_entry=active_entry,
+            local_entry=local_entry,
+            remote_entry=remote_entry,
+        )
+
+    def _selected_action_entries(self) -> tuple[F8ComponentEntry | None, F8ComponentEntry | None, F8ComponentEntry | None]:
+        resolved_entries = self._resolve_action_entries()
         return (
-            active_entry,
-            local_entry,
-            self._remote_entry_for_component_id(component_id),
+            resolved_entries.selected_entry,
+            resolved_entries.local_entry,
+            resolved_entries.remote_entry,
         )
 
     def _linked_draft_reference_text(self, entry: F8ComponentEntry) -> str | None:
@@ -171,15 +192,16 @@ class ComponentCatalogSelectionMixin:
         self,
         selected_entry_override: F8ComponentEntry | None,
     ) -> None:
-        selected, local_entry, remote_entry = self._selected_action_entries()
-        if selected_entry_override is not None:
-            selected = selected_entry_override
-            component_id = str(selected_entry_override.record.componentId or "").strip()
-            local_entry = self._local_entry_for_component_id(component_id)
-            if local_entry is None and selected_entry_override.source == F8ComponentSourceKind.local:
-                local_entry = selected_entry_override
-            remote_entry = self._remote_entry_for_component_id(component_id)
+        resolved_selection = self._resolve_action_entries(selected_entry_override)
+        self._refresh_action_buttons_for_resolved_selection(resolved_selection)
 
+    def _refresh_action_buttons_for_resolved_selection(
+        self,
+        resolved_selection: _ResolvedComponentSelection,
+    ) -> None:
+        selected = resolved_selection.selected_entry
+        local_entry = resolved_selection.local_entry
+        remote_entry = resolved_selection.remote_entry
         current_tab = self._scope_tabs.currentIndex()
         has_selection = selected is not None
         can_load, can_offload = self._load_action_availability(local_entry=local_entry, remote_entry=remote_entry)
@@ -308,10 +330,11 @@ class ComponentCatalogSelectionMixin:
             return ""
 
         pending_reload_component_id = str(selected_entry.record.componentId or "").strip()
+        resolved_selection = self._resolve_action_entries(selected_entry)
         preview_signature = self._preview_signature_for_entry(selected_entry)
         if preview_signature != self._current_preview_signature:
             self._show_selection_preview(selected_entry=selected_entry)
-        self._refresh_action_buttons(selected_entry)
+        self._refresh_action_buttons_for_resolved_selection(resolved_selection)
         return pending_reload_component_id
 
     def _show_selection_preview(self, *, selected_entry: F8ComponentEntry) -> None:
