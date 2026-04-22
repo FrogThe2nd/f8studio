@@ -40,6 +40,25 @@ logger = logging.getLogger(__name__)
 
 class ComponentCatalogActionsMixin:
     @staticmethod
+    def _component_publish_change_flags(
+        *,
+        remote_entry: F8ComponentEntry,
+        draft_entry: F8ComponentEntry,
+    ) -> tuple[bool, bool]:
+        content_changed = json.dumps(remote_entry.record.content, sort_keys=True, default=str) != json.dumps(
+            draft_entry.record.content,
+            sort_keys=True,
+            default=str,
+        )
+        schema_changed = str(remote_entry.record.schemaVersion) != str(draft_entry.record.schemaVersion)
+        name_changed = str(remote_entry.record.name) != str(draft_entry.record.name)
+        description_changed = str(remote_entry.record.description) != str(draft_entry.record.description)
+        tags_changed = list(remote_entry.record.tags or []) != list(draft_entry.record.tags or [])
+        has_structural_changes = content_changed or schema_changed
+        has_metadata_changes = name_changed or description_changed or tags_changed
+        return has_structural_changes, has_metadata_changes
+
+    @staticmethod
     def _is_missing_component_request_error(exc: Exception) -> bool:
         return isinstance(exc, F8ComponentRemoteRequestError) and exc.status_code == 404
 
@@ -580,17 +599,15 @@ class ComponentCatalogActionsMixin:
                 except Exception as exc:
                     show_warning(self, "Publish failed", str(exc))
                     return None
-            content_changed = json.dumps(remote_entry.record.content, sort_keys=True, default=str) != json.dumps(
-                draft_entry.record.content,
-                sort_keys=True,
-                default=str,
+            has_structural_changes, has_metadata_changes = self._component_publish_change_flags(
+                remote_entry=remote_entry,
+                draft_entry=draft_entry,
             )
-            schema_changed = str(remote_entry.record.schemaVersion) != str(draft_entry.record.schemaVersion)
-            name_changed = str(remote_entry.record.name) != str(draft_entry.record.name)
-            description_changed = str(remote_entry.record.description) != str(draft_entry.record.description)
-            tags_changed = list(remote_entry.record.tags or []) != list(draft_entry.record.tags or [])
+            if not has_structural_changes and not has_metadata_changes:
+                show_info(self, "No changes", f"No changes to publish for:\n{draft_entry.record.name}")
+                return None
             try:
-                if not content_changed and not schema_changed and (name_changed or description_changed or tags_changed):
+                if not has_structural_changes and has_metadata_changes:
                     published = self._sync_client.patch_component_meta(
                         target_asset_id,
                         name=str(draft_entry.record.name),

@@ -1131,6 +1131,7 @@ test('variant asset lifecycle works with Better Auth cookie sessions', async (t)
   });
   assert.equal(updated.status, 200);
   assert.equal(updated.json.versionNumber, 2);
+  assert.equal(updated.json.createdAt, created.json.createdAt);
   assert.equal(updated.json.visibility, 'public');
 
   const publicListAfter = await jsonRequest(app, env, '/v1/variants?owner=public&q=alice');
@@ -1208,6 +1209,7 @@ test('variant asset lifecycle works with Better Auth cookie sessions', async (t)
   assert.equal(oldVersion.status, 200);
   assert.equal(oldVersion.json.variantId, 'alice-variant');
   assert.equal(oldVersion.json.hasContent, true);
+  assert.equal(oldVersion.json.createdAt, created.json.createdAt);
 
   const versionNoteUpdated = await jsonRequest(app, env, '/v1/variants/alice-variant/versions/1', {
     method: 'PATCH',
@@ -1232,6 +1234,8 @@ test('variant asset lifecycle works with Better Auth cookie sessions', async (t)
   assert.equal(oldVersionContent.status, 200);
   assert.equal(oldVersionContent.json.record.name, 'Alice Public');
   assert.equal(oldVersionContent.json.record.spec.label, 'Alice Private');
+  assert.equal(oldVersionContent.json.record.createdAt, created.json.createdAt);
+  assert.equal(oldVersionContent.json.record.updatedAt, history.json.versions[1].createdAt);
 
   const conflict = await jsonRequest(app, env, '/v1/variants/alice-variant', {
     method: 'PUT',
@@ -1514,9 +1518,12 @@ test('component asset lifecycle validates session envelope and visibility rules'
   assert.equal(oldVersion.status, 200);
   assert.equal(oldVersion.json.componentId, 'component-a');
   assert.equal(oldVersion.json.hasContent, true);
+  assert.equal(oldVersion.json.createdAt, created.json.createdAt);
   const oldVersionContent = await jsonRequest(app, env, '/v1/components/component-a/versions/1/content', { cookie: bob.cookie });
   assert.equal(oldVersionContent.status, 200);
   assert.equal(oldVersionContent.json.record.name, 'Published Session Metadata');
+  assert.equal(oldVersionContent.json.record.createdAt, created.json.createdAt);
+  assert.equal(oldVersionContent.json.record.updatedAt, history1.json.versions[0].createdAt);
 
   const forbidden = await jsonRequest(app, env, '/v1/components/component-a', {
     method: 'PUT',

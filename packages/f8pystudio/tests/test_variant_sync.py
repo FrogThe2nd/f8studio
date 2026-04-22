@@ -1875,6 +1875,101 @@ def test_variant_publish_missing_linked_asset_can_create_replacement(monkeypatch
     dialog.close()
 
 
+def test_variant_publish_no_diff_ignores_timestamp_only_changes(monkeypatch, tmp_path: Path) -> None:
+    _ = _ensure_app()
+    settings = QtCore.QSettings(str(tmp_path / "variant-sync-no-diff.ini"), QtCore.QSettings.IniFormat)
+    db_path = tmp_path / "assets.db"
+    service = VariantCatalogService(
+        local_provider=LocalVariantProvider(db_path=db_path),
+        remote_provider=RemoteCacheProvider(db_path=db_path),
+    )
+    remote_record = copy_model(
+        _make_entry(
+            variant_id="owned-no-diff",
+            source=F8VariantSourceKind.remote_private,
+            installed=False,
+            remote_version_number=4,
+        ).record,
+        update={
+            "createdAt": "2026-04-21T00:00:00+00:00",
+            "updatedAt": "2026-04-21T00:00:00+00:00",
+        },
+    )
+    remote_entry = copy_model(
+        _make_entry(
+            variant_id="owned-no-diff",
+            source=F8VariantSourceKind.remote_private,
+            installed=False,
+            remote_version_number=4,
+        ),
+        update={
+            "record": remote_record,
+            "visibility": F8VariantVisibility.private,
+            "ownerUserId": "u1",
+            "ownerDisplayName": "User One",
+        },
+    )
+    service.replace_remote_entries([remote_entry])
+    local_record = copy_model(
+        remote_record,
+        update={
+            "variantId": "linked-no-diff",
+            "createdAt": "2026-04-22T00:00:00+00:00",
+            "updatedAt": "2026-04-22T00:00:00+00:00",
+        },
+    )
+
+    dialog = VariantCatalogDialog(
+        parent=None,
+        base_node_type="svc.a.op",
+        base_node_name="Variant",
+        node_graph=None,
+    )
+    dialog._sync_client = VariantSyncClient(settings=settings, catalog_service=service)
+    monkeypatch.setattr(
+        dialog._sync_client,
+        "current_user",
+        lambda: F8VariantRemoteUser(userId="u1", name="User One", email="user-one@example.com"),
+    )
+    monkeypatch.setattr(dialog, "_render_browser_from_state", lambda *args, **kwargs: None)
+
+    saved_entry = dialog._save_variant_record(record=local_record, overwrite_entry=remote_entry)
+    patch_calls: list[tuple[str, str, str, list[str]]] = []
+    update_calls: list[tuple[F8VariantEntry, str | None]] = []
+    info_messages: list[tuple[str, str]] = []
+
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.variant_catalog_sync_flows.show_info",
+        lambda _parent, title, message: info_messages.append((str(title), str(message))),
+    )
+    monkeypatch.setattr(
+        dialog._sync_client,
+        "cache_variant_content",
+        lambda _variant_id: copy_model(remote_entry, update={"hasCachedContent": True}),
+    )
+    monkeypatch.setattr(
+        dialog._sync_client,
+        "patch_variant_meta",
+        lambda variant_id, *, name, description, tags: patch_calls.append(
+            (str(variant_id), str(name), str(description), list(tags))
+        ) or remote_entry,
+    )
+    monkeypatch.setattr(
+        dialog._sync_client,
+        "update_variant",
+        lambda entry, *, change_summary=None: update_calls.append((entry, change_summary)) or entry,
+    )
+
+    published = dialog._publish_variant_draft(saved_entry)
+
+    assert published is None
+    assert patch_calls == []
+    assert update_calls == []
+    assert info_messages == [("No changes", f"No changes to publish for:\n{saved_entry.record.name}")]
+
+    dialog.close()
+
+
 def test_variant_manager_offload_keeps_draft_and_clears_remote_cache(tmp_path: Path) -> None:
     _ = _ensure_app()
     settings = QtCore.QSettings(str(tmp_path / "variant-offload.ini"), QtCore.QSettings.IniFormat)

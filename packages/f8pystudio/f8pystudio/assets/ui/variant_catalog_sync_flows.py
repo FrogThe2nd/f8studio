@@ -23,6 +23,34 @@ from .project_asset_dialogs import prompt_version_notes
 
 class VariantCatalogSyncFlowsMixin:
     @staticmethod
+    def _variant_publish_change_flags(
+        *,
+        remote_entry: F8VariantEntry,
+        draft_entry: F8VariantEntry,
+    ) -> tuple[bool, bool]:
+        spec_changed = json.dumps(remote_entry.record.spec, sort_keys=True, default=str) != json.dumps(
+            draft_entry.record.spec,
+            sort_keys=True,
+            default=str,
+        )
+        kind_changed = remote_entry.record.kind != draft_entry.record.kind
+        base_changed = str(remote_entry.record.baseNodeType) != str(draft_entry.record.baseNodeType)
+        service_changed = str(remote_entry.record.serviceClass) != str(draft_entry.record.serviceClass)
+        operator_changed = str(remote_entry.record.operatorClass or "") != str(draft_entry.record.operatorClass or "")
+        name_changed = str(remote_entry.record.name) != str(draft_entry.record.name)
+        description_changed = str(remote_entry.record.description) != str(draft_entry.record.description)
+        tags_changed = list(remote_entry.record.tags or []) != list(draft_entry.record.tags or [])
+        has_structural_changes = (
+            spec_changed
+            or kind_changed
+            or base_changed
+            or service_changed
+            or operator_changed
+        )
+        has_metadata_changes = name_changed or description_changed or tags_changed
+        return has_structural_changes, has_metadata_changes
+
+    @staticmethod
     def _is_missing_variant_request_error(exc: Exception) -> bool:
         return isinstance(exc, F8VariantRemoteRequestError) and exc.status_code == 404
 
@@ -296,20 +324,15 @@ class VariantCatalogSyncFlowsMixin:
                 except Exception as exc:
                     show_warning(self, "Publish failed", str(exc))
                     return None
-            content_changed = json.dumps(remote_entry.record.spec, sort_keys=True, default=str) != json.dumps(
-                draft_entry.record.spec,
-                sort_keys=True,
-                default=str,
+            has_structural_changes, has_metadata_changes = self._variant_publish_change_flags(
+                remote_entry=remote_entry,
+                draft_entry=draft_entry,
             )
-            kind_changed = remote_entry.record.kind != draft_entry.record.kind
-            base_changed = str(remote_entry.record.baseNodeType) != str(draft_entry.record.baseNodeType)
-            service_changed = str(remote_entry.record.serviceClass) != str(draft_entry.record.serviceClass)
-            operator_changed = str(remote_entry.record.operatorClass or "") != str(draft_entry.record.operatorClass or "")
-            name_changed = str(remote_entry.record.name) != str(draft_entry.record.name)
-            description_changed = str(remote_entry.record.description) != str(draft_entry.record.description)
-            tags_changed = list(remote_entry.record.tags or []) != list(draft_entry.record.tags or [])
+            if not has_structural_changes and not has_metadata_changes:
+                show_info(self, "No changes", f"No changes to publish for:\n{draft_entry.record.name}")
+                return None
             try:
-                if not content_changed and not kind_changed and not base_changed and not service_changed and not operator_changed and (name_changed or description_changed or tags_changed):
+                if not has_structural_changes and has_metadata_changes:
                     published = self._sync_client.patch_variant_meta(
                         target_asset_id,
                         name=str(draft_entry.record.name),

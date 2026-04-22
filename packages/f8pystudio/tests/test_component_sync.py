@@ -1475,6 +1475,87 @@ def test_component_publish_metadata_only_uses_patch_meta(monkeypatch, tmp_path: 
     dialog.close()
 
 
+def test_component_publish_no_diff_ignores_timestamp_only_changes(monkeypatch, tmp_path: Path) -> None:
+    _ = _ensure_app()
+    settings = QtCore.QSettings(str(tmp_path / "component-sync-no-diff.ini"), QtCore.QSettings.IniFormat)
+    service = ComponentCatalogService(db_path=tmp_path / "assets.db")
+    remote_entry = service.install_remote_entry(
+        F8ComponentEntry(
+            record=F8ComponentRecord(
+                componentId="owned-no-diff",
+                name="Owned No Diff",
+                schemaVersion="f8studio-session/1",
+                content={"schemaVersion": "f8studio-session/1", "layout": {"nodes": {}, "connections": []}},
+                createdAt="2026-04-21T00:00:00+00:00",
+                updatedAt="2026-04-21T00:00:00+00:00",
+            ),
+            source=F8ComponentSourceKind.remote_private,
+            visibility=F8ComponentVisibility.private,
+            ownerUserId="u1",
+            ownerDisplayName="User One",
+            remoteVersionNumber=4,
+            installed=True,
+            hasCachedContent=True,
+        )
+    )
+    local_entry = service.upsert_local_entry(
+        F8ComponentEntry(
+            record=F8ComponentRecord(
+                componentId="linked-no-diff",
+                name="Owned No Diff",
+                schemaVersion="f8studio-session/1",
+                content={"schemaVersion": "f8studio-session/1", "layout": {"nodes": {}, "connections": []}},
+                createdAt="2026-04-22T00:00:00+00:00",
+                updatedAt="2026-04-22T00:00:00+00:00",
+            ),
+            source=F8ComponentSourceKind.local,
+            isLocalDraft=True,
+            draftOriginKind=F8ComponentDraftOriginKind.copy_remote,
+            draftOriginAssetId="owned-no-diff",
+            draftOriginVersionNumber=4,
+        )
+    )
+
+    dialog = ComponentCatalogDialog(parent=None, node_graph=None)
+    dialog._sync_client = ComponentSyncClient(settings=settings, catalog_service=service)
+    monkeypatch.setattr(dialog, "_ensure_component_hydrated", lambda entry, operation_name: entry)
+    monkeypatch.setattr(
+        dialog._sync_client,
+        "current_user",
+        lambda: F8ComponentRemoteUser(userId="u1", name="User One", email="user-one@example.com"),
+    )
+    monkeypatch.setattr(dialog, "_render_browser_from_state", lambda *args, **kwargs: None)
+    patch_calls: list[tuple[str, str, str, list[str]]] = []
+    update_calls: list[F8ComponentEntry] = []
+    info_messages: list[tuple[str, str]] = []
+
+    monkeypatch.setattr(
+        "f8pystudio.assets.ui.component_catalog_actions_mixin.show_info",
+        lambda _parent, title, message: info_messages.append((str(title), str(message))),
+    )
+    monkeypatch.setattr(
+        dialog._sync_client,
+        "patch_component_meta",
+        lambda component_id, *, name, description, tags: patch_calls.append(
+            (str(component_id), str(name), str(description), list(tags))
+        ) or remote_entry,
+    )
+    monkeypatch.setattr(
+        dialog._sync_client,
+        "update_component",
+        lambda entry, *, change_summary=None: update_calls.append(entry) or entry,
+    )
+
+    published = dialog._publish_component_draft(local_entry)
+
+    assert published is None
+    assert patch_calls == []
+    assert update_calls == []
+    assert info_messages == [("No changes", "No changes to publish for:\nOwned No Diff")]
+
+    dialog.close()
+
+
 def test_component_publish_missing_linked_asset_can_create_replacement(monkeypatch, tmp_path: Path) -> None:
     _ = _ensure_app()
     settings = QtCore.QSettings(str(tmp_path / "component-missing-linked.ini"), QtCore.QSettings.IniFormat)

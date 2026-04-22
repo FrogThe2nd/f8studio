@@ -1365,7 +1365,16 @@ function variantSummaryPayloadFromRow(row, viewerUserId) {
 
 function variantDetailPayloadFromRows({ head, version, subscription, viewerUserId, includeVersionNumber }) {
   const payload = {
-    ...variantSummaryPayloadFromRow({ ...head, ...version, ...(subscription || {}) }, viewerUserId),
+    ...variantSummaryPayloadFromRow(
+      {
+        ...head,
+        ...(subscription || {}),
+        created_by_user_id: version.created_by_user_id,
+        change_summary: version.change_summary,
+        version_number: version.version_number,
+      },
+      viewerUserId,
+    ),
     versionCreatedAt: String(version.created_at),
     createdByUserId: String(version.created_by_user_id),
   };
@@ -1380,7 +1389,7 @@ function variantContentPayloadFromRows({ head, version }) {
     variantId: String(head.asset_id),
     assetType: 'variant',
     versionNumber: Number(version.version_number),
-    record: parseVariantRecord(version.content, { head }),
+    record: parseVariantRecord(version.content, { head, version }),
   };
 }
 
@@ -1395,7 +1404,16 @@ function componentSummaryPayloadFromRow(row, viewerUserId) {
 function componentDetailPayloadFromRows({ head, version, subscription, viewerUserId, includeVersionNumber }) {
   const record = parseComponentRecord(version.content, { head, version });
   const payload = {
-    ...componentSummaryPayloadFromRow({ ...head, ...version, ...(subscription || {}) }, viewerUserId),
+    ...componentSummaryPayloadFromRow(
+      {
+        ...head,
+        ...(subscription || {}),
+        created_by_user_id: version.created_by_user_id,
+        change_summary: version.change_summary,
+        version_number: version.version_number,
+      },
+      viewerUserId,
+    ),
     schemaVersion: stringOrDefault(record.schemaVersion, COMPONENT_SCHEMA_VERSION),
     versionCreatedAt: String(version.created_at),
     createdByUserId: String(version.created_by_user_id),
@@ -1453,11 +1471,16 @@ function assetSubscriberFromRow(row) {
 }
 
 function adminAssetDetailFromRows({ head, version }) {
-  const summary = adminAssetSummaryFromRow({ ...head, ...version });
+  const summary = adminAssetSummaryFromRow({
+    ...head,
+    created_by_user_id: version.created_by_user_id,
+    change_summary: version.change_summary,
+    version_number: version.version_number,
+  });
   if (String(head.asset_type) === 'variant') {
     return {
       ...summary,
-      record: parseVariantRecord(version.content, { head }),
+      record: parseVariantRecord(version.content, { head, version }),
     };
   }
   return {
@@ -1550,11 +1573,11 @@ function applyAssetQueryFilters({ filters, bindings, query, assetType, extraFilt
   }
 }
 
-function parseVariantRecord(content, { head = null } = {}) {
+function parseVariantRecord(content, { head = null, version = null } = {}) {
   const specPayload = normalizeVariantContentPayload(parseJsonObject(content));
   const variantId = stringOrDefault(head?.asset_id, '');
-  const createdAt = stringOrDefault(head?.created_at, '');
-  const updatedAt = stringOrDefault(head?.updated_at, createdAt);
+  const createdAt = stringOrDefault(head?.created_at, stringOrDefault(version?.created_at, ''));
+  const updatedAt = stringOrDefault(version?.created_at, stringOrDefault(head?.updated_at, createdAt));
   return {
     variantId,
     kind: stringOrDefault(head?.variant_kind, ''),
