@@ -779,6 +779,30 @@ def test_preview_deferred_action_skips_redundant_ui_reset(monkeypatch) -> None:
     host_graph.widget.close()
 
 
+def test_preview_deferred_message_label_expands_for_wrapped_text() -> None:
+    _ensure_app()
+    service_node_cls = _make_service_node_class()
+    host_graph = _build_host_graph(service_node_cls)
+    pane = AssetGraphPreviewPane(parent=None, host_graph=host_graph)
+    pane.resize(520, 320)
+    pane.show()
+
+    pane.show_deferred_action(
+        message="Remote preview is available on demand. This message should wrap without clipping.",
+        button_text="Load preview",
+        callback=lambda: None,
+    )
+    QtWidgets.QApplication.processEvents()
+
+    deferred_label = pane._deferred_label  # type: ignore[attr-defined]
+    assert deferred_label.wordWrap() is True
+    assert deferred_label.sizePolicy().horizontalPolicy() == QtWidgets.QSizePolicy.Policy.Expanding
+    assert deferred_label.width() >= 320
+
+    pane.close()
+    host_graph.widget.close()
+
+
 def test_preview_sync_registered_nodes_reuses_cached_factory_registration(monkeypatch) -> None:
     _ensure_app()
     service_node_cls = _make_service_node_class()
@@ -926,6 +950,63 @@ def test_component_catalog_large_selection_defers_preview_until_requested(monkey
     _wait_for_preview_completion(dialog._preview)
 
     assert len(list(dialog._preview.preview_graph.all_nodes() or [])) == 11
+
+    dialog.close()
+
+
+def test_component_catalog_remote_preview_bypasses_second_gate_after_confirmation(monkeypatch) -> None:
+    _ensure_app()
+    _run_background_workers_immediately(monkeypatch)
+    service_node_cls = _make_service_node_class()
+    host_graph = _build_host_graph(service_node_cls)
+    payload = _large_component_payload_for_node(service_node_cls, node_count=11)
+    entry = F8ComponentEntry(
+        record=F8ComponentRecord(
+            componentId="component-remote-large-preview",
+            name="Remote Large Preview Component",
+            content={
+                "schemaVersion": "f8studio-session/1",
+                "layout": {"nodes": {}, "connections": []},
+            },
+        ),
+        source=F8ComponentSourceKind.remote_public,
+        installed=False,
+        hasCachedContent=False,
+    )
+    cached_entry = copy_model(
+        entry,
+        update={
+            "record": copy_model(
+                entry.record,
+                update={"content": payload},
+            ),
+            "hasCachedContent": True,
+        },
+    )
+    monkeypatch.setattr("f8pystudio.assets.ui.component_catalog_browser.subscribe_components_changed", lambda _cb: (lambda: None))
+    monkeypatch.setattr(ComponentCatalogDialog, "_render_browser_from_state", lambda self, *_args: None)
+    dialog = ComponentCatalogDialog(parent=None, node_graph=host_graph)
+    dialog._entries = [entry]
+    item = QtWidgets.QListWidgetItem()
+    item.setData(QtCore.Qt.ItemDataRole.UserRole, "component-remote-large-preview")
+    dialog._list.addItem(item)
+    monkeypatch.setattr(
+        dialog._sync_client,
+        "load_component_preview_entry",
+        lambda preview_entry: cached_entry if preview_entry.record.componentId == "component-remote-large-preview" else preview_entry,
+    )
+    monkeypatch.setattr(dialog._sync_client, "clone_for_background", lambda: dialog._sync_client)
+
+    dialog._list.setCurrentRow(0)
+    QtWidgets.QApplication.processEvents()
+
+    assert dialog._preview.current_status_text() == "Remote preview is available on demand."
+
+    dialog._preview._load_deferred_preview()  # type: ignore[attr-defined]
+    _wait_for_preview_completion(dialog._preview)
+
+    assert len(list(dialog._preview.preview_graph.all_nodes() or [])) == 11
+    assert dialog._preview._stack.currentWidget() is dialog._preview._preview_page  # type: ignore[attr-defined]
 
     dialog.close()
 

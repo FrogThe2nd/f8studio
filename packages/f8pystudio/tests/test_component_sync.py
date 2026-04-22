@@ -2069,7 +2069,9 @@ def test_component_dialog_remote_preview_is_deferred_until_requested(monkeypatch
     monkeypatch.setattr(
         dialog,
         "_show_component_preview",
-        lambda *, entry: preview_calls.append(str(entry.record.componentId)),
+        lambda *, entry, defer_large_preview=True: preview_calls.append(
+            f"{entry.record.componentId}:{int(bool(defer_large_preview))}"
+        ),
     )
 
     def _load_component_preview_entry(preview_entry: F8ComponentEntry) -> F8ComponentEntry:
@@ -2087,7 +2089,7 @@ def test_component_dialog_remote_preview_is_deferred_until_requested(monkeypatch
 
     dialog._preview._load_deferred_preview()  # type: ignore[attr-defined]
 
-    assert preview_calls == ["remote-selection-preview"]
+    assert preview_calls == ["remote-selection-preview:0"]
     assert rebuild_calls == []
     assert dialog._is_handling_selection_change is False
     assert dialog._pending_asset_cache_rebuild is False

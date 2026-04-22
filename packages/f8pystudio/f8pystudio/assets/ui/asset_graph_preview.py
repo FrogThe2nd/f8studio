@@ -154,18 +154,10 @@ class AssetGraphPreviewPane(QtWidgets.QWidget):
         preview_layout.setContentsMargins(0, 0, 0, 0)
         preview_layout.addWidget(self._preview_split, 1)
         self._status = QtWidgets.QLabel(self)
-        self._status.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        self._status.setWordWrap(True)
-        self._status.setMargin(24)
+        self._configure_message_label(self._status, margin=24, word_wrap=True)
         self._loading_page = QtWidgets.QWidget(self)
         self._loading_label = QtWidgets.QLabel(self._loading_page)
-        self._loading_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        self._loading_label.setWordWrap(False)
-        self._loading_label.setMargin(16)
-        self._loading_label.setSizePolicy(
-            QtWidgets.QSizePolicy.Policy.Expanding,
-            QtWidgets.QSizePolicy.Policy.Fixed,
-        )
+        self._configure_message_label(self._loading_label, margin=16, word_wrap=True)
         loading_font = self._loading_label.font()
         loading_font.setPointSize(max(10, int(loading_font.pointSize())))
         self._loading_label.setFont(loading_font)
@@ -179,15 +171,13 @@ class AssetGraphPreviewPane(QtWidgets.QWidget):
         loading_layout.addStretch(1)
         self._deferred_page = QtWidgets.QWidget(self)
         self._deferred_label = QtWidgets.QLabel(self._deferred_page)
-        self._deferred_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        self._deferred_label.setWordWrap(True)
-        self._deferred_label.setMargin(16)
+        self._configure_message_label(self._deferred_label, margin=16, word_wrap=True)
         self._deferred_button = QtWidgets.QPushButton("Load preview manually", self._deferred_page)
         self._deferred_button.clicked.connect(self._load_deferred_preview)  # type: ignore[attr-defined]
         deferred_layout = QtWidgets.QVBoxLayout(self._deferred_page)
         deferred_layout.setContentsMargins(24, 24, 24, 24)
         deferred_layout.addStretch(1)
-        deferred_layout.addWidget(self._deferred_label, 0, QtCore.Qt.AlignmentFlag.AlignHCenter)
+        deferred_layout.addWidget(self._deferred_label, 0)
         deferred_layout.addWidget(self._deferred_button, 0, QtCore.Qt.AlignmentFlag.AlignHCenter)
         deferred_layout.addStretch(1)
         self._stack = QtWidgets.QStackedLayout()
@@ -216,6 +206,23 @@ class AssetGraphPreviewPane(QtWidgets.QWidget):
         layout.addLayout(self._stack)
 
         self.clear_preview()
+
+    @staticmethod
+    def _configure_message_label(
+        label: QtWidgets.QLabel,
+        *,
+        margin: int,
+        word_wrap: bool,
+    ) -> None:
+        label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        label.setWordWrap(word_wrap)
+        label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+        label.setMargin(max(0, int(margin)))
+        label.setMinimumWidth(0)
+        label.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Expanding,
+            QtWidgets.QSizePolicy.Policy.Preferred,
+        )
 
     def showEvent(self, event: QtGui.QShowEvent) -> None:  # type: ignore[override]
         super().showEvent(event)

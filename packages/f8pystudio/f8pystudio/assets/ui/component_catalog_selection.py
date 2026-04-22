@@ -470,7 +470,7 @@ class ComponentCatalogSelectionMixin(_ComponentCatalogSelectionMixinBase):
             elapsed_seconds,
             time.perf_counter() - started_at,
         )
-        self._show_component_preview(entry=cached_entry)
+        self._show_component_preview(entry=cached_entry, defer_large_preview=False)
 
     def _on_remote_preview_failed(
         self,
@@ -526,7 +526,12 @@ class ComponentCatalogSelectionMixin(_ComponentCatalogSelectionMixinBase):
         )
         self._preview.clear_preview(f"Failed to preview component.\n{hydration_error}")
 
-    def _show_component_preview(self, *, entry: F8ComponentEntry) -> None:
+    def _show_component_preview(
+        self,
+        *,
+        entry: F8ComponentEntry,
+        defer_large_preview: bool = True,
+    ) -> None:
         self._current_preview_signature = self._preview_signature_for_entry(entry)
         self._set_raw_preview_text(
             json.dumps(
@@ -537,7 +542,7 @@ class ComponentCatalogSelectionMixin(_ComponentCatalogSelectionMixinBase):
             )
         )
         preview_node_count = component_preview_node_count(entry.record.content)
-        if preview_node_count > AUTO_PREVIEW_NODE_THRESHOLD:
+        if defer_large_preview and preview_node_count > AUTO_PREVIEW_NODE_THRESHOLD:
             self._preview.show_deferred_component_payload(
                 entry.record.content,
                 message=f"{preview_node_count} nodes.",
