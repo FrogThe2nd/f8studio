@@ -398,14 +398,14 @@ class VariantSyncClient:
         variant_id: str,
         *,
         visibility: F8VariantVisibility,
-        revision: str | None,
+        version_number: int | None,
     ) -> F8VariantEntry:
         payload = self._request_json(
             "PUT",
             f"/v1/variants/{parse.quote(str(variant_id))}/visibility",
             {
                 "visibility": visibility.value,
-                "revision": revision,
+                "versionNumber": version_number,
             },
             authorized=True,
         )
@@ -607,11 +607,11 @@ class VariantSyncClient:
     def upload_entry(self, entry: F8VariantEntry) -> F8VariantEntry:
         _require_variant_record_for_upload(entry.record)
         try:
-            if entry.remoteRevision:
+            if entry.remoteVersionNumber is not None:
                 return self.update_variant(entry)
             return self.create_variant(entry)
         except F8VariantRemoteConflictError as exc:
-            _ = self._catalog_service.mark_conflict(str(entry.record.variantId), remote_revision=exc.remote_revision)
+            _ = self._catalog_service.mark_conflict(str(entry.record.variantId), remote_version_number=exc.remote_version_number)
             raise
         except Exception as exc:
             recovered_entry = self._recover_uploaded_entry(entry)
@@ -754,13 +754,13 @@ class VariantSyncClient:
                 if exc.code == 401:
                     raise F8VariantRemoteAuthError(message) from exc
                 if exc.code == 409:
-                    remote_revision = None
-                    if isinstance(payload_obj.get("revision"), str):
-                        remote_revision = str(payload_obj["revision"])
+                    remote_version_number = None
+                    if payload_obj.get("versionNumber") is not None:
+                        remote_version_number = int(str(payload_obj["versionNumber"]))
                     raise F8VariantRemoteConflictError(
                         message or "Variant update conflict",
                         variant_id=_conflict_variant_id(payload_obj, path),
-                        remote_revision=remote_revision,
+                        remote_version_number=remote_version_number,
                     ) from exc
                 raise F8VariantRemoteRequestError(
                     message or f"{method} {path} failed with HTTP {exc.code}",
@@ -1006,8 +1006,8 @@ def _asset_write_payload(entry: F8VariantEntry, *, change_summary: str | None = 
         "record": _record_payload(entry),
         "visibility": (None if entry.visibility is None else entry.visibility.value),
     }
-    if entry.remoteRevision:
-        payload["revision"] = str(entry.remoteRevision)
+    if entry.remoteVersionNumber is not None:
+        payload["versionNumber"] = int(entry.remoteVersionNumber)
     if change_summary is not None and str(change_summary).strip():
         payload["changeSummary"] = str(change_summary)
     return payload
@@ -1039,7 +1039,7 @@ def _entry_from_asset_payload(payload: JsonObject) -> F8VariantEntry:
         visibility=visibility,
         ownerUserId=_payload_optional_str(payload, "ownerUserId"),
         ownerDisplayName=_payload_optional_str(payload, "ownerDisplayName"),
-        remoteRevision=_payload_optional_str(payload, "revision"),
+        remoteVersionNumber=_payload_optional_int(payload, "versionNumber"),
         downloadedAt=_payload_optional_str(payload, "downloadedAt"),
         installed=_payload_bool(payload, "installed", default=_installed_from_asset_payload(payload)),
         hasCachedContent=_payload_bool(payload, "hasCachedContent", default=False),
@@ -1156,7 +1156,7 @@ def _merge_variant_entries(existing_entry: F8VariantEntry, incoming_entry: F8Var
         return incoming_entry
     if not variant_entry_has_cached_content(existing_entry):
         return incoming_entry
-    if str(existing_entry.remoteRevision or "") != str(incoming_entry.remoteRevision or ""):
+    if existing_entry.remoteVersionNumber != incoming_entry.remoteVersionNumber:
         return incoming_entry
     return copy_model(
         incoming_entry,
@@ -1292,7 +1292,6 @@ def _remote_version_list_from_payload(payload: JsonObject) -> F8VariantRemoteVer
                 variantId=_payload_str(version_payload, "variantId"),
                 assetType=_payload_str(version_payload, "assetType"),
                 versionNumber=_payload_int(version_payload, "versionNumber"),
-                revision=_payload_str(version_payload, "revision"),
                 createdAt=_payload_str(version_payload, "createdAt"),
                 createdByUserId=_payload_str(version_payload, "createdByUserId"),
                 changeSummary=_payload_optional_str(version_payload, "changeSummary"),

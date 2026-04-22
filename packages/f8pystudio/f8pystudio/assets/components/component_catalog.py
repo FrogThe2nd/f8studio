@@ -43,7 +43,7 @@ class LocalComponentProvider:
                 entry.record,
                 origin_kind=origin_kind,
                 publish_target_asset_id=entry.draftOriginAssetId,
-                publish_base_remote_revision=entry.draftOriginRevision,
+                publish_base_remote_version_number=entry.draftOriginVersionNumber,
                 draft_id=str(entry.record.componentId),
             )
         else:
@@ -53,7 +53,7 @@ class LocalComponentProvider:
                     record=entry.record,
                     originKind=origin_kind,
                     publishTargetAssetId=entry.draftOriginAssetId or existing_draft.publishTargetAssetId,
-                    publishBaseRemoteRevision=entry.draftOriginRevision or existing_draft.publishBaseRemoteRevision,
+                    publishBaseRemoteVersionNumber=entry.draftOriginVersionNumber or existing_draft.publishBaseRemoteVersionNumber,
                     createdAt=existing_draft.createdAt,
                     updatedAt=existing_draft.updatedAt,
                 )
@@ -83,7 +83,7 @@ class RemoteComponentCacheProvider:
                 component_remote_cache_table.c.visibility,
                 component_remote_cache_table.c.owner_user_id,
                 component_remote_cache_table.c.owner_display_name,
-                component_remote_cache_table.c.remote_revision,
+                component_remote_cache_table.c.remote_version_number,
                 component_remote_cache_table.c.downloaded_at,
                 component_remote_cache_table.c.installed,
                 component_remote_cache_table.c.has_cached_content,
@@ -126,7 +126,7 @@ class RemoteComponentCacheProvider:
                     visibility=None if entry.visibility is None else str(entry.visibility.value),
                     owner_user_id=entry.ownerUserId,
                     owner_display_name=entry.ownerDisplayName,
-                    remote_revision=entry.remoteRevision,
+                    remote_version_number=entry.remoteVersionNumber,
                     downloaded_at=entry.downloadedAt,
                     installed=entry.installed,
                     subscribed=entry.subscribed,
@@ -144,7 +144,7 @@ class RemoteComponentCacheProvider:
                         visibility=metadata.visibility,
                         owner_user_id=metadata.owner_user_id,
                         owner_display_name=metadata.owner_display_name,
-                        remote_revision=metadata.remote_revision,
+                        remote_version_number=metadata.remote_version_number,
                         downloaded_at=metadata.downloaded_at,
                         installed=1 if metadata.installed else 0,
                         has_cached_content=1 if component_entry_has_cached_content(entry) else 0,
@@ -208,7 +208,7 @@ class ComponentCatalogService:
                 entry.record,
                 origin_kind=origin_kind,
                 publish_target_asset_id=entry.draftOriginAssetId,
-                publish_base_remote_revision=entry.draftOriginRevision,
+                publish_base_remote_version_number=entry.draftOriginVersionNumber,
                 draft_id=str(entry.record.componentId),
             )
         else:
@@ -218,7 +218,7 @@ class ComponentCatalogService:
                     record=entry.record,
                     originKind=origin_kind,
                     publishTargetAssetId=entry.draftOriginAssetId or existing_draft.publishTargetAssetId,
-                    publishBaseRemoteRevision=entry.draftOriginRevision or existing_draft.publishBaseRemoteRevision,
+                    publishBaseRemoteVersionNumber=entry.draftOriginVersionNumber or existing_draft.publishBaseRemoteVersionNumber,
                     createdAt=existing_draft.createdAt,
                     updatedAt=existing_draft.updatedAt,
                 )
@@ -347,13 +347,13 @@ class ComponentCatalogService:
         emit_components_changed()
         return True
 
-    def mark_conflict(self, component_id: str, *, remote_revision: str | None) -> F8ComponentEntry | None:
+    def mark_conflict(self, component_id: str, *, remote_version_number: int | None) -> F8ComponentEntry | None:
         current = self._remote_provider.load_entries()
         out: list[F8ComponentEntry] = []
         target: F8ComponentEntry | None = None
         for entry in current:
             if str(entry.record.componentId) == str(component_id):
-                target = copy_model(entry, update={"remoteRevision": remote_revision})
+                target = copy_model(entry, update={"remoteVersionNumber": remote_version_number})
                 out.append(target)
             else:
                 out.append(entry)
@@ -395,7 +395,7 @@ def _component_entry_from_remote_cache_row(row: Mapping[object, object], metadat
         visibility=visibility,
         ownerUserId=metadata.owner_user_id,
         ownerDisplayName=metadata.owner_display_name,
-        remoteRevision=metadata.remote_revision,
+        remoteVersionNumber=metadata.remote_version_number,
         downloadedAt=metadata.downloaded_at,
         installed=metadata.installed,
         hasCachedContent=_sqlite_row_bool(row, "has_cached_content"),

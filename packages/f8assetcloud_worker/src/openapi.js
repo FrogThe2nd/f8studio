@@ -70,14 +70,14 @@ const managementUserPageResponseSchema = z.object({
 
 const assetSubscriptionSchema = z.object({
   subscribedAt: z.string(),
-  lastSeenRevision: nullableStringSchema,
+  lastSeenVersionNumber: z.number().int().nullable(),
 });
 
 const typedAssetBaseSchema = z.object({
   ownerUserId: z.string(),
   ownerDisplayName: nullableStringSchema,
   visibility: visibilitySchema,
-  revision: z.string(),
+  versionNumber: z.number().int(),
   changeSummary: nullableStringSchema,
   name: z.string(),
   description: z.string(),
@@ -179,7 +179,6 @@ const variantContentResponseSchema = z.object({
   variantId: z.string(),
   assetType: z.literal('variant'),
   versionNumber: z.number().int(),
-  revision: z.string(),
   record: variantRecordSchema,
 });
 
@@ -187,7 +186,6 @@ const componentContentResponseSchema = z.object({
   componentId: z.string(),
   assetType: z.literal('component'),
   versionNumber: z.number().int(),
-  revision: z.string(),
   record: componentRecordSchema,
 });
 
@@ -209,7 +207,6 @@ const componentPageResponseSchema = z.object({
 const assetVersionBaseSchema = z.object({
   assetType: z.enum(['component', 'variant']),
   versionNumber: z.number().int(),
-  revision: z.string(),
   createdAt: z.string(),
   createdByUserId: z.string(),
   changeSummary: nullableStringSchema,
@@ -241,7 +238,7 @@ const adminAssetBaseSchema = z.object({
   ownerUserId: z.string(),
   ownerDisplayName: nullableStringSchema,
   visibility: visibilitySchema,
-  revision: z.string(),
+  versionNumber: z.number().int(),
   changeSummary: nullableStringSchema,
   name: z.string(),
   description: z.string(),
@@ -316,7 +313,7 @@ const variantCreateRequestSchema = z.object({
 });
 
 const variantUpdateRequestSchema = variantCreateRequestSchema.extend({
-  revision: z.string().optional(),
+  versionNumber: z.number().int().optional(),
 });
 
 const componentCreateRequestSchema = z.object({
@@ -326,12 +323,12 @@ const componentCreateRequestSchema = z.object({
 });
 
 const componentUpdateRequestSchema = componentCreateRequestSchema.extend({
-  revision: z.string().optional(),
+  versionNumber: z.number().int().optional(),
 });
 
 const visibilityUpdateRequestSchema = z.object({
   visibility: visibilitySchema,
-  revision: z.string().optional(),
+  versionNumber: z.number().int().optional(),
 });
 
 const assetMetaUpdateRequestSchema = z.object({

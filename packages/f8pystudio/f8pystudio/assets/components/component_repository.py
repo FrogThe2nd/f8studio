@@ -59,7 +59,7 @@ def upsert_component(record: F8ComponentRecord) -> F8ComponentRecord:
                 record=record,
                 originKind=existing_draft.originKind,
                 publishTargetAssetId=existing_draft.publishTargetAssetId,
-                publishBaseRemoteRevision=existing_draft.publishBaseRemoteRevision,
+                publishBaseRemoteVersionNumber=existing_draft.publishBaseRemoteVersionNumber,
                 createdAt=existing_draft.createdAt,
                 updatedAt=existing_draft.updatedAt,
             )
@@ -69,7 +69,7 @@ def upsert_component(record: F8ComponentRecord) -> F8ComponentRecord:
         record,
         origin_kind=F8ComponentDraftOriginKind.new,
         publish_target_asset_id=None,
-        publish_base_remote_revision=None,
+        publish_base_remote_version_number=None,
         draft_id=str(record.componentId),
     )
     return saved.record

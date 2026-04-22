@@ -89,7 +89,7 @@ class RemoteCacheProvider:
                 variant_remote_cache_table.c.visibility,
                 variant_remote_cache_table.c.owner_user_id,
                 variant_remote_cache_table.c.owner_display_name,
-                variant_remote_cache_table.c.remote_revision,
+                variant_remote_cache_table.c.remote_version_number,
                 variant_remote_cache_table.c.downloaded_at,
                 variant_remote_cache_table.c.installed,
                 variant_remote_cache_table.c.has_cached_content,
@@ -325,13 +325,13 @@ class VariantCatalogService:
         emit_variants_changed()
         return True
 
-    def mark_conflict(self, variant_id: str, *, remote_revision: str | None) -> F8VariantEntry | None:
+    def mark_conflict(self, variant_id: str, *, remote_version_number: int | None) -> F8VariantEntry | None:
         current = self._remote_provider.load_entries()
         out: list[F8VariantEntry] = []
         target: F8VariantEntry | None = None
         for entry in current:
             if str(entry.record.variantId) == str(variant_id):
-                target = copy_model(entry, update={"remoteRevision": remote_revision})
+                target = copy_model(entry, update={"remoteVersionNumber": remote_version_number})
                 out.append(target)
             else:
                 out.append(entry)
@@ -512,7 +512,7 @@ def _save_entry_as_draft(draft_service: VariantDraftService, entry: F8VariantEnt
             entry.record,
             origin_kind=origin_kind,
             publish_target_asset_id=entry.draftOriginAssetId,
-            publish_base_remote_revision=entry.draftOriginRevision,
+            publish_base_remote_version_number=entry.draftOriginVersionNumber,
             draft_id=str(entry.record.variantId),
         )
     return draft_service.save_draft(
@@ -521,7 +521,7 @@ def _save_entry_as_draft(draft_service: VariantDraftService, entry: F8VariantEnt
             record=entry.record,
             originKind=origin_kind,
             publishTargetAssetId=entry.draftOriginAssetId or existing_draft.publishTargetAssetId,
-            publishBaseRemoteRevision=entry.draftOriginRevision or existing_draft.publishBaseRemoteRevision,
+            publishBaseRemoteVersionNumber=entry.draftOriginVersionNumber or existing_draft.publishBaseRemoteVersionNumber,
             createdAt=existing_draft.createdAt,
             updatedAt=existing_draft.updatedAt,
         )
@@ -539,7 +539,7 @@ def _variant_entry_from_remote_row(row: object) -> F8VariantEntry:
         visibility=visibility,
         ownerUserId=metadata.owner_user_id,
         ownerDisplayName=metadata.owner_display_name,
-        remoteRevision=metadata.remote_revision,
+        remoteVersionNumber=metadata.remote_version_number,
         downloadedAt=metadata.downloaded_at,
         installed=bool(metadata.installed),
         hasCachedContent=_sqlite_row_bool(row_mapping, "has_cached_content"),
@@ -553,7 +553,7 @@ def _insert_remote_variant_entry(conn: object, entry: F8VariantEntry) -> None:
         visibility=None if entry.visibility is None else str(entry.visibility.value),
         owner_user_id=entry.ownerUserId,
         owner_display_name=entry.ownerDisplayName,
-        remote_revision=entry.remoteRevision,
+        remote_version_number=entry.remoteVersionNumber,
         downloaded_at=entry.downloadedAt,
         installed=entry.installed,
         subscribed=entry.subscribed,
@@ -574,7 +574,7 @@ def _insert_remote_variant_entry(conn: object, entry: F8VariantEntry) -> None:
             visibility=metadata.visibility,
             owner_user_id=metadata.owner_user_id,
             owner_display_name=metadata.owner_display_name,
-            remote_revision=metadata.remote_revision,
+            remote_version_number=metadata.remote_version_number,
             downloaded_at=metadata.downloaded_at,
             installed=1 if metadata.installed else 0,
             has_cached_content=1 if variant_entry_has_cached_content(entry) else 0,

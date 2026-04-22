@@ -382,9 +382,9 @@ class VariantCatalogEntriesMixin:
         visibility_badge = self._build_visibility_badge(container, row_state)
         if visibility_badge is not None:
             meta_row.addWidget(visibility_badge, 0)
-        revision_badge = self._build_revision_badge(container, entry.remoteRevision)
-        if revision_badge is not None:
-            meta_row.addWidget(revision_badge, 0)
+        version_badge = self._build_version_badge(container, entry.remoteVersionNumber)
+        if version_badge is not None:
+            meta_row.addWidget(version_badge, 0)
         meta_row.addStretch(1)
         root.addLayout(meta_row)
         return container
@@ -422,10 +422,9 @@ class VariantCatalogEntriesMixin:
         badge.setToolTip(tooltip)
         return badge
 
-    def _build_revision_badge(self, parent: QtWidgets.QWidget, remote_revision: str | None) -> QtWidgets.QLabel | None:
-        revision_text = str(remote_revision or "").strip()
-        if not revision_text:
+    def _build_version_badge(self, parent: QtWidgets.QWidget, remote_version_number: int | None) -> QtWidgets.QLabel | None:
+        if remote_version_number is None:
             return None
-        badge = self._build_text_badge(parent, revision_text)
-        badge.setToolTip(f"Remote revision: {revision_text}")
+        badge = self._build_text_badge(parent, f"v{int(remote_version_number)}")
+        badge.setToolTip(f"Remote version {int(remote_version_number)}")
         return badge

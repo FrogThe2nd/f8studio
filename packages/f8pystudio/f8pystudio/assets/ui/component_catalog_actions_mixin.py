@@ -97,7 +97,7 @@ class ComponentCatalogActionsMixin:
             draft_entry.record,
             origin_kind=draft_entry.draftOriginKind or F8ComponentDraftOriginKind.new,
             publish_target_asset_id=publish_asset_id,
-            publish_base_remote_revision=published.remoteRevision,
+            publish_base_remote_version_number=published.remoteVersionNumber,
             draft_id=str(draft_entry.record.componentId),
         )
         self._rebuild_browser_after_draft_changed(
@@ -334,7 +334,7 @@ class ComponentCatalogActionsMixin:
                 updated_record,
                 origin_kind=local_entry.draftOriginKind,
                 publish_target_asset_id=local_entry.draftOriginAssetId,
-                publish_base_remote_revision=local_entry.draftOriginRevision,
+                publish_base_remote_version_number=local_entry.draftOriginVersionNumber,
                 draft_id=component_id,
             )
         except ValueError as exc:
@@ -499,13 +499,13 @@ class ComponentCatalogActionsMixin:
         if hydrated_entry is None:
             return None
         publish_target_asset_id: str | None = None
-        publish_base_remote_revision: str | None = None
+        publish_base_remote_version_number: int | None = None
         origin_kind = F8ComponentDraftOriginKind.copy_remote
         if entry.source == F8ComponentSourceKind.local and entry.isLocalDraft:
             origin_kind = F8ComponentDraftOriginKind.copy_local
         elif self._is_owned_remote_entry(hydrated_entry):
             publish_target_asset_id = str(hydrated_entry.record.componentId)
-            publish_base_remote_revision = hydrated_entry.remoteRevision
+            publish_base_remote_version_number = hydrated_entry.remoteVersionNumber
             if not always_duplicate:
                 existing_draft = self._draft_service_for_catalog().draft_for_publish_target(publish_target_asset_id)
                 if existing_draft is not None:
@@ -522,7 +522,7 @@ class ComponentCatalogActionsMixin:
             draft_record,
             origin_kind=origin_kind,
             publish_target_asset_id=publish_target_asset_id,
-            publish_base_remote_revision=publish_base_remote_revision,
+            publish_base_remote_version_number=publish_base_remote_version_number,
             draft_id=str(draft_record.componentId),
         )
         return self._local_entry_for_component_id(saved.draftId)
@@ -592,7 +592,7 @@ class ComponentCatalogActionsMixin:
                             record=upload_record,
                             source=remote_entry.source,
                             visibility=remote_entry.visibility,
-                            remoteRevision=remote_entry.remoteRevision,
+                            remoteVersionNumber=remote_entry.remoteVersionNumber,
                             installed=True,
                             hasCachedContent=True,
                         )
@@ -615,7 +615,7 @@ class ComponentCatalogActionsMixin:
                 draft_entry.record,
                 origin_kind=draft_entry.draftOriginKind,
                 publish_target_asset_id=target_asset_id,
-                publish_base_remote_revision=published.remoteRevision,
+                publish_base_remote_version_number=published.remoteVersionNumber,
                 draft_id=str(draft_entry.record.componentId),
             )
             self._rebuild_browser_after_draft_changed(
@@ -648,7 +648,7 @@ class ComponentCatalogActionsMixin:
             self._sync_client.update_component_visibility(
                 str(selected_entry.record.componentId),
                 visibility=next_visibility,
-                revision=selected_entry.remoteRevision,
+                version_number=selected_entry.remoteVersionNumber,
             )
         except Exception as exc:
             show_warning(self, "Visibility update failed", str(exc))

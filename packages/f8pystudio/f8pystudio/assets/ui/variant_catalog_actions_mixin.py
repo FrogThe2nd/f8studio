@@ -35,7 +35,7 @@ class VariantCatalogActionsMixin:
         record: F8VariantRecord,
         origin_kind: F8VariantDraftOriginKind | None,
         publish_target_asset_id: str | None,
-        publish_base_remote_revision: str | None,
+        publish_base_remote_version_number: int | None,
         draft_id: str | None = None,
     ) -> F8VariantEntry:
         draft_service = self._draft_service_for_catalog()
@@ -54,7 +54,7 @@ class VariantCatalogActionsMixin:
             copy_model(record, update={"name": normalized_name}),
             origin_kind=origin_kind,
             publish_target_asset_id=publish_target_asset_id,
-            publish_base_remote_revision=publish_base_remote_revision,
+            publish_base_remote_version_number=publish_base_remote_version_number,
             draft_id=draft_identifier,
         )
         saved_entry = self._local_entry_for_variant_id(saved.draftId)
@@ -166,7 +166,7 @@ class VariantCatalogActionsMixin:
                 record=new_record,
                 origin_kind=selected_entry.draftOriginKind,
                 publish_target_asset_id=selected_entry.draftOriginAssetId,
-                publish_base_remote_revision=selected_entry.draftOriginRevision,
+                publish_base_remote_version_number=selected_entry.draftOriginVersionNumber,
                 draft_id=str(selected_entry.record.variantId),
             )
         except ValueError as exc:
@@ -233,14 +233,14 @@ class VariantCatalogActionsMixin:
                 record=record,
                 origin_kind=F8VariantDraftOriginKind.new,
                 publish_target_asset_id=None,
-                publish_base_remote_revision=None,
+                publish_base_remote_version_number=None,
             )
         if overwrite_entry.source == F8VariantSourceKind.local:
             return self._save_variant_draft(
                 record=record,
                 origin_kind=overwrite_entry.draftOriginKind,
                 publish_target_asset_id=overwrite_entry.draftOriginAssetId,
-                publish_base_remote_revision=overwrite_entry.draftOriginRevision,
+                publish_base_remote_version_number=overwrite_entry.draftOriginVersionNumber,
                 draft_id=str(overwrite_entry.record.variantId),
             )
         draft_entry = self._ensure_variant_draft_for_entry(overwrite_entry, record=record)
@@ -329,11 +329,11 @@ class VariantCatalogActionsMixin:
         record = source_entry.record
         origin_kind = F8VariantDraftOriginKind.copy_remote
         publish_target_asset_id = None
-        publish_base_remote_revision = None
+        publish_base_remote_version_number = None
         if source_entry.source == F8VariantSourceKind.local and source_entry.isLocalDraft:
             origin_kind = F8VariantDraftOriginKind.copy_local
             publish_target_asset_id = source_entry.draftOriginAssetId
-            publish_base_remote_revision = source_entry.draftOriginRevision
+            publish_base_remote_version_number = source_entry.draftOriginVersionNumber
         duplicate_name = ensure_unique_variant_name(
             str(record.baseNodeType or ""),
             f"{str(record.name or '').strip() or 'Variant'} Draft",
@@ -354,7 +354,7 @@ class VariantCatalogActionsMixin:
             record=duplicated_record,
             origin_kind=origin_kind,
             publish_target_asset_id=publish_target_asset_id,
-            publish_base_remote_revision=publish_base_remote_revision,
+            publish_base_remote_version_number=publish_base_remote_version_number,
         )
         self._rebuild_browser_after_draft_changed(
             preserve_variant_id=str(duplicated_entry.record.variantId)
@@ -398,13 +398,13 @@ class VariantCatalogActionsMixin:
                 show_warning(self, "Load failed", str(exc))
                 return None
         publish_target_asset_id: str | None = None
-        publish_base_remote_revision: str | None = None
+        publish_base_remote_version_number: int | None = None
         origin_kind = F8VariantDraftOriginKind.copy_remote
         if entry.source == F8VariantSourceKind.local and entry.isLocalDraft:
             origin_kind = F8VariantDraftOriginKind.copy_local
         elif self._is_owned_remote_entry(entry):
             publish_target_asset_id = str(entry.record.variantId)
-            publish_base_remote_revision = entry.remoteRevision
+            publish_base_remote_version_number = entry.remoteVersionNumber
             if not always_duplicate:
                 existing_draft = self._draft_service_for_catalog().draft_for_publish_target(publish_target_asset_id)
                 if existing_draft is not None:
@@ -421,7 +421,7 @@ class VariantCatalogActionsMixin:
             record=draft_record,
             origin_kind=origin_kind,
             publish_target_asset_id=publish_target_asset_id,
-            publish_base_remote_revision=publish_base_remote_revision,
+            publish_base_remote_version_number=publish_base_remote_version_number,
         )
         return self._local_entry_for_variant_id(str(saved.record.variantId))
 

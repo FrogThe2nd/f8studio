@@ -281,7 +281,6 @@ class ProjectPickerDialog(QtWidgets.QDialog):
 class AssetVersionBrowserItem:
     version_number: int
     created_at: str
-    revision: str = ""
     change_summary: str = ""
 
 
@@ -343,8 +342,6 @@ class AssetVersionBrowserDialog(QtWidgets.QDialog):
             display_time = format_timestamp_for_local_display(item.created_at)
             tooltip_time = format_timestamp_tooltip(item.created_at)
             label_parts = [f"v{item.version_number}", display_time]
-            if item.revision:
-                label_parts.append(item.revision)
             if item.change_summary:
                 label_parts.append(item.change_summary)
             list_item = QtWidgets.QListWidgetItem(" | ".join(label_parts))

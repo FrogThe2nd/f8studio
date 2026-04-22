@@ -627,7 +627,7 @@ class VariantCatalogSelectionMixin:
         return (
             str(entry.record.variantId or "").strip(),
             str(entry.source.value),
-            str(entry.remoteRevision or ""),
+            str(entry.remoteVersionNumber or ""),
             str(entry.downloadedAt or ""),
             bool(variant_entry_has_cached_content(entry)),
             bool(entry.installed),

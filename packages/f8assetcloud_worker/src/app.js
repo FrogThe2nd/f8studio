@@ -397,8 +397,8 @@ async function routeAssetRequest({ auth, repo, request, url, assetType }) {
     const payload = await readJsonBody(request);
     const visibility = requireBodyString(payload.visibility, 'visibility is required');
     const result = assetType === 'variant'
-      ? await repo.updateVariantVisibility({ variantId: assetId, visibility, revision: payload.revision, userId: user.userId })
-      : await repo.updateComponentVisibility({ componentId: assetId, visibility, revision: payload.revision, userId: user.userId });
+      ? await repo.updateVariantVisibility({ variantId: assetId, visibility, versionNumber: payload.versionNumber, userId: user.userId })
+      : await repo.updateComponentVisibility({ componentId: assetId, visibility, versionNumber: payload.versionNumber, userId: user.userId });
     return jsonResponse(200, result);
   }
 
@@ -1969,7 +1969,7 @@ function handleError(error) {
   if (error instanceof AssetConflictError) {
     const payload = {
       message: 'conflict',
-      revision: error.revision,
+      versionNumber: error.versionNumber,
     };
     if (error.assetType === 'variant') {
       payload.variantId = error.assetId;
@@ -2030,7 +2030,7 @@ function jsonResponse(status, payload) {
 function assetDownloadResponse(payload, { head, versionNumber }) {
   const baseName = stringOrDefault(head && head.name, String(head ? head.asset_id : 'asset'));
   const slug = slugifyForFilename(baseName) || 'asset';
-  const versionSuffix = Number.isFinite(Number(versionNumber)) ? `-v${Number(versionNumber)}` : '';
+  const versionSuffix = Number.isFinite(Number(versionNumber)) ? `-${Number(versionNumber)}` : '';
   const filename = `${slug}${versionSuffix}.json`;
   const body = JSON.stringify(payload, null, 2);
   return new Response(body, {

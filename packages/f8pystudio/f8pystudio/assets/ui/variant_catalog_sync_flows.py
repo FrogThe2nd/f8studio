@@ -83,7 +83,7 @@ class VariantCatalogSyncFlowsMixin:
             record=draft_entry.record,
             origin_kind=draft_entry.draftOriginKind or F8VariantDraftOriginKind.new,
             publish_target_asset_id=publish_asset_id,
-            publish_base_remote_revision=published.remoteRevision,
+            publish_base_remote_version_number=published.remoteVersionNumber,
             draft_id=str(draft_entry.record.variantId),
         )
         self._rebuild_browser_after_draft_changed(
@@ -227,7 +227,7 @@ class VariantCatalogSyncFlowsMixin:
             self._sync_client.update_variant_visibility(
                 str(selected_entry.record.variantId),
                 visibility=next_visibility,
-                revision=selected_entry.remoteRevision,
+                version_number=selected_entry.remoteVersionNumber,
             )
         except Exception as exc:
             show_warning(self, "Visibility update failed", str(exc))
@@ -317,7 +317,7 @@ class VariantCatalogSyncFlowsMixin:
                             record=upload_record,
                             source=remote_entry.source,
                             visibility=remote_entry.visibility,
-                            remoteRevision=remote_entry.remoteRevision,
+                            remoteVersionNumber=remote_entry.remoteVersionNumber,
                             installed=True,
                             hasCachedContent=True,
                         )
@@ -340,7 +340,7 @@ class VariantCatalogSyncFlowsMixin:
                 record=draft_entry.record,
                 origin_kind=draft_entry.draftOriginKind,
                 publish_target_asset_id=target_asset_id,
-                publish_base_remote_revision=published.remoteRevision,
+                publish_base_remote_version_number=published.remoteVersionNumber,
                 draft_id=str(draft_entry.record.variantId),
             )
             self._rebuild_browser_after_draft_changed(

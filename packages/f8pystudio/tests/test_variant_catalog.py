@@ -96,7 +96,7 @@ def test_catalog_service_prefers_local_and_hides_uninstalled_public_remote(tmp_p
     assert all_entries[0].record.name == "Local Shared"
 
 
-def test_remote_variant_provider_persists_remote_revision(tmp_path: Path) -> None:
+def test_remote_variant_provider_persists_remote_version_number(tmp_path: Path) -> None:
     db_path = tmp_path / "assets.db"
     provider = RemoteCacheProvider(db_path=db_path)
     provider.save_entries(
@@ -104,7 +104,7 @@ def test_remote_variant_provider_persists_remote_revision(tmp_path: Path) -> Non
             F8VariantEntry(
                 record=_make_record(variant_id="remote-1", base_node_type="svc.a.op", name="Remote One"),
                 source=F8VariantSourceKind.remote_public,
-                remoteRevision="r1",
+                remoteVersionNumber=1,
                 installed=False,
             )
         ]
@@ -113,7 +113,7 @@ def test_remote_variant_provider_persists_remote_revision(tmp_path: Path) -> Non
     loaded = provider.load_entries()
 
     assert len(loaded) == 1
-    assert loaded[0].remoteRevision == "r1"
+    assert loaded[0].remoteVersionNumber == 1
 
 
 def test_local_variant_provider_preserves_service_variant_without_operator_class(tmp_path: Path) -> None:
@@ -216,7 +216,7 @@ def test_variant_catalog_service_ignores_remote_version_when_saving_draft(tmp_pa
         F8VariantEntry(
             record=_make_record(variant_id="remote-seeded", base_node_type="svc.a.op", name="Remote Seeded"),
             source=F8VariantSourceKind.local,
-            remoteRevision="r5",
+            remoteVersionNumber=5,
         )
     )
 

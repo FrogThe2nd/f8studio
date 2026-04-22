@@ -150,7 +150,7 @@ def test_assets_database_rebuilds_legacy_remote_cache_tables(tmp_path: Path) -> 
                 visibility TEXT,
                 owner_user_id TEXT,
                 owner_display_name TEXT,
-                remote_revision TEXT,
+                remote_version_number TEXT,
                 downloaded_at TEXT,
                 installed INTEGER NOT NULL,
                 has_cached_content INTEGER NOT NULL,
@@ -178,7 +178,7 @@ def test_assets_database_rebuilds_legacy_remote_cache_tables(tmp_path: Path) -> 
                 visibility TEXT,
                 owner_user_id TEXT,
                 owner_display_name TEXT,
-                remote_revision TEXT,
+                remote_version_number TEXT,
                 downloaded_at TEXT,
                 installed INTEGER NOT NULL,
                 has_cached_content INTEGER NOT NULL,
@@ -355,7 +355,7 @@ def _component_entry(
         record=record,
         source=source,
         visibility=F8ComponentVisibility.public if source == F8ComponentSourceKind.remote_public else None,
-        remoteRevision="r1" if source != F8ComponentSourceKind.local else None,
+        remoteVersionNumber=1 if source != F8ComponentSourceKind.local else None,
         installed=installed,
     )
 
@@ -671,15 +671,15 @@ def test_component_catalog_hides_uninstalled_remote_entries_until_installed(tmp_
     assert installed_entry.downloadedAt is not None
 
 
-def test_component_catalog_persists_remote_revision(tmp_path: Path) -> None:
+def test_component_catalog_persists_remote_version_number(tmp_path: Path) -> None:
     service = ComponentCatalogService(db_path=tmp_path / "assets.db")
     remote_entry = copy_model(
         _component_entry(component_id="remote-1", source=F8ComponentSourceKind.remote_public, installed=False),
-        update={"remoteRevision": "r-featured"},
+        update={"remoteVersionNumber": 7},
     )
 
     service.replace_remote_entries([remote_entry])
 
     loaded = service.entry("remote-1", include_uninstalled=True)
     assert loaded is not None
-    assert loaded.remoteRevision == "r-featured"
+    assert loaded.remoteVersionNumber == 7

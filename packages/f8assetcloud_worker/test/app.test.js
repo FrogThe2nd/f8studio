@@ -234,7 +234,7 @@ async function createVerifiedSession(app, env, { name, email, password = TEST_PA
   };
 }
 
-function variantPayload({ variantId, name, visibility = 'private', revision } = {}) {
+function variantPayload({ variantId, name, visibility = 'private', versionNumber } = {}) {
   return {
     record: {
       variantId: variantId || 'variant-1',
@@ -250,12 +250,12 @@ function variantPayload({ variantId, name, visibility = 'private', revision } = 
       updatedAt: '2026-01-01T00:00:00.000Z',
     },
     visibility,
-    revision,
+    versionNumber,
     changeSummary: 'save',
   };
 }
 
-function componentPayload({ componentId, name, visibility = 'private', revision } = {}) {
+function componentPayload({ componentId, name, visibility = 'private', versionNumber } = {}) {
   return {
     record: {
       componentId: componentId || 'component-1',
@@ -281,7 +281,7 @@ function componentPayload({ componentId, name, visibility = 'private', revision 
       updatedAt: '2026-01-01T00:00:00.000Z',
     },
     visibility,
-    revision,
+    versionNumber,
     changeSummary: 'save',
   };
 }
@@ -958,11 +958,10 @@ test('hot asset list queries use composite indexes without temp sorting', async 
        h.*,
        u.name AS owner_display_name,
        s.subscribed_at,
-       s.last_seen_revision,
+       s.last_seen_version_number,
        v.created_by_user_id,
        v.change_summary,
-       v.version_number,
-       v.revision
+       v.version_number
      FROM asset_heads h
      JOIN asset_versions v
        ON v.asset_id = h.asset_id AND v.version_number = h.current_version_number
@@ -987,8 +986,7 @@ test('hot asset list queries use composite indexes without temp sorting', async 
        v.created_at AS version_created_at,
        v.created_by_user_id,
        v.change_summary,
-       v.version_number,
-       v.revision
+       v.version_number
      FROM asset_heads h
      JOIN asset_versions v
        ON v.asset_id = h.asset_id AND v.version_number = h.current_version_number
@@ -1026,7 +1024,7 @@ test('variant asset lifecycle works with Better Auth cookie sessions', async (t)
   assert.equal(created.status, 200);
   assert.equal(created.json.variantId, 'alice-variant');
   assert.equal(created.json.assetType, 'variant');
-  assert.equal(created.json.revision, 'r1');
+  assert.equal(created.json.versionNumber, 1);
   assert.equal(created.json.editable, true);
   const assetHeadColumns = await env.DB.prepare("PRAGMA table_info(asset_heads)").all();
   assert.equal(
@@ -1080,11 +1078,11 @@ test('variant asset lifecycle works with Better Auth cookie sessions', async (t)
       variantId: 'alice-variant',
       name: 'Alice Public',
       visibility: 'public',
-      revision: created.json.revision,
+      versionNumber: created.json.versionNumber,
     }),
   });
   assert.equal(updated.status, 200);
-  assert.equal(updated.json.revision, 'r2');
+  assert.equal(updated.json.versionNumber, 2);
   assert.equal(updated.json.visibility, 'public');
 
   const publicListAfter = await jsonRequest(app, env, '/v1/variants?owner=public&q=alice');
@@ -1113,7 +1111,7 @@ test('variant asset lifecycle works with Better Auth cookie sessions', async (t)
       variantId: 'alice-variant',
       name: 'Bob Edit',
       visibility: 'public',
-      revision: updated.json.revision,
+      versionNumber: updated.json.versionNumber,
     }),
   });
   assert.equal(forbiddenEdit.status, 403);
@@ -1140,11 +1138,11 @@ test('variant asset lifecycle works with Better Auth cookie sessions', async (t)
       variantId: 'alice-variant',
       name: 'Stale Update',
       visibility: 'public',
-      revision: 'r1',
+      versionNumber: 1,
     }),
   });
   assert.equal(conflict.status, 409);
-  assert.equal(conflict.json.revision, 'r2');
+  assert.equal(conflict.json.versionNumber, 2);
 
   const variantHeadBeforeMetaPatch = await env.DB.prepare(
     `SELECT current_version_number, updated_at
@@ -1167,7 +1165,7 @@ test('variant asset lifecycle works with Better Auth cookie sessions', async (t)
   assert.equal(metadataPatched.json.name, 'Alice Public Metadata');
   assert.equal(metadataPatched.json.description, 'Metadata only update');
   assert.deepEqual(metadataPatched.json.tags, ['meta', 'variant']);
-  assert.equal(metadataPatched.json.revision, 'r2');
+  assert.equal(metadataPatched.json.versionNumber, 2);
 
   const variantHeadAfterMetaPatch = await env.DB.prepare(
     `SELECT current_version_number, updated_at
@@ -1312,11 +1310,11 @@ test('component asset lifecycle validates session envelope and visibility rules'
       componentId: 'component-a',
       name: 'Published Session v2',
       visibility: 'public',
-      revision: created.json.revision,
+      versionNumber: created.json.versionNumber,
     }),
   });
   assert.equal(updated.status, 200);
-  assert.equal(updated.json.revision, 'r2');
+  assert.equal(updated.json.versionNumber, 2);
 
   const componentHeadBeforeMetaPatch = await env.DB.prepare(
     `SELECT current_version_number, updated_at
@@ -1339,7 +1337,7 @@ test('component asset lifecycle validates session envelope and visibility rules'
   assert.equal(componentMetadataPatched.json.name, 'Published Session Metadata');
   assert.equal(componentMetadataPatched.json.description, 'Metadata only component update');
   assert.deepEqual(componentMetadataPatched.json.tags, ['meta', 'component']);
-  assert.equal(componentMetadataPatched.json.revision, 'r2');
+  assert.equal(componentMetadataPatched.json.versionNumber, 2);
 
   const componentHeadAfterMetaPatch = await env.DB.prepare(
     `SELECT current_version_number, updated_at
@@ -1384,7 +1382,7 @@ test('component asset lifecycle validates session envelope and visibility rules'
       componentId: 'component-a',
       name: 'Bob Edit',
       visibility: 'public',
-      revision: updated.json.revision,
+      versionNumber: updated.json.versionNumber,
     }),
   });
   assert.equal(forbidden.status, 403);
@@ -1546,7 +1544,6 @@ test('component content endpoint reads canonical stored session payload and reje
     componentId: 'component-canonical',
     assetType: 'component',
     versionNumber: 1,
-    revision: 'r1',
     record: {
       componentId: 'component-canonical',
       name: 'Envelope Record Blob',
@@ -1663,7 +1660,6 @@ test('variant content endpoint reads canonical raw spec and rejects wrapped blob
     variantId: 'variant-canonical',
     assetType: 'variant',
     versionNumber: 1,
-    revision: 'r1',
     record: {
       variantId: 'variant-canonical',
       kind: 'operator',
@@ -1963,7 +1959,7 @@ test('management can permanently purge all assets', async (t) => {
     cookie: alice.cookie,
     payload: {
       ...variantPayload({ variantId: 'alice-variant', name: 'Alice Variant v2', visibility: 'public' }),
-      revision: 'r1',
+      versionNumber: 1,
     },
   });
   assert.equal(variantUpdate.status, 200);
@@ -2342,7 +2338,7 @@ test('asset download endpoints return attachment responses for public assets', a
   assert.match(downloadResponse.headers.get('Content-Type') || '', /application\/json/);
   const disposition = downloadResponse.headers.get('Content-Disposition') || '';
   assert.match(disposition, /attachment/);
-  assert.match(disposition, /filename="download-me-v1\.json"/);
+  assert.match(disposition, /filename="download-me-1\.json"/);
 
   const body = JSON.parse(await downloadResponse.text());
   assert.equal(body.componentId, 'download-component');
@@ -2352,7 +2348,7 @@ test('asset download endpoints return attachment responses for public assets', a
   const versionDownloadRequest = new Request('http://worker.test/v1/components/download-component/versions/1/download');
   const versionDownloadResponse = await app.fetch(versionDownloadRequest, env, {});
   assert.equal(versionDownloadResponse.status, 200);
-  assert.match(versionDownloadResponse.headers.get('Content-Disposition') || '', /filename="download-me-v1\.json"/);
+  assert.match(versionDownloadResponse.headers.get('Content-Disposition') || '', /filename="download-me-1\.json"/);
 });
 
 test('asset download endpoints deny anonymous access to private assets', async (t) => {
@@ -2378,5 +2374,5 @@ test('asset download endpoints deny anonymous access to private assets', async (
   });
   const ownerResponse = await app.fetch(ownerRequest, env, {});
   assert.equal(ownerResponse.status, 200);
-  assert.match(ownerResponse.headers.get('Content-Disposition') || '', /filename="private-variant-v1\.json"/);
+  assert.match(ownerResponse.headers.get('Content-Disposition') || '', /filename="private-variant-1\.json"/);
 });

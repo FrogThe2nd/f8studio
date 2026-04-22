@@ -5,12 +5,12 @@ from dataclasses import dataclass
 from typing import cast
 REMOTE_CACHE_METADATA_SELECT_SQL = """
 source, visibility, owner_user_id, owner_display_name,
-remote_revision, downloaded_at, installed, subscribed
+remote_version_number, downloaded_at, installed, subscribed
 """.strip()
 
 REMOTE_CACHE_METADATA_INSERT_COLUMNS_SQL = """
 source, visibility, owner_user_id, owner_display_name,
-remote_revision, downloaded_at, installed, subscribed
+remote_version_number, downloaded_at, installed, subscribed
 """.strip()
 
 REMOTE_CACHE_METADATA_INSERT_VALUES_SQL = "?, ?, ?, ?, ?, ?, ?, ?"
@@ -22,7 +22,7 @@ class RemoteCacheMetadata:
     visibility: str | None
     owner_user_id: str | None
     owner_display_name: str | None
-    remote_revision: str | None
+    remote_version_number: int | None
     downloaded_at: str | None
     installed: bool
     subscribed: bool
@@ -35,7 +35,7 @@ class RemoteCacheMetadata:
             visibility=_optional_text(mapping["visibility"]),
             owner_user_id=_optional_text(mapping["owner_user_id"]),
             owner_display_name=_optional_text(mapping["owner_display_name"]),
-            remote_revision=_optional_text(mapping["remote_revision"]),
+            remote_version_number=_optional_int(mapping["remote_version_number"]),
             downloaded_at=_optional_text(mapping["downloaded_at"]),
             installed=_sqlite_bool(mapping["installed"]),
             subscribed=_sqlite_bool(mapping["subscribed"]),
@@ -47,19 +47,19 @@ class RemoteCacheMetadata:
             "visibility": self.visibility,
             "ownerUserId": self.owner_user_id,
             "ownerDisplayName": self.owner_display_name,
-            "remoteRevision": self.remote_revision,
+            "remoteVersionNumber": self.remote_version_number,
             "downloadedAt": self.downloaded_at,
             "installed": self.installed,
             "subscribed": self.subscribed,
         }
 
-    def as_db_tuple(self) -> tuple[str, str | None, str | None, str | None, str | None, str | None, int, int]:
+    def as_db_tuple(self) -> tuple[str, str | None, str | None, str | None, int | None, str | None, int, int]:
         return (
             self.source,
             self.visibility,
             self.owner_user_id,
             self.owner_display_name,
-            self.remote_revision,
+            self.remote_version_number,
             self.downloaded_at,
             1 if self.installed else 0,
             1 if self.subscribed else 0,
@@ -72,6 +72,12 @@ def _optional_text(value: object) -> str | None:
     return str(value)
 
 
+def _optional_int(value: object) -> int | None:
+    if value is None:
+        return None
+    return int(str(value))
+
+
 def _sqlite_bool(value: object) -> bool:
     return bool(int(str(value)))
 
@@ -82,7 +88,7 @@ def remote_cache_metadata_from_fields(
     visibility: str | None,
     owner_user_id: str | None,
     owner_display_name: str | None,
-    remote_revision: str | None,
+    remote_version_number: int | None,
     downloaded_at: str | None,
     installed: bool,
     subscribed: bool,
@@ -92,7 +98,7 @@ def remote_cache_metadata_from_fields(
         visibility=visibility,
         owner_user_id=owner_user_id,
         owner_display_name=owner_display_name,
-        remote_revision=remote_revision,
+        remote_version_number=remote_version_number,
         downloaded_at=downloaded_at,
         installed=installed,
         subscribed=subscribed,

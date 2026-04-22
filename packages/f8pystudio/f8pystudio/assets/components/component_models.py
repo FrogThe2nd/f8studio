@@ -42,7 +42,7 @@ class F8ComponentEntry(Struct, kw_only=True):
     visibility: F8ComponentVisibility | None = None
     ownerUserId: str | None = None
     ownerDisplayName: str | None = None
-    remoteRevision: str | None = None
+    remoteVersionNumber: int | None = None
     downloadedAt: str | None = None
     installed: bool = True
     hasCachedContent: bool | None = None
@@ -50,7 +50,7 @@ class F8ComponentEntry(Struct, kw_only=True):
     isLocalDraft: bool = False
     draftOriginKind: F8ComponentDraftOriginKind | None = None
     draftOriginAssetId: str | None = None
-    draftOriginRevision: str | None = None
+    draftOriginVersionNumber: int | None = None
 
 
 class F8ComponentDraftEntry(Struct, kw_only=True):
@@ -58,7 +58,7 @@ class F8ComponentDraftEntry(Struct, kw_only=True):
     record: F8ComponentRecord
     originKind: F8ComponentDraftOriginKind | None = None
     publishTargetAssetId: str | None = None
-    publishBaseRemoteRevision: str | None = None
+    publishBaseRemoteVersionNumber: int | None = None
     createdAt: str = field(default_factory=now_iso)
     updatedAt: str = field(default_factory=now_iso)
 
@@ -88,7 +88,6 @@ class F8ComponentRemoteVersionEntry(Struct, kw_only=True):
     componentId: str
     assetType: str
     versionNumber: int
-    revision: str
     createdAt: str
     createdByUserId: str
     changeSummary: str | None = None
@@ -113,10 +112,10 @@ class F8ComponentRemoteSession(Struct, kw_only=True):
 
 
 class F8ComponentRemoteConflictError(Exception):
-    def __init__(self, message: str, *, component_id: str, remote_revision: str | None = None) -> None:
+    def __init__(self, message: str, *, component_id: str, remote_version_number: int | None = None) -> None:
         super().__init__(message)
         self.component_id = str(component_id)
-        self.remote_revision = None if remote_revision is None else str(remote_revision)
+        self.remote_version_number = remote_version_number
 
 
 class F8ComponentRemoteAuthError(Exception):

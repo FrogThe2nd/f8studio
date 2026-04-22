@@ -237,7 +237,7 @@ class _ComponentApiHandler(BaseHTTPRequestHandler):
                 "componentId": "public-1",
                 "assetType": "component",
                 "versionNumber": 1,
-                "revision": "r-public",
+                "versionNumber": 1,
                 "record": self.server.public_record,
             }
             compressed_once = zlib.compress(json.dumps(payload, ensure_ascii=False).encode("utf-8"), level=6, wbits=31)
@@ -252,7 +252,7 @@ class _ComponentApiHandler(BaseHTTPRequestHandler):
                             "componentId": "public-1",
                             "assetType": "component",
                             "versionNumber": 1,
-                            "revision": "r-public",
+                            "versionNumber": 1,
                             "createdAt": str(self.server.public_record["createdAt"]),
                             "createdByUserId": "u2",
                             "changeSummary": None,
@@ -271,7 +271,7 @@ class _ComponentApiHandler(BaseHTTPRequestHandler):
                     "componentId": "public-1",
                     "assetType": "component",
                     "versionNumber": 1,
-                    "revision": "r-public",
+                    "versionNumber": 1,
                     "record": self.server.public_record,
                 },
             )
@@ -322,7 +322,7 @@ class _Server(ThreadingHTTPServer):
             "ownerUserId": "u2" if visibility == "public" else "u1",
             "ownerDisplayName": "Remote User" if visibility == "public" else "User One",
             "visibility": visibility,
-            "revision": "r-public" if visibility == "public" else "r-private",
+            "versionNumber": 1 if visibility == "public" else 2,
             "createdAt": str(record["createdAt"]),
             "updatedAt": str(record["updatedAt"]),
             "editable": visibility != "public",
@@ -343,7 +343,7 @@ class _Server(ThreadingHTTPServer):
             "ownerUserId": "u2" if visibility == "public" else "u1",
             "ownerDisplayName": "Remote User" if visibility == "public" else "User One",
             "visibility": visibility,
-            "revision": "r-public" if visibility == "public" else "r-private",
+            "versionNumber": 1 if visibility == "public" else 2,
             "name": str(record["name"]),
             "description": str(record["description"]),
             "tags": list(record["tags"]),
@@ -1076,7 +1076,7 @@ def test_component_remote_cache_load_cleans_empty_component_ids(tmp_path: Path) 
                 visibility="public",
                 owner_user_id="u1",
                 owner_display_name="User One",
-                remote_revision="r1",
+                remote_version_number=1,
                 downloaded_at=None,
                 installed=0,
                 has_cached_content=0,
@@ -1110,7 +1110,7 @@ def test_component_remote_cache_row_with_content_loads_as_installed(tmp_path: Pa
                 visibility="public",
                 owner_user_id="u1",
                 owner_display_name="User One",
-                remote_revision="r1",
+                remote_version_number=1,
                 downloaded_at="2026-04-04T00:00:00+00:00",
                 installed=1,
                 has_cached_content=1,
@@ -1142,7 +1142,7 @@ def test_component_row_state_badges_cover_local_remote_and_both() -> None:
         source=F8ComponentSourceKind.remote_public,
         visibility=F8ComponentVisibility.public,
         installed=True,
-        remoteRevision="r5",
+        remoteVersionNumber=5,
     )
 
     both_state = ComponentCatalogDialog._component_row_state_for_entries(
@@ -1202,7 +1202,7 @@ def test_component_row_state_prefers_remote_owner_when_remote_head_exists() -> N
         visibility=F8ComponentVisibility.private,
         ownerUserId="u1",
         ownerDisplayName="User One",
-        remoteRevision="r1",
+        remoteVersionNumber=1,
         installed=True,
         hasCachedContent=True,
     )
@@ -1233,7 +1233,7 @@ def test_component_catalog_load_owned_remote_keeps_remote_only_cache(monkeypatch
         visibility=F8ComponentVisibility.private,
         ownerUserId="u1",
         ownerDisplayName="User One",
-        remoteRevision="r4",
+        remoteVersionNumber=4,
         installed=False,
         hasCachedContent=False,
     )
@@ -1318,7 +1318,7 @@ def test_component_publish_new_draft_keeps_linked_draft(monkeypatch, tmp_path: P
                 "visibility": F8ComponentVisibility.private,
                 "ownerUserId": "u1",
                 "ownerDisplayName": "User One",
-                "remoteRevision": "r1",
+                "remoteVersionNumber": 1,
                 "installed": True,
                 "hasCachedContent": True,
             },
@@ -1334,12 +1334,12 @@ def test_component_publish_new_draft_keeps_linked_draft(monkeypatch, tmp_path: P
     saved_draft = dialog._draft_service_for_catalog().draft("draft-component")
     assert saved_draft is not None
     assert saved_draft.publishTargetAssetId == str(uploaded.record.componentId)
-    assert saved_draft.publishBaseRemoteRevision == "r1"
+    assert saved_draft.publishBaseRemoteVersionNumber == 1
     saved_local = service.entry("draft-component", include_uninstalled=True)
     assert saved_local is not None
     assert saved_local.isLocalDraft is True
     assert saved_local.draftOriginAssetId == str(uploaded.record.componentId)
-    assert saved_local.draftOriginRevision == "r1"
+    assert saved_local.draftOriginVersionNumber == 1
 
     dialog.close()
 
@@ -1407,7 +1407,7 @@ def test_component_publish_metadata_only_uses_patch_meta(monkeypatch, tmp_path: 
             isLocalDraft=True,
             draftOriginKind=F8ComponentDraftOriginKind.copy_remote,
             draftOriginAssetId="owned-overwrite",
-            draftOriginRevision="r4",
+            draftOriginVersionNumber=4,
         )
     )
     remote_entry = service.install_remote_entry(
@@ -1422,7 +1422,7 @@ def test_component_publish_metadata_only_uses_patch_meta(monkeypatch, tmp_path: 
             visibility=F8ComponentVisibility.private,
             ownerUserId="u1",
             ownerDisplayName="User One",
-            remoteRevision="r4",
+            remoteVersionNumber=4,
             installed=True,
             hasCachedContent=True,
         )
@@ -1446,7 +1446,7 @@ def test_component_publish_metadata_only_uses_patch_meta(monkeypatch, tmp_path: 
             remote_entry,
             update={
                 "record": copy_model(remote_entry.record, update={"name": name, "description": description, "tags": tags}),
-                "remoteRevision": "r5",
+                "remoteVersionNumber": 5,
                 "installed": True,
                 "hasCachedContent": True,
             },
@@ -1467,8 +1467,8 @@ def test_component_publish_metadata_only_uses_patch_meta(monkeypatch, tmp_path: 
     assert saved_remote is not None
     assert saved_local.isLocalDraft is True
     assert saved_local.draftOriginAssetId == "owned-overwrite"
-    assert saved_local.draftOriginRevision == "r5"
-    assert saved_remote.remoteRevision == "r5"
+    assert saved_local.draftOriginVersionNumber == 5
+    assert saved_remote.remoteVersionNumber == 5
 
     dialog.close()
 
@@ -1489,7 +1489,7 @@ def test_component_publish_missing_linked_asset_can_create_replacement(monkeypat
             isLocalDraft=True,
             draftOriginKind=F8ComponentDraftOriginKind.copy_remote,
             draftOriginAssetId="missing-component",
-            draftOriginRevision="r4",
+            draftOriginVersionNumber=4,
         )
     )
 
@@ -1527,7 +1527,7 @@ def test_component_publish_missing_linked_asset_can_create_replacement(monkeypat
                 "visibility": F8ComponentVisibility.private,
                 "ownerUserId": "u1",
                 "ownerDisplayName": "User One",
-                "remoteRevision": "r8",
+                "remoteVersionNumber": 8,
                 "installed": True,
                 "hasCachedContent": True,
             },
@@ -1546,7 +1546,7 @@ def test_component_publish_missing_linked_asset_can_create_replacement(monkeypat
     assert saved_local is not None
     assert saved_local.isLocalDraft is True
     assert saved_local.draftOriginAssetId == "replacement-component"
-    assert saved_local.draftOriginRevision == "r8"
+    assert saved_local.draftOriginVersionNumber == 8
 
     dialog.close()
 
@@ -1568,7 +1568,7 @@ def test_component_catalog_copy_to_draft_creates_disconnected_local_draft(monkey
         visibility=F8ComponentVisibility.public,
         ownerUserId="u2",
         ownerDisplayName="Remote User",
-        remoteRevision="r9",
+        remoteVersionNumber=9,
         installed=False,
         hasCachedContent=False,
     )
@@ -1588,7 +1588,7 @@ def test_component_catalog_copy_to_draft_creates_disconnected_local_draft(monkey
     assert draft_entry.record.componentId != "remote-component"
     assert draft_entry.isLocalDraft is True
     assert draft_entry.draftOriginAssetId is None
-    assert draft_entry.draftOriginRevision is None
+    assert draft_entry.draftOriginVersionNumber is None
 
     dialog.close()
 
@@ -1632,7 +1632,7 @@ def test_component_catalog_delete_removes_local_and_owned_remote(monkeypatch, tm
         visibility=F8ComponentVisibility.private,
         ownerUserId="u1",
         ownerDisplayName="User One",
-        remoteRevision="r7",
+        remoteVersionNumber=7,
         installed=True,
         hasCachedContent=False,
     )
@@ -1644,7 +1644,7 @@ def test_component_catalog_delete_removes_local_and_owned_remote(monkeypatch, tm
         copy_model(remote_entry.record, update={"componentId": "draft-owned-delete", "content": {"schemaVersion": "f8studio-session/1", "layout": {"nodes": {}, "connections": []}}}),
         origin_kind=F8ComponentDraftOriginKind.copy_remote,
         publish_target_asset_id="owned-delete",
-        publish_base_remote_revision="r7",
+        publish_base_remote_version_number=7,
         draft_id="draft-owned-delete",
     )
     reload_calls: list[str] = []
@@ -1746,7 +1746,7 @@ def test_component_dialog_remote_preview_is_deferred_until_requested(monkeypatch
         visibility=F8ComponentVisibility.private,
         ownerUserId="u1",
         ownerDisplayName="User One",
-        remoteRevision="r1",
+        remoteVersionNumber=1,
         installed=False,
         hasCachedContent=False,
     )
@@ -2124,7 +2124,7 @@ def test_component_catalog_row_without_description_stays_compact(monkeypatch) ->
     dialog.close()
 
 
-def test_component_catalog_row_shows_remote_revision_badge(monkeypatch) -> None:
+def test_component_catalog_row_shows_remote_version_number_badge(monkeypatch) -> None:
     _ = _ensure_app()
     monkeypatch.setattr(ComponentCatalogDialog, "_render_browser_from_state", lambda self, *_args: None)
 
@@ -2141,7 +2141,7 @@ def test_component_catalog_row_shows_remote_revision_badge(monkeypatch) -> None:
         visibility=F8ComponentVisibility.private,
         ownerUserId="u1",
         ownerDisplayName="User One",
-        remoteRevision="r1",
+        remoteVersionNumber=1,
         installed=True,
         hasCachedContent=True,
     )
@@ -2149,6 +2149,6 @@ def test_component_catalog_row_shows_remote_revision_badge(monkeypatch) -> None:
     row_widget = dialog._build_list_row(entry)
     row_labels = [label.text() for label in row_widget.findChildren(QtWidgets.QLabel)]
 
-    assert "r1" in row_labels
+    assert "v1" in row_labels
 
     dialog.close()

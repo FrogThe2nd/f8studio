@@ -25,10 +25,9 @@ def determine_asset_sync_direction(
     has_remote_entry: bool,
     local_version_number: int | None,
     remote_version_number: int | None,
-    sync_base_remote_revision: str | None,
     sync_base_remote_version_number: int | None,
     sync_base_local_version_number: int | None,
-    current_remote_revision: str | None,
+    current_remote_version_number: int | None,
 ) -> AssetSyncDecision:
     if has_local_entry and not has_remote_entry:
         return AssetSyncDecision(
@@ -52,12 +51,11 @@ def determine_asset_sync_direction(
             base_known=False,
         )
 
-    base_known = bool(str(sync_base_remote_revision or "").strip())
+    base_known = sync_base_remote_version_number is not None
     local_current_version = 1 if local_version_number is None else int(local_version_number)
     base_local_version = None if sync_base_local_version_number is None else int(sync_base_local_version_number)
-    _ = sync_base_remote_version_number
     local_changed = base_local_version is None or local_current_version > base_local_version
-    remote_changed = bool(base_known and str(sync_base_remote_revision or "") != str(current_remote_revision or ""))
+    remote_changed = bool(base_known and sync_base_remote_version_number != current_remote_version_number)
 
     if not base_known:
         if local_version_number is not None and remote_version_number is not None:

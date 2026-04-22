@@ -544,7 +544,7 @@ class ComponentCatalogSelectionMixin:
         return (
             str(entry.record.componentId or "").strip(),
             str(entry.source.value),
-            str(entry.remoteRevision or ""),
+            str(entry.remoteVersionNumber or ""),
             str(entry.downloadedAt or ""),
             bool(component_entry_has_cached_content(entry)),
             bool(entry.installed),

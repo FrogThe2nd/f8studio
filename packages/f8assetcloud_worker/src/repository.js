@@ -5,11 +5,11 @@ const MAX_CONTENT_BYTES = 10 * 1024 * 1024;
 const COMPONENT_SCHEMA_VERSION = 'f8studio-session/1';
 
 export class AssetConflictError extends Error {
-  constructor({ assetId, assetType, revision }) {
+  constructor({ assetId, assetType, versionNumber }) {
     super(`Asset ${assetId} update conflict`);
     this.assetId = String(assetId);
     this.assetType = normalizeAssetType(assetType);
-    this.revision = String(revision);
+    this.versionNumber = normalizeVersionNumber(versionNumber);
   }
 }
 
@@ -236,8 +236,7 @@ export class AssetRepository {
           v.created_at AS version_created_at,
           v.created_by_user_id,
           v.change_summary,
-          v.version_number,
-          v.revision
+          v.version_number
         FROM asset_heads h
         LEFT JOIN variant_details vd ON vd.asset_id = h.asset_id
         JOIN asset_versions v
@@ -254,8 +253,7 @@ export class AssetRepository {
           v.created_at AS version_created_at,
           v.created_by_user_id,
           v.change_summary,
-          v.version_number,
-          v.revision
+          v.version_number
         FROM asset_heads h
         JOIN asset_versions v
           ON v.asset_id = h.asset_id AND v.version_number = h.current_version_number
@@ -404,8 +402,8 @@ export class AssetRepository {
     return this._forkAsset({ assetId: variantId, assetType: 'variant', payload, user });
   }
 
-  async updateVariantVisibility({ variantId, visibility, revision, userId }) {
-    return this._updateAssetVisibility({ assetId: variantId, assetType: 'variant', visibility, revision, userId });
+  async updateVariantVisibility({ variantId, visibility, versionNumber, userId }) {
+    return this._updateAssetVisibility({ assetId: variantId, assetType: 'variant', visibility, versionNumber, userId });
   }
 
   async createComponent({ payload, user }) {
@@ -467,8 +465,8 @@ export class AssetRepository {
     return this._forkAsset({ assetId: componentId, assetType: 'component', payload, user });
   }
 
-  async updateComponentVisibility({ componentId, visibility, revision, userId }) {
-    return this._updateAssetVisibility({ assetId: componentId, assetType: 'component', visibility, revision, userId });
+  async updateComponentVisibility({ componentId, visibility, versionNumber, userId }) {
+    return this._updateAssetVisibility({ assetId: componentId, assetType: 'component', visibility, versionNumber, userId });
   }
 
   async _createAsset({ normalized, userId }) {
@@ -505,7 +503,6 @@ export class AssetRepository {
     await this._insertAssetVersion({
       assetId: normalized.assetId,
       versionNumber: 1,
-      revision: normalized.revision,
       contentJson: normalized.contentJson,
       createdAt: normalized.updatedAt,
       createdByUserId: userId,
@@ -515,17 +512,16 @@ export class AssetRepository {
   }
 
   async _updateAsset({ existing, normalized, userId }) {
-    if (String(normalized.revision || '') !== String(existing.revision || '')) {
+    if (normalized.versionNumber !== null && Number(normalized.versionNumber) !== Number(existing.current_version_number)) {
       throw new AssetConflictError({
         assetId: existing.asset_id,
         assetType: existing.asset_type,
-        revision: String(existing.revision),
+        versionNumber: Number(existing.current_version_number),
       });
     }
 
     enforceContentSizeLimit(normalized.contentJson);
     const nextVersionNumber = Number(existing.current_version_number) + 1;
-    const nextRevision = nextRevisionForAsset(String(existing.revision));
     await this._db.prepare(
       `UPDATE asset_heads
        SET visibility = ?,
@@ -556,7 +552,6 @@ export class AssetRepository {
     await this._insertAssetVersion({
       assetId: normalized.assetId,
       versionNumber: nextVersionNumber,
-      revision: nextRevision,
       contentJson: normalized.contentJson,
       createdAt: normalized.updatedAt,
       createdByUserId: userId,
@@ -564,10 +559,10 @@ export class AssetRepository {
     });
     await this._db.prepare(
       `UPDATE asset_subscriptions
-       SET last_seen_revision = COALESCE(last_seen_revision, ?)
+       SET last_seen_version_number = COALESCE(last_seen_version_number, ?)
        WHERE asset_id = ? AND subscriber_user_id = ?`,
     )
-      .bind(nextRevision, normalized.assetId, userId)
+      .bind(nextVersionNumber, normalized.assetId, userId)
       .run();
     return this._getAssetDetailPayload({ assetId: normalized.assetId, assetType: normalized.assetType, userId, versionNumber: null });
   }
@@ -646,11 +641,10 @@ export class AssetRepository {
           vd.operator_class,
           u.name AS owner_display_name,
           s.subscribed_at,
-          s.last_seen_revision,
+          s.last_seen_version_number,
           v.created_by_user_id,
           v.change_summary,
-          v.version_number,
-          v.revision
+          v.version_number
         FROM asset_heads h
         LEFT JOIN variant_details vd ON vd.asset_id = h.asset_id
         JOIN asset_versions v
@@ -666,11 +660,10 @@ export class AssetRepository {
           h.*,
           u.name AS owner_display_name,
           s.subscribed_at,
-          s.last_seen_revision,
+          s.last_seen_version_number,
           v.created_by_user_id,
           v.change_summary,
-          v.version_number,
-          v.revision
+          v.version_number
         FROM asset_heads h
         JOIN asset_versions v
           ON v.asset_id = h.asset_id AND v.version_number = h.current_version_number
@@ -699,7 +692,7 @@ export class AssetRepository {
 
     const start = parseCursor(cursor);
     const result = await this._db.prepare(
-      `SELECT asset_id, version_number, revision, content, created_at, created_by_user_id, change_summary
+      `SELECT asset_id, version_number, content, created_at, created_by_user_id, change_summary
        FROM asset_versions
        WHERE asset_id = ?
        ORDER BY version_number DESC
@@ -726,12 +719,12 @@ export class AssetRepository {
     }
     const now = nowIso();
     await this._db.prepare(
-      `INSERT INTO asset_subscriptions (asset_id, subscriber_user_id, subscribed_at, last_seen_revision)
+      `INSERT INTO asset_subscriptions (asset_id, subscriber_user_id, subscribed_at, last_seen_version_number)
        VALUES (?, ?, ?, ?)
        ON CONFLICT(asset_id, subscriber_user_id)
-       DO UPDATE SET subscribed_at = excluded.subscribed_at, last_seen_revision = excluded.last_seen_revision`,
+       DO UPDATE SET subscribed_at = excluded.subscribed_at, last_seen_version_number = excluded.last_seen_version_number`,
     )
-      .bind(String(assetId), String(userId), now, String(head.revision))
+      .bind(String(assetId), String(userId), now, Number(head.current_version_number))
       .run();
     return this._getAssetDetailPayload({ assetId, assetType, userId, versionNumber: null });
   }
@@ -786,14 +779,14 @@ export class AssetRepository {
     });
   }
 
-  async _updateAssetVisibility({ assetId, assetType, visibility, revision, userId }) {
+  async _updateAssetVisibility({ assetId, assetType, visibility, versionNumber, userId }) {
     const existing = await this._requireOwnedAsset({ assetId, assetType, userId });
-    const expectedRevision = String(revision || '').trim();
-    if (expectedRevision && expectedRevision !== String(existing.revision || '')) {
+    const expectedVersionNumber = normalizeOptionalVersionNumber(versionNumber);
+    if (expectedVersionNumber !== null && expectedVersionNumber !== Number(existing.current_version_number)) {
       throw new AssetConflictError({
         assetId: String(existing.asset_id),
         assetType,
-        revision: String(existing.revision),
+        versionNumber: Number(existing.current_version_number),
       });
     }
     await this._db.prepare(
@@ -845,17 +838,16 @@ export class AssetRepository {
     return existing;
   }
 
-  async _insertAssetVersion({ assetId, versionNumber, revision, contentJson, createdAt, createdByUserId, changeSummary }) {
+  async _insertAssetVersion({ assetId, versionNumber, contentJson, createdAt, createdByUserId, changeSummary }) {
     const compressedContent = await compressGzip(contentJson);
     await this._db.prepare(
       `INSERT INTO asset_versions (
-         asset_id, version_number, revision, content, created_at, created_by_user_id, change_summary
-       ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+         asset_id, version_number, content, created_at, created_by_user_id, change_summary
+       ) VALUES (?, ?, ?, ?, ?, ?)`,
     )
       .bind(
         String(assetId),
         Number(versionNumber),
-        String(revision),
         compressedContent,
         String(createdAt),
         String(createdByUserId),
@@ -897,7 +889,6 @@ export class AssetRepository {
       ? await this._db.prepare(
         `SELECT
            h.*,
-           v.revision,
            vd.variant_kind,
            vd.base_node_type,
            vd.service_class,
@@ -915,9 +906,8 @@ export class AssetRepository {
       : await this._db.prepare(
         `SELECT
            h.*,
-           v.revision,
            u.name AS owner_display_name
-         FROM asset_heads h
+        FROM asset_heads h
          JOIN asset_versions v
            ON v.asset_id = h.asset_id AND v.version_number = h.current_version_number
          LEFT JOIN user u ON u.id = h.owner_user_id
@@ -936,7 +926,7 @@ export class AssetRepository {
 
   async _findAssetVersionRow(assetId, versionNumber) {
     const row = await this._db.prepare(
-      `SELECT asset_id, version_number, revision, content, created_at, created_by_user_id, change_summary
+      `SELECT asset_id, version_number, content, created_at, created_by_user_id, change_summary
        FROM asset_versions
        WHERE asset_id = ? AND version_number = ?`,
     )
@@ -965,7 +955,7 @@ export class AssetRepository {
 
   async _findSubscriptionRow(assetId, userId) {
     const row = await this._db.prepare(
-      `SELECT asset_id, subscriber_user_id, subscribed_at, last_seen_revision
+      `SELECT asset_id, subscriber_user_id, subscribed_at, last_seen_version_number
        FROM asset_subscriptions WHERE asset_id = ? AND subscriber_user_id = ?`,
     )
       .bind(String(assetId), String(userId))
@@ -1104,7 +1094,7 @@ function normalizeVariantCreatePayload(payload, user) {
     assetType: 'variant',
     ownerUserId: String(user.userId),
     visibility: normalizeVisibility(payload.visibility),
-    revision: 'r1',
+    versionNumber: null,
     name: record.name,
     description: record.description,
     tags: record.tags,
@@ -1129,7 +1119,7 @@ function normalizeVariantUpdatePayload(payload, existing, user) {
     assetType: 'variant',
     ownerUserId: String(user.userId),
     visibility: normalizeVisibility(payload.visibility ?? existing.visibility),
-    revision: String(payload.revision || ''),
+    versionNumber: normalizeOptionalVersionNumber(payload.versionNumber),
     name: record.name,
     description: record.description,
     tags: record.tags,
@@ -1156,7 +1146,7 @@ function normalizeComponentCreatePayload(payload, user) {
     assetType: 'component',
     ownerUserId: String(user.userId),
     visibility: normalizeVisibility(payload.visibility),
-    revision: 'r1',
+    versionNumber: null,
     name: record.name,
     description: record.description,
     tags: record.tags,
@@ -1175,7 +1165,7 @@ function normalizeComponentUpdatePayload(payload, existing, user) {
     assetType: 'component',
     ownerUserId: String(user.userId),
     visibility: normalizeVisibility(payload.visibility ?? existing.visibility),
-    revision: String(payload.revision || ''),
+    versionNumber: normalizeOptionalVersionNumber(payload.versionNumber),
     name: record.name,
     description: record.description,
     tags: record.tags,
@@ -1300,7 +1290,6 @@ function variantContentPayloadFromRows({ head, version }) {
     variantId: String(head.asset_id),
     assetType: 'variant',
     versionNumber: Number(version.version_number),
-    revision: String(version.revision),
     record: parseVariantRecord(version.content, { head }),
   };
 }
@@ -1332,7 +1321,6 @@ function componentContentPayloadFromRows({ head, version }) {
     componentId: String(head.asset_id),
     assetType: 'component',
     versionNumber: Number(version.version_number),
-    revision: String(version.revision),
     record: parseComponentRecord(version.content, { head, version }),
   };
 }
@@ -1345,7 +1333,7 @@ function genericTypedAssetPayload(row, viewerUserId) {
     ownerUserId: String(row.owner_user_id),
     ownerDisplayName: nullableString(row.owner_display_name),
     visibility: String(row.visibility),
-    revision: String(row.revision),
+    versionNumber: Number(row.version_number ?? row.current_version_number),
     changeSummary: nullableString(row.change_summary),
     name: String(row.name),
     description: String(row.description),
@@ -1358,7 +1346,7 @@ function genericTypedAssetPayload(row, viewerUserId) {
     subscription: isSubscribed
       ? {
         subscribedAt: String(row.subscribed_at),
-        lastSeenRevision: nullableString(row.last_seen_revision),
+        lastSeenVersionNumber: nullableNumber(row.last_seen_version_number),
       }
       : null,
   };
@@ -1415,7 +1403,7 @@ function genericAssetSummary(row) {
     ownerUserId: String(row.owner_user_id),
     ownerDisplayName: nullableString(row.owner_display_name),
     visibility: String(row.visibility),
-    revision: String(row.revision),
+    versionNumber: Number(row.version_number ?? row.current_version_number),
     changeSummary: nullableString(row.change_summary),
     name: String(row.name),
     description: String(row.description),
@@ -1429,7 +1417,6 @@ function assetVersionSummaryFromRow(assetType, row) {
   const summary = {
     assetType,
     versionNumber: Number(row.version_number),
-    revision: String(row.revision),
     createdAt: String(row.created_at),
     createdByUserId: String(row.created_by_user_id),
     changeSummary: nullableString(row.change_summary),
@@ -1604,16 +1591,19 @@ function normalizeVersionNumber(value) {
   return versionNumber;
 }
 
-function nextRevisionForAsset(currentRevision) {
-  const text = String(currentRevision || 'r0');
-  if (!text.startsWith('r')) {
-    return 'r1';
+function normalizeOptionalVersionNumber(value) {
+  if (value === undefined || value === null || String(value).trim() === '') {
+    return null;
   }
-  const value = Number.parseInt(text.slice(1), 10);
-  if (!Number.isFinite(value) || value < 0) {
-    return 'r1';
+  return normalizeVersionNumber(value);
+}
+
+function nullableNumber(value) {
+  if (value === undefined || value === null || String(value).trim() === '') {
+    return null;
   }
-  return `r${value + 1}`;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
 }
 
 function normalizeTags(value) {

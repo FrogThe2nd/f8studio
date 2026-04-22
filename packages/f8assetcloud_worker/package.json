@@ -9,7 +9,7 @@
     "web:dev": "npm --prefix ./console_web run dev",
     "web:build": "npm --prefix ./console_web run build",
     "web:preview": "npm --prefix ./console_web run preview",
-    "test": "node --test",
+    "test": "node --test test/**/*.test.js",
     "d1:migrate": "wrangler d1 migrations apply DB --remote",
     "d1:migrate:local": "wrangler d1 migrations apply DB --local",
     "d1:migrate:preview": "wrangler d1 migrations apply DB --remote --preview",

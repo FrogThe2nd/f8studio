@@ -10,6 +10,7 @@ from f8pysdk.codec import dump_json, validate_as
 from ..common import (
     json_object_loads,
     json_string_list_loads,
+    mapping_optional_int,
     mapping_optional_str,
     mapping_str,
     new_asset_id,
@@ -44,7 +45,7 @@ class ComponentDraftService:
                 component_drafts_local_table.c.content,
                 component_drafts_local_table.c.origin_kind,
                 component_drafts_local_table.c.publish_target_asset_id,
-                component_drafts_local_table.c.publish_base_remote_revision,
+                component_drafts_local_table.c.publish_base_remote_version_number,
                 component_drafts_local_table.c.created_at,
                 component_drafts_local_table.c.updated_at,
             )
@@ -70,7 +71,7 @@ class ComponentDraftService:
             component_drafts_local_table.c.content,
             component_drafts_local_table.c.origin_kind,
             component_drafts_local_table.c.publish_target_asset_id,
-            component_drafts_local_table.c.publish_base_remote_revision,
+            component_drafts_local_table.c.publish_base_remote_version_number,
             component_drafts_local_table.c.created_at,
             component_drafts_local_table.c.updated_at,
         ).where(component_drafts_local_table.c.draft_id == normalized_draft_id)
@@ -94,7 +95,7 @@ class ComponentDraftService:
                 component_drafts_local_table.c.content,
                 component_drafts_local_table.c.origin_kind,
                 component_drafts_local_table.c.publish_target_asset_id,
-                component_drafts_local_table.c.publish_base_remote_revision,
+                component_drafts_local_table.c.publish_base_remote_version_number,
                 component_drafts_local_table.c.created_at,
                 component_drafts_local_table.c.updated_at,
             )
@@ -131,7 +132,7 @@ class ComponentDraftService:
         *,
         origin_kind: F8ComponentDraftOriginKind | None,
         publish_target_asset_id: str | None,
-        publish_base_remote_revision: str | None,
+        publish_base_remote_version_number: int | None,
         draft_id: str | None = None,
     ) -> F8ComponentDraftEntry:
         draft_identifier = str(draft_id or "").strip() or new_asset_id()
@@ -149,9 +150,7 @@ class ComponentDraftService:
                 record=normalized_record,
                 originKind=origin_kind,
                 publishTargetAssetId=None if publish_target_asset_id is None else str(publish_target_asset_id),
-                publishBaseRemoteRevision=(
-                    None if publish_base_remote_revision is None else str(publish_base_remote_revision)
-                ),
+                publishBaseRemoteVersionNumber=publish_base_remote_version_number,
                 createdAt=str(normalized_record.createdAt),
                 updatedAt=str(normalized_record.updatedAt),
             )
@@ -176,7 +175,7 @@ def draft_as_catalog_entry(draft: F8ComponentDraftEntry) -> F8ComponentEntry:
         isLocalDraft=True,
         draftOriginKind=draft.originKind,
         draftOriginAssetId=draft.publishTargetAssetId,
-        draftOriginRevision=draft.publishBaseRemoteRevision,
+        draftOriginVersionNumber=draft.publishBaseRemoteVersionNumber,
     )
 
 
@@ -199,10 +198,10 @@ def _normalized_component_draft(draft: F8ComponentDraftEntry) -> F8ComponentDraf
         publishTargetAssetId=(
             None if draft.publishTargetAssetId is None else str(draft.publishTargetAssetId).strip() or None
         ),
-        publishBaseRemoteRevision=(
+        publishBaseRemoteVersionNumber=(
             None
-            if draft.publishBaseRemoteRevision is None
-            else str(draft.publishBaseRemoteRevision).strip() or None
+            if draft.publishBaseRemoteVersionNumber is None
+            else int(draft.publishBaseRemoteVersionNumber)
         ),
         createdAt=created_at,
         updatedAt=updated_at,
@@ -219,7 +218,7 @@ def _draft_db_values(draft: F8ComponentDraftEntry) -> dict[str, object]:
         "content": _compress_content(stable_json_dumps(draft.record.content)),
         "origin_kind": None if draft.originKind is None else draft.originKind.value,
         "publish_target_asset_id": draft.publishTargetAssetId,
-        "publish_base_remote_revision": draft.publishBaseRemoteRevision,
+        "publish_base_remote_version_number": draft.publishBaseRemoteVersionNumber,
         "created_at": str(draft.createdAt),
         "updated_at": str(draft.updatedAt),
     }
@@ -248,7 +247,7 @@ def _draft_from_row(row: object) -> F8ComponentDraftEntry:
         record=record,
         originKind=origin_kind,
         publishTargetAssetId=mapping_optional_str(row_mapping, "publish_target_asset_id"),
-        publishBaseRemoteRevision=mapping_optional_str(row_mapping, "publish_base_remote_revision"),
+        publishBaseRemoteVersionNumber=mapping_optional_int(row_mapping, "publish_base_remote_version_number"),
         createdAt=created_at,
         updatedAt=updated_at,
     )

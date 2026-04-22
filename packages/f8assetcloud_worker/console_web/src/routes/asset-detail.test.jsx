@@ -72,7 +72,7 @@ const defaultAsset = {
   visibility: 'public',
   ownerDisplayName: 'Owner Name',
   ownerUserId: 'owner-1',
-  revision: 'rev-1',
+  versionNumber: 1,
   updatedAt: '2026-04-21T10:00:00.000Z',
   subscribed: false,
   editable: false,

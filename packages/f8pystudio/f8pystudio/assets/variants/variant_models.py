@@ -33,7 +33,7 @@ class F8VariantEntry(Struct, kw_only=True):
     visibility: F8VariantVisibility | None = None
     ownerUserId: str | None = None
     ownerDisplayName: str | None = None
-    remoteRevision: str | None = None
+    remoteVersionNumber: int | None = None
     downloadedAt: str | None = None
     installed: bool = True
     hasCachedContent: bool | None = None
@@ -41,7 +41,7 @@ class F8VariantEntry(Struct, kw_only=True):
     isLocalDraft: bool = False
     draftOriginKind: F8VariantDraftOriginKind | None = None
     draftOriginAssetId: str | None = None
-    draftOriginRevision: str | None = None
+    draftOriginVersionNumber: int | None = None
 
 
 class F8VariantDraftEntry(Struct, kw_only=True):
@@ -49,7 +49,7 @@ class F8VariantDraftEntry(Struct, kw_only=True):
     record: F8VariantRecord
     originKind: F8VariantDraftOriginKind | None = None
     publishTargetAssetId: str | None = None
-    publishBaseRemoteRevision: str | None = None
+    publishBaseRemoteVersionNumber: int | None = None
     createdAt: str = field(default_factory=now_iso)
     updatedAt: str = field(default_factory=now_iso)
 
@@ -85,7 +85,6 @@ class F8VariantRemoteVersionEntry(Struct, kw_only=True):
     variantId: str
     assetType: str
     versionNumber: int
-    revision: str
     createdAt: str
     createdByUserId: str
     changeSummary: str | None = None
@@ -104,10 +103,10 @@ class F8VariantRemoteSession(Struct, kw_only=True):
 
 
 class F8VariantRemoteConflictError(Exception):
-    def __init__(self, message: str, *, variant_id: str, remote_revision: str | None = None) -> None:
+    def __init__(self, message: str, *, variant_id: str, remote_version_number: int | None = None) -> None:
         super().__init__(message)
         self.variant_id = str(variant_id)
-        self.remote_revision = None if remote_revision is None else str(remote_revision)
+        self.remote_version_number = remote_version_number
 
 
 class F8VariantRemoteAuthError(Exception):

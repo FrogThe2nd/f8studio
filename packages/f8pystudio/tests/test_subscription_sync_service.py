@@ -52,7 +52,7 @@ def _spy_count(spy: QtTest.QSignalSpy) -> int:
 def _variant_entry(
     *,
     variant_id: str,
-    revision: str,
+    version_number: int,
     installed: bool,
     subscribed: bool = True,
 ) -> F8VariantEntry:
@@ -75,7 +75,7 @@ def _variant_entry(
         visibility=F8VariantVisibility.public,
         ownerUserId="owner-1",
         ownerDisplayName="Owner",
-        remoteRevision=revision,
+        remoteVersionNumber=version_number,
         installed=installed,
         hasCachedContent=installed,
         subscribed=subscribed,
@@ -85,7 +85,7 @@ def _variant_entry(
 def _component_entry(
     *,
     component_id: str,
-    revision: str,
+    version_number: int,
     installed: bool,
     subscribed: bool = True,
 ) -> F8ComponentEntry:
@@ -107,7 +107,7 @@ def _component_entry(
         visibility=F8ComponentVisibility.public,
         ownerUserId="owner-1",
         ownerDisplayName="Owner",
-        remoteRevision=revision,
+        remoteVersionNumber=version_number,
         installed=installed,
         hasCachedContent=installed,
         subscribed=subscribed,
@@ -152,7 +152,7 @@ class _FakeVariantClient:
         next_cursor = None if index + 1 >= len(self.page_sequences) else str(index + 1)
         for entry in entries:
             existing = self.remote_entries.get(str(entry.record.variantId))
-            if existing is not None and existing.installed and str(existing.remoteRevision or "") == str(entry.remoteRevision or ""):
+            if existing is not None and existing.installed and existing.remoteVersionNumber == entry.remoteVersionNumber:
                 self.remote_entries[str(entry.record.variantId)] = copy_model(
                     entry,
                     update={
@@ -223,7 +223,7 @@ class _FakeComponentClient:
         next_cursor = None if index + 1 >= len(self.page_sequences) else str(index + 1)
         for entry in entries:
             existing = self.remote_entries.get(str(entry.record.componentId))
-            if existing is not None and existing.installed and str(existing.remoteRevision or "") == str(entry.remoteRevision or ""):
+            if existing is not None and existing.installed and existing.remoteVersionNumber == entry.remoteVersionNumber:
                 self.remote_entries[str(entry.record.componentId)] = copy_model(
                     entry,
                     update={
@@ -298,8 +298,8 @@ def _make_service(
 
 def test_subscription_sync_service_only_enqueues_diffed_assets() -> None:
     _ensure_app()
-    matched_variant = _variant_entry(variant_id="variant-same", revision="r1", installed=True)
-    matched_component = _component_entry(component_id="component-same", revision="r1", installed=True)
+    matched_variant = _variant_entry(variant_id="variant-same", version_number=1, installed=True)
+    matched_component = _component_entry(component_id="component-same", version_number=1, installed=True)
     service, variant_client, component_client = _make_service(
         variant_pages=[[copy_model(matched_variant, update={"installed": False, "hasCachedContent": False})]],
         component_pages=[[copy_model(matched_component, update={"installed": False, "hasCachedContent": False})]],
@@ -323,8 +323,8 @@ def test_subscription_sync_service_processes_installations_serially() -> None:
     _ensure_app()
     gate = threading.Event()
     service, variant_client, component_client = _make_service(
-        variant_pages=[[_variant_entry(variant_id="variant-a", revision="r1", installed=False)]],
-        component_pages=[[_component_entry(component_id="component-a", revision="r1", installed=False)]],
+        variant_pages=[[_variant_entry(variant_id="variant-a", version_number=1, installed=False)]],
+        component_pages=[[_component_entry(component_id="component-a", version_number=1, installed=False)]],
         variant_gate_install_by_id={"variant-a": gate},
     )
     finished_spy = QtTest.QSignalSpy(service.sync_finished)
@@ -344,8 +344,8 @@ def test_subscription_sync_service_processes_installations_serially() -> None:
 def test_subscription_sync_service_continues_after_item_failure() -> None:
     _ensure_app()
     service, variant_client, component_client = _make_service(
-        variant_pages=[[_variant_entry(variant_id="variant-fail", revision="r1", installed=False)]],
-        component_pages=[[_component_entry(component_id="component-ok", revision="r1", installed=False)]],
+        variant_pages=[[_variant_entry(variant_id="variant-fail", version_number=1, installed=False)]],
+        component_pages=[[_component_entry(component_id="component-ok", version_number=1, installed=False)]],
         variant_fail_install_ids={"variant-fail"},
     )
     failed_spy = QtTest.QSignalSpy(service.sync_item_failed)
@@ -380,7 +380,7 @@ def test_subscription_sync_service_collapses_reentrant_manual_refreshes() -> Non
     _ensure_app()
     gate = threading.Event()
     service, variant_client, _component_client = _make_service(
-        variant_pages=[[_variant_entry(variant_id="variant-a", revision="r1", installed=False)]],
+        variant_pages=[[_variant_entry(variant_id="variant-a", version_number=1, installed=False)]],
         component_pages=[[]],
         variant_gate_install_by_id={"variant-a": gate},
     )

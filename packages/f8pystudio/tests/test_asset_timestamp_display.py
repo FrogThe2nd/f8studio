@@ -68,14 +68,13 @@ def test_asset_version_browser_dialog_formats_history_timestamps_locally(monkeyp
             AssetVersionBrowserItem(
                 version_number=3,
                 created_at="2026-04-15T13:45:00+00:00",
-                revision="rev-3",
                 change_summary="Updated graph",
             )
         ],
         load_payload=lambda _version_number: {"ok": True},
     )
 
-    assert dialog._list.item(0).text() == "v3 | LOCAL<2026-04-15T13:45:00+00:00> | rev-3 | Updated graph"
+    assert dialog._list.item(0).text() == "v3 | LOCAL<2026-04-15T13:45:00+00:00> | Updated graph"
     assert dialog._list.item(0).toolTip() == "TIP<2026-04-15T13:45:00+00:00>"
 
 

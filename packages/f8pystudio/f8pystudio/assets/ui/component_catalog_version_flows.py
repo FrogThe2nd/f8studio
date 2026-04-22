@@ -34,7 +34,6 @@ class ComponentCatalogVersionFlowsMixin:
         return AssetVersionBrowserItem(
             version_number=int(version.versionNumber),
             created_at=str(version.createdAt),
-            revision=str(version.revision),
             change_summary="" if version.changeSummary is None else str(version.changeSummary),
         )
 

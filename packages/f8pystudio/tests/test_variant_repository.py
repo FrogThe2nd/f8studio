@@ -146,7 +146,7 @@ def test_export_import_library_v1_entries_preserves_draft_link_metadata(
         _make_variant_record(variant_id="v-sync", base_node_type="svc.a.op", name="sync"),
         origin_kind=F8VariantDraftOriginKind.copy_remote,
         publish_target_asset_id="remote-sync",
-        publish_base_remote_revision="r7",
+        publish_base_remote_version_number=7,
         draft_id="v-sync",
     )
 
@@ -158,7 +158,7 @@ def test_export_import_library_v1_entries_preserves_draft_link_metadata(
     assert exported["entries"][0]["isLocalDraft"] is True
     assert exported["entries"][0]["draftOriginKind"] == "copy_remote"
     assert exported["entries"][0]["draftOriginAssetId"] == "remote-sync"
-    assert exported["entries"][0]["draftOriginRevision"] == "r7"
+    assert exported["entries"][0]["draftOriginVersionNumber"] == 7
 
     replaced_service = VariantCatalogService(db_path=tmp_path / "imported-assets.db")
     monkeypatch.setattr("f8pystudio.assets.variants.variant_repository._service", lambda: replaced_service)
@@ -169,7 +169,7 @@ def test_export_import_library_v1_entries_preserves_draft_link_metadata(
     assert imported.isLocalDraft is True
     assert imported.draftOriginKind == F8VariantDraftOriginKind.copy_remote
     assert imported.draftOriginAssetId == "remote-sync"
-    assert imported.draftOriginRevision == "r7"
+    assert imported.draftOriginVersionNumber == 7
 
 
 def test_import_rejects_variant_library_without_draft_metadata(

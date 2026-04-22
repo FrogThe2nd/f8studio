@@ -107,6 +107,13 @@ def mapping_int(mapping: Mapping[object, object], key: str) -> int:
     return int(str(mapping[key]))
 
 
+def mapping_optional_int(mapping: Mapping[object, object], key: str) -> int | None:
+    value = mapping[key]
+    if value is None:
+        return None
+    return int(str(value))
+
+
 def origin_headers_for_base_url(base_url: str) -> dict[str, str]:
     parsed = parse.urlsplit(str(base_url or "").strip())
     if not parsed.scheme or not parsed.netloc:

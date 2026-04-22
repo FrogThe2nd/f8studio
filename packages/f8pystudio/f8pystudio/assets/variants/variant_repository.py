@@ -203,7 +203,7 @@ def upsert_variant_entry(entry: F8VariantEntry) -> F8VariantEntry:
             entry.record,
             origin_kind=entry.draftOriginKind or F8VariantDraftOriginKind.new,
             publish_target_asset_id=entry.draftOriginAssetId,
-            publish_base_remote_revision=entry.draftOriginRevision,
+            publish_base_remote_version_number=entry.draftOriginVersionNumber,
             draft_id=str(entry.record.variantId),
         )
     else:
@@ -213,7 +213,7 @@ def upsert_variant_entry(entry: F8VariantEntry) -> F8VariantEntry:
                 record=entry.record,
                 originKind=entry.draftOriginKind or draft.originKind,
                 publishTargetAssetId=entry.draftOriginAssetId or draft.publishTargetAssetId,
-                publishBaseRemoteRevision=entry.draftOriginRevision or draft.publishBaseRemoteRevision,
+                publishBaseRemoteVersionNumber=entry.draftOriginVersionNumber or draft.publishBaseRemoteVersionNumber,
                 createdAt=draft.createdAt,
                 updatedAt=draft.updatedAt,
             )
@@ -233,7 +233,7 @@ def upsert_variant(record: F8VariantRecord) -> F8VariantRecord:
                 record=record,
                 originKind=existing_draft.originKind,
                 publishTargetAssetId=existing_draft.publishTargetAssetId,
-                publishBaseRemoteRevision=existing_draft.publishBaseRemoteRevision,
+                publishBaseRemoteVersionNumber=existing_draft.publishBaseRemoteVersionNumber,
                 createdAt=existing_draft.createdAt,
                 updatedAt=existing_draft.updatedAt,
             )
@@ -244,7 +244,7 @@ def upsert_variant(record: F8VariantRecord) -> F8VariantRecord:
         record,
         origin_kind=F8VariantDraftOriginKind.new,
         publish_target_asset_id=None,
-        publish_base_remote_revision=None,
+        publish_base_remote_version_number=None,
         draft_id=str(record.variantId),
     )
     emit_variants_changed()
@@ -320,7 +320,7 @@ def _variant_library_payload(entries: list[F8VariantEntry]) -> dict[str, object]
                 "isLocalDraft": entry.isLocalDraft,
                 "draftOriginKind": None if entry.draftOriginKind is None else entry.draftOriginKind.value,
                 "draftOriginAssetId": entry.draftOriginAssetId,
-                "draftOriginRevision": entry.draftOriginRevision,
+                "draftOriginVersionNumber": entry.draftOriginVersionNumber,
             }
             for entry in entries
         ],
@@ -346,7 +346,7 @@ def _variant_entries_from_library_payload(payload: dict[str, object]) -> list[F8
                 isLocalDraft=_required_bool(raw_entry, "isLocalDraft"),
                 draftOriginKind=_required_draft_origin_kind(raw_entry, "draftOriginKind"),
                 draftOriginAssetId=_optional_str(raw_entry.get("draftOriginAssetId")),
-                draftOriginRevision=_optional_str(raw_entry.get("draftOriginRevision")),
+                draftOriginVersionNumber=_optional_int(raw_entry.get("draftOriginVersionNumber")),
             )
         )
     return entries

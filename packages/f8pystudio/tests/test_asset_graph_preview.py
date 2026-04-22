@@ -1244,7 +1244,7 @@ def test_component_dialog_shows_linked_draft_reference(monkeypatch, tmp_path: Pa
         ),
         origin_kind=F8ComponentDraftOriginKind.copy_remote,
         publish_target_asset_id="remote-component-1",
-        publish_base_remote_revision="rev-1",
+        publish_base_remote_version_number=1,
         draft_id="draft-linked-component",
     )
 
@@ -1300,7 +1300,7 @@ def test_component_dialog_remote_row_shows_draft_badge(monkeypatch, tmp_path: Pa
         ),
         origin_kind=F8ComponentDraftOriginKind.copy_remote,
         publish_target_asset_id="remote-component-draft-badge",
-        publish_base_remote_revision="rev-2",
+        publish_base_remote_version_number=2,
         draft_id="local-linked-component",
     )
 
@@ -1372,7 +1372,7 @@ def test_variant_dialog_shows_linked_draft_label(monkeypatch, tmp_path: Path) ->
         ),
         origin_kind=F8VariantDraftOriginKind.copy_remote,
         publish_target_asset_id="remote-variant-1",
-        publish_base_remote_revision="rev-1",
+        publish_base_remote_version_number=1,
         draft_id="draft-linked",
     )
 
@@ -1444,7 +1444,7 @@ def test_variant_dialog_remote_row_shows_draft_badge(monkeypatch, tmp_path: Path
         ),
         origin_kind=F8VariantDraftOriginKind.copy_remote,
         publish_target_asset_id="remote-variant-draft-badge",
-        publish_base_remote_revision="rev-2",
+        publish_base_remote_version_number=2,
         draft_id="local-linked-variant",
     )
 
@@ -1494,7 +1494,7 @@ def test_variant_dialog_node_type_combo_tracks_current_tab_entries(monkeypatch, 
         ),
         origin_kind=F8VariantDraftOriginKind.new,
         publish_target_asset_id=None,
-        publish_base_remote_revision=None,
+        publish_base_remote_version_number=None,
         draft_id="draft-node-type",
     )
     dialog._sync_client._catalog_service._remote_provider.save_entries(
@@ -2092,7 +2092,7 @@ def test_component_catalog_save_as_component_overwrite_choices_only_include_draf
         ),
         origin_kind=F8ComponentDraftOriginKind.new,
         publish_target_asset_id=None,
-        publish_base_remote_revision=None,
+        publish_base_remote_version_number=None,
         draft_id="draft-existing-component",
     )
 
@@ -2991,7 +2991,7 @@ def test_variant_dialog_installed_uses_remove_from_installed(monkeypatch) -> Non
     dialog.close()
 
 
-def test_variant_catalog_row_without_description_stays_compact_and_shows_remote_revision(monkeypatch) -> None:
+def test_variant_catalog_row_without_description_stays_compact_and_shows_remote_version_number(monkeypatch) -> None:
     _ensure_app()
     monkeypatch.setattr("f8pystudio.assets.ui.variant_catalog_browser.subscribe_variants_changed", lambda _cb: (lambda: None))
     monkeypatch.setattr(VariantCatalogDialog, "_render_browser_from_state", lambda self, *_args, **_kwargs: None)
@@ -3020,7 +3020,7 @@ def test_variant_catalog_row_without_description_stays_compact_and_shows_remote_
         visibility=F8VariantVisibility.private,
         ownerUserId="u1",
         ownerDisplayName="User One",
-        remoteRevision="r1",
+        remoteVersionNumber=1,
         installed=True,
         hasCachedContent=True,
     )
@@ -3030,7 +3030,7 @@ def test_variant_catalog_row_without_description_stays_compact_and_shows_remote_
 
     assert row_widget.sizeHint().height() <= 56
     assert "This description should not appear in the row." not in row_labels
-    assert "r1" in row_labels
+    assert "v1" in row_labels
 
     dialog.close()
 

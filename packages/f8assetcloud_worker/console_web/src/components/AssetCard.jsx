@@ -41,7 +41,7 @@ export function AssetCard({ asset }) {
         </Button>
         <span className="inline-flex items-center gap-2 text-sm text-slate-300">
           <Layers3 className="size-4 text-cyan-200" />
-          {asset?.revision || 'n/a'}
+          {Number.isFinite(Number(asset?.versionNumber)) ? `Version ${Number(asset.versionNumber)}` : 'No versions'}
         </span>
         {asset?.subscribed ? (
           <span className="inline-flex items-center gap-2 text-sm text-emerald-200">

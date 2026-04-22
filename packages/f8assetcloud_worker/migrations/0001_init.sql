@@ -106,13 +106,11 @@ CREATE INDEX idx_variant_details_lookup ON variant_details(base_node_type, varia
 CREATE TABLE asset_versions (
   asset_id TEXT NOT NULL,
   version_number INTEGER NOT NULL,
-  revision TEXT NOT NULL,
   content BLOB NOT NULL,
   created_at TEXT NOT NULL,
   created_by_user_id TEXT NOT NULL,
   change_summary TEXT,
   PRIMARY KEY (asset_id, version_number),
-  UNIQUE (asset_id, revision),
   FOREIGN KEY (asset_id) REFERENCES asset_heads(asset_id),
   FOREIGN KEY (created_by_user_id) REFERENCES user(id)
 );
@@ -124,7 +122,7 @@ CREATE TABLE asset_subscriptions (
   asset_id TEXT NOT NULL,
   subscriber_user_id TEXT NOT NULL,
   subscribed_at TEXT NOT NULL,
-  last_seen_revision TEXT,
+  last_seen_version_number INTEGER,
   PRIMARY KEY (asset_id, subscriber_user_id),
   FOREIGN KEY (asset_id) REFERENCES asset_heads(asset_id),
   FOREIGN KEY (subscriber_user_id) REFERENCES user(id)

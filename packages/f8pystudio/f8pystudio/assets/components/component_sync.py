@@ -421,14 +421,14 @@ class ComponentSyncClient:
         component_id: str,
         *,
         visibility: F8ComponentVisibility,
-        revision: str | None,
+        version_number: int | None,
     ) -> F8ComponentEntry:
         payload = self._request_json(
             "PUT",
             f"/v1/components/{parse.quote(str(component_id))}/visibility",
             {
                 "visibility": visibility.value,
-                "revision": revision,
+                "versionNumber": version_number,
             },
             authorized=True,
         )
@@ -454,11 +454,11 @@ class ComponentSyncClient:
     def upload_entry(self, entry: F8ComponentEntry) -> F8ComponentEntry:
         _require_component_record_for_upload(entry.record)
         try:
-            if entry.remoteRevision:
+            if entry.remoteVersionNumber is not None:
                 return self.update_component(entry)
             return self.create_component(entry)
         except F8ComponentRemoteConflictError as exc:
-            _ = self._catalog_service.mark_conflict(str(entry.record.componentId), remote_revision=exc.remote_revision)
+            _ = self._catalog_service.mark_conflict(str(entry.record.componentId), remote_version_number=exc.remote_version_number)
             raise
         except Exception as exc:
             recovered_entry = self._recover_uploaded_entry(entry)
@@ -519,7 +519,7 @@ class ComponentSyncClient:
             update={
                 "source": source_kind,
                 "visibility": visibility,
-                "remoteRevision": None,
+                "remoteVersionNumber": None,
                 "installed": True,
                 "subscribed": False,
             },
@@ -698,13 +698,13 @@ class ComponentSyncClient:
                 if exc.code == 401:
                     raise F8ComponentRemoteAuthError(message) from exc
                 if exc.code == 409:
-                    remote_revision = None
-                    if isinstance(payload_obj.get("revision"), str):
-                        remote_revision = str(payload_obj["revision"])
+                    remote_version_number = None
+                    if payload_obj.get("versionNumber") is not None:
+                        remote_version_number = int(str(payload_obj["versionNumber"]))
                     raise F8ComponentRemoteConflictError(
                         message or "Component update conflict",
                         component_id=_conflict_component_id(payload_obj, path),
-                        remote_revision=remote_revision,
+                        remote_version_number=remote_version_number,
                     ) from exc
                 raise F8ComponentRemoteRequestError(
                     message or f"{method} {path} failed with HTTP {exc.code}",
@@ -932,8 +932,8 @@ def _asset_write_payload(entry: F8ComponentEntry, *, change_summary: str | None 
         "record": _record_payload(entry.record),
         "visibility": None if entry.visibility is None else entry.visibility.value,
     }
-    if entry.remoteRevision:
-        payload["revision"] = str(entry.remoteRevision)
+    if entry.remoteVersionNumber is not None:
+        payload["versionNumber"] = int(entry.remoteVersionNumber)
     if change_summary:
         payload["changeSummary"] = str(change_summary)
     return payload
@@ -972,7 +972,7 @@ def _entry_from_asset_payload(payload: JsonObject) -> F8ComponentEntry:
         visibility=_visibility_from_payload(payload),
         ownerUserId=_payload_optional_str(payload, "ownerUserId"),
         ownerDisplayName=_payload_optional_str(payload, "ownerDisplayName"),
-        remoteRevision=_payload_optional_str(payload, "revision"),
+        remoteVersionNumber=_payload_optional_int(payload, "versionNumber"),
         downloadedAt=_payload_optional_str(payload, "downloadedAt"),
         installed=_payload_bool(payload, "installed", default=_installed_from_asset_payload(payload, record)),
         hasCachedContent=_payload_bool(payload, "hasCachedContent", default=_component_record_has_full_content(record)),
@@ -1080,7 +1080,7 @@ def _merge_component_entries(existing_entry: F8ComponentEntry, incoming_entry: F
         return incoming_entry
     if not existing_has_content:
         return incoming_entry
-    if str(existing_entry.remoteRevision or "") != str(incoming_entry.remoteRevision or ""):
+    if existing_entry.remoteVersionNumber != incoming_entry.remoteVersionNumber:
         return incoming_entry
     merged_record = F8ComponentRecord(
         componentId=str(incoming_entry.record.componentId),
@@ -1258,7 +1258,6 @@ def _remote_version_list_from_payload(payload: JsonObject) -> F8ComponentRemoteV
                 componentId=_payload_str(version_payload, "componentId"),
                 assetType=_payload_str(version_payload, "assetType"),
                 versionNumber=_payload_int(version_payload, "versionNumber"),
-                revision=_payload_str(version_payload, "revision"),
                 createdAt=_payload_str(version_payload, "createdAt"),
                 createdByUserId=_payload_str(version_payload, "createdByUserId"),
                 changeSummary=_payload_optional_str(version_payload, "changeSummary"),

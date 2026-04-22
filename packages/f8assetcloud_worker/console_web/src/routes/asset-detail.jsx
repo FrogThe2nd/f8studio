@@ -194,8 +194,8 @@ function AssetDetailContent({
               <h3 className="text-lg font-semibold text-white">Metadata</h3>
               <dl className="mt-4 space-y-3 text-sm text-slate-300">
                 <div className="flex justify-between gap-4">
-                  <dt>Revision</dt>
-                  <dd>{asset.revision}</dd>
+                  <dt>Version</dt>
+                  <dd>{formatRelativeVersion(asset.versionNumber)}</dd>
                 </div>
                 <div className="flex justify-between gap-4">
                   <dt>Updated</dt>

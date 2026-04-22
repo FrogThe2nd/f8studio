@@ -64,7 +64,7 @@ class _FakeLogDock:
         self.exceptions.append((str(channel), str(context), str(exc)))
 
 
-class _FakeProjectAssetMetaDialog:
+class _FakeAssetOverwriteMetaDialog:
     init_kwargs: dict[str, object] | None = None
 
     def __init__(
@@ -75,9 +75,11 @@ class _FakeProjectAssetMetaDialog:
         name: str,
         description: str,
         tags: list[str],
+        overwrite_choices: list[object],
+        overwrite_label: str,
         name_validator: object | None = None,
     ) -> None:
-        del parent, name_validator
+        del parent, overwrite_choices, overwrite_label, name_validator
         type(self).init_kwargs = {
             "title": str(title),
             "name": str(name),
@@ -88,13 +90,14 @@ class _FakeProjectAssetMetaDialog:
     def exec(self) -> int:
         return QtWidgets.QDialog.Accepted
 
-    def values(self) -> tuple[str, str, list[str]]:
+    def values(self) -> tuple[str, str, list[str], str | None]:
         init_kwargs = type(self).init_kwargs
         assert init_kwargs is not None
         return (
             str(init_kwargs["name"]),
             str(init_kwargs["description"]),
             list(init_kwargs["tags"]),
+            None,
         )
 
 
@@ -230,14 +233,16 @@ def test_save_component_as_dialog_seeds_metadata_from_current_project(monkeypatc
     parent = QtWidgets.QWidget()
     saved_records: list[object] = []
     info_messages: list[tuple[str, str]] = []
-    _FakeProjectAssetMetaDialog.init_kwargs = None
+    _FakeAssetOverwriteMetaDialog.init_kwargs = None
 
     monkeypatch.setattr(project_asset_actions, "ProjectStorageService", lambda: service)
-    monkeypatch.setattr(project_asset_actions, "ProjectAssetMetaDialog", _FakeProjectAssetMetaDialog)
-    monkeypatch.setattr(project_asset_actions, "upsert_component", lambda record: saved_records.append(record))
+    monkeypatch.setattr(project_asset_actions, "AssetOverwriteMetaDialog", _FakeAssetOverwriteMetaDialog)
     monkeypatch.setattr(
-        project_asset_actions,
-        "show_info",
+        "f8pystudio.assets.components.component_repository.upsert_component",
+        lambda record: saved_records.append(record),
+    )
+    monkeypatch.setattr(
+        "f8pystudio.ui.support.ui_notifications.show_info",
         lambda _parent, title, message: info_messages.append((str(title), str(message))),
     )
 
@@ -250,8 +255,8 @@ def test_save_component_as_dialog_seeds_metadata_from_current_project(monkeypatc
 
     assert project.projectId == service.current_project_id()
     assert saved is True
-    assert _FakeProjectAssetMetaDialog.init_kwargs == {
-        "title": "Save As Component",
+    assert _FakeAssetOverwriteMetaDialog.init_kwargs == {
+        "title": "Export to Component",
         "name": "Seed Project",
         "description": "Seed description",
         "tags": ["alpha", "beta"],
@@ -262,7 +267,7 @@ def test_save_component_as_dialog_seeds_metadata_from_current_project(monkeypatc
     assert saved_record.description == "Seed description"
     assert saved_record.tags == ["alpha", "beta"]
     assert saved_record.content == _session_payload("unused")
-    assert info_messages == [("Component saved", "Saved component:\nSeed Project")]
+    assert info_messages == [("Component Saved", "Saved component:\nSeed Project")]
 
 
 def test_open_component_catalog_dialog_is_modeless(monkeypatch) -> None:
