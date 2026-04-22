@@ -243,6 +243,27 @@ class RecordingCommandNode final : public f8::cppsdk::CommandableNode {
   json last_meta = json::object();
 };
 
+class RejectingSetStateNode final : public f8::cppsdk::SetStateHandlerNode {
+ public:
+  bool on_set_state(const std::string& node_id, const std::string& field, const json& value, const json& meta,
+                    std::string& error_code, std::string& error_message) override {
+    last_node_id = node_id;
+    last_field = field;
+    last_value = value;
+    last_meta = meta;
+    ++count;
+    error_code = "UNKNOWN_FIELD";
+    error_message = "unknown state field";
+    return false;
+  }
+
+  int count = 0;
+  std::string last_node_id;
+  std::string last_field;
+  json last_value = json(nullptr);
+  json last_meta = json::object();
+};
+
 }  // namespace
 
 TEST(ServiceBusIntegration, DataRouteDeliversAndBuffers) {
@@ -605,6 +626,109 @@ TEST(ServiceBusIntegration, CommandInputStateDispatchesAndFansOutOutput) {
   ASSERT_TRUE(state_node.last_value["args"].is_object());
   EXPECT_EQ(state_node.last_value["args"].value("a", 0), 1);
   EXPECT_EQ(state_node.last_value["args"].value("b", 0), 2);
+
+  auto output_raw = bus.kv().get(f8::cppsdk::kv_key_node_state("svcB", output_field));
+  ASSERT_TRUE(output_raw.has_value());
+  json output_payload = json::object();
+  ASSERT_TRUE(f8::cppsdk::decode_json(output_raw->data(), output_raw->size(), output_payload));
+  ASSERT_TRUE(output_payload.is_object());
+  EXPECT_EQ(output_payload["value"]["call"], "run");
+
+  bus.stop();
+  server.stop();
+#endif
+}
+
+TEST(ServiceBusIntegration, HiddenCommandInputBypassesRejectingSetStateHandler) {
+#if defined(_WIN32)
+  GTEST_SKIP() << "integration test requires nats-server + fork/exec";
+#else
+  const int port = pick_free_port();
+  ASSERT_GT(port, 0);
+  NatsServerProcess server(port);
+  ASSERT_TRUE(server.start());
+
+  const std::string url = "nats://127.0.0.1:" + std::to_string(port);
+
+  f8::cppsdk::ServiceBus::Config cfg;
+  cfg.service_id = "svcB";
+  cfg.nats_url = url;
+  cfg.kv_memory_storage = true;
+  f8::cppsdk::ServiceBus bus(cfg);
+  RecordingCommandNode command_node;
+  RecordingStateNode state_node;
+  RejectingSetStateNode rejecting_state_node;
+  bus.add_set_state_node(&rejecting_state_node);
+  bus.add_command_node(
+      &command_node,
+      json{{"service",
+            {{"commands",
+              json::array({
+                  json{{"name", "run"}, {"params", json::array({json{{"name", "a"}}, json{{"name", "b"}}})}},
+              })}}}});
+  bus.add_stateful_node(&state_node);
+
+  f8::cppsdk::NatsClient probe;
+  ASSERT_TRUE(wait_until(
+      [&]() { return probe.connect(url); }, [&]() {}, 2000))
+      << "NATS server did not become reachable";
+  probe.close();
+
+  ASSERT_TRUE(bus.start());
+
+  const std::string input_field = command_input_state_field("run");
+  const std::string output_field = command_output_state_field("run");
+
+  json graph;
+  graph["graphId"] = "g1";
+  graph["revision"] = "r1";
+  graph["nodes"] = json::array({
+      json{{"nodeId", "svcB"},
+           {"serviceId", "svcB"},
+           {"serviceClass", "demo"},
+           {"operatorClass", nullptr},
+           {"stateFields",
+            json::array({
+                json{{"name", input_field}, {"access", "wo"}, {"valueSchema", json::object()}},
+                json{{"name", output_field}, {"access", "ro"}, {"valueSchema", json::object()}},
+                json{{"name", "result"}, {"access", "rw"}, {"valueSchema", json::object()}},
+            })}}},
+  });
+  graph["edges"] = json::array({
+      json{{"edgeId", "e1"},
+           {"kind", "state"},
+           {"fromServiceId", "svcB"},
+           {"fromOperatorId", "svcB"},
+           {"fromPort", output_field},
+           {"toServiceId", "svcB"},
+           {"toOperatorId", "svcB"},
+           {"toPort", "result"},
+           {"strategy", "latest"}}});
+
+  std::string err_code;
+  std::string err_msg;
+  ASSERT_TRUE(bus.on_set_rungraph(graph, json::object(), err_code, err_msg)) << err_code << ": " << err_msg;
+
+  ASSERT_TRUE(bus.on_set_state("svcB", input_field, json::array({7, 8}), json::object(), err_code, err_msg))
+      << err_code << ": " << err_msg;
+
+  ASSERT_TRUE(wait_until([&]() { return command_node.count > 0; }, [&]() { (void)bus.drain_main_thread(); }, 2000))
+      << "hidden command input did not dispatch";
+  ASSERT_TRUE(wait_until([&]() { return state_node.count > 0; }, [&]() { (void)bus.drain_main_thread(); }, 2000))
+      << "hidden command output did not fan out";
+
+  EXPECT_EQ(rejecting_state_node.count, 0);
+  EXPECT_EQ(command_node.last_call, "run");
+  ASSERT_TRUE(command_node.last_args.is_object());
+  EXPECT_EQ(command_node.last_args.value("a", 0), 7);
+  EXPECT_EQ(command_node.last_args.value("b", 0), 8);
+
+  ASSERT_TRUE(state_node.last_value.is_object());
+  EXPECT_EQ(state_node.last_field, "result");
+  EXPECT_EQ(state_node.last_value["call"], "run");
+  ASSERT_TRUE(state_node.last_value["args"].is_object());
+  EXPECT_EQ(state_node.last_value["args"].value("a", 0), 7);
+  EXPECT_EQ(state_node.last_value["args"].value("b", 0), 8);
 
   auto output_raw = bus.kv().get(f8::cppsdk::kv_key_node_state("svcB", output_field));
   ASSERT_TRUE(output_raw.has_value());

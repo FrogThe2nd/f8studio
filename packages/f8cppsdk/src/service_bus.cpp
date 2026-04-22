@@ -1027,33 +1027,40 @@ bool ServiceBus::on_set_state(const std::string& node_id, const std::string& fie
     return true;
   }
 
+  std::string node_id_s;
+  try {
+    node_id_s = ensure_token(node_id, "node_id");
+  } catch (...) {
+    error_code = "INVALID_ARGS";
+    error_message = "invalid nodeId";
+    return false;
+  }
+
+  std::string field_s = trim_copy(field);
+  if (field_s.empty()) {
+    error_code = "INVALID_ARGS";
+    error_message = "field must be non-empty";
+    return false;
+  }
+
+  bool is_hidden_command_input = false;
+  {
+    std::lock_guard<std::mutex> lock(state_mu_);
+    is_hidden_command_input = command_input_bindings_.find({node_id_s, field_s}) != command_input_bindings_.end();
+  }
+  if (is_hidden_command_input) {
+    publish_state_local(node_id_s, field_s, value, now_ms(), "endpoint", meta, "external", true, true);
+    error_code.clear();
+    error_message.clear();
+    return true;
+  }
+
   std::vector<SetStateHandlerNode*> nodes;
   {
     std::lock_guard<std::mutex> lock(handlers_mu_);
     nodes = set_state_nodes_;
   }
   if (nodes.empty()) {
-    std::string node_id_s;
-    try {
-      node_id_s = ensure_token(node_id, "node_id");
-    } catch (...) {
-      error_code = "INVALID_ARGS";
-      error_message = "invalid nodeId";
-      return false;
-    }
-    std::string field_s = field;
-    field_s.erase(field_s.begin(),
-                  std::find_if(field_s.begin(), field_s.end(), [](unsigned char ch) { return !std::isspace(ch); }));
-    field_s.erase(std::find_if(field_s.rbegin(), field_s.rend(),
-                               [](unsigned char ch) { return !std::isspace(ch); })
-                      .base(),
-                  field_s.end());
-    if (field_s.empty()) {
-      error_code = "INVALID_ARGS";
-      error_message = "field must be non-empty";
-      return false;
-    }
-
     std::string access;
     {
       std::lock_guard<std::mutex> lock(state_mu_);
