@@ -99,7 +99,6 @@ class VariantCatalogUiMixin:
         btn_add = QtWidgets.QPushButton("Save From Selected Node", self._toolbar)
         btn_refresh = QtWidgets.QPushButton("Refresh", self._toolbar)
         btn_import = QtWidgets.QPushButton("Import...", self._toolbar)
-        btn_export = QtWidgets.QPushButton("Export...", self._toolbar)
         self._btn_install = QtWidgets.QPushButton(self._toolbar)
         self._btn_upload = QtWidgets.QPushButton(self._toolbar)
         self._btn_subscribe = QtWidgets.QPushButton(self._toolbar)
@@ -114,12 +113,9 @@ class VariantCatalogUiMixin:
         btn_add.setIcon(icon_for(btn_add, StudioIcon.CIRCLE_PLUS))
         btn_add.setText("")
         btn_import.setIcon(icon_for(btn_import, StudioIcon.PACKAGE_IMPORT))
-        btn_export.setIcon(icon_for(btn_export, StudioIcon.PACKAGE_EXPORT))
-
         btn_add.clicked.connect(self._on_add_clicked)  # type: ignore[attr-defined]
         btn_refresh.clicked.connect(self._on_refresh_clicked)  # type: ignore[attr-defined]
         btn_import.clicked.connect(self._on_import_clicked)  # type: ignore[attr-defined]
-        btn_export.clicked.connect(self._on_export_clicked)  # type: ignore[attr-defined]
         self._btn_install.clicked.connect(self._on_install_clicked)  # type: ignore[attr-defined]
         self._btn_upload.clicked.connect(self._on_upload_clicked)  # type: ignore[attr-defined]
         self._btn_subscribe.clicked.connect(self._on_subscribe_clicked)  # type: ignore[attr-defined]
@@ -140,13 +136,11 @@ class VariantCatalogUiMixin:
         self._configure_icon_button(self._btn_history, "History", hidden=True)
         self._configure_icon_button(self._btn_create, "Create on canvas", hidden=True)
         self._configure_icon_button(btn_refresh, "Refresh current list")
-        self._configure_icon_button(btn_import, "Import")
-        self._configure_icon_button(btn_export, "Export")
+        self._configure_icon_button(btn_import, "Import asset JSON")
         self._configure_icon_button(btn_add, "Save From Selected Node")
 
         self._toolbar.addWidget(btn_add)
         self._toolbar.addWidget(btn_import)
-        self._toolbar.addWidget(btn_export)
         self._toolbar.addSeparator()
         self._toolbar.addWidget(btn_refresh)
         self._toolbar.addSeparator()
@@ -163,7 +157,6 @@ class VariantCatalogUiMixin:
         self._btn_refresh = btn_refresh
         self._btn_add = btn_add
         self._btn_import = btn_import
-        self._btn_export = btn_export
 
         toolbar_row = QtWidgets.QHBoxLayout()
         toolbar_row.addWidget(self._toolbar)

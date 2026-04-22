@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
-from f8pysdk.codec import copy_model
+from f8pysdk.codec import dump_json, validate_as
 from f8pystudio.nodegraph.session_schema import extract_layout
 from .component_drafts import ComponentDraftService, draft_as_catalog_entry
 from .component_catalog import ComponentCatalogService
@@ -13,9 +12,9 @@ from .component_models import (
     F8ComponentDraftOriginKind,
     F8ComponentEntry,
     F8ComponentRecord,
-    F8ComponentSourceKind,
 )
-from ..common import JsonObject, json_object_loads, json_string_list_loads
+from ..common import json_string_list_loads, new_asset_id
+from ..common.asset_file_exchange import read_component_asset_file, write_component_asset_file
 
 
 def _service() -> ComponentCatalogService:
@@ -80,19 +79,19 @@ def delete_component(component_id: str) -> bool:
 
 
 def import_component_from_json(path: str, *, metadata: dict[str, object] | None = None) -> F8ComponentRecord:
-    in_path = Path(str(path or "").strip())
-    if not in_path.is_file():
-        raise FileNotFoundError(f"Component JSON not found: {in_path}")
-    raw = json_object_loads(in_path.read_text(encoding="utf-8"))
-    _ = extract_layout(raw)
+    payload = read_component_asset_file(path)
+    _ = extract_layout(payload.record.content)
     meta = {} if metadata is None else dict(metadata)
-    record = F8ComponentRecord(
-        componentId=str(meta.get("componentId") or ""),
-        name=str(meta.get("name") or in_path.stem or "Imported Component"),
-        description=str(meta.get("description") or ""),
-        tags=_metadata_tags(meta),
-        schemaVersion=_content_schema_version(raw),
-        content=raw,
+    desired_name = str(meta.get("name") or payload.record.name or "").strip()
+    record = validate_as(
+        F8ComponentRecord,
+        {
+            **dump_json(payload.record, mode="json"),
+            "componentId": str(meta.get("componentId") or new_asset_id()),
+            "name": ensure_unique_component_name(desired_name),
+            "description": str(meta.get("description") or payload.record.description or ""),
+            "tags": _metadata_tags(meta) if "tags" in meta else list(payload.record.tags or []),
+        },
     )
     return upsert_component(record)
 
@@ -101,17 +100,11 @@ def export_component_to_json(component_id: str, path: str) -> Path:
     entry = component_entry(component_id, include_uninstalled=True)
     if entry is None:
         raise FileNotFoundError(f"Component not found: {component_id}")
-    out_path = Path(str(path or "").strip())
-    if not str(out_path):
-        raise ValueError("Export path is empty")
-    if out_path.suffix.lower() != ".json":
-        out_path = out_path.with_suffix(".json")
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    _ = out_path.write_text(
-        json.dumps(entry.record.content, ensure_ascii=False, indent=2, default=str),
-        encoding="utf-8",
+    return write_component_asset_file(
+        path,
+        record=entry.record,
+        version_number=_entry_version_number(entry),
     )
-    return out_path
 
 
 def _metadata_tags(metadata: dict[str, object]) -> list[str]:
@@ -121,12 +114,58 @@ def _metadata_tags(metadata: dict[str, object]) -> list[str]:
     return json_string_list_loads(raw_tags)
 
 
-def _content_schema_version(content: JsonObject) -> str:
-    return str(content["schemaVersion"])
+def ensure_unique_component_name(
+    desired_name: str,
+    *,
+    exclude_component_id: str | None = None,
+    existing_records: list[F8ComponentRecord] | None = None,
+) -> str:
+    base_name = normalize_component_name(desired_name) or "Imported Component"
+    records = _local_component_records() if existing_records is None else list(existing_records)
+    if not _component_name_conflict(records, name=base_name, exclude_component_id=exclude_component_id):
+        return base_name
+    suffix = 2
+    while True:
+        candidate = f"{base_name} ({suffix})"
+        if not _component_name_conflict(records, name=candidate, exclude_component_id=exclude_component_id):
+            return candidate
+        suffix += 1
+
+
+def normalize_component_name(name: str) -> str:
+    return str(name or "").strip()
 
 
 def _component_sort_key(entry: F8ComponentEntry) -> tuple[str, str]:
     return (str(entry.record.name or "").lower(), str(entry.record.componentId or ""))
+
+
+def _entry_version_number(entry: F8ComponentEntry) -> int:
+    if entry.remoteVersionNumber is not None and int(entry.remoteVersionNumber) > 0:
+        return int(entry.remoteVersionNumber)
+    return 1
+
+
+def _local_component_records() -> list[F8ComponentRecord]:
+    return [entry.record for entry in _draft_service().list_catalog_entries()]
+
+
+def _component_name_conflict(
+    records: list[F8ComponentRecord],
+    *,
+    name: str,
+    exclude_component_id: str | None = None,
+) -> bool:
+    normalized_name = normalize_component_name(name)
+    normalized_exclude_component_id = str(exclude_component_id or "").strip()
+    if not normalized_name:
+        return False
+    for record in records:
+        if normalized_exclude_component_id and str(record.componentId or "").strip() == normalized_exclude_component_id:
+            continue
+        if normalize_component_name(record.name) == normalized_name:
+            return True
+    return False
 
 
 __all__ = [
@@ -136,4 +175,6 @@ __all__ = [
     "delete_component",
     "import_component_from_json",
     "export_component_to_json",
+    "ensure_unique_component_name",
+    "normalize_component_name",
 ]

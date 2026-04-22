@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from qtpy import QtWidgets
@@ -9,6 +8,7 @@ from f8pysdk.codec import copy_model, dump_json, validate_as
 from f8pysdk.specs import F8OperatorSpec, F8ServiceSpec, F8VariantRecord
 
 from ..common import new_asset_id
+from ..common.asset_file_exchange import read_variant_asset_file
 from ..variants.variant_catalog import variant_entry_is_installed
 from ..variants.variant_compose import build_variant_record_from_node
 from ..variants.variant_ids import build_variant_node_type
@@ -447,39 +447,51 @@ class VariantCatalogActionsMixin:
     def _on_import_clicked(self) -> None:
         path, _ = QtWidgets.QFileDialog.getOpenFileName(
             self,
-            "Import Variant Library JSON",
+            "Import Variant Asset JSON",
             "",
             "JSON (*.json);;All Files (*)",
         )
         selected_path = str(path or "").strip()
         if not selected_path:
             return
-        mode = QtWidgets.QMessageBox.question(
-            self,
-            "Import mode",
-            "Merge into existing local library?\n\nYes = Merge\nNo = Replace",
-            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No | QtWidgets.QMessageBox.Cancel,
-        )
-        if mode == QtWidgets.QMessageBox.Cancel:
-            return
         try:
-            import_from_json(selected_path, mode="merge" if mode == QtWidgets.QMessageBox.Yes else "replace")
+            payload = read_variant_asset_file(selected_path)
+            current_base_type = str(self._get_current_base_node_type() or "").strip()
+            imported_base_type = str(payload.record.baseNodeType or "").strip()
+            if current_base_type and imported_base_type != current_base_type:
+                raise ValueError(
+                    f"Variant base node type mismatch: expected {current_base_type}, got {imported_base_type}."
+                )
+            imported = import_from_json(selected_path)
         except Exception as exc:
             show_warning(self, "Import failed", str(exc))
             return
+        self._rebuild_browser_after_draft_changed(
+            preserve_variant_id=str(imported.variantId)
+        )
+        show_info(self, "Imported", f"Imported variant:\n{imported.name}")
 
     def _on_export_clicked(self) -> None:
+        selected_entry = self._selected_entry()
+        if selected_entry is None:
+            return
+        if selected_entry.source != F8VariantSourceKind.local and not variant_entry_is_installed(selected_entry):
+            try:
+                selected_entry = self._sync_client.hydrate_variant(str(selected_entry.record.variantId))
+            except Exception as exc:
+                show_warning(self, "Export failed", str(exc))
+                return
         path, _ = QtWidgets.QFileDialog.getSaveFileName(
             self,
-            "Export Variant Library JSON",
-            "nodeVariants.json",
+            "Export Variant Asset JSON",
+            selected_entry.record.name,
             "JSON (*.json);;All Files (*)",
         )
         selected_path = str(path or "").strip()
         if not selected_path:
             return
         try:
-            out = export_to_json(selected_path)
+            out = export_to_json(str(selected_entry.record.variantId), selected_path)
         except Exception as exc:
             show_warning(self, "Export failed", str(exc))
             return

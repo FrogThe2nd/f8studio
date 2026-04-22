@@ -31,7 +31,6 @@ from ...ui.support.ui_notifications import show_info, show_warning
 from .project_asset_dialogs import (
     AssetOverwriteChoice,
     AssetOverwriteMetaDialog,
-    ProjectAssetMetaDialog,
     prompt_version_notes,
 )
 
@@ -206,6 +205,10 @@ class ComponentCatalogActionsMixin:
             history_action = menu.addAction("History")
             history_action.setEnabled(local_entry is not None or remote_entry is not None)
             history_action.triggered.connect(self._on_history_clicked)  # type: ignore[attr-defined]
+        menu.addSeparator()
+        export_action = menu.addAction("Export Asset JSON")
+        export_action.setEnabled(selected_entry is not None)
+        export_action.triggered.connect(self._on_export_clicked)  # type: ignore[attr-defined]
         return menu
 
     def _component_overwrite_choices(self, *, exclude_component_id: str | None = None) -> list[AssetOverwriteChoice]:
@@ -334,7 +337,6 @@ class ComponentCatalogActionsMixin:
         if metadata_dialog.exec() != QtWidgets.QDialog.Accepted:
             return
         name, description, tags, _overwrite_component_id = metadata_dialog.values()
-        from f8pysdk.codec import copy_model
         updated_record = validate_as(
             F8ComponentRecord,
             {
@@ -706,43 +708,33 @@ class ComponentCatalogActionsMixin:
     def _on_import_clicked(self) -> None:
         path, _ = QtWidgets.QFileDialog.getOpenFileName(
             self,
-            "Import Component JSON",
+            "Import Component Asset JSON",
             "",
             "JSON (*.json);;All Files (*)",
         )
         selected_path = str(path or "").strip()
         if not selected_path:
             return
-        metadata_dialog = ProjectAssetMetaDialog(
-            parent=self,
-            title="Import Component",
-            name="Imported Component",
-            description="",
-            tags=[],
-        )
-        if metadata_dialog.exec() != QtWidgets.QDialog.Accepted:
-            return
-        name, description, tags = metadata_dialog.values()
         try:
-            import_component_from_json(
-                selected_path,
-                metadata={
-                    "componentId": new_asset_id(),
-                    "name": name,
-                    "description": description,
-                    "tags": tags,
-                },
-            )
+            imported = import_component_from_json(selected_path)
         except Exception as exc:
             show_warning(self, "Import failed", str(exc))
+            return
+        self._rebuild_browser_after_draft_changed(
+            preserve_component_id=str(imported.componentId)
+        )
+        show_info(self, "Imported", f"Imported component:\n{imported.name}")
 
     def _on_export_clicked(self) -> None:
         selected_entry = self._selected_entry()
         if selected_entry is None:
             return
+        selected_entry = self._ensure_component_hydrated(selected_entry, operation_name="Export component")
+        if selected_entry is None:
+            return
         path, _ = QtWidgets.QFileDialog.getSaveFileName(
             self,
-            "Export Component JSON",
+            "Export Component Asset JSON",
             selected_entry.record.name,
             "JSON (*.json);;All Files (*)",
         )

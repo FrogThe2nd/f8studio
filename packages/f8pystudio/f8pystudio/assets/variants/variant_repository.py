@@ -1,11 +1,8 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
-from typing import Literal
 
 from f8pysdk.codec import copy_model
-from f8pysdk.codec import dump_json, validate_as
 
 from f8pysdk.specs import F8VariantLibrary, F8VariantRecord
 
@@ -28,8 +25,10 @@ from .variant_models import (
     F8VariantDraftEntry,
     F8VariantDraftOriginKind,
     F8VariantEntry,
-    F8VariantSourceKind,
+    variant_now_iso,
 )
+from ..common import new_asset_id
+from ..common.asset_file_exchange import read_variant_asset_file, write_variant_asset_file
 
 
 def _service() -> VariantCatalogService:
@@ -258,130 +257,37 @@ def delete_variant(variant_id: str) -> bool:
     return deleted
 
 
-def import_from_json(path: str, mode: Literal["merge", "replace"] = "merge") -> F8VariantLibrary:
-    in_path = Path(str(path or "").strip())
-    if not in_path.is_file():
-        raise FileNotFoundError(f"Variants file not found: {in_path}")
-    raw = json.loads(in_path.read_text(encoding="utf-8"))
-    if not isinstance(raw, dict):
-        raise ValueError("Variant library payload must be an object.")
-    schema_version = str(raw.get("schemaVersion") or "").strip()
-    if schema_version != "f8variantlib/1":
-        raise ValueError(f"Unsupported variant library schemaVersion: {schema_version!r}")
-    entries = _variant_entries_from_library_payload(raw)
-    draft_service = _draft_service()
-    if mode == "replace":
-        for draft in draft_service.list_drafts():
-            draft_service.delete_draft(draft.draftId)
-        existing_records: list[F8VariantRecord] = []
-    else:
-        existing_records = [draft.record for draft in draft_service.list_drafts()]
-    for entry in entries:
-        normalized_name = ensure_unique_variant_name(
-            str(entry.record.baseNodeType or ""),
-            str(entry.record.name or ""),
-            exclude_variant_id=str(entry.record.variantId),
-            existing_records=existing_records,
-        )
-        saved_entry = upsert_variant_entry(
-            copy_model(
-                entry,
-                update={
-                    "record": copy_model(entry.record, update={"name": normalized_name}),
-                },
-            )
-        )
-        existing_records.append(saved_entry.record)
-    return load_library()
-
-
-def export_to_json(path: str) -> Path:
-    out_path = Path(str(path or "").strip())
-    if not str(out_path):
-        raise ValueError("Export path is empty")
-    if out_path.suffix.lower() != ".json":
-        out_path = out_path.with_suffix(".json")
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    entries = _draft_service().list_catalog_entries()
-    payload = _variant_library_payload(entries)
-    out_path.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2, default=str),
-        encoding="utf-8",
+def import_from_json(path: str) -> F8VariantRecord:
+    payload = read_variant_asset_file(path)
+    imported_record = copy_model(
+        payload.record,
+        update={
+            "variantId": new_asset_id(),
+            "name": ensure_unique_variant_name(
+                str(payload.record.baseNodeType or ""),
+                str(payload.record.name or ""),
+            ),
+            "updatedAt": variant_now_iso(),
+        },
     )
-    return out_path
+    return upsert_variant(imported_record)
 
 
-def _variant_library_payload(entries: list[F8VariantEntry]) -> dict[str, object]:
-    return {
-        "schemaVersion": "f8variantlib/1",
-        "entries": [
-            {
-                "record": dump_json(entry.record, mode="json"),
-                "isLocalDraft": entry.isLocalDraft,
-                "draftOriginKind": None if entry.draftOriginKind is None else entry.draftOriginKind.value,
-                "draftOriginAssetId": entry.draftOriginAssetId,
-                "draftOriginVersionNumber": entry.draftOriginVersionNumber,
-            }
-            for entry in entries
-        ],
-    }
+def export_to_json(variant_id: str, path: str) -> Path:
+    entry = variant_entry(variant_id, include_uninstalled=True)
+    if entry is None:
+        raise FileNotFoundError(f"Variant not found: {variant_id}")
+    return write_variant_asset_file(
+        path,
+        record=entry.record,
+        version_number=_entry_version_number(entry),
+    )
 
 
-def _variant_entries_from_library_payload(payload: dict[str, object]) -> list[F8VariantEntry]:
-    raw_entries = payload.get("entries")
-    if not isinstance(raw_entries, list):
-        raise ValueError("Variant library missing `entries` array.")
-    entries: list[F8VariantEntry] = []
-    for raw_entry in raw_entries:
-        if not isinstance(raw_entry, dict):
-            raise ValueError("Variant library entry must be an object.")
-        record = validate_as(F8VariantRecord, raw_entry.get("record"))
-        entry = local_entry_from_record(record)
-        entries.append(
-            F8VariantEntry(
-                record=entry.record,
-                source=F8VariantSourceKind.local,
-                installed=True,
-                hasCachedContent=True,
-                isLocalDraft=_required_bool(raw_entry, "isLocalDraft"),
-                draftOriginKind=_required_draft_origin_kind(raw_entry, "draftOriginKind"),
-                draftOriginAssetId=_optional_str(raw_entry.get("draftOriginAssetId")),
-                draftOriginVersionNumber=_optional_int(raw_entry.get("draftOriginVersionNumber")),
-            )
-        )
-    return entries
-
-
-def _optional_int(value: object) -> int | None:
-    if value is None:
-        return None
-    return int(value)
-
-
-def _optional_str(value: object) -> str | None:
-    if value is None:
-        return None
-    return str(value)
-
-
-def _required_bool(payload: dict[str, object], key: str) -> bool:
-    if key not in payload:
-        raise ValueError(f"Variant library entry missing `{key}`.")
-    value = payload[key]
-    if not isinstance(value, bool):
-        raise ValueError(f"Variant library entry `{key}` must be a boolean.")
-    return value
-
-
-def _required_draft_origin_kind(payload: dict[str, object], key: str) -> F8VariantDraftOriginKind | None:
-    if key not in payload:
-        raise ValueError(f"Variant library entry missing `{key}`.")
-    value = payload[key]
-    if value is None:
-        return None
-    if not isinstance(value, str) or not value.strip():
-        raise ValueError(f"Variant library entry `{key}` must be a non-empty string or null.")
-    return F8VariantDraftOriginKind(value)
+def _entry_version_number(entry: F8VariantEntry) -> int:
+    if entry.remoteVersionNumber is not None and int(entry.remoteVersionNumber) > 0:
+        return int(entry.remoteVersionNumber)
+    return 1
 
 
 def _validate_unique_variant_name(record: F8VariantRecord, *, exclude_variant_id: str | None) -> None:

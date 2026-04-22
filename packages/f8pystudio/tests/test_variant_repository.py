@@ -81,26 +81,43 @@ def test_upsert_allows_same_name_different_base(monkeypatch: pytest.MonkeyPatch,
 def test_import_auto_renames_duplicates(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     _patch_variants_file(monkeypatch, tmp_path)
     upsert_variant(_make_variant_record(variant_id="v-existing", base_node_type="svc.a.op", name="name"))
+    generated_ids = iter(["v2-import", "v3-import"])
+    monkeypatch.setattr(
+        "f8pystudio.assets.variants.variant_repository.new_asset_id",
+        lambda: next(generated_ids),
+    )
 
-    import_path = tmp_path / "import.json"
-    payload = {
-        "schemaVersion": "f8variantlib/1",
-        "entries": [
+    import_path_1 = tmp_path / "import-1.json"
+    import_path_1.write_text(
+        json.dumps(
             {
-                "record": dump_json(_make_variant_record(variant_id="v2", base_node_type="svc.a.op", name="name"), mode="json"),
-                "isLocalDraft": False,
-                "draftOriginKind": None,
+                "variantId": "remote-v2",
+                "assetType": "variant",
+                "versionNumber": 3,
+                "record": dump_json(_make_variant_record(variant_id="remote-v2", base_node_type="svc.a.op", name="name"), mode="json"),
             },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    import_path_2 = tmp_path / "import-2.json"
+    import_path_2.write_text(
+        json.dumps(
             {
-                "record": dump_json(_make_variant_record(variant_id="v3", base_node_type="svc.a.op", name=" name "), mode="json"),
-                "isLocalDraft": False,
-                "draftOriginKind": None,
+                "variantId": "remote-v3",
+                "assetType": "variant",
+                "versionNumber": 4,
+                "record": dump_json(_make_variant_record(variant_id="remote-v3", base_node_type="svc.a.op", name=" name "), mode="json"),
             },
-        ],
-    }
-    import_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
 
-    import_from_json(str(import_path), mode="merge")
+    import_from_json(str(import_path_1))
+    import_from_json(str(import_path_2))
     names = [item.name for item in list_variants_for_base("svc.a.op")]
 
     assert "name" in names
@@ -134,62 +151,53 @@ def test_delete_variant_removes_local_history_rows(monkeypatch: pytest.MonkeyPat
     assert draft_service.draft("v-delete") is None
 
 
-def test_export_import_library_v1_entries_preserves_draft_link_metadata(
+def test_export_import_single_asset_json_uses_web_protocol(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     _patch_variants_file(monkeypatch, tmp_path)
-    service = VariantCatalogService(db_path=tmp_path / "assets.db")
-    draft_service = VariantDraftService(db_path=tmp_path / "assets.db")
-    monkeypatch.setattr("f8pystudio.assets.variants.variant_repository._service", lambda: service)
-    _ = draft_service.create_draft_from_record(
-        _make_variant_record(variant_id="v-sync", base_node_type="svc.a.op", name="sync"),
-        origin_kind=F8VariantDraftOriginKind.copy_remote,
-        publish_target_asset_id="remote-sync",
-        publish_base_remote_version_number=7,
-        draft_id="v-sync",
-    )
+    _ = upsert_variant(_make_variant_record(variant_id="v-sync", base_node_type="svc.a.op", name="sync"))
 
     export_path = tmp_path / "variants-export.json"
-    export_to_json(str(export_path))
+    export_to_json("v-sync", str(export_path))
 
     exported = json.loads(export_path.read_text(encoding="utf-8"))
-    assert exported["schemaVersion"] == "f8variantlib/1"
-    assert exported["entries"][0]["isLocalDraft"] is True
-    assert exported["entries"][0]["draftOriginKind"] == "copy_remote"
-    assert exported["entries"][0]["draftOriginAssetId"] == "remote-sync"
-    assert exported["entries"][0]["draftOriginVersionNumber"] == 7
+    assert exported["assetType"] == "variant"
+    assert exported["variantId"] == "v-sync"
+    assert exported["versionNumber"] == 1
+    assert exported["record"]["variantId"] == "v-sync"
 
-    replaced_service = VariantCatalogService(db_path=tmp_path / "imported-assets.db")
-    monkeypatch.setattr("f8pystudio.assets.variants.variant_repository._service", lambda: replaced_service)
-    import_from_json(str(export_path), mode="replace")
+    monkeypatch.setattr(
+        "f8pystudio.assets.variants.variant_repository.new_asset_id",
+        lambda: "v-imported",
+    )
+    imported_record = import_from_json(str(export_path))
 
-    imported = replaced_service.entry("v-sync", include_uninstalled=True)
+    assert imported_record.variantId == "v-imported"
+    imported = variant_exists("v-imported")
+    assert imported is True
+    imported_entry = VariantCatalogService(db_path=tmp_path / "assets.db").entry("v-imported", include_uninstalled=True)
     assert imported is not None
-    assert imported.isLocalDraft is True
-    assert imported.draftOriginKind == F8VariantDraftOriginKind.copy_remote
-    assert imported.draftOriginAssetId == "remote-sync"
-    assert imported.draftOriginVersionNumber == 7
+    assert imported_entry is not None
+    assert imported_entry.record.name == "sync (2)"
 
 
-def test_import_rejects_variant_library_without_draft_metadata(
+def test_import_rejects_variant_asset_payload_with_wrong_type(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     _patch_variants_file(monkeypatch, tmp_path)
     import_path = tmp_path / "legacy-variants.json"
     payload = {
-        "schemaVersion": "f8variantlib/1",
-        "entries": [
-            {
-                "record": dump_json(_make_variant_record(variant_id="v-legacy", base_node_type="svc.a.op", name="legacy"), mode="json"),
-            }
-        ],
+        "variantId": "v-legacy",
+        "assetType": "component",
+        "versionNumber": 1,
+        "record": dump_json(_make_variant_record(variant_id="v-legacy", base_node_type="svc.a.op", name="legacy"), mode="json"),
     }
     import_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    with pytest.raises(ValueError, match="isLocalDraft"):
-        import_from_json(str(import_path), mode="merge")
+    with pytest.raises(ValueError, match="Expected variant asset payload"):
+        import_from_json(str(import_path))
 
 
 def test_variant_node_type_round_trips_real_variant_id() -> None:

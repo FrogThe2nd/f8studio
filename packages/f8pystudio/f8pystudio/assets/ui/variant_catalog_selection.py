@@ -728,4 +728,8 @@ class VariantCatalogSelectionMixin:
             history_action = menu.addAction("History")
             history_action.setEnabled(local_entry is not None or remote_entry is not None)
             history_action.triggered.connect(self._on_history_clicked)  # type: ignore[attr-defined]
+        menu.addSeparator()
+        export_action = menu.addAction("Export Asset JSON")
+        export_action.setEnabled(selected_entry is not None)
+        export_action.triggered.connect(self._on_export_clicked)  # type: ignore[attr-defined]
         menu.exec(self._list.viewport().mapToGlobal(pos))

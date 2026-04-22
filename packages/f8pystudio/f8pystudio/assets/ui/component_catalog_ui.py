@@ -63,7 +63,6 @@ class ComponentCatalogUiMixin:
         btn_add = QtWidgets.QPushButton(self._toolbar)
         btn_refresh = QtWidgets.QPushButton(self._toolbar)
         btn_import = QtWidgets.QPushButton(self._toolbar)
-        btn_export = QtWidgets.QPushButton(self._toolbar)
         self._btn_install = QtWidgets.QPushButton(self._toolbar)
         self._btn_upload = QtWidgets.QPushButton(self._toolbar)
         self._btn_subscribe = QtWidgets.QPushButton(self._toolbar)
@@ -77,8 +76,7 @@ class ComponentCatalogUiMixin:
         button_specs = [
             (btn_add, StudioIcon.CIRCLE_PLUS, "Save As Component"),
             (btn_refresh, StudioIcon.REFRESH, "Refresh current list"),
-            (btn_import, StudioIcon.PACKAGE_IMPORT, "Import JSON"),
-            (btn_export, StudioIcon.PACKAGE_EXPORT, "Export JSON"),
+            (btn_import, StudioIcon.PACKAGE_IMPORT, "Import asset JSON"),
         ]
         for button, icon_token, tooltip in button_specs:
             button.setIcon(icon_for(button, icon_token))
@@ -89,7 +87,6 @@ class ComponentCatalogUiMixin:
         btn_add.clicked.connect(self._on_add_clicked)  # type: ignore[attr-defined]
         btn_refresh.clicked.connect(self._on_refresh_clicked)  # type: ignore[attr-defined]
         btn_import.clicked.connect(self._on_import_clicked)  # type: ignore[attr-defined]
-        btn_export.clicked.connect(self._on_export_clicked)  # type: ignore[attr-defined]
         self._btn_install.clicked.connect(self._on_install_clicked)  # type: ignore[attr-defined]
         self._btn_upload.clicked.connect(self._on_upload_clicked)  # type: ignore[attr-defined]
         self._btn_subscribe.clicked.connect(self._on_subscribe_clicked)  # type: ignore[attr-defined]
@@ -112,7 +109,6 @@ class ComponentCatalogUiMixin:
 
         self._toolbar.addWidget(btn_add)
         self._toolbar.addWidget(btn_import)
-        self._toolbar.addWidget(btn_export)
         self._toolbar.addSeparator()
         self._toolbar.addWidget(btn_refresh)
         self._toolbar.addSeparator()
@@ -128,7 +124,6 @@ class ComponentCatalogUiMixin:
         self._btn_refresh = btn_refresh
         self._btn_add = btn_add
         self._btn_import = btn_import
-        self._btn_export = btn_export
 
         toolbar_row = QtWidgets.QHBoxLayout()
         toolbar_row.addWidget(self._toolbar)
