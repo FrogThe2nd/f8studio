@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 import logging
 import time
+from typing import TYPE_CHECKING, Any
 
 from qtpy import QtCore, QtWidgets
 
@@ -16,11 +17,24 @@ from ...ui.support.ui_icons import StudioIcon, icon_for
 from ...ui.support.ui_notifications import show_warning
 from .asset_cloud_account_menu import build_asset_account_menu, prompt_asset_cloud_sign_in
 from .background_tasks import BackgroundCallWorker
+from .catalog_hosts import _ComponentCatalogDialogHost
 
 logger = logging.getLogger(__name__)
 
 
-class ComponentCatalogBrowserMixin:
+if TYPE_CHECKING:
+    _ComponentCatalogBrowserMixinBase = _ComponentCatalogDialogHost
+else:
+    _ComponentCatalogBrowserMixinBase = object
+
+
+class ComponentCatalogBrowserMixin(_ComponentCatalogBrowserMixinBase):
+    _is_handling_selection_change: bool
+    _build_row_states: Any
+    _entries_for_current_tab: Any
+    _build_list_row: Any
+    _on_selection_changed: Any
+
     def _initialize_browser_state(self) -> None:
         tabs = (self._TAB_DRAFTS, self._TAB_MINE, self._TAB_COMMUNITY, self._TAB_INSTALLED)
         self._initial_remote_refresh_done = False
@@ -196,7 +210,7 @@ class ComponentCatalogBrowserMixin:
 
     def _refresh_catalog_source_snapshot(self) -> None:
         self._catalog_local_entries_snapshot = self._draft_service_for_catalog().list_catalog_entries()
-        self._catalog_remote_entries_snapshot = self._sync_client._catalog_service.load_remote_entries()
+        self._catalog_remote_entries_snapshot = self._sync_client.load_cached_remote_entries()
 
     def _local_entries_snapshot(self) -> list[F8ComponentEntry]:
         return list(self._catalog_local_entries_snapshot)
@@ -367,7 +381,7 @@ class ComponentCatalogBrowserMixin:
 
     def _sanitize_remote_entries_for_signed_out_user(self) -> None:
         sanitized_remote_entries: list[F8ComponentEntry] = []
-        for entry in self._sync_client._catalog_service.load_remote_entries():
+        for entry in self._sync_client.load_cached_remote_entries():
             if entry.source == F8ComponentSourceKind.remote_private:
                 continue
             if not entry.subscribed:
@@ -382,7 +396,7 @@ class ComponentCatalogBrowserMixin:
                     },
                 )
             )
-        self._sync_client._catalog_service.replace_remote_entries(
+        self._sync_client.replace_cached_remote_entries(
             sanitized_remote_entries,
             emit_changed=False,
         )
@@ -750,7 +764,7 @@ class ComponentCatalogBrowserMixin:
                 self._list.clear()
                 for entry in self._entries:
                     item = QtWidgets.QListWidgetItem()
-                    item.setData(QtCore.Qt.UserRole, entry.record.componentId)
+                    item.setData(QtCore.Qt.ItemDataRole.UserRole, entry.record.componentId)
                     row_widget = self._build_list_row(entry)
                     item.setSizeHint(row_widget.sizeHint())
                     self._list.addItem(item)
@@ -784,7 +798,7 @@ class ComponentCatalogBrowserMixin:
             item = self._list.item(index)
             if item is None:
                 continue
-            item_component_id = str(item.data(QtCore.Qt.UserRole) or "").strip()
+            item_component_id = str(item.data(QtCore.Qt.ItemDataRole.UserRole) or "").strip()
             if item_component_id != normalized_component_id:
                 continue
             self._list.setCurrentItem(item)

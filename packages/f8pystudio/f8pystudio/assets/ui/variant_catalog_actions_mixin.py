@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from qtpy import QtWidgets
 
@@ -26,9 +26,16 @@ from ..variants.variant_repository import (
 )
 from ...ui.support.ui_notifications import show_info, show_warning
 from .project_asset_dialogs import AssetOverwriteChoice, AssetOverwriteMetaDialog
+from .catalog_hosts import VariantCatalogActionsHost
 
 
-class VariantCatalogActionsMixin:
+if TYPE_CHECKING:
+    _VariantCatalogActionsMixinBase = VariantCatalogActionsHost
+else:
+    _VariantCatalogActionsMixinBase = object
+
+
+class VariantCatalogActionsMixin(_VariantCatalogActionsMixinBase):
     def _save_variant_draft(
         self,
         *,
@@ -103,7 +110,7 @@ class VariantCatalogActionsMixin:
             overwrite_label="Overwrite Existing Variant",
             name_validator=self._validate_save_variant_name,
         )
-        if dlg.exec() != QtWidgets.QDialog.Accepted:
+        if dlg.exec() != QtWidgets.QDialog.DialogCode.Accepted:
             return
         name, description, tags, overwrite_variant_id = dlg.values()
         overwrite_entry = self._resolve_overwrite_target(name=name, overwrite_variant_id=overwrite_variant_id)
@@ -152,7 +159,7 @@ class VariantCatalogActionsMixin:
                 candidate, selected.variantId
             ),
         )
-        if dlg.exec() != QtWidgets.QDialog.Accepted:
+        if dlg.exec() != QtWidgets.QDialog.DialogCode.Accepted:
             return
         name, description, tags, _overwrite_variant_id = dlg.values()
         payload = dump_json(selected, mode="json")
@@ -270,7 +277,14 @@ class VariantCatalogActionsMixin:
         if current_tab == self._TAB_DRAFTS:
             if local_entry is None:
                 return
-            if QtWidgets.QMessageBox.question(self, "Delete draft", f"Delete draft '{selected_entry.record.name}'?") != QtWidgets.QMessageBox.Yes:
+            if (
+                QtWidgets.QMessageBox.question(
+                    self,
+                    "Delete draft",
+                    f"Delete draft '{selected_entry.record.name}'?",
+                )
+                != QtWidgets.QMessageBox.StandardButton.Yes
+            ):
                 return
             if not self._draft_service_for_catalog().delete_draft(str(local_entry.record.variantId)):
                 show_warning(self, "Delete failed", "Draft was not found.")
@@ -285,7 +299,7 @@ class VariantCatalogActionsMixin:
                 self,
                 "Remove from Installed",
                 f"Remove installed cache for '{selected_entry.record.name}'?",
-            ) != QtWidgets.QMessageBox.Yes:
+            ) != QtWidgets.QMessageBox.StandardButton.Yes:
                 return
             if self._offload_selected_variant(local_entry=local_entry, remote_entry=remote_entry):
                 show_info(
@@ -299,7 +313,7 @@ class VariantCatalogActionsMixin:
             return
         title = "Delete variant"
         prompt = f"Delete remote variant '{selected_entry.record.name}'?"
-        if QtWidgets.QMessageBox.question(self, title, prompt) != QtWidgets.QMessageBox.Yes:
+        if QtWidgets.QMessageBox.question(self, title, prompt) != QtWidgets.QMessageBox.StandardButton.Yes:
             return
         try:
             if has_owned_remote and remote_entry is not None:

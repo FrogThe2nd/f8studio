@@ -38,7 +38,7 @@ class ComponentCatalogDialog(
         self._row_states_by_component_id: dict[str, AssetCatalogRowState] = {}
         self._sync_client = ComponentSyncClient()
         self._draft_service = ComponentDraftService(
-            db_path=self._sync_client._catalog_service.db_path
+            db_path=self._sync_client.catalog_db_path()
         )
         self._initialize_browser_state()
         self._initialize_selection_state()
@@ -46,7 +46,7 @@ class ComponentCatalogDialog(
         self._render_browser_initial_state()
 
     def _draft_service_for_catalog(self) -> ComponentDraftService:
-        draft_db_path = self._sync_client._catalog_service.db_path
-        if self._draft_service._db._path != draft_db_path:
+        draft_db_path = self._sync_client.catalog_db_path()
+        if self._draft_service.db_path != draft_db_path:
             self._draft_service = ComponentDraftService(db_path=draft_db_path)
         return self._draft_service

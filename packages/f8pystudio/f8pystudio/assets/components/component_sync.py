@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import zlib
-import http.cookies
 import json
 import logging
+from pathlib import Path
 import socket
-from typing import Protocol, cast
+from typing import cast
 from urllib import error, parse, request
 
 from qtpy import QtCore
@@ -26,6 +26,19 @@ from ..common import (
     resolve_asset_cloud_base_url,
     saved_session_account_ids_from_raw,
 )
+from ..common.remote_http import (
+    HttpResponseContext,
+    build_json_request_data,
+    session_cookie_from_headers,
+)
+from ..common.remote_sessions import (
+    account_id_for_session_cookie,
+    current_session_base_url_from_raw,
+    remote_session_payload_base,
+    saved_session_by_id,
+    session_matches_base_url,
+    upsert_saved_sessions,
+)
 from .component_catalog import (
     ComponentCatalogService,
     component_entry_can_hydrate,
@@ -33,6 +46,7 @@ from .component_catalog import (
 )
 from .component_models import (
     F8ComponentEntry,
+    F8ComponentLocalVersionSummary,
     F8ComponentRemoteAuth,
     F8ComponentRemoteAuthError,
     F8ComponentRemoteConflictError,
@@ -109,6 +123,27 @@ class ComponentSyncClient:
     def set_base_url(self, base_url: str) -> None:
         self._set_value("base_url", str(base_url or "").strip().rstrip("/"))
 
+    def catalog_db_path(self) -> Path:
+        return self._catalog_service.db_path
+
+    def load_cached_remote_entries(self) -> list[F8ComponentEntry]:
+        return self._catalog_service.load_remote_entries()
+
+    def replace_cached_remote_entries(self, entries: list[F8ComponentEntry], *, emit_changed: bool = True) -> None:
+        self._catalog_service.replace_remote_entries(entries, emit_changed=emit_changed)
+
+    def cache_cached_remote_entry(self, entry: F8ComponentEntry, *, emit_changed: bool = True) -> F8ComponentEntry:
+        return self._catalog_service.cache_remote_entry(entry, emit_changed=emit_changed)
+
+    def uninstall_cached_component(self, component_id: str) -> F8ComponentEntry | None:
+        return self._catalog_service.uninstall_remote_entry(component_id)
+
+    def list_local_component_versions(self, component_id: str) -> list[F8ComponentLocalVersionSummary]:
+        return self._catalog_service.list_local_versions(component_id)
+
+    def local_component_version_record(self, component_id: str, version_number: int) -> F8ComponentRecord | None:
+        return self._catalog_service.local_version_record(component_id, version_number)
+
     def remembered_email(self) -> str:
         return self._value_str("email")
 
@@ -146,7 +181,7 @@ class ComponentSyncClient:
         account_id = self.current_account_id()
         if not account_id:
             return None
-        session = self._saved_session_by_id(account_id)
+        session = saved_session_by_id(self.saved_sessions(), account_id=account_id)
         if session is None:
             self._clear_current_auth_state()
             return None
@@ -637,13 +672,8 @@ class ComponentSyncClient:
         }
         if path.startswith("/api/auth/"):
             headers.update(origin_headers_for_base_url(base_url))
-        if payload is not None:
-            raw_json = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-            if len(raw_json) > 4096:
-                data = zlib.compress(raw_json, level=6, wbits=31)
-                headers["Content-Encoding"] = "gzip"
-            else:
-                data = raw_json
+        data, payload_headers = build_json_request_data(payload)
+        headers.update(payload_headers)
 
         if authorized:
             session_cookie = self.current_access_token()
@@ -655,13 +685,13 @@ class ComponentSyncClient:
         req = request.Request(url=url, data=data, headers=headers, method=method)
         timeout_seconds = _request_timeout_seconds(method=method, path=path)
         try:
-            response_context = cast(_HttpResponseContext, request.urlopen(req, timeout=timeout_seconds))
+            response_context = cast(HttpResponseContext, request.urlopen(req, timeout=timeout_seconds))
             with response_context as response_like:
                 response_data = response_like.read()
                 content_encoding = response_like.headers.get("Content-Encoding", "").lower()
                 raw_body = decode_http_response_text(response_data, content_encoding=content_encoding)
 
-                session_cookie = _session_cookie_from_headers(response_like.headers)
+                session_cookie = session_cookie_from_headers(response_like.headers)
                 if session_cookie:
                     self._access_token = session_cookie
                     account_id_for_cookie = ""
@@ -737,15 +767,13 @@ class ComponentSyncClient:
         normalized_session_cookie = str(session_cookie or "").strip()
         if not normalized_session_cookie:
             return ""
-        if self._access_token_account_id and self._access_token == normalized_session_cookie:
-            return str(self._access_token_account_id)
-        current_session = self.current_session()
-        if current_session is not None and str(current_session.sessionCookie).strip() == normalized_session_cookie:
-            return str(current_session.accountId)
-        for session in self.saved_sessions():
-            if str(session.sessionCookie).strip() == normalized_session_cookie:
-                return str(session.accountId)
-        return ""
+        return account_id_for_session_cookie(
+            session_cookie=normalized_session_cookie,
+            access_token=self._access_token,
+            access_token_account_id=self._access_token_account_id,
+            current_session=self.current_session(),
+            saved_sessions=self.saved_sessions(),
+        )
 
     def _post_json(self, path: str, payload: JsonObject, *, authorized: bool) -> JsonObject:
         return self._request_json("POST", path, payload, authorized=authorized)
@@ -761,30 +789,16 @@ class ComponentSyncClient:
             return None
 
     def _saved_session_by_id(self, account_id: str) -> F8ComponentRemoteSession | None:
-        normalized_account_id = str(account_id or "").strip()
-        if not normalized_account_id:
-            return None
-        for session in self.saved_sessions():
-            if session.accountId == normalized_account_id:
-                return session
-        return None
+        return saved_session_by_id(self.saved_sessions(), account_id=account_id)
 
     def _session_matches_current_base_url(self, session: F8ComponentRemoteSession) -> bool:
-        return str(session.baseUrl).strip().rstrip("/") == self.base_url()
+        return session_matches_base_url(session, base_url=self.base_url())
 
     def _current_session_base_url(self) -> str:
-        current_account_id = self.current_account_id()
-        if not current_account_id:
-            return ""
-        for item in self._value_list(self._SAVED_SESSIONS_KEY):
-            if not isinstance(item, dict):
-                continue
-            payload = json_object_from_value(item)
-            account_id = str(payload.get("accountId") or "").strip()
-            if account_id != current_account_id:
-                continue
-            return str(payload.get("baseUrl") or "").strip().rstrip("/")
-        return ""
+        return current_session_base_url_from_raw(
+            self._value_list(self._SAVED_SESSIONS_KEY),
+            current_account_id=self.current_account_id(),
+        )
 
     def _set_auth(self, auth: F8ComponentRemoteAuth, *, base_url: str, remember: bool) -> None:
         session_cookie = str(auth.sessionCookie)
@@ -806,17 +820,11 @@ class ComponentSyncClient:
             logger.debug("Component cloud login now persists account sessions for account switching support.")
 
     def _upsert_saved_session(self, session: F8ComponentRemoteSession) -> None:
-        out: list[F8ComponentRemoteSession] = []
-        replaced = False
-        for current in self.saved_sessions():
-            if current.accountId == session.accountId:
-                out.append(session)
-                replaced = True
-            else:
-                out.append(current)
-        if not replaced:
-            out.append(session)
-        out.sort(key=lambda item: (item.baseUrl.lower(), str(item.user.name).lower(), item.user.userId))
+        out = upsert_saved_sessions(
+            self.saved_sessions(),
+            session=session,
+            sort_key=lambda item: (item.baseUrl.lower(), str(item.user.name).lower(), item.user.userId),
+        )
         self._set_value(self._SAVED_SESSIONS_KEY, [_remote_session_payload(item) for item in out])
 
     def _update_cached_remote_entry(self, entry: F8ComponentEntry) -> F8ComponentEntry:
@@ -873,18 +881,6 @@ class ComponentSyncClient:
         self._set_value(self._CURRENT_ACCOUNT_ID_KEY, "")
         self._set_value("user", {})
         self._set_value("email", "")
-
-class _HttpResponseLike(Protocol):
-    status: int
-
-    def read(self) -> bytes: ...
-
-
-class _HttpResponseContext(Protocol):
-    def __enter__(self) -> _HttpResponseLike: ...
-
-    def __exit__(self, exc_type: object, exc: object, tb: object) -> object: ...
-
 
 def _try_parse_json_object(raw: str) -> JsonObject:
     try:
@@ -1209,40 +1205,13 @@ def _remote_session_from_payload(
 
 def _remote_session_payload(session: F8ComponentRemoteSession) -> JsonObject:
     return {
-        "accountId": str(session.accountId),
-        "baseUrl": str(session.baseUrl),
+        **remote_session_payload_base(
+            account_id=session.accountId,
+            base_url=session.baseUrl,
+            last_used_at=session.lastUsedAt,
+        ),
         "user": _remote_user_payload(session.user),
-        "lastUsedAt": str(session.lastUsedAt),
     }
-
-
-def _session_cookie_from_headers(headers: object) -> str:
-    values = _header_values(headers, "Set-Cookie")
-    if not values:
-        return ""
-    cookie = http.cookies.SimpleCookie()
-    for value in values:
-        try:
-            cookie.load(value)
-        except http.cookies.CookieError:
-            logger.warning("Ignoring invalid Set-Cookie header from component cloud")
-    parts: list[str] = []
-    for morsel in cookie.values():
-        parts.append(f"{morsel.key}={morsel.value}")
-    return "; ".join(parts)
-
-
-def _header_values(headers: object, name: str) -> list[str]:
-    get_all = getattr(headers, "get_all", None)
-    if callable(get_all):
-        values = get_all(name)
-        if isinstance(values, list):
-            return [str(value) for value in values if str(value).strip()]
-    if hasattr(headers, "get"):
-        value = headers.get(name)
-        if value is not None and str(value).strip():
-            return [str(value)]
-    return []
 
 
 def _remote_version_list_from_payload(payload: JsonObject) -> F8ComponentRemoteVersionList:
@@ -1329,7 +1298,3 @@ def _payload_string_list(payload: JsonObject, key: str) -> list[str]:
         if text:
             out.append(text)
     return out
-
-
-def _payload_int(payload: JsonObject, key: str) -> int:
-    return int(str(payload[key]))

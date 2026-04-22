@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Any
+
 from qtpy import QtCore, QtWidgets
 
 from ...ui.support.ui_icons import StudioIcon, icon_for
@@ -7,9 +9,40 @@ from ...ui.support.json_text_editor import attach_json_enhancements
 from ..components.component_models import F8ComponentEntry
 from .asset_graph_preview import AssetGraphPreviewPane
 from .catalog_status import AssetCatalogRowState
+from .catalog_hosts import _ComponentCatalogDialogHost
 
 
-class ComponentCatalogUiMixin:
+if TYPE_CHECKING:
+    _ComponentCatalogUiMixinBase = _ComponentCatalogDialogHost
+else:
+    _ComponentCatalogUiMixinBase = object
+
+
+class ComponentCatalogUiMixin(_ComponentCatalogUiMixinBase):
+    setWindowTitle: Any
+    resize: Any
+    _on_scope_tab_changed: Any
+    _on_accounts_clicked: Any
+    _on_search_text_changed: Any
+    _on_search_submitted: Any
+    _on_filter_changed: Any
+    _on_add_clicked: Any
+    _on_refresh_clicked: Any
+    _on_import_clicked: Any
+    _on_install_clicked: Any
+    _on_upload_clicked: Any
+    _on_subscribe_clicked: Any
+    _on_copy_local_clicked: Any
+    _on_delete_clicked: Any
+    _on_edit_clicked: Any
+    _on_visibility_clicked: Any
+    _on_history_clicked: Any
+    _on_insert_clicked: Any
+    _on_selection_changed: Any
+    _on_item_double_clicked: Any
+    _on_list_scrolled: Any
+    _on_list_context_menu_requested: Any
+
     def _initialize_ui(self, *, node_graph: object) -> None:
         self.setWindowTitle("Components")
         self.resize(1180, 760)
@@ -28,7 +61,7 @@ class ComponentCatalogUiMixin:
         self._scope_tabs.currentChanged.connect(self._on_scope_tab_changed)  # type: ignore[attr-defined]
 
         self._account_button = QtWidgets.QToolButton(self)
-        self._account_button.setToolButtonStyle(QtCore.Qt.ToolButtonIconOnly)
+        self._account_button.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonIconOnly)
         self._account_button.setIcon(icon_for(self._account_button, StudioIcon.USER))
         self._account_button.setToolTip("Accounts")
         self._account_button.clicked.connect(self._on_accounts_clicked)  # type: ignore[attr-defined]
@@ -51,7 +84,7 @@ class ComponentCatalogUiMixin:
 
         self._toolbar = QtWidgets.QToolBar("Components", self)
         self._toolbar.setMovable(False)
-        self._toolbar.setToolButtonStyle(QtCore.Qt.ToolButtonIconOnly)
+        self._toolbar.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonIconOnly)
         self._toolbar.setIconSize(QtCore.QSize(16, 16))
         self._toolbar.addWidget(self._scope_tabs)
         self._toolbar.addSeparator()
@@ -133,7 +166,7 @@ class ComponentCatalogUiMixin:
 
     def _build_detail_split(self, *, node_graph: object) -> QtWidgets.QSplitter:
         self._list = QtWidgets.QListWidget(self)
-        self._list.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
+        self._list.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.SingleSelection)
         self._list.setSpacing(3)
         self._list.setStyleSheet("QListWidget::item { border: 0; padding: 0; }")
         self._list.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
@@ -145,14 +178,14 @@ class ComponentCatalogUiMixin:
         self._preview = AssetGraphPreviewPane(parent=self, host_graph=node_graph)
         self._raw = QtWidgets.QPlainTextEdit(self)
         self._raw.setReadOnly(True)
-        self._raw.setLineWrapMode(QtWidgets.QPlainTextEdit.NoWrap)
+        self._raw.setLineWrapMode(QtWidgets.QPlainTextEdit.LineWrapMode.NoWrap)
         attach_json_enhancements(self._raw, read_only=True)
 
         self._detail_tabs = QtWidgets.QTabWidget(self)
         self._detail_tabs.addTab(self._preview, "Preview")
         self._detail_tabs.addTab(self._raw, "Raw")
 
-        split = QtWidgets.QSplitter(QtCore.Qt.Horizontal, self)
+        split = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal, self)
         split.addWidget(self._list)
         split.addWidget(self._detail_tabs)
         split.setStretchFactor(0, 4)

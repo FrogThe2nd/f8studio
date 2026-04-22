@@ -32,6 +32,10 @@ class VariantDraftService:
         self._db = AssetsDatabase(db_path)
         self._db.ensure_initialized()
 
+    @property
+    def db_path(self) -> Path:
+        return self._db.path
+
     def list_drafts(self) -> list[F8VariantDraftEntry]:
         statement = (
             select(

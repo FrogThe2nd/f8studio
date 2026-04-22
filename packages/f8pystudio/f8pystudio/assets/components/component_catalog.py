@@ -32,6 +32,10 @@ class LocalComponentProvider:
     def __init__(self, db_path: Path | None = None) -> None:
         self._draft_service = ComponentDraftService(db_path=db_path)
 
+    @property
+    def db_path(self) -> Path:
+        return self._draft_service.db_path
+
     def load_entries(self) -> list[F8ComponentEntry]:
         return self._draft_service.list_catalog_entries()
 
@@ -68,6 +72,10 @@ class RemoteComponentCacheProvider:
     def __init__(self, db_path: Path | None = None) -> None:
         self._db = AssetsDatabase(db_path)
         self._db.ensure_initialized()
+
+    @property
+    def db_path(self) -> Path:
+        return self._db.path
 
     def load_entries(self) -> list[F8ComponentEntry]:
         statement = (

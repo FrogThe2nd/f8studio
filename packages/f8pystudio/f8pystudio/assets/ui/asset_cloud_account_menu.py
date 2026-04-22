@@ -90,11 +90,11 @@ class AssetCloudSignInDialog(QtWidgets.QDialog):
         self._email = QtWidgets.QLineEdit(email, self)
         self._email.setClearButtonEnabled(True)
         self._password = QtWidgets.QLineEdit(self)
-        self._password.setEchoMode(QtWidgets.QLineEdit.Password)
+        self._password.setEchoMode(QtWidgets.QLineEdit.EchoMode.Password)
         self._password.setClearButtonEnabled(True)
 
         endpoint_label = QtWidgets.QLabel(f"Cloud URL: {base_url}", self)
-        endpoint_label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
+        endpoint_label.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
         endpoint_label.setWordWrap(True)
 
         form = QtWidgets.QFormLayout()
@@ -102,7 +102,7 @@ class AssetCloudSignInDialog(QtWidgets.QDialog):
         form.addRow("Password", self._password)
 
         buttons = QtWidgets.QDialogButtonBox(
-            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel,
+            QtWidgets.QDialogButtonBox.StandardButton.Ok | QtWidgets.QDialogButtonBox.StandardButton.Cancel,
             parent=self,
         )
         buttons.accepted.connect(self._on_accept_clicked)  # type: ignore[attr-defined]

@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import http.cookies
 import json
 import logging
+from pathlib import Path
 import socket
 import zlib
-from typing import Protocol, cast
+from typing import cast
 from urllib import error, parse, request
 
 import msgspec
@@ -27,6 +27,19 @@ from ..common import (
     resolve_asset_cloud_base_url,
     saved_session_account_ids_from_raw,
 )
+from ..common.remote_http import (
+    HttpResponseContext,
+    build_json_request_data,
+    session_cookie_from_headers,
+)
+from ..common.remote_sessions import (
+    account_id_for_session_cookie,
+    current_session_base_url_from_raw,
+    remote_session_payload_base,
+    saved_session_by_id,
+    session_matches_base_url,
+    upsert_saved_sessions,
+)
 from .variant_catalog import VariantCatalogService, variant_entry_has_cached_content, variant_entry_is_installed
 from .variant_models import (
     F8VariantEntry,
@@ -39,6 +52,7 @@ from .variant_models import (
     F8VariantRemoteUser,
     F8VariantRemoteVersionEntry,
     F8VariantRemoteVersionList,
+    F8VariantLocalVersionSummary,
     F8VariantSourceKind,
     F8VariantVisibility,
 )
@@ -108,6 +122,30 @@ class VariantSyncClient:
     def set_base_url(self, base_url: str) -> None:
         self._set_value("base_url", str(base_url or "").strip().rstrip("/"))
 
+    def catalog_db_path(self) -> Path:
+        return self._catalog_service.db_path
+
+    def load_cached_remote_entries(self) -> list[F8VariantEntry]:
+        return self._catalog_service.load_remote_entries()
+
+    def load_all_catalog_entries(self) -> list[F8VariantEntry]:
+        return self._catalog_service.load_all_entries()
+
+    def replace_cached_remote_entries(self, entries: list[F8VariantEntry], *, emit_changed: bool = True) -> None:
+        self._catalog_service.replace_remote_entries(entries, emit_changed=emit_changed)
+
+    def cache_cached_remote_entry(self, entry: F8VariantEntry, *, emit_changed: bool = True) -> F8VariantEntry:
+        return self._catalog_service.cache_remote_entry(entry, emit_changed=emit_changed)
+
+    def uninstall_cached_variant(self, variant_id: str) -> F8VariantEntry | None:
+        return self._catalog_service.uninstall_remote_entry(variant_id)
+
+    def list_local_variant_versions(self, variant_id: str) -> list[F8VariantLocalVersionSummary]:
+        return self._catalog_service.list_local_versions(variant_id)
+
+    def local_variant_version_record(self, variant_id: str, version_number: int) -> F8VariantRecord | None:
+        return self._catalog_service.local_version_record(variant_id, version_number)
+
     def remembered_email(self) -> str:
         return self._value_str("email")
 
@@ -145,7 +183,7 @@ class VariantSyncClient:
         account_id = self.current_account_id()
         if not account_id:
             return None
-        session = self._saved_session_by_id(account_id)
+        session = saved_session_by_id(self.saved_sessions(), account_id=account_id)
         if session is None:
             self._clear_current_auth_state()
             return None
@@ -674,14 +712,8 @@ class VariantSyncClient:
         }
         if path.startswith("/api/auth/"):
             headers.update(origin_headers_for_base_url(base_url))
-        if payload is not None:
-            raw_data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-            if len(raw_data) > 4096:
-                # compress with wbits=31 for gzip format (not just deflate)
-                data = zlib.compress(raw_data, level=6, wbits=31)
-                headers["Content-Encoding"] = "gzip"
-            else:
-                data = raw_data
+        data, payload_headers = build_json_request_data(payload)
+        headers.update(payload_headers)
 
         if authorized:
             session_cookie = self.current_access_token()
@@ -694,7 +726,7 @@ class VariantSyncClient:
         req = request.Request(url=url, data=data, headers=headers, method=method)
         timeout_seconds = _request_timeout_seconds(method=method, path=path)
         try:
-            response_context = cast(_HttpResponseContext, request.urlopen(req, timeout=timeout_seconds))
+            response_context = cast(HttpResponseContext, request.urlopen(req, timeout=timeout_seconds))
             with response_context as response_like:
                 content_encoding = response_like.headers.get("Content-Encoding")
                 raw_bytes = response_like.read()
@@ -710,7 +742,7 @@ class VariantSyncClient:
                     response_like.status,
                     redact_http_body_for_log(raw_body, max_chars=1000),
                 )
-                session_cookie = _session_cookie_from_headers(response_like.headers)
+                session_cookie = session_cookie_from_headers(response_like.headers)
                 if session_cookie:
                     self._access_token = session_cookie
                     account_id_for_cookie = ""
@@ -793,15 +825,13 @@ class VariantSyncClient:
         normalized_session_cookie = str(session_cookie or "").strip()
         if not normalized_session_cookie:
             return ""
-        if self._access_token_account_id and self._access_token == normalized_session_cookie:
-            return str(self._access_token_account_id)
-        current_session = self.current_session()
-        if current_session is not None and str(current_session.sessionCookie).strip() == normalized_session_cookie:
-            return str(current_session.accountId)
-        for session in self.saved_sessions():
-            if str(session.sessionCookie).strip() == normalized_session_cookie:
-                return str(session.accountId)
-        return ""
+        return account_id_for_session_cookie(
+            session_cookie=normalized_session_cookie,
+            access_token=self._access_token,
+            access_token_account_id=self._access_token_account_id,
+            current_session=self.current_session(),
+            saved_sessions=self.saved_sessions(),
+        )
 
     def _post_json(self, path: str, payload: JsonObject, *, authorized: bool) -> JsonObject:
         return self._request_json("POST", path, payload, authorized=authorized)
@@ -884,47 +914,27 @@ class VariantSyncClient:
             logger.debug("Variant cloud login now persists account sessions for account switching support.")
 
     def _upsert_saved_session(self, session: F8VariantRemoteSession) -> None:
-        out: list[F8VariantRemoteSession] = []
-        replaced = False
-        for current in self.saved_sessions():
-            if current.accountId == session.accountId:
-                out.append(session)
-                replaced = True
-            else:
-                out.append(current)
-        if not replaced:
-            out.append(session)
-        out.sort(key=lambda item: (item.baseUrl.lower(), str(item.user.name).lower(), item.user.userId))
+        out = upsert_saved_sessions(
+            self.saved_sessions(),
+            session=session,
+            sort_key=lambda item: (item.baseUrl.lower(), str(item.user.name).lower(), item.user.userId),
+        )
         self._set_value(
             self._SAVED_SESSIONS_KEY,
             [_remote_session_payload(item) for item in out],
         )
 
     def _saved_session_by_id(self, account_id: str) -> F8VariantRemoteSession | None:
-        normalized_account_id = str(account_id or "").strip()
-        if not normalized_account_id:
-            return None
-        for session in self.saved_sessions():
-            if session.accountId == normalized_account_id:
-                return session
-        return None
+        return saved_session_by_id(self.saved_sessions(), account_id=account_id)
 
     def _session_matches_current_base_url(self, session: F8VariantRemoteSession) -> bool:
-        return str(session.baseUrl).strip().rstrip("/") == self.base_url()
+        return session_matches_base_url(session, base_url=self.base_url())
 
     def _current_session_base_url(self) -> str:
-        current_account_id = self.current_account_id()
-        if not current_account_id:
-            return ""
-        for item in self._value_list(self._SAVED_SESSIONS_KEY):
-            if not isinstance(item, dict):
-                continue
-            payload = json_object_from_value(item)
-            account_id = str(payload.get("accountId") or "").strip()
-            if account_id != current_account_id:
-                continue
-            return str(payload.get("baseUrl") or "").strip().rstrip("/")
-        return ""
+        return current_session_base_url_from_raw(
+            self._value_list(self._SAVED_SESSIONS_KEY),
+            current_account_id=self.current_account_id(),
+        )
 
     def _clear_current_auth_state(self) -> None:
         self._access_token = ""
@@ -932,18 +942,6 @@ class VariantSyncClient:
         self._set_value(self._CURRENT_ACCOUNT_ID_KEY, "")
         self._set_value("user", {})
         self._set_value("email", "")
-
-class _HttpResponseLike(Protocol):
-    status: int
-
-    def read(self) -> bytes: ...
-
-
-class _HttpResponseContext(Protocol):
-    def __enter__(self) -> _HttpResponseLike: ...
-
-    def __exit__(self, exc_type: object, exc: object, tb: object) -> object: ...
-
 
 def _try_parse_json_object(raw: str) -> JsonObject:
     try:
@@ -1242,40 +1240,13 @@ def _remote_session_from_payload(
 
 def _remote_session_payload(session: F8VariantRemoteSession) -> JsonObject:
     return {
-        "accountId": str(session.accountId),
-        "baseUrl": str(session.baseUrl),
+        **remote_session_payload_base(
+            account_id=session.accountId,
+            base_url=session.baseUrl,
+            last_used_at=session.lastUsedAt,
+        ),
         "user": _remote_user_payload(session.user),
-        "lastUsedAt": str(session.lastUsedAt),
     }
-
-
-def _session_cookie_from_headers(headers: object) -> str:
-    values = _header_values(headers, "Set-Cookie")
-    if not values:
-        return ""
-    cookie = http.cookies.SimpleCookie()
-    for value in values:
-        try:
-            cookie.load(value)
-        except http.cookies.CookieError:
-            logger.warning("Ignoring invalid Set-Cookie header from variant cloud")
-    parts: list[str] = []
-    for morsel in cookie.values():
-        parts.append(f"{morsel.key}={morsel.value}")
-    return "; ".join(parts)
-
-
-def _header_values(headers: object, name: str) -> list[str]:
-    get_all = getattr(headers, "get_all", None)
-    if callable(get_all):
-        values = get_all(name)
-        if isinstance(values, list):
-            return [str(value) for value in values if str(value).strip()]
-    if hasattr(headers, "get"):
-        value = headers.get(name)
-        if value is not None and str(value).strip():
-            return [str(value)]
-    return []
 
 
 def _remote_version_list_from_payload(payload: JsonObject) -> F8VariantRemoteVersionList:

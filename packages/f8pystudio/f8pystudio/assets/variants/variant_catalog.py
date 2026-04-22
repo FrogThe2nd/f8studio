@@ -32,10 +32,21 @@ logger = logging.getLogger(__name__)
 class VariantSourceProvider(Protocol):
     def load_entries(self) -> list[F8VariantEntry]: ...
 
+    @property
+    def db_path(self) -> Path: ...
+
+
+class _SqlExecuteConnection(Protocol):
+    def execute(self, statement: object) -> object: ...
+
 
 class LocalVariantProvider:
     def __init__(self, db_path: Path | None = None) -> None:
         self._draft_service = VariantDraftService(db_path=db_path)
+
+    @property
+    def db_path(self) -> Path:
+        return self._draft_service.db_path
 
     def load_entries(self) -> list[F8VariantEntry]:
         return self._draft_service.list_catalog_entries()
@@ -70,6 +81,10 @@ class RemoteCacheProvider:
     def __init__(self, db_path: Path | None = None) -> None:
         self._db = AssetsDatabase(db_path)
         self._db.ensure_initialized()
+
+    @property
+    def db_path(self) -> Path:
+        return self._db.path
 
     def load_entries(self) -> list[F8VariantEntry]:
         statement = (
@@ -142,10 +157,10 @@ class VariantCatalogService:
     ) -> None:
         if db_path is not None:
             self._db_path = Path(db_path)
-        elif local_provider is not None and hasattr(local_provider, "_draft_service"):
-            self._db_path = local_provider._draft_service._db.path  # pyright: ignore[reportAttributeAccessIssue]
+        elif local_provider is not None:
+            self._db_path = local_provider.db_path
         elif remote_provider is not None:
-            self._db_path = remote_provider._db.path  # pyright: ignore[reportAttributeAccessIssue]
+            self._db_path = remote_provider.db_path
         else:
             self._db_path = AssetsDatabase().path
         self._remote_provider = RemoteCacheProvider(self._db_path) if remote_provider is None else remote_provider
@@ -547,7 +562,7 @@ def _variant_entry_from_remote_row(row: object) -> F8VariantEntry:
     )
 
 
-def _insert_remote_variant_entry(conn: object, entry: F8VariantEntry) -> None:
+def _insert_remote_variant_entry(conn: _SqlExecuteConnection, entry: F8VariantEntry) -> None:
     metadata = remote_cache_metadata_from_fields(
         source=str(entry.source.value),
         visibility=None if entry.visibility is None else str(entry.visibility.value),

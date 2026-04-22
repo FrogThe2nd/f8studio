@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 import logging
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from qtpy import QtCore, QtWidgets
 
@@ -17,11 +17,19 @@ from ..variants.variant_sync import VariantRemoteScopeRefreshRequest, VariantRem
 from ..variants.variant_events import subscribe_variants_changed
 from .asset_cloud_account_menu import build_asset_account_menu, prompt_asset_cloud_sign_in
 from .background_tasks import BackgroundCallWorker
+from .catalog_hosts import _VariantCatalogDialogHost
+
+
+if TYPE_CHECKING:
+    _VariantCatalogBrowserMixinBase = _VariantCatalogDialogHost
+else:
+    _VariantCatalogBrowserMixinBase = object
 
 logger = logging.getLogger(__name__)
 
 
-class VariantCatalogBrowserMixin:
+class VariantCatalogBrowserMixin(_VariantCatalogBrowserMixinBase):
+    _TAB_DRAFTS: int
     _TAB_MINE: int
     _TAB_COMMUNITY: int
     _TAB_INSTALLED: int
@@ -46,7 +54,6 @@ class VariantCatalogBrowserMixin:
     _entries_for_current_tab: Any
     _build_list_row: Any
     _on_selection_changed: Any
-    _draft_service_for_catalog: Any
     _matches_filter: Any
 
     def _initialize_browser_state(self) -> None:
@@ -107,7 +114,7 @@ class VariantCatalogBrowserMixin:
 
     def _refresh_catalog_source_snapshot(self) -> None:
         self._catalog_local_entries_snapshot = self._draft_service_for_catalog().list_catalog_entries()
-        self._catalog_remote_entries_snapshot = self._sync_client._catalog_service.load_remote_entries()
+        self._catalog_remote_entries_snapshot = self._sync_client.load_cached_remote_entries()
 
     def _local_entries_snapshot(self) -> list[F8VariantEntry]:
         return list(self._catalog_local_entries_snapshot)
@@ -566,7 +573,7 @@ class VariantCatalogBrowserMixin:
 
     def _sanitize_remote_entries_for_signed_out_user(self) -> None:
         sanitized_remote_entries: list[F8VariantEntry] = []
-        for entry in self._sync_client._catalog_service.load_remote_entries():
+        for entry in self._sync_client.load_cached_remote_entries():
             if entry.source == F8VariantSourceKind.remote_private:
                 continue
             if not entry.subscribed:
@@ -581,7 +588,7 @@ class VariantCatalogBrowserMixin:
                     },
                 )
             )
-        self._sync_client._catalog_service.replace_remote_entries(
+        self._sync_client.replace_cached_remote_entries(
             sanitized_remote_entries,
             emit_changed=False,
         )

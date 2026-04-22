@@ -4,7 +4,7 @@ import json
 import logging
 import time
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from qtpy import QtCore, QtWidgets
 
@@ -15,6 +15,7 @@ from ...ui.support.ui_icons import StudioIcon, icon_for
 from .background_tasks import BackgroundCallWorker
 from ..variants.variant_catalog import variant_entry_has_cached_content, variant_entry_is_installed
 from ..variants.variant_models import F8VariantEntry, F8VariantRecord, F8VariantSourceKind, F8VariantVisibility
+from .catalog_hosts import _VariantCatalogDialogHost
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +35,13 @@ class _ResolvedVariantSelection:
     remote_entry: F8VariantEntry | None
 
 
-class VariantCatalogSelectionMixin:
+if TYPE_CHECKING:
+    _VariantCatalogSelectionMixinBase = _VariantCatalogDialogHost
+else:
+    _VariantCatalogSelectionMixinBase = object
+
+
+class VariantCatalogSelectionMixin(_VariantCatalogSelectionMixinBase):
     _TAB_DRAFTS: int
     _TAB_MINE: int
     _TAB_COMMUNITY: int
@@ -134,7 +141,7 @@ class VariantCatalogSelectionMixin:
         normalized_variant_id = str(variant_id or "").strip()
         if not normalized_variant_id:
             return None
-        return self._sync_client._catalog_service.remote_entry(normalized_variant_id)
+        return self._sync_client.remote_entry(normalized_variant_id)
 
     def _resolve_action_entries(
         self,
@@ -547,7 +554,7 @@ class VariantCatalogSelectionMixin:
         if not isinstance(result, F8VariantEntry):
             self._preview.clear_preview("Failed to preview variant.\nUnexpected preview payload.")
             return
-        cached_entry = self._sync_client._catalog_service.cache_remote_entry(
+        cached_entry = self._sync_client.cache_cached_remote_entry(
             result,
             emit_changed=False,
         )
@@ -728,8 +735,4 @@ class VariantCatalogSelectionMixin:
             history_action = menu.addAction("History")
             history_action.setEnabled(local_entry is not None or remote_entry is not None)
             history_action.triggered.connect(self._on_history_clicked)  # type: ignore[attr-defined]
-        menu.addSeparator()
-        export_action = menu.addAction("Export Asset JSON")
-        export_action.setEnabled(selected_entry is not None)
-        export_action.triggered.connect(self._on_export_clicked)  # type: ignore[attr-defined]
         menu.exec(self._list.viewport().mapToGlobal(pos))

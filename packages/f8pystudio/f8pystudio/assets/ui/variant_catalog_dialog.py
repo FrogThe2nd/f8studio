@@ -52,7 +52,7 @@ class VariantCatalogDialog(
         self._row_states_by_variant_id: dict[str, AssetCatalogRowState] = {}
         self._sync_client = VariantSyncClient()
         self._draft_service = VariantDraftService(
-            db_path=self._sync_client._catalog_service.db_path
+            db_path=self._sync_client.catalog_db_path()
         )
         self._initialize_browser_state()
         self._initialize_selection_state()
@@ -62,7 +62,7 @@ class VariantCatalogDialog(
         self._render_browser_initial_state()
 
     def _draft_service_for_catalog(self) -> VariantDraftService:
-        draft_db_path = self._sync_client._catalog_service.db_path
-        if self._draft_service._db._path != draft_db_path:
+        draft_db_path = self._sync_client.catalog_db_path()
+        if self._draft_service.db_path != draft_db_path:
             self._draft_service = VariantDraftService(db_path=draft_db_path)
         return self._draft_service

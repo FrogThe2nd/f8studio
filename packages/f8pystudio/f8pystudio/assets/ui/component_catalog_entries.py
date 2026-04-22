@@ -1,14 +1,23 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from f8pysdk.codec import copy_model
 
 from ..components.component_catalog import component_entry_has_cached_content, component_entry_is_installed
 from ..components.component_models import F8ComponentEntry, F8ComponentSourceKind, F8ComponentVisibility
 from ..components.component_repository import list_component_entries
 from .catalog_status import AssetCatalogRowState, build_asset_catalog_row_state
+from .catalog_hosts import _ComponentCatalogDialogHost
 
 
-class ComponentCatalogEntriesMixin:
+if TYPE_CHECKING:
+    _ComponentCatalogEntriesMixinBase = _ComponentCatalogDialogHost
+else:
+    _ComponentCatalogEntriesMixinBase = object
+
+
+class ComponentCatalogEntriesMixin(_ComponentCatalogEntriesMixinBase):
     LINKED_DRAFT_LABEL: str
 
     def _entries_for_current_tab(self) -> list[F8ComponentEntry]:

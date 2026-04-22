@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+from typing import TYPE_CHECKING
 
 from qtpy import QtCore, QtWidgets
 
@@ -34,12 +35,19 @@ from .project_asset_dialogs import (
     AssetOverwriteMetaDialog,
     prompt_version_notes,
 )
+from .catalog_hosts import ComponentCatalogActionsHost
+
+
+if TYPE_CHECKING:
+    _ComponentCatalogActionsMixinBase = ComponentCatalogActionsHost
+else:
+    _ComponentCatalogActionsMixinBase = object
 
 
 logger = logging.getLogger(__name__)
 
 
-class ComponentCatalogActionsMixin:
+class ComponentCatalogActionsMixin(_ComponentCatalogActionsMixinBase):
     @staticmethod
     def _component_publish_change_flags(
         *,
@@ -85,10 +93,10 @@ class ComponentCatalogActionsMixin:
                 f"Missing asset: {missing_component_id}\n\n"
                 "Create a new cloud component and relink this draft to it?"
             ),
-            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
-            QtWidgets.QMessageBox.Yes,
+            QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
+            QtWidgets.QMessageBox.StandardButton.Yes,
         )
-        return answer == QtWidgets.QMessageBox.Yes
+        return answer == QtWidgets.QMessageBox.StandardButton.Yes
 
     def _request_publish_version_notes(self, *, component_name: str) -> str | None:
         return prompt_version_notes(
@@ -233,10 +241,6 @@ class ComponentCatalogActionsMixin:
             history_action = menu.addAction("History")
             history_action.setEnabled(local_entry is not None or remote_entry is not None)
             history_action.triggered.connect(self._on_history_clicked)  # type: ignore[attr-defined]
-        menu.addSeparator()
-        export_action = menu.addAction("Export Asset JSON")
-        export_action.setEnabled(selected_entry is not None)
-        export_action.triggered.connect(self._on_export_clicked)  # type: ignore[attr-defined]
         return menu
 
     def _component_overwrite_choices(self, *, exclude_component_id: str | None = None) -> list[AssetOverwriteChoice]:
@@ -297,7 +301,7 @@ class ComponentCatalogActionsMixin:
             overwrite_label="Overwrite Existing Component",
             name_validator=self._validate_save_component_name,
         )
-        if metadata_dialog.exec() != QtWidgets.QDialog.Accepted:
+        if metadata_dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
             return
         try:
             selected_nodes = list(graph.selected_nodes() or [])
@@ -362,7 +366,7 @@ class ComponentCatalogActionsMixin:
                 candidate, component_id
             ),
         )
-        if metadata_dialog.exec() != QtWidgets.QDialog.Accepted:
+        if metadata_dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
             return
         name, description, tags, _overwrite_component_id = metadata_dialog.values()
         updated_record = validate_as(
@@ -397,7 +401,7 @@ class ComponentCatalogActionsMixin:
             if local_entry is None:
                 return
             answer = QtWidgets.QMessageBox.question(self, "Delete draft", f"Delete draft '{selected_entry.record.name}'?")
-            if answer != QtWidgets.QMessageBox.Yes:
+            if answer != QtWidgets.QMessageBox.StandardButton.Yes:
                 return
             if not self._draft_service_for_catalog().delete_draft(str(local_entry.record.componentId)):
                 show_warning(self, "Delete failed", "Draft was not found.")
@@ -413,7 +417,7 @@ class ComponentCatalogActionsMixin:
                 "Remove from Installed",
                 f"Remove installed cache for '{selected_entry.record.name}'?",
             )
-            if answer != QtWidgets.QMessageBox.Yes:
+            if answer != QtWidgets.QMessageBox.StandardButton.Yes:
                 return
             if self._offload_selected_component(local_entry=local_entry, remote_entry=remote_entry):
                 show_info(self, "Removed from Installed", f"Removed from installed cache:\n{selected_entry.record.name}")
@@ -424,7 +428,7 @@ class ComponentCatalogActionsMixin:
         title = "Delete component"
         prompt = f"Delete remote component '{selected_entry.record.name}'?"
         answer = QtWidgets.QMessageBox.question(self, title, prompt)
-        if answer != QtWidgets.QMessageBox.Yes:
+        if answer != QtWidgets.QMessageBox.StandardButton.Yes:
             return
         try:
             if has_owned_remote and remote_entry is not None:
@@ -688,9 +692,9 @@ class ComponentCatalogActionsMixin:
             self,
             "Change visibility",
             prompt,
-            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
         )
-        if answer != QtWidgets.QMessageBox.Yes:
+        if answer != QtWidgets.QMessageBox.StandardButton.Yes:
             return
         try:
             self._sync_client.update_component_visibility(

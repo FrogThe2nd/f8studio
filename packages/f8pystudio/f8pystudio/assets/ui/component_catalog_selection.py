@@ -4,7 +4,7 @@ import json
 import logging
 import time
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from qtpy import QtCore, QtWidgets
 
@@ -20,6 +20,7 @@ from ..components.component_catalog import (
     component_entry_is_installed,
 )
 from ..components.component_models import F8ComponentEntry, F8ComponentSourceKind, F8ComponentVisibility
+from .catalog_hosts import _ComponentCatalogDialogHost
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +42,13 @@ class _ResolvedComponentSelection:
     remote_entry: F8ComponentEntry | None
 
 
-class ComponentCatalogSelectionMixin:
+if TYPE_CHECKING:
+    _ComponentCatalogSelectionMixinBase = _ComponentCatalogDialogHost
+else:
+    _ComponentCatalogSelectionMixinBase = object
+
+
+class ComponentCatalogSelectionMixin(_ComponentCatalogSelectionMixinBase):
     LINKED_DRAFT_LABEL: str
 
     def _initialize_selection_state(self) -> None:
@@ -66,7 +73,7 @@ class ComponentCatalogSelectionMixin:
             raise
         if item is None:
             return None
-        component_id = str(item.data(QtCore.Qt.UserRole) or "").strip()
+        component_id = str(item.data(QtCore.Qt.ItemDataRole.UserRole) or "").strip()
         if not component_id:
             return None
         for entry in self._entries:
@@ -105,7 +112,7 @@ class ComponentCatalogSelectionMixin:
         normalized_component_id = str(component_id or "").strip()
         if not normalized_component_id:
             return None
-        for entry in self._sync_client._catalog_service._remote_provider.load_entries():
+        for entry in self._sync_client.load_cached_remote_entries():
             if str(entry.record.componentId or "").strip() == normalized_component_id:
                 return entry
         return None
@@ -453,7 +460,7 @@ class ComponentCatalogSelectionMixin:
         if not isinstance(result, F8ComponentEntry):
             self._preview.clear_preview("Failed to preview component.\nUnexpected preview payload.")
             return
-        cached_entry = self._sync_client._catalog_service.cache_remote_entry(
+        cached_entry = self._sync_client.cache_cached_remote_entry(
             result,
             emit_changed=False,
         )

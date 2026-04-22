@@ -63,10 +63,15 @@ class _CallbackServer(ThreadingHTTPServer):
 class _CallbackRequestHandler(BaseHTTPRequestHandler):
     server_version = "PyStudioBrowserAuth/1.0"
 
+    @property
+    def _callback_server(self) -> _CallbackServer:
+        return self.server  # type: ignore[return-value]
+
     def do_GET(self) -> None:  # noqa: N802
         parsed = parse.urlsplit(self.path)
-        if parsed.path != self.server.callback_path:
-            self._write_response(404, _callback_result_html(success=False, redirect_url=self.server.error_redirect_url))
+        server = self._callback_server
+        if parsed.path != server.callback_path:
+            self._write_response(404, _callback_result_html(success=False, redirect_url=server.error_redirect_url))
             return
         query = parse.parse_qs(parsed.query, keep_blank_values=False)
         code = _query_first(query, "code")
@@ -81,17 +86,17 @@ class _CallbackRequestHandler(BaseHTTPRequestHandler):
         )
         if callback.error or not callback.code or not callback.state:
             self._queue_callback(callback)
-            self._write_response(400, _callback_result_html(success=False, redirect_url=self.server.error_redirect_url))
+            self._write_response(400, _callback_result_html(success=False, redirect_url=server.error_redirect_url))
             return
         self._queue_callback(callback)
-        self._write_response(200, _callback_result_html(success=True, redirect_url=self.server.success_redirect_url))
+        self._write_response(200, _callback_result_html(success=True, redirect_url=server.success_redirect_url))
 
     def log_message(self, format: str, *args: object) -> None:  # noqa: A003
         del format, args
         return
 
     def _queue_callback(self, callback: AssetCloudBrowserAuthCallback) -> None:
-        queue = self.server.callback_queue
+        queue = self._callback_server.callback_queue
         try:
             queue.put_nowait(callback)
         except Exception:

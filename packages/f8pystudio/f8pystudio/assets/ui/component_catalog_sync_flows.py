@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from qtpy import QtWidgets
 
 from ..components.component_catalog import component_entry_is_installed
@@ -8,9 +10,16 @@ from ..components.component_models import (
     F8ComponentVisibility,
 )
 from ...ui.support.ui_notifications import show_warning
+from .catalog_hosts import ComponentCatalogSyncHost
 
 
-class ComponentCatalogSyncFlowsMixin:
+if TYPE_CHECKING:
+    _ComponentCatalogSyncFlowsMixinBase = ComponentCatalogSyncHost
+else:
+    _ComponentCatalogSyncFlowsMixinBase = object
+
+
+class ComponentCatalogSyncFlowsMixin(_ComponentCatalogSyncFlowsMixinBase):
     def _offload_selected_component(
         self,
         *,
@@ -19,7 +28,7 @@ class ComponentCatalogSyncFlowsMixin:
     ) -> bool:
         changed = False
         if remote_entry is not None and component_entry_is_installed(remote_entry):
-            changed = self._sync_client._catalog_service.uninstall_remote_entry(str(remote_entry.record.componentId)) is not None or changed
+            changed = self._sync_client.uninstall_cached_component(str(remote_entry.record.componentId)) is not None or changed
         if changed:
             preserve_component_id = ""
             if remote_entry is not None:

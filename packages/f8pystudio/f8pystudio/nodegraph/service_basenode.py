@@ -341,6 +341,10 @@ class F8StudioServiceNodeItem(
     def refresh_state_inline_control_read_only(self) -> None:
         _refresh_state_inline_control_read_only_impl(self)
 
+    def set_preview_read_only(self, read_only: bool) -> None:
+        self._f8_preview_read_only = bool(read_only)
+        self.refresh_state_inline_control_read_only()
+
     def _invoke_command(self, cmd: Any) -> None:
         _invoke_command_impl(self, cmd)
 

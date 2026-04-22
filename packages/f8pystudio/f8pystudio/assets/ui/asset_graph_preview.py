@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Callable, cast
+from typing import Callable, Protocol, cast
 
 from NodeGraphQt.errors import NodeCreationError
 from NodeGraphQt.qgraphics.node_abstract import AbstractNodeItem
@@ -15,6 +15,7 @@ from f8pysdk.codec import dump_json
 
 from ...assets.common import JsonObject, json_object_from_value
 from ...nodegraph.node_graph import F8StudioGraph
+from ...nodegraph.service_basenode import F8StudioServiceNodeItem
 from ...nodegraph.viewer import F8StudioNodeViewer
 from ...ui.support.state_builders import set_control_read_only
 from ...ui.support.qt_lifecycle import qt_runtime_error_is_object_deleted
@@ -32,11 +33,17 @@ _PREVIEW_INSPECTOR_MAX_WIDTH = 360
 _PREVIEW_INSPECTOR_FRACTION = 0.3
 
 
+class _PreviewNodeLike(Protocol):
+    view: object
+
+    def set_property(self, name: str, value: object, *, push_undo: bool = True) -> None: ...
+
+
 class _AssetPreviewViewer(F8StudioNodeViewer):
     def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent=parent)
-        self.setViewportUpdateMode(QtWidgets.QGraphicsView.BoundingRectViewportUpdate)
-        self.setCacheMode(QtWidgets.QGraphicsView.CacheBackground)
+        self.setViewportUpdateMode(QtWidgets.QGraphicsView.ViewportUpdateMode.BoundingRectViewportUpdate)
+        self.setCacheMode(QtWidgets.QGraphicsView.CacheModeFlag.CacheBackground)
         self._shortcut_search.setEnabled(False)
         self._shortcut_delete.setEnabled(False)
         self._shortcut_backspace.setEnabled(False)
@@ -128,7 +135,7 @@ class AssetGraphPreviewPane(QtWidgets.QWidget):
         self._host_graph = host_graph
         self._viewer = _AssetPreviewViewer(self)
         self._preview_graph = F8StudioGraph(parent=self, viewer=self._viewer)
-        self._preview_graph._skip_post_load_viewer_refresh = True  # pyright: ignore[reportAttributeAccessIssue]
+        self._preview_graph.set_skip_post_load_viewer_refresh(True)
         self._inspector = F8StudioSingleNodePropertiesWidget(
             self,
             node_graph=self._preview_graph,
@@ -333,7 +340,7 @@ class AssetGraphPreviewPane(QtWidgets.QWidget):
             self._preview_graph.clear_session()
         except Exception:
             logger.exception("Failed to clear preview graph.")
-        self._preview_graph._undo_stack.clear()
+        self._preview_graph.clear_undo_history()
         self._inspector.set_node(None, force_clear=True)
 
     def _show_status(self, message: str) -> None:
@@ -356,7 +363,7 @@ class AssetGraphPreviewPane(QtWidgets.QWidget):
 
     def _run_with_preview_updates_frozen(self, callback: Callable[[], None]) -> None:
         widgets_to_freeze: list[QtWidgets.QWidget] = []
-        graph_widget = getattr(self._preview_graph, "widget", None)
+        graph_widget = self._preview_graph.widget
         viewer = self._preview_graph.viewer()
         if isinstance(graph_widget, QtWidgets.QWidget):
             widgets_to_freeze.append(graph_widget)
@@ -514,7 +521,7 @@ class AssetGraphPreviewPane(QtWidgets.QWidget):
         if node is None:
             raise ValueError(f'Unable to create preview node for "{base_node_type}".')
         variant_spec_json = record.spec if isinstance(record.spec, dict) else dump_json(record.spec, mode="json")
-        self._preview_graph._apply_variant_to_node(  # pyright: ignore[reportPrivateUsage]
+        self._preview_graph.apply_variant_record_to_node(
             node=cast(object, node),
             variant_record=record,
             variant_spec_json=json_object_from_value(variant_spec_json),
@@ -522,18 +529,13 @@ class AssetGraphPreviewPane(QtWidgets.QWidget):
         return node
 
     def _create_preview_node(self, *, node_type: str, name: str | None) -> object | None:
-        previous_loading = bool(self._preview_graph._loading_session)
-        self._preview_graph._loading_session = True
-        try:
-            return self._preview_graph.create_node(
-                node_type,
-                name=name,
-                selected=False,
-                pos=(0.0, 0.0),
-                push_undo=False,
-            )
-        finally:
-            self._preview_graph._loading_session = previous_loading
+        return self._preview_graph.create_node_for_session_load(
+            node_type,
+            name=name,
+            selected=False,
+            pos=(0.0, 0.0),
+            push_undo=False,
+        )
 
     def _clear_selected_nodes(self) -> None:
         self._preview_graph.clear_selection()
@@ -634,19 +636,13 @@ class AssetGraphPreviewPane(QtWidgets.QWidget):
 
     def _apply_preview_interaction_mode(self) -> None:
         for node in list(self._preview_graph.all_nodes() or []):
-            view = getattr(node, "view", None)
-            if view is None:
+            view = cast(_PreviewNodeLike, cast(object, node)).view
+            if not isinstance(view, F8StudioServiceNodeItem):
                 continue
             try:
-                setattr(view, "_f8_preview_read_only", True)
+                view.set_preview_read_only(True)
             except (AttributeError, RuntimeError, TypeError):
                 continue
-            refresh = getattr(view, "refresh_state_inline_control_read_only", None)
-            if callable(refresh):
-                try:
-                    refresh()
-                except (AttributeError, RuntimeError, TypeError):
-                    continue
 
     @staticmethod
     def _item_scene_rect(item: QtWidgets.QGraphicsItem) -> QtCore.QRectF:
@@ -703,25 +699,19 @@ class AssetGraphPreviewPane(QtWidgets.QWidget):
             if isinstance(group_widget, QtWidgets.QWidget):
                 group_widget.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
             return
-        if isinstance(
+        if type(widget) is QtWidgets.QWidget or isinstance(
             widget,
             (
-                QtWidgets.QLineEdit,
-                QtWidgets.QPlainTextEdit,
-                QtWidgets.QTextEdit,
-                QtWidgets.QAbstractSpinBox,
-                QtWidgets.QAbstractButton,
-                QtWidgets.QComboBox,
-                QtWidgets.QAbstractSlider,
-                QtWidgets.QAbstractItemView,
+                QtWidgets.QFrame,
+                QtWidgets.QGroupBox,
+                QtWidgets.QScrollArea,
+                QtWidgets.QSplitter,
+                QtWidgets.QStackedWidget,
+                QtWidgets.QTabWidget,
             ),
-        ) or hasattr(widget, "set_read_only") or hasattr(widget, "set_disabled"):
-            set_control_read_only(widget, read_only=True)
-        if isinstance(widget, QtWidgets.QTextEdit):
-            widget.setTextInteractionFlags(
-                QtCore.Qt.TextInteractionFlag.TextSelectableByMouse
-                | QtCore.Qt.TextInteractionFlag.TextSelectableByKeyboard
-            )
+        ):
+            return
+        set_control_read_only(widget, read_only=True)
 
 
 __all__ = ["AssetGraphPreviewPane"]

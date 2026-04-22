@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from qtpy import QtWidgets
 
 from f8pysdk.codec import dump_json
@@ -22,9 +24,16 @@ from .project_asset_dialogs import (
     AssetVersionBrowserItem,
     ProjectAssetMetaDialog,
 )
+from .catalog_hosts import ComponentCatalogVersionHost
 
 
-class ComponentCatalogVersionFlowsMixin:
+if TYPE_CHECKING:
+    _ComponentCatalogVersionFlowsMixinBase = ComponentCatalogVersionHost
+else:
+    _ComponentCatalogVersionFlowsMixinBase = object
+
+
+class ComponentCatalogVersionFlowsMixin(_ComponentCatalogVersionFlowsMixinBase):
     @staticmethod
     def _local_version_item(version: F8ComponentLocalVersionSummary) -> AssetVersionBrowserItem:
         return AssetVersionBrowserItem(version_number=int(version.versionNumber), created_at=str(version.createdAt))
@@ -38,7 +47,7 @@ class ComponentCatalogVersionFlowsMixin:
         )
 
     def _show_local_history(self, entry: F8ComponentEntry) -> None:
-        versions = self._sync_client._catalog_service.list_local_versions(str(entry.record.componentId))
+        versions = self._sync_client.list_local_component_versions(str(entry.record.componentId))
         if not versions:
             show_info(self, "Component History", "No local history found.")
             return
@@ -75,7 +84,7 @@ class ComponentCatalogVersionFlowsMixin:
                 AssetVersionBrowserAction(action_key="fork_remote", label="Fork To My Cloud"),
             ],
         )
-        if history_dialog.exec() != QtWidgets.QDialog.Accepted:
+        if history_dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
             return
         selected_version_number = history_dialog.selected_version_number()
         action_key = history_dialog.selected_action_key()
@@ -88,7 +97,7 @@ class ComponentCatalogVersionFlowsMixin:
             self._fork_remote_version_to_cloud(entry=entry, version_number=int(selected_version_number))
 
     def _require_local_version_payload(self, component_id: str, version_number: int) -> F8ComponentRecord:
-        record = self._sync_client._catalog_service.local_version_record(str(component_id), int(version_number))
+        record = self._sync_client.local_component_version_record(str(component_id), int(version_number))
         if record is None:
             raise FileNotFoundError(f"Component version not found: {component_id} v{version_number}")
         return record
@@ -108,7 +117,7 @@ class ComponentCatalogVersionFlowsMixin:
             description=historical_entry.record.description,
             tags=list(historical_entry.record.tags or []),
         )
-        if metadata_dialog.exec() != QtWidgets.QDialog.Accepted:
+        if metadata_dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
             return
         name, description, tags = metadata_dialog.values()
         local_record = F8ComponentRecord(
@@ -141,7 +150,7 @@ class ComponentCatalogVersionFlowsMixin:
             description=historical_entry.record.description,
             tags=list(historical_entry.record.tags or []),
         )
-        if metadata_dialog.exec() != QtWidgets.QDialog.Accepted:
+        if metadata_dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
             return
         visibility = self._choose_visibility()
         if visibility is None:
@@ -179,11 +188,13 @@ class ComponentCatalogVersionFlowsMixin:
             self,
             "Upload visibility",
             "Publish this component publicly?\n\nYes = public\nNo = private",
-            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No | QtWidgets.QMessageBox.Cancel,
+            QtWidgets.QMessageBox.StandardButton.Yes
+            | QtWidgets.QMessageBox.StandardButton.No
+            | QtWidgets.QMessageBox.StandardButton.Cancel,
         )
-        if answer == QtWidgets.QMessageBox.Cancel:
+        if answer == QtWidgets.QMessageBox.StandardButton.Cancel:
             return None
-        if answer == QtWidgets.QMessageBox.Yes:
+        if answer == QtWidgets.QMessageBox.StandardButton.Yes:
             return F8ComponentVisibility.public
         return F8ComponentVisibility.private
 

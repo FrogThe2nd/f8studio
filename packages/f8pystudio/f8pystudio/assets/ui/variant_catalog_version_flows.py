@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from f8pysdk.codec import dump_json
 from f8pysdk.specs import F8VariantRecord
 
@@ -10,10 +12,17 @@ from ..variants.variant_models import (
     F8VariantSourceKind,
 )
 from ...ui.support.ui_notifications import show_info, show_warning
+from .catalog_hosts import VariantCatalogVersionHost
 from .project_asset_dialogs import AssetVersionBrowserDialog, AssetVersionBrowserItem
 
 
-class VariantCatalogVersionFlowsMixin:
+if TYPE_CHECKING:
+    _VariantCatalogVersionFlowsMixinBase = VariantCatalogVersionHost
+else:
+    _VariantCatalogVersionFlowsMixinBase = object
+
+
+class VariantCatalogVersionFlowsMixin(_VariantCatalogVersionFlowsMixinBase):
     def _on_history_clicked(self) -> None:
         selected_entry = self._selected_entry()
         if selected_entry is None:
@@ -34,7 +43,7 @@ class VariantCatalogVersionFlowsMixin:
         self._show_remote_history(selected_entry)
 
     def _show_local_history(self, entry: F8VariantEntry) -> None:
-        versions = self._sync_client._catalog_service.list_local_versions(str(entry.record.variantId))
+        versions = self._sync_client.list_local_variant_versions(str(entry.record.variantId))
         if not versions:
             show_info(self, "Variant History", "No local history found.")
             return
@@ -82,7 +91,7 @@ class VariantCatalogVersionFlowsMixin:
         )
 
     def _require_local_version_payload(self, variant_id: str, version_number: int) -> F8VariantRecord:
-        record = self._sync_client._catalog_service.local_version_record(str(variant_id), int(version_number))
+        record = self._sync_client.local_variant_version_record(str(variant_id), int(version_number))
         if record is None:
             raise FileNotFoundError(f"Variant version not found: {variant_id} v{version_number}")
         return record

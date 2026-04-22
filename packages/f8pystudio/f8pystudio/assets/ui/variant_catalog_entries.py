@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING
 
 from qtpy import QtCore, QtWidgets
 
@@ -14,6 +14,7 @@ from ..variants.variant_models import (
 )
 from ..variants.variant_repository import list_entries_for_base, normalize_variant_name
 from .catalog_status import AssetCatalogRowState, build_asset_catalog_row_state
+from .catalog_hosts import _VariantCatalogDialogHost
 
 logger = logging.getLogger(__name__)
 
@@ -49,31 +50,13 @@ def variant_row_state_for_entries(
     )
 
 
-class VariantCatalogEntriesMixin:
-    _TAB_DRAFTS: int
-    _TAB_MINE: int
-    _TAB_COMMUNITY: int
-    _TAB_INSTALLED: int
-    _base_node_type: str
-    _is_global_mode: bool
-    LOCAL_DRAFT_LABEL: str
-    LINKED_DRAFT_LABEL: str
-    _sync_client: Any
-    _scope_tabs: Any
-    _row_states_by_variant_id: dict[str, AssetCatalogRowState]
-    _list: QtWidgets.QListWidget
-    _current_query: Any
-    _get_current_base_node_type: Any
-    _current_filter_value: Any
-    _entry_matches_query: Any
-    _owner_label_text: Any
-    _linked_draft_reference_text: Any
-    _linked_draft_reference_tooltip: Any
-    _linked_draft_badge_text: Any
-    _linked_draft_badge_tooltip: Any
-    _is_owned_remote_entry: Any
-    _is_owned_remote_shared_entry: Any
-    _is_mine_entry: Any
+if TYPE_CHECKING:
+    _VariantCatalogEntriesMixinBase = _VariantCatalogDialogHost
+else:
+    _VariantCatalogEntriesMixinBase = object
+
+
+class VariantCatalogEntriesMixin(_VariantCatalogEntriesMixinBase):
 
     @staticmethod
     def _matches_base_type(entry: F8VariantEntry, *, current_base_type: str) -> bool:
@@ -255,7 +238,7 @@ class VariantCatalogEntriesMixin:
     def _mine_entries_for_base(self, *, exclude_variant_id: str | None = None) -> list[F8VariantEntry]:
         excluded_variant_id = str(exclude_variant_id or "").strip()
         entries: list[F8VariantEntry] = []
-        for entry in self._sync_client._catalog_service.load_all_entries():
+        for entry in self._sync_client.load_all_catalog_entries():
             if str(entry.record.baseNodeType or "").strip() != self._base_node_type:
                 continue
             variant_id = str(entry.record.variantId or "").strip()

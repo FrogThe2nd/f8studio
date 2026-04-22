@@ -38,7 +38,7 @@ class ProjectAssetMetaDialog(QtWidgets.QDialog):
         form.addRow("Tags (comma-separated)", self._tags)
 
         buttons = QtWidgets.QDialogButtonBox(
-            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel,
+            QtWidgets.QDialogButtonBox.StandardButton.Ok | QtWidgets.QDialogButtonBox.StandardButton.Cancel,
             parent=self,
         )
         buttons.accepted.connect(self._on_accept_clicked)  # type: ignore[attr-defined]
@@ -90,7 +90,7 @@ class AssetVersionNoteDialog(QtWidgets.QDialog):
         self._note.setPlainText(str(note or ""))
 
         buttons = QtWidgets.QDialogButtonBox(
-            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel,
+            QtWidgets.QDialogButtonBox.StandardButton.Ok | QtWidgets.QDialogButtonBox.StandardButton.Cancel,
             parent=self,
         )
         buttons.accepted.connect(self.accept)  # type: ignore[attr-defined]
@@ -118,7 +118,7 @@ def prompt_version_notes(
         prompt=prompt,
         note=note,
     )
-    if dialog.exec() != QtWidgets.QDialog.Accepted:
+    if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
         return None
     return dialog.value()
 
@@ -182,7 +182,7 @@ class AssetOverwriteMetaDialog(QtWidgets.QDialog):
         form.addRow("Tags (comma-separated)", self._tags)
 
         buttons = QtWidgets.QDialogButtonBox(
-            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel,
+            QtWidgets.QDialogButtonBox.StandardButton.Ok | QtWidgets.QDialogButtonBox.StandardButton.Cancel,
             parent=self,
         )
         buttons.accepted.connect(self._on_accept_clicked)  # type: ignore[attr-defined]
@@ -261,16 +261,16 @@ class ProjectPickerDialog(QtWidgets.QDialog):
         self._list = QtWidgets.QListWidget(self)
         self._details = QtWidgets.QPlainTextEdit(self)
         self._details.setReadOnly(True)
-        self._details.setLineWrapMode(QtWidgets.QPlainTextEdit.NoWrap)
+        self._details.setLineWrapMode(QtWidgets.QPlainTextEdit.LineWrapMode.NoWrap)
 
-        split = QtWidgets.QSplitter(QtCore.Qt.Horizontal, self)
+        split = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal, self)
         split.addWidget(self._list)
         split.addWidget(self._details)
         split.setStretchFactor(0, 3)
         split.setStretchFactor(1, 4)
 
         buttons = QtWidgets.QDialogButtonBox(
-            QtWidgets.QDialogButtonBox.Open | QtWidgets.QDialogButtonBox.Cancel,
+            QtWidgets.QDialogButtonBox.StandardButton.Open | QtWidgets.QDialogButtonBox.StandardButton.Cancel,
             parent=self,
         )
         buttons.accepted.connect(self.accept)  # type: ignore[attr-defined]
@@ -282,7 +282,7 @@ class ProjectPickerDialog(QtWidgets.QDialog):
 
         for index, project in enumerate(self._projects):
             item = QtWidgets.QListWidgetItem(project.name)
-            item.setData(QtCore.Qt.UserRole, project.projectId)
+            item.setData(QtCore.Qt.ItemDataRole.UserRole, project.projectId)
             if project.projectId == current_project_id:
                 item.setSelected(True)
                 self._list.setCurrentRow(index)
@@ -298,7 +298,7 @@ class ProjectPickerDialog(QtWidgets.QDialog):
         item = _list_current_item_or_none(self._list)
         if item is None:
             return ""
-        return str(item.data(QtCore.Qt.UserRole) or "").strip()
+        return str(item.data(QtCore.Qt.ItemDataRole.UserRole) or "").strip()
 
     def _on_current_item_changed(
         self,
@@ -308,7 +308,7 @@ class ProjectPickerDialog(QtWidgets.QDialog):
         if current is None:
             self._details.setPlainText("")
             return
-        selected_project_id = str(current.data(QtCore.Qt.UserRole) or "").strip()
+        selected_project_id = str(current.data(QtCore.Qt.ItemDataRole.UserRole) or "").strip()
         selected_summary = None
         for project in self._projects:
             if project.projectId == selected_project_id:
@@ -366,23 +366,23 @@ class AssetVersionBrowserDialog(QtWidgets.QDialog):
         self._list = QtWidgets.QListWidget(self)
         self._details = QtWidgets.QPlainTextEdit(self)
         self._details.setReadOnly(True)
-        self._details.setLineWrapMode(QtWidgets.QPlainTextEdit.NoWrap)
+        self._details.setLineWrapMode(QtWidgets.QPlainTextEdit.LineWrapMode.NoWrap)
 
-        split = QtWidgets.QSplitter(QtCore.Qt.Horizontal, self)
+        split = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal, self)
         split.addWidget(self._list)
         split.addWidget(self._details)
         split.setStretchFactor(0, 3)
         split.setStretchFactor(1, 5)
 
         buttons = QtWidgets.QDialogButtonBox(parent=self)
-        close_button = buttons.addButton(QtWidgets.QDialogButtonBox.Close)
+        close_button = buttons.addButton(QtWidgets.QDialogButtonBox.StandardButton.Close)
         close_button.clicked.connect(self.reject)  # type: ignore[attr-defined]
         resolved_actions = list(actions or [])
         if primary_action_label and not resolved_actions:
             resolved_actions.append(AssetVersionBrowserAction(action_key="primary", label=primary_action_label))
         self._action_buttons: dict[str, QtWidgets.QPushButton] = {}
         for action in resolved_actions:
-            action_button = buttons.addButton(action.label, QtWidgets.QDialogButtonBox.AcceptRole)
+            action_button = buttons.addButton(action.label, QtWidgets.QDialogButtonBox.ButtonRole.AcceptRole)
             action_button.clicked.connect(
                 lambda _checked=False, action_key=action.action_key: self._on_action_clicked(action_key)
             )  # type: ignore[attr-defined]
@@ -399,7 +399,7 @@ class AssetVersionBrowserDialog(QtWidgets.QDialog):
             if item.change_summary:
                 label_parts.append(item.change_summary)
             list_item = QtWidgets.QListWidgetItem(" | ".join(label_parts))
-            list_item.setData(QtCore.Qt.UserRole, item.version_number)
+            list_item.setData(QtCore.Qt.ItemDataRole.UserRole, item.version_number)
             if tooltip_time:
                 list_item.setToolTip(tooltip_time)
             self._list.addItem(list_item)
@@ -437,7 +437,7 @@ class AssetVersionBrowserDialog(QtWidgets.QDialog):
             self._details.setPlainText("")
             self._set_action_buttons_enabled(False)
             return
-        version_number = int(current.data(QtCore.Qt.UserRole) or 0)
+        version_number = int(current.data(QtCore.Qt.ItemDataRole.UserRole) or 0)
         self._selected_version_number = version_number
         self._selected_action_key = None
         self._set_action_buttons_enabled(True)

@@ -26,6 +26,7 @@ LIGHTWEIGHT_CORE_ROOTS = (
     PACKAGE_ROOT / "studio_specs",
     PACKAGE_ROOT / "visualization",
 )
+ASSETS_ROOT = PACKAGE_ROOT / "assets"
 
 
 def _package_module_for_path(path: Path) -> tuple[str, ...]:
@@ -169,7 +170,10 @@ def test_lightweight_core_packages_avoid_runtime_qt_imports() -> None:
 
 
 def test_assets_domain_core_only_uses_nodegraph_session_schema() -> None:
-    allowed_nodegraph_target = "f8pystudio.nodegraph.session_schema"
+    allowed_nodegraph_targets = {
+        "f8pystudio.nodegraph.session_payload_sanitizer",
+        "f8pystudio.nodegraph.session_schema",
+    }
     for root in DOMAIN_ASSETS_ROOTS:
         for path in _python_files(root):
             imports = _import_targets(path)
@@ -178,7 +182,84 @@ def test_assets_domain_core_only_uses_nodegraph_session_schema() -> None:
             }
             ui_targets = {target for target in imports if target == "f8pystudio.ui" or target.startswith("f8pystudio.ui.")}
             assert not ui_targets, str(path)
-            assert nodegraph_targets <= {allowed_nodegraph_target}, str(path)
+            assert nodegraph_targets <= allowed_nodegraph_targets, str(path)
+
+
+def test_assets_common_remote_infrastructure_stays_domain_agnostic() -> None:
+    forbidden_targets = (
+        "f8pystudio.assets.components",
+        "f8pystudio.assets.variants",
+        "f8pystudio.assets.projects",
+        "f8pystudio.assets.ui",
+    )
+    for module_name in ("remote_http.py", "remote_sessions.py", "error_reporting.py"):
+        path = PACKAGE_ROOT / "assets" / "common" / module_name
+        imports = _import_targets(path)
+        for forbidden in forbidden_targets:
+            assert all(
+                target != forbidden and not target.startswith(forbidden + ".")
+                for target in imports
+            ), str(path)
+
+
+def test_assets_sync_clients_use_shared_remote_common_helpers() -> None:
+    required_targets = {
+        "f8pystudio.assets.common.remote_http",
+        "f8pystudio.assets.common.remote_sessions",
+    }
+    for path in (
+        PACKAGE_ROOT / "assets" / "components" / "component_sync.py",
+        PACKAGE_ROOT / "assets" / "variants" / "variant_sync.py",
+    ):
+        imports = _import_targets(path)
+        assert required_targets <= imports
+
+
+def test_assets_forbid_private_chain_shortcuts_and_dynamic_attribute_probing() -> None:
+    forbidden_patterns = (
+        "_sync_client._catalog_service",
+        "_draft_service._db",
+        "_preview_graph._",
+        "getattr(",
+        "setattr(",
+        "hasattr(",
+    )
+    for path in _python_files(ASSETS_ROOT):
+        source = path.read_text(encoding="utf-8")
+        assert all(pattern not in source for pattern in forbidden_patterns), str(path)
+
+
+def test_assets_public_exports_remain_stable() -> None:
+    import f8pystudio.assets as assets
+
+    expected_exports = [
+        "AssetsDatabase",
+        "assets_db_path",
+        "ProjectStorageService",
+        "ComponentCatalogService",
+        "ComponentDraftService",
+        "ComponentSyncClient",
+        "VariantDraftService",
+        "VariantSyncClient",
+        "F8ProjectRecord",
+        "F8ProjectSummary",
+        "F8ProjectVersionSummary",
+        "F8ComponentDraftEntry",
+        "F8ComponentEntry",
+        "F8ComponentRecord",
+        "F8ComponentSourceKind",
+        "F8ComponentVisibility",
+        "F8VariantDraftEntry",
+        "F8VariantEntry",
+        "F8VariantKind",
+        "F8VariantRecord",
+        "F8VariantRef",
+        "F8VariantSourceKind",
+        "F8VariantVisibility",
+    ]
+    assert assets.__all__ == expected_exports
+    for export_name in expected_exports:
+        assert hasattr(assets, export_name), export_name
 
 
 def test_low_level_ui_layers_do_not_reach_into_assets_ui_or_studio_bridge() -> None:

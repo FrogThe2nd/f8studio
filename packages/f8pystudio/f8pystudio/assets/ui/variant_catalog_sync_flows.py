@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from typing import TYPE_CHECKING
 
 from qtpy import QtWidgets
 
@@ -18,10 +19,17 @@ from ..variants.variant_models import (
     variant_now_iso,
 )
 from ...ui.support.ui_notifications import show_info, show_warning
+from .catalog_hosts import VariantCatalogSyncHost
 from .project_asset_dialogs import prompt_version_notes
 
 
-class VariantCatalogSyncFlowsMixin:
+if TYPE_CHECKING:
+    _VariantCatalogSyncFlowsMixinBase = VariantCatalogSyncHost
+else:
+    _VariantCatalogSyncFlowsMixinBase = object
+
+
+class VariantCatalogSyncFlowsMixin(_VariantCatalogSyncFlowsMixinBase):
     @staticmethod
     def _variant_publish_change_flags(
         *,
@@ -68,10 +76,10 @@ class VariantCatalogSyncFlowsMixin:
                 f"Missing asset: {missing_variant_id}\n\n"
                 "Create a new cloud variant and relink this draft to it?"
             ),
-            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
-            QtWidgets.QMessageBox.Yes,
+            QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
+            QtWidgets.QMessageBox.StandardButton.Yes,
         )
-        return answer == QtWidgets.QMessageBox.Yes
+        return answer == QtWidgets.QMessageBox.StandardButton.Yes
 
     def _request_publish_version_notes(self, *, variant_name: str) -> str | None:
         return prompt_version_notes(
@@ -153,7 +161,7 @@ class VariantCatalogSyncFlowsMixin:
     ) -> bool:
         changed = False
         if remote_entry is not None and variant_entry_is_installed(remote_entry):
-            changed = self._sync_client._catalog_service.uninstall_remote_entry(str(remote_entry.record.variantId)) is not None or changed
+            changed = self._sync_client.uninstall_cached_variant(str(remote_entry.record.variantId)) is not None or changed
         if changed:
             preserve_variant_id = ""
             if remote_entry is not None:
@@ -259,9 +267,9 @@ class VariantCatalogSyncFlowsMixin:
             self,
             "Change visibility",
             prompt,
-            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
         )
-        if answer != QtWidgets.QMessageBox.Yes:
+        if answer != QtWidgets.QMessageBox.StandardButton.Yes:
             return
         try:
             self._sync_client.update_variant_visibility(
@@ -281,11 +289,13 @@ class VariantCatalogSyncFlowsMixin:
             self,
             "Upload visibility",
             "Publish this variant publicly?\n\nYes = public\nNo = private",
-            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No | QtWidgets.QMessageBox.Cancel,
+            QtWidgets.QMessageBox.StandardButton.Yes
+            | QtWidgets.QMessageBox.StandardButton.No
+            | QtWidgets.QMessageBox.StandardButton.Cancel,
         )
-        if answer == QtWidgets.QMessageBox.Cancel:
+        if answer == QtWidgets.QMessageBox.StandardButton.Cancel:
             return None
-        if answer == QtWidgets.QMessageBox.Yes:
+        if answer == QtWidgets.QMessageBox.StandardButton.Yes:
             return F8VariantVisibility.public
         return F8VariantVisibility.private
 

@@ -27,10 +27,12 @@ from .layers import normalize_layer_defs
 from .service_bridge_protocol import ServiceBridge
 from .session_layout_codec import SessionLayoutCodecMixin
 from .viewer import F8StudioNodeViewer
+from ..assets.common import JsonObject
 from ..assets.common.asset_cache_events import subscribe_asset_cache_changed
 from ..render_nodes.backdrop import BackdropRenderNode
-from ..ui.support.ui_notifications import show_warning
 from ..ui.dialogs.node_docs_dialog import SpecTemplate
+from ..ui.support.ui_notifications import show_warning
+from f8pysdk.specs import F8VariantRecord
 
 MISSING_SERVICE_NODE_TYPE = "svc.f8.missing.service"
 MISSING_OPERATOR_NODE_TYPE = "svc.f8.missing.operator"
@@ -136,6 +138,47 @@ class F8StudioGraph(
         if isinstance(window, QtWidgets.QWidget):
             return window
         return viewer
+
+    def set_skip_post_load_viewer_refresh(self, skip: bool) -> None:
+        self._skip_post_load_viewer_refresh = bool(skip)
+
+    def clear_undo_history(self) -> None:
+        self._undo_stack.clear()
+
+    def create_node_for_session_load(
+        self,
+        node_type: str,
+        *,
+        name: str | None = None,
+        pos: tuple[float, float] | None = None,
+        selected: bool = False,
+        push_undo: bool = False,
+    ) -> object | None:
+        previous_loading = bool(self._loading_session)
+        self._loading_session = True
+        try:
+            return self.create_node(
+                node_type,
+                name=name,
+                pos=pos,
+                selected=selected,
+                push_undo=push_undo,
+            )
+        finally:
+            self._loading_session = previous_loading
+
+    def apply_variant_record_to_node(
+        self,
+        *,
+        node: object,
+        variant_record: F8VariantRecord,
+        variant_spec_json: JsonObject,
+    ) -> None:
+        self._apply_variant_to_node(
+            node=node,
+            variant_record=variant_record,
+            variant_spec_json=variant_spec_json,
+        )
 
     def begin_node_placement(self, node_type: str, node_label: str) -> None:
         viewer = self._viewer
