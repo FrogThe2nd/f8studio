@@ -133,3 +133,77 @@ def test_component_import_rejects_wrong_asset_type(monkeypatch: pytest.MonkeyPat
 
     with pytest.raises(ValueError, match="Expected component asset payload"):
         import_component_from_json(str(import_path))
+
+
+def test_component_export_sanitizes_launch_runtime_errors_and_publish_redactions(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _patch_component_service(monkeypatch, tmp_path)
+    saved = upsert_component(
+        F8ComponentRecord(
+            componentId="component-dirty",
+            name="Dirty Component",
+            description="desc",
+            tags=["demo"],
+            content={
+                "schemaVersion": "f8studio-session/1",
+                "layout": {
+                    "nodes": {
+                        "svcA": {
+                            "type_": "svc.f8.player",
+                            "f8_spec": {
+                                "schemaVersion": "f8service/1",
+                                "specKind": "service",
+                                "serviceClass": "f8.player",
+                                "version": "0.0.1",
+                                "label": "Player",
+                                "launch": {
+                                    "command": "H:\\Feel8\\f8studio\\services\\f8\\player\\win\\service.exe",
+                                    "args": [],
+                                    "env": {},
+                                    "workdir": "H:\\Feel8\\f8studio\\services\\f8\\player",
+                                },
+                                "stateFields": [
+                                    {
+                                        "name": "path",
+                                        "access": "rw",
+                                        "redactOnPublish": True,
+                                        "valueSchema": {"type": "string", "default": ""},
+                                    },
+                                    {
+                                        "name": "preview",
+                                        "access": "ro",
+                                        "redactOnPublish": False,
+                                        "valueSchema": {},
+                                    },
+                                    {
+                                        "name": "lastError",
+                                        "access": "wo",
+                                        "redactOnPublish": False,
+                                        "valueSchema": {"type": "string", "default": ""},
+                                    },
+                                ],
+                            },
+                            "custom": {
+                                "path": "C:\\Users\\sshome\\video.mp4",
+                                "preview": {"frame": 1},
+                                "lastError": "Traceback (most recent call last):\n  File \"H:\\Feel8\\f8studio\\x.py\"",
+                            },
+                        }
+                    },
+                    "connections": [],
+                },
+            },
+        )
+    )
+
+    export_path = tmp_path / "component-sanitized-export.json"
+    export_component_to_json(str(saved.componentId), str(export_path))
+
+    exported = json.loads(export_path.read_text(encoding="utf-8"))
+    node_payload = exported["record"]["content"]["layout"]["nodes"]["svcA"]
+    assert "launch" not in node_payload["f8_spec"]
+    assert node_payload["custom"]["path"] == ""
+    assert "preview" not in node_payload["custom"]
+    assert "lastError" not in node_payload["custom"]

@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from f8pysdk.codec import dump_json, validate_as
+from f8pysdk.codec import copy_model, dump_json, validate_as
+from f8pystudio.nodegraph.session_payload_sanitizer import sanitize_session_content_for_persistence
 from f8pystudio.nodegraph.session_schema import extract_layout
 from .component_drafts import ComponentDraftService, draft_as_catalog_entry
 from .component_catalog import ComponentCatalogService
@@ -100,9 +101,18 @@ def export_component_to_json(component_id: str, path: str) -> Path:
     entry = component_entry(component_id, include_uninstalled=True)
     if entry is None:
         raise FileNotFoundError(f"Component not found: {component_id}")
+    sanitized_record = copy_model(
+        entry.record,
+        update={
+            "content": sanitize_session_content_for_persistence(
+                entry.record.content,
+                redact_publish_state_values=True,
+            )
+        },
+    )
     return write_component_asset_file(
         path,
-        record=entry.record,
+        record=sanitized_record,
         version_number=_entry_version_number(entry),
     )
 

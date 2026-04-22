@@ -241,6 +241,83 @@ def test_serialize_publish_session_uses_schema_default_when_redacting() -> None:
     assert published["layout"]["nodes"]["svcA"]["custom"]["enabled"] is True
 
 
+def test_serialize_session_strips_service_launch_from_persisted_specs() -> None:
+    graph = _new_graph_with_registry({})
+    input_layout = {
+        "nodes": {
+            "svcA": {
+                "type_": "svc.f8.cvkit.tracker",
+                "f8_spec": {
+                    "schemaVersion": "f8service/1",
+                    "specKind": "service",
+                    "serviceClass": "f8.cvkit.tracker",
+                    "version": "0.0.1",
+                    "label": "Tracker",
+                    "launch": {
+                        "command": "H:\\Feel8\\f8studio\\services\\f8\\cvkit\\win\\f8cvkit_tracking_service.exe",
+                        "args": [],
+                        "env": {},
+                        "workdir": "H:\\Feel8\\f8studio\\services\\f8\\cvkit\\tracking",
+                    },
+                },
+            }
+        }
+    }
+
+    with patch.object(NodeGraph, "serialize_session", return_value=input_layout):
+        saved = graph.serialize_session()
+
+    saved_spec = saved["layout"]["nodes"]["svcA"]["f8_spec"]
+    assert saved_spec["serviceClass"] == "f8.cvkit.tracker"
+    assert saved_spec["label"] == "Tracker"
+    assert "launch" not in saved_spec
+
+
+def test_serialize_session_drops_runtime_outputs_but_keeps_user_authored_wo_and_identity_fields() -> None:
+    graph = _new_graph_with_registry({})
+    input_layout = {
+        "nodes": {
+            "opA": {
+                "type_": "svc.f8.pyengine.op",
+                "f8_spec": dump_json(
+                    F8OperatorSpec(
+                        schemaVersion=F8OperatorSchemaVersion.f8operator_1,
+                        serviceClass="f8.pyengine",
+                        operatorClass="f8.test.persistence",
+                        version="0.0.1",
+                        label="Persistence Test",
+                        stateFields=[
+                            F8StateSpec(name="gain", valueSchema=any_schema(), access=F8StateAccess.rw),
+                            F8StateSpec(name="preview", valueSchema=any_schema(), access=F8StateAccess.ro),
+                            F8StateSpec(name="svcId", valueSchema=string_schema(default=""), access=F8StateAccess.ro),
+                            F8StateSpec(name="sequence", valueSchema=any_schema(), access=F8StateAccess.wo),
+                            F8StateSpec(name="lastError", valueSchema=string_schema(default=""), access=F8StateAccess.wo),
+                        ],
+                    ),
+                    mode="json",
+                ),
+                "custom": {
+                    "gain": 2.5,
+                    "preview": {"value": 99},
+                    "svcId": "svc_parent",
+                    "sequence": {"points": [1, 2, 3]},
+                    "lastError": "Traceback (most recent call last): ...",
+                },
+            }
+        }
+    }
+
+    with patch.object(NodeGraph, "serialize_session", return_value=input_layout):
+        saved = graph.serialize_session()
+
+    saved_custom = saved["layout"]["nodes"]["opA"]["custom"]
+    assert saved_custom["gain"] == 2.5
+    assert saved_custom["svcId"] == "svc_parent"
+    assert saved_custom["sequence"] == {"points": [1, 2, 3]}
+    assert "preview" not in saved_custom
+    assert "lastError" not in saved_custom
+
+
 def test_build_node_classes_registers_missing_specialized_classes() -> None:
     ServiceCatalog.instance().clear()
     node_classes = PyStudioProgram.build_node_classes()

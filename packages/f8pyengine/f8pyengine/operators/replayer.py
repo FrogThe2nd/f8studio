@@ -371,6 +371,7 @@ ReplayerRuntimeNode.SPEC = F8OperatorSpec(
             access=F8StateAccess.rw,
             required=True,
             showOnNode=True,
+            redactOnPublish=True,
         ),
         F8StateSpec(
             name="loop",

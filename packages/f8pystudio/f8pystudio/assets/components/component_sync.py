@@ -12,6 +12,7 @@ from urllib import error, parse, request
 from qtpy import QtCore
 
 from f8pysdk.codec import copy_model, validate_as
+from ...nodegraph.session_payload_sanitizer import sanitize_session_content_for_persistence
 from ...nodegraph.session_schema import SESSION_SCHEMA_VERSION
 
 from ..common import (
@@ -1273,7 +1274,10 @@ def _record_payload(record: F8ComponentRecord) -> JsonObject:
         "description": str(record.description),
         "tags": [str(tag) for tag in list(record.tags or []) if str(tag).strip()],
         "schemaVersion": str(record.schemaVersion),
-        "content": record.content,
+        "content": sanitize_session_content_for_persistence(
+            record.content,
+            redact_publish_state_values=True,
+        ),
         "createdAt": str(record.createdAt),
         "updatedAt": str(record.updatedAt),
     }

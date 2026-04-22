@@ -550,5 +550,13 @@ class RecorderReplayerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("positionMs", data_names)
 
 
+def test_recorder_and_replayer_paths_are_publish_redacted() -> None:
+    recorder_path = next(field for field in list(RecorderRuntimeNode.SPEC.stateFields or []) if str(field.name) == "path")
+    replayer_path = next(field for field in list(ReplayerRuntimeNode.SPEC.stateFields or []) if str(field.name) == "path")
+
+    assert bool(recorder_path.redactOnPublish) is True
+    assert bool(replayer_path.redactOnPublish) is True
+
+
 if __name__ == "__main__":
     unittest.main()

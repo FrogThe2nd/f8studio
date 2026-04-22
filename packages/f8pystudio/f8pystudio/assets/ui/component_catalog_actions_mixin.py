@@ -27,6 +27,7 @@ from ...nodegraph.component_publish_payload import (
     collect_component_selected_node_ids,
     trim_component_publish_payload_to_selected_nodes,
 )
+from ...nodegraph.session_payload_sanitizer import sanitize_session_content_for_persistence
 from ...ui.support.ui_notifications import show_info, show_warning
 from .project_asset_dialogs import (
     AssetOverwriteChoice,
@@ -45,8 +46,16 @@ class ComponentCatalogActionsMixin:
         remote_entry: F8ComponentEntry,
         draft_entry: F8ComponentEntry,
     ) -> tuple[bool, bool]:
-        content_changed = json.dumps(remote_entry.record.content, sort_keys=True, default=str) != json.dumps(
+        remote_publish_content = sanitize_session_content_for_persistence(
+            remote_entry.record.content,
+            redact_publish_state_values=True,
+        )
+        draft_publish_content = sanitize_session_content_for_persistence(
             draft_entry.record.content,
+            redact_publish_state_values=True,
+        )
+        content_changed = json.dumps(remote_publish_content, sort_keys=True, default=str) != json.dumps(
+            draft_publish_content,
             sort_keys=True,
             default=str,
         )
