@@ -1623,7 +1623,7 @@ Event-driven input node that mocks the Lovense Local API, publishes received com
 
 #### Common Wiring Patterns
 
-- **Validation Branch**: Keep the mock server active on a side branch. Use it to confirm that your `Lovense Out` or `Lovense Program Adapter` nodes are sending the expected intensity values.
+- **Validation Branch**: Keep the mock server active on a side branch. Use it to confirm that your `Lovense Out` or downstream parser/post-process nodes are receiving the expected Lovense command payloads.
 - **Protocol Sniffing**: Inspect the emitted event state and execution triggers using `Print` or `Text Viz` nodes to see exactly how the "virtual device" is responding to your graph.
 - **Automated Testing**: Use it in automated scenario tests to verify that a logic chain produces the correct device commands without needing human interaction.
 
@@ -1670,83 +1670,6 @@ Event-driven input node that mocks the Lovense Local API, publishes received com
 - `eventIncludeRequest` (Event Include Request, `rw`): Include request headers/body in the `event` state (debug). Schema: `boolean / default=False`.
 - `listening` (Listening, `ro`): True if the HTTP server is currently listening. Schema: `boolean / default=False`.
 - `lastError` (Last Error, `ro`): Last server error (e.g. bind failure). Schema: `string / default=`.
-
-##### Data Input Ports
-
-_None_
-
-##### Data Output Ports
-
-_None_
-
-#### Related Scenarios
-
-- No bundled scenario references this node yet.
-
-<a id="operator-f8-lovense-program-adapter"></a>
-### Lovense Program Adapter (`f8.lovense_program_adapter`)
-Convert Lovense Mock Server events into ProgramWave input + amplitude.
-
-#### When to Use
-
-- Use `Lovense Program Adapter` to translate generic motion signals or "Program" payloads into the specific command semantics required by the Lovense hardware protocol.
-- It is the specialized translation layer that isolates device-specific logic (like intensity rounding and specific vibration modes) from your abstract graph motion.
-- Ideal for complex scenarios where you want one motion source to control a variety of Lovense-compatible toys with different capabilities.
-
-#### Common Wiring Patterns
-
-- **Device Adaptation**: Place it immediately after your main waveform generation (`f8-cosine`, `f8-wave-pattern`) and normalization (`Range Map`). Feed the adapted result directly into a `Lovense Out` node.
-- **Side-by-Side Comparison**: Keep the generic "source" motion branch visible in parallel with the "adapted" output using `f8-viz-wave` to verify that the translation is faithful to the original intent.
-- **Profile Switching**: Use the adapter to apply different "profiles" to the same signal (e.g., mapping a stroke to a vibration intensity vs. a rotation speed).
-
-#### Pitfalls / Gotchas
-
-- **Input Normalization**: If the source signal is poorly scaled or unnormalized (e.g., values > 1.0), the adapter's internal logic will produce unpredictable results or clipped intensity commands. High-quality input is a prerequisite.
-- **Mixed Responsibilities**: Do not attempt to fix signal jitter or add delays inside the adapter. Handle signal cleanup in `Smooth Filter` and logic in `f8-pyengine`. The adapter should be a clean 1:1 translation stage.
-- **Rounding Artifacts**: Lovense devices have discrete intensity steps. If your source signal is very subtle, the adapter's rounding may lead to a "steppy" feeling in the physical vibration.
-
-#### Operator Reference
-
-- Exec in ports: none
-- Exec out ports: none
-
-##### Typical Inputs / Outputs
-
-- Data inputs: none
-- Data outputs: none
-
-##### State Fields
-
-| Name | Access | Required | On Node | Schema | Description |
-| --- | --- | --- | --- | --- | --- |
-| `lovenseEvent` | `wo` | `true` | `true` | `object{eventId, payload, request, seq, ...}` | State-edge input from Lovense Mock Server: the latest event dict. |
-| `program` | `ro` | `false` | `true` | `object{hz, loopPauseSec, loopRunningSec, timeSec, ...}` | Readonly output: ProgramWave-compatible dict (tsMs/timeSec/hz/loopRunningSec/loopPauseSec). |
-| `amplitude` | `ro` | `false` | `true` | `number / default=0.0` | Readonly output: normalized amplitude (0..1). |
-| `kind` | `ro` | `false` | `false` | `string / default=` | Readonly output: event kind (debug). |
-| `sequence` | `ro` | `false` | `false` | `object{stepMs, timeSec, tsMs, values}` | Readonly output: sequence dict for Sequence Player (typically pattern -> hz sequence). |
-| `minHz` | `rw` | `true` | `false` | `number / default=0.0` | Frequency at thrusting=0. |
-| `maxHz` | `rw` | `true` | `false` | `number / default=3.0` | Frequency at thrusting=thrustingMax. |
-| `thrustingMax` | `rw` | `true` | `false` | `number / default=20.0` | Normalize thrusting value by this maximum. |
-| `depthMax` | `wo` | `true` | `false` | `number / default=3.0` | Normalize depth value by this maximum (amplitude). |
-| `speedGamma` | `wo` | `true` | `false` | `number / default=1.0` | Nonlinear curve for thrusting->speed (>=0.01). |
-| `vibrateHz` | `wo` | `true` | `false` | `number / default=2.0` | Default program frequency for All: vibration events. |
-| `vibrateMax` | `rw` | `true` | `false` | `number / default=20.0` | Normalize All: vibration strength by this maximum. |
-| `patternMinHz` | `rw` | `true` | `false` | `number / default=0.0` | Pattern strength=0 mapped Hz minimum. |
-| `patternMaxHz` | `rw` | `true` | `false` | `number / default=5.0` | Pattern strength=patternStrengthMax mapped Hz maximum. |
-| `patternStrengthMax` | `rw` | `true` | `false` | `number / default=20.0` | Normalize Pattern strength values by this maximum before mapping to Hz. |
-| `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
-| `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
-
-##### Key Fields That Matter
-
-- `lovenseEvent` (Lovense Event, `wo`): State-edge input from Lovense Mock Server: the latest event dict. Schema: `object{eventId, payload, request, seq, ...}`.
-- `program` (Program, `ro`): Readonly output: ProgramWave-compatible dict (tsMs/timeSec/hz/loopRunningSec/loopPauseSec). Schema: `object{hz, loopPauseSec, loopRunningSec, timeSec, ...}`.
-- `amplitude` (Amplitude, `ro`): Readonly output: normalized amplitude (0..1). Schema: `number / default=0.0`.
-- `minHz` (Min Hz, `rw`): Frequency at thrusting=0. Schema: `number / default=0.0`.
-- `maxHz` (Max Hz, `rw`): Frequency at thrusting=thrustingMax. Schema: `number / default=3.0`.
-- `thrustingMax` (Thrusting Max, `rw`): Normalize thrusting value by this maximum. Schema: `number / default=20.0`.
-- `depthMax` (Depth Max, `wo`): Normalize depth value by this maximum (amplitude). Schema: `number / default=3.0`.
-- `speedGamma` (Speed Gamma, `wo`): Nonlinear curve for thrusting->speed (>=0.01). Schema: `number / default=1.0`.
 
 ##### Data Input Ports
 

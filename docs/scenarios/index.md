@@ -1,6 +1,6 @@
 # Scenarios
 
-This section provides four scenario guides that map directly to the session scripts, with practical setup, key parameters, and validation checks.
+This section provides five scenario guides that map directly to the session scripts, with practical setup, key parameters, and validation checks.
 
 ## Scene List
 
@@ -8,6 +8,7 @@ This section provides four scenario guides that map directly to the session scri
 2. [Scene 02: GameMod Skeleton](scene-02-gamemod_skeleton.md)
 3. [Scene 03: Audio Driven TCode](scene-03-audio_driven.md)
 4. [Scene 04: Functional TCode Generation](scene-04-functional_tcode.md)
+5. [Scene 05: Lovense Bridge](scene-05-lovense_bridge.md)
 
 ## Script Downloads
 

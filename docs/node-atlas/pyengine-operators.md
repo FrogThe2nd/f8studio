@@ -26,7 +26,6 @@
 | `f8.lovense_out` | Lovense Out | Send Lovense Local API commands with split channels: sendPositionCmd->Position, sendFunctionCmd->Function. | [Open](../modules/services/f8-pyengine.md#operator-f8-lovense-out) |
 | `f8.buttplug_out` | Buttplug Out | Connect to Intiface/Buttplug with split channels: sendPositionCmd->position, sendFunctionCmd->state. | [Open](../modules/services/f8-pyengine.md#operator-f8-buttplug-out) |
 | `f8.lovense_mock_server` | Lovense Mock Server | Event-driven input node that mocks the Lovense Local API, publishes received commands as state, and emits exec. | [Open](../modules/services/f8-pyengine.md#operator-f8-lovense-mock-server) |
-| `f8.lovense_program_adapter` | Lovense Program Adapter | Convert Lovense Mock Server events into ProgramWave input + amplitude. | [Open](../modules/services/f8-pyengine.md#operator-f8-lovense-program-adapter) |
 | `f8.sequence_player` | Sequence Player | Play a step-sequence over time (epoch-based), outputting the current step value. | [Open](../modules/services/f8-pyengine.md#operator-f8-sequence-player) |
 | `f8.mix_silence_fill` | Mix (Silence Fill) | Outputs A by default; when A is silent for a while, crossfades to B as filler. | [Open](../modules/services/f8-pyengine.md#operator-f8-mix-silence-fill) |
 | `f8.playback_sync` | Playback Sync | Extrapolates IMPlayer playback position between sparse playback state updates. | [Open](../modules/services/f8-pyengine.md#operator-f8-playback-sync) |

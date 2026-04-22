@@ -14,7 +14,6 @@ from .smooth_filter import SmoothFilterRuntimeNode
 from .range_map import RangeMapRuntimeNode
 from .rate_limiter import RateLimiterRuntimeNode
 from .lovense_mock_server import LovenseMockServerRuntimeNode
-from .lovense_program_adapter import LovenseProgramAdapterRuntimeNode
 from .lovense_out import LovenseOutRuntimeNode
 from .buttplug_out import ButtplugOutRuntimeNode
 from .mix_silence_fill import MixSilenceFillRuntimeNode
@@ -57,7 +56,6 @@ __all__ = [
     "RangeMapRuntimeNode",
     "RateLimiterRuntimeNode",
     "LovenseMockServerRuntimeNode",
-    "LovenseProgramAdapterRuntimeNode",
     "LovenseOutRuntimeNode",
     "ButtplugOutRuntimeNode",
     "MixSilenceFillRuntimeNode",
