@@ -1488,7 +1488,10 @@ def test_variant_publish_new_draft_keeps_linked_draft_and_restores_remote_owner(
         lambda: "published-variant",
     )
 
-    def _create_variant(entry: F8VariantEntry) -> F8VariantEntry:
+    create_calls: list[tuple[F8VariantEntry, str | None]] = []
+
+    def _create_variant(entry: F8VariantEntry, *, change_summary: str | None = None) -> F8VariantEntry:
+        create_calls.append((entry, change_summary))
         uploaded_entry = copy_model(
             _make_entry(variant_id="published-variant", source=F8VariantSourceKind.remote_private),
             update={
@@ -1504,10 +1507,13 @@ def test_variant_publish_new_draft_keeps_linked_draft_and_restores_remote_owner(
         return service.install_remote_entry(uploaded_entry)
 
     monkeypatch.setattr(dialog._sync_client, "create_variant", _create_variant)
+    monkeypatch.setattr(dialog, "_request_publish_version_notes", lambda **kwargs: "Initial variant note")
 
     uploaded = dialog._publish_variant_draft(local_entry)
 
     assert uploaded is not None
+    assert len(create_calls) == 1
+    assert create_calls[0][1] == "Initial variant note"
     saved_draft = dialog._draft_service_for_catalog().draft("draft-promote")
     saved_remote = service.remote_entry("published-variant")
     assert saved_draft is not None
@@ -1748,10 +1754,10 @@ def test_variant_manager_save_over_remote_offload_seeds_remote_sync_base(monkeyp
     assert saved_entry.draftOriginAssetId == "owned-overwrite"
     assert saved_entry.draftOriginVersionNumber == 4
 
-    update_calls: list[F8VariantEntry] = []
+    update_calls: list[tuple[F8VariantEntry, str | None]] = []
 
-    def _update_variant(entry: F8VariantEntry) -> F8VariantEntry:
-        update_calls.append(entry)
+    def _update_variant(entry: F8VariantEntry, *, change_summary: str | None = None) -> F8VariantEntry:
+        update_calls.append((entry, change_summary))
         uploaded_entry = copy_model(
             remote_entry,
             update={
@@ -1769,12 +1775,14 @@ def test_variant_manager_save_over_remote_offload_seeds_remote_sync_base(monkeyp
         lambda _variant_id: copy_model(remote_entry, update={"hasCachedContent": True}),
     )
     monkeypatch.setattr(dialog._sync_client, "update_variant", _update_variant)
+    monkeypatch.setattr(dialog, "_request_publish_version_notes", lambda **kwargs: "Updated variant note")
 
     published = dialog._publish_variant_draft(saved_entry)
 
     assert published is not None
     assert len(update_calls) == 1
-    assert update_calls[0].record.variantId == "owned-overwrite"
+    assert update_calls[0][0].record.variantId == "owned-overwrite"
+    assert update_calls[0][1] == "Updated variant note"
     updated_draft = dialog._draft_service_for_catalog().draft(str(saved_entry.record.variantId))
     assert updated_draft is not None
     assert updated_draft.publishTargetAssetId == "owned-overwrite"
@@ -1817,7 +1825,7 @@ def test_variant_publish_missing_linked_asset_can_create_replacement(monkeypatch
     )
 
     question_calls: list[str] = []
-    create_calls: list[F8VariantEntry] = []
+    create_calls: list[tuple[F8VariantEntry, str | None]] = []
 
     monkeypatch.setattr(
         QtWidgets.QMessageBox,
@@ -1832,8 +1840,8 @@ def test_variant_publish_missing_linked_asset_can_create_replacement(monkeypatch
         ),
     )
 
-    def _create_variant(entry: F8VariantEntry) -> F8VariantEntry:
-        create_calls.append(entry)
+    def _create_variant(entry: F8VariantEntry, *, change_summary: str | None = None) -> F8VariantEntry:
+        create_calls.append((entry, change_summary))
         uploaded_entry = copy_model(
             _make_entry(variant_id="replacement-variant", source=F8VariantSourceKind.remote_private),
             update={
@@ -1849,13 +1857,15 @@ def test_variant_publish_missing_linked_asset_can_create_replacement(monkeypatch
         return service.install_remote_entry(uploaded_entry)
 
     monkeypatch.setattr(dialog._sync_client, "create_variant", _create_variant)
+    monkeypatch.setattr(dialog, "_request_publish_version_notes", lambda **kwargs: "Replacement variant note")
 
     published = dialog._publish_variant_draft(local_entry)
 
     assert published is not None
     assert question_calls == ["asked"]
     assert len(create_calls) == 1
-    assert create_calls[0].record.variantId == "replacement-variant"
+    assert create_calls[0][0].record.variantId == "replacement-variant"
+    assert create_calls[0][1] == "Replacement variant note"
     saved_local = service.entry("draft-linked-missing", include_uninstalled=True)
     assert saved_local is not None
     assert saved_local.isLocalDraft is True

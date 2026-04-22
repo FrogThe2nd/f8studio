@@ -79,6 +79,7 @@ export function useAsset(assetId) {
     loadVersionContent,
     loading,
     setAsset,
+    setVersions,
     versionContentByNumber,
     versions,
   };

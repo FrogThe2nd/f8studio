@@ -378,6 +378,10 @@ export class AssetRepository {
     return this._listAssetVersions({ assetId: variantId, assetType: 'variant', userId, cursor });
   }
 
+  async listVariantSubscribers({ variantId, userId, cursor }) {
+    return this._listAssetSubscribers({ assetId: variantId, assetType: 'variant', userId, cursor });
+  }
+
   async getVariantVersion({ variantId, versionNumber, userId }) {
     return this._getAssetDetailPayload({ assetId: variantId, assetType: 'variant', userId, versionNumber });
   }
@@ -404,6 +408,16 @@ export class AssetRepository {
 
   async updateVariantVisibility({ variantId, visibility, versionNumber, userId }) {
     return this._updateAssetVisibility({ assetId: variantId, assetType: 'variant', visibility, versionNumber, userId });
+  }
+
+  async updateVariantVersionNote({ variantId, versionNumber, changeSummary, userId }) {
+    return this._updateAssetVersionNote({
+      assetId: variantId,
+      assetType: 'variant',
+      versionNumber,
+      changeSummary,
+      userId,
+    });
   }
 
   async createComponent({ payload, user }) {
@@ -441,6 +455,10 @@ export class AssetRepository {
     return this._listAssetVersions({ assetId: componentId, assetType: 'component', userId, cursor });
   }
 
+  async listComponentSubscribers({ componentId, userId, cursor }) {
+    return this._listAssetSubscribers({ assetId: componentId, assetType: 'component', userId, cursor });
+  }
+
   async getComponentVersion({ componentId, versionNumber, userId }) {
     return this._getAssetDetailPayload({ assetId: componentId, assetType: 'component', userId, versionNumber });
   }
@@ -467,6 +485,16 @@ export class AssetRepository {
 
   async updateComponentVisibility({ componentId, visibility, versionNumber, userId }) {
     return this._updateAssetVisibility({ assetId: componentId, assetType: 'component', visibility, versionNumber, userId });
+  }
+
+  async updateComponentVersionNote({ componentId, versionNumber, changeSummary, userId }) {
+    return this._updateAssetVersionNote({
+      assetId: componentId,
+      assetType: 'component',
+      versionNumber,
+      changeSummary,
+      userId,
+    });
   }
 
   async _createAsset({ normalized, userId }) {
@@ -709,6 +737,40 @@ export class AssetRepository {
     };
   }
 
+  async _listAssetSubscribers({ assetId, assetType, userId, cursor }) {
+    const head = await this.getAssetById(assetId);
+    if (head === null || String(head.asset_type) !== assetType) {
+      throw new AssetNotFoundError(`Asset ${assetId} not found`);
+    }
+    if (String(head.owner_user_id) !== String(userId || '')) {
+      throw new AssetPermissionError('forbidden');
+    }
+
+    const start = parseCursor(cursor);
+    const result = await this._db.prepare(
+      `SELECT
+         s.subscriber_user_id,
+         s.subscribed_at,
+         s.last_seen_version_number,
+         u.name AS subscriber_name,
+         u.email AS subscriber_email
+       FROM asset_subscriptions s
+       JOIN user u ON u.id = s.subscriber_user_id
+       WHERE s.asset_id = ?
+       ORDER BY LOWER(COALESCE(u.name, u.email, s.subscriber_user_id)), s.subscriber_user_id
+       LIMIT ? OFFSET ?`,
+    )
+      .bind(String(assetId), PAGE_SIZE + 1, start)
+      .all();
+    const rows = Array.isArray(result.results) ? result.results : [];
+    const hasMore = rows.length > PAGE_SIZE;
+    const items = hasMore ? rows.slice(0, PAGE_SIZE) : rows;
+    return {
+      entries: items.map((row) => assetSubscriberFromRow(row)),
+      nextCursor: hasMore ? String(start + PAGE_SIZE) : null,
+    };
+  }
+
   async _subscribeAsset({ assetId, assetType, userId }) {
     const head = await this.getAssetById(assetId, assetType);
     if (head === null || String(head.asset_type) !== assetType) {
@@ -743,6 +805,34 @@ export class AssetRepository {
       .bind(String(assetId), String(userId))
       .run();
     return this._getAssetDetailPayload({ assetId, assetType, userId, versionNumber: null });
+  }
+
+  async _updateAssetVersionNote({ assetId, assetType, versionNumber, changeSummary, userId }) {
+    const head = await this.getAssetById(assetId, assetType);
+    if (head === null || String(head.asset_type) !== assetType) {
+      throw new AssetNotFoundError(`Asset ${assetId} not found`);
+    }
+    if (String(head.owner_user_id) !== String(userId || '')) {
+      throw new AssetPermissionError('forbidden');
+    }
+    const normalizedVersionNumber = normalizeVersionNumber(versionNumber);
+    const existingVersion = await this.getAssetVersion(assetId, normalizedVersionNumber);
+    if (existingVersion === null) {
+      throw new AssetNotFoundError(`Asset version ${assetId}:${normalizedVersionNumber} not found`);
+    }
+    await this._db.prepare(
+      `UPDATE asset_versions
+       SET change_summary = ?
+       WHERE asset_id = ? AND version_number = ?`,
+    )
+      .bind(nullableString(changeSummary), String(assetId), normalizedVersionNumber)
+      .run();
+    return this._getAssetDetailPayload({
+      assetId,
+      assetType,
+      userId,
+      versionNumber: normalizedVersionNumber,
+    });
   }
 
   async _forkAsset({ assetId, assetType, payload, user }) {
@@ -1349,6 +1439,16 @@ function genericTypedAssetPayload(row, viewerUserId) {
         lastSeenVersionNumber: nullableNumber(row.last_seen_version_number),
       }
       : null,
+  };
+}
+
+function assetSubscriberFromRow(row) {
+  return {
+    userId: String(row.subscriber_user_id),
+    name: stringOrDefault(row.subscriber_name, String(row.subscriber_email || row.subscriber_user_id || '')),
+    email: nullableString(row.subscriber_email),
+    subscribedAt: String(row.subscribed_at),
+    lastSeenVersionNumber: nullableNumber(row.last_seen_version_number),
   };
 }
 

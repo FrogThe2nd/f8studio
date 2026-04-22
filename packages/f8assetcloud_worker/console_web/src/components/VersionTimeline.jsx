@@ -19,7 +19,9 @@ export function VersionTimeline({ versions, selectedVersionNumber, onSelect }) {
             )}
           >
             <p className="text-sm font-semibold text-white">{formatRelativeVersion(version?.versionNumber)}</p>
-            <p className="mt-3 text-sm text-slate-300">{version?.changeSummary || 'No change summary recorded.'}</p>
+            {version?.changeSummary ? (
+              <p className="mt-3 text-sm text-slate-300">{version.changeSummary}</p>
+            ) : null}
             <p className="mt-3 text-xs text-slate-400">{formatTimestamp(version?.createdAt)}</p>
           </button>
         );

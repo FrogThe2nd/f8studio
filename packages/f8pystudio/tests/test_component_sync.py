@@ -1307,10 +1307,10 @@ def test_component_publish_new_draft_keeps_linked_draft(monkeypatch, tmp_path: P
     monkeypatch.setattr(dialog, "_choose_visibility", lambda: F8ComponentVisibility.private)
     monkeypatch.setattr(dialog, "_ensure_component_hydrated", lambda entry, operation_name: entry)
 
-    create_calls: list[F8ComponentEntry] = []
+    create_calls: list[tuple[F8ComponentEntry, str | None]] = []
 
-    def _create_component(entry: F8ComponentEntry) -> F8ComponentEntry:
-        create_calls.append(entry)
+    def _create_component(entry: F8ComponentEntry, *, change_summary: str | None = None) -> F8ComponentEntry:
+        create_calls.append((entry, change_summary))
         uploaded_entry = copy_model(
             entry,
             update={
@@ -1326,11 +1326,13 @@ def test_component_publish_new_draft_keeps_linked_draft(monkeypatch, tmp_path: P
         return service.install_remote_entry(uploaded_entry)
 
     monkeypatch.setattr(dialog._sync_client, "create_component", _create_component)
+    monkeypatch.setattr(dialog, "_request_publish_version_notes", lambda **kwargs: "Initial component note")
 
     uploaded = dialog._publish_component_draft(local_entry)
 
     assert uploaded is not None
     assert len(create_calls) == 1
+    assert create_calls[0][1] == "Initial component note"
     saved_draft = dialog._draft_service_for_catalog().draft("draft-component")
     assert saved_draft is not None
     assert saved_draft.publishTargetAssetId == str(uploaded.record.componentId)
@@ -1503,7 +1505,7 @@ def test_component_publish_missing_linked_asset_can_create_replacement(monkeypat
     )
 
     question_calls: list[str] = []
-    create_calls: list[F8ComponentEntry] = []
+    create_calls: list[tuple[F8ComponentEntry, str | None]] = []
 
     monkeypatch.setattr(
         QtWidgets.QMessageBox,
@@ -1518,8 +1520,8 @@ def test_component_publish_missing_linked_asset_can_create_replacement(monkeypat
         ),
     )
 
-    def _create_component(entry: F8ComponentEntry) -> F8ComponentEntry:
-        create_calls.append(entry)
+    def _create_component(entry: F8ComponentEntry, *, change_summary: str | None = None) -> F8ComponentEntry:
+        create_calls.append((entry, change_summary))
         uploaded_entry = copy_model(
             entry,
             update={
@@ -1535,13 +1537,15 @@ def test_component_publish_missing_linked_asset_can_create_replacement(monkeypat
         return service.install_remote_entry(uploaded_entry)
 
     monkeypatch.setattr(dialog._sync_client, "create_component", _create_component)
+    monkeypatch.setattr(dialog, "_request_publish_version_notes", lambda **kwargs: "Replacement component note")
 
     published = dialog._publish_component_draft(local_entry)
 
     assert published is not None
     assert question_calls == ["asked"]
     assert len(create_calls) == 1
-    assert create_calls[0].record.componentId == "replacement-component"
+    assert create_calls[0][0].record.componentId == "replacement-component"
+    assert create_calls[0][1] == "Replacement component note"
     saved_local = service.entry("draft-linked-missing", include_uninstalled=True)
     assert saved_local is not None
     assert saved_local.isLocalDraft is True

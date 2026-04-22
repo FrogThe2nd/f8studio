@@ -18,6 +18,7 @@ from ..variants.variant_models import (
     variant_now_iso,
 )
 from ...ui.support.ui_notifications import show_info, show_warning
+from .project_asset_dialogs import prompt_version_notes
 
 
 class VariantCatalogSyncFlowsMixin:
@@ -44,6 +45,13 @@ class VariantCatalogSyncFlowsMixin:
         )
         return answer == QtWidgets.QMessageBox.Yes
 
+    def _request_publish_version_notes(self, *, variant_name: str) -> str | None:
+        return prompt_version_notes(
+            parent=self,
+            title="Version Notes",
+            prompt=f"Add optional notes for the new published version of '{variant_name}'.",
+        )
+
     def _create_remote_variant_for_draft(
         self,
         draft_entry: F8VariantEntry,
@@ -52,6 +60,9 @@ class VariantCatalogSyncFlowsMixin:
     ) -> F8VariantEntry | None:
         visibility = preferred_visibility or self._choose_visibility()
         if visibility is None:
+            return None
+        change_summary = self._request_publish_version_notes(variant_name=str(draft_entry.record.name))
+        if change_summary is None:
             return None
         publish_asset_id = new_asset_id()
         upload_record = validate_as(
@@ -74,7 +85,8 @@ class VariantCatalogSyncFlowsMixin:
                     visibility=visibility,
                     installed=True,
                     hasCachedContent=True,
-                )
+                ),
+                change_summary=change_summary,
             )
         except Exception as exc:
             show_warning(self, "Publish failed", str(exc))
@@ -305,6 +317,9 @@ class VariantCatalogSyncFlowsMixin:
                         tags=[str(tag) for tag in list(draft_entry.record.tags or [])],
                     )
                 else:
+                    change_summary = self._request_publish_version_notes(variant_name=str(draft_entry.record.name))
+                    if change_summary is None:
+                        return None
                     upload_record = validate_as(
                         F8VariantRecord,
                         {
@@ -320,7 +335,8 @@ class VariantCatalogSyncFlowsMixin:
                             remoteVersionNumber=remote_entry.remoteVersionNumber,
                             installed=True,
                             hasCachedContent=True,
-                        )
+                        ),
+                        change_summary=change_summary,
                     )
             except F8VariantRemoteRequestError as exc:
                 if self._is_missing_variant_request_error(exc) and self._confirm_create_replacement_variant(

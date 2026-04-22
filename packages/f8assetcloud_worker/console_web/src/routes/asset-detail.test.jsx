@@ -2,11 +2,12 @@ import { cleanup, render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { mockUseAsset, mockUseSession, mockLoadVersionContent, mockSetAsset } = vi.hoisted(() => ({
+const { mockUseAsset, mockUseSession, mockLoadVersionContent, mockSetAsset, mockSetVersions } = vi.hoisted(() => ({
   mockUseAsset: vi.fn(),
   mockUseSession: vi.fn(),
   mockLoadVersionContent: vi.fn(),
   mockSetAsset: vi.fn(),
+  mockSetVersions: vi.fn(),
 }));
 
 vi.mock('../app/Layout.jsx', () => ({
@@ -25,6 +26,10 @@ vi.mock('../components/EditAssetDialog.jsx', () => ({
   EditAssetDialog: () => <div data-testid="edit-asset-dialog">Edit asset</div>,
 }));
 
+vi.mock('../components/EditVersionNoteDialog.jsx', () => ({
+  EditVersionNoteDialog: () => <div data-testid="edit-version-note-dialog">Edit version note</div>,
+}));
+
 vi.mock('../components/EmptyState.jsx', () => ({
   EmptyState: ({ title, description, action }) => (
     <div>
@@ -33,6 +38,10 @@ vi.mock('../components/EmptyState.jsx', () => ({
       {action}
     </div>
   ),
+}));
+
+vi.mock('../components/MarkdownContent.jsx', () => ({
+  MarkdownContent: ({ source, placeholder }) => <div>{source || placeholder}</div>,
 }));
 
 vi.mock('../components/ShareDialog.jsx', () => ({
@@ -45,10 +54,6 @@ vi.mock('../components/SubscribeButton.jsx', () => ({
 
 vi.mock('../components/TagList.jsx', () => ({
   TagList: ({ tags }) => <div>{Array.isArray(tags) ? tags.join(', ') : ''}</div>,
-}));
-
-vi.mock('../components/VersionContentViewer.jsx', () => ({
-  VersionContentViewer: () => <div>Version content</div>,
 }));
 
 vi.mock('../components/VersionTimeline.jsx', () => ({
@@ -99,6 +104,7 @@ function renderRoute(entry = '/assets/asset-1') {
 describe('AssetDetailRoute', () => {
   beforeEach(() => {
     mockSetAsset.mockReset();
+    mockSetVersions.mockReset();
     mockLoadVersionContent.mockReset();
     mockLoadVersionContent.mockResolvedValue({ record: { schemaVersion: 'spec/1' } });
     mockUseAsset.mockReset();
@@ -109,6 +115,7 @@ describe('AssetDetailRoute', () => {
       loadVersionContent: mockLoadVersionContent,
       loading: false,
       setAsset: mockSetAsset,
+      setVersions: mockSetVersions,
       versionContentByNumber: {
         '1': { record: { schemaVersion: 'spec/1' } },
       },
@@ -134,6 +141,8 @@ describe('AssetDetailRoute', () => {
     expect(screen.getByText('Public Demo Asset')).toBeTruthy();
     expect(screen.getByRole('link', { name: 'Log In to Subscribe' }).getAttribute('href')).toBe('/login');
     expect(screen.queryByTestId('edit-asset-dialog')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Subscribers' })).toBeNull();
+    expect(mockLoadVersionContent).not.toHaveBeenCalled();
   });
 
   it('shows subscribe actions and hides edit controls for non-owners', () => {
@@ -154,6 +163,7 @@ describe('AssetDetailRoute', () => {
       loadVersionContent: mockLoadVersionContent,
       loading: false,
       setAsset: mockSetAsset,
+      setVersions: mockSetVersions,
       versionContentByNumber: {
         '1': { record: { schemaVersion: 'f8studio-session/1' } },
       },
@@ -165,5 +175,38 @@ describe('AssetDetailRoute', () => {
     expect(screen.getByTestId('layout-shell')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Subscribe' })).toBeTruthy();
     expect(screen.queryByTestId('edit-asset-dialog')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Subscribers' })).toBeNull();
+    expect(mockLoadVersionContent).not.toHaveBeenCalled();
+  });
+
+  it('shows subscribe controls for the asset owner and keeps owner-only tools visible', async () => {
+    mockUseSession.mockReturnValue({
+      authResolved: true,
+      currentUser: {
+        userId: 'owner-1',
+      },
+      isAuthenticated: true,
+    });
+    mockUseAsset.mockReturnValue({
+      asset: {
+        ...defaultAsset,
+        editable: true,
+        isOwner: true,
+      },
+      assetType: 'variant',
+      error: '',
+      loadVersionContent: mockLoadVersionContent,
+      loading: false,
+      setAsset: mockSetAsset,
+      setVersions: mockSetVersions,
+      versionContentByNumber: {},
+      versions: defaultVersions,
+    });
+
+    renderRoute();
+
+    expect(screen.getByRole('button', { name: 'Subscribe' })).toBeTruthy();
+    expect(await screen.findByTestId('edit-asset-dialog')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Subscribers' })).toBeTruthy();
   });
 });

@@ -69,6 +69,60 @@ class ProjectAssetMetaDialog(QtWidgets.QDialog):
         )
 
 
+class AssetVersionNoteDialog(QtWidgets.QDialog):
+    def __init__(
+        self,
+        *,
+        parent: QtWidgets.QWidget | None,
+        title: str,
+        prompt: str,
+        note: str = "",
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.resize(520, 320)
+
+        prompt_label = QtWidgets.QLabel(prompt, self)
+        prompt_label.setWordWrap(True)
+
+        self._note = QtWidgets.QPlainTextEdit(self)
+        self._note.setPlaceholderText("Optional: summarize what changed in this version.")
+        self._note.setPlainText(str(note or ""))
+
+        buttons = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel,
+            parent=self,
+        )
+        buttons.accepted.connect(self.accept)  # type: ignore[attr-defined]
+        buttons.rejected.connect(self.reject)  # type: ignore[attr-defined]
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.addWidget(prompt_label)
+        layout.addWidget(self._note)
+        layout.addWidget(buttons)
+
+    def value(self) -> str:
+        return str(self._note.toPlainText() or "").strip()
+
+
+def prompt_version_notes(
+    *,
+    parent: QtWidgets.QWidget | None,
+    title: str,
+    prompt: str,
+    note: str = "",
+) -> str | None:
+    dialog = AssetVersionNoteDialog(
+        parent=parent,
+        title=title,
+        prompt=prompt,
+        note=note,
+    )
+    if dialog.exec() != QtWidgets.QDialog.Accepted:
+        return None
+    return dialog.value()
+
+
 def _list_current_item_or_none(list_widget: QtWidgets.QListWidget) -> QtWidgets.QListWidgetItem | None:
     try:
         return list_widget.currentItem()

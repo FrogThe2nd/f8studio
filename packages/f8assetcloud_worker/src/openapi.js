@@ -73,6 +73,19 @@ const assetSubscriptionSchema = z.object({
   lastSeenVersionNumber: z.number().int().nullable(),
 });
 
+const assetSubscriberSchema = z.object({
+  userId: z.string(),
+  name: z.string(),
+  email: nullableStringSchema,
+  subscribedAt: z.string(),
+  lastSeenVersionNumber: z.number().int().nullable(),
+});
+
+const assetSubscriberPageResponseSchema = z.object({
+  entries: z.array(assetSubscriberSchema),
+  nextCursor: nullableStringSchema,
+});
+
 const typedAssetBaseSchema = z.object({
   ownerUserId: z.string(),
   ownerDisplayName: nullableStringSchema,
@@ -290,6 +303,10 @@ const versionListQuerySchema = z.object({
   cursor: z.string().optional(),
 });
 
+const subscriberListQuerySchema = z.object({
+  cursor: z.string().optional(),
+});
+
 const userListQuerySchema = z.object({
   q: z.string().optional(),
   cursor: z.string().optional(),
@@ -335,6 +352,10 @@ const assetMetaUpdateRequestSchema = z.object({
   name: z.string(),
   description: z.string().optional(),
   tags: z.array(z.string()).optional(),
+});
+
+const assetVersionNoteUpdateRequestSchema = z.object({
+  changeSummary: z.string().nullable().optional(),
 });
 
 const variantForkRequestSchema = z.object({
@@ -663,6 +684,21 @@ export function registerOpenApiRoutes(app, handlers) {
     }),
   }, handlers.routeComponentAssetRequest);
 
+  registerRoute(openapi, 'patch', '/v1/components/:componentId/versions/:versionNumber', {
+    tags: ['components'],
+    summary: 'Update a component version note',
+    request: {
+      params: z.object({
+        componentId: z.string(),
+        versionNumber: z.string(),
+      }),
+      body: jsonRequestBody(assetVersionNoteUpdateRequestSchema, 'Component version note payload'),
+    },
+    responses: withCommonErrorResponses({
+      200: jsonSuccessResponse(componentVersionDetailSchema, 'Updated component version detail'),
+    }),
+  }, handlers.routeComponentAssetRequest);
+
   registerRoute(openapi, 'get', '/v1/components/:componentId/versions/:versionNumber/content', {
     tags: ['components'],
     summary: 'Get component version content',
@@ -688,6 +724,20 @@ export function registerOpenApiRoutes(app, handlers) {
     },
     responses: withCommonErrorResponses({
       200: jsonSuccessResponse(componentContentResponseSchema, 'Component version download payload'),
+    }),
+  }, handlers.routeComponentAssetRequest);
+
+  registerRoute(openapi, 'get', '/v1/components/:componentId/subscribers', {
+    tags: ['components'],
+    summary: 'List component subscribers',
+    request: {
+      params: z.object({
+        componentId: z.string(),
+      }),
+      query: subscriberListQuerySchema,
+    },
+    responses: withCommonErrorResponses({
+      200: jsonSuccessResponse(assetSubscriberPageResponseSchema, 'Component subscriber page'),
     }),
   }, handlers.routeComponentAssetRequest);
 
@@ -875,6 +925,21 @@ export function registerOpenApiRoutes(app, handlers) {
     }),
   }, handlers.routeVariantAssetRequest);
 
+  registerRoute(openapi, 'patch', '/v1/variants/:variantId/versions/:versionNumber', {
+    tags: ['variants'],
+    summary: 'Update a variant version note',
+    request: {
+      params: z.object({
+        variantId: z.string(),
+        versionNumber: z.string(),
+      }),
+      body: jsonRequestBody(assetVersionNoteUpdateRequestSchema, 'Variant version note payload'),
+    },
+    responses: withCommonErrorResponses({
+      200: jsonSuccessResponse(variantVersionDetailSchema, 'Updated variant version detail'),
+    }),
+  }, handlers.routeVariantAssetRequest);
+
   registerRoute(openapi, 'get', '/v1/variants/:variantId/versions/:versionNumber/content', {
     tags: ['variants'],
     summary: 'Get variant version content',
@@ -900,6 +965,20 @@ export function registerOpenApiRoutes(app, handlers) {
     },
     responses: withCommonErrorResponses({
       200: jsonSuccessResponse(variantContentResponseSchema, 'Variant version download payload'),
+    }),
+  }, handlers.routeVariantAssetRequest);
+
+  registerRoute(openapi, 'get', '/v1/variants/:variantId/subscribers', {
+    tags: ['variants'],
+    summary: 'List variant subscribers',
+    request: {
+      params: z.object({
+        variantId: z.string(),
+      }),
+      query: subscriberListQuerySchema,
+    },
+    responses: withCommonErrorResponses({
+      200: jsonSuccessResponse(assetSubscriberPageResponseSchema, 'Variant subscriber page'),
     }),
   }, handlers.routeVariantAssetRequest);
 

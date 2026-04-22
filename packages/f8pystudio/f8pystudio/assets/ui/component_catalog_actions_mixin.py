@@ -28,7 +28,12 @@ from ...nodegraph.component_publish_payload import (
     trim_component_publish_payload_to_selected_nodes,
 )
 from ...ui.support.ui_notifications import show_info, show_warning
-from .project_asset_dialogs import AssetOverwriteChoice, AssetOverwriteMetaDialog, ProjectAssetMetaDialog
+from .project_asset_dialogs import (
+    AssetOverwriteChoice,
+    AssetOverwriteMetaDialog,
+    ProjectAssetMetaDialog,
+    prompt_version_notes,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -58,6 +63,13 @@ class ComponentCatalogActionsMixin:
         )
         return answer == QtWidgets.QMessageBox.Yes
 
+    def _request_publish_version_notes(self, *, component_name: str) -> str | None:
+        return prompt_version_notes(
+            parent=self,
+            title="Version Notes",
+            prompt=f"Add optional notes for the new published version of '{component_name}'.",
+        )
+
     def _create_remote_component_for_draft(
         self,
         draft_entry: F8ComponentEntry,
@@ -66,6 +78,9 @@ class ComponentCatalogActionsMixin:
     ) -> F8ComponentEntry | None:
         visibility = preferred_visibility or self._choose_visibility()
         if visibility is None:
+            return None
+        change_summary = self._request_publish_version_notes(component_name=str(draft_entry.record.name))
+        if change_summary is None:
             return None
         publish_asset_id = new_asset_id()
         upload_record = validate_as(
@@ -88,7 +103,8 @@ class ComponentCatalogActionsMixin:
                     visibility=visibility,
                     installed=True,
                     hasCachedContent=True,
-                )
+                ),
+                change_summary=change_summary,
             )
         except Exception as exc:
             show_warning(self, "Publish failed", str(exc))
@@ -580,6 +596,9 @@ class ComponentCatalogActionsMixin:
                         tags=[str(tag) for tag in list(draft_entry.record.tags or [])],
                     )
                 else:
+                    change_summary = self._request_publish_version_notes(component_name=str(draft_entry.record.name))
+                    if change_summary is None:
+                        return None
                     upload_record = validate_as(
                         F8ComponentRecord,
                         {
@@ -595,7 +614,8 @@ class ComponentCatalogActionsMixin:
                             remoteVersionNumber=remote_entry.remoteVersionNumber,
                             installed=True,
                             hasCachedContent=True,
-                        )
+                        ),
+                        change_summary=change_summary,
                     )
             except F8ComponentRemoteRequestError as exc:
                 if self._is_missing_component_request_error(exc) and self._confirm_create_replacement_component(

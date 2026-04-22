@@ -428,6 +428,26 @@ async function routeAssetRequest({ auth, repo, request, url, assetType }) {
     return jsonResponse(200, result);
   }
 
+  if (parts.length === 3 && parts[1] === 'versions' && request.method === 'PATCH') {
+    const user = await requireAssetWriteUser({ auth, repo, request });
+    const payload = await readJsonBody(request);
+    const versionNumber = parts[2];
+    const result = assetType === 'variant'
+      ? await repo.updateVariantVersionNote({
+        variantId: assetId,
+        versionNumber,
+        changeSummary: payload.changeSummary,
+        userId: user.userId,
+      })
+      : await repo.updateComponentVersionNote({
+        componentId: assetId,
+        versionNumber,
+        changeSummary: payload.changeSummary,
+        userId: user.userId,
+      });
+    return jsonResponse(200, result);
+  }
+
   if (parts.length === 4 && parts[1] === 'versions' && parts[3] === 'content' && request.method === 'GET') {
     const viewer = await optionalAuthenticatedUser({ auth, request });
     const versionNumber = parts[2];
@@ -452,6 +472,14 @@ async function routeAssetRequest({ auth, repo, request, url, assetType }) {
       ? await repo.getVariantVersionContent({ variantId: assetId, versionNumber, userId: viewerId })
       : await repo.getComponentVersionContent({ componentId: assetId, versionNumber, userId: viewerId });
     return assetDownloadResponse(payload, { head, versionNumber: payload.versionNumber });
+  }
+
+  if (parts.length === 2 && parts[1] === 'subscribers' && request.method === 'GET') {
+    const user = await requireAuthenticatedUser({ auth, request });
+    const result = assetType === 'variant'
+      ? await repo.listVariantSubscribers({ variantId: assetId, userId: user.userId })
+      : await repo.listComponentSubscribers({ componentId: assetId, userId: user.userId });
+    return jsonResponse(200, result);
   }
 
   if (parts.length === 2 && parts[1] === 'subscribe') {
@@ -753,6 +781,8 @@ async function routeDesktopAuthorizeGet({ auth, db, env, request, siteSettings }
   const authorizeRequest = parseDesktopAuthorizeRequestFromUrl(requestUrl);
   const socialProvider = desktopAuthorizeSocialProvider(requestUrl);
   const errorMessage = desktopAuthorizeErrorMessage(requestUrl);
+  const allowRegistration = Boolean(siteSettings?.allowUserRegistration);
+  const allowDesktopGoogle = allowRegistration && hasGoogleProvider(env);
   const session = await auth.api.getSession({
     headers: request.headers,
   });
@@ -772,10 +802,22 @@ async function routeDesktopAuthorizeGet({ auth, db, env, request, siteSettings }
     });
   }
   if (socialProvider) {
+    if (!allowRegistration) {
+      return htmlResponse(
+        400,
+        buildDesktopAuthorizeHtml({
+          request: authorizeRequest,
+          allowGoogle: false,
+          allowRegistration: false,
+          errorMessage: 'Google sign-in is unavailable while registration is disabled.',
+          email: '',
+        }),
+      );
+    }
     if (socialProvider !== 'google') {
       throw new HttpError(400, `unsupported social provider: ${socialProvider}`);
     }
-    if (!hasGoogleProvider(env)) {
+    if (!allowDesktopGoogle) {
       throw new HttpError(400, 'Google sign-in is not configured');
     }
     return startDesktopSocialSignIn({
@@ -790,8 +832,8 @@ async function routeDesktopAuthorizeGet({ auth, db, env, request, siteSettings }
     200,
     buildDesktopAuthorizeHtml({
       request: authorizeRequest,
-      allowGoogle: hasGoogleProvider(env),
-      allowRegistration: Boolean(siteSettings?.allowUserRegistration),
+      allowGoogle: allowDesktopGoogle,
+      allowRegistration,
       errorMessage,
       email: '',
     }),
@@ -822,7 +864,7 @@ async function routeDesktopAuthorizePost({ auth, db, env, request, siteSettings 
         error.status,
         buildDesktopAuthorizeHtml({
           request: authorizeRequest,
-          allowGoogle: hasGoogleProvider(env),
+          allowGoogle: Boolean(siteSettings?.allowUserRegistration) && hasGoogleProvider(env),
           allowRegistration: Boolean(siteSettings?.allowUserRegistration),
           errorMessage: error.message,
           email,
@@ -1602,7 +1644,7 @@ function buildDesktopAuthorizeHtml({ request, allowGoogle, allowRegistration, er
   const escapedCodeChallengeMethod = escapeHtml(request.codeChallengeMethod);
   const escapedEmail = escapeHtml(email);
   const escapedError = escapeHtml(errorMessage);
-  const googleButton = allowGoogle
+  const googleButton = allowGoogle && allowRegistration
     ? `<form method="get" action="${DESKTOP_AUTH_BASE_PATH}/authorize" class="social-form">
         <input type="hidden" name="client_id" value="${escapedClientId}" />
         <input type="hidden" name="redirect_uri" value="${escapedRedirectUri}" />
@@ -1698,11 +1740,6 @@ function buildDesktopAuthorizeHtml({ request, allowGoogle, allowRegistration, er
       .social-form {
         margin-top: 14px;
       }
-      code {
-        background: #09111f;
-        padding: 2px 6px;
-        border-radius: 6px;
-      }
     </style>
   </head>
   <body>
@@ -1728,7 +1765,6 @@ function buildDesktopAuthorizeHtml({ request, allowGoogle, allowRegistration, er
         <button type="submit">Sign in to Asset Cloud</button>
       </form>
       ${googleButton}
-      <p class="muted">Desktop callback: <code>${escapedRedirectUri}</code></p>
     </main>
   </body>
 </html>`;

@@ -747,6 +747,50 @@ test('desktop browser auth page shows a Google button when Google auth is config
   const pageHtml = await pageResponse.text();
   assert.match(pageHtml, /Continue with Google/);
   assert.match(pageHtml, /name="social_provider" value="google"/);
+  assert.doesNotMatch(pageHtml, /Desktop callback:/);
+});
+
+test('desktop browser auth page hides Google sign-in when registration is disabled', async (t) => {
+  const env = createEnv({
+    allowUserRegistration: false,
+    GOOGLE_CLIENT_ID: 'google-client-id',
+    GOOGLE_CLIENT_SECRET: 'google-client-secret',
+  });
+  t.after(() => env.DB.close());
+  const app = createApp();
+
+  const redirectUri = 'http://127.0.0.1:42003/callback';
+  const state = 'desktop-google-disabled-state';
+  const codeVerifier = 'desktop-google-disabled-verifier';
+  const codeChallenge = pkceChallenge(codeVerifier);
+  const pageResponse = await app.fetch(new Request(
+    `http://worker.test/v1/auth/desktop/authorize?client_id=pystudio&redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(state)}&code_challenge=${encodeURIComponent(codeChallenge)}&code_challenge_method=S256`,
+  ), env, {});
+  assert.equal(pageResponse.status, 200);
+  const pageHtml = await pageResponse.text();
+  assert.doesNotMatch(pageHtml, /Continue with Google/);
+  assert.doesNotMatch(pageHtml, /Desktop callback:/);
+});
+
+test('desktop browser Google sign-in start is rejected when registration is disabled', async (t) => {
+  const env = createEnv({
+    allowUserRegistration: false,
+    GOOGLE_CLIENT_ID: 'google-client-id',
+    GOOGLE_CLIENT_SECRET: 'google-client-secret',
+  });
+  t.after(() => env.DB.close());
+  const app = createApp();
+
+  const redirectUri = 'http://127.0.0.1:42004/callback';
+  const state = 'desktop-google-disabled-start-state';
+  const codeVerifier = 'desktop-google-disabled-start-verifier';
+  const codeChallenge = pkceChallenge(codeVerifier);
+  const authorizeResponse = await app.fetch(new Request(
+    `http://worker.test/v1/auth/desktop/authorize?client_id=pystudio&redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(state)}&code_challenge=${encodeURIComponent(codeChallenge)}&code_challenge_method=S256&social_provider=google&social_start=1`,
+  ), env, {});
+  assert.equal(authorizeResponse.status, 400);
+  const pageHtml = await authorizeResponse.text();
+  assert.match(pageHtml, /Google sign-in is unavailable while registration is disabled\./);
 });
 
 test('desktop browser Google sign-in start redirects to the provider and preserves desktop resume state', async (t) => {
@@ -791,12 +835,16 @@ test('openapi endpoints expose the audited worker contract', async (t) => {
   assert.ok(openapi.json.paths['/v1/components/{componentId}/content']);
   assert.ok(openapi.json.paths['/v1/components/{componentId}/meta']);
   assert.ok(openapi.json.paths['/v1/components/{componentId}/versions']);
+  assert.ok(openapi.json.paths['/v1/components/{componentId}/versions/{versionNumber}'].patch);
+  assert.ok(openapi.json.paths['/v1/components/{componentId}/subscribers']);
   assert.ok(openapi.json.paths['/v1/components/{componentId}/subscribe']);
   assert.ok(openapi.json.paths['/v1/variants']);
   assert.ok(openapi.json.paths['/v1/variants/{variantId}']);
   assert.ok(openapi.json.paths['/v1/variants/{variantId}/content']);
   assert.ok(openapi.json.paths['/v1/variants/{variantId}/meta']);
   assert.ok(openapi.json.paths['/v1/variants/{variantId}/versions']);
+  assert.ok(openapi.json.paths['/v1/variants/{variantId}/versions/{versionNumber}'].patch);
+  assert.ok(openapi.json.paths['/v1/variants/{variantId}/subscribers']);
   assert.ok(openapi.json.paths['/v1/variants/{variantId}/subscribe']);
   assert.ok(openapi.json.paths['/v1/management/users']);
   assert.ok(openapi.json.paths['/v1/management/users/{userId}']);
@@ -1097,12 +1145,46 @@ test('variant asset lifecycle works with Better Auth cookie sessions', async (t)
   assert.equal(subscribed.json.subscribed, true);
   assert.equal(subscribed.json.editable, false);
 
+  const ownerSubscribe = await jsonRequest(app, env, '/v1/variants/alice-variant/subscribe', {
+    method: 'POST',
+    cookie: alice.cookie,
+  });
+  assert.equal(ownerSubscribe.status, 200);
+  assert.equal(ownerSubscribe.json.subscribed, true);
+  assert.equal(ownerSubscribe.json.editable, true);
+
   const subscribedList = await jsonRequest(app, env, '/v1/variants?owner=subscribed', {
     cookie: bob.cookie,
   });
   assert.equal(subscribedList.status, 200);
   assert.equal(subscribedList.json.entries.length, 1);
   assert.equal(subscribedList.json.entries[0].variantId, 'alice-variant');
+
+  const ownerSubscribedList = await jsonRequest(app, env, '/v1/variants?owner=subscribed', {
+    cookie: alice.cookie,
+  });
+  assert.equal(ownerSubscribedList.status, 200);
+  assert.equal(ownerSubscribedList.json.entries.length, 1);
+  assert.equal(ownerSubscribedList.json.entries[0].variantId, 'alice-variant');
+
+  const subscribers = await jsonRequest(app, env, '/v1/variants/alice-variant/subscribers', {
+    cookie: alice.cookie,
+  });
+  assert.equal(subscribers.status, 200);
+  assert.equal(subscribers.json.entries.length, 2);
+  assert.deepEqual(
+    subscribers.json.entries.map((entry) => entry.userId),
+    [alice.userId, bob.userId],
+  );
+  assert.deepEqual(
+    subscribers.json.entries.map((entry) => entry.name),
+    ['Alice', 'Bob'],
+  );
+
+  const forbiddenSubscribers = await jsonRequest(app, env, '/v1/variants/alice-variant/subscribers', {
+    cookie: bob.cookie,
+  });
+  assert.equal(forbiddenSubscribers.status, 403);
 
   const forbiddenEdit = await jsonRequest(app, env, '/v1/variants/alice-variant', {
     method: 'PUT',
@@ -1126,6 +1208,26 @@ test('variant asset lifecycle works with Better Auth cookie sessions', async (t)
   assert.equal(oldVersion.status, 200);
   assert.equal(oldVersion.json.variantId, 'alice-variant');
   assert.equal(oldVersion.json.hasContent, true);
+
+  const versionNoteUpdated = await jsonRequest(app, env, '/v1/variants/alice-variant/versions/1', {
+    method: 'PATCH',
+    cookie: alice.cookie,
+    payload: {
+      changeSummary: 'Initial release note',
+    },
+  });
+  assert.equal(versionNoteUpdated.status, 200);
+  assert.equal(versionNoteUpdated.json.changeSummary, 'Initial release note');
+
+  const forbiddenVersionNote = await jsonRequest(app, env, '/v1/variants/alice-variant/versions/1', {
+    method: 'PATCH',
+    cookie: bob.cookie,
+    payload: {
+      changeSummary: 'Bob note',
+    },
+  });
+  assert.equal(forbiddenVersionNote.status, 403);
+
   const oldVersionContent = await jsonRequest(app, env, '/v1/variants/alice-variant/versions/1/content', { cookie: alice.cookie });
   assert.equal(oldVersionContent.status, 200);
   assert.equal(oldVersionContent.json.record.name, 'Alice Public');
@@ -1183,6 +1285,7 @@ test('variant asset lifecycle works with Better Auth cookie sessions', async (t)
   const variantVersionsAfterMetaPatch = await jsonRequest(app, env, '/v1/variants/alice-variant/versions', { cookie: alice.cookie });
   assert.equal(variantVersionsAfterMetaPatch.status, 200);
   assert.equal(variantVersionsAfterMetaPatch.json.versions.length, 2);
+  assert.equal(variantVersionsAfterMetaPatch.json.versions[1].changeSummary, 'Initial release note');
 
   const forbiddenVariantMetadataPatch = await jsonRequest(app, env, '/v1/variants/alice-variant/meta', {
     method: 'PATCH',
@@ -1298,10 +1401,49 @@ test('component asset lifecycle validates session envelope and visibility rules'
   assert.equal(subscribed.json.subscribed, true);
   assert.equal(subscribed.json.editable, false);
 
+  const ownerSubscribe = await jsonRequest(app, env, '/v1/components/component-a/subscribe', {
+    method: 'POST',
+    cookie: alice.cookie,
+  });
+  assert.equal(ownerSubscribe.status, 200);
+  assert.equal(ownerSubscribe.json.subscribed, true);
+  assert.equal(ownerSubscribe.json.editable, true);
+
+  const ownerSubscribedList = await jsonRequest(app, env, '/v1/components?owner=subscribed', {
+    cookie: alice.cookie,
+  });
+  assert.equal(ownerSubscribedList.status, 200);
+  assert.equal(ownerSubscribedList.json.entries.length, 1);
+  assert.equal(ownerSubscribedList.json.entries[0].componentId, 'component-a');
+
+  const subscribers = await jsonRequest(app, env, '/v1/components/component-a/subscribers', {
+    cookie: alice.cookie,
+  });
+  assert.equal(subscribers.status, 200);
+  assert.equal(subscribers.json.entries.length, 2);
+  assert.deepEqual(
+    subscribers.json.entries.map((entry) => entry.userId),
+    [alice.userId, bob.userId],
+  );
+  assert.deepEqual(
+    subscribers.json.entries.map((entry) => entry.name),
+    ['Alice', 'Bob'],
+  );
+
   const history1 = await jsonRequest(app, env, '/v1/components/component-a/versions', { cookie: alice.cookie });
   assert.equal(history1.status, 200);
   assert.equal(history1.json.versions.length, 1);
   assert.equal(history1.json.versions[0].componentId, 'component-a');
+
+  const versionNoteUpdated = await jsonRequest(app, env, '/v1/components/component-a/versions/1', {
+    method: 'PATCH',
+    cookie: alice.cookie,
+    payload: {
+      changeSummary: 'Initial component note',
+    },
+  });
+  assert.equal(versionNoteUpdated.status, 200);
+  assert.equal(versionNoteUpdated.json.changeSummary, 'Initial component note');
 
   const updated = await jsonRequest(app, env, '/v1/components/component-a', {
     method: 'PUT',
@@ -1355,6 +1497,7 @@ test('component asset lifecycle validates session envelope and visibility rules'
   const componentVersionsAfterMetaPatch = await jsonRequest(app, env, '/v1/components/component-a/versions', { cookie: alice.cookie });
   assert.equal(componentVersionsAfterMetaPatch.status, 200);
   assert.equal(componentVersionsAfterMetaPatch.json.versions.length, 2);
+  assert.equal(componentVersionsAfterMetaPatch.json.versions[1].changeSummary, 'Initial component note');
 
   const forbiddenComponentMetadataPatch = await jsonRequest(app, env, '/v1/components/component-a/meta', {
     method: 'PATCH',

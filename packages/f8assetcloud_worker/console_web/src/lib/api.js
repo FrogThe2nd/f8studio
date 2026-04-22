@@ -86,6 +86,19 @@ export function listAssetVersions(assetType, assetId, params = {}) {
   return apiFetch(`${root}/${encodeURIComponent(assetId)}/versions${buildQuery(params)}`);
 }
 
+export function updateAssetVersionNote(assetType, assetId, versionNumber, payload) {
+  const root = assetType === 'variant' ? '/v1/variants' : '/v1/components';
+  return apiFetch(`${root}/${encodeURIComponent(assetId)}/versions/${encodeURIComponent(versionNumber)}`, {
+    method: 'PATCH',
+    body: payload,
+  });
+}
+
+export function getAssetSubscribers(assetType, assetId, params = {}) {
+  const root = assetType === 'variant' ? '/v1/variants' : '/v1/components';
+  return apiFetch(`${root}/${encodeURIComponent(assetId)}/subscribers${buildQuery(params)}`);
+}
+
 export function getAssetVersionContent(assetType, assetId, versionNumber) {
   const root = assetType === 'variant' ? '/v1/variants' : '/v1/components';
   return apiFetch(`${root}/${encodeURIComponent(assetId)}/versions/${encodeURIComponent(versionNumber)}/content`);

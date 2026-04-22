@@ -1,9 +1,20 @@
-import { useEffect, useState } from 'react';
+import { Suspense, lazy, useEffect, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { Pencil, X } from 'lucide-react';
 
 import { Button } from './ui/button.jsx';
 import { updateAssetMeta } from '../lib/api.js';
+
+const MarkdownEditor = lazy(async () => {
+  const module = await import('./MarkdownEditor.jsx');
+  return {
+    default: module.MarkdownEditor,
+  };
+});
+
+function EditorLoader() {
+  return <p className="text-sm text-slate-400">Loading editor...</p>;
+}
 
 export function EditAssetDialog({ asset, assetType, onUpdated }) {
   const [open, setOpen] = useState(false);
@@ -54,7 +65,7 @@ export function EditAssetDialog({ asset, assetType, onUpdated }) {
       </Dialog.Trigger>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 bg-slate-950/70 backdrop-blur-sm" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 w-[min(92vw,640px)] -translate-x-1/2 -translate-y-1/2 rounded-[1.75rem] border border-white/10 bg-slate-950 p-6 shadow-[0_30px_80px_rgba(0,0,0,0.42)]">
+        <Dialog.Content className="fixed left-1/2 top-1/2 max-h-[88vh] w-[min(92vw,980px)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-[1.75rem] border border-white/10 bg-slate-950 p-6 shadow-[0_30px_80px_rgba(0,0,0,0.42)]">
           <div className="flex items-start justify-between gap-4">
             <div>
               <Dialog.Title className="text-xl font-semibold text-white">Edit asset details</Dialog.Title>
@@ -73,10 +84,9 @@ export function EditAssetDialog({ asset, assetType, onUpdated }) {
               Name
               <input className="mt-2 w-full rounded-2xl border border-white/12 bg-white/5 px-4 py-3 text-white focus:border-cyan-300/40 focus:outline-none" value={name} onChange={(event) => setName(event.target.value)} />
             </label>
-            <label className="block text-sm text-slate-300">
-              Description
-              <textarea className="mt-2 min-h-28 w-full rounded-2xl border border-white/12 bg-white/5 px-4 py-3 text-white focus:border-cyan-300/40 focus:outline-none" value={description} onChange={(event) => setDescription(event.target.value)} />
-            </label>
+            <Suspense fallback={<EditorLoader />}>
+              <MarkdownEditor value={description} onChange={setDescription} />
+            </Suspense>
             <label className="block text-sm text-slate-300">
               Tags
               <input className="mt-2 w-full rounded-2xl border border-white/12 bg-white/5 px-4 py-3 text-white focus:border-cyan-300/40 focus:outline-none" value={tags} onChange={(event) => setTags(event.target.value)} placeholder="comma, separated, tags" />
