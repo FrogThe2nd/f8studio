@@ -29,7 +29,18 @@ _SENSITIVE_JSON_KEYS = frozenset(
 
 
 def now_iso() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    return canonicalize_iso_utc(datetime.now(timezone.utc))
+
+
+def canonicalize_iso_utc(value: object) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    parsed = _parse_timestamp_for_local_display(text)
+    if parsed is None:
+        return text
+    normalized = parsed.astimezone(timezone.utc).replace(microsecond=0)
+    return normalized.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def format_timestamp_for_local_display(value: object, *, local_tz: tzinfo | None = None) -> str:

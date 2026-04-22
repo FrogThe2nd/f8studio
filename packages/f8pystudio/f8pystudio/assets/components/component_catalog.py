@@ -9,7 +9,14 @@ import zlib
 from sqlalchemy import delete, insert, select
 from f8pysdk.codec import copy_model
 
-from ..common import json_object_loads, json_string_list_loads, mapping_optional_str, mapping_str, stable_json_dumps
+from ..common import (
+    canonicalize_iso_utc,
+    json_object_loads,
+    json_string_list_loads,
+    mapping_optional_str,
+    mapping_str,
+    stable_json_dumps,
+)
 from ..common.remote_cache_common import RemoteCacheMetadata, remote_cache_metadata_from_fields
 from ..db import AssetsDatabase, component_remote_cache_table
 from .component_drafts import ComponentDraftService, draft_as_catalog_entry
@@ -387,8 +394,8 @@ def _component_record_from_row(row: Mapping[object, object]) -> F8ComponentRecor
         description=mapping_str(row, "description"),
         tags=json_string_list_loads(row.get("tags_json")),
         content=json_object_loads(_decompress_content(row.get("content"))),
-        createdAt=mapping_str(row, "created_at"),
-        updatedAt=mapping_str(row, "updated_at"),
+        createdAt=canonicalize_iso_utc(mapping_str(row, "created_at")),
+        updatedAt=canonicalize_iso_utc(mapping_str(row, "updated_at")),
     )
 
 
@@ -401,7 +408,7 @@ def _component_entry_from_remote_cache_row(row: Mapping[object, object], metadat
         ownerUserId=metadata.owner_user_id,
         ownerDisplayName=metadata.owner_display_name,
         remoteVersionNumber=metadata.remote_version_number,
-        downloadedAt=metadata.downloaded_at,
+        downloadedAt=None if metadata.downloaded_at is None else canonicalize_iso_utc(metadata.downloaded_at),
         installed=metadata.installed,
         hasCachedContent=_sqlite_row_bool(row, "has_cached_content"),
         subscribed=metadata.subscribed,
@@ -459,12 +466,17 @@ def _normalize_remote_component_entry_for_storage(entry: F8ComponentEntry) -> F8
     normalized_content = entry.record.content if has_cached_content else {}
     normalized_record = copy_model(
         entry.record,
-        update={"content": normalized_content},
+        update={
+            "content": normalized_content,
+            "createdAt": canonicalize_iso_utc(entry.record.createdAt),
+            "updatedAt": canonicalize_iso_utc(entry.record.updatedAt),
+        },
     )
     return copy_model(
         entry,
         update={
             "record": normalized_record,
+            "downloadedAt": None if entry.downloadedAt is None else canonicalize_iso_utc(entry.downloadedAt),
             "hasCachedContent": has_cached_content,
         },
     )

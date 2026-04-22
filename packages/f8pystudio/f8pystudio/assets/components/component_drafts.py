@@ -8,6 +8,7 @@ from sqlalchemy import delete, insert, select, update
 from f8pysdk.codec import dump_json, validate_as
 
 from ..common import (
+    canonicalize_iso_utc,
     json_object_loads,
     json_string_list_loads,
     mapping_optional_int,
@@ -183,7 +184,7 @@ def draft_as_catalog_entry(draft: F8ComponentDraftEntry) -> F8ComponentEntry:
 def _normalized_component_draft(draft: F8ComponentDraftEntry) -> F8ComponentDraftEntry:
     draft_id = str(draft.draftId or "").strip() or new_asset_id()
     timestamp = component_now_iso()
-    created_at = str(draft.createdAt or draft.record.createdAt or timestamp)
+    created_at = canonicalize_iso_utc(draft.createdAt or draft.record.createdAt or timestamp)
     updated_at = timestamp
     record_payload = {
         **dump_json(draft.record, mode="json"),
@@ -229,8 +230,8 @@ def _draft_from_row(row: object) -> F8ComponentDraftEntry:
         row = dict(row)
     row_mapping: dict[object, object] = row
     draft_id = mapping_str(row_mapping, "draft_id")
-    created_at = mapping_str(row_mapping, "created_at")
-    updated_at = mapping_str(row_mapping, "updated_at")
+    created_at = canonicalize_iso_utc(mapping_str(row_mapping, "created_at"))
+    updated_at = canonicalize_iso_utc(mapping_str(row_mapping, "updated_at"))
     record = F8ComponentRecord(
         componentId=draft_id,
         name=mapping_str(row_mapping, "name"),

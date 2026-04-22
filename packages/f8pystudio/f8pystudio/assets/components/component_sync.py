@@ -17,6 +17,7 @@ from ...nodegraph.session_payload_sanitizer import sanitize_session_content_for_
 from ..common import (
     AssetCloudCredentialStore,
     JsonObject,
+    canonicalize_iso_utc,
     decode_http_response_text,
     default_asset_cloud_credential_store,
     json_object_from_value,
@@ -1028,8 +1029,8 @@ def _summary_component_record_from_payload(payload: JsonObject) -> F8ComponentRe
         description=_payload_optional_str(payload, "description") or "",
         tags=_payload_string_list(payload, "tags"),
         content={},
-        createdAt=_payload_str(payload, "createdAt"),
-        updatedAt=_payload_str(payload, "updatedAt"),
+        createdAt=canonicalize_iso_utc(_payload_str(payload, "createdAt")),
+        updatedAt=canonicalize_iso_utc(_payload_str(payload, "updatedAt")),
     )
 
 
@@ -1242,8 +1243,8 @@ def _record_payload(record: F8ComponentRecord) -> JsonObject:
             record.content,
             redact_publish_state_values=True,
         ),
-        "createdAt": str(record.createdAt),
-        "updatedAt": str(record.updatedAt),
+        "createdAt": canonicalize_iso_utc(record.createdAt),
+        "updatedAt": canonicalize_iso_utc(record.updatedAt),
     }
 
 

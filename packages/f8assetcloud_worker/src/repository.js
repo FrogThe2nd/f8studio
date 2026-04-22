@@ -1,4 +1,4 @@
-﻿import { compressGzip, decompressGzip, escapeLikePattern, isPlainObject, nowIso, nullableString, stringOrDefault, toBoolean } from './utils.js';
+﻿import { canonicalUtcTimestamp, compressGzip, decompressGzip, escapeLikePattern, isPlainObject, nowIso, nullableString, stringOrDefault, toBoolean } from './utils.js';
 
 const PAGE_SIZE = 100;
 const MAX_CONTENT_BYTES = 10 * 1024 * 1024;
@@ -1373,7 +1373,7 @@ function variantDetailPayloadFromRows({ head, version, subscription, viewerUserI
       },
       viewerUserId,
     ),
-    versionCreatedAt: String(version.created_at),
+    versionCreatedAt: normalizeDbTimestamp(version.created_at),
     createdByUserId: String(version.created_by_user_id),
   };
   if (includeVersionNumber) {
@@ -1411,7 +1411,7 @@ function componentDetailPayloadFromRows({ head, version, subscription, viewerUse
       },
       viewerUserId,
     ),
-    versionCreatedAt: String(version.created_at),
+    versionCreatedAt: normalizeDbTimestamp(version.created_at),
     createdByUserId: String(version.created_by_user_id),
   };
   if (includeVersionNumber) {
@@ -1442,14 +1442,14 @@ function genericTypedAssetPayload(row, viewerUserId) {
     name: String(row.name),
     description: String(row.description),
     tags: normalizeTags(parseJsonArray(row.tags_json)),
-    createdAt: String(row.created_at),
-    updatedAt: String(row.updated_at),
+    createdAt: normalizeDbTimestamp(row.created_at),
+    updatedAt: normalizeDbTimestamp(row.updated_at),
     isOwner,
     subscribed: isSubscribed,
     editable: isOwner,
     subscription: isSubscribed
       ? {
-        subscribedAt: String(row.subscribed_at),
+        subscribedAt: normalizeDbTimestamp(row.subscribed_at),
         lastSeenVersionNumber: nullableNumber(row.last_seen_version_number),
       }
       : null,
@@ -1461,7 +1461,7 @@ function assetSubscriberFromRow(row) {
     userId: String(row.subscriber_user_id),
     name: stringOrDefault(row.subscriber_name, String(row.subscriber_email || row.subscriber_user_id || '')),
     email: nullableString(row.subscriber_email),
-    subscribedAt: String(row.subscribed_at),
+    subscribedAt: normalizeDbTimestamp(row.subscribed_at),
     lastSeenVersionNumber: nullableNumber(row.last_seen_version_number),
   };
 }
@@ -1527,8 +1527,8 @@ function genericAssetSummary(row) {
     name: String(row.name),
     description: String(row.description),
     tags: normalizeTags(parseJsonArray(row.tags_json)),
-    createdAt: String(row.created_at),
-    updatedAt: String(row.updated_at),
+    createdAt: normalizeDbTimestamp(row.created_at),
+    updatedAt: normalizeDbTimestamp(row.updated_at),
   };
 }
 
@@ -1536,7 +1536,7 @@ function assetVersionSummaryFromRow(assetType, row) {
   const summary = {
     assetType,
     versionNumber: Number(row.version_number),
-    createdAt: String(row.created_at),
+    createdAt: normalizeDbTimestamp(row.created_at),
     createdByUserId: String(row.created_by_user_id),
     changeSummary: nullableString(row.change_summary),
   };
@@ -1572,8 +1572,8 @@ function applyAssetQueryFilters({ filters, bindings, query, assetType, extraFilt
 function parseVariantRecord(content, { head = null, version = null } = {}) {
   const specPayload = normalizeVariantContentPayload(parseJsonObject(content));
   const variantId = stringOrDefault(head?.asset_id, '');
-  const createdAt = stringOrDefault(head?.created_at, stringOrDefault(version?.created_at, ''));
-  const updatedAt = stringOrDefault(version?.created_at, stringOrDefault(head?.updated_at, createdAt));
+  const createdAt = normalizeDbTimestamp(head?.created_at) || normalizeDbTimestamp(version?.created_at);
+  const updatedAt = normalizeDbTimestamp(version?.created_at) || normalizeDbTimestamp(head?.updated_at) || createdAt;
   return {
     variantId,
     kind: stringOrDefault(head?.variant_kind, ''),
@@ -1592,8 +1592,8 @@ function parseVariantRecord(content, { head = null, version = null } = {}) {
 function parseComponentRecord(content, { head = null, version = null } = {}) {
   const contentPayload = normalizeComponentContentPayload(parseJsonObject(content));
   const componentId = stringOrDefault(head?.asset_id, '');
-  const createdAt = stringOrDefault(head?.created_at, stringOrDefault(version?.created_at, ''));
-  const updatedAt = stringOrDefault(version?.created_at, stringOrDefault(head?.updated_at, createdAt));
+  const createdAt = normalizeDbTimestamp(head?.created_at) || normalizeDbTimestamp(version?.created_at);
+  const updatedAt = normalizeDbTimestamp(version?.created_at) || normalizeDbTimestamp(head?.updated_at) || createdAt;
   return {
     componentId,
     name: stringOrDefault(head?.name, componentId),
@@ -1738,15 +1738,18 @@ function parseCursor(value) {
 
 function normalizeIsoString(value, fallback) {
   const text = String(value || '').trim();
-  return text || fallback;
+  if (text) {
+    return normalizeDbTimestamp(text);
+  }
+  return normalizeDbTimestamp(fallback);
 }
 
 function normalizeDbTimestamp(value) {
   if (value instanceof Date) {
-    return value.toISOString();
+    return canonicalUtcTimestamp(value);
   }
   if (typeof value === 'number' && Number.isFinite(value)) {
-    return new Date(value).toISOString();
+    return canonicalUtcTimestamp(value);
   }
   const text = String(value || '').trim();
   if (!text) {
@@ -1754,9 +1757,10 @@ function normalizeDbTimestamp(value) {
   }
   const numeric = Number(text);
   if (Number.isFinite(numeric)) {
-    return new Date(numeric).toISOString();
+    return canonicalUtcTimestamp(numeric);
   }
-  return text;
+  const normalized = canonicalUtcTimestamp(text);
+  return normalized || text;
 }
 
 function stableJson(value) {
