@@ -8,7 +8,12 @@ from qtpy import QtWidgets
 
 from ..assets.common import new_asset_id
 from ..assets.components.component_drafts import ComponentDraftService
-from ..assets.components.component_models import F8ComponentEntry, F8ComponentRecord, F8ComponentSourceKind
+from ..assets.components.component_models import (
+    F8ComponentEntry,
+    F8ComponentRecord,
+    F8ComponentSourceKind,
+    component_now_iso,
+)
 from ..assets.components.component_repository import upsert_component
 from ..assets.ui.project_asset_dialogs import AssetOverwriteChoice, AssetOverwriteMetaDialog
 from ..ui.support.ui_notifications import show_info, show_warning
@@ -147,12 +152,15 @@ class GraphComponentActionsMixin:
                         break
             if overwrite_entry is None:
                 overwrite_entry = self._draft_component_entry_by_name(name)
+            timestamp = component_now_iso()
             record = F8ComponentRecord(
                 componentId=new_asset_id() if overwrite_entry is None else str(overwrite_entry.record.componentId),
                 name=name,
                 description=description,
                 tags=tags,
                 content=payload,
+                createdAt=timestamp,
+                updatedAt=timestamp,
             )
             upsert_component(record)
         except Exception as exc:

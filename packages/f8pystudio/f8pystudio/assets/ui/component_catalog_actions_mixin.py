@@ -67,11 +67,10 @@ class ComponentCatalogActionsMixin(_ComponentCatalogActionsMixinBase):
             sort_keys=True,
             default=str,
         )
-        schema_changed = str(remote_entry.record.schemaVersion) != str(draft_entry.record.schemaVersion)
         name_changed = str(remote_entry.record.name) != str(draft_entry.record.name)
         description_changed = str(remote_entry.record.description) != str(draft_entry.record.description)
         tags_changed = list(remote_entry.record.tags or []) != list(draft_entry.record.tags or [])
-        has_structural_changes = content_changed or schema_changed
+        has_structural_changes = content_changed
         has_metadata_changes = name_changed or description_changed or tags_changed
         return has_structural_changes, has_metadata_changes
 
@@ -319,12 +318,15 @@ class ComponentCatalogActionsMixin(_ComponentCatalogActionsMixinBase):
             overwrite_entry = None if not overwrite_component_id else self._local_entry_for_component_id(str(overwrite_component_id))
             if overwrite_entry is None:
                 overwrite_entry = self._draft_entry_by_name(name)
+            timestamp = component_now_iso()
             record = F8ComponentRecord(
                 componentId=new_asset_id() if overwrite_entry is None else str(overwrite_entry.record.componentId),
                 name=name,
                 description=description,
                 tags=tags,
                 content=payload,
+                createdAt=timestamp,
+                updatedAt=timestamp,
             )
             upsert_component(record)
         except Exception as exc:

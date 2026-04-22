@@ -47,7 +47,6 @@ component_remote_cache_table = Table(
     Column("name", Text, nullable=False),
     Column("description", Text, nullable=False),
     Column("tags_json", Text, nullable=False),
-    Column("schema_version", Text, nullable=False),
     Column("created_at", Text, nullable=False),
     Column("updated_at", Text, nullable=False),
     Column("source", Text, nullable=False),
@@ -69,7 +68,6 @@ component_drafts_local_table = Table(
     Column("name", Text, nullable=False),
     Column("description", Text, nullable=False),
     Column("tags_json", Text, nullable=False),
-    Column("schema_version", Text, nullable=False),
     Column("content", LargeBinary, nullable=False),
     Column("origin_kind", Text, nullable=True),
     Column("publish_target_asset_id", Text, nullable=True),
@@ -234,6 +232,9 @@ class AssetsDatabase:
         return self._table_column_names_mismatch(
             inspector=inspector,
             table=component_remote_cache_table,
+        ) or self._table_column_names_mismatch(
+            inspector=inspector,
+            table=component_drafts_local_table,
         ) or self._table_column_names_mismatch(
             inspector=inspector,
             table=variant_remote_cache_table,

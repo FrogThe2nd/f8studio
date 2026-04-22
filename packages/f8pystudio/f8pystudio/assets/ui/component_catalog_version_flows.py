@@ -15,6 +15,7 @@ from ..components.component_models import (
     F8ComponentRemoteVersionEntry,
     F8ComponentSourceKind,
     F8ComponentVisibility,
+    component_now_iso,
 )
 from ..components.component_repository import upsert_component
 from ...ui.support.ui_notifications import show_info, show_warning
@@ -120,12 +121,15 @@ class ComponentCatalogVersionFlowsMixin(_ComponentCatalogVersionFlowsMixinBase):
         if metadata_dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
             return
         name, description, tags = metadata_dialog.values()
+        timestamp = component_now_iso()
         local_record = F8ComponentRecord(
             componentId=new_asset_id(),
             name=name,
             description=description,
             tags=tags,
             content=historical_entry.record.content,
+            createdAt=timestamp,
+            updatedAt=timestamp,
         )
         upsert_component(local_record)
         show_info(self, "Saved", f"Saved local component from v{int(version_number)}:\n{local_record.name}")
@@ -156,12 +160,15 @@ class ComponentCatalogVersionFlowsMixin(_ComponentCatalogVersionFlowsMixinBase):
         if visibility is None:
             return
         name, description, tags = metadata_dialog.values()
+        timestamp = component_now_iso()
         forked_record = F8ComponentRecord(
             componentId=new_asset_id(),
             name=name,
             description=description,
             tags=tags,
             content=historical_entry.record.content,
+            createdAt=timestamp,
+            updatedAt=timestamp,
         )
         forked_entry = F8ComponentEntry(
             record=forked_record,

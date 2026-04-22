@@ -103,6 +103,37 @@ components:
         - createdAt
         - updatedAt
       additionalProperties: false
+    F8ComponentRecord:
+      title: F8ComponentRecord
+      type: object
+      properties:
+        componentId:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+          default: ""
+        tags:
+          type: array
+          items:
+            type: string
+          default: []
+        content:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/F8JsonValue"
+        createdAt:
+          type: string
+          default: ""
+        updatedAt:
+          type: string
+          default: ""
+      required:
+        - componentId
+        - name
+        - content
+      additionalProperties: false
     F8VariantLibrary:
       title: F8VariantLibrary
       type: object

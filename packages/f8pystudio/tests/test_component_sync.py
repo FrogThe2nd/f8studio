@@ -37,7 +37,6 @@ def _component_record(component_id: str, name: str) -> dict[str, object]:
         "name": name,
         "description": "",
         "tags": [],
-        "schemaVersion": "f8studio-session/1",
         "content": {
             "schemaVersion": "f8studio-session/1",
             "layout": {
@@ -347,7 +346,6 @@ class _Server(ThreadingHTTPServer):
             "name": str(record["name"]),
             "description": str(record["description"]),
             "tags": list(record["tags"]),
-            "schemaVersion": str(record["schemaVersion"]),
             "createdAt": str(record["createdAt"]),
             "updatedAt": str(record["updatedAt"]),
             "editable": visibility != "public",
@@ -357,7 +355,6 @@ class _Server(ThreadingHTTPServer):
                 "name": str(record["name"]),
                 "description": str(record["description"]),
                 "tags": list(record["tags"]),
-                "schemaVersion": str(record["schemaVersion"]),
                 "content": {},
                 "createdAt": str(record["createdAt"]),
                 "updatedAt": str(record["updatedAt"]),
@@ -678,7 +675,6 @@ def test_component_catalog_service_skips_noop_remote_replace_and_supports_silent
             name="Public One",
             description="",
             tags=[],
-            schemaVersion="f8studio-session/1",
             content={},
             createdAt="2026-04-21T00:00:00+00:00",
             updatedAt="2026-04-21T00:00:00+00:00",
@@ -931,7 +927,6 @@ def test_component_sync_client_accepts_flat_content_payloads(tmp_path: Path, mon
             "name": "Flat Content Component",
             "description": "",
             "tags": ["flat"],
-            "schemaVersion": "f8studio-session/1",
             "content": {
                 "schemaVersion": "f8studio-session/1",
                 "layout": {"nodes": {}, "connections": []},
@@ -945,7 +940,6 @@ def test_component_sync_client_accepts_flat_content_payloads(tmp_path: Path, mon
     record = client.get_component_content("public-1")
 
     assert record.componentId == "public-1"
-    assert record.schemaVersion == "f8studio-session/1"
     assert record.content["schemaVersion"] == "f8studio-session/1"
 
 
@@ -960,7 +954,6 @@ def test_component_sync_client_preview_load_uses_content_endpoint_only(tmp_path:
             name="Preview Only",
             description="Remote summary",
             tags=["preview"],
-            schemaVersion="f8studio-session/1",
             content={},
         ),
         source=F8ComponentSourceKind.remote_public,
@@ -985,7 +978,6 @@ def test_component_sync_client_preview_load_uses_content_endpoint_only(tmp_path:
             "name": "Preview Only",
             "description": "Remote summary",
             "tags": ["preview"],
-            "schemaVersion": "f8studio-session/1",
             "content": {
                 "schemaVersion": "f8studio-session/1",
                 "layout": {"nodes": {}, "connections": []},
@@ -1015,7 +1007,6 @@ def test_component_sync_client_rejects_upload_without_full_content(tmp_path: Pat
             name="Empty Component",
             description="",
             tags=[],
-            schemaVersion="f8studio-session/1",
             content={},
             createdAt="2026-04-07T00:00:00+00:00",
             updatedAt="2026-04-07T00:00:00+00:00",
@@ -1069,8 +1060,7 @@ def test_component_remote_cache_load_cleans_empty_component_ids(tmp_path: Path) 
                 name="Broken Row",
                 description="",
                 tags_json="[]",
-                schema_version="f8studio-session/1",
-                created_at="2026-04-04T00:00:00+00:00",
+                                created_at="2026-04-04T00:00:00+00:00",
                 updated_at="2026-04-04T00:00:00+00:00",
                 source="remote_public",
                 visibility="public",
@@ -1103,8 +1093,7 @@ def test_component_remote_cache_row_with_content_loads_as_installed(tmp_path: Pa
                 name=str(canonical_record["name"]),
                 description=str(canonical_record["description"]),
                 tags_json=json.dumps(canonical_record["tags"]),
-                schema_version=str(canonical_record["schemaVersion"]),
-                created_at=str(canonical_record["createdAt"]),
+                                created_at=str(canonical_record["createdAt"]),
                 updated_at=str(canonical_record["updatedAt"]),
                 source="remote_public",
                 visibility="public",
@@ -1129,14 +1118,13 @@ def test_component_remote_cache_row_with_content_loads_as_installed(tmp_path: Pa
 
 def test_component_row_state_badges_cover_local_remote_and_both() -> None:
     local_entry = F8ComponentEntry(
-        record=F8ComponentRecord(componentId="asset-1", name="Local"),
+        record=F8ComponentRecord(componentId="asset-1", name="Local", content={}),
         source=F8ComponentSourceKind.local,
     )
     remote_entry = F8ComponentEntry(
         record=F8ComponentRecord(
             componentId="asset-1",
             name="Remote",
-            schemaVersion="f8studio-session/1",
             content={"schemaVersion": "f8studio-session/1", "layout": {"nodes": {}, "connections": []}},
         ),
         source=F8ComponentSourceKind.remote_public,
@@ -1154,7 +1142,7 @@ def test_component_row_state_badges_cover_local_remote_and_both() -> None:
         component_id="asset-2",
         local_entry=None,
         remote_entry=F8ComponentEntry(
-            record=F8ComponentRecord(componentId="asset-2", name="Remote Only"),
+            record=F8ComponentRecord(componentId="asset-2", name="Remote Only", content={}),
             source=F8ComponentSourceKind.remote_public,
             visibility=F8ComponentVisibility.public,
             installed=False,
@@ -1163,7 +1151,7 @@ def test_component_row_state_badges_cover_local_remote_and_both() -> None:
     local_state = ComponentCatalogDialog._component_row_state_for_entries(
         component_id="asset-3",
         local_entry=F8ComponentEntry(
-            record=F8ComponentRecord(componentId="asset-3", name="Local Only"),
+            record=F8ComponentRecord(componentId="asset-3", name="Local Only", content={}),
             source=F8ComponentSourceKind.local,
         ),
         remote_entry=None,
@@ -1176,7 +1164,7 @@ def test_component_row_state_badges_cover_local_remote_and_both() -> None:
 
 def test_component_row_state_uses_local_draft_owner_label() -> None:
     local_entry = F8ComponentEntry(
-        record=F8ComponentRecord(componentId="draft-component", name="Draft Component"),
+        record=F8ComponentRecord(componentId="draft-component", name="Draft Component", content={}),
         source=F8ComponentSourceKind.local,
         isLocalDraft=True,
     )
@@ -1192,12 +1180,12 @@ def test_component_row_state_uses_local_draft_owner_label() -> None:
 
 def test_component_row_state_prefers_remote_owner_when_remote_head_exists() -> None:
     local_entry = F8ComponentEntry(
-        record=F8ComponentRecord(componentId="draft-component-remote", name="Draft Component Remote"),
+        record=F8ComponentRecord(componentId="draft-component-remote", name="Draft Component Remote", content={}),
         source=F8ComponentSourceKind.local,
         isLocalDraft=True,
     )
     remote_entry = F8ComponentEntry(
-        record=F8ComponentRecord(componentId="draft-component-remote", name="Draft Component Remote"),
+        record=F8ComponentRecord(componentId="draft-component-remote", name="Draft Component Remote", content={}),
         source=F8ComponentSourceKind.remote_private,
         visibility=F8ComponentVisibility.private,
         ownerUserId="u1",
@@ -1224,7 +1212,6 @@ def test_component_catalog_load_owned_remote_keeps_remote_only_cache(monkeypatch
         record=F8ComponentRecord(
             componentId="owned-component",
             name="Owned Component",
-            schemaVersion="f8studio-session/1",
             content={},
             createdAt="2026-04-02T00:00:00+00:00",
             updatedAt="2026-04-02T00:00:00+00:00",
@@ -1292,7 +1279,6 @@ def test_component_publish_new_draft_keeps_linked_draft(monkeypatch, tmp_path: P
             record=F8ComponentRecord(
                 componentId="draft-component",
                 name="Draft Component",
-                schemaVersion="f8studio-session/1",
                 content={"schemaVersion": "f8studio-session/1", "layout": {"nodes": {}, "connections": []}},
             ),
             source=F8ComponentSourceKind.local,
@@ -1355,7 +1341,6 @@ def test_component_upload_clicked_publishes_selected_draft(monkeypatch, tmp_path
             record=F8ComponentRecord(
                 componentId="draft-upload-clicked",
                 name="Draft Upload Clicked",
-                schemaVersion="f8studio-session/1",
                 content={"schemaVersion": "f8studio-session/1", "layout": {"nodes": {}, "connections": []}},
             ),
             source=F8ComponentSourceKind.local,
@@ -1402,7 +1387,6 @@ def test_component_publish_metadata_only_uses_patch_meta(monkeypatch, tmp_path: 
             record=F8ComponentRecord(
                 componentId="linked-draft",
                 name="Owned Overwrite Draft",
-                schemaVersion="f8studio-session/1",
                 content={"schemaVersion": "f8studio-session/1", "layout": {"nodes": {}, "connections": []}},
             ),
             source=F8ComponentSourceKind.local,
@@ -1417,7 +1401,6 @@ def test_component_publish_metadata_only_uses_patch_meta(monkeypatch, tmp_path: 
             record=F8ComponentRecord(
                 componentId="owned-overwrite",
                 name="Owned Overwrite",
-                schemaVersion="f8studio-session/1",
                 content={"schemaVersion": "f8studio-session/1", "layout": {"nodes": {}, "connections": []}},
             ),
             source=F8ComponentSourceKind.remote_private,
@@ -1484,7 +1467,6 @@ def test_component_publish_no_diff_ignores_timestamp_only_changes(monkeypatch, t
             record=F8ComponentRecord(
                 componentId="owned-no-diff",
                 name="Owned No Diff",
-                schemaVersion="f8studio-session/1",
                 content={"schemaVersion": "f8studio-session/1", "layout": {"nodes": {}, "connections": []}},
                 createdAt="2026-04-21T00:00:00+00:00",
                 updatedAt="2026-04-21T00:00:00+00:00",
@@ -1503,7 +1485,6 @@ def test_component_publish_no_diff_ignores_timestamp_only_changes(monkeypatch, t
             record=F8ComponentRecord(
                 componentId="linked-no-diff",
                 name="Owned No Diff",
-                schemaVersion="f8studio-session/1",
                 content={"schemaVersion": "f8studio-session/1", "layout": {"nodes": {}, "connections": []}},
                 createdAt="2026-04-22T00:00:00+00:00",
                 updatedAt="2026-04-22T00:00:00+00:00",
@@ -1642,7 +1623,6 @@ def test_component_publish_no_diff_ignores_legacy_launch_and_runtime_only_state(
             record=F8ComponentRecord(
                 componentId="owned-legacy-no-diff",
                 name="Owned Legacy No Diff",
-                schemaVersion="f8studio-session/1",
                 content=dirty_remote_content,
                 createdAt="2026-04-21T00:00:00+00:00",
                 updatedAt="2026-04-21T00:00:00+00:00",
@@ -1661,7 +1641,6 @@ def test_component_publish_no_diff_ignores_legacy_launch_and_runtime_only_state(
             record=F8ComponentRecord(
                 componentId="linked-legacy-no-diff",
                 name="Owned Legacy No Diff",
-                schemaVersion="f8studio-session/1",
                 content=clean_local_content,
                 createdAt="2026-04-22T00:00:00+00:00",
                 updatedAt="2026-04-22T00:00:00+00:00",
@@ -1719,7 +1698,6 @@ def test_asset_write_payload_sanitizes_component_content_for_upload() -> None:
         record=F8ComponentRecord(
             componentId="dirty-upload",
             name="Dirty Upload",
-            schemaVersion="f8studio-session/1",
             content={
                 "schemaVersion": "f8studio-session/1",
                 "layout": {
@@ -1793,7 +1771,6 @@ def test_component_publish_missing_linked_asset_can_create_replacement(monkeypat
             record=F8ComponentRecord(
                 componentId="draft-linked-missing",
                 name="Draft Linked Missing",
-                schemaVersion="f8studio-session/1",
                 content={"schemaVersion": "f8studio-session/1", "layout": {"nodes": {}, "connections": []}},
             ),
             source=F8ComponentSourceKind.local,
@@ -1872,7 +1849,6 @@ def test_component_catalog_copy_to_draft_creates_disconnected_local_draft(monkey
         record=F8ComponentRecord(
             componentId="remote-component",
             name="Remote Component",
-            schemaVersion="f8studio-session/1",
             content={"schemaVersion": "f8studio-session/1", "layout": {"nodes": {}, "connections": []}},
             createdAt="2026-04-02T00:00:00+00:00",
             updatedAt="2026-04-02T00:00:00+00:00",
@@ -1938,7 +1914,6 @@ def test_component_catalog_delete_removes_local_and_owned_remote(monkeypatch, tm
         record=F8ComponentRecord(
             componentId="owned-delete",
             name="Owned Delete",
-            schemaVersion="f8studio-session/1",
             content={},
         ),
         source=F8ComponentSourceKind.remote_private,
@@ -1999,7 +1974,6 @@ def test_component_catalog_disables_load_offload_for_local_draft(monkeypatch, tm
             record=F8ComponentRecord(
                 componentId="draft-component-disable",
                 name="Draft Component Disable",
-                schemaVersion="f8studio-session/1",
                 content={"schemaVersion": "f8studio-session/1", "layout": {"nodes": {}, "connections": []}},
             ),
             source=F8ComponentSourceKind.local,
@@ -2050,7 +2024,6 @@ def test_component_dialog_remote_preview_is_deferred_until_requested(monkeypatch
             componentId="remote-selection-preview",
             name="Remote Selection Preview",
             description="",
-            schemaVersion="f8studio-session/1",
             content={},
             createdAt="2026-04-21T00:00:00+00:00",
             updatedAt="2026-04-21T00:00:00+00:00",
@@ -2136,7 +2109,6 @@ def test_component_dialog_skips_redundant_preview_refresh_for_same_selection(mon
             componentId="local-preview",
             name="Local Preview",
             description="",
-            schemaVersion="f8studio-session/1",
             content={
                 "schemaVersion": "f8studio-session/1",
                 "layout": {"nodes": {}, "connections": []},
@@ -2184,7 +2156,6 @@ def test_component_dialog_skips_redundant_action_button_updates_for_same_selecti
                 componentId="local-button-state",
                 name="Local Button State",
                 description="",
-                schemaVersion="f8studio-session/1",
                 content={
                     "schemaVersion": "f8studio-session/1",
                     "layout": {"nodes": {}, "connections": []},
@@ -2243,7 +2214,6 @@ def test_component_dialog_selection_change_resolves_action_entries_once(monkeypa
                 componentId="local-resolution-state",
                 name="Local Resolution State",
                 description="",
-                schemaVersion="f8studio-session/1",
                 content={
                     "schemaVersion": "f8studio-session/1",
                     "layout": {"nodes": {}, "connections": []},
@@ -2303,7 +2273,6 @@ def test_component_dialog_skips_redundant_raw_preview_updates_for_same_selection
                 componentId="local-raw-state",
                 name="Local Raw State",
                 description="",
-                schemaVersion="f8studio-session/1",
                 content={
                     "schemaVersion": "f8studio-session/1",
                     "layout": {"nodes": {}, "connections": []},
@@ -2347,7 +2316,7 @@ def test_graph_component_actions_overwrite_choices_only_include_drafts(monkeypat
     _ensure_app()
     captured_choice_ids: list[str] = []
     draft_entry = F8ComponentEntry(
-        record=F8ComponentRecord(componentId="draft-component", name="Draft Component"),
+        record=F8ComponentRecord(componentId="draft-component", name="Draft Component", content={}),
         source=F8ComponentSourceKind.local,
         isLocalDraft=True,
     )
@@ -2419,7 +2388,6 @@ def test_component_catalog_row_without_description_stays_compact(monkeypatch) ->
             componentId="compact-row",
             name="Compact Row",
             description="This description should not appear in the row.",
-            schemaVersion="f8studio-session/1",
             content={"schemaVersion": "f8studio-session/1", "layout": {"nodes": {}, "connections": []}},
         ),
         source=F8ComponentSourceKind.remote_public,
@@ -2447,7 +2415,6 @@ def test_component_catalog_row_shows_remote_version_number_badge(monkeypatch) ->
             componentId="revision-row",
             name="Revision Row",
             description="",
-            schemaVersion="f8studio-session/1",
             content={"schemaVersion": "f8studio-session/1", "layout": {"nodes": {}, "connections": []}},
         ),
         source=F8ComponentSourceKind.remote_private,

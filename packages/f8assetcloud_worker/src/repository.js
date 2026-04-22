@@ -1300,13 +1300,12 @@ function normalizeComponentRecord(record, { expectedComponentId }) {
   if (!isPlainObject(record)) {
     throw new AssetValidationError('record is required');
   }
+  if (Object.hasOwn(record, 'schemaVersion')) {
+    throw new AssetValidationError('record.schemaVersion is not allowed; use record.content.schemaVersion');
+  }
   const componentId = requireNonEmptyString(record.componentId, 'record.componentId is required');
   if (expectedComponentId && componentId !== expectedComponentId) {
     throw new AssetValidationError('record.componentId must match the request path');
-  }
-  const schemaVersion = requireNonEmptyString(record.schemaVersion, 'record.schemaVersion is required');
-  if (schemaVersion !== COMPONENT_SCHEMA_VERSION) {
-    throw new AssetValidationError(`record.schemaVersion must be ${COMPONENT_SCHEMA_VERSION}`);
   }
   if (!isPlainObject(record.content)) {
     throw new AssetValidationError('record.content must be a JSON object');
@@ -1323,7 +1322,6 @@ function normalizeComponentRecord(record, { expectedComponentId }) {
     name: requireNonEmptyString(record.name, 'record.name is required'),
     description: stringOrDefault(record.description, ''),
     tags: normalizeTags(record.tags),
-    schemaVersion,
     content: deepCloneJson(record.content),
     createdAt: normalizeIsoString(record.createdAt, ''),
     updatedAt: normalizeIsoString(record.updatedAt, ''),
@@ -1402,7 +1400,6 @@ function componentSummaryPayloadFromRow(row, viewerUserId) {
 }
 
 function componentDetailPayloadFromRows({ head, version, subscription, viewerUserId, includeVersionNumber }) {
-  const record = parseComponentRecord(version.content, { head, version });
   const payload = {
     ...componentSummaryPayloadFromRow(
       {
@@ -1414,7 +1411,6 @@ function componentDetailPayloadFromRows({ head, version, subscription, viewerUse
       },
       viewerUserId,
     ),
-    schemaVersion: stringOrDefault(record.schemaVersion, COMPONENT_SCHEMA_VERSION),
     versionCreatedAt: String(version.created_at),
     createdByUserId: String(version.created_by_user_id),
   };
@@ -1603,7 +1599,6 @@ function parseComponentRecord(content, { head = null, version = null } = {}) {
     name: stringOrDefault(head?.name, componentId),
     description: stringOrDefault(head?.description, ''),
     tags: normalizeTags(parseJsonArray(head?.tags_json)),
-    schemaVersion: stringOrDefault(contentPayload.schemaVersion, COMPONENT_SCHEMA_VERSION),
     content: contentPayload,
     createdAt,
     updatedAt,

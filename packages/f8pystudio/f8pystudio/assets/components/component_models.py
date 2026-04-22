@@ -3,7 +3,7 @@ from __future__ import annotations
 from enum import Enum
 from msgspec import Struct, field
 
-from f8pystudio.nodegraph.session_schema import SESSION_SCHEMA_VERSION
+from f8pysdk.specs import F8ComponentRecord
 from ..common import JsonObject, now_iso
 
 
@@ -23,17 +23,6 @@ class F8ComponentDraftOriginKind(Enum):
     new = "new"
     copy_local = "copy_local"
     copy_remote = "copy_remote"
-
-
-class F8ComponentRecord(Struct, kw_only=True):
-    componentId: str
-    name: str
-    description: str = ""
-    tags: list[str] = field(default_factory=list)
-    schemaVersion: str = SESSION_SCHEMA_VERSION
-    content: JsonObject = field(default_factory=dict)
-    createdAt: str = field(default_factory=now_iso)
-    updatedAt: str = field(default_factory=now_iso)
 
 
 class F8ComponentEntry(Struct, kw_only=True):

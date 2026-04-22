@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 
 import pytest
+from f8pysdk.codec import validate_as
+from f8pysdk.specs import F8ComponentRecord as ProtocolF8ComponentRecord
 
 from f8pystudio.assets.components.component_catalog import ComponentCatalogService
 from f8pystudio.assets.components.component_repository import (
@@ -55,7 +57,6 @@ def test_component_import_renames_duplicate_names(monkeypatch: pytest.MonkeyPatc
             "name": "Imported Component",
             "description": "desc",
             "tags": ["demo"],
-            "schemaVersion": "f8studio-session/1",
             "content": {
                 "schemaVersion": "f8studio-session/1",
                 "layout": {
@@ -117,7 +118,6 @@ def test_component_import_rejects_wrong_asset_type(monkeypatch: pytest.MonkeyPat
             "name": "Wrong Type",
             "description": "",
             "tags": [],
-            "schemaVersion": "f8studio-session/1",
             "content": {
                 "schemaVersion": "f8studio-session/1",
                 "layout": {
@@ -207,3 +207,19 @@ def test_component_export_sanitizes_launch_runtime_errors_and_publish_redactions
     assert node_payload["custom"]["path"] == ""
     assert "preview" not in node_payload["custom"]
     assert "lastError" not in node_payload["custom"]
+
+
+def test_component_protocol_record_rejects_legacy_top_level_schema_version() -> None:
+    with pytest.raises(Exception):
+        validate_as(
+            ProtocolF8ComponentRecord,
+            {
+                "componentId": "component-legacy",
+                "name": "Legacy Component",
+                "schemaVersion": "f8studio-session/1",
+                "content": {
+                    "schemaVersion": "f8studio-session/1",
+                    "layout": {"nodes": {}, "connections": []},
+                },
+            },
+        )

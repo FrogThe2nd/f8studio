@@ -13,7 +13,6 @@ from qtpy import QtCore
 
 from f8pysdk.codec import copy_model, validate_as
 from ...nodegraph.session_payload_sanitizer import sanitize_session_content_for_persistence
-from ...nodegraph.session_schema import SESSION_SCHEMA_VERSION
 
 from ..common import (
     AssetCloudCredentialStore,
@@ -1028,7 +1027,6 @@ def _summary_component_record_from_payload(payload: JsonObject) -> F8ComponentRe
         name=_payload_str(payload, "name"),
         description=_payload_optional_str(payload, "description") or "",
         tags=_payload_string_list(payload, "tags"),
-        schemaVersion=_payload_optional_str(payload, "schemaVersion") or SESSION_SCHEMA_VERSION,
         content={},
         createdAt=_payload_str(payload, "createdAt"),
         updatedAt=_payload_str(payload, "updatedAt"),
@@ -1084,7 +1082,6 @@ def _merge_component_entries(existing_entry: F8ComponentEntry, incoming_entry: F
         name=str(incoming_entry.record.name),
         description=str(incoming_entry.record.description),
         tags=list(incoming_entry.record.tags),
-        schemaVersion=str(incoming_entry.record.schemaVersion),
         content=existing_entry.record.content,
         createdAt=str(incoming_entry.record.createdAt),
         updatedAt=str(incoming_entry.record.updatedAt),
@@ -1137,7 +1134,6 @@ def _hydrate_component_entry(entry: F8ComponentEntry, record: F8ComponentRecord)
         name=str(entry.record.name or record.name),
         description=str(entry.record.description or record.description),
         tags=list(entry.record.tags or record.tags),
-        schemaVersion=str(entry.record.schemaVersion or record.schemaVersion),
         content=record.content,
         createdAt=str(entry.record.createdAt or record.createdAt),
         updatedAt=str(entry.record.updatedAt or record.updatedAt),
@@ -1242,7 +1238,6 @@ def _record_payload(record: F8ComponentRecord) -> JsonObject:
         "name": str(record.name),
         "description": str(record.description),
         "tags": [str(tag) for tag in list(record.tags or []) if str(tag).strip()],
-        "schemaVersion": str(record.schemaVersion),
         "content": sanitize_session_content_for_persistence(
             record.content,
             redact_publish_state_values=True,

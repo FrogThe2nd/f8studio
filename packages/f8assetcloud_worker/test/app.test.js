@@ -262,7 +262,6 @@ function componentPayload({ componentId, name, visibility = 'private', versionNu
       name: name || 'Component 1',
       description: 'published session',
       tags: ['session'],
-      schemaVersion: 'f8studio-session/1',
       content: {
         schemaVersion: 'f8studio-session/1',
         layout: {
@@ -1362,12 +1361,13 @@ test('component asset lifecycle validates session envelope and visibility rules'
         name: 'Bad',
         description: '',
         tags: [],
-        schemaVersion: 'bad',
+        schemaVersion: 'f8studio-session/1',
         content: { schemaVersion: 'bad', layout: {} },
       },
     },
   });
   assert.equal(invalid.status, 400);
+  assert.equal(invalid.json.message, 'record.schemaVersion is not allowed; use record.content.schemaVersion');
 
   const created = await jsonRequest(app, env, '/v1/components', {
     method: 'POST',
@@ -1376,7 +1376,7 @@ test('component asset lifecycle validates session envelope and visibility rules'
   });
   assert.equal(created.status, 200);
   assert.equal(created.json.componentId, 'component-a');
-  assert.equal(created.json.schemaVersion, 'f8studio-session/1');
+  assert.equal(Object.hasOwn(created.json, 'schemaVersion'), false);
   const componentVariantDetails = await env.DB.prepare(
     'SELECT asset_id FROM variant_details WHERE asset_id = ?',
   )

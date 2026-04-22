@@ -18,7 +18,12 @@ from ...assets.ui.project_asset_dialogs import (
     ProjectAssetMetaDialog, AssetOverwriteChoice, AssetOverwriteMetaDialog,
     ProjectPickerDialog,
 )
-from ...assets.components.component_models import F8ComponentRecord, F8ComponentEntry, F8ComponentSourceKind
+from ...assets.components.component_models import (
+    F8ComponentEntry,
+    F8ComponentRecord,
+    F8ComponentSourceKind,
+    component_now_iso,
+)
 from ...assets.components.component_repository import upsert_component
 from ...assets.projects.project_models import F8ProjectRecord
 from ...assets.projects.project_storage import ProjectStorageService
@@ -401,12 +406,15 @@ def save_component_as_dialog(
                     break
         if overwrite_entry is None:
             overwrite_entry = _mine_component_entry_by_name(name)
+        timestamp = component_now_iso()
         record = F8ComponentRecord(
             componentId=new_asset_id() if overwrite_entry is None else str(overwrite_entry.record.componentId),
             name=name,
             description=description,
             tags=tags,
             content=studio_graph.serialize_publish_session(),
+            createdAt=timestamp,
+            updatedAt=timestamp,
         )
         from ...assets.components.component_repository import upsert_component
         upsert_component(record)

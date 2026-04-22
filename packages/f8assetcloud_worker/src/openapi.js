@@ -136,7 +136,6 @@ const componentRecordSchema = z.object({
   name: z.string(),
   description: z.string(),
   tags: z.array(z.string()),
-  schemaVersion: z.string(),
   content: unknownObjectSchema,
   createdAt: z.string(),
   updatedAt: z.string(),
@@ -147,7 +146,6 @@ const componentRecordRequestSchema = z.object({
   name: z.string(),
   description: z.string().optional(),
   tags: z.array(z.string()).optional(),
-  schemaVersion: z.string(),
   content: unknownObjectSchema,
   createdAt: z.string().optional(),
   updatedAt: z.string().optional(),
@@ -175,7 +173,6 @@ const variantDetailSchema = variantSummarySchema.extend({
 });
 
 const componentDetailSchema = componentSummarySchema.extend({
-  schemaVersion: z.string(),
   versionCreatedAt: z.string(),
   createdByUserId: z.string(),
 });
