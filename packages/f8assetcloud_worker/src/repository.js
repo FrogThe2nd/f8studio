@@ -120,6 +120,30 @@ export class AssetRepository {
     };
   }
 
+  async getUserById(userId) {
+    const row = await this._db.prepare(
+      `SELECT id, name, email, emailVerified, role, createdAt, updatedAt
+       FROM user
+       WHERE id = ?`,
+    )
+      .bind(String(userId))
+      .first();
+    if (row === null) {
+      return null;
+    }
+    return {
+      userId: String(row.id),
+      name: stringOrDefault(row.name, String(row.email || '')),
+      email: String(row.email || ''),
+      emailVerified: Number(row.emailVerified || 0) !== 0,
+      role: normalizeUserRole(row.role),
+      isAdmin: normalizeUserRole(row.role) === 'admin',
+      canUpload: normalizeUserRole(row.role) !== 'readonly',
+      createdAt: normalizeDbTimestamp(row.createdAt),
+      updatedAt: normalizeDbTimestamp(row.updatedAt),
+    };
+  }
+
   async isUserNameTaken({ name, excludeUserId = '' }) {
     const normalizedName = String(name || '').trim();
     if (!normalizedName) {
@@ -307,24 +331,8 @@ export class AssetRepository {
     if (assetTypeHint && String(existing.asset_type) !== String(assetTypeHint)) {
       return false;
     }
-    const assetIdStr = String(assetId);
-
-    await this._db.prepare('DELETE FROM asset_subscriptions WHERE asset_id = ?')
-      .bind(assetIdStr)
-      .run();
-
-    await this._db.prepare('DELETE FROM asset_versions WHERE asset_id = ?')
-      .bind(assetIdStr)
-      .run();
-
-    if (await this._hasVariantDetailsTable()) {
-      await this._db.prepare('DELETE FROM variant_details WHERE asset_id = ?')
-        .bind(assetIdStr)
-        .run();
-    }
-
     await this._db.prepare('DELETE FROM asset_heads WHERE asset_id = ?')
-      .bind(assetIdStr)
+      .bind(String(assetId))
       .run();
 
     return true;
@@ -364,8 +372,8 @@ export class AssetRepository {
     await this._deleteOwnedAsset({ assetId: variantId, assetType: 'variant', userId });
   }
 
-  async getVariant({ variantId, userId }) {
-    return this._getAssetDetailPayload({ assetId: variantId, assetType: 'variant', userId, versionNumber: null });
+  async getVariant({ variantId, userId, head = null }) {
+    return this._getAssetDetailPayload({ assetId: variantId, assetType: 'variant', userId, versionNumber: null, head });
   }
 
   async listVariants({ userId, kind, baseNodeType, query, visibility, owner, cursor }) {
@@ -391,16 +399,16 @@ export class AssetRepository {
     return this._listAssetSubscribers({ assetId: variantId, assetType: 'variant', userId, cursor });
   }
 
-  async getVariantVersion({ variantId, versionNumber, userId }) {
-    return this._getAssetDetailPayload({ assetId: variantId, assetType: 'variant', userId, versionNumber });
+  async getVariantVersion({ variantId, versionNumber, userId, head = null }) {
+    return this._getAssetDetailPayload({ assetId: variantId, assetType: 'variant', userId, versionNumber, head });
   }
 
-  async getVariantContent({ variantId, userId }) {
-    return this._getAssetContentPayload({ assetId: variantId, assetType: 'variant', userId, versionNumber: null });
+  async getVariantContent({ variantId, userId, head = null }) {
+    return this._getAssetContentPayload({ assetId: variantId, assetType: 'variant', userId, versionNumber: null, head });
   }
 
-  async getVariantVersionContent({ variantId, versionNumber, userId }) {
-    return this._getAssetContentPayload({ assetId: variantId, assetType: 'variant', userId, versionNumber });
+  async getVariantVersionContent({ variantId, versionNumber, userId, head = null }) {
+    return this._getAssetContentPayload({ assetId: variantId, assetType: 'variant', userId, versionNumber, head });
   }
 
   async subscribeVariant({ variantId, userId }) {
@@ -444,8 +452,8 @@ export class AssetRepository {
     await this._deleteOwnedAsset({ assetId: componentId, assetType: 'component', userId });
   }
 
-  async getComponent({ componentId, userId }) {
-    return this._getAssetDetailPayload({ assetId: componentId, assetType: 'component', userId, versionNumber: null });
+  async getComponent({ componentId, userId, head = null }) {
+    return this._getAssetDetailPayload({ assetId: componentId, assetType: 'component', userId, versionNumber: null, head });
   }
 
   async listComponents({ userId, query, visibility, owner, cursor }) {
@@ -468,16 +476,16 @@ export class AssetRepository {
     return this._listAssetSubscribers({ assetId: componentId, assetType: 'component', userId, cursor });
   }
 
-  async getComponentVersion({ componentId, versionNumber, userId }) {
-    return this._getAssetDetailPayload({ assetId: componentId, assetType: 'component', userId, versionNumber });
+  async getComponentVersion({ componentId, versionNumber, userId, head = null }) {
+    return this._getAssetDetailPayload({ assetId: componentId, assetType: 'component', userId, versionNumber, head });
   }
 
-  async getComponentContent({ componentId, userId }) {
-    return this._getAssetContentPayload({ assetId: componentId, assetType: 'component', userId, versionNumber: null });
+  async getComponentContent({ componentId, userId, head = null }) {
+    return this._getAssetContentPayload({ assetId: componentId, assetType: 'component', userId, versionNumber: null, head });
   }
 
-  async getComponentVersionContent({ componentId, versionNumber, userId }) {
-    return this._getAssetContentPayload({ assetId: componentId, assetType: 'component', userId, versionNumber });
+  async getComponentVersionContent({ componentId, versionNumber, userId, head = null }) {
+    return this._getAssetContentPayload({ assetId: componentId, assetType: 'component', userId, versionNumber, head });
   }
 
   async subscribeComponent({ componentId, userId }) {
@@ -606,49 +614,35 @@ export class AssetRepository {
 
   async _deleteOwnedAsset({ assetId, assetType, userId }) {
     await this._requireOwnedAsset({ assetId, assetType, userId });
-    const assetIdStr = String(assetId);
-
-    await this._db.prepare('DELETE FROM asset_subscriptions WHERE asset_id = ?')
-      .bind(assetIdStr)
-      .run();
-
-    await this._db.prepare('DELETE FROM asset_versions WHERE asset_id = ?')
-      .bind(assetIdStr)
-      .run();
-
-    if (await this._hasVariantDetailsTable()) {
-      await this._db.prepare('DELETE FROM variant_details WHERE asset_id = ?')
-        .bind(assetIdStr)
-        .run();
-    }
-
     await this._db.prepare('DELETE FROM asset_heads WHERE asset_id = ?')
-      .bind(assetIdStr)
+      .bind(String(assetId))
       .run();
   }
 
-  async _getAssetContext({ assetId, assetType, userId, versionNumber }) {
-    const head = await this.getAssetById(assetId, assetType);
-    if (head === null || String(head.asset_type) !== assetType) {
+  async _getAssetContext({ assetId, assetType, userId, versionNumber, includeContent = false, head = null }) {
+    const resolvedHead = head ?? await this.getAssetById(assetId, assetType);
+    if (resolvedHead === null || String(resolvedHead.asset_type) !== assetType) {
       throw new AssetNotFoundError(`Asset ${assetId} not found`);
     }
-    ensureCanView(head, userId);
-    const targetVersionNumber = versionNumber === null ? Number(head.current_version_number) : normalizeVersionNumber(versionNumber);
-    if (targetVersionNumber !== Number(head.current_version_number) && String(head.visibility) !== 'public' && String(head.owner_user_id) !== String(userId || '')) {
+    ensureCanView(resolvedHead, userId);
+    const targetVersionNumber = versionNumber === null ? Number(resolvedHead.current_version_number) : normalizeVersionNumber(versionNumber);
+    if (targetVersionNumber !== Number(resolvedHead.current_version_number) && String(resolvedHead.visibility) !== 'public' && String(resolvedHead.owner_user_id) !== String(userId || '')) {
       throw new AssetPermissionError('forbidden');
     }
-    const version = await this.getAssetVersion(assetId, targetVersionNumber);
+    const version = includeContent
+      ? await this.getAssetVersion(assetId, targetVersionNumber)
+      : await this.getAssetVersionMetadata(assetId, targetVersionNumber);
     if (version === null) {
       throw new AssetNotFoundError(`Asset version ${assetId}:${targetVersionNumber} not found`);
     }
     const subscription = userId ? await this._findSubscriptionRow(assetId, userId) : null;
-    return { head, version, subscription };
+    return { head: resolvedHead, version, subscription };
   }
 
-  async _getAssetDetailPayload({ assetId, assetType, userId, versionNumber }) {
-    const { head, version, subscription } = await this._getAssetContext({ assetId, assetType, userId, versionNumber });
+  async _getAssetDetailPayload({ assetId, assetType, userId, versionNumber, head = null }) {
+    const { head: resolvedHead, version, subscription } = await this._getAssetContext({ assetId, assetType, userId, versionNumber, head });
     return typedAssetDetailPayloadFromRows({
-      head,
+      head: resolvedHead,
       version,
       subscription,
       viewerUserId: userId,
@@ -656,9 +650,9 @@ export class AssetRepository {
     });
   }
 
-  async _getAssetContentPayload({ assetId, assetType, userId, versionNumber }) {
-    const { head, version } = await this._getAssetContext({ assetId, assetType, userId, versionNumber });
-    return typedAssetContentPayloadFromRows({ head, version });
+  async _getAssetContentPayload({ assetId, assetType, userId, versionNumber, head = null }) {
+    const { head: resolvedHead, version } = await this._getAssetContext({ assetId, assetType, userId, versionNumber, includeContent: true, head });
+    return typedAssetContentPayloadFromRows({ head: resolvedHead, version });
   }
 
   async _listTypedAssetSummaries({ assetType, userId, query, cursor, visibility, owner, extraFilters }) {
@@ -729,7 +723,7 @@ export class AssetRepository {
 
     const start = parseCursor(cursor);
     const result = await this._db.prepare(
-      `SELECT asset_id, version_number, content, created_at, created_by_user_id, change_summary
+      `SELECT asset_id, version_number, created_at, created_by_user_id, change_summary
        FROM asset_versions
        WHERE asset_id = ?
        ORDER BY version_number DESC
@@ -824,7 +818,7 @@ export class AssetRepository {
       throw new AssetPermissionError('forbidden');
     }
     const normalizedVersionNumber = normalizeVersionNumber(versionNumber);
-    const existingVersion = await this.getAssetVersion(assetId, normalizedVersionNumber);
+    const existingVersion = await this.getAssetVersionMetadata(assetId, normalizedVersionNumber);
     if (existingVersion === null) {
       throw new AssetNotFoundError(`Asset version ${assetId}:${normalizedVersionNumber} not found`);
     }
@@ -1036,6 +1030,17 @@ export class AssetRepository {
     return this._inflateVersionRow(row);
   }
 
+  async _findAssetVersionMetadataRow(assetId, versionNumber) {
+    const row = await this._db.prepare(
+      `SELECT asset_id, version_number, created_at, created_by_user_id, change_summary
+       FROM asset_versions
+       WHERE asset_id = ? AND version_number = ?`,
+    )
+      .bind(String(assetId), Number(versionNumber))
+      .first();
+    return row || null;
+  }
+
   async _inflateVersionRow(row) {
     return {
       ...row,
@@ -1049,6 +1054,10 @@ export class AssetRepository {
 
   async getAssetVersion(assetId, versionNumber) {
     return this._findAssetVersionRow(assetId, versionNumber);
+  }
+
+  async getAssetVersionMetadata(assetId, versionNumber) {
+    return this._findAssetVersionMetadataRow(assetId, versionNumber);
   }
 
   async _findSubscriptionRow(assetId, userId) {

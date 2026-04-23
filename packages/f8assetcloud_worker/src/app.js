@@ -21,6 +21,7 @@ const PURGE_ALL_ASSETS_CONFIRMATION_TEXT = 'DELETE ALL ASSETS';
 const DESKTOP_AUTHORIZATION_CODE_TTL_SECONDS = 300;
 const DESKTOP_ACCESS_TOKEN_TTL_SECONDS = 3600;
 const DESKTOP_REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 3600;
+const DESKTOP_REQUEST_PURGE_INTERVAL_MS = 60 * 1000;
 const DESKTOP_AUTH_CONFIRM_CSRF_COOKIE = 'f8assetcloud_desktop_csrf';
 const DESKTOP_AUTH_ALLOWED_CLIENT_IDS = new Set(['pystudio']);
 const MAX_REQUEST_COMPRESSED_BYTES = 12 * 1024 * 1024;
@@ -48,6 +49,8 @@ const RESERVED_IDENTITY_NAMES = new Set([
 const textEncoder = new TextEncoder();
 let bootstrapAdminInitByDb = new WeakMap();
 let authCacheByDb = new WeakMap();
+let lastDesktopAuthorizationCodePurgeByDb = new WeakMap();
+let lastDesktopSessionPurgeByDb = new WeakMap();
 
 export function createApp() {
   const app = new Hono();
@@ -65,9 +68,10 @@ export function createApp() {
   }));
 
   app.all(`${AUTH_BASE_PATH}/*`, async (c) => {
-    const auth = await getOrCreateAuth(c.env, c.req.raw);
+    const siteSettings = await readSiteSettings(c.env.DB);
+    const auth = await getOrCreateAuth(c.env, c.req.raw, siteSettings);
     await ensureBootstrapAdmin({ env: c.env });
-    if (await shouldBlockPublicRegistration({ db: c.env.DB, request: c.req.raw })) {
+    if (shouldBlockPublicRegistration({ siteSettings, request: c.req.raw })) {
       return jsonResponse(403, { message: 'new user registration is disabled' });
     }
     return auth.handler(c.req.raw);
@@ -121,8 +125,8 @@ export function createApp() {
       }
       const assetType = String(head.asset_type);
       const asset = assetType === 'variant'
-        ? await repo.getVariant({ variantId: assetId, userId: viewerId })
-        : await repo.getComponent({ componentId: assetId, userId: viewerId });
+        ? await repo.getVariant({ variantId: assetId, userId: viewerId, head })
+        : await repo.getComponent({ componentId: assetId, userId: viewerId, head });
       applyAnonymousPublicCacheHeaders(c, c.req.raw, String(head.visibility) === 'public' && viewer === null);
       return { assetType, asset };
     },
@@ -437,6 +441,8 @@ export function createApp() {
 export function resetWorkerCachesForTesting() {
   bootstrapAdminInitByDb = new WeakMap();
   authCacheByDb = new WeakMap();
+  lastDesktopAuthorizationCodePurgeByDb = new WeakMap();
+  lastDesktopSessionPurgeByDb = new WeakMap();
 }
 
 async function routeAssetRequest({ auth, db, repo, request, url, assetType, allowedOrigins }) {
@@ -488,11 +494,15 @@ async function routeAssetRequest({ auth, db, repo, request, url, assetType, allo
 
   if (parts.length === 2 && parts[1] === 'content' && request.method === 'GET') {
     const viewer = await optionalAuthenticatedUser({ auth, db, request });
+    const viewerId = viewer === null ? null : viewer.userId;
     const head = await repo.getAssetById(assetId, assetType);
+    if (head === null || String(head.asset_type) !== assetType) {
+      return jsonResponse(404, { message: 'not found' });
+    }
     const result = assetType === 'variant'
-      ? await repo.getVariantContent({ variantId: assetId, userId: viewer === null ? null : viewer.userId })
-      : await repo.getComponentContent({ componentId: assetId, userId: viewer === null ? null : viewer.userId });
-    return jsonResponse(200, result, anonymousPublicResponseHeaders(request, viewer === null && String(head?.visibility) === 'public'));
+      ? await repo.getVariantContent({ variantId: assetId, userId: viewerId, head })
+      : await repo.getComponentContent({ componentId: assetId, userId: viewerId, head });
+    return jsonResponse(200, result, anonymousPublicResponseHeaders(request, viewer === null && String(head.visibility) === 'public'));
   }
 
   if (parts.length === 2 && parts[1] === 'download' && request.method === 'GET') {
@@ -506,8 +516,8 @@ async function routeAssetRequest({ auth, db, repo, request, url, assetType, allo
       return jsonResponse(404, { message: 'not found' });
     }
     const payload = assetType === 'variant'
-      ? await repo.getVariantContent({ variantId: assetId, userId: viewerId })
-      : await repo.getComponentContent({ componentId: assetId, userId: viewerId });
+      ? await repo.getVariantContent({ variantId: assetId, userId: viewerId, head })
+      : await repo.getComponentContent({ componentId: assetId, userId: viewerId, head });
     return assetDownloadResponse(payload, {
       head,
       versionNumber: payload.versionNumber,
@@ -573,12 +583,16 @@ async function routeAssetRequest({ auth, db, repo, request, url, assetType, allo
 
   if (parts.length === 4 && parts[1] === 'versions' && parts[3] === 'content' && request.method === 'GET') {
     const viewer = await optionalAuthenticatedUser({ auth, db, request });
+    const viewerId = viewer === null ? null : viewer.userId;
     const versionNumber = parts[2];
     const head = await repo.getAssetById(assetId, assetType);
+    if (head === null || String(head.asset_type) !== assetType) {
+      return jsonResponse(404, { message: 'not found' });
+    }
     const result = assetType === 'variant'
-      ? await repo.getVariantVersionContent({ variantId: assetId, versionNumber, userId: viewer === null ? null : viewer.userId })
-      : await repo.getComponentVersionContent({ componentId: assetId, versionNumber, userId: viewer === null ? null : viewer.userId });
-    return jsonResponse(200, result, anonymousPublicResponseHeaders(request, viewer === null && String(head?.visibility) === 'public'));
+      ? await repo.getVariantVersionContent({ variantId: assetId, versionNumber, userId: viewerId, head })
+      : await repo.getComponentVersionContent({ componentId: assetId, versionNumber, userId: viewerId, head });
+    return jsonResponse(200, result, anonymousPublicResponseHeaders(request, viewer === null && String(head.visibility) === 'public'));
   }
 
   if (parts.length === 4 && parts[1] === 'versions' && parts[3] === 'download' && request.method === 'GET') {
@@ -593,8 +607,8 @@ async function routeAssetRequest({ auth, db, repo, request, url, assetType, allo
       return jsonResponse(404, { message: 'not found' });
     }
     const payload = assetType === 'variant'
-      ? await repo.getVariantVersionContent({ variantId: assetId, versionNumber, userId: viewerId })
-      : await repo.getComponentVersionContent({ componentId: assetId, versionNumber, userId: viewerId });
+      ? await repo.getVariantVersionContent({ variantId: assetId, versionNumber, userId: viewerId, head })
+      : await repo.getComponentVersionContent({ componentId: assetId, versionNumber, userId: viewerId, head });
     return assetDownloadResponse(payload, {
       head,
       versionNumber: payload.versionNumber,
@@ -1091,8 +1105,7 @@ async function routeDesktopTokenPost({ db, request }) {
   if (computedChallenge !== record.codeChallenge) {
     throw new HttpError(400, 'codeVerifier is invalid');
   }
-  const user = await readAppUserById(db, record.userId);
-  if (user === null) {
+  if (record.user === null) {
     throw new HttpError(401, 'browser session is no longer valid');
   }
   const usedAt = Date.now();
@@ -1106,7 +1119,7 @@ async function routeDesktopTokenPost({ db, request }) {
   }
   const desktopAuth = await issueDesktopTokenPair({
     db,
-    user,
+    user: record.user,
   });
   return jsonResponse(200, desktopAuthResponsePayload(desktopAuth));
 }
@@ -1270,13 +1283,13 @@ function createAuth(env, { siteSettings, baseURL, trustedOrigins }) {
   });
 }
 
-async function getOrCreateAuth(env, request) {
-  const siteSettings = await readSiteSettings(env.DB);
+async function getOrCreateAuth(env, request, siteSettings = null) {
+  const resolvedSiteSettings = siteSettings ?? await readSiteSettings(env.DB);
   const requestUrl = new URL(request.url);
   const baseURL = resolveAuthBaseUrl(env, requestUrl);
   const trustedOrigins = resolveTrustedOrigins(env, requestUrl, baseURL);
   const cacheKey = buildAuthCacheKey({
-    allowUserRegistration: siteSettings.allowUserRegistration,
+    allowUserRegistration: resolvedSiteSettings.allowUserRegistration,
     baseURL,
     trustedOrigins,
   });
@@ -1286,7 +1299,7 @@ async function getOrCreateAuth(env, request) {
     return cached;
   }
   const auth = createAuth(env, {
-    siteSettings,
+    siteSettings: resolvedSiteSettings,
     baseURL,
     trustedOrigins,
   });
@@ -1467,7 +1480,7 @@ async function requireManagementUser({ auth, db, request, allowedOrigins = null 
 
 async function requireAssetWriteUser({ auth, db, repo, request, allowedOrigins = null }) {
   const user = await requireAuthenticatedUser({ auth, db, request, allowedOrigins });
-  const latestUser = await repo.getUserByIdWithStats(user.userId);
+  const latestUser = await repo.getUserById(user.userId);
   if (latestUser === null) {
     throw new HttpError(401, 'authentication required');
   }
@@ -1776,7 +1789,7 @@ async function startDesktopSocialSignIn({ auth, request, providerId, callbackURL
 }
 
 async function redirectWithDesktopAuthorizationCode({ db, desktopRequest, userId }) {
-  await purgeExpiredDesktopAuthorizationCodes(db);
+  await purgeExpiredDesktopAuthorizationCodesIfDue(db);
   const now = Date.now();
   const code = generateId(48);
   const expiresAt = now + DESKTOP_AUTHORIZATION_CODE_TTL_SECONDS * 1000;
@@ -1803,20 +1816,26 @@ async function redirectWithDesktopAuthorizationCode({ db, desktopRequest, userId
 }
 
 async function loadDesktopAuthorizationCodeRecord(db, code) {
-  await purgeExpiredDesktopAuthorizationCodes(db);
+  await purgeExpiredDesktopAuthorizationCodesIfDue(db);
   const row = await db.prepare(
     `SELECT
-      code,
-      user_id,
-      client_id,
-      redirect_uri,
-      code_challenge,
-      code_challenge_method,
-      created_at,
-      expires_at,
-      used_at
-    FROM desktop_authorization_codes
-    WHERE code = ?`,
+      dac.code,
+      dac.user_id,
+      dac.client_id,
+      dac.redirect_uri,
+      dac.code_challenge,
+      dac.code_challenge_method,
+      dac.created_at,
+      dac.expires_at,
+      dac.used_at,
+      u.id,
+      u.name,
+      u.email,
+      u.emailVerified,
+      u.role
+    FROM desktop_authorization_codes dac
+    LEFT JOIN user u ON u.id = dac.user_id
+    WHERE dac.code = ?`,
   )
     .bind(code)
     .first();
@@ -1833,6 +1852,7 @@ async function loadDesktopAuthorizationCodeRecord(db, code) {
     createdAt: Number(row.created_at || 0),
     expiresAt: Number(row.expires_at || 0),
     usedAt: row.used_at === null || row.used_at === undefined ? null : Number(row.used_at),
+    user: row.id === null || row.id === undefined ? null : appUserFromDbRow(row),
   };
 }
 
@@ -1840,6 +1860,13 @@ async function purgeExpiredDesktopAuthorizationCodes(db) {
   await db.prepare('DELETE FROM desktop_authorization_codes WHERE expires_at < ?')
     .bind(Date.now())
     .run();
+}
+
+async function purgeExpiredDesktopAuthorizationCodesIfDue(db) {
+  if (!shouldRunDbIntervalTask(lastDesktopAuthorizationCodePurgeByDb, db, DESKTOP_REQUEST_PURGE_INTERVAL_MS)) {
+    return;
+  }
+  await purgeExpiredDesktopAuthorizationCodes(db);
 }
 
 function assertAllowedDesktopClientId(clientId) {
@@ -2074,7 +2101,7 @@ function appUserFromDbRow(row) {
 }
 
 async function issueDesktopTokenPair({ db, user }) {
-  await purgeExpiredDesktopSessions(db);
+  await purgeExpiredDesktopSessionsIfDue(db);
   const now = Date.now();
   const accessToken = generateId(64);
   const refreshToken = generateId(64);
@@ -2124,14 +2151,22 @@ function desktopAuthResponsePayload(desktopAuth) {
 }
 
 async function refreshDesktopTokenPair({ db, refreshToken }) {
-  await purgeExpiredDesktopSessions(db);
+  await purgeExpiredDesktopSessionsIfDue(db);
   const refreshTokenHash = await hashOpaqueToken(refreshToken);
   const existing = await db.prepare(
-    `SELECT id, user_id
-     FROM desktop_sessions
-     WHERE refresh_token_hash = ?
-       AND refresh_token_expires_at > ?
-       AND revoked_at IS NULL
+    `SELECT
+       ds.id,
+       ds.user_id,
+       u.id AS user_id_for_payload,
+       u.name,
+       u.email,
+       u.emailVerified,
+       u.role
+     FROM desktop_sessions ds
+     JOIN user u ON u.id = ds.user_id
+     WHERE ds.refresh_token_hash = ?
+       AND ds.refresh_token_expires_at > ?
+       AND ds.revoked_at IS NULL
      LIMIT 1`,
   )
     .bind(refreshTokenHash, Date.now())
@@ -2139,10 +2174,13 @@ async function refreshDesktopTokenPair({ db, refreshToken }) {
   if (existing === null) {
     throw new HttpError(401, 'refreshToken is invalid or has expired');
   }
-  const user = await readAppUserById(db, String(existing.user_id || ''));
-  if (user === null) {
-    throw new HttpError(401, 'refreshToken is invalid or has expired');
-  }
+  const user = appUserFromDbRow({
+    id: existing.user_id_for_payload,
+    name: existing.name,
+    email: existing.email,
+    emailVerified: existing.emailVerified,
+    role: existing.role,
+  });
   const now = Date.now();
   const nextAccessToken = generateId(64);
   const nextRefreshToken = generateId(64);
@@ -2200,6 +2238,23 @@ async function purgeExpiredDesktopSessions(db) {
   )
     .bind(Date.now())
     .run();
+}
+
+async function purgeExpiredDesktopSessionsIfDue(db) {
+  if (!shouldRunDbIntervalTask(lastDesktopSessionPurgeByDb, db, DESKTOP_REQUEST_PURGE_INTERVAL_MS)) {
+    return;
+  }
+  await purgeExpiredDesktopSessions(db);
+}
+
+function shouldRunDbIntervalTask(lastRunByDb, db, intervalMs) {
+  const now = Date.now();
+  const lastRunAt = Number(lastRunByDb.get(db) || 0);
+  if (lastRunAt > 0 && now - lastRunAt < intervalMs) {
+    return false;
+  }
+  lastRunByDb.set(db, now);
+  return true;
 }
 
 async function hashOpaqueToken(value) {
@@ -3007,12 +3062,11 @@ async function sendResetPasswordMessage({ env, toEmail, recipientName, resetUrl 
   });
 }
 
-async function shouldBlockPublicRegistration({ db, request }) {
+function shouldBlockPublicRegistration({ siteSettings, request }) {
   if (!isPublicRegistrationRequest(request)) {
     return false;
   }
-  const settings = await readSiteSettings(db);
-  return !settings.allowUserRegistration;
+  return !siteSettings.allowUserRegistration;
 }
 
 function isPublicRegistrationRequest(request) {

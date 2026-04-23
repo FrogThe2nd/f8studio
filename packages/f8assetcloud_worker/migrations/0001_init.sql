@@ -117,7 +117,7 @@ CREATE TABLE asset_versions (
   created_by_user_id TEXT NOT NULL,
   change_summary TEXT,
   PRIMARY KEY (asset_id, version_number),
-  FOREIGN KEY (asset_id) REFERENCES asset_heads(asset_id),
+  FOREIGN KEY (asset_id) REFERENCES asset_heads(asset_id) ON DELETE CASCADE,
   FOREIGN KEY (created_by_user_id) REFERENCES user(id)
 );
 
@@ -130,7 +130,7 @@ CREATE TABLE asset_subscriptions (
   subscribed_at TEXT NOT NULL,
   last_seen_version_number INTEGER,
   PRIMARY KEY (asset_id, subscriber_user_id),
-  FOREIGN KEY (asset_id) REFERENCES asset_heads(asset_id),
+  FOREIGN KEY (asset_id) REFERENCES asset_heads(asset_id) ON DELETE CASCADE,
   FOREIGN KEY (subscriber_user_id) REFERENCES user(id)
 );
 
