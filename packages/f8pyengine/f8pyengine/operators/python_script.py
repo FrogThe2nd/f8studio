@@ -202,8 +202,8 @@ DEFAULT_CODE = (
     "# - onStart return values are ignored; use ctx.emit()/ctx.set_state().\n"
     "# - inputs binding mode is configured by state `inputMode`:\n"
     "#   - input_view (default): supports dot and mapping access\n"
-    "#   - raw_dict: plain dict only\n"
-    "#   - msgspec_struct: typed struct from dataIn schema\n"
+    "#   - raw_dict: plain dict only (faster for mapping-style high-frequency scripts)\n"
+    "#   - msgspec_struct: typed struct from dataIn schema (faster for dot-style high-frequency scripts)\n"
     "# - State TypeGuard helpers are available from f8_dynamic_states\n"
     "#   - example: from f8_dynamic_states import is_state_lastError\n"
     "#   - then: if is_state_lastError(value, field): ...\n"
@@ -1151,7 +1151,10 @@ PythonScriptRuntimeNode.SPEC = F8OperatorSpec(
         F8StateSpec(
             name="inputMode",
             label="Input Mode",
-            description="Input binding mode: input_view | raw_dict | msgspec_struct.",
+            description=(
+                "Input binding mode: input_view | raw_dict | msgspec_struct. "
+                "For high-frequency scripts, prefer raw_dict for mapping access or msgspec_struct for dot access."
+            ),
             valueSchema=string_schema(
                 default=INPUT_MODE_INPUT_VIEW,
                 enum=[INPUT_MODE_INPUT_VIEW, INPUT_MODE_RAW_DICT, INPUT_MODE_MSGSPEC_STRUCT],
