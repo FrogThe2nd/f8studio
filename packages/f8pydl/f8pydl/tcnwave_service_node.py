@@ -310,6 +310,7 @@ class OnnxTcnWaveServiceNode(ServiceNode):
         self._runtime_warning = ""
 
         self._window: deque[Any] = deque()
+        self._sequence_buffer: Any = None
         self._aggregator = DelayedAverageAggregator()
         self._new_frame_counter = 0
         self._last_processed_frame_id: int | None = None
@@ -330,6 +331,7 @@ class OnnxTcnWaveServiceNode(ServiceNode):
             await asyncio.gather(t, return_exceptions=True)
         self._close_shm()
         self._window.clear()
+        self._sequence_buffer = None
         self._aggregator.reset()
 
     async def on_lifecycle(self, active: bool, meta: dict[str, Any]) -> None:
@@ -523,6 +525,7 @@ class OnnxTcnWaveServiceNode(ServiceNode):
         self._runtime_yaml = None
         self._model = None
         self._window.clear()
+        self._sequence_buffer = None
         self._aggregator.reset()
         self._new_frame_counter = 0
         self._last_processed_frame_id = None
@@ -543,6 +546,7 @@ class OnnxTcnWaveServiceNode(ServiceNode):
             return
         self._close_shm()
         self._window.clear()
+        self._sequence_buffer = None
         self._aggregator.reset()
         self._new_frame_counter = 0
         self._last_processed_frame_id = None
@@ -649,6 +653,7 @@ class OnnxTcnWaveServiceNode(ServiceNode):
         self._runtime_yaml = yaml_path
         self._model = spec
         self._window = deque(maxlen=runtime.sequence_length)
+        self._sequence_buffer = None
         self._aggregator.reset()
         self._new_frame_counter = 0
         self._last_processed_frame_id = None
@@ -766,7 +771,21 @@ class OnnxTcnWaveServiceNode(ServiceNode):
                 if not do_infer:
                     continue
 
-                sequence = np.stack(self._window, axis=0)
+                sequence_buffer = self._sequence_buffer
+                if sequence_buffer is None:
+                    sequence_buffer = np.empty(
+                        (
+                            int(self._runtime.sequence_length),
+                            int(self._runtime.channels),
+                            int(self._runtime.input_height),
+                            int(self._runtime.input_width),
+                        ),
+                        dtype=np.float32,
+                    )
+                    self._sequence_buffer = sequence_buffer
+                for sequence_index, frame in enumerate(self._window):
+                    sequence_buffer[sequence_index] = frame
+                sequence = sequence_buffer
                 t_infer0 = time.perf_counter()
                 values_np = self._runtime.infer_sequence(sequence)
                 values = self._to_float_list(values_np.tolist())
