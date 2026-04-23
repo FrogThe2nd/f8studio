@@ -28,6 +28,7 @@ function createEnv({ allowUserRegistration = true, ...overrides } = {}) {
   const env = {
     DB: createSqliteD1Database({ migrationsSql }),
     BETTER_AUTH_SECRET: TEST_AUTH_SECRET,
+    AUTH_BASE_URL: 'http://worker.test',
     BOOTSTRAP_ADMIN_USERNAME: 'admin',
     BOOTSTRAP_ADMIN_DISPLAY_NAME: 'Administrator',
     BOOTSTRAP_ADMIN_PASSWORD: TEST_PASSWORD,
@@ -44,6 +45,7 @@ function createEnv({ allowUserRegistration = true, ...overrides } = {}) {
 }
 
 async function jsonRequest(app, env, pathname, { method, payload, cookie, origin } = {}) {
+  const requestMethod = method || 'GET';
   const headers = {};
   if (payload !== undefined) {
     headers['Content-Type'] = 'application/json';
@@ -51,11 +53,18 @@ async function jsonRequest(app, env, pathname, { method, payload, cookie, origin
   if (cookie) {
     headers.cookie = cookie;
   }
-  if (origin) {
+  if (origin !== undefined) {
     headers.origin = origin;
+  } else if (
+    cookie
+    && requestMethod !== 'GET'
+    && requestMethod !== 'HEAD'
+    && String(pathname).startsWith('/v1/')
+  ) {
+    headers.origin = new URL(String(env.AUTH_BASE_URL || 'http://worker.test')).origin;
   }
   const request = new Request(`http://worker.test${pathname}`, {
-    method: method || 'GET',
+    method: requestMethod,
     headers,
     body: payload === undefined ? undefined : JSON.stringify(payload),
   });
@@ -105,6 +114,11 @@ function extractDebugToken(logs, label) {
 function responseCookie(headers) {
   const setCookie = headers.get('set-cookie');
   return setCookie ? String(setCookie).split(';')[0] : '';
+}
+
+function desktopCsrfTokenFromHtml(html) {
+  const match = /name="csrf_token" value="([^"]+)"/.exec(String(html || ''));
+  return match ? String(match[1] || '') : '';
 }
 
 function pkceChallenge(value) {
@@ -603,7 +617,7 @@ test('providers endpoint reflects Google auth configuration', async (t) => {
   assert.equal(providers.json.google, true);
 });
 
-test('desktop browser auth renders a sign-in page and exchanges an authorization code for a session cookie', async (t) => {
+test('desktop browser auth renders a confirmation page and exchanges an authorization code for desktop tokens', async (t) => {
   const env = createEnv();
   t.after(() => env.DB.close());
   const app = createApp();
@@ -629,6 +643,10 @@ test('desktop browser auth renders a sign-in page and exchanges an authorization
   const pageHtml = await pageResponse.text();
   assert.match(pageHtml, /Continue to PyStudio/);
   assert.match(pageHtml, /name="email"/);
+  const pageCsrfCookie = responseCookie(pageResponse.headers);
+  const pageCsrfToken = desktopCsrfTokenFromHtml(pageHtml);
+  assert.ok(pageCsrfCookie);
+  assert.ok(pageCsrfToken);
 
   const authorizeBody = new URLSearchParams({
     client_id: 'pystudio',
@@ -636,6 +654,7 @@ test('desktop browser auth renders a sign-in page and exchanges an authorization
     state,
     code_challenge: codeChallenge,
     code_challenge_method: 'S256',
+    csrf_token: pageCsrfToken,
     email: 'desktop@example.com',
     password: TEST_PASSWORD,
   });
@@ -643,6 +662,8 @@ test('desktop browser auth renders a sign-in page and exchanges an authorization
     method: 'POST',
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
+      cookie: pageCsrfCookie,
+      origin: 'http://worker.test',
     },
     body: authorizeBody.toString(),
   }), env, {});
@@ -665,13 +686,16 @@ test('desktop browser auth renders a sign-in page and exchanges an authorization
   });
   assert.equal(tokenResponse.status, 200);
   assert.equal(tokenResponse.json.user.email, 'desktop@example.com');
-  assert.match(String(tokenResponse.json.sessionCookie || ''), /=/);
+  assert.ok(String(tokenResponse.json.accessToken || '').trim());
+  assert.ok(String(tokenResponse.json.refreshToken || '').trim());
 
-  const meResponse = await jsonRequest(app, env, '/v1/me', {
-    cookie: String(tokenResponse.json.sessionCookie || ''),
-  });
-  assert.equal(meResponse.status, 200);
-  assert.equal(meResponse.json.email, 'desktop@example.com');
+  const meResponseRaw = await app.fetch(new Request('http://worker.test/v1/me', {
+    headers: {
+      Authorization: `Bearer ${String(tokenResponse.json.accessToken || '')}`,
+    },
+  }), env, {});
+  assert.equal(meResponseRaw.status, 200);
+  assert.equal((await meResponseRaw.json()).email, 'desktop@example.com');
 
   const secondExchange = await jsonRequest(app, env, '/v1/auth/desktop/token', {
     method: 'POST',
@@ -700,7 +724,7 @@ test('desktop browser auth can authorize directly from an existing browser sessi
   const state = 'desktop-state-existing';
   const codeVerifier = 'desktop-code-verifier-existing';
   const codeChallenge = pkceChallenge(codeVerifier);
-  const authorizeResponse = await app.fetch(new Request(
+  const authorizePageResponse = await app.fetch(new Request(
     `http://worker.test/v1/auth/desktop/authorize?client_id=pystudio&redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(state)}&code_challenge=${encodeURIComponent(codeChallenge)}&code_challenge_method=S256`,
     {
       headers: {
@@ -708,6 +732,26 @@ test('desktop browser auth can authorize directly from an existing browser sessi
       },
     },
   ), env, {});
+  assert.equal(authorizePageResponse.status, 200);
+  const authorizePageHtml = await authorizePageResponse.text();
+  assert.match(authorizePageHtml, /Continue as/);
+  const authorizeBody = new URLSearchParams({
+    client_id: 'pystudio',
+    redirect_uri: redirectUri,
+    state,
+    code_challenge: codeChallenge,
+    code_challenge_method: 'S256',
+    csrf_token: desktopCsrfTokenFromHtml(authorizePageHtml),
+  });
+  const authorizeResponse = await app.fetch(new Request('http://worker.test/v1/auth/desktop/authorize', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      cookie: `${desktopUser.cookie}; ${responseCookie(authorizePageResponse.headers)}`,
+      origin: 'http://worker.test',
+    },
+    body: authorizeBody.toString(),
+  }), env, {});
   assert.equal(authorizeResponse.status, 302);
   const callbackUrl = new URL(String(authorizeResponse.headers.get('location') || ''));
   assert.equal(callbackUrl.searchParams.get('state'), state);
@@ -725,6 +769,96 @@ test('desktop browser auth can authorize directly from an existing browser sessi
   });
   assert.equal(tokenResponse.status, 200);
   assert.equal(tokenResponse.json.user.email, 'desktop-session@example.com');
+});
+
+test('desktop refresh rotates tokens and revoke invalidates the refresh token', async (t) => {
+  const env = createEnv();
+  t.after(() => env.DB.close());
+  const app = createApp();
+
+  const signedUp = await signUpUser(app, env, {
+    name: 'Desktop Refresh User',
+    email: 'desktop-refresh@example.com',
+  });
+  assert.equal(signedUp.status, 200);
+  assert.ok(signedUp.verifyToken);
+  const verified = await verifyUserEmail(app, env, signedUp.verifyToken);
+  assert.equal(verified.status, 200);
+
+  const redirectUri = 'http://127.0.0.1:42005/callback';
+  const state = 'desktop-refresh-state';
+  const codeVerifier = 'desktop-refresh-verifier';
+  const codeChallenge = pkceChallenge(codeVerifier);
+  const authorizePath = `/v1/auth/desktop/authorize?client_id=pystudio&redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(state)}&code_challenge=${encodeURIComponent(codeChallenge)}&code_challenge_method=S256`;
+  const authorizePage = await app.fetch(new Request(`http://worker.test${authorizePath}`), env, {});
+  assert.equal(authorizePage.status, 200);
+  const authorizeBody = new URLSearchParams({
+    client_id: 'pystudio',
+    redirect_uri: redirectUri,
+    state,
+    code_challenge: codeChallenge,
+    code_challenge_method: 'S256',
+    csrf_token: desktopCsrfTokenFromHtml(await authorizePage.text()),
+    email: 'desktop-refresh@example.com',
+    password: TEST_PASSWORD,
+  });
+  const authorizeResponse = await app.fetch(new Request('http://worker.test/v1/auth/desktop/authorize', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      cookie: responseCookie(authorizePage.headers),
+      origin: 'http://worker.test',
+    },
+    body: authorizeBody.toString(),
+  }), env, {});
+  assert.equal(authorizeResponse.status, 302);
+  const code = String(new URL(String(authorizeResponse.headers.get('location') || '')).searchParams.get('code') || '');
+  assert.ok(code);
+
+  const tokenResponse = await jsonRequest(app, env, '/v1/auth/desktop/token', {
+    method: 'POST',
+    payload: {
+      clientId: 'pystudio',
+      redirectUri,
+      code,
+      codeVerifier,
+    },
+  });
+  assert.equal(tokenResponse.status, 200);
+
+  const refreshResponse = await jsonRequest(app, env, '/v1/auth/desktop/refresh', {
+    method: 'POST',
+    payload: {
+      refreshToken: tokenResponse.json.refreshToken,
+    },
+  });
+  assert.equal(refreshResponse.status, 200);
+  assert.notEqual(refreshResponse.json.accessToken, tokenResponse.json.accessToken);
+  assert.notEqual(refreshResponse.json.refreshToken, tokenResponse.json.refreshToken);
+
+  const oldAccessMe = await app.fetch(new Request('http://worker.test/v1/me', {
+    headers: {
+      Authorization: `Bearer ${String(tokenResponse.json.accessToken || '')}`,
+    },
+  }), env, {});
+  assert.equal(oldAccessMe.status, 401);
+
+  const revokeResponse = await jsonRequest(app, env, '/v1/auth/desktop/revoke', {
+    method: 'POST',
+    payload: {
+      refreshToken: refreshResponse.json.refreshToken,
+    },
+  });
+  assert.equal(revokeResponse.status, 200);
+  assert.equal(revokeResponse.json.revoked, true);
+
+  const refreshAfterRevoke = await jsonRequest(app, env, '/v1/auth/desktop/refresh', {
+    method: 'POST',
+    payload: {
+      refreshToken: refreshResponse.json.refreshToken,
+    },
+  });
+  assert.equal(refreshAfterRevoke.status, 401);
 });
 
 test('desktop browser auth page shows a Google button when Google auth is configured', async (t) => {
@@ -825,6 +959,10 @@ test('openapi endpoints expose the audited worker contract', async (t) => {
   assert.equal(openapi.status, 200);
   assert.equal(openapi.json.info.title, 'Feel8 Asset Cloud API');
   assert.ok(openapi.json.paths['/v1/auth/providers']);
+  assert.ok(openapi.json.paths['/v1/auth/desktop/token']);
+  assert.ok(openapi.json.paths['/v1/auth/desktop/session']);
+  assert.ok(openapi.json.paths['/v1/auth/desktop/refresh']);
+  assert.ok(openapi.json.paths['/v1/auth/desktop/revoke']);
   assert.ok(openapi.json.paths['/v1/site-settings']);
   assert.ok(openapi.json.paths['/v1/me']);
   assert.ok(openapi.json.paths['/v1/me'].put);
@@ -1180,6 +1318,7 @@ test('variant asset lifecycle works with Better Auth cookie sessions', async (t)
     subscribers.json.entries.map((entry) => entry.name),
     ['Alice', 'Bob'],
   );
+  assert.ok(subscribers.json.entries.every((entry) => Object.hasOwn(entry, 'email') === false));
 
   const forbiddenSubscribers = await jsonRequest(app, env, '/v1/variants/alice-variant/subscribers', {
     cookie: bob.cookie,
@@ -1433,6 +1572,7 @@ test('component asset lifecycle validates session envelope and visibility rules'
     subscribers.json.entries.map((entry) => entry.name),
     ['Alice', 'Bob'],
   );
+  assert.ok(subscribers.json.entries.every((entry) => Object.hasOwn(entry, 'email') === false));
 
   const history1 = await jsonRequest(app, env, '/v1/components/component-a/versions', { cookie: alice.cookie });
   assert.equal(history1.status, 200);
@@ -2329,6 +2469,7 @@ test('worker can accept gzip-compressed asset JSON request bodies', async (t) =>
       'Content-Type': 'application/json',
       'Content-Encoding': 'gzip',
       cookie: alice.cookie,
+      origin: 'http://worker.test',
     },
     body: compressedPayload,
   });
@@ -2357,6 +2498,7 @@ test('worker rejects mismatched gzip request body headers', async (t) => {
     headers: {
       'Content-Type': 'application/json',
       cookie: alice.cookie,
+      origin: 'http://worker.test',
     },
     body: gzippedPayload,
   }), env, {});
@@ -2369,6 +2511,7 @@ test('worker rejects mismatched gzip request body headers', async (t) => {
       'Content-Type': 'application/json',
       'Content-Encoding': 'gzip',
       cookie: alice.cookie,
+      origin: 'http://worker.test',
     },
     body: payloadJson,
   }), env, {});

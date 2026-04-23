@@ -1,7 +1,7 @@
 ﻿import { betterAuth, generateId } from 'better-auth';
 import { APIError } from '@better-auth/core/error';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
-import { admin } from 'better-auth/plugins';
+import { admin, captcha } from 'better-auth/plugins';
 import { ApiException } from 'chanfana';
 import { drizzle } from 'drizzle-orm/d1';
 import { Hono } from 'hono';
@@ -19,6 +19,13 @@ const MANAGEMENT_API_BASE_PATH = '/v1/management';
 const PORTAL_STATIC_DIR = '/_portal';
 const PURGE_ALL_ASSETS_CONFIRMATION_TEXT = 'DELETE ALL ASSETS';
 const DESKTOP_AUTHORIZATION_CODE_TTL_SECONDS = 300;
+const DESKTOP_ACCESS_TOKEN_TTL_SECONDS = 3600;
+const DESKTOP_REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 3600;
+const DESKTOP_AUTH_CONFIRM_CSRF_COOKIE = 'f8assetcloud_desktop_csrf';
+const DESKTOP_AUTH_ALLOWED_CLIENT_IDS = new Set(['pystudio']);
+const MAX_REQUEST_COMPRESSED_BYTES = 12 * 1024 * 1024;
+const MAX_REQUEST_JSON_BYTES = 12 * 1024 * 1024;
+const PUBLIC_CACHE_CONTROL_HEADER = 'public, max-age=120, stale-while-revalidate=300';
 const USER_ROLE_ADMIN = 'admin';
 const USER_ROLE_USER = 'user';
 const USER_ROLE_READONLY = 'readonly';
@@ -45,15 +52,19 @@ let authCacheByDb = new WeakMap();
 export function createApp() {
   const app = new Hono();
 
+  app.use('*', async (c, next) => {
+    validateEnv(c.env);
+    await next();
+  });
+
   app.use('*', cors({
     origin: (origin, c) => resolveAllowedOrigin(c.env, origin),
     credentials: true,
     allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'HEAD'],
-    allowHeaders: ['Content-Type'],
+    allowHeaders: ['Authorization', 'Content-Type', 'X-Captcha-Response'],
   }));
 
   app.all(`${AUTH_BASE_PATH}/*`, async (c) => {
-    validateEnv(c.env);
     const auth = await getOrCreateAuth(c.env, c.req.raw);
     await ensureBootstrapAdmin({ env: c.env });
     if (await shouldBlockPublicRegistration({ db: c.env.DB, request: c.req.raw })) {
@@ -63,23 +74,42 @@ export function createApp() {
   });
 
   app.use('/v1/*', async (c, next) => {
-    validateEnv(c.env);
     const auth = await getOrCreateAuth(c.env, c.req.raw);
     await ensureBootstrapAdmin({ env: c.env });
     c.set('auth', auth);
     c.set('repo', new AssetRepository(c.env.DB));
+    c.set('allowedOrigins', calculateAllowedOrigins(c.env));
     await next();
   });
 
   registerOpenApiRoutes(app, {
     getAuthProviders: async (c) => ({
       google: hasGoogleProvider(c.env),
+      turnstileSiteKey: turnstileSiteKey(c.env),
     }),
     getSiteSettings: async (c) => c.get('repo').getSiteSettings(),
+    routeDesktopTokenPost: async (c) => routeDesktopTokenPost({
+      db: c.env.DB,
+      request: c.req.raw,
+    }),
+    routeDesktopSessionPost: async (c) => routeDesktopSessionPost({
+      auth: c.get('auth'),
+      db: c.env.DB,
+      request: c.req.raw,
+      allowedOrigins: c.get('allowedOrigins'),
+    }),
+    routeDesktopRefreshPost: async (c) => routeDesktopRefreshPost({
+      db: c.env.DB,
+      request: c.req.raw,
+    }),
+    routeDesktopRevokePost: async (c) => routeDesktopRevokePost({
+      db: c.env.DB,
+      request: c.req.raw,
+    }),
     resolveAsset: async (c) => {
       const auth = c.get('auth');
       const repo = c.get('repo');
-      const viewer = await optionalAuthenticatedUser({ auth, request: c.req.raw });
+      const viewer = await optionalAuthenticatedUser({ auth, db: c.env.DB, request: c.req.raw });
       const viewerId = viewer === null ? null : viewer.userId;
       const assetId = c.req.param('assetId');
       const head = await repo.getAssetById(assetId);
@@ -93,16 +123,26 @@ export function createApp() {
       const asset = assetType === 'variant'
         ? await repo.getVariant({ variantId: assetId, userId: viewerId })
         : await repo.getComponent({ componentId: assetId, userId: viewerId });
+      applyAnonymousPublicCacheHeaders(c, c.req.raw, String(head.visibility) === 'public' && viewer === null);
       return { assetType, asset };
     },
     getMe: async (c) => {
-      const user = await requireAuthenticatedUser({ auth: c.get('auth'), request: c.req.raw });
+      const user = await requireAuthenticatedUser({
+        auth: c.get('auth'),
+        db: c.env.DB,
+        request: c.req.raw,
+        allowedOrigins: c.get('allowedOrigins'),
+      });
       return toApiUser(user);
     },
     updateMe: async (c) => {
-      const auth = c.get('auth');
       const repo = c.get('repo');
-      const user = await requireAuthenticatedUser({ auth, request: c.req.raw });
+      const user = await requireAuthenticatedUser({
+        auth: c.get('auth'),
+        db: c.env.DB,
+        request: c.req.raw,
+        allowedOrigins: c.get('allowedOrigins'),
+      });
       const payload = await readJsonBody(c.req.raw);
       const name = requireUserProfileName(payload.name, {
         currentName: user.name,
@@ -112,9 +152,9 @@ export function createApp() {
         if (await repo.isUserNameTaken({ name, excludeUserId: user.userId })) {
           throw new HttpError(409, 'name already in use');
         }
-        await auth.api.updateUser({
-          body: { name },
-          headers: c.req.raw.headers,
+        await updateAppUserName(c.env.DB, {
+          userId: user.userId,
+          name,
         });
       }
       const updated = await repo.getUserByIdWithStats(user.userId);
@@ -124,7 +164,8 @@ export function createApp() {
       return toApiUser(updated);
     },
     listComponents: async (c) => {
-      const viewer = await optionalAuthenticatedUser({ auth: c.get('auth'), request: c.req.raw });
+      const viewer = await optionalAuthenticatedUser({ auth: c.get('auth'), db: c.env.DB, request: c.req.raw });
+      applyAnonymousPublicCacheHeaders(c, c.req.raw, viewer === null);
       return c.get('repo').listComponents({
         userId: viewer === null ? null : viewer.userId,
         query: c.req.query('q') || '',
@@ -134,14 +175,17 @@ export function createApp() {
       });
     },
     getComponentContent: async (c) => {
-      const viewer = await optionalAuthenticatedUser({ auth: c.get('auth'), request: c.req.raw });
-      return c.get('repo').getComponentContent({
+      const viewer = await optionalAuthenticatedUser({ auth: c.get('auth'), db: c.env.DB, request: c.req.raw });
+      const result = await c.get('repo').getComponentContent({
         componentId: c.req.param('componentId'),
         userId: viewer === null ? null : viewer.userId,
       });
+      applyAnonymousPublicCacheHeaders(c, c.req.raw, viewer === null);
+      return result;
     },
     listVariants: async (c) => {
-      const viewer = await optionalAuthenticatedUser({ auth: c.get('auth'), request: c.req.raw });
+      const viewer = await optionalAuthenticatedUser({ auth: c.get('auth'), db: c.env.DB, request: c.req.raw });
+      applyAnonymousPublicCacheHeaders(c, c.req.raw, viewer === null);
       return c.get('repo').listVariants({
         userId: viewer === null ? null : viewer.userId,
         kind: c.req.query('kind') || '',
@@ -154,39 +198,62 @@ export function createApp() {
     },
     createVariant: async (c) => {
       const repo = c.get('repo');
-      const user = await requireAssetWriteUser({ auth: c.get('auth'), repo, request: c.req.raw });
+      const user = await requireAssetWriteUser({
+        auth: c.get('auth'),
+        db: c.env.DB,
+        repo,
+        request: c.req.raw,
+        allowedOrigins: c.get('allowedOrigins'),
+      });
       const payload = await readJsonBody(c.req.raw);
       return repo.createVariant({ payload, user });
     },
     createComponent: async (c) => {
       const repo = c.get('repo');
-      const user = await requireAssetWriteUser({ auth: c.get('auth'), repo, request: c.req.raw });
+      const user = await requireAssetWriteUser({
+        auth: c.get('auth'),
+        db: c.env.DB,
+        repo,
+        request: c.req.raw,
+        allowedOrigins: c.get('allowedOrigins'),
+      });
       const payload = await readJsonBody(c.req.raw);
       return repo.createComponent({ payload, user });
     },
     routeVariantAssetRequest: async (c) => routeAssetRequest({
       auth: c.get('auth'),
+      db: c.env.DB,
       repo: c.get('repo'),
       request: c.req.raw,
       url: new URL(c.req.raw.url),
       assetType: 'variant',
+      allowedOrigins: c.get('allowedOrigins'),
     }),
     routeComponentAssetRequest: async (c) => routeAssetRequest({
       auth: c.get('auth'),
+      db: c.env.DB,
       repo: c.get('repo'),
       request: c.req.raw,
       url: new URL(c.req.raw.url),
       assetType: 'component',
+      allowedOrigins: c.get('allowedOrigins'),
     }),
     routeManagementRequest: async (c) => {
-      const managementUser = await requireManagementUser({ auth: c.get('auth'), request: c.req.raw });
+      const managementUser = await requireManagementUser({
+        auth: c.get('auth'),
+        db: c.env.DB,
+        request: c.req.raw,
+        allowedOrigins: c.get('allowedOrigins'),
+      });
       return routeManagementRequest({
+        db: c.env.DB,
         env: c.env,
         managementUser,
         auth: c.get('auth'),
         repo: c.get('repo'),
         request: c.req.raw,
         url: new URL(c.req.raw.url),
+        allowedOrigins: c.get('allowedOrigins'),
       });
     },
   });
@@ -239,32 +306,49 @@ export function createApp() {
   });
 
   app.post(`${DESKTOP_AUTH_BASE_PATH}/token`, async (c) => {
-    const auth = c.get('auth');
     return routeDesktopTokenPost({
-      auth,
       db: c.env.DB,
       request: c.req.raw,
     });
   });
 
+  app.post(`${DESKTOP_AUTH_BASE_PATH}/session`, async (c) => routeDesktopSessionPost({
+    auth: c.get('auth'),
+    db: c.env.DB,
+    request: c.req.raw,
+    allowedOrigins: c.get('allowedOrigins'),
+  }));
+
+  app.post(`${DESKTOP_AUTH_BASE_PATH}/refresh`, async (c) => routeDesktopRefreshPost({
+    db: c.env.DB,
+    request: c.req.raw,
+  }));
+
+  app.post(`${DESKTOP_AUTH_BASE_PATH}/revoke`, async (c) => routeDesktopRevokePost({
+    db: c.env.DB,
+    request: c.req.raw,
+  }));
+
   app.post('/v1/me/password', async (c) => {
-    const auth = c.get('auth');
+    const user = await requireAuthenticatedUser({
+      auth: c.get('auth'),
+      db: c.env.DB,
+      request: c.req.raw,
+      allowedOrigins: c.get('allowedOrigins'),
+    });
     const payload = await readJsonBody(c.req.raw);
-    await requireAuthenticatedUser({ auth, request: c.req.raw });
-    await auth.api.changePassword({
-      body: {
-        currentPassword: requireBodyString(payload.currentPassword, 'currentPassword is required'),
-        newPassword: requireBodyString(payload.newPassword, 'newPassword is required'),
-        revokeOtherSessions: true,
-      },
-      headers: c.req.raw.headers,
+    await changeAppUserPassword(c.env.DB, {
+      userId: user.userId,
+      currentPassword: requireBodyString(payload.currentPassword, 'currentPassword is required'),
+      newPassword: requireBodyString(payload.newPassword, 'newPassword is required'),
     });
     return c.json({});
   });
 
   app.get('/v1/variants', async (c) => {
     const repo = c.get('repo');
-    const viewer = await optionalAuthenticatedUser({ auth: c.get('auth'), request: c.req.raw });
+    const viewer = await optionalAuthenticatedUser({ auth: c.get('auth'), db: c.env.DB, request: c.req.raw });
+    applyAnonymousPublicCacheHeaders(c, c.req.raw, viewer === null);
     const result = await repo.listVariants({
       userId: viewer === null ? null : viewer.userId,
       kind: c.req.query('kind') || '',
@@ -279,43 +363,66 @@ export function createApp() {
 
   app.post('/v1/variants', async (c) => {
     const repo = c.get('repo');
-    const user = await requireAssetWriteUser({ auth: c.get('auth'), repo, request: c.req.raw });
+    const user = await requireAssetWriteUser({
+      auth: c.get('auth'),
+      db: c.env.DB,
+      repo,
+      request: c.req.raw,
+      allowedOrigins: c.get('allowedOrigins'),
+    });
     const payload = await readJsonBody(c.req.raw);
     return c.json(await repo.createVariant({ payload, user }));
   });
 
   app.post('/v1/components', async (c) => {
     const repo = c.get('repo');
-    const user = await requireAssetWriteUser({ auth: c.get('auth'), repo, request: c.req.raw });
+    const user = await requireAssetWriteUser({
+      auth: c.get('auth'),
+      db: c.env.DB,
+      repo,
+      request: c.req.raw,
+      allowedOrigins: c.get('allowedOrigins'),
+    });
     const payload = await readJsonBody(c.req.raw);
     return c.json(await repo.createComponent({ payload, user }));
   });
 
   app.all('/v1/variants/*', async (c) => routeAssetRequest({
     auth: c.get('auth'),
+    db: c.env.DB,
     repo: c.get('repo'),
     request: c.req.raw,
     url: new URL(c.req.raw.url),
     assetType: 'variant',
+    allowedOrigins: c.get('allowedOrigins'),
   }));
 
   app.all('/v1/components/*', async (c) => routeAssetRequest({
     auth: c.get('auth'),
+    db: c.env.DB,
     repo: c.get('repo'),
     request: c.req.raw,
     url: new URL(c.req.raw.url),
     assetType: 'component',
+    allowedOrigins: c.get('allowedOrigins'),
   }));
 
   app.all(`${MANAGEMENT_API_BASE_PATH}/*`, async (c) => {
-    const managementUser = await requireManagementUser({ auth: c.get('auth'), request: c.req.raw });
+    const managementUser = await requireManagementUser({
+      auth: c.get('auth'),
+      db: c.env.DB,
+      request: c.req.raw,
+      allowedOrigins: c.get('allowedOrigins'),
+    });
     return routeManagementRequest({
+      db: c.env.DB,
       env: c.env,
       managementUser,
       auth: c.get('auth'),
       repo: c.get('repo'),
       request: c.req.raw,
       url: new URL(c.req.raw.url),
+      allowedOrigins: c.get('allowedOrigins'),
     });
   });
 
@@ -332,7 +439,7 @@ export function resetWorkerCachesForTesting() {
   authCacheByDb = new WeakMap();
 }
 
-async function routeAssetRequest({ auth, repo, request, url, assetType }) {
+async function routeAssetRequest({ auth, db, repo, request, url, assetType, allowedOrigins }) {
   const prefix = assetType === 'variant' ? '/v1/variants/' : '/v1/components/';
   const tail = decodeURIComponent(url.pathname.slice(prefix.length));
   const parts = tail.split('/').filter((part) => part.length > 0);
@@ -340,17 +447,28 @@ async function routeAssetRequest({ auth, repo, request, url, assetType }) {
   if (!assetId) {
     return jsonResponse(404, { message: 'not found' });
   }
+  if (isStateChangingRequestMethod(request.method)) {
+    await enforceWorkerRateLimit({
+      db,
+      key: buildWorkerRateLimitKey({
+        namespace: `${assetType}_${parts[1] || 'root'}_${String(request.method).toLowerCase()}`,
+        request,
+      }),
+      windowSeconds: 60,
+      maxRequests: parts[1] === 'subscribe' ? 20 : 30,
+    });
+  }
 
   if (parts.length === 1) {
     if (request.method === 'GET') {
-      const viewer = await optionalAuthenticatedUser({ auth, request });
+      const viewer = await optionalAuthenticatedUser({ auth, db, request });
       const result = assetType === 'variant'
         ? await repo.getVariant({ variantId: assetId, userId: viewer === null ? null : viewer.userId })
         : await repo.getComponent({ componentId: assetId, userId: viewer === null ? null : viewer.userId });
-      return jsonResponse(200, result);
+      return jsonResponse(200, result, anonymousPublicResponseHeaders(request, viewer === null && String(result.visibility) === 'public'));
     }
     if (request.method === 'PUT') {
-      const user = await requireAssetWriteUser({ auth, repo, request });
+      const user = await requireAssetWriteUser({ auth, db, repo, request, allowedOrigins });
       const payload = await readJsonBody(request);
       const result = assetType === 'variant'
         ? await repo.updateVariant({ variantId: assetId, payload, user })
@@ -358,7 +476,7 @@ async function routeAssetRequest({ auth, repo, request, url, assetType }) {
       return jsonResponse(200, result);
     }
     if (request.method === 'DELETE') {
-      const user = await requireAssetWriteUser({ auth, repo, request });
+      const user = await requireAssetWriteUser({ auth, db, repo, request, allowedOrigins });
       if (assetType === 'variant') {
         await repo.deleteVariant({ variantId: assetId, userId: user.userId });
       } else {
@@ -369,15 +487,16 @@ async function routeAssetRequest({ auth, repo, request, url, assetType }) {
   }
 
   if (parts.length === 2 && parts[1] === 'content' && request.method === 'GET') {
-    const viewer = await optionalAuthenticatedUser({ auth, request });
+    const viewer = await optionalAuthenticatedUser({ auth, db, request });
+    const head = await repo.getAssetById(assetId, assetType);
     const result = assetType === 'variant'
       ? await repo.getVariantContent({ variantId: assetId, userId: viewer === null ? null : viewer.userId })
       : await repo.getComponentContent({ componentId: assetId, userId: viewer === null ? null : viewer.userId });
-    return jsonResponse(200, result);
+    return jsonResponse(200, result, anonymousPublicResponseHeaders(request, viewer === null && String(head?.visibility) === 'public'));
   }
 
   if (parts.length === 2 && parts[1] === 'download' && request.method === 'GET') {
-    const viewer = await optionalAuthenticatedUser({ auth, request });
+    const viewer = await optionalAuthenticatedUser({ auth, db, request });
     const viewerId = viewer === null ? null : viewer.userId;
     const head = await repo.getAssetById(assetId, assetType);
     if (head === null || String(head.asset_type) !== assetType) {
@@ -389,11 +508,15 @@ async function routeAssetRequest({ auth, repo, request, url, assetType }) {
     const payload = assetType === 'variant'
       ? await repo.getVariantContent({ variantId: assetId, userId: viewerId })
       : await repo.getComponentContent({ componentId: assetId, userId: viewerId });
-    return assetDownloadResponse(payload, { head, versionNumber: payload.versionNumber });
+    return assetDownloadResponse(payload, {
+      head,
+      versionNumber: payload.versionNumber,
+      headers: anonymousPublicResponseHeaders(request, viewer === null && String(head.visibility) === 'public'),
+    });
   }
 
   if (parts.length === 2 && parts[1] === 'visibility' && request.method === 'PUT') {
-    const user = await requireAssetWriteUser({ auth, repo, request });
+    const user = await requireAssetWriteUser({ auth, db, repo, request, allowedOrigins });
     const payload = await readJsonBody(request);
     const visibility = requireBodyString(payload.visibility, 'visibility is required');
     const result = assetType === 'variant'
@@ -403,7 +526,7 @@ async function routeAssetRequest({ auth, repo, request, url, assetType }) {
   }
 
   if (parts.length === 2 && parts[1] === 'meta' && request.method === 'PATCH') {
-    const user = await requireAssetWriteUser({ auth, repo, request });
+    const user = await requireAssetWriteUser({ auth, db, repo, request, allowedOrigins });
     const payload = await readJsonBody(request);
     const result = assetType === 'variant'
       ? await repo.updateVariantMeta({ variantId: assetId, payload, user })
@@ -412,24 +535,24 @@ async function routeAssetRequest({ auth, repo, request, url, assetType }) {
   }
 
   if (parts.length === 2 && parts[1] === 'versions' && request.method === 'GET') {
-    const viewer = await optionalAuthenticatedUser({ auth, request });
+    const viewer = await optionalAuthenticatedUser({ auth, db, request });
     const result = assetType === 'variant'
       ? await repo.listVariantVersions({ variantId: assetId, userId: viewer === null ? null : viewer.userId })
       : await repo.listComponentVersions({ componentId: assetId, userId: viewer === null ? null : viewer.userId });
-    return jsonResponse(200, result);
+    return jsonResponse(200, result, anonymousPublicResponseHeaders(request, viewer === null));
   }
 
   if (parts.length === 3 && parts[1] === 'versions' && request.method === 'GET') {
-    const viewer = await optionalAuthenticatedUser({ auth, request });
+    const viewer = await optionalAuthenticatedUser({ auth, db, request });
     const versionNumber = parts[2];
     const result = assetType === 'variant'
       ? await repo.getVariantVersion({ variantId: assetId, versionNumber, userId: viewer === null ? null : viewer.userId })
       : await repo.getComponentVersion({ componentId: assetId, versionNumber, userId: viewer === null ? null : viewer.userId });
-    return jsonResponse(200, result);
+    return jsonResponse(200, result, anonymousPublicResponseHeaders(request, viewer === null && String(result.visibility) === 'public'));
   }
 
   if (parts.length === 3 && parts[1] === 'versions' && request.method === 'PATCH') {
-    const user = await requireAssetWriteUser({ auth, repo, request });
+    const user = await requireAssetWriteUser({ auth, db, repo, request, allowedOrigins });
     const payload = await readJsonBody(request);
     const versionNumber = parts[2];
     const result = assetType === 'variant'
@@ -449,16 +572,17 @@ async function routeAssetRequest({ auth, repo, request, url, assetType }) {
   }
 
   if (parts.length === 4 && parts[1] === 'versions' && parts[3] === 'content' && request.method === 'GET') {
-    const viewer = await optionalAuthenticatedUser({ auth, request });
+    const viewer = await optionalAuthenticatedUser({ auth, db, request });
     const versionNumber = parts[2];
+    const head = await repo.getAssetById(assetId, assetType);
     const result = assetType === 'variant'
       ? await repo.getVariantVersionContent({ variantId: assetId, versionNumber, userId: viewer === null ? null : viewer.userId })
       : await repo.getComponentVersionContent({ componentId: assetId, versionNumber, userId: viewer === null ? null : viewer.userId });
-    return jsonResponse(200, result);
+    return jsonResponse(200, result, anonymousPublicResponseHeaders(request, viewer === null && String(head?.visibility) === 'public'));
   }
 
   if (parts.length === 4 && parts[1] === 'versions' && parts[3] === 'download' && request.method === 'GET') {
-    const viewer = await optionalAuthenticatedUser({ auth, request });
+    const viewer = await optionalAuthenticatedUser({ auth, db, request });
     const viewerId = viewer === null ? null : viewer.userId;
     const versionNumber = parts[2];
     const head = await repo.getAssetById(assetId, assetType);
@@ -471,11 +595,15 @@ async function routeAssetRequest({ auth, repo, request, url, assetType }) {
     const payload = assetType === 'variant'
       ? await repo.getVariantVersionContent({ variantId: assetId, versionNumber, userId: viewerId })
       : await repo.getComponentVersionContent({ componentId: assetId, versionNumber, userId: viewerId });
-    return assetDownloadResponse(payload, { head, versionNumber: payload.versionNumber });
+    return assetDownloadResponse(payload, {
+      head,
+      versionNumber: payload.versionNumber,
+      headers: anonymousPublicResponseHeaders(request, viewer === null && String(head.visibility) === 'public'),
+    });
   }
 
   if (parts.length === 2 && parts[1] === 'subscribers' && request.method === 'GET') {
-    const user = await requireAuthenticatedUser({ auth, request });
+    const user = await requireAuthenticatedUser({ auth, db, request, allowedOrigins });
     const result = assetType === 'variant'
       ? await repo.listVariantSubscribers({ variantId: assetId, userId: user.userId })
       : await repo.listComponentSubscribers({ componentId: assetId, userId: user.userId });
@@ -483,7 +611,7 @@ async function routeAssetRequest({ auth, repo, request, url, assetType }) {
   }
 
   if (parts.length === 2 && parts[1] === 'subscribe') {
-    const user = await requireAuthenticatedUser({ auth, request });
+    const user = await requireAuthenticatedUser({ auth, db, request, allowedOrigins });
     if (request.method === 'POST') {
       const result = assetType === 'variant'
         ? await repo.subscribeVariant({ variantId: assetId, userId: user.userId })
@@ -499,7 +627,7 @@ async function routeAssetRequest({ auth, repo, request, url, assetType }) {
   }
 
   if (parts.length === 2 && parts[1] === 'fork' && request.method === 'POST') {
-    const user = await requireAssetWriteUser({ auth, repo, request });
+    const user = await requireAssetWriteUser({ auth, db, repo, request, allowedOrigins });
     const payload = await readJsonBody(request);
     const result = assetType === 'variant'
       ? await repo.forkVariant({ variantId: assetId, payload, user })
@@ -510,7 +638,18 @@ async function routeAssetRequest({ auth, repo, request, url, assetType }) {
   return jsonResponse(404, { message: 'not found' });
 }
 
-async function routeManagementRequest({ env, managementUser, auth, repo, request, url }) {
+async function routeManagementRequest({ db, env, managementUser, auth, repo, request, url, allowedOrigins }) {
+  if (isStateChangingRequestMethod(request.method)) {
+    await enforceWorkerRateLimit({
+      db,
+      key: buildWorkerRateLimitKey({
+        namespace: `management_${String(request.method).toLowerCase()}`,
+        request,
+      }),
+      windowSeconds: 60,
+      maxRequests: 20,
+    });
+  }
   if (request.method === 'GET' && url.pathname === `${MANAGEMENT_API_BASE_PATH}/users`) {
     const users = await repo.listUsers({
       query: url.searchParams.get('q') || '',
@@ -779,6 +918,13 @@ async function routeManagementRequest({ env, managementUser, auth, repo, request
 async function routeDesktopAuthorizeGet({ auth, db, env, request, siteSettings }) {
   const requestUrl = new URL(request.url);
   const authorizeRequest = parseDesktopAuthorizeRequestFromUrl(requestUrl);
+  assertAllowedDesktopClientId(authorizeRequest.clientId);
+  await enforceWorkerRateLimit({
+    db,
+    key: buildWorkerRateLimitKey({ namespace: 'desktop_authorize_get', request }),
+    windowSeconds: 60,
+    maxRequests: 30,
+  });
   const socialProvider = desktopAuthorizeSocialProvider(requestUrl);
   const errorMessage = desktopAuthorizeErrorMessage(requestUrl);
   const allowRegistration = Boolean(siteSettings?.allowUserRegistration);
@@ -786,32 +932,23 @@ async function routeDesktopAuthorizeGet({ auth, db, env, request, siteSettings }
   const session = await auth.api.getSession({
     headers: request.headers,
   });
-  if (session !== null && session.session && session.user) {
-    const rawCookieHeader = String(request.headers.get('cookie') || '').trim();
-    const sessionCookie = extractSessionCookieFromCookieHeader({
-      cookieHeader: rawCookieHeader,
-      sessionToken: String(session.session.token || ''),
-    }) || rawCookieHeader;
-    if (!sessionCookie) {
-      throw new HttpError(400, 'authenticated browser session is missing the session cookie');
-    }
-    return redirectWithDesktopAuthorizationCode({
-      db,
-      desktopRequest: authorizeRequest,
-      sessionCookie,
-    });
-  }
+  const currentUser = session === null || !session.user ? null : toAppUser(session.user);
+  const pageCsrfToken = generateId(32);
   if (socialProvider) {
     if (!allowRegistration) {
-      return htmlResponse(
+      return desktopAuthorizePageResponse(
         400,
         buildDesktopAuthorizeHtml({
           request: authorizeRequest,
           allowGoogle: false,
           allowRegistration: false,
+          currentUser,
+          csrfToken: pageCsrfToken,
           errorMessage: 'Google sign-in is unavailable while registration is disabled.',
           email: '',
         }),
+        request,
+        pageCsrfToken,
       );
     }
     if (socialProvider !== 'google') {
@@ -828,59 +965,108 @@ async function routeDesktopAuthorizeGet({ auth, db, env, request, siteSettings }
       errorCallbackURL: desktopAuthorizeErrorCallbackUrl(requestUrl),
     });
   }
-  return htmlResponse(
+  return desktopAuthorizePageResponse(
     200,
     buildDesktopAuthorizeHtml({
       request: authorizeRequest,
       allowGoogle: allowDesktopGoogle,
       allowRegistration,
+      currentUser,
+      csrfToken: pageCsrfToken,
       errorMessage,
       email: '',
     }),
+    request,
+    pageCsrfToken,
   );
 }
 
 async function routeDesktopAuthorizePost({ auth, db, env, request, siteSettings }) {
+  assertAllowedCookieStateChange(calculateAllowedOrigins(env), request);
+  await enforceWorkerRateLimit({
+    db,
+    key: buildWorkerRateLimitKey({ namespace: 'desktop_authorize_post', request }),
+    windowSeconds: 60,
+    maxRequests: 20,
+  });
   const form = await request.formData();
   const authorizeRequest = parseDesktopAuthorizeRequestFromForm(form);
-  const email = requireFormString(form.get('email'), 'email is required');
-  const password = requireFormString(form.get('password'), 'password is required');
+  assertAllowedDesktopClientId(authorizeRequest.clientId);
+  validateDesktopAuthorizeCsrf({ request, form });
+  const email = String(form.get('email') || '').trim();
+  const password = String(form.get('password') || '');
+  const allowRegistration = Boolean(siteSettings?.allowUserRegistration);
+  const allowGoogle = allowRegistration && hasGoogleProvider(env);
+  const existingSession = await auth.api.getSession({
+    headers: request.headers,
+  });
   try {
-    const sessionCookie = await signInDesktopBrowserUser({
-      auth,
-      authorizeUrl: request.url,
-      request,
-      email,
-      password,
-    });
+    let userId = '';
+    if (existingSession !== null && existingSession.user && !email && !password) {
+      userId = String(existingSession.user.id || '').trim();
+    } else {
+      const normalizedEmail = requireFormString(email, 'email is required');
+      const normalizedPassword = requireFormString(password, 'password is required');
+      const sessionCookie = await signInDesktopBrowserUser({
+        auth,
+        authorizeUrl: request.url,
+        request,
+        email: normalizedEmail,
+        password: normalizedPassword,
+      });
+      const sessionHeaders = new Headers();
+      sessionHeaders.set('cookie', sessionCookie);
+      const signedInSession = await auth.api.getSession({
+        headers: sessionHeaders,
+      });
+      if (signedInSession === null || !signedInSession.user) {
+        throw new HttpError(401, 'browser session is no longer valid');
+      }
+      userId = String(signedInSession.user.id || '').trim();
+    }
+    if (!userId) {
+      throw new HttpError(401, 'browser session is no longer valid');
+    }
     return redirectWithDesktopAuthorizationCode({
       db,
       desktopRequest: authorizeRequest,
-      sessionCookie,
+      userId,
     });
   } catch (error) {
     if (error instanceof HttpError) {
-      return htmlResponse(
+      const pageCsrfToken = generateId(32);
+      return desktopAuthorizePageResponse(
         error.status,
         buildDesktopAuthorizeHtml({
           request: authorizeRequest,
-          allowGoogle: Boolean(siteSettings?.allowUserRegistration) && hasGoogleProvider(env),
-          allowRegistration: Boolean(siteSettings?.allowUserRegistration),
+          allowGoogle,
+          allowRegistration,
+          currentUser: existingSession === null || !existingSession.user ? null : toAppUser(existingSession.user),
+          csrfToken: pageCsrfToken,
           errorMessage: error.message,
           email,
         }),
+        request,
+        pageCsrfToken,
       );
     }
     throw error;
   }
 }
 
-async function routeDesktopTokenPost({ auth, db, request }) {
+async function routeDesktopTokenPost({ db, request }) {
+  await enforceWorkerRateLimit({
+    db,
+    key: buildWorkerRateLimitKey({ namespace: 'desktop_token', request }),
+    windowSeconds: 60,
+    maxRequests: 20,
+  });
   const payload = await readJsonBody(request);
   const code = requireBodyString(payload.code, 'code is required');
   const clientId = requireBodyString(payload.clientId ?? payload.client_id, 'clientId is required');
   const redirectUri = requireBodyString(payload.redirectUri ?? payload.redirect_uri, 'redirectUri is required');
   const codeVerifier = requireBodyString(payload.codeVerifier ?? payload.code_verifier, 'codeVerifier is required');
+  assertAllowedDesktopClientId(clientId);
   requireLoopbackRedirectUri(redirectUri);
   const record = await loadDesktopAuthorizationCodeRecord(db, code);
   if (record === null) {
@@ -905,12 +1091,8 @@ async function routeDesktopTokenPost({ auth, db, request }) {
   if (computedChallenge !== record.codeChallenge) {
     throw new HttpError(400, 'codeVerifier is invalid');
   }
-  const sessionHeaders = new Headers();
-  sessionHeaders.set('cookie', record.sessionCookie);
-  const session = await auth.api.getSession({
-    headers: sessionHeaders,
-  });
-  if (session === null || !session.user) {
+  const user = await readAppUserById(db, record.userId);
+  if (user === null) {
     throw new HttpError(401, 'browser session is no longer valid');
   }
   const usedAt = Date.now();
@@ -922,15 +1104,75 @@ async function routeDesktopTokenPost({ auth, db, request }) {
   if (Number(updateResult.meta?.changes || 0) < 1) {
     throw new HttpError(400, 'authorization code has already been used');
   }
-  return jsonResponse(200, {
-    sessionCookie: record.sessionCookie,
-    user: toApiUser(toAppUser(session.user)),
+  const desktopAuth = await issueDesktopTokenPair({
+    db,
+    user,
   });
+  return jsonResponse(200, desktopAuthResponsePayload(desktopAuth));
+}
+
+async function routeDesktopSessionPost({ auth, db, request, allowedOrigins }) {
+  assertAllowedCookieStateChange(allowedOrigins, request);
+  await enforceWorkerRateLimit({
+    db,
+    key: buildWorkerRateLimitKey({ namespace: 'desktop_session_exchange', request }),
+    windowSeconds: 60,
+    maxRequests: 12,
+  });
+  const session = await auth.api.getSession({
+    headers: request.headers,
+  });
+  if (session === null || !session.user) {
+    throw new HttpError(401, 'authentication required');
+  }
+  const user = await readAppUserById(db, String(session.user.id || ''));
+  if (user === null) {
+    throw new HttpError(401, 'authentication required');
+  }
+  return jsonResponse(200, desktopAuthResponsePayload(await issueDesktopTokenPair({ db, user })));
+}
+
+async function routeDesktopRefreshPost({ db, request }) {
+  const payload = await readJsonBody(request);
+  const refreshToken = requireBodyString(payload.refreshToken ?? payload.refresh_token, 'refreshToken is required');
+  await enforceWorkerRateLimit({
+    db,
+    key: `worker:desktop_refresh:${await hashOpaqueToken(refreshToken)}`,
+    windowSeconds: 60,
+    maxRequests: 20,
+  });
+  return jsonResponse(200, desktopAuthResponsePayload(await refreshDesktopTokenPair({
+    db,
+    refreshToken,
+  })));
+}
+
+async function routeDesktopRevokePost({ db, request }) {
+  const payload = await readJsonBody(request);
+  const refreshToken = requireBodyString(payload.refreshToken ?? payload.refresh_token, 'refreshToken is required');
+  await revokeDesktopRefreshToken({
+    db,
+    refreshToken,
+  });
+  return jsonResponse(200, { revoked: true });
 }
 
 function createAuth(env, { siteSettings, baseURL, trustedOrigins }) {
   const db = drizzle(env.DB);
   const socialProviders = {};
+  const plugins = [
+    admin({
+      defaultRole: USER_ROLE_USER,
+      adminRoles: [USER_ROLE_ADMIN],
+    }),
+  ];
+  if (turnstileSecretKey(env)) {
+    plugins.push(captcha({
+      provider: 'cloudflare-turnstile',
+      secretKey: turnstileSecretKey(env),
+      endpoints: ['/sign-up/email', '/request-password-reset'],
+    }));
+  }
   if (hasGoogleProvider(env)) {
     socialProviders.google = {
       clientId: String(env.GOOGLE_CLIENT_ID || '').trim(),
@@ -1011,12 +1253,20 @@ function createAuth(env, { siteSettings, baseURL, trustedOrigins }) {
       },
     },
     socialProviders,
-    plugins: [
-      admin({
-        defaultRole: USER_ROLE_USER,
-        adminRoles: [USER_ROLE_ADMIN],
-      }),
-    ],
+    plugins,
+    rateLimit: {
+      enabled: true,
+      storage: 'database',
+      window: 60,
+      max: 60,
+      customRules: {
+        '/sign-in/email': { window: 60, max: 6 },
+        '/sign-up/email': { window: 600, max: 5 },
+        '/request-password-reset': { window: 900, max: 4 },
+        '/send-verification-email': { window: 900, max: 4 },
+        '/verify-email': { window: 300, max: 10 },
+      },
+    },
   });
 }
 
@@ -1191,37 +1441,32 @@ async function ensureBootstrapAdminOnce(env, config) {
   });
 }
 
-async function requireAuthenticatedUser({ auth, request }) {
-  const session = await auth.api.getSession({
-    headers: request.headers,
-  });
-  if (session === null) {
+async function requireAuthenticatedUser({ auth, db, request, allowedOrigins = null }) {
+  const authState = await readAuthenticatedRequestState({ auth, db, request });
+  if (authState === null) {
     throw new HttpError(401, 'authentication required');
   }
-  return toAppUser(session.user);
-}
-
-async function optionalAuthenticatedUser({ auth, request }) {
-  const cookie = request.headers.get('cookie') || '';
-  if (!cookie.trim()) {
-    return null;
+  if (authState.authType === 'cookie' && isStateChangingRequestMethod(request.method)) {
+    assertAllowedCookieStateChange(allowedOrigins, request);
   }
-  const session = await auth.api.getSession({
-    headers: request.headers,
-  });
-  return session === null ? null : toAppUser(session.user);
+  return authState.user;
 }
 
-async function requireManagementUser({ auth, request }) {
-  const user = await requireAuthenticatedUser({ auth, request });
+async function optionalAuthenticatedUser({ auth, db, request }) {
+  const authState = await readAuthenticatedRequestState({ auth, db, request });
+  return authState === null ? null : authState.user;
+}
+
+async function requireManagementUser({ auth, db, request, allowedOrigins = null }) {
+  const user = await requireAuthenticatedUser({ auth, db, request, allowedOrigins });
   if (!user.isAdmin) {
     throw new HttpError(403, 'management access required');
   }
   return user;
 }
 
-async function requireAssetWriteUser({ auth, repo, request }) {
-  const user = await requireAuthenticatedUser({ auth, request });
+async function requireAssetWriteUser({ auth, db, repo, request, allowedOrigins = null }) {
+  const user = await requireAuthenticatedUser({ auth, db, request, allowedOrigins });
   const latestUser = await repo.getUserByIdWithStats(user.userId);
   if (latestUser === null) {
     throw new HttpError(401, 'authentication required');
@@ -1234,6 +1479,53 @@ async function requireAssetWriteUser({ auth, repo, request }) {
     role: latestUser.role,
     canUpload: latestUser.canUpload,
   };
+}
+
+async function readAuthenticatedRequestState({ auth, db, request }) {
+  const bearerToken = readBearerTokenFromRequest(request);
+  if (bearerToken !== null) {
+    const user = await readDesktopAccessTokenUser({
+      db,
+      accessToken: bearerToken,
+    });
+    if (user === null) {
+      throw new HttpError(401, 'authentication required');
+    }
+    return {
+      authType: 'bearer',
+      user,
+    };
+  }
+  const cookieHeader = String(request.headers.get('cookie') || '').trim();
+  if (!cookieHeader) {
+    return null;
+  }
+  const session = await auth.api.getSession({
+    headers: request.headers,
+  });
+  if (session === null || !session.user) {
+    return null;
+  }
+  return {
+    authType: 'cookie',
+    user: toAppUser(session.user),
+  };
+}
+
+function readBearerTokenFromRequest(request) {
+  const headerValue = String(request.headers.get('authorization') || '').trim();
+  if (!headerValue) {
+    return null;
+  }
+  const match = /^Bearer\s+(.+)$/i.exec(headerValue);
+  if (!match) {
+    throw new HttpError(401, 'Authorization header must use Bearer token');
+  }
+  const token = String(match[1] || '').trim();
+  if (!token) {
+    throw new HttpError(401, 'Authorization header must use Bearer token');
+  }
+  return token;
 }
 
 async function assertUserHasNoAssets(repo, userId) {
@@ -1276,6 +1568,9 @@ function validateEnv(env) {
   if (!getAuthSecret(env)) {
     throw new HttpError(500, 'BETTER_AUTH_SECRET is not configured');
   }
+  if (!String(env.AUTH_BASE_URL || '').trim()) {
+    throw new HttpError(500, 'AUTH_BASE_URL is not configured');
+  }
 }
 
 function getAuthSecret(env) {
@@ -1284,6 +1579,23 @@ function getAuthSecret(env) {
 
 function hasGoogleProvider(env) {
   return Boolean(String(env.GOOGLE_CLIENT_ID || '').trim() && String(env.GOOGLE_CLIENT_SECRET || '').trim());
+}
+
+function turnstileSiteKey(env) {
+  const siteKey = String(
+    env.TURNSTILE_SITE_KEY
+      || env.CLOUDFLARE_TURNSTILE_SITE_KEY
+      || '',
+  ).trim();
+  return siteKey || null;
+}
+
+function turnstileSecretKey(env) {
+  return String(
+    env.TURNSTILE_SECRET_KEY
+      || env.CLOUDFLARE_TURNSTILE_SECRET_KEY
+      || '',
+  ).trim();
 }
 
 function parseDesktopAuthorizeRequestFromUrl(url) {
@@ -1463,23 +1775,23 @@ async function startDesktopSocialSignIn({ auth, request, providerId, callbackURL
   });
 }
 
-async function redirectWithDesktopAuthorizationCode({ db, desktopRequest, sessionCookie }) {
+async function redirectWithDesktopAuthorizationCode({ db, desktopRequest, userId }) {
   await purgeExpiredDesktopAuthorizationCodes(db);
   const now = Date.now();
   const code = generateId(48);
   const expiresAt = now + DESKTOP_AUTHORIZATION_CODE_TTL_SECONDS * 1000;
   await db.prepare(
     `INSERT INTO desktop_authorization_codes
-      (code, client_id, redirect_uri, code_challenge, code_challenge_method, session_cookie, created_at, expires_at, used_at)
+      (code, user_id, client_id, redirect_uri, code_challenge, code_challenge_method, created_at, expires_at, used_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
   )
     .bind(
       code,
+      String(userId),
       desktopRequest.clientId,
       desktopRequest.redirectUri,
       desktopRequest.codeChallenge,
       desktopRequest.codeChallengeMethod,
-      sessionCookie,
       now,
       expiresAt,
     )
@@ -1495,11 +1807,11 @@ async function loadDesktopAuthorizationCodeRecord(db, code) {
   const row = await db.prepare(
     `SELECT
       code,
+      user_id,
       client_id,
       redirect_uri,
       code_challenge,
       code_challenge_method,
-      session_cookie,
       created_at,
       expires_at,
       used_at
@@ -1513,11 +1825,11 @@ async function loadDesktopAuthorizationCodeRecord(db, code) {
   }
   return {
     code: String(row.code || ''),
+    userId: String(row.user_id || ''),
     clientId: String(row.client_id || ''),
     redirectUri: String(row.redirect_uri || ''),
     codeChallenge: String(row.code_challenge || ''),
     codeChallengeMethod: String(row.code_challenge_method || ''),
-    sessionCookie: String(row.session_cookie || ''),
     createdAt: Number(row.created_at || 0),
     expiresAt: Number(row.expires_at || 0),
     usedAt: row.used_at === null || row.used_at === undefined ? null : Number(row.used_at),
@@ -1527,6 +1839,430 @@ async function loadDesktopAuthorizationCodeRecord(db, code) {
 async function purgeExpiredDesktopAuthorizationCodes(db) {
   await db.prepare('DELETE FROM desktop_authorization_codes WHERE expires_at < ?')
     .bind(Date.now())
+    .run();
+}
+
+function assertAllowedDesktopClientId(clientId) {
+  const normalizedClientId = String(clientId || '').trim();
+  if (!DESKTOP_AUTH_ALLOWED_CLIENT_IDS.has(normalizedClientId)) {
+    throw new HttpError(400, 'clientId is not allowed');
+  }
+}
+
+function buildWorkerRateLimitKey({ namespace, request, identity = '' }) {
+  const normalizedNamespace = String(namespace || '').trim() || 'unknown';
+  const normalizedIdentity = String(identity || '').trim();
+  if (normalizedIdentity) {
+    return `worker:${normalizedNamespace}:${normalizedIdentity}`;
+  }
+  const forwardedIp = String(
+    request.headers.get('cf-connecting-ip')
+      || request.headers.get('x-forwarded-for')
+      || '',
+  )
+    .split(',')[0]
+    .trim();
+  if (forwardedIp) {
+    return `worker:${normalizedNamespace}:${forwardedIp}`;
+  }
+  const userAgent = String(request.headers.get('user-agent') || '').trim();
+  if (userAgent) {
+    return `worker:${normalizedNamespace}:ua:${userAgent.slice(0, 120)}`;
+  }
+  return `worker:${normalizedNamespace}:anonymous`;
+}
+
+async function enforceWorkerRateLimit({ db, key, windowSeconds, maxRequests }) {
+  const normalizedKey = String(key || '').trim();
+  if (!normalizedKey) {
+    return;
+  }
+  const now = Date.now();
+  const windowStart = now - (Number(windowSeconds) * 1000);
+  const existing = await db.prepare(
+    'SELECT count, lastRequest FROM rateLimit WHERE key = ?',
+  )
+    .bind(normalizedKey)
+    .first();
+  if (existing === null || Number(existing.lastRequest || 0) < windowStart) {
+    await db.prepare(
+      `INSERT INTO rateLimit (key, count, lastRequest)
+       VALUES (?, 1, ?)
+       ON CONFLICT(key) DO UPDATE SET
+         count = 1,
+         lastRequest = excluded.lastRequest`,
+    )
+      .bind(normalizedKey, now)
+      .run();
+    return;
+  }
+  const currentCount = Number(existing.count || 0);
+  if (currentCount >= Number(maxRequests)) {
+    throw new HttpError(429, 'rate limit exceeded');
+  }
+  await db.prepare(
+    `UPDATE rateLimit
+     SET count = ?, lastRequest = ?
+     WHERE key = ?`,
+  )
+    .bind(currentCount + 1, now, normalizedKey)
+    .run();
+}
+
+function desktopAuthorizePageResponse(status, html, request, csrfToken) {
+  const headers = new Headers({
+    'Content-Type': 'text/html; charset=utf-8',
+    'Cache-Control': 'no-store',
+  });
+  headers.append('Set-Cookie', buildSetCookieHeader({
+    name: DESKTOP_AUTH_CONFIRM_CSRF_COOKIE,
+    value: csrfToken,
+    request,
+    path: `${DESKTOP_AUTH_BASE_PATH}/authorize`,
+    maxAgeSeconds: DESKTOP_AUTHORIZATION_CODE_TTL_SECONDS,
+  }));
+  return new Response(html, {
+    status,
+    headers,
+  });
+}
+
+function buildSetCookieHeader({ name, value, request, path = '/', maxAgeSeconds = 0 }) {
+  const parts = [
+    `${String(name || '').trim()}=${encodeURIComponent(String(value || '').trim())}`,
+    `Path=${path}`,
+    `Max-Age=${Math.max(0, Number(maxAgeSeconds) || 0)}`,
+    'HttpOnly',
+    'SameSite=Lax',
+  ];
+  if (new URL(request.url).protocol === 'https:') {
+    parts.push('Secure');
+  }
+  return parts.join('; ');
+}
+
+function validateDesktopAuthorizeCsrf({ request, form }) {
+  const formToken = requireFormString(
+    form.get('csrf_token') || form.get('csrfToken'),
+    'csrf token is required',
+  );
+  const cookieToken = readCookieValueFromHeader(request.headers.get('cookie'), DESKTOP_AUTH_CONFIRM_CSRF_COOKIE);
+  if (!cookieToken || cookieToken !== formToken) {
+    throw new HttpError(403, 'desktop authorization form is invalid');
+  }
+}
+
+function readCookieValueFromHeader(cookieHeader, cookieName) {
+  const normalizedCookieName = String(cookieName || '').trim();
+  if (!normalizedCookieName) {
+    return '';
+  }
+  const rawHeader = String(cookieHeader || '');
+  if (!rawHeader.trim()) {
+    return '';
+  }
+  const cookies = rawHeader.split(';');
+  for (const item of cookies) {
+    const trimmed = item.trim();
+    if (!trimmed) {
+      continue;
+    }
+    const separatorIndex = trimmed.indexOf('=');
+    if (separatorIndex <= 0) {
+      continue;
+    }
+    const name = trimmed.slice(0, separatorIndex).trim();
+    if (name !== normalizedCookieName) {
+      continue;
+    }
+    return decodeURIComponent(trimmed.slice(separatorIndex + 1).trim());
+  }
+  return '';
+}
+
+function isStateChangingRequestMethod(method) {
+  const normalizedMethod = String(method || '').trim().toUpperCase();
+  return normalizedMethod === 'POST'
+    || normalizedMethod === 'PUT'
+    || normalizedMethod === 'PATCH'
+    || normalizedMethod === 'DELETE';
+}
+
+function assertAllowedCookieStateChange(allowedOrigins, request) {
+  if (!isStateChangingRequestMethod(request.method)) {
+    return;
+  }
+  const origin = String(request.headers.get('origin') || '').trim();
+  if (!origin) {
+    throw new HttpError(403, 'Origin header is required');
+  }
+  if (!isAllowedOrigin(allowedOrigins, origin)) {
+    throw new HttpError(403, 'Origin is not allowed');
+  }
+}
+
+function isAllowedOrigin(allowedOrigins, origin) {
+  const normalizedOrigin = String(origin || '').trim();
+  if (!normalizedOrigin) {
+    return false;
+  }
+  for (const allowedOrigin of normalizeAllowedOrigins(allowedOrigins)) {
+    if (allowedOrigin === normalizedOrigin) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function normalizeAllowedOrigins(allowedOrigins) {
+  if (allowedOrigins instanceof Set) {
+    return [...allowedOrigins].map((value) => String(value || '').trim()).filter(Boolean);
+  }
+  if (Array.isArray(allowedOrigins)) {
+    return allowedOrigins.map((value) => String(value || '').trim()).filter(Boolean);
+  }
+  return [];
+}
+
+async function readAppUserById(db, userId) {
+  const normalizedUserId = String(userId || '').trim();
+  if (!normalizedUserId) {
+    return null;
+  }
+  const row = await db.prepare(
+    `SELECT id, name, email, emailVerified, role
+     FROM user
+     WHERE id = ?
+     LIMIT 1`,
+  )
+    .bind(normalizedUserId)
+    .first();
+  return row === null ? null : appUserFromDbRow(row);
+}
+
+async function readDesktopAccessTokenUser({ db, accessToken }) {
+  const accessTokenHash = await hashOpaqueToken(accessToken);
+  const row = await db.prepare(
+    `SELECT
+       u.id,
+       u.name,
+       u.email,
+       u.emailVerified,
+       u.role
+     FROM desktop_sessions ds
+     JOIN user u ON u.id = ds.user_id
+     WHERE ds.access_token_hash = ?
+       AND ds.access_token_expires_at > ?
+       AND ds.revoked_at IS NULL
+     LIMIT 1`,
+  )
+    .bind(accessTokenHash, Date.now())
+    .first();
+  return row === null ? null : appUserFromDbRow(row);
+}
+
+function appUserFromDbRow(row) {
+  return {
+    userId: String(row.id),
+    name: stringOrDefault(row.name, String(row.email || row.id || '')),
+    email: stringOrDefault(row.email, ''),
+    emailVerified: Number(row.emailVerified || 0) !== 0,
+    role: normalizeUserRole(row.role),
+    isAdmin: normalizeUserRole(row.role) === USER_ROLE_ADMIN,
+    canUpload: normalizeUserRole(row.role) !== USER_ROLE_READONLY,
+  };
+}
+
+async function issueDesktopTokenPair({ db, user }) {
+  await purgeExpiredDesktopSessions(db);
+  const now = Date.now();
+  const accessToken = generateId(64);
+  const refreshToken = generateId(64);
+  const accessTokenExpiresAt = now + (DESKTOP_ACCESS_TOKEN_TTL_SECONDS * 1000);
+  const refreshTokenExpiresAt = now + (DESKTOP_REFRESH_TOKEN_TTL_SECONDS * 1000);
+  await db.prepare(
+    `INSERT INTO desktop_sessions (
+       id,
+       user_id,
+       access_token_hash,
+       access_token_expires_at,
+       refresh_token_hash,
+       refresh_token_expires_at,
+       revoked_at,
+       created_at,
+       updated_at
+     ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
+  )
+    .bind(
+      generateId(),
+      String(user.userId),
+      await hashOpaqueToken(accessToken),
+      accessTokenExpiresAt,
+      await hashOpaqueToken(refreshToken),
+      refreshTokenExpiresAt,
+      now,
+      now,
+    )
+    .run();
+  return {
+    accessToken,
+    accessTokenExpiresAt,
+    refreshToken,
+    refreshTokenExpiresAt,
+    user,
+  };
+}
+
+function desktopAuthResponsePayload(desktopAuth) {
+  return {
+    accessToken: desktopAuth.accessToken,
+    accessTokenExpiresAt: timestampIso(desktopAuth.accessTokenExpiresAt),
+    refreshToken: desktopAuth.refreshToken,
+    refreshTokenExpiresAt: timestampIso(desktopAuth.refreshTokenExpiresAt),
+    user: toApiUser(desktopAuth.user),
+  };
+}
+
+async function refreshDesktopTokenPair({ db, refreshToken }) {
+  await purgeExpiredDesktopSessions(db);
+  const refreshTokenHash = await hashOpaqueToken(refreshToken);
+  const existing = await db.prepare(
+    `SELECT id, user_id
+     FROM desktop_sessions
+     WHERE refresh_token_hash = ?
+       AND refresh_token_expires_at > ?
+       AND revoked_at IS NULL
+     LIMIT 1`,
+  )
+    .bind(refreshTokenHash, Date.now())
+    .first();
+  if (existing === null) {
+    throw new HttpError(401, 'refreshToken is invalid or has expired');
+  }
+  const user = await readAppUserById(db, String(existing.user_id || ''));
+  if (user === null) {
+    throw new HttpError(401, 'refreshToken is invalid or has expired');
+  }
+  const now = Date.now();
+  const nextAccessToken = generateId(64);
+  const nextRefreshToken = generateId(64);
+  const nextAccessTokenExpiresAt = now + (DESKTOP_ACCESS_TOKEN_TTL_SECONDS * 1000);
+  const nextRefreshTokenExpiresAt = now + (DESKTOP_REFRESH_TOKEN_TTL_SECONDS * 1000);
+  const updateResult = await db.prepare(
+    `UPDATE desktop_sessions
+     SET access_token_hash = ?,
+         access_token_expires_at = ?,
+         refresh_token_hash = ?,
+         refresh_token_expires_at = ?,
+         updated_at = ?
+     WHERE id = ?
+       AND refresh_token_hash = ?
+       AND revoked_at IS NULL`,
+  )
+    .bind(
+      await hashOpaqueToken(nextAccessToken),
+      nextAccessTokenExpiresAt,
+      await hashOpaqueToken(nextRefreshToken),
+      nextRefreshTokenExpiresAt,
+      now,
+      String(existing.id || ''),
+      refreshTokenHash,
+    )
+    .run();
+  if (Number(updateResult.meta?.changes || 0) < 1) {
+    throw new HttpError(401, 'refreshToken is invalid or has expired');
+  }
+  return {
+    accessToken: nextAccessToken,
+    accessTokenExpiresAt: nextAccessTokenExpiresAt,
+    refreshToken: nextRefreshToken,
+    refreshTokenExpiresAt: nextRefreshTokenExpiresAt,
+    user,
+  };
+}
+
+async function revokeDesktopRefreshToken({ db, refreshToken }) {
+  const refreshTokenHash = await hashOpaqueToken(refreshToken);
+  await db.prepare(
+    `UPDATE desktop_sessions
+     SET revoked_at = ?, updated_at = ?
+     WHERE refresh_token_hash = ? AND revoked_at IS NULL`,
+  )
+    .bind(Date.now(), Date.now(), refreshTokenHash)
+    .run();
+}
+
+async function purgeExpiredDesktopSessions(db) {
+  await db.prepare(
+    `DELETE FROM desktop_sessions
+     WHERE refresh_token_expires_at < ?
+        OR revoked_at IS NOT NULL`,
+  )
+    .bind(Date.now())
+    .run();
+}
+
+async function hashOpaqueToken(value) {
+  const digest = await crypto.subtle.digest(
+    'SHA-256',
+    textEncoder.encode(String(value || '')),
+  );
+  return bytesToHex(new Uint8Array(digest));
+}
+
+function timestampIso(value) {
+  const timestamp = Number(value || 0);
+  if (!Number.isFinite(timestamp) || timestamp <= 0) {
+    return '';
+  }
+  return new Date(timestamp).toISOString();
+}
+
+async function updateAppUserName(db, { userId, name }) {
+  await db.prepare(
+    `UPDATE user
+     SET name = ?, updatedAt = ?
+     WHERE id = ?`,
+  )
+    .bind(String(name), Date.now(), String(userId))
+    .run();
+}
+
+async function changeAppUserPassword(db, { userId, currentPassword, newPassword }) {
+  const account = await db.prepare(
+    `SELECT id, password
+     FROM account
+     WHERE userId = ? AND providerId = 'credential'
+     LIMIT 1`,
+  )
+    .bind(String(userId))
+    .first();
+  if (account === null || !String(account.password || '').trim()) {
+    throw new HttpError(400, 'password authentication is unavailable for this account');
+  }
+  const isCurrentPasswordValid = await verifyAuthPassword({
+    hash: String(account.password || ''),
+    password: currentPassword,
+  });
+  if (!isCurrentPasswordValid) {
+    throw new HttpError(400, 'currentPassword is invalid');
+  }
+  await db.prepare(
+    `UPDATE account
+     SET password = ?, updatedAt = ?
+     WHERE id = ?`,
+  )
+    .bind(await hashAuthPassword(newPassword), Date.now(), String(account.id || ''))
+    .run();
+  await clearAppUserSessions(db, userId);
+}
+
+async function clearAppUserSessions(db, userId) {
+  await db.prepare('DELETE FROM session WHERE userId = ?')
+    .bind(String(userId))
+    .run();
+  await db.prepare('DELETE FROM desktop_sessions WHERE user_id = ?')
+    .bind(String(userId))
     .run();
 }
 
@@ -1636,14 +2372,17 @@ function errorMessageFromPayload(payload) {
   return '';
 }
 
-function buildDesktopAuthorizeHtml({ request, allowGoogle, allowRegistration, errorMessage, email }) {
+function buildDesktopAuthorizeHtml({ request, allowGoogle, allowRegistration, currentUser, csrfToken, errorMessage, email }) {
   const escapedClientId = escapeHtml(request.clientId);
   const escapedRedirectUri = escapeHtml(request.redirectUri);
   const escapedState = escapeHtml(request.state);
   const escapedCodeChallenge = escapeHtml(request.codeChallenge);
   const escapedCodeChallengeMethod = escapeHtml(request.codeChallengeMethod);
+  const escapedCsrfToken = escapeHtml(csrfToken);
   const escapedEmail = escapeHtml(email);
   const escapedError = escapeHtml(errorMessage);
+  const currentUserName = currentUser ? escapeHtml(currentUser.name || currentUser.email || currentUser.userId) : '';
+  const currentUserEmail = currentUser ? escapeHtml(currentUser.email || '') : '';
   const googleButton = allowGoogle && allowRegistration
     ? `<form method="get" action="${DESKTOP_AUTH_BASE_PATH}/authorize" class="social-form">
         <input type="hidden" name="client_id" value="${escapedClientId}" />
@@ -1710,6 +2449,13 @@ function buildDesktopAuthorizeHtml({ request, allowGoogle, allowRegistration, er
         gap: 14px;
         margin-top: 18px;
       }
+      .section {
+        margin-top: 18px;
+        padding: 14px;
+        border-radius: 12px;
+        border: 1px solid #30456b;
+        background: rgba(12, 24, 44, 0.72);
+      }
       label {
         display: grid;
         gap: 6px;
@@ -1748,21 +2494,34 @@ function buildDesktopAuthorizeHtml({ request, allowGoogle, allowRegistration, er
       <p class="muted">Sign in here and we’ll send your browser back to the running desktop app.</p>
       ${registrationHint}
       ${escapedError ? `<div class="error">${escapedError}</div>` : ''}
+      ${currentUser ? `<section class="section">
+        <p>Signed in as <strong>${currentUserName}</strong>${currentUserEmail ? ` <span class="muted">(${currentUserEmail})</span>` : ''}</p>
+        <form method="post" action="${DESKTOP_AUTH_BASE_PATH}/authorize">
+          <input type="hidden" name="client_id" value="${escapedClientId}" />
+          <input type="hidden" name="redirect_uri" value="${escapedRedirectUri}" />
+          <input type="hidden" name="state" value="${escapedState}" />
+          <input type="hidden" name="code_challenge" value="${escapedCodeChallenge}" />
+          <input type="hidden" name="code_challenge_method" value="${escapedCodeChallengeMethod}" />
+          <input type="hidden" name="csrf_token" value="${escapedCsrfToken}" />
+          <button type="submit">Continue as ${currentUserName}</button>
+        </form>
+      </section>` : ''}
       <form method="post" action="${DESKTOP_AUTH_BASE_PATH}/authorize">
         <input type="hidden" name="client_id" value="${escapedClientId}" />
         <input type="hidden" name="redirect_uri" value="${escapedRedirectUri}" />
         <input type="hidden" name="state" value="${escapedState}" />
         <input type="hidden" name="code_challenge" value="${escapedCodeChallenge}" />
         <input type="hidden" name="code_challenge_method" value="${escapedCodeChallengeMethod}" />
+        <input type="hidden" name="csrf_token" value="${escapedCsrfToken}" />
         <label>
           Email
-          <input type="email" name="email" value="${escapedEmail}" autocomplete="email" required />
+          <input type="email" name="email" value="${escapedEmail}" autocomplete="email" ${currentUser ? '' : 'required'} />
         </label>
         <label>
           Password
-          <input type="password" name="password" autocomplete="current-password" required />
+          <input type="password" name="password" autocomplete="current-password" ${currentUser ? '' : 'required'} />
         </label>
-        <button type="submit">Sign in to Asset Cloud</button>
+        <button type="submit">${currentUser ? 'Use a different account' : 'Sign in to Asset Cloud'}</button>
       </form>
       ${googleButton}
     </main>
@@ -1806,23 +2565,30 @@ function invalidateAuthCache(db) {
 
 function resolveAuthBaseUrl(env, requestUrl) {
   const configured = String(env.AUTH_BASE_URL || '').trim();
-  if (configured) {
-    return configured;
+  if (!configured) {
+    throw new HttpError(500, 'AUTH_BASE_URL is not configured');
   }
-  return requestUrl.origin;
+  try {
+    return new URL(configured).toString().replace(/\/+$/g, '');
+  } catch (error) {
+    throw new HttpError(500, 'AUTH_BASE_URL must be a valid absolute URL');
+  }
 }
 
-function resolveTrustedOrigins(env, requestUrl, baseURL) {
+function calculateAllowedOrigins(env) {
   const origins = new Set();
-  addOrigin(origins, baseURL);
-  addOrigin(origins, requestUrl.origin);
+  addOrigin(origins, resolveAuthBaseUrl(env));
   const extra = String(env.CORS_ALLOWED_ORIGINS || '').trim();
   if (extra) {
     for (const value of extra.split(',')) {
       addOrigin(origins, value);
     }
   }
-  return [...origins];
+  return origins;
+}
+
+function resolveTrustedOrigins(env, requestUrl, baseURL) {
+  return [...calculateAllowedOrigins(env)];
 }
 
 function addOrigin(target, value) {
@@ -1838,23 +2604,11 @@ function addOrigin(target, value) {
 }
 
 function resolveAllowedOrigin(env, origin) {
-  const baseUrl = String(env.AUTH_BASE_URL || '').trim();
-  if (!baseUrl) {
-    return origin || '*';
+  const normalizedOrigin = String(origin || '').trim();
+  if (!normalizedOrigin) {
+    return null;
   }
-  const primaryOrigin = new URL(baseUrl).origin;
-  if (!origin || origin === primaryOrigin) {
-    return primaryOrigin;
-  }
-  const extra = String(env.CORS_ALLOWED_ORIGINS || '').trim();
-  if (extra) {
-    for (const allowed of extra.split(',')) {
-      if (allowed.trim() === origin) {
-        return origin;
-      }
-    }
-  }
-  return primaryOrigin;
+  return isAllowedOrigin(calculateAllowedOrigins(env), normalizedOrigin) ? normalizedOrigin : null;
 }
 
 function validateIdentityName(value, { allowReserved = false } = {}) {
@@ -1953,17 +2707,20 @@ async function readJsonBody(request) {
   const contentEncoding = String(request.headers.get('Content-Encoding') || '').toLowerCase();
   let raw = '';
   if (contentEncoding.includes('gzip')) {
-    const compressedBody = await request.arrayBuffer();
+    const compressedBody = await readRequestBytesWithLimit(request, MAX_REQUEST_COMPRESSED_BYTES);
     if (compressedBody.byteLength === 0) {
       return {};
     }
     try {
-      raw = await decompressGzip(new Uint8Array(compressedBody));
+      raw = await decompressGzipBodyWithLimit(compressedBody, MAX_REQUEST_JSON_BYTES);
     } catch (error) {
+      if (error instanceof HttpError) {
+        throw error;
+      }
       throw new HttpError(400, 'request body gzip decompression failed');
     }
   } else {
-    raw = await request.text();
+    raw = await readRequestTextWithLimit(request, MAX_REQUEST_JSON_BYTES);
   }
   if (!raw) {
     return {};
@@ -1978,6 +2735,65 @@ async function readJsonBody(request) {
     throw new HttpError(400, 'request body must be a JSON object');
   }
   return parsed;
+}
+
+async function readRequestTextWithLimit(request, maxBytes) {
+  const bytes = await readRequestBytesWithLimit(request, maxBytes);
+  return new TextDecoder().decode(bytes);
+}
+
+async function readRequestBytesWithLimit(request, maxBytes) {
+  if (request.body === null) {
+    return new Uint8Array();
+  }
+  const reader = request.body.getReader();
+  const chunks = [];
+  let totalBytes = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+    const chunk = value instanceof Uint8Array ? value : new Uint8Array(value);
+    totalBytes += chunk.byteLength;
+    if (totalBytes > Number(maxBytes)) {
+      throw new HttpError(413, 'request body is too large');
+    }
+    chunks.push(chunk);
+  }
+  return concatUint8Arrays(chunks, totalBytes);
+}
+
+async function decompressGzipBodyWithLimit(buffer, maxBytes) {
+  const stream = new Blob([buffer]).stream().pipeThrough(new DecompressionStream('gzip'));
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let totalBytes = 0;
+  let output = '';
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+    const chunk = value instanceof Uint8Array ? value : new Uint8Array(value);
+    totalBytes += chunk.byteLength;
+    if (totalBytes > Number(maxBytes)) {
+      throw new HttpError(413, 'request body is too large');
+    }
+    output += decoder.decode(chunk, { stream: true });
+  }
+  output += decoder.decode();
+  return output;
+}
+
+function concatUint8Arrays(chunks, totalBytes) {
+  const output = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    output.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return output;
 }
 
 function handleError(error) {
@@ -2054,29 +2870,73 @@ function isUniqueConstraintError(error) {
   );
 }
 
-function jsonResponse(status, payload) {
+function jsonResponse(status, payload, extraHeaders = null) {
+  const headers = new Headers({
+    'Content-Type': 'application/json',
+  });
+  appendHeaders(headers, extraHeaders);
   return new Response(JSON.stringify(payload), {
     status,
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers,
   });
 }
 
-function assetDownloadResponse(payload, { head, versionNumber }) {
+function assetDownloadResponse(payload, { head, versionNumber, headers: extraHeaders = null }) {
   const baseName = stringOrDefault(head && head.name, String(head ? head.asset_id : 'asset'));
   const slug = slugifyForFilename(baseName) || 'asset';
   const versionSuffix = Number.isFinite(Number(versionNumber)) ? `-${Number(versionNumber)}` : '';
   const filename = `${slug}${versionSuffix}.json`;
   const body = JSON.stringify(payload, null, 2);
+  const headers = new Headers({
+    'Content-Type': 'application/json',
+    'Content-Disposition': `attachment; filename="${filename}"`,
+    'Cache-Control': 'no-store',
+  });
+  appendHeaders(headers, extraHeaders);
   return new Response(body, {
     status: 200,
-    headers: {
-      'Content-Type': 'application/json',
-      'Content-Disposition': `attachment; filename="${filename}"`,
-      'Cache-Control': 'no-store',
-    },
+    headers,
   });
+}
+
+function appendHeaders(targetHeaders, sourceHeaders) {
+  if (!sourceHeaders) {
+    return;
+  }
+  const iterable = sourceHeaders instanceof Headers
+    ? sourceHeaders.entries()
+    : Object.entries(sourceHeaders);
+  for (const [key, value] of iterable) {
+    if (value === null || value === undefined || String(value).trim() === '') {
+      continue;
+    }
+    targetHeaders.set(key, String(value));
+  }
+}
+
+function isAnonymousRequest(request) {
+  return !String(request.headers.get('authorization') || '').trim()
+    && !String(request.headers.get('cookie') || '').trim();
+}
+
+function anonymousPublicResponseHeaders(request, shouldCache) {
+  if (!shouldCache || !isAnonymousRequest(request)) {
+    return null;
+  }
+  return {
+    'Cache-Control': PUBLIC_CACHE_CONTROL_HEADER,
+    Vary: 'Authorization, Cookie',
+  };
+}
+
+function applyAnonymousPublicCacheHeaders(c, request, shouldCache) {
+  const headers = anonymousPublicResponseHeaders(request, shouldCache);
+  if (!headers) {
+    return;
+  }
+  for (const [key, value] of Object.entries(headers)) {
+    c.header(key, value);
+  }
 }
 
 function slugifyForFilename(value) {

@@ -6,20 +6,20 @@ const { mockUseSession } = vi.hoisted(() => ({
   mockUseSession: vi.fn(),
 }));
 
-const { mockSignUpEmail } = vi.hoisted(() => ({
-  mockSignUpEmail: vi.fn(),
+const { mockRegisterWithPassword } = vi.hoisted(() => ({
+  mockRegisterWithPassword: vi.fn(),
 }));
 
-vi.mock('../authClient.js', () => ({
-  authClient: {
-    signUp: {
-      email: (...args) => mockSignUpEmail(...args),
-    },
-  },
+vi.mock('../lib/api.js', () => ({
+  registerWithPassword: (...args) => mockRegisterWithPassword(...args),
 }));
 
 vi.mock('../hooks/useSession.jsx', () => ({
   useSession: () => mockUseSession(),
+}));
+
+vi.mock('../components/TurnstileWidget.jsx', () => ({
+  TurnstileWidget: () => null,
 }));
 
 import { RegisterRoute } from './register.jsx';
@@ -38,9 +38,10 @@ describe('RegisterRoute', () => {
     mockUseSession.mockReturnValue({
       authResolved: true,
       isAuthenticated: false,
+      authProviders: { turnstileSiteKey: '' },
       siteSettings: { allowUserRegistration: true },
     });
-    mockSignUpEmail.mockReset();
+    mockRegisterWithPassword.mockReset();
   });
 
   afterEach(() => {
@@ -48,7 +49,7 @@ describe('RegisterRoute', () => {
   });
 
   it('uses the root verify-email callback URL', async () => {
-    mockSignUpEmail.mockResolvedValue(undefined);
+    mockRegisterWithPassword.mockResolvedValue(undefined);
 
     renderRoute();
 
@@ -58,11 +59,13 @@ describe('RegisterRoute', () => {
     fireEvent.change(screen.getByLabelText('Confirm Password'), { target: { value: 'password123' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create Account' }));
 
-    expect(mockSignUpEmail).toHaveBeenCalledWith({
+    expect(mockRegisterWithPassword).toHaveBeenCalledWith({
       name: 'Alice',
       email: 'alice@example.com',
       password: 'password123',
       callbackURL: 'http://localhost:3000/verify-email?verified=1',
+    }, {
+      captchaResponse: '',
     });
   });
 
@@ -76,6 +79,6 @@ describe('RegisterRoute', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Create Account' }));
 
     expect(screen.getByText('Passwords do not match.')).toBeTruthy();
-    expect(mockSignUpEmail).not.toHaveBeenCalled();
+    expect(mockRegisterWithPassword).not.toHaveBeenCalled();
   });
 });

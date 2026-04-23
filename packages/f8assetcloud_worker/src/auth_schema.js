@@ -51,9 +51,16 @@ export const verificationTable = sqliteTable('verification', {
   updatedAt: integer('updatedAt', { mode: 'timestamp_ms' }).notNull(),
 });
 
+export const rateLimitTable = sqliteTable('rateLimit', {
+  key: text('key').primaryKey(),
+  count: integer('count', { mode: 'number' }).notNull(),
+  lastRequest: integer('lastRequest', { mode: 'timestamp_ms' }).notNull(),
+});
+
 export const authSchema = {
   user: userTable,
   session: sessionTable,
   account: accountTable,
   verification: verificationTable,
+  rateLimit: rateLimitTable,
 };

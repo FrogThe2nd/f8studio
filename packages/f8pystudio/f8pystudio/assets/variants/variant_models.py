@@ -72,8 +72,15 @@ class F8VariantRemoteUser(Struct, kw_only=True):
 
 
 class F8VariantRemoteAuth(Struct, kw_only=True):
-    sessionCookie: str
+    accessToken: str
+    accessTokenExpiresAt: str
+    refreshToken: str
+    refreshTokenExpiresAt: str
     user: F8VariantRemoteUser
+
+    @property
+    def sessionCookie(self) -> str:
+        return str(self.accessToken)
 
 
 class F8VariantRemoteListPage(Struct, kw_only=True):
@@ -97,9 +104,16 @@ class F8VariantRemoteVersionList(Struct, kw_only=True):
 class F8VariantRemoteSession(Struct, kw_only=True):
     accountId: str
     baseUrl: str
-    sessionCookie: str
+    refreshToken: str
+    accessTokenExpiresAt: str
+    refreshTokenExpiresAt: str
     user: F8VariantRemoteUser
     lastUsedAt: str
+    accessToken: str = ""
+
+    @property
+    def sessionCookie(self) -> str:
+        return str(self.accessToken)
 
 
 class F8VariantRemoteConflictError(Exception):

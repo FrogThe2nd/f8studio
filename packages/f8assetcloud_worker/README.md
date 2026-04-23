@@ -10,7 +10,9 @@ Cloudflare Worker + D1 backend for Feel8 asset management, rebuilt around `Hono 
 - OpenAPI docs for audited `/v1/*` endpoints are served at `/docs` and `/openapi.json`
 - User and management console is the React app in `console_web`
 - The web UI is served at `/console`, and `/` redirects to `/console/`
-- Authentication uses Better Auth cookie sessions, not custom JWTs
+- Browser auth uses Better Auth cookie sessions
+- Desktop auth uses worker-issued opaque `accessToken` + `refreshToken` pairs scoped to `/v1/*`
+- `/api/auth/*` stays browser-only; desktop Bearer tokens are never accepted on Better Auth internals
 - D1 schema starts from a single fresh migration: `migrations/0001_init.sql`
 
 ## Database model
@@ -62,6 +64,9 @@ Asset storage contract:
 - Email verification
 - Password reset
 - Google OAuth login
+- Cloudflare Turnstile protection for public sign-up and password-reset-request flows
+- Better Auth rate limiting backed by D1
+- Worker-side rate limiting on desktop auth, mutations, subscriptions, and management routes
 - Management permissions are backed by Better Auth role support
 - Bootstrap management account creation from environment variables
 
@@ -79,6 +84,10 @@ Auth:
 App wrappers:
 
 - `GET /v1/auth/providers`
+- `POST /v1/auth/desktop/session`
+- `POST /v1/auth/desktop/token`
+- `POST /v1/auth/desktop/refresh`
+- `POST /v1/auth/desktop/revoke`
 - `GET /v1/auth/verify-email?token=...`
 - `POST /v1/auth/reset-password`
 - `GET /v1/me`
@@ -152,13 +161,13 @@ OpenAPI contract:
 Required:
 
 - `BETTER_AUTH_SECRET`
+- `AUTH_BASE_URL`
 - `BOOTSTRAP_ADMIN_NAME`
 - `BOOTSTRAP_ADMIN_EMAIL`
 - `BOOTSTRAP_ADMIN_PASSWORD`
 
 Recommended:
 
-- `AUTH_BASE_URL`
 - `AUTH_VERIFY_EMAIL_BASE_URL`
 - `AUTH_RESET_PASSWORD_BASE_URL`
 - `EMAIL_VERIFY_TOKEN_TTL_SECONDS`
@@ -169,11 +178,17 @@ Recommended:
 CORS:
 
 - `CORS_ALLOWED_ORIGINS` — comma-separated list of extra allowed origins (e.g. `http://localhost:5173`)
+- In production, only `AUTH_BASE_URL` and explicit `CORS_ALLOWED_ORIGINS` are trusted; the worker no longer trusts arbitrary request origins
 
 Google login:
 
 - `GOOGLE_CLIENT_ID`
 - `GOOGLE_CLIENT_SECRET`
+
+Cloudflare Turnstile:
+
+- `TURNSTILE_SITE_KEY` (or `CLOUDFLARE_TURNSTILE_SITE_KEY`)
+- `TURNSTILE_SECRET_KEY` (or `CLOUDFLARE_TURNSTILE_SECRET_KEY`)
 
 Email delivery via Resend:
 
@@ -191,15 +206,39 @@ Variable precedence:
 - `wrangler.toml` `[vars]` provides checked-in defaults for deploys and local dev.
 - `.dev.vars` overrides those values during `wrangler dev`, so local debugging should usually be adjusted there.
 
+## Security hard requirements
+
+- Set `AUTH_BASE_URL` in every deployed environment. The worker now fails closed when it is missing.
+- Deploy Cloudflare WAF / edge rate limiting for anonymous public traffic. Anonymous browse endpoints stay open by design and should not rely on D1-backed application rate limits alone.
+- Configure Turnstile when public registration or password reset is enabled.
+- Store `TURNSTILE_SECRET_KEY` as a Wrangler secret, not in `wrangler.toml`.
+- Keep `CORS_ALLOWED_ORIGINS` minimal. Do not mirror arbitrary request origins.
+- Treat every open-source client as untrusted. The server must enforce authorization, quotas, and input limits even when a client knows the protocol.
+- Browser-cookie `POST/PUT/PATCH/DELETE` requests to `/v1/*` require allowed `Origin`; desktop Bearer tokens bypass browser CSRF rules and must use `Authorization: Bearer ...`.
+- Owner-facing subscriber list endpoints no longer expose subscriber email addresses. Email is admin-only data.
+- Large request bodies are size-checked both before and after gzip decompression; over-limit uploads are rejected with `413`.
+
 ## Desktop browser sign-in notes
 
 PyStudio desktop sign-in uses the system browser plus a temporary loopback callback (`http://127.0.0.1:<port>/callback`).
+
+Desktop flow summary:
+
+- `GET /v1/auth/desktop/authorize` always renders a confirmation page
+- `POST /v1/auth/desktop/authorize` confirms the request with CSRF + allowed-origin checks
+- `POST /v1/auth/desktop/token` exchanges a one-time code for a desktop token pair
+- `POST /v1/auth/desktop/refresh` rotates the short-lived access token
+- `POST /v1/auth/desktop/revoke` invalidates the saved refresh token
+
+PyStudio stores only the desktop `refreshToken` in keyring. Browser session cookies are not persisted locally.
 
 Key variables for switching environments:
 
 - PyStudio: `F8_ASSET_CLOUD_BASE_URL`
 - Worker / Better Auth: `AUTH_BASE_URL`
 - Cross-origin local dev: `CORS_ALLOWED_ORIGINS`
+
+Release builds of PyStudio are expected to stay pinned to the official backend (`https://assetcloud.feel8.fun`). Custom `F8_ASSET_CLOUD_BASE_URL` overrides are intended for local development and testing.
 
 Friendly callback pages now live at:
 

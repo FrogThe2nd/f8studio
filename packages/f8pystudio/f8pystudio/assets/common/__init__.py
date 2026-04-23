@@ -13,10 +13,12 @@ from .browser_auth import (
     build_browser_callback_redirect_url,
     build_pkce_code_challenge,
     create_browser_auth_session,
+    create_browser_auth_session_for_port,
     find_free_loopback_port,
 )
 from .common import (
     ASSET_CLOUD_BASE_URL_ENV,
+    OFFICIAL_ASSET_CLOUD_BASE_URL,
     JsonObject,
     canonicalize_iso_utc,
     decode_http_response_text,
@@ -43,6 +45,7 @@ from .remote_cache_common import RemoteCacheMetadata, remote_cache_metadata_from
 __all__ = [
     "JsonObject",
     "ASSET_CLOUD_BASE_URL_ENV",
+    "OFFICIAL_ASSET_CLOUD_BASE_URL",
     "canonicalize_iso_utc",
     "AssetCloudCredentialStore",
     "AssetCloudCredentialStoreError",
@@ -55,6 +58,7 @@ __all__ = [
     "build_browser_callback_redirect_url",
     "build_pkce_code_challenge",
     "create_browser_auth_session",
+    "create_browser_auth_session_for_port",
     "decode_http_response_text",
     "find_free_loopback_port",
     "format_timestamp_for_local_display",

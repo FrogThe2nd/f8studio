@@ -2,7 +2,16 @@
 
 const PAGE_SIZE = 100;
 const MAX_CONTENT_BYTES = 10 * 1024 * 1024;
+const MAX_ASSET_ID_LENGTH = 128;
+const MAX_ASSET_NAME_LENGTH = 120;
+const MAX_DESCRIPTION_BYTES = 16 * 1024;
+const MAX_CHANGE_SUMMARY_LENGTH = 280;
+const MAX_TAG_COUNT = 20;
+const MAX_TAG_LENGTH = 48;
+const MAX_ASSET_FIELD_LENGTH = 128;
+const SAFE_ASSET_ID_PATTERN = /^[A-Za-z0-9._~-]+$/;
 const COMPONENT_SCHEMA_VERSION = 'f8studio-session/1';
+const textEncoder = new TextEncoder();
 
 export class AssetConflictError extends Error {
   constructor({ assetId, assetType, versionNumber }) {
@@ -752,12 +761,11 @@ export class AssetRepository {
          s.subscriber_user_id,
          s.subscribed_at,
          s.last_seen_version_number,
-         u.name AS subscriber_name,
-         u.email AS subscriber_email
+         u.name AS subscriber_name
        FROM asset_subscriptions s
        JOIN user u ON u.id = s.subscriber_user_id
        WHERE s.asset_id = ?
-       ORDER BY LOWER(COALESCE(u.name, u.email, s.subscriber_user_id)), s.subscriber_user_id
+       ORDER BY LOWER(COALESCE(u.name, s.subscriber_user_id)), s.subscriber_user_id
        LIMIT ? OFFSET ?`,
     )
       .bind(String(assetId), PAGE_SIZE + 1, start)
@@ -825,7 +833,7 @@ export class AssetRepository {
        SET change_summary = ?
        WHERE asset_id = ? AND version_number = ?`,
     )
-      .bind(nullableString(changeSummary), String(assetId), normalizedVersionNumber)
+      .bind(normalizeChangeSummary(changeSummary), String(assetId), normalizedVersionNumber)
       .run();
     return this._getAssetDetailPayload({
       assetId,
@@ -901,9 +909,9 @@ export class AssetRepository {
   async _updateAssetMeta({ assetId, assetType, payload, userId }) {
     // Metadata-only update: updates name/description/tags without creating a new version row.
     await this._requireOwnedAsset({ assetId, assetType, userId });
-    const name = requireNonEmptyString(payload.name, 'name is required');
-    const description = String(payload.description || '');
-    const tags = Array.isArray(payload.tags) ? payload.tags.map(String) : [];
+    const name = requireAssetName(payload.name, 'name is required');
+    const description = optionalDescription(payload.description);
+    const tags = normalizeTags(payload.tags);
     await this._db.prepare(
       `UPDATE asset_heads
        SET name = ?,
@@ -1190,7 +1198,7 @@ function normalizeVariantCreatePayload(payload, user) {
     tags: record.tags,
     createdAt,
     updatedAt,
-    changeSummary: nullableString(payload.changeSummary),
+    changeSummary: normalizeChangeSummary(payload.changeSummary),
     variantDetails: {
       variantKind: record.kind,
       baseNodeType: record.baseNodeType,
@@ -1215,7 +1223,7 @@ function normalizeVariantUpdatePayload(payload, existing, user) {
     tags: record.tags,
     createdAt: String(existing.created_at),
     updatedAt: timestamp,
-    changeSummary: nullableString(payload.changeSummary),
+    changeSummary: normalizeChangeSummary(payload.changeSummary),
     variantDetails: {
       variantKind: record.kind,
       baseNodeType: record.baseNodeType,
@@ -1242,7 +1250,7 @@ function normalizeComponentCreatePayload(payload, user) {
     tags: record.tags,
     createdAt,
     updatedAt,
-    changeSummary: nullableString(payload.changeSummary),
+    changeSummary: normalizeChangeSummary(payload.changeSummary),
     contentJson: stableJson(record.content),
   };
 }
@@ -1261,7 +1269,7 @@ function normalizeComponentUpdatePayload(payload, existing, user) {
     tags: record.tags,
     createdAt: String(existing.created_at),
     updatedAt: timestamp,
-    changeSummary: nullableString(payload.changeSummary),
+    changeSummary: normalizeChangeSummary(payload.changeSummary),
     contentJson: stableJson(record.content),
   };
 }
@@ -1270,14 +1278,14 @@ function normalizeVariantRecord(record, { expectedVariantId }) {
   if (!isPlainObject(record)) {
     throw new AssetValidationError('record is required');
   }
-  const variantId = requireNonEmptyString(record.variantId, 'record.variantId is required');
+  const variantId = requireAssetIdentifier(record.variantId, 'record.variantId is required');
   if (expectedVariantId && variantId !== expectedVariantId) {
     throw new AssetValidationError('record.variantId must match the request path');
   }
-  const kind = requireNonEmptyString(record.kind, 'record.kind is required');
-  const baseNodeType = requireNonEmptyString(record.baseNodeType, 'record.baseNodeType is required');
-  const serviceClass = requireNonEmptyString(record.serviceClass, 'record.serviceClass is required');
-  const name = requireNonEmptyString(record.name, 'record.name is required');
+  const kind = requireAssetField(record.kind, 'record.kind is required');
+  const baseNodeType = requireAssetField(record.baseNodeType, 'record.baseNodeType is required');
+  const serviceClass = requireAssetField(record.serviceClass, 'record.serviceClass is required');
+  const name = requireAssetName(record.name, 'record.name is required');
   if (!isPlainObject(record.spec)) {
     throw new AssetValidationError('record.spec must be a JSON object');
   }
@@ -1286,9 +1294,9 @@ function normalizeVariantRecord(record, { expectedVariantId }) {
     kind,
     baseNodeType,
     serviceClass,
-    operatorClass: nullableString(record.operatorClass),
+    operatorClass: optionalAssetField(record.operatorClass),
     name,
-    description: stringOrDefault(record.description, ''),
+    description: optionalDescription(record.description),
     tags: normalizeTags(record.tags),
     spec: deepCloneJson(record.spec),
     createdAt: normalizeIsoString(record.createdAt, ''),
@@ -1303,7 +1311,7 @@ function normalizeComponentRecord(record, { expectedComponentId }) {
   if (Object.hasOwn(record, 'schemaVersion')) {
     throw new AssetValidationError('record.schemaVersion is not allowed; use record.content.schemaVersion');
   }
-  const componentId = requireNonEmptyString(record.componentId, 'record.componentId is required');
+  const componentId = requireAssetIdentifier(record.componentId, 'record.componentId is required');
   if (expectedComponentId && componentId !== expectedComponentId) {
     throw new AssetValidationError('record.componentId must match the request path');
   }
@@ -1319,8 +1327,8 @@ function normalizeComponentRecord(record, { expectedComponentId }) {
   }
   return {
     componentId,
-    name: requireNonEmptyString(record.name, 'record.name is required'),
-    description: stringOrDefault(record.description, ''),
+    name: requireAssetName(record.name, 'record.name is required'),
+    description: optionalDescription(record.description),
     tags: normalizeTags(record.tags),
     content: deepCloneJson(record.content),
     createdAt: normalizeIsoString(record.createdAt, ''),
@@ -1459,8 +1467,7 @@ function genericTypedAssetPayload(row, viewerUserId) {
 function assetSubscriberFromRow(row) {
   return {
     userId: String(row.subscriber_user_id),
-    name: stringOrDefault(row.subscriber_name, String(row.subscriber_email || row.subscriber_user_id || '')),
-    email: nullableString(row.subscriber_email),
+    name: stringOrDefault(row.subscriber_name, String(row.subscriber_user_id || '')),
     subscribedAt: normalizeDbTimestamp(row.subscribed_at),
     lastSeenVersionNumber: nullableNumber(row.last_seen_version_number),
   };
@@ -1728,7 +1735,19 @@ function normalizeTags(value) {
   if (!Array.isArray(value)) {
     return [];
   }
-  return value.map((item) => String(item)).filter((item) => item.trim().length > 0);
+  if (value.length > MAX_TAG_COUNT) {
+    throw new AssetValidationError(`tags must contain at most ${MAX_TAG_COUNT} items`);
+  }
+  const tags = value
+    .map((item) => requireConstrainedString(item, 'tag must be a non-empty string', {
+      maxLength: MAX_TAG_LENGTH,
+      fieldLabel: 'tag',
+    }))
+    .filter((item) => item.length > 0);
+  if (tags.length > MAX_TAG_COUNT) {
+    throw new AssetValidationError(`tags must contain at most ${MAX_TAG_COUNT} items`);
+  }
+  return tags;
 }
 
 function parseCursor(value) {
@@ -1921,6 +1940,77 @@ function parseJsonObject(value, errorMessage = 'stored version content must be a
 
 function deepCloneJson(value) {
   return JSON.parse(JSON.stringify(value));
+}
+
+function requireAssetIdentifier(value, message) {
+  const text = requireConstrainedString(value, message, {
+    maxLength: MAX_ASSET_ID_LENGTH,
+    fieldLabel: 'asset id',
+  });
+  if (!SAFE_ASSET_ID_PATTERN.test(text)) {
+    throw new AssetValidationError('asset id must use URL-safe characters only');
+  }
+  return text;
+}
+
+function requireAssetName(value, message) {
+  return requireConstrainedString(value, message, {
+    maxLength: MAX_ASSET_NAME_LENGTH,
+    fieldLabel: 'name',
+  });
+}
+
+function requireAssetField(value, message) {
+  return requireConstrainedString(value, message, {
+    maxLength: MAX_ASSET_FIELD_LENGTH,
+    fieldLabel: 'field',
+  });
+}
+
+function optionalAssetField(value) {
+  const text = nullableString(value);
+  if (text === null) {
+    return null;
+  }
+  return requireConstrainedString(text, 'field is too long', {
+    maxLength: MAX_ASSET_FIELD_LENGTH,
+    fieldLabel: 'field',
+  });
+}
+
+function optionalDescription(value) {
+  const text = String(value || '');
+  ensureMaxByteLength(text, MAX_DESCRIPTION_BYTES, 'description');
+  return text;
+}
+
+function normalizeChangeSummary(value) {
+  const text = nullableString(value);
+  if (text === null) {
+    return null;
+  }
+  if (text.length > MAX_CHANGE_SUMMARY_LENGTH) {
+    throw new AssetValidationError(`changeSummary must be at most ${MAX_CHANGE_SUMMARY_LENGTH} characters`);
+  }
+  return text;
+}
+
+function requireConstrainedString(value, message, { maxLength, fieldLabel }) {
+  const text = String(value || '').trim();
+  if (!text) {
+    throw new AssetValidationError(message);
+  }
+  if (text.length > Number(maxLength)) {
+    throw new AssetValidationError(`${fieldLabel} must be at most ${maxLength} characters`);
+  }
+  return text;
+}
+
+function ensureMaxByteLength(value, maxBytes, fieldLabel) {
+  const byteLength = textEncoder.encode(String(value || '')).length;
+  if (byteLength > Number(maxBytes)) {
+    throw new AssetValidationError(`${fieldLabel} must be at most ${Math.round(Number(maxBytes) / 1024)} KiB`);
+  }
 }
 
 function requireNonEmptyString(value, message) {

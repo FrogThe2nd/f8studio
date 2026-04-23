@@ -2,17 +2,22 @@ import { useState } from 'react';
 import { Link, Navigate } from 'react-router-dom';
 
 import { Button } from '../components/ui/button.jsx';
-import { authClient } from '../authClient.js';
+import { TurnstileWidget } from '../components/TurnstileWidget.jsx';
+import { registerWithPassword } from '../lib/api.js';
 import { useSession } from '../hooks/useSession.jsx';
 
 export function RegisterRoute() {
-  const { authResolved, isAuthenticated, siteSettings } = useSession();
+  const { authResolved, isAuthenticated, siteSettings, authProviders } = useSession();
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState('');
+  const [captchaResponse, setCaptchaResponse] = useState('');
+  const [captchaResetKey, setCaptchaResetKey] = useState(0);
+  const turnstileSiteKey = String(authProviders?.turnstileSiteKey || '').trim();
+  const captchaRequired = Boolean(turnstileSiteKey);
 
   if (authResolved && isAuthenticated) {
     return <Navigate replace to="/assets/mine" />;
@@ -30,19 +35,27 @@ export function RegisterRoute() {
     setPending(true);
     setMessage('');
     try {
-      await authClient.signUp.email({
+      await registerWithPassword({
         name: name.trim(),
         email: email.trim(),
         password,
         callbackURL: `${window.location.origin}/verify-email?verified=1`,
+      }, {
+        captchaResponse,
       });
       setMessage('Account created. Verify your email, then sign in.');
       setName('');
       setEmail('');
       setPassword('');
       setConfirmPassword('');
+      setCaptchaResponse('');
+      setCaptchaResetKey((current) => current + 1);
     } catch (errorValue) {
       setMessage(errorValue instanceof Error ? errorValue.message : String(errorValue));
+      if (captchaRequired) {
+        setCaptchaResponse('');
+        setCaptchaResetKey((current) => current + 1);
+      }
     } finally {
       setPending(false);
     }
@@ -70,8 +83,18 @@ export function RegisterRoute() {
             Confirm Password
             <input type="password" className="mt-2 w-full rounded-2xl border border-white/12 bg-white/5 px-4 py-3 text-white focus:border-cyan-300/40 focus:outline-none" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} />
           </label>
+          {captchaRequired ? (
+            <div className="space-y-2">
+              <p className="text-sm text-slate-300">Complete the security check to finish registration.</p>
+              <TurnstileWidget
+                siteKey={turnstileSiteKey}
+                onTokenChange={setCaptchaResponse}
+                resetKey={captchaResetKey}
+              />
+            </div>
+          ) : null}
           {message ? <p className="text-sm text-slate-200">{message}</p> : null}
-          <Button type="submit" disabled={pending || !name.trim() || !email.trim() || !password || !confirmPassword}>
+          <Button type="submit" disabled={pending || !name.trim() || !email.trim() || !password || !confirmPassword || (captchaRequired && !captchaResponse)}>
             {pending ? 'Creating account...' : 'Create Account'}
           </Button>
         </form>

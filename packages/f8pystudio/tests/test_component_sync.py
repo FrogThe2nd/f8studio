@@ -64,16 +64,25 @@ def _ensure_app() -> QtWidgets.QApplication:
 
 class _MemoryCredentialStore:
     def __init__(self) -> None:
-        self._cookies_by_account_id: dict[str, str] = {}
+        self._refresh_tokens_by_account_id: dict[str, str] = {}
+
+    def load_refresh_token(self, *, account_id: str) -> str:
+        return str(self._refresh_tokens_by_account_id.get(str(account_id), ""))
+
+    def store_refresh_token(self, *, account_id: str, refresh_token: str) -> None:
+        self._refresh_tokens_by_account_id[str(account_id)] = str(refresh_token)
+
+    def delete_refresh_token(self, *, account_id: str) -> None:
+        self._refresh_tokens_by_account_id.pop(str(account_id), None)
 
     def load_session_cookie(self, *, account_id: str) -> str:
-        return str(self._cookies_by_account_id.get(str(account_id), ""))
+        return self.load_refresh_token(account_id=account_id)
 
     def store_session_cookie(self, *, account_id: str, session_cookie: str) -> None:
-        self._cookies_by_account_id[str(account_id)] = str(session_cookie)
+        self.store_refresh_token(account_id=account_id, refresh_token=session_cookie)
 
     def delete_session_cookie(self, *, account_id: str) -> None:
-        self._cookies_by_account_id.pop(str(account_id), None)
+        self.delete_refresh_token(account_id=account_id)
 
 
 class _GraphComponentSaveHost(GraphComponentActionsMixin):
@@ -139,18 +148,36 @@ class _ComponentApiHandler(BaseHTTPRequestHandler):
 
     def _session_cookie(self) -> str:
         cookie = str(self.headers.get("Cookie") or "")
-        if "session=rotated-2" in cookie:
-            return "session=rotated-2"
         if "session=active-2" in cookie:
             return "session=active-2"
-        if "session=rotated-1" in cookie:
-            return "session=rotated-1"
         if "session=active-1" in cookie:
             return "session=active-1"
         return ""
 
+    def _authorization_token(self) -> str:
+        header = str(self.headers.get("Authorization") or "").strip()
+        if not header.startswith("Bearer "):
+            return ""
+        return header[len("Bearer ") :].strip()
+
+    def _user_key_for_browser_session(self) -> str:
+        session_cookie = self._session_cookie()
+        if session_cookie == "session=active-2":
+            return "u2"
+        if session_cookie == "session=active-1":
+            return "u1"
+        return ""
+
+    def _user_key_for_access_token(self) -> str:
+        access_token = self._authorization_token()
+        if access_token in {"access-u2", "access-u2-rotated"}:
+            return "u2"
+        if access_token in {"access-u1", "access-u1-rotated"}:
+            return "u1"
+        return ""
+
     def _check_auth(self) -> bool:
-        if self._session_cookie():
+        if self._user_key_for_access_token():
             return True
         self._write_json(401, {"message": "expired"})
         return False
@@ -164,16 +191,39 @@ class _ComponentApiHandler(BaseHTTPRequestHandler):
                 set_cookie="session=active-1; Path=/; HttpOnly",
             )
             return
+        if self.path == "/v1/auth/desktop/session":
+            self.server.last_desktop_session_origin = str(self.headers.get("Origin") or "")
+            user_key = self._user_key_for_browser_session()
+            if not user_key:
+                self._write_json(401, {"message": "expired"})
+                return
+            self._write_json(200, self.server.desktop_auth_payload(user_key))
+            return
         if self.path == "/v1/auth/desktop/token":
             payload = self._read_json()
             self.server.last_desktop_token_payload = payload
-            self._write_json(
-                200,
-                {
-                    "sessionCookie": "session=active-1",
-                    "user": {"userId": "u1", "name": "User One", "email": "u@example.com"},
-                },
-            )
+            self._write_json(200, self.server.desktop_auth_payload("u1"))
+            return
+        if self.path == "/v1/auth/desktop/refresh":
+            payload = self._read_json()
+            self.server.last_desktop_refresh_payload = payload
+            refresh_token = str(payload.get("refreshToken") or "")
+            if refresh_token in self.server.revoked_refresh_tokens:
+                self._write_json(401, {"message": "expired"})
+                return
+            user_key = self.server.user_key_for_refresh_token(refresh_token)
+            if not user_key:
+                self._write_json(401, {"message": "expired"})
+                return
+            self._write_json(200, self.server.desktop_auth_payload(user_key))
+            return
+        if self.path == "/v1/auth/desktop/revoke":
+            payload = self._read_json()
+            self.server.last_desktop_revoke_payload = payload
+            refresh_token = str(payload.get("refreshToken") or "")
+            if refresh_token:
+                self.server.revoked_refresh_tokens.add(refresh_token)
+            self._write_json(200, {"ok": True})
             return
         if self.path == "/api/auth/sign-out":
             self.server.last_signout_origin = str(self.headers.get("Origin") or "")
@@ -205,13 +255,12 @@ class _ComponentApiHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         if self.path.startswith("/v1/components?"):
-            cookie = str(self.headers.get("Cookie") or "")
             if "owner=me" in self.path:
                 if not self._check_auth():
                     return
                 self._write_json(200, {"entries": [self.server.private_asset_summary], "nextCursor": None})
                 return
-            if "owner=public" in self.path and not cookie:
+            if "owner=public" in self.path and not self._authorization_token():
                 self._write_json(200, {"entries": [self.server.public_asset_summary], "nextCursor": None})
                 return
             if not self._check_auth():
@@ -221,12 +270,10 @@ class _ComponentApiHandler(BaseHTTPRequestHandler):
         if self.path == "/v1/me":
             if not self._check_auth():
                 return
-            session_cookie = self._session_cookie()
-            set_cookie = self.server.rotate_me_cookie or None
-            if session_cookie in {"session=active-2", "session=rotated-2"}:
-                self._write_json(200, {"userId": "u2", "name": "User Two", "email": "u2@example.com"}, set_cookie=set_cookie)
+            if self._user_key_for_access_token() == "u2":
+                self._write_json(200, {"userId": "u2", "name": "User Two", "email": "u2@example.com"})
                 return
-            self._write_json(200, {"userId": "u1", "name": "User One", "email": "u@example.com"}, set_cookie=set_cookie)
+            self._write_json(200, {"userId": "u1", "name": "User One", "email": "u@example.com"})
             return
         if self.path == "/v1/components/public-1":
             self._write_json(200, self.server.public_asset)
@@ -296,6 +343,7 @@ class _Server(ThreadingHTTPServer):
     def __init__(self, server_address: tuple[str, int]):
         super().__init__(server_address, _ComponentApiHandler)
         self.last_login_user_agent = ""
+        self.last_desktop_session_origin = ""
         self.last_signout_origin = ""
         self.public_record = _component_record("public-1", "Public Component")
         self.private_record = _component_record("private-1", "Private Component")
@@ -305,8 +353,35 @@ class _Server(ThreadingHTTPServer):
         self.private_asset_summary = self.asset_summary_payload(self.private_record, visibility="private")
         self.last_create_payload: dict[str, object] = {}
         self.last_desktop_token_payload: dict[str, object] = {}
-        self.rotate_me_cookie = ""
+        self.last_desktop_refresh_payload: dict[str, object] = {}
+        self.last_desktop_revoke_payload: dict[str, object] = {}
+        self.revoked_refresh_tokens: set[str] = set()
+        self.refresh_access_tokens_by_user_key: dict[str, str] = {}
         self.deleted_component_ids: list[str] = []
+
+    @staticmethod
+    def _user_payload(user_key: str) -> dict[str, str]:
+        if user_key == "u2":
+            return {"userId": "u2", "name": "User Two", "email": "u2@example.com"}
+        return {"userId": "u1", "name": "User One", "email": "u@example.com"}
+
+    @staticmethod
+    def user_key_for_refresh_token(refresh_token: str) -> str:
+        if refresh_token == "refresh-u2":
+            return "u2"
+        if refresh_token == "refresh-u1":
+            return "u1"
+        return ""
+
+    def desktop_auth_payload(self, user_key: str) -> dict[str, object]:
+        access_token = self.refresh_access_tokens_by_user_key.get(user_key, f"access-{user_key}")
+        return {
+            "accessToken": access_token,
+            "accessTokenExpiresAt": "2026-05-01T00:05:00Z",
+            "refreshToken": f"refresh-{user_key}",
+            "refreshTokenExpiresAt": "2026-06-01T00:00:00Z",
+            "user": self._user_payload(user_key),
+        }
 
     @staticmethod
     def asset_payload(
@@ -384,7 +459,10 @@ def test_component_sync_client_supports_anonymous_public_install_and_cookie_sess
 
         auth = client.login(base_url=f"http://127.0.0.1:{server.server_port}", email="u@example.com", password="p", remember=True)
         assert auth.user.name == "User One"
+        assert auth.accessToken == "access-u1"
+        assert auth.refreshToken == "refresh-u1"
         assert server.last_login_user_agent == "F8Studio/1.0"
+        assert server.last_desktop_session_origin == f"http://127.0.0.1:{server.server_port}"
         settings.beginGroup("assetcloud/v1")
         saved_sessions_raw = settings.value("saved_sessions", [])
         stored_session_cookie = settings.value("session_cookie", "")
@@ -394,10 +472,12 @@ def test_component_sync_client_supports_anonymous_public_install_and_cookie_sess
         assert len(saved_sessions_raw) == 1
         assert isinstance(saved_sessions_raw[0], dict)
         assert "sessionCookie" not in saved_sessions_raw[0]
+        assert "accessToken" not in saved_sessions_raw[0]
+        assert "refreshToken" not in saved_sessions_raw[0]
 
         refreshed_page = client.list_components(scope="community")
         assert refreshed_page.entries[0].record.componentId == "public-1"
-        assert client.current_access_token() == "session=active-1"
+        assert client.current_access_token() == "access-u1"
         cached_public = service.entry("public-1", include_uninstalled=True)
         assert cached_public is not None
         assert isinstance(cached_public.record.content.get("layout"), dict)
@@ -441,7 +521,7 @@ def test_component_sync_client_supports_anonymous_public_install_and_cookie_sess
         assert client.current_access_token() == ""
         assert client.current_session() is None
         assert client.saved_sessions() == []
-        assert server.last_signout_origin == f"http://127.0.0.1:{server.server_port}"
+        assert server.last_desktop_revoke_payload == {"refreshToken": "refresh-u1"}
     finally:
         server.shutdown()
         server.server_close()
@@ -468,7 +548,9 @@ def test_component_sync_client_can_exchange_browser_authorization_code(tmp_path:
         )
 
         assert auth.user.name == "User One"
-        assert client.current_access_token() == "session=active-1"
+        assert auth.accessToken == "access-u1"
+        assert auth.refreshToken == "refresh-u1"
+        assert client.current_access_token() == "access-u1"
         assert server.last_desktop_token_payload == {
             "clientId": "pystudio",
             "code": "desktop-code-1",
@@ -493,8 +575,8 @@ def test_component_sync_client_refresh_auth_preserves_switched_account_cookie(tm
         base_url = f"http://127.0.0.1:{server.server_port}"
         account_id_1 = f"{base_url}::u@example.com"
         account_id_2 = f"{base_url}::u2@example.com"
-        credential_store.store_session_cookie(account_id=account_id_1, session_cookie="session=active-1")
-        credential_store.store_session_cookie(account_id=account_id_2, session_cookie="session=active-2")
+        credential_store.store_refresh_token(account_id=account_id_1, refresh_token="refresh-u1")
+        credential_store.store_refresh_token(account_id=account_id_2, refresh_token="refresh-u2")
         settings.beginGroup("assetcloud/v1")
         settings.setValue(
             "saved_sessions",
@@ -517,73 +599,77 @@ def test_component_sync_client_refresh_auth_preserves_switched_account_cookie(tm
         settings.setValue("user", {"userId": "u1", "name": "User One", "email": "u@example.com"})
         settings.endGroup()
 
-        assert client.current_access_token() == "session=active-1"
+        assert client.current_access_token() == ""
 
         settings.beginGroup("assetcloud/v1")
         settings.setValue("current_account_id", account_id_2)
         settings.setValue("user", {"userId": "u2", "name": "User Two", "email": "u2@example.com"})
         settings.endGroup()
 
-        assert client.current_access_token() == "session=active-2"
+        assert client.current_access_token() == ""
 
         auth = client.refresh_auth()
-        assert auth.sessionCookie == "session=active-2"
+        assert auth.accessToken == "access-u2"
+        assert auth.refreshToken == "refresh-u2"
         assert auth.user.email == "u2@example.com"
-        assert client.current_access_token() == "session=active-2"
-        assert credential_store.load_session_cookie(account_id=account_id_2) == "session=active-2"
+        assert client.current_access_token() == "access-u2"
+        assert credential_store.load_refresh_token(account_id=account_id_2) == "refresh-u2"
     finally:
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
 
 
-def test_component_sync_client_switch_account_is_local_only(tmp_path: Path, monkeypatch) -> None:
-    settings = QtCore.QSettings(str(tmp_path / "component-switch-local.ini"), QtCore.QSettings.IniFormat)
-    credential_store = _MemoryCredentialStore()
-    service = ComponentCatalogService(db_path=tmp_path / "assets.db")
-    client = ComponentSyncClient(settings=settings, catalog_service=service, credential_store=credential_store)
-    base_url = "https://assetcloud.test"
-    account_id_1 = f"{base_url}::u1@example.com"
-    account_id_2 = f"{base_url}::u2@example.com"
-    credential_store.store_session_cookie(account_id=account_id_1, session_cookie="session=active-1")
-    credential_store.store_session_cookie(account_id=account_id_2, session_cookie="session=active-2")
-    settings.beginGroup("assetcloud/v1")
-    settings.setValue(
-        "saved_sessions",
-        [
-            {
-                "accountId": account_id_1,
-                "baseUrl": base_url,
-                "user": {"userId": "u1", "name": "User One", "email": "u1@example.com"},
-                "lastUsedAt": "2026-04-21T10:00:00+00:00",
-            },
-            {
-                "accountId": account_id_2,
-                "baseUrl": base_url,
-                "user": {"userId": "u2", "name": "User Two", "email": "u2@example.com"},
-                "lastUsedAt": "2026-04-21T10:05:00+00:00",
-            },
-        ],
-    )
-    settings.setValue("current_account_id", account_id_1)
-    settings.setValue("user", {"userId": "u1", "name": "User One", "email": "u1@example.com"})
-    settings.endGroup()
+def test_component_sync_client_switch_account_refreshes_tokens(tmp_path: Path) -> None:
+    server = _Server(("127.0.0.1", 0))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        settings = QtCore.QSettings(str(tmp_path / "component-switch-local.ini"), QtCore.QSettings.IniFormat)
+        credential_store = _MemoryCredentialStore()
+        service = ComponentCatalogService(db_path=tmp_path / "assets.db")
+        client = ComponentSyncClient(settings=settings, catalog_service=service, credential_store=credential_store)
+        base_url = f"http://127.0.0.1:{server.server_port}"
+        account_id_1 = f"{base_url}::u1@example.com"
+        account_id_2 = f"{base_url}::u2@example.com"
+        credential_store.store_refresh_token(account_id=account_id_1, refresh_token="refresh-u1")
+        credential_store.store_refresh_token(account_id=account_id_2, refresh_token="refresh-u2")
+        settings.beginGroup("assetcloud/v1")
+        settings.setValue(
+            "saved_sessions",
+            [
+                {
+                    "accountId": account_id_1,
+                    "baseUrl": base_url,
+                    "user": {"userId": "u1", "name": "User One", "email": "u1@example.com"},
+                    "lastUsedAt": "2026-04-21T10:00:00+00:00",
+                },
+                {
+                    "accountId": account_id_2,
+                    "baseUrl": base_url,
+                    "user": {"userId": "u2", "name": "User Two", "email": "u2@example.com"},
+                    "lastUsedAt": "2026-04-21T10:05:00+00:00",
+                },
+            ],
+        )
+        settings.setValue("current_account_id", account_id_1)
+        settings.setValue("user", {"userId": "u1", "name": "User One", "email": "u1@example.com"})
+        settings.endGroup()
 
-    monkeypatch.setattr(
-        client,
-        "_request_json_response",
-        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("switch_account should not hit the network")),
-    )
+        auth = client.switch_account(account_id_2)
 
-    auth = client.switch_account(account_id_2)
-
-    assert auth.sessionCookie == "session=active-2"
-    assert auth.user.email == "u2@example.com"
-    assert client.current_account_id() == account_id_2
-    assert client.current_user() is not None
-    assert client.current_user().email == "u2@example.com"
-    assert client.current_access_token() == "session=active-2"
-    assert client.base_url() == base_url
+        assert auth.accessToken == "access-u2"
+        assert auth.refreshToken == "refresh-u2"
+        assert auth.user.email == "u2@example.com"
+        assert client.current_account_id() == account_id_2
+        assert client.current_user() is not None
+        assert client.current_user().email == "u2@example.com"
+        assert client.current_access_token() == "access-u2"
+        assert client.base_url() == base_url
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
 
 
 def test_component_sync_client_persists_rotated_session_cookie_from_refresh_auth(tmp_path: Path) -> None:
@@ -598,7 +684,7 @@ def test_component_sync_client_persists_rotated_session_cookie_from_refresh_auth
         client = ComponentSyncClient(settings=settings, catalog_service=service, credential_store=credential_store)
         base_url = f"http://127.0.0.1:{server.server_port}"
         account_id = f"{base_url}::u@example.com"
-        credential_store.store_session_cookie(account_id=account_id, session_cookie="session=active-1")
+        credential_store.store_refresh_token(account_id=account_id, refresh_token="refresh-u1")
         settings.beginGroup("assetcloud/v1")
         settings.setValue(
             "saved_sessions",
@@ -615,12 +701,12 @@ def test_component_sync_client_persists_rotated_session_cookie_from_refresh_auth
         settings.setValue("user", {"userId": "u1", "name": "User One", "email": "u@example.com"})
         settings.endGroup()
 
-        server.rotate_me_cookie = "session=rotated-1; Path=/; HttpOnly"
+        server.refresh_access_tokens_by_user_key["u1"] = "access-u1-rotated"
         auth = client.refresh_auth()
 
-        assert auth.sessionCookie == "session=rotated-1"
-        assert client.current_access_token() == "session=rotated-1"
-        assert credential_store.load_session_cookie(account_id=account_id) == "session=rotated-1"
+        assert auth.accessToken == "access-u1-rotated"
+        assert client.current_access_token() == "access-u1-rotated"
+        assert credential_store.load_refresh_token(account_id=account_id) == "refresh-u1"
 
         restarted_client = ComponentSyncClient(
             settings=settings,
@@ -628,10 +714,11 @@ def test_component_sync_client_persists_rotated_session_cookie_from_refresh_auth
             credential_store=credential_store,
         )
 
-        assert restarted_client.current_access_token() == "session=rotated-1"
+        assert restarted_client.current_access_token() == ""
         refreshed_auth = restarted_client.refresh_auth()
+        assert refreshed_auth.accessToken == "access-u1-rotated"
         assert refreshed_auth.user.email == "u@example.com"
-        assert restarted_client.current_access_token() == "session=rotated-1"
+        assert restarted_client.current_access_token() == "access-u1-rotated"
     finally:
         server.shutdown()
         server.server_close()
@@ -718,7 +805,7 @@ def test_component_sync_client_uses_env_base_url_when_settings_are_empty(tmp_pat
     assert client.base_url() == "http://127.0.0.1:8787"
 
 
-def test_component_sync_client_drops_saved_sessions_missing_keyring_cookie(tmp_path: Path, caplog) -> None:
+def test_component_sync_client_drops_saved_sessions_missing_keyring_refresh_token(tmp_path: Path, caplog) -> None:
     settings = QtCore.QSettings(str(tmp_path / "component-sync-missing-keyring.ini"), QtCore.QSettings.IniFormat)
     settings.beginGroup("assetcloud/v1")
     settings.setValue(
@@ -755,7 +842,7 @@ def test_component_sync_client_drops_saved_sessions_missing_keyring_cookie(tmp_p
 
     assert client.current_session() is None
     assert client.current_user() is None
-    assert "Dropping saved component session with missing keyring cookie" in caplog.text
+    assert "Dropping saved component session with missing keyring refresh token" in caplog.text
 
 
 def test_component_sync_client_clears_invalid_saved_session_after_refresh_auth_failure(tmp_path: Path, caplog) -> None:
@@ -769,7 +856,7 @@ def test_component_sync_client_clears_invalid_saved_session_after_refresh_auth_f
         client = ComponentSyncClient(settings=settings, catalog_service=service, credential_store=credential_store)
         base_url = f"http://127.0.0.1:{server.server_port}"
         account_id = f"{base_url}::u@example.com"
-        credential_store.store_session_cookie(account_id=account_id, session_cookie="session=expired")
+        credential_store.store_refresh_token(account_id=account_id, refresh_token="refresh-expired")
         settings.beginGroup("assetcloud/v1")
         settings.setValue(
             "saved_sessions",
@@ -794,7 +881,7 @@ def test_component_sync_client_clears_invalid_saved_session_after_refresh_auth_f
         assert client.current_session() is None
         assert client.current_user() is None
         assert client.saved_sessions() == []
-        assert credential_store.load_session_cookie(account_id=account_id) == ""
+        assert credential_store.load_refresh_token(account_id=account_id) == ""
         assert "Component saved session became unauthorized and was cleared" in caplog.text
         assert account_id in caplog.text
         assert "u@example.com" in caplog.text
@@ -823,7 +910,7 @@ def test_component_sync_client_hides_current_session_when_env_base_url_differs(t
         credential_store=credential_store,
     )
     account_id = "https://assetcloud.feel8.fun::u@example.com"
-    credential_store.store_session_cookie(account_id=account_id, session_cookie="session=prod")
+    credential_store.store_refresh_token(account_id=account_id, refresh_token="refresh-prod")
     settings.beginGroup("assetcloud/v1")
     settings.setValue(
         "saved_sessions",
@@ -1030,11 +1117,27 @@ def test_component_logout_clears_local_session_when_remote_signout_fails(tmp_pat
         base_url = f"http://127.0.0.1:{server.server_port}"
         _ = client.login(base_url=base_url, email="u@example.com", password="p", remember=True)
 
-        def _raise_signout_timeout(_path: str, _payload: dict[str, object], *, authorized: bool) -> dict[str, object]:
-            assert authorized is True
-            raise F8ComponentRemoteRequestError("POST /api/auth/sign-out timed out after 10s")
+        original_request_json = client._request_json
 
-        monkeypatch.setattr(client, "_post_json", _raise_signout_timeout)
+        def _raise_signout_timeout(
+            method: str,
+            path: str,
+            payload: dict[str, object] | None,
+            *,
+            authorized: bool,
+            retry_on_auth_failure: bool = True,
+        ) -> dict[str, object]:
+            if method == "POST" and path == "/v1/auth/desktop/revoke":
+                raise F8ComponentRemoteRequestError("POST /v1/auth/desktop/revoke timed out after 10s")
+            return original_request_json(
+                method,
+                path,
+                payload,
+                authorized=authorized,
+                retry_on_auth_failure=retry_on_auth_failure,
+            )
+
+        monkeypatch.setattr(client, "_request_json", _raise_signout_timeout)
 
         with caplog.at_level(logging.WARNING):
             client.logout()

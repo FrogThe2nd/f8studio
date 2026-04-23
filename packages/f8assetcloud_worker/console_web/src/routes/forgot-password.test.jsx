@@ -6,10 +6,20 @@ const { mockRequestPasswordReset } = vi.hoisted(() => ({
   mockRequestPasswordReset: vi.fn(),
 }));
 
-vi.mock('../authClient.js', () => ({
-  authClient: {
-    requestPasswordReset: (...args) => mockRequestPasswordReset(...args),
-  },
+const { mockUseSession } = vi.hoisted(() => ({
+  mockUseSession: vi.fn(),
+}));
+
+vi.mock('../lib/api.js', () => ({
+  requestPasswordResetEmail: (...args) => mockRequestPasswordReset(...args),
+}));
+
+vi.mock('../hooks/useSession.jsx', () => ({
+  useSession: () => mockUseSession(),
+}));
+
+vi.mock('../components/TurnstileWidget.jsx', () => ({
+  TurnstileWidget: () => null,
 }));
 
 import { ForgotPasswordRoute } from './forgot-password.jsx';
@@ -25,6 +35,10 @@ function renderRoute() {
 describe('ForgotPasswordRoute', () => {
   beforeEach(() => {
     mockRequestPasswordReset.mockReset();
+    mockUseSession.mockReset();
+    mockUseSession.mockReturnValue({
+      authProviders: { turnstileSiteKey: '' },
+    });
   });
 
   afterEach(() => {
@@ -42,6 +56,8 @@ describe('ForgotPasswordRoute', () => {
     expect(mockRequestPasswordReset).toHaveBeenCalledWith({
       email: 'alice@example.com',
       redirectTo: 'http://localhost:3000/reset-password',
+    }, {
+      captchaResponse: '',
     });
   });
 });

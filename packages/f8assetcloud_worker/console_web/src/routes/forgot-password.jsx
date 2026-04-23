@@ -2,26 +2,41 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import { Button } from '../components/ui/button.jsx';
-import { authClient } from '../authClient.js';
+import { TurnstileWidget } from '../components/TurnstileWidget.jsx';
+import { requestPasswordResetEmail } from '../lib/api.js';
+import { useSession } from '../hooks/useSession.jsx';
 
 export function ForgotPasswordRoute() {
+  const { authProviders } = useSession();
   const [email, setEmail] = useState('');
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState('');
+  const [captchaResponse, setCaptchaResponse] = useState('');
+  const [captchaResetKey, setCaptchaResetKey] = useState(0);
+  const turnstileSiteKey = String(authProviders?.turnstileSiteKey || '').trim();
+  const captchaRequired = Boolean(turnstileSiteKey);
 
   async function handleSubmit(event) {
     event.preventDefault();
     setPending(true);
     setMessage('');
     try {
-      await authClient.requestPasswordReset({
+      await requestPasswordResetEmail({
         email: email.trim(),
         redirectTo: `${window.location.origin}/reset-password`,
+      }, {
+        captchaResponse,
       });
       setMessage('If that account exists, a reset link is on the way.');
       setEmail('');
+      setCaptchaResponse('');
+      setCaptchaResetKey((current) => current + 1);
     } catch (errorValue) {
       setMessage(errorValue instanceof Error ? errorValue.message : String(errorValue));
+      if (captchaRequired) {
+        setCaptchaResponse('');
+        setCaptchaResetKey((current) => current + 1);
+      }
     } finally {
       setPending(false);
     }
@@ -40,8 +55,18 @@ export function ForgotPasswordRoute() {
             Email
             <input className="mt-2 w-full rounded-2xl border border-white/12 bg-white/5 px-4 py-3 text-white focus:border-cyan-300/40 focus:outline-none" value={email} onChange={(event) => setEmail(event.target.value)} />
           </label>
+          {captchaRequired ? (
+            <div className="space-y-2">
+              <p className="text-sm text-slate-300">Complete the security check to request a reset link.</p>
+              <TurnstileWidget
+                siteKey={turnstileSiteKey}
+                onTokenChange={setCaptchaResponse}
+                resetKey={captchaResetKey}
+              />
+            </div>
+          ) : null}
           {message ? <p className="text-sm text-slate-200">{message}</p> : null}
-          <Button type="submit" disabled={pending || !email.trim()}>
+          <Button type="submit" disabled={pending || !email.trim() || (captchaRequired && !captchaResponse)}>
             {pending ? 'Sending...' : 'Send Reset Link'}
           </Button>
         </form>

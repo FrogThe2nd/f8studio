@@ -20,6 +20,7 @@ const errorResponseSchema = z.object({
 
 const authProvidersResponseSchema = z.object({
   google: z.boolean(),
+  turnstileSiteKey: nullableStringSchema,
 });
 
 const siteSettingsResponseSchema = z.object({
@@ -76,9 +77,31 @@ const assetSubscriptionSchema = z.object({
 const assetSubscriberSchema = z.object({
   userId: z.string(),
   name: z.string(),
-  email: nullableStringSchema,
   subscribedAt: z.string(),
   lastSeenVersionNumber: z.number().int().nullable(),
+});
+
+const desktopTokenExchangeRequestSchema = z.object({
+  clientId: z.string(),
+  redirectUri: z.string(),
+  code: z.string(),
+  codeVerifier: z.string(),
+});
+
+const desktopRefreshRequestSchema = z.object({
+  refreshToken: z.string(),
+});
+
+const desktopAuthResponseSchema = z.object({
+  accessToken: z.string(),
+  accessTokenExpiresAt: z.string(),
+  refreshToken: z.string(),
+  refreshTokenExpiresAt: z.string(),
+  user: apiUserResponseSchema,
+});
+
+const desktopRevokeResponseSchema = z.object({
+  revoked: z.boolean(),
 });
 
 const assetSubscriberPageResponseSchema = z.object({
@@ -501,6 +524,47 @@ export function registerOpenApiRoutes(app, handlers) {
       200: jsonSuccessResponse(siteSettingsResponseSchema, 'Current site settings'),
     }),
   }, handlers.getSiteSettings);
+
+  registerRoute(openapi, 'post', '/v1/auth/desktop/token', {
+    tags: ['account'],
+    summary: 'Exchange a desktop authorization code for desktop tokens',
+    request: {
+      body: jsonRequestBody(desktopTokenExchangeRequestSchema, 'Desktop token exchange payload'),
+    },
+    responses: withCommonErrorResponses({
+      200: jsonSuccessResponse(desktopAuthResponseSchema, 'Desktop token response'),
+    }),
+  }, handlers.routeDesktopTokenPost);
+
+  registerRoute(openapi, 'post', '/v1/auth/desktop/session', {
+    tags: ['account'],
+    summary: 'Exchange the current browser session for desktop tokens',
+    responses: withCommonErrorResponses({
+      200: jsonSuccessResponse(desktopAuthResponseSchema, 'Desktop token response'),
+    }),
+  }, handlers.routeDesktopSessionPost);
+
+  registerRoute(openapi, 'post', '/v1/auth/desktop/refresh', {
+    tags: ['account'],
+    summary: 'Refresh desktop access and refresh tokens',
+    request: {
+      body: jsonRequestBody(desktopRefreshRequestSchema, 'Desktop refresh payload'),
+    },
+    responses: withCommonErrorResponses({
+      200: jsonSuccessResponse(desktopAuthResponseSchema, 'Refreshed desktop token response'),
+    }),
+  }, handlers.routeDesktopRefreshPost);
+
+  registerRoute(openapi, 'post', '/v1/auth/desktop/revoke', {
+    tags: ['account'],
+    summary: 'Revoke a desktop refresh token',
+    request: {
+      body: jsonRequestBody(desktopRefreshRequestSchema, 'Desktop revoke payload'),
+    },
+    responses: withCommonErrorResponses({
+      200: jsonSuccessResponse(desktopRevokeResponseSchema, 'Desktop token revoked'),
+    }),
+  }, handlers.routeDesktopRevokePost);
 
   registerRoute(openapi, 'get', '/v1/me', {
     tags: ['account'],

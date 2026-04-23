@@ -7,7 +7,7 @@ from keyring.errors import KeyringError
 
 from .common import json_object_from_value
 
-_ASSET_CLOUD_SESSION_SERVICE_NAME = "feel8.f8pystudio.assetcloud.session"
+_ASSET_CLOUD_REFRESH_TOKEN_SERVICE_NAME = "feel8.f8pystudio.assetcloud.refresh-token"
 
 
 class AssetCloudCredentialStoreError(RuntimeError):
@@ -15,57 +15,66 @@ class AssetCloudCredentialStoreError(RuntimeError):
 
 
 class AssetCloudCredentialStore(Protocol):
-    def load_session_cookie(self, *, account_id: str) -> str: ...
+    def load_refresh_token(self, *, account_id: str) -> str: ...
 
-    def store_session_cookie(self, *, account_id: str, session_cookie: str) -> None: ...
+    def store_refresh_token(self, *, account_id: str, refresh_token: str) -> None: ...
 
-    def delete_session_cookie(self, *, account_id: str) -> None: ...
+    def delete_refresh_token(self, *, account_id: str) -> None: ...
 
 
 class KeyringAssetCloudCredentialStore:
-    def load_session_cookie(self, *, account_id: str) -> str:
+    def load_refresh_token(self, *, account_id: str) -> str:
         normalized_account_id = _normalized_account_id(account_id)
         if not normalized_account_id:
             return ""
         try:
-            value = keyring.get_password(_ASSET_CLOUD_SESSION_SERVICE_NAME, normalized_account_id)
+            value = keyring.get_password(_ASSET_CLOUD_REFRESH_TOKEN_SERVICE_NAME, normalized_account_id)
         except KeyringError as exc:
             raise AssetCloudCredentialStoreError(
-                f"Failed to load asset cloud session cookie from keyring for account {normalized_account_id!r}."
+                f"Failed to load asset cloud refresh token from keyring for account {normalized_account_id!r}."
             ) from exc
         return str(value or "").strip()
 
-    def store_session_cookie(self, *, account_id: str, session_cookie: str) -> None:
+    def store_refresh_token(self, *, account_id: str, refresh_token: str) -> None:
         normalized_account_id = _normalized_account_id(account_id)
-        normalized_session_cookie = str(session_cookie or "").strip()
+        normalized_refresh_token = str(refresh_token or "").strip()
         if not normalized_account_id:
             raise ValueError("account_id must not be empty.")
-        if not normalized_session_cookie:
-            raise ValueError("session_cookie must not be empty.")
+        if not normalized_refresh_token:
+            raise ValueError("refresh_token must not be empty.")
         try:
             keyring.set_password(
-                _ASSET_CLOUD_SESSION_SERVICE_NAME,
+                _ASSET_CLOUD_REFRESH_TOKEN_SERVICE_NAME,
                 normalized_account_id,
-                normalized_session_cookie,
+                normalized_refresh_token,
             )
         except KeyringError as exc:
             raise AssetCloudCredentialStoreError(
-                f"Failed to store asset cloud session cookie in keyring for account {normalized_account_id!r}."
+                f"Failed to store asset cloud refresh token in keyring for account {normalized_account_id!r}."
             ) from exc
 
-    def delete_session_cookie(self, *, account_id: str) -> None:
+    def delete_refresh_token(self, *, account_id: str) -> None:
         normalized_account_id = _normalized_account_id(account_id)
         if not normalized_account_id:
             return
-        existing_value = self.load_session_cookie(account_id=normalized_account_id)
+        existing_value = self.load_refresh_token(account_id=normalized_account_id)
         if not existing_value:
             return
         try:
-            keyring.delete_password(_ASSET_CLOUD_SESSION_SERVICE_NAME, normalized_account_id)
+            keyring.delete_password(_ASSET_CLOUD_REFRESH_TOKEN_SERVICE_NAME, normalized_account_id)
         except KeyringError as exc:
             raise AssetCloudCredentialStoreError(
-                f"Failed to delete asset cloud session cookie from keyring for account {normalized_account_id!r}."
+                f"Failed to delete asset cloud refresh token from keyring for account {normalized_account_id!r}."
             ) from exc
+
+    def load_session_cookie(self, *, account_id: str) -> str:
+        return self.load_refresh_token(account_id=account_id)
+
+    def store_session_cookie(self, *, account_id: str, session_cookie: str) -> None:
+        self.store_refresh_token(account_id=account_id, refresh_token=session_cookie)
+
+    def delete_session_cookie(self, *, account_id: str) -> None:
+        self.delete_refresh_token(account_id=account_id)
 
 
 def default_asset_cloud_credential_store() -> AssetCloudCredentialStore:

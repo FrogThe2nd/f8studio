@@ -12,7 +12,7 @@ from ..common import (
     AssetCloudBrowserAuthError,
     AssetCloudBrowserCallbackServer,
     build_browser_callback_redirect_url,
-    create_browser_auth_session,
+    create_browser_auth_session_for_port,
     format_timestamp_for_local_display,
 )
 from ...ui.support.ui_icons import StudioIcon, icon_for
@@ -82,6 +82,16 @@ def _sessions_matching_base_url(
     ]
 
 
+def _backend_label(*, base_url: str, default_base_url: str) -> str:
+    normalized_base_url = str(base_url or "").strip().rstrip("/")
+    normalized_default_base_url = str(default_base_url or "").strip().rstrip("/")
+    if not normalized_base_url:
+        return ""
+    if normalized_base_url == normalized_default_base_url:
+        return normalized_base_url
+    return f"{normalized_base_url} [non-official backend]"
+
+
 class AssetCloudSignInDialog(QtWidgets.QDialog):
     def __init__(self, *, parent: QtWidgets.QWidget | None, base_url: str, email: str) -> None:
         super().__init__(parent)
@@ -131,14 +141,17 @@ class AssetCloudSignInDialog(QtWidgets.QDialog):
 def prompt_asset_cloud_sign_in(*, parent: QtWidgets.QWidget, sync_client: AssetCloudSyncClient) -> bool:
     base_url = sync_client.base_url()
     sync_client.set_base_url(base_url)
-    auth_session = create_browser_auth_session(base_url=base_url)
     callback_server = AssetCloudBrowserCallbackServer(
-        callback_port=auth_session.callback_port,
+        callback_port=0,
         success_redirect_url=build_browser_callback_redirect_url(base_url=base_url, success=True),
         error_redirect_url=build_browser_callback_redirect_url(base_url=base_url, success=False),
     )
     try:
         callback_server.start()
+        auth_session = create_browser_auth_session_for_port(
+            base_url=base_url,
+            callback_port=callback_server.callback_port,
+        )
         _open_system_browser(auth_session.authorize_url)
         callback = _wait_for_browser_sign_in_callback(
             parent=parent,
@@ -226,9 +239,15 @@ def build_asset_account_menu(
 ) -> QtWidgets.QMenu:
     menu = QtWidgets.QMenu(parent)
     current_user = sync_client.current_user()
+    backend_label = _backend_label(
+        base_url=sync_client.base_url(),
+        default_base_url=sync_client.default_base_url(),
+    )
     current_text = "Cloud: signed out"
     if current_user is not None:
-        current_text = f"Cloud: {_user_greeting_name(current_user)} @ {sync_client.base_url()}"
+        current_text = f"Cloud: {_user_greeting_name(current_user)} @ {backend_label}"
+    elif backend_label:
+        current_text = f"Cloud: signed out @ {backend_label}"
     header = menu.addAction(current_text)
     header.setEnabled(False)
     menu.addSeparator()

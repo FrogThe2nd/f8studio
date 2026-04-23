@@ -126,13 +126,30 @@ async function cleanupExpiredSessions(env) {
   if (!db) {
     return;
   }
-  const result = await db.prepare(
-    'DELETE FROM session WHERE expiresAt < ?',
-  )
-    .bind(Date.now())
-    .run();
-  const deleted = Number(result?.meta?.changes || 0);
-  if (deleted > 0) {
-    console.info(`[cron] cleaned up ${deleted} expired session(s)`);
+  const now = Date.now();
+  const [browserSessions, desktopCodes, desktopSessions] = await Promise.all([
+    db.prepare('DELETE FROM session WHERE expiresAt < ?')
+      .bind(now)
+      .run(),
+    db.prepare('DELETE FROM desktop_authorization_codes WHERE expires_at < ?')
+      .bind(now)
+      .run(),
+    db.prepare(
+      `DELETE FROM desktop_sessions
+       WHERE refresh_token_expires_at < ?
+          OR revoked_at IS NOT NULL`,
+    )
+      .bind(now)
+      .run(),
+  ]);
+  const deletedBrowserSessions = Number(browserSessions?.meta?.changes || 0);
+  const deletedDesktopCodes = Number(desktopCodes?.meta?.changes || 0);
+  const deletedDesktopSessions = Number(desktopSessions?.meta?.changes || 0);
+  if (deletedBrowserSessions > 0 || deletedDesktopCodes > 0 || deletedDesktopSessions > 0) {
+    console.info(
+      `[cron] cleaned up ${deletedBrowserSessions} expired browser session(s), `
+      + `${deletedDesktopCodes} desktop code(s), `
+      + `${deletedDesktopSessions} desktop session(s)`,
+    );
   }
 }

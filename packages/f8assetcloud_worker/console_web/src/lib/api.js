@@ -34,6 +34,16 @@ export async function apiFetch(path, options = {}) {
   return payload;
 }
 
+function captchaHeaders(captchaResponse) {
+  const normalizedCaptchaResponse = String(captchaResponse || '').trim();
+  if (!normalizedCaptchaResponse) {
+    return {};
+  }
+  return {
+    'X-Captcha-Response': normalizedCaptchaResponse,
+  };
+}
+
 function buildQuery(params) {
   const searchParams = new URLSearchParams();
   Object.entries(params || {}).forEach(([key, value]) => {
@@ -54,6 +64,14 @@ export function getSiteSettings() {
   return apiFetch('/v1/site-settings');
 }
 
+export function registerWithPassword(payload, { captchaResponse = '' } = {}) {
+  return apiFetch('/api/auth/sign-up/email', {
+    method: 'POST',
+    body: payload,
+    headers: captchaHeaders(captchaResponse),
+  });
+}
+
 export function getCurrentUser() {
   return apiFetch('/v1/me');
 }
@@ -62,6 +80,14 @@ export function updateCurrentUser(payload) {
   return apiFetch('/v1/me', {
     method: 'PUT',
     body: payload,
+  });
+}
+
+export function requestPasswordResetEmail(payload, { captchaResponse = '' } = {}) {
+  return apiFetch('/api/auth/request-password-reset', {
+    method: 'POST',
+    body: payload,
+    headers: captchaHeaders(captchaResponse),
   });
 }
 

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { apiFetch } from './api.js';
+import { apiFetch, registerWithPassword, requestPasswordResetEmail } from './api.js';
 
 describe('apiFetch', () => {
   afterEach(() => {
@@ -46,5 +46,57 @@ describe('apiFetch', () => {
         message: 'Request failed (500)',
       }),
     );
+  });
+
+  it('attaches the captcha header for password registration', async () => {
+    const fetchMock = vi.fn(async () => new Response('{}', {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await registerWithPassword(
+      {
+        name: 'Alice',
+        email: 'alice@example.com',
+        password: 'password123',
+        callbackURL: 'http://localhost:3000/verify-email?verified=1',
+      },
+      { captchaResponse: 'captcha-token-1' },
+    );
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/auth/sign-up/email', expect.objectContaining({
+      headers: expect.objectContaining({
+        'Content-Type': 'application/json',
+        'X-Captcha-Response': 'captcha-token-1',
+      }),
+    }));
+  });
+
+  it('attaches the captcha header for password reset requests', async () => {
+    const fetchMock = vi.fn(async () => new Response('{}', {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await requestPasswordResetEmail(
+      {
+        email: 'alice@example.com',
+        redirectTo: 'http://localhost:3000/reset-password',
+      },
+      { captchaResponse: 'captcha-token-2' },
+    );
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/auth/request-password-reset', expect.objectContaining({
+      headers: expect.objectContaining({
+        'Content-Type': 'application/json',
+        'X-Captcha-Response': 'captcha-token-2',
+      }),
+    }));
   });
 });

@@ -120,14 +120,17 @@ class AssetCloudBrowserCallbackServer:
         success_redirect_url: str = "",
         error_redirect_url: str = "",
     ) -> None:
-        self._callback_port = int(callback_port)
+        requested_port = int(callback_port)
+        if requested_port < 0:
+            raise ValueError("callback_port must not be negative.")
         self._callback_path = str(callback_path)
         self._server = _CallbackServer(
-            ("127.0.0.1", self._callback_port),
+            ("127.0.0.1", requested_port),
             self._callback_path,
             success_redirect_url=success_redirect_url,
             error_redirect_url=error_redirect_url,
         )
+        self._callback_port = int(self._server.server_address[1])
         self._thread: threading.Thread | None = None
 
     @property
@@ -175,10 +178,22 @@ class AssetCloudBrowserCallbackServer:
 
 
 def create_browser_auth_session(*, base_url: str, client_id: str = "pystudio") -> AssetCloudBrowserAuthSession:
+    return create_browser_auth_session_for_port(
+        base_url=base_url,
+        client_id=client_id,
+        callback_port=find_free_loopback_port(),
+    )
+
+
+def create_browser_auth_session_for_port(
+    *,
+    base_url: str,
+    client_id: str = "pystudio",
+    callback_port: int,
+) -> AssetCloudBrowserAuthSession:
     normalized_base_url = str(base_url or "").strip().rstrip("/")
     if not normalized_base_url:
         raise ValueError("base_url must not be empty.")
-    callback_port = find_free_loopback_port()
     state = secrets.token_urlsafe(32)
     code_verifier = secrets.token_urlsafe(64)
     code_challenge = build_pkce_code_challenge(code_verifier)
@@ -301,5 +316,6 @@ __all__ = [
     "build_browser_callback_redirect_url",
     "build_pkce_code_challenge",
     "create_browser_auth_session",
+    "create_browser_auth_session_for_port",
     "find_free_loopback_port",
 ]

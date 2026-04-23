@@ -10,7 +10,7 @@ export function SessionProvider({ children }) {
   const sessionQuery = authClient.useSession();
   const navigate = useNavigate();
   const location = useLocation();
-  const [authProviders, setAuthProviders] = useState({ google: false });
+  const [authProviders, setAuthProviders] = useState({ google: false, turnstileSiteKey: '' });
   const [siteSettings, setSiteSettings] = useState({ allowUserRegistration: false });
   const [currentUser, setCurrentUser] = useState(null);
   const [linkedAccounts, setLinkedAccounts] = useState([]);
@@ -30,6 +30,7 @@ export function SessionProvider({ children }) {
         }
         setAuthProviders({
           google: Boolean(providers?.google),
+          turnstileSiteKey: String(providers?.turnstileSiteKey || ''),
         });
         setSiteSettings({
           allowUserRegistration: Boolean(settings?.allowUserRegistration),
@@ -38,7 +39,7 @@ export function SessionProvider({ children }) {
         if (cancelled) {
           return;
         }
-        setAuthProviders({ google: false });
+        setAuthProviders({ google: false, turnstileSiteKey: '' });
         setSiteSettings({ allowUserRegistration: false });
       }
     })();

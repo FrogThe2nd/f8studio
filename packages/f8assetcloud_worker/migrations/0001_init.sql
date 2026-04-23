@@ -64,6 +64,12 @@ CREATE TABLE verification (
 CREATE INDEX idx_verification_identifier ON verification(identifier);
 CREATE INDEX idx_verification_expiresAt ON verification(expiresAt);
 
+CREATE TABLE rateLimit (
+  key TEXT PRIMARY KEY,
+  count INTEGER NOT NULL,
+  lastRequest INTEGER NOT NULL
+);
+
 CREATE TABLE asset_heads (
   asset_id TEXT PRIMARY KEY,
   asset_type TEXT NOT NULL,
@@ -152,15 +158,38 @@ CREATE TABLE bootstrap_admin_state (
 
 CREATE TABLE desktop_authorization_codes (
   code TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
   client_id TEXT NOT NULL,
   redirect_uri TEXT NOT NULL,
   code_challenge TEXT NOT NULL,
   code_challenge_method TEXT NOT NULL,
-  session_cookie TEXT NOT NULL,
   created_at INTEGER NOT NULL,
   expires_at INTEGER NOT NULL,
-  used_at INTEGER
+  used_at INTEGER,
+  FOREIGN KEY (user_id) REFERENCES user(id) ON DELETE CASCADE
 );
 
 CREATE INDEX idx_desktop_authorization_codes_expires_at
   ON desktop_authorization_codes(expires_at);
+CREATE INDEX idx_desktop_authorization_codes_user_id
+  ON desktop_authorization_codes(user_id);
+
+CREATE TABLE desktop_sessions (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  access_token_hash TEXT NOT NULL UNIQUE,
+  access_token_expires_at INTEGER NOT NULL,
+  refresh_token_hash TEXT NOT NULL UNIQUE,
+  refresh_token_expires_at INTEGER NOT NULL,
+  revoked_at INTEGER,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES user(id) ON DELETE CASCADE
+);
+
+CREATE INDEX idx_desktop_sessions_user_id
+  ON desktop_sessions(user_id);
+CREATE INDEX idx_desktop_sessions_access_token_expires_at
+  ON desktop_sessions(access_token_expires_at);
+CREATE INDEX idx_desktop_sessions_refresh_token_expires_at
+  ON desktop_sessions(refresh_token_expires_at);

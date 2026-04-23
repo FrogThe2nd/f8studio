@@ -131,7 +131,11 @@ def test_prompt_asset_cloud_sign_in_shows_welcome_message(monkeypatch) -> None:
     def _fail_warning(_parent: QtWidgets.QWidget | None, title: str, message: str) -> None:
         raise AssertionError(f"unexpected warning: {title} {message}")
 
-    monkeypatch.setattr(asset_cloud_account_menu, "create_browser_auth_session", _browser_auth_session)
+    monkeypatch.setattr(
+        asset_cloud_account_menu,
+        "create_browser_auth_session_for_port",
+        lambda *, base_url, callback_port, client_id="pystudio": _browser_auth_session(base_url=base_url),
+    )
     monkeypatch.setattr(asset_cloud_account_menu, "_open_system_browser", lambda url: opened_urls.append(str(url)))
     monkeypatch.setattr(
         asset_cloud_account_menu,
@@ -173,7 +177,11 @@ def test_prompt_asset_cloud_sign_in_preserves_loopback_base_url(monkeypatch) -> 
     def _fail_warning(_parent: QtWidgets.QWidget | None, title: str, message: str) -> None:
         raise AssertionError(f"unexpected warning: {title} {message}")
 
-    monkeypatch.setattr(asset_cloud_account_menu, "create_browser_auth_session", _browser_auth_session)
+    monkeypatch.setattr(
+        asset_cloud_account_menu,
+        "create_browser_auth_session_for_port",
+        lambda *, base_url, callback_port, client_id="pystudio": _browser_auth_session(base_url=base_url),
+    )
     monkeypatch.setattr(asset_cloud_account_menu, "_open_system_browser", lambda url: opened_urls.append(str(url)))
     monkeypatch.setattr(
         asset_cloud_account_menu,

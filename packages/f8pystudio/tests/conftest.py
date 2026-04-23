@@ -8,28 +8,37 @@ from qtpy import QtCore
 
 class _MemoryAssetCloudCredentialStore:
     def __init__(self) -> None:
-        self._session_cookies_by_account_id: dict[str, str] = {}
+        self._refresh_tokens_by_account_id: dict[str, str] = {}
 
-    def load_session_cookie(self, *, account_id: str) -> str:
+    def load_refresh_token(self, *, account_id: str) -> str:
         normalized_account_id = str(account_id or "").strip()
         if not normalized_account_id:
             return ""
-        return self._session_cookies_by_account_id.get(normalized_account_id, "")
+        return self._refresh_tokens_by_account_id.get(normalized_account_id, "")
 
-    def store_session_cookie(self, *, account_id: str, session_cookie: str) -> None:
+    def store_refresh_token(self, *, account_id: str, refresh_token: str) -> None:
         normalized_account_id = str(account_id or "").strip()
-        normalized_session_cookie = str(session_cookie or "").strip()
+        normalized_refresh_token = str(refresh_token or "").strip()
         if not normalized_account_id:
             raise ValueError("account_id must not be empty.")
-        if not normalized_session_cookie:
-            raise ValueError("session_cookie must not be empty.")
-        self._session_cookies_by_account_id[normalized_account_id] = normalized_session_cookie
+        if not normalized_refresh_token:
+            raise ValueError("refresh_token must not be empty.")
+        self._refresh_tokens_by_account_id[normalized_account_id] = normalized_refresh_token
 
-    def delete_session_cookie(self, *, account_id: str) -> None:
+    def delete_refresh_token(self, *, account_id: str) -> None:
         normalized_account_id = str(account_id or "").strip()
         if not normalized_account_id:
             return
-        self._session_cookies_by_account_id.pop(normalized_account_id, None)
+        self._refresh_tokens_by_account_id.pop(normalized_account_id, None)
+
+    def load_session_cookie(self, *, account_id: str) -> str:
+        return self.load_refresh_token(account_id=account_id)
+
+    def store_session_cookie(self, *, account_id: str, session_cookie: str) -> None:
+        self.store_refresh_token(account_id=account_id, refresh_token=session_cookie)
+
+    def delete_session_cookie(self, *, account_id: str) -> None:
+        self.delete_refresh_token(account_id=account_id)
 
 
 @pytest.fixture(autouse=True)

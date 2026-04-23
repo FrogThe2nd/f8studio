@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from datetime import datetime, timezone, tzinfo
 import json
 import os
+import sys
 from typing import TypeAlias, cast
 from urllib import parse
 from uuid import uuid4
@@ -11,6 +12,7 @@ import zlib
 
 JsonObject: TypeAlias = dict[str, object]
 ASSET_CLOUD_BASE_URL_ENV: str = "F8_ASSET_CLOUD_BASE_URL"
+OFFICIAL_ASSET_CLOUD_BASE_URL: str = "https://assetcloud.feel8.fun"
 _REDACTED_VALUE = "[redacted]"
 _SENSITIVE_JSON_KEYS = frozenset(
     {
@@ -139,13 +141,13 @@ def origin_headers_for_base_url(base_url: str) -> dict[str, str]:
 
 
 def resolve_asset_cloud_base_url(*, saved_base_url: str, default_base_url: str, fallback_base_url: str = "") -> str:
-    configured_base_url = str(os.environ.get(ASSET_CLOUD_BASE_URL_ENV) or "").strip().rstrip("/")
+    configured_base_url = _release_safe_base_url(str(os.environ.get(ASSET_CLOUD_BASE_URL_ENV) or ""))
     if configured_base_url:
         return configured_base_url
-    normalized_saved_base_url = str(saved_base_url or "").strip().rstrip("/")
+    normalized_saved_base_url = _release_safe_base_url(saved_base_url)
     if normalized_saved_base_url:
         return normalized_saved_base_url
-    normalized_fallback_base_url = str(fallback_base_url or "").strip().rstrip("/")
+    normalized_fallback_base_url = _release_safe_base_url(fallback_base_url)
     if normalized_fallback_base_url:
         return normalized_fallback_base_url
     return str(default_base_url or "").strip().rstrip("/")
@@ -190,6 +192,18 @@ def _is_sensitive_json_key(key: str) -> bool:
         if normalized == sensitive_normalized:
             return True
     return False
+
+
+def _release_safe_base_url(value: str) -> str:
+    normalized_value = str(value or "").strip().rstrip("/")
+    if not normalized_value:
+        return ""
+    if not getattr(sys, "frozen", False):
+        return normalized_value
+    normalized_official = OFFICIAL_ASSET_CLOUD_BASE_URL.rstrip("/")
+    if normalized_value == normalized_official:
+        return normalized_value
+    return ""
 
 
 def _parse_timestamp_for_local_display(text: str) -> datetime | None:
