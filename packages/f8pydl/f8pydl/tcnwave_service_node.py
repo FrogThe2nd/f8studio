@@ -310,6 +310,10 @@ class OnnxTcnWaveServiceNode(ServiceNode):
         self._runtime_warning = ""
 
         self._window: deque[Any] = deque()
+        self._window_ring: list[Any] = []
+        self._window_ring_size = 0
+        self._window_ring_pos = 0
+        self._window_ring_count = 0
         self._aggregator = DelayedAverageAggregator()
         self._new_frame_counter = 0
         self._last_processed_frame_id: int | None = None
@@ -523,6 +527,10 @@ class OnnxTcnWaveServiceNode(ServiceNode):
         self._runtime_yaml = None
         self._model = None
         self._window.clear()
+        self._window_ring.clear()
+        self._window_ring_size = 0
+        self._window_ring_pos = 0
+        self._window_ring_count = 0
         self._aggregator.reset()
         self._new_frame_counter = 0
         self._last_processed_frame_id = None
@@ -543,6 +551,10 @@ class OnnxTcnWaveServiceNode(ServiceNode):
             return
         self._close_shm()
         self._window.clear()
+        self._window_ring.clear()
+        self._window_ring_size = 0
+        self._window_ring_pos = 0
+        self._window_ring_count = 0
         self._aggregator.reset()
         self._new_frame_counter = 0
         self._last_processed_frame_id = None
@@ -649,6 +661,10 @@ class OnnxTcnWaveServiceNode(ServiceNode):
         self._runtime_yaml = yaml_path
         self._model = spec
         self._window = deque(maxlen=runtime.sequence_length)
+        self._window_ring = [None] * int(runtime.sequence_length)
+        self._window_ring_size = int(runtime.sequence_length)
+        self._window_ring_pos = 0
+        self._window_ring_count = 0
         self._aggregator.reset()
         self._new_frame_counter = 0
         self._last_processed_frame_id = None
@@ -752,11 +768,16 @@ class OnnxTcnWaveServiceNode(ServiceNode):
 
                 prepared = self._runtime.prepare_frame(frame_bgr)
                 self._window.append(prepared)
+                if self._window_ring_size > 0:
+                    self._window_ring[self._window_ring_pos] = prepared
+                    self._window_ring_pos = (self._window_ring_pos + 1) % self._window_ring_size
+                    if self._window_ring_count < self._window_ring_size:
+                        self._window_ring_count += 1
                 frame_index = self._aggregator.register_frame(frame_id=frame_id_seen, ts_ms=int(header.ts_ms))
 
-                if len(self._window) < int(self._runtime.sequence_length):
+                if self._window_ring_count < int(self._runtime.sequence_length):
                     await self._set_last_error(
-                        f"warming up temporal window: {len(self._window)}/{self._runtime.sequence_length}"
+                        f"warming up temporal window: {self._window_ring_count}/{self._runtime.sequence_length}"
                     )
                     continue
 
@@ -766,7 +787,13 @@ class OnnxTcnWaveServiceNode(ServiceNode):
                 if not do_infer:
                     continue
 
-                sequence = np.stack(self._window, axis=0)
+                if self._window_ring_pos == 0:
+                    sequence = np.stack(self._window_ring, axis=0)
+                else:
+                    sequence = np.stack(
+                        self._window_ring[self._window_ring_pos :] + self._window_ring[: self._window_ring_pos],
+                        axis=0,
+                    )
                 t_infer0 = time.perf_counter()
                 values_np = self._runtime.infer_sequence(sequence)
                 values = self._to_float_list(values_np.tolist())
