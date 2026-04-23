@@ -27,6 +27,8 @@ DataRouteTarget = tuple[str, str, F8Edge]
 DataOutRoutes = dict[tuple[str, str], tuple[DataRouteTarget, ...]]
 DataCrossInRoutes = dict[str, tuple[DataRouteTarget, ...]]
 DataCrossOutRoutes = dict[tuple[str, str], str]
+DEFAULT_DATA_EMIT_OPTIONS = DataEmitOptions()
+LOCAL_COMPUTE_DATA_EMIT_OPTIONS = DataEmitOptions.local_compute_only()
 
 
 @dataclass
@@ -165,12 +167,14 @@ class DataRouter:
         bus = self._bus
         if not bus._active:
             return
-        emit_options = options or DataEmitOptions()
+        emit_options = options or DEFAULT_DATA_EMIT_OPTIONS
         ts = int(ts_ms or now_ms())
-        bus._monitor_record_emit(str(node_id), str(port), int(ts))
+        from_node = str(node_id)
+        from_port = str(port)
+        bus._monitor_record_emit(from_node, from_port, ts)
         await self._route_emitted_value(
-            from_node=str(node_id),
-            from_port=str(port),
+            from_node=from_node,
+            from_port=from_port,
             value=value,
             ts_ms=ts,
             ctx_id=ctx_id,
@@ -201,7 +205,7 @@ class DataRouter:
                     return None
             value, ts = buf.queue.popleft()
             if ts is not None:
-                wait_ms = float(max(0, int(now_ms()) - int(ts)))
+                wait_ms = float(max(0, now_ts - int(ts)))
                 bus._monitor_record_wait(wait_ms)
             buf.last_pulled_value = value
             buf.last_pulled_ts = int(ts) if ts is not None else now_ts
@@ -213,7 +217,7 @@ class DataRouter:
             await self.ensure_input_available(node_id=node_id, port=port, ctx_id=ctx_id)
         value = buf.last_seen_value
         if buf.last_seen_ts is not None:
-            wait_ms = float(max(0, int(now_ms()) - int(buf.last_seen_ts)))
+            wait_ms = float(max(0, now_ts - int(buf.last_seen_ts)))
             bus._monitor_record_wait(wait_ms)
         buf.queue.clear()
         if value is not None:
@@ -249,7 +253,6 @@ class DataRouter:
             return
         stack.add(key)
         try:
-            local_compute_options = DataEmitOptions.local_compute_only()
             for from_node, from_port, edge in self._intra_data_in.get(key) or ():
                 src = bus._nodes.get(from_node)
                 if src is None:
@@ -277,7 +280,7 @@ class DataRouter:
                     value=value,
                     ts_ms=ts_now,
                     ctx_id=ctx_id,
-                    options=local_compute_options,
+                    options=LOCAL_COMPUTE_DATA_EMIT_OPTIONS,
                     force_buffer_target=key,
                 )
                 if delivered:
@@ -488,7 +491,7 @@ class DataRouter:
                 to_node=to_node,
                 to_port=to_port,
                 value=value,
-                ts_ms=int(ts_ms),
+                ts_ms=ts_ms,
                 edge=edge,
                 ctx_id=ctx_id,
             )
@@ -541,14 +544,16 @@ class DataRouter:
             return False
         delivered = False
         for to_node, to_port, edge in self._intra_data_out.get((from_node, from_port), ()):
+            to_node_s = str(to_node)
+            to_port_s = str(to_port)
             self._deliver_local_input(
-                to_node=to_node,
-                to_port=to_port,
+                to_node=to_node_s,
+                to_port=to_port_s,
                 value=value,
-                ts_ms=int(ts_ms),
+                ts_ms=ts_ms,
                 edge=edge,
                 ctx_id=ctx_id,
-                force_buffer=force_buffer_target == (str(to_node), str(to_port)),
+                force_buffer=force_buffer_target == (to_node_s, to_port_s),
             )
             delivered = True
         return delivered

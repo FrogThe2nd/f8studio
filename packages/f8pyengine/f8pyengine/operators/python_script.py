@@ -286,12 +286,14 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         self._closing = False
         self._last_error: str | None = None
         self._error_seq = 0
+        self._pull_error_once: set[str] = set()
         self._self_state_writes: dict[str, Any] = {}
         self._pull_cache_ctx_id: str | int | None = None
         self._pull_cache_outputs: dict[str, Any] = {}
         self._state_key_hint_logged = False
         self._video_subscriptions: dict[str, _VideoShmSubscription] = {}
         self._data_out_port_set: set[str] = set()
+        self._data_in_port_names: tuple[str, ...] = tuple(str(name) for name in self.data_in_ports)
         self._single_data_out_port: str | None = None
         self._has_out_port = False
         self._input_mode = coerce_input_mode(self._initial_state.get("inputMode"), default=INPUT_MODE_INPUT_VIEW)
@@ -674,6 +676,18 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
             self._single_data_out_port = None
         self._has_out_port = "out" in self._data_out_port_set
 
+    async def _pull_inputs_for_context(self, ctx_id: str | int | None) -> dict[str, Any]:
+        inputs: dict[str, Any] = {}
+        for in_port in self._data_in_port_names:
+            try:
+                inputs[in_port] = await self.pull(in_port, ctx_id=ctx_id)
+            except Exception as exc:
+                error_key = f"{in_port}:{type(exc).__name__}:{exc}"
+                if error_key not in self._pull_error_once:
+                    self._pull_error_once.add(error_key)
+                    self._set_error(f"pull:{in_port}", exc)
+        return inputs
+
     async def _await_msg_result(self, result: Any) -> Any:
         if self._hooks.on_msg_is_async:
             return await result
@@ -872,12 +886,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
         # Exec-driven: pull current values for all inputs.
         if not self._hooks.runtime:
             return list(self._exec_out_ports)
-        inputs: dict[str, Any] = {}
-        for p in self.data_in_ports:
-            try:
-                inputs[str(p)] = await self.pull(str(p), ctx_id=exec_id)
-            except Exception:
-                continue
+        inputs = await self._pull_inputs_for_context(exec_id)
         exec_in = str(in_port or "").strip() or None
         return await self._run_on_exec(inputs, exec_in=exec_in)
 
@@ -892,12 +901,7 @@ class PythonScriptRuntimeNode(OperatorNode, ClosableNode):
             if out_port in self._pull_cache_outputs:
                 return self._pull_cache_outputs.get(out_port)
 
-        inputs: dict[str, Any] = {}
-        for in_port in self.data_in_ports:
-            try:
-                inputs[str(in_port)] = await self.pull(str(in_port), ctx_id=ctx_id)
-            except Exception:
-                continue
+        inputs = await self._pull_inputs_for_context(ctx_id)
 
         outputs = await self._compute_outputs_for_pull(inputs, exec_in=None)
         if ctx_id is not None:
