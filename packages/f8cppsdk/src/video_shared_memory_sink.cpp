@@ -300,6 +300,16 @@ bool VideoSharedMemoryReader::readHeader(VideoSharedMemoryHeader& out) const {
   return true;
 }
 
+bool VideoSharedMemoryReader::peekLatestHeader(VideoSharedMemoryHeader& out) const {
+  VideoSharedMemoryHeader h0{};
+  VideoSharedMemoryHeader h1{};
+  if (!readHeader(h0)) return false;
+  if (!readHeader(h1)) return false;
+  if (h1.frame_id != h0.frame_id || h1.active_slot != h0.active_slot || h1.notify_seq != h0.notify_seq) return false;
+  out = h0;
+  return true;
+}
+
 bool VideoSharedMemoryReader::waitNewFrame(std::uint32_t last_notify_seq, std::uint32_t timeout_ms,
                                            std::uint32_t* observed_notify_seq) const {
   if (!region_.data() || region_.size() < sizeof(ShmHeader)) return false;
@@ -364,6 +374,22 @@ bool VideoSharedMemoryReader::copyLatestPayload(std::vector<std::byte>& out_payl
   std::memcpy(out_payload.data(), base + slot_off, bytes);
   out_header = h0;
   return true;
+}
+
+bool VideoSharedMemoryReader::copyLatestPayloadIfChanged(std::vector<std::byte>& out_payload,
+                                                         VideoSharedMemoryHeader& out_header,
+                                                         std::uint64_t last_frame_id) const {
+  VideoSharedMemoryHeader hdr{};
+  if (!peekLatestHeader(hdr)) return false;
+  if (hdr.frame_id == 0 || hdr.frame_id == last_frame_id) return false;
+  return copyLatestPayload(out_payload, out_header);
+}
+
+bool VideoSharedMemoryReader::copyLatestFrameIfChanged(std::vector<std::byte>& out_bgra,
+                                                       VideoSharedMemoryHeader& out_header,
+                                                       std::uint64_t last_frame_id) const {
+  if (!copyLatestPayloadIfChanged(out_bgra, out_header, last_frame_id)) return false;
+  return out_header.format == kVideoFormatBgra32;
 }
 
 bool VideoSharedMemoryReader::copyLatestFrame(std::vector<std::byte>& out_bgra, VideoSharedMemoryHeader& out_header) const {

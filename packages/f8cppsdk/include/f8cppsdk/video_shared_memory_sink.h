@@ -81,7 +81,12 @@ class VideoSharedMemoryReader {
   void close();
 
   bool readHeader(VideoSharedMemoryHeader& out) const;
+  bool peekLatestHeader(VideoSharedMemoryHeader& out) const;
   bool waitNewFrame(std::uint32_t last_notify_seq, std::uint32_t timeout_ms, std::uint32_t* observed_notify_seq) const;
+  bool copyLatestPayloadIfChanged(std::vector<std::byte>& out_payload, VideoSharedMemoryHeader& out_header,
+                                  std::uint64_t last_frame_id) const;
+  bool copyLatestFrameIfChanged(std::vector<std::byte>& out_bgra, VideoSharedMemoryHeader& out_header,
+                                std::uint64_t last_frame_id) const;
   bool copyLatestPayload(std::vector<std::byte>& out_payload, VideoSharedMemoryHeader& out_header) const;
   bool copyLatestFrame(std::vector<std::byte>& out_bgra, VideoSharedMemoryHeader& out_header) const;
 

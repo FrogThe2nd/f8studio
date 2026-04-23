@@ -16,6 +16,11 @@
 #if defined(__linux__) && !defined(_WIN32)
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
+#if defined(F8_HAVE_XSHM)
+#include <X11/extensions/XShm.h>
+#include <sys/ipc.h>
+#include <sys/shm.h>
+#endif
 #endif
 
 namespace f8::screencap {
@@ -31,6 +36,12 @@ struct X11Runtime {
   Window root = 0;
   bool have_window = false;
   Window window = 0;
+#if defined(F8_HAVE_XSHM)
+  bool use_xshm = false;
+  XImage* shm_image = nullptr;
+  XShmSegmentInfo shm_info{};
+  std::size_t shm_bytes = 0;
+#endif
 #endif
 
   int src_x = 0;
@@ -123,6 +134,24 @@ void LinuxX11Capture::close_capture() {
   auto* rt = reinterpret_cast<X11Runtime*>(rt_);
   if (!rt) return;
 #if defined(__linux__) && !defined(_WIN32)
+#if defined(F8_HAVE_XSHM)
+  if (rt->shm_image) {
+    if (rt->use_xshm && rt->dpy) {
+      XShmDetach(rt->dpy, &rt->shm_info);
+      XSync(rt->dpy, False);
+    }
+    XDestroyImage(rt->shm_image);
+    rt->shm_image = nullptr;
+  }
+  if (rt->shm_info.shmaddr && rt->shm_info.shmaddr != reinterpret_cast<char*>(-1)) {
+    shmdt(rt->shm_info.shmaddr);
+    rt->shm_info.shmaddr = nullptr;
+  }
+  if (rt->shm_info.shmid >= 0) {
+    shmctl(rt->shm_info.shmid, IPC_RMID, nullptr);
+    rt->shm_info.shmid = -1;
+  }
+#endif
   if (rt->dpy) {
     XCloseDisplay(rt->dpy);
     rt->dpy = nullptr;
@@ -149,6 +178,9 @@ bool LinuxX11Capture::open_capture(std::string& err) {
   }();
 
   auto rt = std::make_unique<X11Runtime>();
+#if defined(F8_HAVE_XSHM)
+  rt->shm_info.shmid = -1;
+#endif
   rt->dpy = XOpenDisplay(nullptr);
   if (!rt->dpy) {
     err = "XOpenDisplay failed (is DISPLAY set?)";
@@ -249,6 +281,44 @@ bool LinuxX11Capture::open_capture(std::string& err) {
   rt->src_w = src_w;
   rt->src_h = src_h;
 
+#if defined(F8_HAVE_XSHM)
+  if (!rt->have_window && XShmQueryExtension(rt->dpy)) {
+    rt->shm_image = XShmCreateImage(rt->dpy, DefaultVisual(rt->dpy, rt->screen), DefaultDepth(rt->dpy, rt->screen), ZPixmap,
+                                    nullptr, &rt->shm_info, static_cast<unsigned>(src_w), static_cast<unsigned>(src_h));
+    if (rt->shm_image && rt->shm_image->bytes_per_line > 0 && rt->shm_image->height > 0) {
+      rt->shm_bytes = static_cast<std::size_t>(rt->shm_image->bytes_per_line) * static_cast<std::size_t>(rt->shm_image->height);
+      rt->shm_info.shmid = shmget(IPC_PRIVATE, rt->shm_bytes, IPC_CREAT | 0600);
+      if (rt->shm_info.shmid >= 0) {
+        rt->shm_info.shmaddr = static_cast<char*>(shmat(rt->shm_info.shmid, nullptr, 0));
+        if (rt->shm_info.shmaddr && rt->shm_info.shmaddr != reinterpret_cast<char*>(-1)) {
+          rt->shm_info.readOnly = False;
+          rt->shm_image->data = rt->shm_info.shmaddr;
+          if (XShmAttach(rt->dpy, &rt->shm_info)) {
+            XSync(rt->dpy, False);
+            shmctl(rt->shm_info.shmid, IPC_RMID, nullptr);
+            rt->shm_info.shmid = -1;
+            rt->use_xshm = true;
+          }
+        }
+      }
+    }
+    if (!rt->use_xshm) {
+      if (rt->shm_image) {
+        XDestroyImage(rt->shm_image);
+        rt->shm_image = nullptr;
+      }
+      if (rt->shm_info.shmaddr && rt->shm_info.shmaddr != reinterpret_cast<char*>(-1)) {
+        shmdt(rt->shm_info.shmaddr);
+        rt->shm_info.shmaddr = nullptr;
+      }
+      if (rt->shm_info.shmid >= 0) {
+        shmctl(rt->shm_info.shmid, IPC_RMID, nullptr);
+        rt->shm_info.shmid = -1;
+      }
+    }
+  }
+#endif
+
   frame_id_ = 0;
   last_write_ts_ms_ = 0;
   rt_ = rt.release();
@@ -298,9 +368,21 @@ void LinuxX11Capture::pump_capture() {
   if (src_w <= 0 || src_h <= 0) return;
 
   XImage* img = nullptr;
-  if (rt->have_window) {
+  bool destroy_img = true;
+#if defined(F8_HAVE_XSHM)
+  if (rt->use_xshm && rt->shm_image) {
+    if (!XShmGetImage(rt->dpy, rt->root, rt->shm_image, rt->src_x, rt->src_y, AllPlanes)) {
+      set_error("XShmGetImage failed; falling back to XGetImage");
+      rt->use_xshm = false;
+    } else {
+      img = rt->shm_image;
+      destroy_img = false;
+    }
+  }
+#endif
+  if (!img && rt->have_window) {
     img = XGetImage(rt->dpy, rt->window, 0, 0, static_cast<unsigned>(src_w), static_cast<unsigned>(src_h), AllPlanes, ZPixmap);
-  } else {
+  } else if (!img) {
     img = XGetImage(rt->dpy, rt->root, rt->src_x, rt->src_y, static_cast<unsigned>(src_w), static_cast<unsigned>(src_h), AllPlanes,
                     ZPixmap);
   }
@@ -308,7 +390,7 @@ void LinuxX11Capture::pump_capture() {
   if (!img || !img->data) {
     set_error("XGetImage failed");
     want_restart_.store(true, std::memory_order_release);
-    if (img) XDestroyImage(img);
+    if (img && destroy_img) XDestroyImage(img);
     return;
   }
 
@@ -316,11 +398,12 @@ void LinuxX11Capture::pump_capture() {
   const int out_h = static_cast<int>(sink_->outputHeight());
   const int out_stride = out_w * 4;
   if (out_w <= 0 || out_h <= 0) {
-    XDestroyImage(img);
+    if (destroy_img) XDestroyImage(img);
     return;
   }
 
-  if (out_bgra_.size() != static_cast<std::size_t>(out_stride) * out_h) {
+  const bool same_size_output = out_w == src_w && out_h == src_h;
+  if (!same_size_output && out_bgra_.size() != static_cast<std::size_t>(out_stride) * out_h) {
     out_bgra_.resize(static_cast<std::size_t>(out_stride) * out_h);
   }
 
@@ -328,7 +411,7 @@ void LinuxX11Capture::pump_capture() {
   const int bpp = img->bits_per_pixel;
   const int bytes_per_line = img->bytes_per_line;
   if (bpp != 32 && bpp != 24) {
-    XDestroyImage(img);
+    if (destroy_img) XDestroyImage(img);
     set_error("unsupported XImage bits_per_pixel");
     return;
   }
@@ -336,9 +419,19 @@ void LinuxX11Capture::pump_capture() {
   const auto rmi = mask_info(static_cast<std::uint32_t>(img->red_mask));
   const auto gmi = mask_info(static_cast<std::uint32_t>(img->green_mask));
   const auto bmi = mask_info(static_cast<std::uint32_t>(img->blue_mask));
-  src_bgra_.resize(static_cast<std::size_t>(src_w) * src_h * 4);
+  const int src_stride = src_w * 4;
+  if (src_bgra_.size() != static_cast<std::size_t>(src_stride) * src_h) {
+    src_bgra_.resize(static_cast<std::size_t>(src_stride) * src_h);
+  }
 
+  bool converted = false;
   const bool lsb_first = (img->byte_order == LSBFirst);
+  if (bpp == 32) {
+    converted = copy_ximage_fast_bgra32(reinterpret_cast<const std::uint8_t*>(img->data), src_w, src_h, bytes_per_line,
+                                        src_bgra_.data(), src_stride, static_cast<std::uint32_t>(img->red_mask),
+                                        static_cast<std::uint32_t>(img->green_mask),
+                                        static_cast<std::uint32_t>(img->blue_mask), img->byte_order);
+  }
   const auto read_u32 = [&](const std::uint8_t* p) -> std::uint32_t {
     if (lsb_first) {
       return static_cast<std::uint32_t>(p[0]) | (static_cast<std::uint32_t>(p[1]) << 8u) | (static_cast<std::uint32_t>(p[2]) << 16u) |
@@ -355,38 +448,44 @@ void LinuxX11Capture::pump_capture() {
   };
 
   const auto* src = reinterpret_cast<const std::uint8_t*>(img->data);
-  for (int y = 0; y < src_h; ++y) {
-    const std::uint8_t* row = src + static_cast<std::size_t>(y) * bytes_per_line;
-    std::uint8_t* out = src_bgra_.data() + static_cast<std::size_t>(y) * src_w * 4;
-    for (int x = 0; x < src_w; ++x) {
-      std::uint32_t px = 0;
-      if (bpp == 32) {
-        px = read_u32(row + static_cast<std::size_t>(x) * 4);
-      } else {
-        px = read_u24(row + static_cast<std::size_t>(x) * 3);
+  if (!converted) {
+    for (int y = 0; y < src_h; ++y) {
+      const std::uint8_t* row = src + static_cast<std::size_t>(y) * bytes_per_line;
+      std::uint8_t* out = src_bgra_.data() + static_cast<std::size_t>(y) * src_w * 4;
+      for (int x = 0; x < src_w; ++x) {
+        std::uint32_t px = 0;
+        if (bpp == 32) {
+          px = read_u32(row + static_cast<std::size_t>(x) * 4);
+        } else {
+          px = read_u24(row + static_cast<std::size_t>(x) * 3);
+        }
+
+        const std::uint32_t rv = (rmi.mask != 0) ? ((px & rmi.mask) >> rmi.shift) : 0u;
+        const std::uint32_t gv = (gmi.mask != 0) ? ((px & gmi.mask) >> gmi.shift) : 0u;
+        const std::uint32_t bv = (bmi.mask != 0) ? ((px & bmi.mask) >> bmi.shift) : 0u;
+
+        out[x * 4 + 0] = scale_to_u8(bv, bmi.bits);
+        out[x * 4 + 1] = scale_to_u8(gv, gmi.bits);
+        out[x * 4 + 2] = scale_to_u8(rv, rmi.bits);
+        out[x * 4 + 3] = 255;
       }
-
-      const std::uint32_t rv = (rmi.mask != 0) ? ((px & rmi.mask) >> rmi.shift) : 0u;
-      const std::uint32_t gv = (gmi.mask != 0) ? ((px & gmi.mask) >> gmi.shift) : 0u;
-      const std::uint32_t bv = (bmi.mask != 0) ? ((px & bmi.mask) >> bmi.shift) : 0u;
-
-      out[x * 4 + 0] = scale_to_u8(bv, bmi.bits);
-      out[x * 4 + 1] = scale_to_u8(gv, gmi.bits);
-      out[x * 4 + 2] = scale_to_u8(rv, rmi.bits);
-      out[x * 4 + 3] = 255;
     }
   }
 
-  XDestroyImage(img);
+  if (destroy_img) XDestroyImage(img);
 
-  const int src_stride = src_w * 4;
-  if (out_w == src_w && out_h == src_h) {
-    std::memcpy(out_bgra_.data(), src_bgra_.data(), src_bgra_.size());
+  const std::uint8_t* frame_data = src_bgra_.data();
+  int frame_stride = src_stride;
+  if (same_size_output) {
+    frame_data = src_bgra_.data();
+    frame_stride = src_stride;
   } else {
     scale_bgra_bilinear(src_bgra_.data(), src_w, src_h, src_stride, out_bgra_.data(), out_w, out_h, out_stride);
+    frame_data = out_bgra_.data();
+    frame_stride = out_stride;
   }
 
-  if (!sink_->writeFrame(out_bgra_.data(), static_cast<unsigned>(out_stride))) {
+  if (!sink_->writeFrame(frame_data, static_cast<unsigned>(frame_stride))) {
     set_error("shm writeFrame failed");
     return;
   }
@@ -404,6 +503,32 @@ void LinuxX11Capture::set_error(std::string err) {
   }
   spdlog::warn("x11 capture error: {}", err);
   if (on_error_) on_error_(std::move(err));
+}
+
+bool LinuxX11Capture::copy_ximage_fast_bgra32(const std::uint8_t* src, int src_w, int src_h, int src_stride,
+                                              std::uint8_t* dst, int dst_stride, std::uint32_t red_mask,
+                                              std::uint32_t green_mask, std::uint32_t blue_mask, int byte_order) {
+  if (!src || !dst || src_w <= 0 || src_h <= 0 || src_stride < src_w * 4 || dst_stride < src_w * 4) return false;
+#if defined(__linux__) && !defined(_WIN32)
+  const bool lsb_bgrx = byte_order == LSBFirst && red_mask == 0x00FF0000u && green_mask == 0x0000FF00u &&
+                        blue_mask == 0x000000FFu;
+  if (!lsb_bgrx) return false;
+  for (int y = 0; y < src_h; ++y) {
+    const std::uint8_t* source_row = src + static_cast<std::size_t>(y) * src_stride;
+    std::uint8_t* dest_row = dst + static_cast<std::size_t>(y) * dst_stride;
+    std::memcpy(dest_row, source_row, static_cast<std::size_t>(src_w) * 4u);
+    for (int x = 0; x < src_w; ++x) {
+      dest_row[static_cast<std::size_t>(x) * 4u + 3u] = 255u;
+    }
+  }
+  return true;
+#else
+  (void)red_mask;
+  (void)green_mask;
+  (void)blue_mask;
+  (void)byte_order;
+  return false;
+#endif
 }
 
 void LinuxX11Capture::scale_bgra_bilinear(const std::uint8_t* src, int src_w, int src_h, int src_stride, std::uint8_t* dst,

@@ -73,6 +73,7 @@ class DenseOptflowService final : public f8::cppsdk::LifecycleNode,
   std::string flow_shm_name_;
   std::string flow_shm_format_ = "flow2_f16";
   double compute_scale_ = 0.5;
+  std::string output_scale_mode_ = "full";
 
   // Video reader state.
   f8::cppsdk::VideoSharedMemoryReader video_;
@@ -86,6 +87,11 @@ class DenseOptflowService final : public f8::cppsdk::LifecycleNode,
 
   // Previous compute frame in grayscale.
   cv::Mat prev_gray_;
+  cv::Mat gray_;
+  cv::Mat prev_compute_;
+  cv::Mat gray_compute_;
+  cv::Mat flow_compute_;
+  cv::Mat flow_full_;
   bool has_prev_gray_ = false;
   int prev_width_ = 0;
   int prev_height_ = 0;
