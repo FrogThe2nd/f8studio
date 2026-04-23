@@ -121,6 +121,8 @@ def validate_as(model_type: type[T], value: Any, *_args: Any, **_kwargs: Any) ->
 
 
 def dump_json(value: Any, *_args: Any, **_kwargs: Any) -> Any:
+    if value is None or type(value) in (str, int, float, bool):
+        return value
     try:
         raw = msgspec.to_builtins(value)
     except (TypeError, ValueError):
