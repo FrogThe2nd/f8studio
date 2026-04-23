@@ -13,7 +13,7 @@ Manual usage guidance is merged from `docs/modules/manual/*.md` and `docs/module
 | `f8.audiofeat.rhythm` | Audio Feature Rhythm | `0` | `6` | [Audio Feature Rhythm](services/f8-audiofeat-rhythm.md) |
 | `f8.implayer` | IM Player | `0` | `24` | [IM Player](services/f8-implayer.md) |
 | `f8.proclauncher` | Proc Launcher | `0` | `5` | [Proc Launcher](services/f8-proclauncher.md) |
-| `f8.pyengine` | PyEngine | `41` | `3` | [PyEngine](services/f8-pyengine.md) |
+| `f8.pyengine` | PyEngine | `42` | `3` | [PyEngine](services/f8-pyengine.md) |
 | `f8.pyexpr` | Python Expr Service | `0` | `6` | [Python Expr Service](services/f8-pyexpr.md) |
 | `f8.pyscript` | Python Script Service | `0` | `6` | [Python Script Service](services/f8-pyscript.md) |
 | `f8.screencap` | Screen Capture | `0` | `16` | [Screen Capture](services/f8-screencap.md) |

@@ -33,7 +33,8 @@ from .operators.data_expr import register_operator as register_data_expr_operato
 from .operators.lovense_mock_server import register_operator as register_lovense_mock_server_operator
 from .operators.lovense_out import register_operator as register_lovense_out_operator
 from .operators.buttplug_out import register_operator as register_buttplug_out_operator
-from .operators.mix_silence_fill import register_operator as register_mix_silence_fill_operator
+from .operators.silence_detector import register_operator as register_silence_detector_operator
+from .operators.switch_mixer import register_operator as register_switch_mixer_operator
 from .operators.sequence_player import register_operator as register_sequence_player_operator
 from .operators.playback_sync import register_operator as register_playback_sync_operator
 from .operators.handy_out import register_operator as register_handy_out_operator
@@ -112,7 +113,8 @@ def register_pyengine_specs(registry: RuntimeNodeRegistry) -> RuntimeNodeRegistr
     register_buttplug_out_operator(registry)
     register_lovense_mock_server_operator(registry)
     register_sequence_player_operator(registry)
-    register_mix_silence_fill_operator(registry)
+    register_silence_detector_operator(registry)
+    register_switch_mixer_operator(registry)
     register_playback_sync_operator(registry)
     register_handy_out_operator(registry)
     register_state_trigger_operator(registry)

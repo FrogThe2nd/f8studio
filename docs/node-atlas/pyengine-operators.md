@@ -27,7 +27,8 @@
 | `f8.buttplug_out` | Buttplug Out | Connect to Intiface/Buttplug with split channels: sendPositionCmd->position, sendFunctionCmd->state. | [Open](../modules/services/f8-pyengine.md#operator-f8-buttplug-out) |
 | `f8.lovense_mock_server` | Lovense Mock Server | Event-driven input node that mocks the Lovense Local API, publishes received commands as state, and emits exec. | [Open](../modules/services/f8-pyengine.md#operator-f8-lovense-mock-server) |
 | `f8.sequence_player` | Sequence Player | Play a step-sequence over time (epoch-based), outputting the current step value. | [Open](../modules/services/f8-pyengine.md#operator-f8-sequence-player) |
-| `f8.mix_silence_fill` | Mix (Silence Fill) | Outputs A by default; when A is silent for a while, crossfades to B as filler. | [Open](../modules/services/f8-pyengine.md#operator-f8-mix-silence-fill) |
+| `f8.silence_detector` | Silence Detector | Detect whether a signal has stayed nearly unchanged for long enough to be considered silent. | [Open](../modules/services/f8-pyengine.md#operator-f8-silence-detector) |
+| `f8.switch_mixer` | Switch Mixer | Switch between any number of user-defined input channels with an optional smooth crossfade. | [Open](../modules/services/f8-pyengine.md#operator-f8-switch-mixer) |
 | `f8.playback_sync` | Playback Sync | Extrapolates IMPlayer playback position between sparse playback state updates. | [Open](../modules/services/f8-pyengine.md#operator-f8-playback-sync) |
 | `f8.handy_out` | Handy Out | Drive The Handy via HDSP using normalized 0. | [Open](../modules/services/f8-pyengine.md#operator-f8-handy-out) |
 | `f8.state_trigger` | State Trigger | Triggers exec on `changed` when state `value` changes; ideal for wiring button-like state changes into exec graphs. | [Open](../modules/services/f8-pyengine.md#operator-f8-state-trigger) |

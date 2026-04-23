@@ -50,7 +50,7 @@ Pattern->phase wiring example (reusable):
 
 ### Mix / Fill
 
-`Mix (Silence Fill)` (`operatorClass=f8.mix_silence_fill`) outputs input `A` normally, but when `A` stays nearly-constant for `silenceMs`, it crossfades to `B` as a filler signal.
+`Switch Mixer` (`operatorClass=f8.switch_mixer`) switches among any number of user-defined input channels under `currentChannel`, with optional smooth crossfade via `fadeMs`. If the selected channel stops receiving valid samples, the node keeps repeating that channel's last valid value.
 
 ### Buttplug / Intiface bridge
 

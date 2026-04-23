@@ -16,7 +16,8 @@ from .rate_limiter import RateLimiterRuntimeNode
 from .lovense_mock_server import LovenseMockServerRuntimeNode
 from .lovense_out import LovenseOutRuntimeNode
 from .buttplug_out import ButtplugOutRuntimeNode
-from .mix_silence_fill import MixSilenceFillRuntimeNode
+from .switch_mixer import SwitchMixerRuntimeNode
+from .silence_detector import SilenceDetectorRuntimeNode
 from .program_wave import ProgramWaveRuntimeNode
 from .sequence_player import SequencePlayerRuntimeNode
 from .playback_sync import PlaybackSyncRuntimeNode
@@ -58,7 +59,8 @@ __all__ = [
     "LovenseMockServerRuntimeNode",
     "LovenseOutRuntimeNode",
     "ButtplugOutRuntimeNode",
-    "MixSilenceFillRuntimeNode",
+    "SwitchMixerRuntimeNode",
+    "SilenceDetectorRuntimeNode",
     "PlaybackSyncRuntimeNode",
     "HandyOutRuntimeNode",
     "StateTriggerRuntimeNode",

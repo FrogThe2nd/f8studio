@@ -1747,27 +1747,27 @@ _None_
 
 - No bundled scenario references this node yet.
 
-<a id="operator-f8-mix-silence-fill"></a>
-### Mix (Silence Fill) (`f8.mix_silence_fill`)
-Outputs A by default; when A is silent for a while, crossfades to B as filler.
+<a id="operator-f8-silence-detector"></a>
+### Silence Detector (`f8.silence_detector`)
+Detect whether a signal has stayed nearly unchanged for long enough to be considered silent.
 
 #### When to Use
 
-- Use `Mix (Silence Fill)` when your graph combines multiple signal sources (e.g., from different detectors or audio streams) and you want to ensure the output remains continuous even if one or more branches stop sending data.
-- It is the standard way to "blend" multiple control inputs into a single authoritative signal (e.g., mixing a manual slider with an automated vision trigger).
-- Best for building robust scenarios that shouldn't "freeze" or "glitch" when a sensor port is temporarily disconnected.
+- Use `Silence Detector` when you want to detect that a signal has effectively stopped changing and expose that result as sparse graph state.
+- It is a good fit for fallback routing, watchdog-style graph logic, and any situation where "no meaningful movement" should trigger another behavior.
+- Best when the downstream node should react to a stable state change rather than reading a per-sample analysis signal.
 
 #### Common Wiring Patterns
 
-- **Safe Blending**: Combine multiple upstream branches before final scaling or mapping nodes. This allows you to inspect one combined, high-level signal instead of managing dozens of individual branches.
-- **Fall-Through Monitoring**: Keep a `Wave Viz` immediately after the mixer to observe how different signals are being prioritized or added together in real-time.
-- **Default State Engine**: Use the mixer to provide a "Default" or "Base" set of values that are only overridden when higher-priority signals become active.
+- **Fallback Switching**: Feed the primary signal into `Silence Detector.value`, then use graph logic to switch `Switch Mixer.currentChannel` to a fallback port when `isSilent` becomes true.
+- **State-Driven Logic**: Pair it with `State Expr`, `State Trigger`, or UI bindings when other graph nodes should respond to silence as a boolean condition.
+- **Sparse Monitoring**: Show `isSilent` on the node and inspect `lastActiveTsMs` for quick debugging without adding another visualization stream.
 
 #### Pitfalls / Gotchas
 
-- **Hidden Failures**: Because this node "fills" missing data with silence or neutral values, it can hide genuine upstream outages (like a crashed camera service). Use separate `monitor` ports or health visualizers to track individual branch health.
-- **Normalization Drifts**: If you mix multiple signals without prior range mapping, a single high-intensity branch can "drown out" all others. ensure your inputs are normalized to a consistent 0-1 range before mixing.
-- **Over-Abstraction**: Mixing too early in your logic chain can make it very difficult to debug branch-specific issues, as you are only ever looking at the final "stew" of data.
+- **Threshold Tuning**: If `deltaThreshold` is too small, normal noise will keep the node from ever becoming silent; if too large, subtle real motion may be ignored.
+- **Exec-Driven Sampling**: Detection updates on exec, so the effective responsiveness depends on how often the graph drives the node.
+- **Signal Semantics**: It detects lack of change, not low absolute amplitude. A constant non-zero signal still becomes "silent" under this definition.
 
 #### Operator Reference
 
@@ -1778,24 +1778,26 @@ Outputs A by default; when A is silent for a while, crossfades to B as filler.
 
 - Exec inputs: `exec`
 - Exec outputs: `exec`
-- Data inputs: `A`, `B`
-- Data outputs: `out`, `alpha`, `silent`
+- Data inputs: `value`
+- Data outputs: none
 
 ##### State Fields
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `silenceMs` | `rw` | `true` | `true` | `integer / default=500` | If A changes less than deltaThreshold for this long, fade to B. |
-| `deltaThreshold` | `rw` | `true` | `true` | `number / default=0.001` | Absolute change threshold to treat A as active. |
-| `fadeMs` | `rw` | `true` | `true` | `integer / default=200` | Crossfade time (0=instant). |
+| `silenceMs` | `rw` | `true` | `true` | `integer / default=500` | If the input changes less than deltaThreshold for this long, mark it silent. |
+| `deltaThreshold` | `rw` | `true` | `true` | `number / default=0.001` | Absolute change threshold to treat the input as active. |
+| `isSilent` | `ro` | `true` | `true` | `boolean / default=False` | Readonly sparse state output indicating whether the signal is currently silent. |
+| `lastActiveTsMs` | `ro` | `true` | `false` | `integer / default=0` | Readonly timestamp of the last detected activity transition. |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 | `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
 ##### Key Fields That Matter
 
-- `silenceMs` (Silence (ms), `rw`): If A changes less than deltaThreshold for this long, fade to B. Schema: `integer / default=500`.
-- `deltaThreshold` (Delta Threshold, `rw`): Absolute change threshold to treat A as active. Schema: `number / default=0.001`.
-- `fadeMs` (Fade (ms), `rw`): Crossfade time (0=instant). Schema: `integer / default=200`.
+- `silenceMs` (Silence (ms), `rw`): If the input changes less than deltaThreshold for this long, mark it silent. Schema: `integer / default=500`.
+- `deltaThreshold` (Delta Threshold, `rw`): Absolute change threshold to treat the input as active. Schema: `number / default=0.001`.
+- `isSilent` (Is Silent, `ro`): Readonly sparse state output indicating whether the signal is currently silent. Schema: `boolean / default=False`.
+- `lastActiveTsMs` (Last Active (tsMs), `ro`): Readonly timestamp of the last detected activity transition. Schema: `integer / default=0`.
 - `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
 - `operatorId` (Operator Id, `ro`): Readonly: current operator/node id (operatorId). Schema: `string`.
 
@@ -1803,16 +1805,82 @@ Outputs A by default; when A is silent for a while, crossfades to B as filler.
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
-| `A` | `true` | `true` | `number` | Primary signal |
-| `B` | `true` | `true` | `number` | Filler signal |
+| `value` | `true` | `true` | `number` | Signal to analyze |
+
+##### Data Output Ports
+
+_None_
+
+#### Related Scenarios
+
+- No bundled scenario references this node yet.
+
+<a id="operator-f8-switch-mixer"></a>
+### Switch Mixer (`f8.switch_mixer`)
+Switch between any number of user-defined input channels with an optional smooth crossfade.
+
+#### When to Use
+
+- Use `Switch Mixer` when your graph needs to select among multiple signal channels or tracks while keeping the transition smooth and controlled.
+- It is a good fit for state-driven routing such as primary vs fallback motion, manual override vs automatic control, or switching among several behavior profiles.
+- Best for graphs where direct hard switching would feel too abrupt and you want the choice of a short crossfade instead.
+
+#### Common Wiring Patterns
+
+- **Named Channel Routing**: Add custom data input ports such as `main`, `fallback`, `manual`, or `track_3`, then drive `currentChannel` from graph state or UI.
+- **Primary / Fallback Routing**: Pair `Silence Detector.isSilent` with graph logic that updates `currentChannel` to a fallback port when the main source becomes inactive.
+- **Soft Transition Monitoring**: Keep a `Wave Viz` after the mixer and inspect `alpha` to verify that transitions are smooth instead of hard cuts.
+
+#### Pitfalls / Gotchas
+
+- **Input Range Mismatch**: If your channels are not normalized to similar ranges, the transition can still feel jumpy even with crossfade enabled.
+- **Missing Control Logic**: `Switch Mixer` does not decide when to switch; pair it with explicit state logic such as `Silence Detector`, `State Expr`, or UI-driven state.
+- **Hold Semantics**: When a selected channel stops receiving valid samples, the mixer holds that channel's last valid value. That is useful for continuity, but it also means stale upstream data can remain audible if your graph never switches away.
+- **Too Much Fade**: Very large `fadeMs` values can make the graph feel sluggish or indecisive when the control condition changes quickly.
+
+#### Operator Reference
+
+- Exec in ports: `exec`
+- Exec out ports: `exec`
+
+##### Typical Inputs / Outputs
+
+- Exec inputs: `exec`
+- Exec outputs: `exec`
+- Data inputs: `ch1`, `ch2`
+- Data outputs: `out`, `alpha`
+
+##### State Fields
+
+| Name | Access | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- | --- |
+| `currentChannel` | `rw` | `true` | `true` | `string / default=ch1` | Name of the selected input channel/track to play. |
+| `resolvedChannel` | `ro` | `true` | `true` | `string / default=` | Readonly currently resolved input channel after validation/fallback. |
+| `fadeMs` | `rw` | `true` | `true` | `integer / default=200` | Transition duration in milliseconds. Set to 0 for an instant switch. |
+| `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
+| `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
+
+##### Key Fields That Matter
+
+- `currentChannel` (Current Channel, `rw`): Name of the selected input channel/track to play. Schema: `string / default=ch1`.
+- `resolvedChannel` (Resolved Channel, `ro`): Readonly currently resolved input channel after validation/fallback. Schema: `string / default=`.
+- `fadeMs` (Fade (ms), `rw`): Transition duration in milliseconds. Set to 0 for an instant switch. Schema: `integer / default=200`.
+- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
+- `operatorId` (Operator Id, `ro`): Readonly: current operator/node id (operatorId). Schema: `string`.
+
+##### Data Input Ports
+
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `ch1` | `false` | `true` | `number` | Input channel 1 |
+| `ch2` | `false` | `true` | `number` | Input channel 2 |
 
 ##### Data Output Ports
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
 | `out` | `true` | `true` | `number` | Mixed output |
-| `alpha` | `true` | `true` | `number` | Crossfade factor (0=A, 1=B) |
-| `silent` | `true` | `true` | `number` | 1 if A is considered silent else 0 |
+| `alpha` | `true` | `true` | `number` | Transition progress (0..1) |
 
 #### Related Scenarios
 
