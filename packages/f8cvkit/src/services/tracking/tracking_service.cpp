@@ -704,6 +704,7 @@ bool TrackingService::start() {
 
   video_.close();
   frame_bgra_.clear();
+  frame_bgr_.release();
   last_header_.reset();
   last_frame_id_ = 0;
   last_video_open_attempt_ms_ = 0;
@@ -942,6 +943,9 @@ void TrackingService::set_shm_name(const std::string& shm_name, const json& meta
   publish_state_if_changed("shmName", shm_name_override_, "state", meta);
   video_.close();
   last_video_open_attempt_ms_ = 0;
+  last_frame_id_ = 0;
+  frame_bgra_.clear();
+  frame_bgr_.release();
 }
 
 void TrackingService::set_init_select(const std::string& mode, const json& meta) {
@@ -1047,9 +1051,8 @@ void TrackingService::apply_init_box_if_any() {
 
   cv::Mat bgra_mat(static_cast<int>(hdr.height), static_cast<int>(hdr.width), CV_8UC4,
                    const_cast<std::byte*>(frame_bgra_.data()), static_cast<std::size_t>(hdr.pitch));
-  cv::Mat bgr;
   try {
-    cv::cvtColor(bgra_mat, bgr, cv::COLOR_BGRA2BGR);
+    cv::cvtColor(bgra_mat, frame_bgr_, cv::COLOR_BGRA2BGR);
   } catch (const cv::Exception& ex) {
     publish_state_if_changed("lastError", std::string("opencv cvtColor failed: ") + ex.what(), "runtime",
                              json::object());
@@ -1102,7 +1105,7 @@ void TrackingService::apply_init_box_if_any() {
                                  json::object());
         return;
       }
-      tracker_->init(bgr, bb);
+      tracker_->init(frame_bgr_, bb);
       spdlog::info("cvkit_tracking tracker init ok kind={} bbox=[{},{},{},{}]", tracker_kind_state_, bb.x, bb.y,
                    bb.width, bb.height);
       active_tracker_kind_state_ = tracker_kind_state_;
@@ -1145,7 +1148,7 @@ void TrackingService::process_frame_once() {
   }
 
   f8::cppsdk::VideoSharedMemoryHeader hdr{};
-  if (!video_.copyLatestFrame(frame_bgra_, hdr)) {
+  if (!video_.copyLatestFrameIfChanged(frame_bgra_, hdr, last_frame_id_)) {
     return;
   }
   if (hdr.frame_id == 0 || hdr.frame_id == last_frame_id_) {
@@ -1169,9 +1172,8 @@ void TrackingService::process_frame_once() {
 
   cv::Mat bgra_mat(static_cast<int>(hdr.height), static_cast<int>(hdr.width), CV_8UC4,
                    const_cast<std::byte*>(frame_bgra_.data()), static_cast<std::size_t>(hdr.pitch));
-  cv::Mat bgr;
   try {
-    cv::cvtColor(bgra_mat, bgr, cv::COLOR_BGRA2BGR);
+    cv::cvtColor(bgra_mat, frame_bgr_, cv::COLOR_BGRA2BGR);
   } catch (const cv::Exception& ex) {
     publish_state_if_changed("lastError", std::string("opencv cvtColor failed: ") + ex.what(), "runtime",
                              json::object());
@@ -1183,7 +1185,7 @@ void TrackingService::process_frame_once() {
   cv::Rect out_bbox = bbox;
   bool ok = false;
   try {
-    ok = tracker->update(bgr, out_bbox);
+    ok = tracker->update(frame_bgr_, out_bbox);
   } catch (const cv::Exception& ex) {
     publish_state_if_changed("lastError", std::string("opencv tracker update failed: ") + ex.what(), "runtime",
                              json::object());

@@ -112,6 +112,7 @@ class TrackingService final : public f8::cppsdk::LifecycleNode,
   std::string shm_name_override_;
   f8::cppsdk::VideoSharedMemoryReader video_;
   std::vector<std::byte> frame_bgra_;
+  cv::Mat frame_bgr_;
   std::optional<f8::cppsdk::VideoSharedMemoryHeader> last_header_;
   std::uint64_t last_frame_id_ = 0;
   std::int64_t last_video_open_attempt_ms_ = 0;
