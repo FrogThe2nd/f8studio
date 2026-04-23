@@ -40,18 +40,6 @@ class TemporalDetectorInputSpec:
     input_width: int
 
 
-def _prepare_rgb_blob(frame_bgr: Any, *, width: int, height: int, cv2: Any) -> Any:
-    return cv2.dnn.blobFromImage(
-        frame_bgr,
-        scalefactor=1.0 / 255.0,
-        size=(int(width), int(height)),
-        mean=(0.0, 0.0, 0.0),
-        swapRB=True,
-        crop=False,
-        ddepth=cv2.CV_32F,
-    )
-
-
 def _choose_ort_providers(*, prefer: Literal["auto", "cuda", "cpu"]) -> list[str]:
     import onnxruntime as ort  # type: ignore
 
@@ -763,28 +751,11 @@ class OnnxClassifierRuntime:
 
     def _prepare_input(self, frame_bgr: Any, *, cv2: Any, np: Any) -> Any:
         spec = self.spec
-        input_type = str(self._session.input_meta.type or "").lower()
-        is_float_input = "float" in input_type
-
-        input_shape = self._session.input_meta.shape
-        is_nchw = True
-        if isinstance(input_shape, list) and len(input_shape) == 4:
-            ch_dim = input_shape[1]
-            if isinstance(ch_dim, int) and ch_dim != 3:
-                is_nchw = False
-            if input_shape[3] == 3:
-                is_nchw = False
-
-        if is_float_input and is_nchw:
-            return _prepare_rgb_blob(
-                frame_bgr,
-                width=int(spec.input_width),
-                height=int(spec.input_height),
-                cv2=cv2,
-            )
-
         img = cv2.resize(frame_bgr, (int(spec.input_width), int(spec.input_height)), interpolation=cv2.INTER_LINEAR)
         img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+
+        input_type = str(self._session.input_meta.type or "").lower()
+        is_float_input = "float" in input_type
 
         if is_float_input:
             x = img_rgb.astype(np.float32) / 255.0
@@ -877,12 +848,17 @@ class OnnxNeuFlowRuntime:
 
     def prepare_input(self, frame_bgr: Any) -> Any:
         import cv2  # type: ignore
-        return _prepare_rgb_blob(
+        import numpy as np  # type: ignore
+
+        resized = cv2.resize(
             frame_bgr,
-            width=int(self._input_width),
-            height=int(self._input_height),
-            cv2=cv2,
+            (int(self._input_width), int(self._input_height)),
+            interpolation=cv2.INTER_LINEAR,
         )
+        rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
+        x = rgb.astype(np.float32) / 255.0
+        x = np.transpose(x, (2, 0, 1))[None, ...]
+        return x
 
     def infer_preprocessed(self, prev_tensor: Any, now_tensor: Any, *, output_size_hw: tuple[int, int]) -> Any:
         import cv2  # type: ignore
@@ -1036,16 +1012,19 @@ class OnnxTemporalWaveRuntime:
 
     def prepare_frame(self, frame_bgr: Any) -> Any:
         import cv2  # type: ignore
+        import numpy as np  # type: ignore
 
         if self._channels != 3:
             raise ValueError(f"Temporal wave runtime currently supports 3-channel input, got {self._channels}")
-        blob = _prepare_rgb_blob(
+        resized = cv2.resize(
             frame_bgr,
-            width=int(self._input_width),
-            height=int(self._input_height),
-            cv2=cv2,
+            (int(self._input_width), int(self._input_height)),
+            interpolation=cv2.INTER_LINEAR,
         )
-        return blob[0]
+        rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
+        x = rgb.astype(np.float32) / 255.0
+        x = np.transpose(x, (2, 0, 1))
+        return np.ascontiguousarray(x)
 
     def infer_sequence(self, sequence_chw: Any) -> Any:
         import numpy as np  # type: ignore
