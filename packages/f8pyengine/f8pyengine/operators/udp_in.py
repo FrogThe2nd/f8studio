@@ -35,10 +35,6 @@ from ..constants import SERVICE_CLASS
 OPERATOR_CLASS = "f8.udp_in"
 logger = logging.getLogger(__name__)
 
-_OUTPUT_MODE_TEXT = "text"
-_OUTPUT_MODE_JSON = "json"
-_OUTPUT_MODE_BYTEARRAY = "bytearray"
-_OUTPUT_MODE_ENUM = [_OUTPUT_MODE_TEXT, _OUTPUT_MODE_JSON, _OUTPUT_MODE_BYTEARRAY]
 _EXEC_PACKET_CACHE_MIN = 256
 
 
@@ -73,7 +69,6 @@ def _packet_payload_schema():
             "text": string_schema(),
             "json": any_schema(),
             "jsonValid": boolean_schema(),
-            "value": any_schema(),
         }
     )
 
@@ -118,7 +113,7 @@ class UdpInRuntimeNode(OperatorNode, EntrypointNode):
     - listens on a local UDP port
     - keeps the latest packet
     - always exposes decoded text + raw bytearray
-    - optionally switches `value` output between text/json/bytearray via state
+    - always exposes parsed JSON when the payload is valid UTF-8 JSON
     - emits exec on `packet` for incoming datagrams
     """
 
@@ -145,14 +140,12 @@ class UdpInRuntimeNode(OperatorNode, EntrypointNode):
             self._initial_state.get("allowNonLoopbackBind"),
             default=False,
         )
-        self._output_mode = self._coerce_output_mode(self._initial_state.get("outputMode"))
         self._packet_count = 0
         self._last_error = ""
         self._latest_packet: _PacketRecord | None = None
         self._packet_by_ctx_id: dict[str, _PacketRecord] = {}
         self._packet_ctx_order: deque[str] = deque()
         self._packet_snapshot_limit = _EXEC_PACKET_CACHE_MIN
-        self._output_version = 0
         self._entrypoint_ctx: EntrypointContext | None = None
         self._pending_exec_id: str | int | None = None
         self._emit_wakeup = asyncio.Event()
@@ -199,18 +192,15 @@ class UdpInRuntimeNode(OperatorNode, EntrypointNode):
             return None
 
         port_name = str(port or "").strip()
-        if port_name not in ("value", "text", "raw", "json", "packet"):
+        if port_name not in ("text", "raw", "json", "packet"):
             return None
 
         await self._ensure_receiver()
         async with self._packet_lock:
             packet = self._packet_for_ctx_locked(ctx_id)
-            output_mode = self._output_mode
 
         if packet is None:
             return None
-        if port_name == "value":
-            return self._value_for_mode(packet, output_mode=output_mode)
         if port_name == "text":
             return packet.text
         if port_name == "raw":
@@ -219,7 +209,7 @@ class UdpInRuntimeNode(OperatorNode, EntrypointNode):
             if not packet.json_valid:
                 return None
             return packet.json_value
-        return self._build_packet_payload(packet, output_mode=output_mode)
+        return self._build_packet_payload(packet)
 
     async def on_state(self, field: str, value: Any, *, ts_ms: int | None = None) -> None:
         del ts_ms
@@ -234,12 +224,6 @@ class UdpInRuntimeNode(OperatorNode, EntrypointNode):
                 await self._ensure_receiver(force_restart=True)
             else:
                 await self._stop_receiver()
-            return
-        if field_name == "outputMode":
-            output_mode = self._coerce_output_mode(value)
-            if output_mode != self._output_mode:
-                self._output_mode = output_mode
-                self._bump_output_version()
             return
 
     async def validate_state(self, field: str, value: Any, *, ts_ms: int, meta: dict[str, Any]) -> Any:
@@ -264,8 +248,6 @@ class UdpInRuntimeNode(OperatorNode, EntrypointNode):
             return max_queue
         if field_name == "reuseAddress":
             return coerce_flag(value, default=False)
-        if field_name == "outputMode":
-            return self._coerce_output_mode(value)
         return value
 
     async def close(self) -> None:
@@ -283,13 +265,6 @@ class UdpInRuntimeNode(OperatorNode, EntrypointNode):
                 return int(float(value))
             except (TypeError, ValueError):
                 return int(default)
-
-    @staticmethod
-    def _coerce_output_mode(value: Any) -> str:
-        text = str(value or "").strip().lower()
-        if text in _OUTPUT_MODE_ENUM:
-            return text
-        return _OUTPUT_MODE_TEXT
 
     async def _read_cfg_from_state(self) -> _UdpConfig | None:
         bind_address = await self.get_state_value("bindAddress")
@@ -418,7 +393,6 @@ class UdpInRuntimeNode(OperatorNode, EntrypointNode):
                 async with self._packet_lock:
                     self._latest_packet = packet
                     self._store_packet_snapshot_locked(exec_id=exec_id, packet=packet)
-                    self._bump_output_version()
                 await self._publish_packet_state(packet)
                 self._request_exec_emit(exec_id=exec_id)
             except asyncio.CancelledError:
@@ -449,15 +423,7 @@ class UdpInRuntimeNode(OperatorNode, EntrypointNode):
             json_error=json_error,
         )
 
-    @staticmethod
-    def _value_for_mode(packet: _PacketRecord, *, output_mode: str) -> Any:
-        if output_mode == _OUTPUT_MODE_BYTEARRAY:
-            return bytearray(packet.raw)
-        if output_mode == _OUTPUT_MODE_JSON and packet.json_valid:
-            return packet.json_value
-        return packet.text
-
-    def _build_packet_payload(self, packet: _PacketRecord, *, output_mode: str) -> dict[str, Any]:
+    def _build_packet_payload(self, packet: _PacketRecord) -> dict[str, Any]:
         return {
             "timestampMs": int(packet.rx_ts_ms),
             "remoteAddress": packet.remote_address,
@@ -467,7 +433,6 @@ class UdpInRuntimeNode(OperatorNode, EntrypointNode):
             "text": packet.text,
             "json": packet.json_value if packet.json_valid else None,
             "jsonValid": bool(packet.json_valid),
-            "value": self._value_for_mode(packet, output_mode=output_mode),
         }
 
     @staticmethod
@@ -559,10 +524,6 @@ class UdpInRuntimeNode(OperatorNode, EntrypointNode):
         except Exception as exc:
             logger.exception("[%s:udp_in] stop emit task failed", self.node_id, exc_info=exc)
 
-    def _bump_output_version(self) -> None:
-        self._output_version += 1
-
-
 UdpInRuntimeNode.SPEC = F8OperatorSpec(
     schemaVersion=F8OperatorSchemaVersion.f8operator_1,
     serviceClass=SERVICE_CLASS,
@@ -570,16 +531,11 @@ UdpInRuntimeNode.SPEC = F8OperatorSpec(
     operatorClass=OPERATOR_CLASS,
     version="0.0.1",
     label="UDP In",
-    description="Receives UDP packets with weak format assumptions and exposes text/json/bytearray views.",
+    description="Receives UDP packets and exposes explicit raw/text/json views plus packet metadata.",
     tags=["io", "udp", "network", "input", "json", "bytes", "bytearray"],
     execInPorts=[],
     execOutPorts=["packet"],
     dataOutPorts=[
-        F8DataPortSpec(
-            name="value",
-            description="Latest packet value, selected by `outputMode`.",
-            valueSchema=any_schema(),
-        ),
         F8DataPortSpec(
             name="text",
             description="Latest packet decoded as UTF-8 text with replacement for invalid bytes.",
@@ -597,7 +553,7 @@ UdpInRuntimeNode.SPEC = F8OperatorSpec(
         ),
         F8DataPortSpec(
             name="packet",
-            description="Latest packet metadata plus text/json/value views.",
+            description="Latest packet metadata plus raw/text/json views.",
             valueSchema=_packet_payload_schema(),
         ),
     ],
@@ -646,15 +602,6 @@ UdpInRuntimeNode.SPEC = F8OperatorSpec(
             access=F8StateAccess.rw,
             required=True,
             showOnNode=False,
-        ),
-        F8StateSpec(
-            name="outputMode",
-            label="Output Mode",
-            description="Controls the `value` output: text, json, or bytearray.",
-            valueSchema=string_schema(default=_OUTPUT_MODE_TEXT, enum=_OUTPUT_MODE_ENUM),
-            access=F8StateAccess.rw,
-            required=True,
-            showOnNode=True,
         ),
         F8StateSpec(
             name="listening",

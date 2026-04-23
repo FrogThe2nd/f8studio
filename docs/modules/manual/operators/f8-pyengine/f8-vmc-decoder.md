@@ -12,6 +12,6 @@
 
 ## Pitfalls / Gotchas
 
-- **Binary Input Required**: VMC is an OSC-based binary protocol, so keep the upstream `UDP In.outputMode` on `bytearray` for the main path.
+- **Binary Payload Required**: VMC is an OSC-based binary protocol. Feed this node with `UDP In.packet` or direct raw bytes so decoding reads the original payload, not text/json views.
 - **Decoder Placement**: Put VMC-specific logic after `VMC Decoder`, not before; upstream nodes should stay transport-oriented.
 - **Packet Contract**: Feed this node with `UDP In.packet` so OSC/VMC decoding stays isolated from socket management.

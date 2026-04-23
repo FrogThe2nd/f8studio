@@ -88,7 +88,6 @@ class SkeletonDecoderPipelineTests(unittest.IsolatedAsyncioTestCase):
                 "port": int(port),
                 "maxQueue": 1024,
                 "reuseAddress": False,
-                "outputMode": "json",
             },
             execInPorts=list(UdpInRuntimeNode.SPEC.execInPorts or []),
             execOutPorts=list(UdpInRuntimeNode.SPEC.execOutPorts or []),

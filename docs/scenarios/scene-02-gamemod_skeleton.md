@@ -15,7 +15,7 @@ Receive UDP skeleton packets through `UDP In`, decode them with `Skeleton Decode
 ## Steps
 
 1. Import the script and start `PyEngine`.
-2. Confirm `UDP In.port` matches your sender (`39540` in this script) and keep `UDP In.outputMode` on `bytearray`.
+2. Confirm `UDP In.port` matches your sender (`39540` in this script) and keep `UDP In.packet -> Skeleton Decoder.packet` wired directly.
 3. Select the target stream via `Skeleton Decoder.selectedKey`.
 4. Confirm timing links: `Tick 1.exec -> Python Script.exec` and `Tick 1.tickMs -> TCode 1.intervalMs`.
 5. Validate value flow in `Python Script.out`, `Envelope 1.normalized`, and `Range Map 1.value`.

@@ -17,7 +17,7 @@
 | `f8.range_map` | Range Map | Clip input to [inMin,inMax] then remap to [outMin,outMax] with a curve. | [Open](../modules/services/f8-pyengine.md#operator-f8-range-map) |
 | `f8.rate_limiter` | Rate Limiter | Limits the rate of change (and optionally acceleration) of an input signal. | [Open](../modules/services/f8-pyengine.md#operator-f8-rate-limiter) |
 | `f8.serial_out` | Serial Out | Writes incoming values to a serial port (pyserial). | [Open](../modules/services/f8-pyengine.md#operator-f8-serial-out) |
-| `f8.udp_in` | UDP In | Receives UDP packets with weak format assumptions and exposes text/json/bytearray views. | [Open](../modules/services/f8-pyengine.md#operator-f8-udp-in) |
+| `f8.udp_in` | UDP In | Receives UDP packets and exposes explicit raw/text/json views plus packet metadata. | [Open](../modules/services/f8-pyengine.md#operator-f8-udp-in) |
 | `f8.skeleton_decoder` | Skeleton Decoder | Decodes udp_in packet payloads into skeleton streams with chunk reassembly. | [Open](../modules/services/f8-pyengine.md#operator-f8-skeleton-decoder) |
 | `f8.udp_out` | UDP Out | Sends incoming values to a UDP host/port. | [Open](../modules/services/f8-pyengine.md#operator-f8-udp-out) |
 | `f8.tcode` | TCode | Generates TCode v0. | [Open](../modules/services/f8-pyengine.md#operator-f8-tcode) |

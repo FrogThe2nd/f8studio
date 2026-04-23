@@ -50,7 +50,7 @@ class _FakeEntrypointContext:
 
 
 class UdpInTests(unittest.IsolatedAsyncioTestCase):
-    async def _setup_runtime(self, *, port: int, output_mode: str = "text") -> tuple[object, UdpInRuntimeNode, _FakeEntrypointContext]:
+    async def _setup_runtime(self, *, port: int) -> tuple[object, UdpInRuntimeNode, _FakeEntrypointContext]:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
         reg = create_runtime_node_registry()
@@ -68,7 +68,6 @@ class UdpInTests(unittest.IsolatedAsyncioTestCase):
                 "port": int(port),
                 "maxQueue": 1024,
                 "reuseAddress": False,
-                "outputMode": output_mode,
             },
             execInPorts=list(UdpInRuntimeNode.SPEC.execInPorts or []),
             execOutPorts=list(UdpInRuntimeNode.SPEC.execOutPorts or []),
@@ -113,29 +112,39 @@ class UdpInTests(unittest.IsolatedAsyncioTestCase):
     async def _compute_output(self, node: UdpInRuntimeNode, port: str) -> Any:
         return await node.compute_output(port, ctx_id=f"ctx:{port}")
 
-    async def test_json_packet_can_switch_from_text_to_json_via_state(self) -> None:
+    def test_spec_has_no_value_alias_output(self) -> None:
+        state_names = {str(field.name or "") for field in list(UdpInRuntimeNode.SPEC.stateFields or [])}
+        port_names = {str(port.name or "") for port in list(UdpInRuntimeNode.SPEC.dataOutPorts or [])}
+        self.assertNotIn("outputMode", state_names)
+        self.assertNotIn("value", port_names)
+
+    async def test_json_packet_exposes_text_json_and_packet_views(self) -> None:
         port = _free_udp_port()
-        bus, node, ctx = await self._setup_runtime(port=port, output_mode="text")
+        bus, node, ctx = await self._setup_runtime(port=port)
         try:
             payload = {"kind": "ping", "count": 3}
             _send_udp(port=port, payload=json.dumps(payload).encode("utf-8"))
             await self._wait_exec_calls(ctx, at_least=1, timeout_s=1.5)
 
-            value_as_text = await self._compute_output(node, "value")
-            self.assertEqual(value_as_text, json.dumps(payload))
+            value_alias = await self._compute_output(node, "value")
+            self.assertIsNone(value_alias)
 
-            await bus.publish_state_external("udp_in", "outputMode", "json", source="test")
-            value_as_json = await self._compute_output(node, "value")
-            self.assertEqual(value_as_json, payload)
+            text_value = await self._compute_output(node, "text")
+            self.assertEqual(text_value, json.dumps(payload))
 
             json_value = await self._compute_output(node, "json")
             self.assertEqual(json_value, payload)
+
+            raw_value = await self._compute_output(node, "raw")
+            self.assertIsInstance(raw_value, bytearray)
+            self.assertEqual(bytes(raw_value), json.dumps(payload).encode("utf-8"))
 
             packet = await self._compute_output(node, "packet")
             self.assertIsInstance(packet, dict)
             assert isinstance(packet, dict)
             self.assertEqual(packet["json"], payload)
-            self.assertEqual(packet["value"], payload)
+            self.assertEqual(packet["text"], json.dumps(payload))
+            self.assertNotIn("value", packet)
             self.assertEqual(packet["remoteAddress"], "127.0.0.1")
             self.assertGreater(int(packet["remotePort"]), 0)
         finally:
@@ -143,15 +152,11 @@ class UdpInTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_raw_output_preserves_non_ascii_bytes(self) -> None:
         port = _free_udp_port()
-        bus, node, ctx = await self._setup_runtime(port=port, output_mode="bytearray")
+        bus, node, ctx = await self._setup_runtime(port=port)
         try:
             raw = bytes([0xFF, 0x00, 0x41, 0x80])
             _send_udp(port=port, payload=raw)
             await self._wait_exec_calls(ctx, at_least=1, timeout_s=1.5)
-
-            value = await self._compute_output(node, "value")
-            self.assertIsInstance(value, bytearray)
-            self.assertEqual(bytes(value), raw)
 
             raw_out = await self._compute_output(node, "raw")
             self.assertIsInstance(raw_out, bytearray)
@@ -162,25 +167,40 @@ class UdpInTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("A", text)
             self.assertIn("\ufffd", text)
 
+            json_value = await self._compute_output(node, "json")
+            self.assertIsNone(json_value)
+
+            packet = await self._compute_output(node, "packet")
+            self.assertIsInstance(packet, dict)
+            assert isinstance(packet, dict)
+            self.assertEqual(bytes(packet["raw"]), raw)
+            self.assertNotIn("value", packet)
+
             byte_length = await bus.get_state("udp_in", "lastByteLength")
             self.assertTrue(byte_length.found)
             self.assertEqual(int(byte_length.value or 0), len(raw))
         finally:
             await self._teardown_runtime(node)
 
-    async def test_invalid_json_in_json_mode_falls_back_to_text_and_records_parse_error(self) -> None:
+    async def test_invalid_json_keeps_text_and_records_parse_error(self) -> None:
         port = _free_udp_port()
-        bus, node, ctx = await self._setup_runtime(port=port, output_mode="json")
+        bus, node, ctx = await self._setup_runtime(port=port)
         try:
             payload = b"{bad json"
             _send_udp(port=port, payload=payload)
             await self._wait_exec_calls(ctx, at_least=1, timeout_s=1.5)
 
-            value = await self._compute_output(node, "value")
-            self.assertEqual(value, payload.decode("utf-8", errors="replace"))
+            text_value = await self._compute_output(node, "text")
+            self.assertEqual(text_value, payload.decode("utf-8", errors="replace"))
 
             json_value = await self._compute_output(node, "json")
             self.assertIsNone(json_value)
+
+            packet = await self._compute_output(node, "packet")
+            self.assertIsInstance(packet, dict)
+            assert isinstance(packet, dict)
+            self.assertFalse(bool(packet["jsonValid"]))
+            self.assertNotIn("value", packet)
 
             parse_error = await bus.get_state("udp_in", "lastParseError")
             self.assertTrue(parse_error.found)
@@ -217,7 +237,7 @@ class UdpInTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_packet_output_tracks_exec_context_snapshot(self) -> None:
         port = _free_udp_port()
-        bus, node, ctx = await self._setup_runtime(port=port, output_mode="text")
+        bus, node, ctx = await self._setup_runtime(port=port)
         try:
             _send_udp(port=port, payload=b"first-packet")
             await self._wait_exec_calls(ctx, at_least=1, timeout_s=1.5)
@@ -236,6 +256,8 @@ class UdpInTests(unittest.IsolatedAsyncioTestCase):
             assert isinstance(second_packet, dict)
             self.assertEqual(first_packet["text"], "first-packet")
             self.assertEqual(second_packet["text"], "second-packet")
+            self.assertNotIn("value", first_packet)
+            self.assertNotIn("value", second_packet)
 
             latest_packet = await self._compute_output(node, "packet")
             self.assertIsInstance(latest_packet, dict)

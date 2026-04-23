@@ -919,7 +919,7 @@ Writes incoming values to a serial port (pyserial).
 
 <a id="operator-f8-udp-in"></a>
 ### UDP In (`f8.udp_in`)
-Receives UDP packets with weak format assumptions and exposes text/json/bytearray views.
+Receives UDP packets and exposes explicit raw/text/json views plus packet metadata.
 
 #### When to Use
 
@@ -929,13 +929,13 @@ Receives UDP packets with weak format assumptions and exposes text/json/bytearra
 
 #### Common Wiring Patterns
 
-- **Binary Motion Stream**: Set `outputMode` to `bytearray`, then connect `packet` to `Skeleton Decoder.packet` or `VMC Decoder.packet`.
-- **JSON Packet Ingest**: Set `outputMode` to `json` when the sender emits UTF-8 JSON payloads and wire `value` or `json` into downstream logic.
+- **Binary Motion Stream**: Connect `packet` to `Skeleton Decoder.packet` or `VMC Decoder.packet` so downstream nodes receive the raw payload plus packet metadata.
+- **JSON Packet Ingest**: Wire `json` into downstream logic when the sender emits UTF-8 JSON payloads, and keep `text` attached for inspection.
 - **Debug Branch**: Attach `Text Viz` or `Print` to `text`, `json`, or `packet` while keeping protocol decoding on a separate branch.
 
 #### Pitfalls / Gotchas
 
-- **Wrong Output Mode**: Binary protocols such as VMC and custom skeleton packets should use `bytearray`; `text` or `json` will only help for inspection.
+- **Exact Bytes vs Packet Envelope**: Use `raw` when downstream only needs payload bytes. Use `packet` when downstream also needs source/timestamp metadata or exec-context packet snapshots.
 - **Bind Security**: Non-loopback bind addresses stay blocked unless `allowNonLoopbackBind` is enabled explicitly.
 - **Protocol Split**: `UDP In` does not decode motion payloads on its own anymore; decoding must happen in a dedicated downstream operator.
 
@@ -948,7 +948,7 @@ Receives UDP packets with weak format assumptions and exposes text/json/bytearra
 
 - Exec outputs: `packet`
 - Data inputs: none
-- Data outputs: `value`, `text`, `raw`, `json`, `packet`
+- Data outputs: `text`, `raw`, `json`, `packet`
 
 ##### State Fields
 
@@ -959,7 +959,6 @@ Receives UDP packets with weak format assumptions and exposes text/json/bytearra
 | `port` | `rw` | `true` | `true` | `integer / default=39541` | UDP listen port. |
 | `maxQueue` | `rw` | `true` | `false` | `integer / default=512` | Max queued packets before dropping (1..4096). |
 | `reuseAddress` | `rw` | `true` | `false` | `boolean / default=False` | Best-effort: allow multiple listeners on the same bind tuple if the OS supports it. |
-| `outputMode` | `rw` | `true` | `true` | `string / enum[text, json, bytearray] / default=text` | Controls the `value` output: text, json, or bytearray. |
 | `listening` | `ro` | `true` | `true` | `boolean / default=False` | Readonly flag telling whether the UDP socket is active. |
 | `packetCount` | `ro` | `true` | `true` | `integer / default=0` | Readonly number of received UDP packets. |
 | `droppedPackets` | `ro` | `true` | `false` | `integer / default=0` | Readonly number of packets dropped because the queue was full. |
@@ -978,9 +977,9 @@ Receives UDP packets with weak format assumptions and exposes text/json/bytearra
 - `port` (Port, `rw`): UDP listen port. Schema: `integer / default=39541`.
 - `maxQueue` (Max Queue, `rw`): Max queued packets before dropping (1..4096). Schema: `integer / default=512`.
 - `reuseAddress` (Reuse Address, `rw`): Best-effort: allow multiple listeners on the same bind tuple if the OS supports it. Schema: `boolean / default=False`.
-- `outputMode` (Output Mode, `rw`): Controls the `value` output: text, json, or bytearray. Schema: `string / enum[text, json, bytearray] / default=text`.
 - `listening` (Listening, `ro`): Readonly flag telling whether the UDP socket is active. Schema: `boolean / default=False`.
 - `packetCount` (Packet Count, `ro`): Readonly number of received UDP packets. Schema: `integer / default=0`.
+- `droppedPackets` (Dropped Packets, `ro`): Readonly number of packets dropped because the queue was full. Schema: `integer / default=0`.
 
 ##### Data Input Ports
 
@@ -990,11 +989,10 @@ _None_
 
 | Name | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- |
-| `value` | `true` | `true` | `any` | Latest packet value, selected by `outputMode`. |
 | `text` | `true` | `true` | `string / default=` | Latest packet decoded as UTF-8 text with replacement for invalid bytes. |
 | `raw` | `true` | `true` | `any` | Latest packet as bytearray, preserving non-ASCII bytes. |
 | `json` | `true` | `true` | `any` | Latest packet parsed as JSON when valid; otherwise None. |
-| `packet` | `true` | `true` | `object{byteLength, json, jsonValid, raw, ...}` | Latest packet metadata plus text/json/value views. |
+| `packet` | `true` | `true` | `object{byteLength, json, jsonValid, raw, ...}` | Latest packet metadata plus raw/text/json views. |
 
 #### Related Scenarios
 
@@ -1014,11 +1012,13 @@ Decodes udp_in packet payloads into skeleton streams with chunk reassembly.
 
 - **Latest Skeleton Stream**: Connect `UDP In.packet` to `Skeleton Decoder.packet`, then feed `selectedSkeleton` into `Bone Selector`, `Bone Filter`, or visualizers.
 - **Multi-Character Monitor**: Use `skeletons` to drive inspection tools that need the full active set, while `selectedSkeleton` drives the main control chain.
+- **Cached Pull Loop**: Keep `UDP In.packet -> Skeleton Decoder.packet` wired at packet rate, then drive a downstream solver or visualizer from a slower `Tick.exec` and pull `skeletons` or `selectedSkeleton` on demand.
 - **Chunk Reassembly**: Keep this decoder close to the packet source so fragmented skeleton frames are reassembled before other operators consume them.
 
 #### Pitfalls / Gotchas
 
 - **Transport Assumption**: This node expects a packet object from `UDP In.packet`; it is not meant to parse arbitrary text or JSON payloads directly.
+- **Latest-State Sampling**: If a downstream node is driven by `Tick.exec` and only pulls `skeletons` or `selectedSkeleton`, it samples the latest decoded state at that tick. Intermediate UDP packets are coalesced rather than replayed one-by-one.
 - **Selection Confusion**: `selectedKey` only works when the incoming model key exists in `availableKeys`; inspect that list first when nothing appears downstream.
 - **Packet Contract**: Keep the upstream node on `UDP In.packet`; this decoder expects the packet object rather than ad-hoc payload fragments.
 
@@ -2352,7 +2352,7 @@ Decodes udp_in packet payloads carrying VMC OSC messages into skeleton streams.
 
 #### Pitfalls / Gotchas
 
-- **Binary Input Required**: VMC is an OSC-based binary protocol, so keep the upstream `UDP In.outputMode` on `bytearray` for the main path.
+- **Binary Payload Required**: VMC is an OSC-based binary protocol. Feed this node with `UDP In.packet` or direct raw bytes so decoding reads the original payload, not text/json views.
 - **Decoder Placement**: Put VMC-specific logic after `VMC Decoder`, not before; upstream nodes should stay transport-oriented.
 - **Packet Contract**: Feed this node with `UDP In.packet` so OSC/VMC decoding stays isolated from socket management.
 

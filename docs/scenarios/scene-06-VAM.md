@@ -77,7 +77,10 @@ Why `Skeleton Decoder.skeletons` instead of `selectedSkeleton`:
 
 Recommended execution model:
 
+- Let `UDP In.packet -> Skeleton Decoder.packet` update decoder state at network packet rate.
 - Drive the `Python Script` node from `Tick.exec` so the graph has a deterministic evaluation cadence.
+- Have `Python Script` pull `Skeleton Decoder.skeletons` on each tick and work from the latest decoded cache.
+- This intentionally decouples UDP packet rate from solver rate: the script samples the newest decoded skeleton state instead of replaying every packet.
 - Treat the script as the stateful pose solver.
 - Treat everything after the script as downstream signal shaping or output routing.
 

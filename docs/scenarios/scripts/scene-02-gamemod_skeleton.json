@@ -4296,7 +4296,7 @@
           "schemaVersion": "f8operator/1",
           "rendererClass": "default_op",
           "version": "0.0.1",
-          "description": "Receives UDP packets with weak format assumptions and exposes text/json/bytearray views.",
+          "description": "Receives UDP packets and exposes explicit raw/text/json views plus packet metadata.",
           "tags": [
             "io",
             "udp",
@@ -4376,24 +4376,6 @@
               "description": "Best-effort: allow multiple listeners on the same bind tuple if the OS supports it.",
               "required": true,
               "showOnNode": false,
-              "redactOnPublish": false
-            },
-            {
-              "name": "outputMode",
-              "valueSchema": {
-                "type": "string",
-                "default": "text",
-                "enum": [
-                  "text",
-                  "json",
-                  "bytearray"
-                ]
-              },
-              "access": "rw",
-              "label": "Output Mode",
-              "description": "Controls the `value` output: text, json, or bytearray.",
-              "required": true,
-              "showOnNode": true,
               "redactOnPublish": false
             },
             {
@@ -4514,15 +4496,6 @@
           "dataInPorts": [],
           "dataOutPorts": [
             {
-              "name": "value",
-              "valueSchema": {
-                "type": "any"
-              },
-              "description": "Latest packet value, selected by `outputMode`.",
-              "required": true,
-              "showOnNode": true
-            },
-            {
               "name": "text",
               "valueSchema": {
                 "type": "string",
@@ -4578,13 +4551,10 @@
                   },
                   "jsonValid": {
                     "type": "boolean"
-                  },
-                  "value": {
-                    "type": "any"
                   }
                 }
               },
-              "description": "Latest packet metadata plus text/json/value views.",
+              "description": "Latest packet metadata plus raw/text/json views.",
               "required": true,
               "showOnNode": true
             }
@@ -4598,7 +4568,6 @@
           "port": 39540,
           "maxQueue": 512,
           "reuseAddress": true,
-          "outputMode": "bytearray",
           "listening": false,
           "packetCount": 0,
           "droppedPackets": 0,
