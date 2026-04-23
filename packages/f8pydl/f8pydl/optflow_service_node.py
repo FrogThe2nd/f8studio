@@ -716,7 +716,7 @@ class OnnxOptflowServiceNode(ServiceNode):
                 buf = np.frombuffer(payload, dtype=np.uint8)
                 rows = buf.reshape((height, pitch))
                 bgra = rows[:, : width * 4].reshape((height, width, 4))
-                frame_bgr = np.ascontiguousarray(bgra[:, :, 0:3])
+                frame_bgr = bgra[:, :, 0:3]
 
                 tensor = self._runtime.prepare_input(frame_bgr)
                 pair = self._frame_cache.push_and_get_pair(

@@ -746,7 +746,7 @@ class OnnxTcnWaveServiceNode(ServiceNode):
                 buf = np.frombuffer(payload, dtype=np.uint8)
                 rows = buf.reshape((height, pitch))
                 bgra = rows[:, : width * 4].reshape((height, width, 4))
-                frame_bgr = np.ascontiguousarray(bgra[:, :, 0:3])
+                frame_bgr = bgra[:, :, 0:3]
                 if self._use_vr_focus_crop and int(frame_bgr.shape[1]) > 1:
                     frame_bgr = apply_vr_focus_crop(frame_bgr)
 
@@ -766,7 +766,7 @@ class OnnxTcnWaveServiceNode(ServiceNode):
                 if not do_infer:
                     continue
 
-                sequence = np.stack(tuple(self._window), axis=0)
+                sequence = np.stack(self._window, axis=0)
                 t_infer0 = time.perf_counter()
                 values_np = self._runtime.infer_sequence(sequence)
                 values = self._to_float_list(values_np.tolist())

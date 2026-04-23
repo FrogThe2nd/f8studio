@@ -830,7 +830,7 @@ class OnnxVisionServiceNode(ServiceNode):
                 buf = np.frombuffer(payload, dtype=np.uint8)
                 rows = buf.reshape((height, pitch))
                 bgra = rows[:, : width * 4].reshape((height, width, 4))
-                frame_bgr = np.ascontiguousarray(bgra[:, :, 0:3])
+                frame_bgr = bgra[:, :, 0:3]
 
                 t_infer0 = time.perf_counter()
                 if self._temporal_det_runtime is not None:
