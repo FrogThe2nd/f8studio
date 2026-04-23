@@ -77,6 +77,8 @@ DROP TABLE IF EXISTS verification;
 DROP TABLE IF EXISTS user;
 DROP TABLE IF EXISTS d1_migrations;
 DROP TABLE IF EXISTS desktop_authorization_codes;
+DROP TABLE IF EXISTS desktop_sessions;
+DROP TABLE IF EXISTS rateLimit;
 PRAGMA foreign_keys = on;
 '
 
