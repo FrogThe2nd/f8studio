@@ -83,6 +83,18 @@ def _read_static_describe_file(service_dir: Path) -> dict[str, Any] | None:
     return None
 
 
+def read_static_describe_payload(service_dir: Path, entry: F8ServiceEntry) -> tuple[dict[str, Any] | None, str | None]:
+    inline_payload = _read_inline_describe(entry)
+    if inline_payload is not None:
+        return inline_payload, "inline"
+
+    static_payload = _read_static_describe_file(service_dir)
+    if static_payload is not None:
+        return static_payload, "file"
+
+    return None, None
+
+
 def _read_inline_describe(entry: F8ServiceEntry) -> dict[str, Any] | None:
     if (os.environ.get("F8_DISCOVERY_DISABLE_STATIC_DESCRIBE") or "").strip():
         return None
@@ -301,8 +313,18 @@ def describe_entry(
     return data
 
 
-def describe_entry_timed(service_dir: Path, entry: F8ServiceEntry) -> tuple[dict[str, Any] | None, float, str]:
+def describe_entry_timed(
+    service_dir: Path,
+    entry: F8ServiceEntry,
+    *,
+    initial_payload: dict[str, Any] | None = None,
+    source: str | None = None,
+) -> tuple[dict[str, Any] | None, float, str]:
     started_at = time.perf_counter()
+
+    if initial_payload is not None and source is not None:
+        payload = describe_entry(service_dir, entry, initial_payload=initial_payload)
+        return payload, (time.perf_counter() - started_at) * 1000.0, source
 
     inline_payload = _read_inline_describe(entry)
     if inline_payload is not None:
@@ -363,5 +385,6 @@ __all__ = [
     "discovery_slow_ms_default",
     "last_discovery_error_lines",
     "last_discovery_timing_lines",
+    "read_static_describe_payload",
     "set_discovery_timing_lines",
 ]

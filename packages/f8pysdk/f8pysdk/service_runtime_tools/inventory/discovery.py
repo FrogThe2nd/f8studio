@@ -18,6 +18,7 @@ from .describe import (
     discovery_slow_ms_default,
     last_discovery_error_lines,
     last_discovery_timing_lines,
+    read_static_describe_payload,
     set_discovery_timing_lines,
 )
 from .entry import default_discovery_roots, find_service_dirs, load_service_entry
@@ -51,10 +52,20 @@ def load_discovery_into_catalog(
 
     payload_by_dir: dict[Path, dict[str, Any] | None] = {}
     timing_by_dir: dict[Path, tuple[float, str]] = {}
-    jobs = discovery_parallelism(len(entries))
+    subprocess_entries: list[tuple[Path, F8ServiceEntry]] = []
+    for service_dir, entry in entries:
+        static_payload, static_source = read_static_describe_payload(service_dir, entry)
+        if static_payload is None or static_source is None:
+            subprocess_entries.append((service_dir, entry))
+            continue
+        payload, dt_ms, source = describe_entry_timed(service_dir, entry, initial_payload=static_payload, source=static_source)
+        payload_by_dir[service_dir] = payload
+        timing_by_dir[service_dir] = (dt_ms, source)
+
+    jobs = discovery_parallelism(len(subprocess_entries))
     if os.name == "nt":
         has_pixi_describe = False
-        for _service_dir, entry in entries:
+        for _service_dir, entry in subprocess_entries:
             try:
                 command_name = str(entry.launch.command or "").strip().lower()
             except Exception:
@@ -70,8 +81,8 @@ def load_discovery_into_catalog(
         if has_pixi_describe and jobs > 1:
             jobs = 1
 
-    if jobs <= 1 or len(entries) <= 1:
-        for service_dir, entry in entries:
+    if jobs <= 1 or len(subprocess_entries) <= 1:
+        for service_dir, entry in subprocess_entries:
             payload, dt_ms, source = describe_entry_timed(service_dir, entry)
             payload_by_dir[service_dir] = payload
             timing_by_dir[service_dir] = (dt_ms, source)
@@ -81,7 +92,7 @@ def load_discovery_into_catalog(
                 concurrent.futures.Future[tuple[dict[str, Any] | None, float, str]],
                 tuple[Path, F8ServiceEntry],
             ] = {}
-            for service_dir, entry in entries:
+            for service_dir, entry in subprocess_entries:
                 futures[executor.submit(describe_entry_timed, service_dir, entry)] = (service_dir, entry)
             for future in concurrent.futures.as_completed(futures):
                 service_dir, _entry = futures[future]
