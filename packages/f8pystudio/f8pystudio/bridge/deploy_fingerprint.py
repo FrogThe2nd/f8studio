@@ -147,7 +147,8 @@ def _normalize_runtime_node(node: F8RuntimeNode, cache: dict[int, Any]) -> dict[
         "serviceId": str(node.serviceId),
         "serviceClass": str(node.serviceClass),
     }
-    _put_optional_payload(payload, "operatorClass", node.operatorClass)
+    if not _is_unset(node.operatorClass):
+        payload["operatorClass"] = node.operatorClass
     if not _is_unset(node.execInPorts):
         payload["execInPorts"] = sorted(str(item) for item in node.execInPorts)
     if not _is_unset(node.execOutPorts):
