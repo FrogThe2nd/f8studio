@@ -1,9 +1,19 @@
 from __future__ import annotations
 
 import json
+from enum import Enum
 from typing import Any
 
+import msgspec
 from f8pysdk.codec import dump_json
+from f8pysdk.specs import (
+    F8DataPortSpec,
+    F8Edge,
+    F8RuntimeGraph,
+    F8RuntimeNode,
+    F8RuntimeService,
+    F8StateSpec,
+)
 
 from ..nodegraph.runtime_compiler import CompiledRuntimeGraphs
 
@@ -17,6 +27,152 @@ def _normalize_spec_payload(payload: Any) -> Any:
     if isinstance(payload, list):
         return [_normalize_spec_payload(item) for item in payload]
     return payload
+
+
+def _is_unset(value: Any) -> bool:
+    return isinstance(value, msgspec.UnsetType)
+
+
+def _enum_payload(value: Any) -> Any:
+    if isinstance(value, Enum):
+        return value.value
+    return value
+
+
+def _put_optional_payload(payload: dict[str, Any], key: str, value: Any) -> None:
+    if _is_unset(value):
+        return
+    payload[key] = _enum_payload(value)
+
+
+def _normalize_cached_payload(value: Any, cache: dict[int, Any]) -> Any:
+    cache_key = id(value)
+    if cache_key in cache:
+        return cache[cache_key]
+    normalized = _normalize_spec_payload(dump_json(value, mode="json"))
+    cache[cache_key] = normalized
+    return normalized
+
+
+def _normalize_data_port_spec(spec: Any, cache: dict[int, Any]) -> dict[str, Any]:
+    cache_key = id(spec)
+    if cache_key in cache:
+        cached = cache[cache_key]
+        return cached if isinstance(cached, dict) else {}
+    if not isinstance(spec, F8DataPortSpec):
+        normalized = _normalize_cached_payload(spec, cache)
+        return normalized if isinstance(normalized, dict) else {}
+
+    payload: dict[str, Any] = {
+        "name": str(spec.name),
+        "valueSchema": _normalize_cached_payload(spec.valueSchema, cache),
+    }
+    _put_optional_payload(payload, "description", spec.description)
+    _put_optional_payload(payload, "required", spec.required)
+    _put_optional_payload(payload, "showOnNode", spec.showOnNode)
+    cache[cache_key] = payload
+    return payload
+
+
+def _normalize_state_spec(spec: Any, cache: dict[int, Any]) -> dict[str, Any]:
+    cache_key = id(spec)
+    if cache_key in cache:
+        cached = cache[cache_key]
+        return cached if isinstance(cached, dict) else {}
+    if not isinstance(spec, F8StateSpec):
+        normalized = _normalize_cached_payload(spec, cache)
+        return normalized if isinstance(normalized, dict) else {}
+
+    payload: dict[str, Any] = {
+        "name": str(spec.name),
+        "valueSchema": _normalize_cached_payload(spec.valueSchema, cache),
+        "access": _enum_payload(spec.access),
+    }
+    _put_optional_payload(payload, "label", spec.label)
+    _put_optional_payload(payload, "description", spec.description)
+    _put_optional_payload(payload, "required", spec.required)
+    _put_optional_payload(payload, "uiControl", spec.uiControl)
+    _put_optional_payload(payload, "showOnNode", spec.showOnNode)
+    _put_optional_payload(payload, "redactOnPublish", spec.redactOnPublish)
+    editor_assist = msgspec.UNSET
+    if not _is_unset(spec.editorAssist):
+        editor_assist = _normalize_cached_payload(spec.editorAssist, cache)
+    _put_optional_payload(payload, "editorAssist", editor_assist)
+    cache[cache_key] = payload
+    return payload
+
+
+def _normalize_runtime_service(service: F8RuntimeService, cache: dict[int, Any]) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "serviceId": str(service.serviceId),
+        "serviceClass": str(service.serviceClass),
+    }
+    _put_optional_payload(payload, "label", service.label)
+    if not _is_unset(service.meta):
+        payload["meta"] = _normalize_cached_payload(service.meta, cache)
+    if not _is_unset(service.autoSampleRequests):
+        payload["autoSampleRequests"] = _normalize_cached_payload(service.autoSampleRequests, cache)
+    return payload
+
+
+def _normalize_runtime_node(node: F8RuntimeNode, cache: dict[int, Any]) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "nodeId": str(node.nodeId),
+        "serviceId": str(node.serviceId),
+        "serviceClass": str(node.serviceClass),
+    }
+    _put_optional_payload(payload, "operatorClass", node.operatorClass)
+    if not _is_unset(node.execInPorts):
+        payload["execInPorts"] = sorted(str(item) for item in node.execInPorts)
+    if not _is_unset(node.execOutPorts):
+        payload["execOutPorts"] = sorted(str(item) for item in node.execOutPorts)
+    if not _is_unset(node.dataInPorts):
+        payload["dataInPorts"] = sorted(
+            (_normalize_data_port_spec(item, cache) for item in node.dataInPorts),
+            key=_normalized_named_spec_sort_key,
+        )
+    if not _is_unset(node.dataOutPorts):
+        payload["dataOutPorts"] = sorted(
+            (_normalize_data_port_spec(item, cache) for item in node.dataOutPorts),
+            key=_normalized_named_spec_sort_key,
+        )
+    if not _is_unset(node.stateFields):
+        payload["stateFields"] = sorted(
+            (_normalize_state_spec(item, cache) for item in node.stateFields),
+            key=_normalized_named_spec_sort_key,
+        )
+    return payload
+
+
+def _normalize_runtime_edge(edge: F8Edge) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "fromServiceId": str(edge.fromServiceId),
+        "fromPort": str(edge.fromPort),
+        "toServiceId": str(edge.toServiceId),
+        "toPort": str(edge.toPort),
+        "kind": _enum_payload(edge.kind),
+    }
+    _put_optional_payload(payload, "fromOperatorId", edge.fromOperatorId)
+    _put_optional_payload(payload, "toOperatorId", edge.toOperatorId)
+    _put_optional_payload(payload, "strategy", edge.strategy)
+    _put_optional_payload(payload, "queueSize", edge.queueSize)
+    _put_optional_payload(payload, "timeoutMs", edge.timeoutMs)
+    _put_optional_payload(payload, "direction", edge.direction)
+    return payload
+
+
+def _build_runtime_graph_deploy_snapshot(graph: F8RuntimeGraph) -> dict[str, Any]:
+    cache: dict[int, Any] = {}
+    services = []
+    if not _is_unset(graph.services):
+        services = sorted((_normalize_runtime_service(item, cache) for item in graph.services), key=_normalized_service_sort_key)
+    nodes = []
+    if not _is_unset(graph.nodes):
+        nodes = sorted((_normalize_runtime_node(item, cache) for item in graph.nodes), key=_normalized_node_sort_key)
+    edges = []
+    if not _is_unset(graph.edges):
+        edges = sorted((_normalize_runtime_edge(item) for item in graph.edges), key=_normalized_edge_sort_key)
+    return {"services": services, "nodes": nodes, "edges": edges}
 
 
 def _normalized_named_spec_sort_key(payload: Any) -> tuple[str, str]:
@@ -99,6 +255,9 @@ def _normalize_edge_payload(payload: Any) -> dict[str, Any]:
 
 
 def build_compiled_deploy_snapshot(compiled: CompiledRuntimeGraphs) -> dict[str, Any]:
+    if isinstance(compiled.global_graph, F8RuntimeGraph):
+        return _build_runtime_graph_deploy_snapshot(compiled.global_graph)
+
     graph_payload = dump_json(compiled.global_graph, mode="json", by_alias=True)
     if not isinstance(graph_payload, dict):
         return {"services": [], "nodes": [], "edges": []}
