@@ -446,7 +446,7 @@ class VariantCatalogBrowserMixin(_VariantCatalogBrowserMixinBase):
         self._refresh_remote_catalog_if_needed()
 
     def _sync_auth_controls_ui(self) -> None:
-        logged_in = self._sync_client.current_user() is not None and bool(self._sync_client.current_access_token())
+        logged_in = self._sync_client.current_user() is not None
         self._btn_refresh.setEnabled(not self._is_loading_remote_scope)
         self._account_button.setIcon(icon_for(self._account_button, StudioIcon.USER if logged_in else StudioIcon.USER_OFF))
 
