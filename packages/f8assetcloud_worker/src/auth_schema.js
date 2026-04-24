@@ -52,9 +52,10 @@ export const verificationTable = sqliteTable('verification', {
 });
 
 export const rateLimitTable = sqliteTable('rateLimit', {
-  key: text('key').primaryKey(),
+  id: text('id').primaryKey(),
+  key: text('key').notNull().unique(),
   count: integer('count', { mode: 'number' }).notNull(),
-  lastRequest: integer('lastRequest', { mode: 'timestamp_ms' }).notNull(),
+  lastRequest: integer('lastRequest', { mode: 'number' }).notNull(),
 });
 
 export const authSchema = {

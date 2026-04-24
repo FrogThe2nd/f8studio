@@ -61,7 +61,7 @@ export function createApp() {
   });
 
   app.use('*', cors({
-    origin: (origin, c) => resolveAllowedOrigin(c.env, origin),
+    origin: (origin, c) => resolveAllowedOrigin(c.env, origin, new URL(c.req.url)),
     credentials: true,
     allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'HEAD'],
     allowHeaders: ['Authorization', 'Content-Type', 'X-Captcha-Response'],
@@ -2630,9 +2630,10 @@ function resolveAuthBaseUrl(env, requestUrl) {
   }
 }
 
-function calculateAllowedOrigins(env) {
+function calculateAllowedOrigins(env, requestUrl = null) {
   const origins = new Set();
   addOrigin(origins, resolveAuthBaseUrl(env));
+  addLoopbackRequestOrigin(origins, requestUrl);
   const extra = String(env.CORS_ALLOWED_ORIGINS || '').trim();
   if (extra) {
     for (const value of extra.split(',')) {
@@ -2643,7 +2644,7 @@ function calculateAllowedOrigins(env) {
 }
 
 function resolveTrustedOrigins(env, requestUrl, baseURL) {
-  return [...calculateAllowedOrigins(env)];
+  return [...calculateAllowedOrigins(env, requestUrl)];
 }
 
 function addOrigin(target, value) {
@@ -2658,12 +2659,27 @@ function addOrigin(target, value) {
   }
 }
 
-function resolveAllowedOrigin(env, origin) {
+function addLoopbackRequestOrigin(target, requestUrl) {
+  if (!(requestUrl instanceof URL)) {
+    return;
+  }
+  if (!isLoopbackHostname(requestUrl.hostname)) {
+    return;
+  }
+  target.add(requestUrl.origin);
+}
+
+function isLoopbackHostname(hostname) {
+  const value = String(hostname || '').trim().toLowerCase();
+  return value === 'localhost' || value === '127.0.0.1' || value === '::1' || value === '[::1]';
+}
+
+function resolveAllowedOrigin(env, origin, requestUrl = null) {
   const normalizedOrigin = String(origin || '').trim();
   if (!normalizedOrigin) {
     return null;
   }
-  return isAllowedOrigin(calculateAllowedOrigins(env), normalizedOrigin) ? normalizedOrigin : null;
+  return isAllowedOrigin(calculateAllowedOrigins(env, requestUrl), normalizedOrigin) ? normalizedOrigin : null;
 }
 
 function validateIdentityName(value, { allowReserved = false } = {}) {

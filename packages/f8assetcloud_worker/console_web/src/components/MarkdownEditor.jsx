@@ -1,125 +1,174 @@
-import { useDeferredValue, useRef } from 'react';
-import { Eye, Heading1, Link2, List, PenSquare, Sparkles } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  BlockTypeSelect,
+  BoldItalicUnderlineToggles,
+  CreateLink,
+  DiffSourceToggleWrapper,
+  InsertCodeBlock,
+  InsertTable,
+  ListsToggle,
+  MDXEditor,
+  Separator,
+  UndoRedo,
+  codeBlockPlugin,
+  codeMirrorPlugin,
+  diffSourcePlugin,
+  headingsPlugin,
+  linkDialogPlugin,
+  linkPlugin,
+  listsPlugin,
+  markdownShortcutPlugin,
+  quotePlugin,
+  tablePlugin,
+  toolbarPlugin,
+} from '@mdxeditor/editor';
+import '@mdxeditor/editor/style.css';
+import { createPortal } from 'react-dom';
+import { Maximize2, Minimize2 } from 'lucide-react';
 
-import { MarkdownContent } from './MarkdownContent.jsx';
-import { Button } from './ui/button.jsx';
+import { cn } from '../lib/cn.js';
 
-const toolbarActions = [
-  { key: 'heading', label: 'Heading', icon: Heading1 },
-  { key: 'bold', label: 'Bold', icon: Sparkles },
-  { key: 'list', label: 'List', icon: List },
-  { key: 'link', label: 'Link', icon: Link2 },
-];
+const codeBlockLanguages = {
+  bash: 'Bash',
+  css: 'CSS',
+  html: 'HTML',
+  js: 'JavaScript',
+  json: 'JSON',
+  jsx: 'JSX',
+  md: 'Markdown',
+  py: 'Python',
+  sql: 'SQL',
+  ts: 'TypeScript',
+  tsx: 'TSX',
+  txt: 'Plain text',
+};
 
-function nextWrappedSelection({ textarea, prefix, suffix, placeholder }) {
-  const start = textarea.selectionStart;
-  const end = textarea.selectionEnd;
-  const selectedText = textarea.value.slice(start, end);
-  const innerText = selectedText || placeholder;
-  const replacement = `${prefix}${innerText}${suffix}`;
-  textarea.setRangeText(replacement, start, end, 'end');
-  return textarea.value;
+function MarkdownToolbar() {
+  return (
+    <DiffSourceToggleWrapper options={['rich-text', 'source']}>
+      <UndoRedo />
+      <Separator />
+      <BlockTypeSelect />
+      <Separator />
+      <BoldItalicUnderlineToggles options={['Bold', 'Italic']} />
+      <ListsToggle options={['bullet', 'number']} />
+      <CreateLink />
+      <Separator />
+      <InsertTable />
+      <InsertCodeBlock />
+    </DiffSourceToggleWrapper>
+  );
 }
 
-function nextPrefixedLines({ textarea, prefix, placeholder }) {
-  const start = textarea.selectionStart;
-  const end = textarea.selectionEnd;
-  const selectedText = textarea.value.slice(start, end);
-  const baseText = selectedText || placeholder;
-  const replacement = baseText
-    .split('\n')
-    .map((line) => {
-      const trimmedLine = line.trim();
-      return trimmedLine ? `${prefix}${trimmedLine}` : prefix.trimEnd();
-    })
-    .join('\n');
-  textarea.setRangeText(replacement, start, end, 'end');
-  return textarea.value;
-}
+export function MarkdownEditor({
+  value,
+  onChange,
+  label = 'Description',
+  description = 'Supports headings, lists, links, quotes, tables, code blocks, and source mode.',
+  placeholder = 'Write with Markdown...',
+  minHeightClassName = 'min-h-64',
+}) {
+  const editorRef = useRef(null);
+  const latestValueRef = useRef(String(value || ''));
+  const initialMarkdown = useMemo(() => String(value || ''), []);
+  const [fullscreen, setFullscreen] = useState(false);
 
-export function MarkdownEditor({ value, onChange }) {
-  const textareaRef = useRef(null);
-  const deferredValue = useDeferredValue(value);
+  useEffect(() => {
+    const nextValue = String(value || '');
+    latestValueRef.current = nextValue;
 
-  function handleToolbarClick(actionKey) {
-    const textarea = textareaRef.current;
-    if (!textarea) {
+    const editor = editorRef.current;
+    if (!editor) {
       return;
     }
-    let nextValue = textarea.value;
-    if (actionKey === 'heading') {
-      nextValue = nextPrefixedLines({ textarea, prefix: '# ', placeholder: 'Heading' });
-    } else if (actionKey === 'bold') {
-      nextValue = nextWrappedSelection({ textarea, prefix: '**', suffix: '**', placeholder: 'Bold text' });
-    } else if (actionKey === 'list') {
-      nextValue = nextPrefixedLines({ textarea, prefix: '- ', placeholder: 'List item' });
-    } else if (actionKey === 'link') {
-      const start = textarea.selectionStart;
-      const end = textarea.selectionEnd;
-      const selectedText = textarea.value.slice(start, end);
-      const label = selectedText || 'Link text';
-      textarea.setRangeText(`[${label}](https://example.com)`, start, end, 'end');
-      nextValue = textarea.value;
+    if (editor.getMarkdown() !== nextValue) {
+      editor.setMarkdown(nextValue);
     }
-    onChange(nextValue);
-    textarea.focus();
+  }, [value]);
+
+  useEffect(() => {
+    if (!fullscreen) {
+      return undefined;
+    }
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    function handleKeyDown(event) {
+      if (event.key === 'Escape') {
+        setFullscreen(false);
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [fullscreen]);
+
+  const plugins = useMemo(() => [
+    headingsPlugin(),
+    listsPlugin(),
+    quotePlugin(),
+    linkPlugin(),
+    linkDialogPlugin(),
+    tablePlugin(),
+    codeBlockPlugin({ defaultCodeBlockLanguage: 'txt' }),
+    codeMirrorPlugin({ autoLoadLanguageSupport: false, codeBlockLanguages }),
+    markdownShortcutPlugin(),
+    diffSourcePlugin({ viewMode: 'rich-text' }),
+    toolbarPlugin({ toolbarContents: MarkdownToolbar }),
+  ], []);
+
+  function handleChange(nextMarkdown) {
+    if (nextMarkdown === latestValueRef.current) {
+      return;
+    }
+    latestValueRef.current = nextMarkdown;
+    onChange(nextMarkdown);
   }
 
-  return (
-    <div className="space-y-4 rounded-[1.5rem] border border-white/10 bg-slate-950/40 p-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+  const editorContent = (
+    <section className={cn(
+      'space-y-3',
+      fullscreen
+        ? 'fixed inset-0 z-[120] overflow-y-auto bg-slate-950 p-6'
+        : '',
+    )}
+    >
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <p className="text-sm font-medium text-white">Description</p>
-          <p className="mt-1 text-xs leading-5 text-slate-400">
-            Supports headings, lists, links, code blocks, and tables.
-          </p>
+          <p className="text-sm font-medium text-white">{label}</p>
+          {description ? (
+            <p className="mt-1 text-xs leading-5 text-slate-400">{description}</p>
+          ) : null}
         </div>
-        <div className="flex flex-wrap gap-2">
-          {toolbarActions.map((action) => {
-            const Icon = action.icon;
-            return (
-              <Button
-                key={action.key}
-                type="button"
-                variant="outline"
-                size="sm"
-                className="border-white/12 bg-white/5 text-slate-200 hover:bg-white/10"
-                onClick={() => handleToolbarClick(action.key)}
-              >
-                <Icon className="size-3.5" />
-                {action.label}
-              </Button>
-            );
-          })}
-        </div>
+        <button
+          type="button"
+          className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-white/12 bg-white/5 px-3 text-xs font-medium text-slate-200 transition hover:bg-white/10 hover:text-white"
+          onClick={() => setFullscreen((current) => !current)}
+        >
+          {fullscreen ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
+          {fullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
+        </button>
       </div>
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
-        <section className="space-y-2">
-          <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.24em] text-cyan-200/80">
-            <PenSquare className="size-3.5" />
-            Write
-          </div>
-          <textarea
-            ref={textareaRef}
-            className="min-h-64 w-full rounded-[1.25rem] border border-white/12 bg-white/5 px-4 py-3 text-sm leading-7 text-white focus:border-cyan-300/40 focus:outline-none"
-            value={value}
-            onChange={(event) => onChange(event.target.value)}
-            placeholder="Describe this asset with Markdown..."
-          />
-        </section>
-        <section className="space-y-2">
-          <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.24em] text-cyan-200/80">
-            <Eye className="size-3.5" />
-            Preview
-          </div>
-          <div className="min-h-64 rounded-[1.25rem] border border-white/10 bg-white/5 p-4">
-            <MarkdownContent
-              source={deferredValue}
-              placeholder="Your Markdown preview will appear here."
-            />
-          </div>
-        </section>
-      </div>
-    </div>
+      <MDXEditor
+        ref={editorRef}
+        className="f8-markdown-editor dark-theme"
+        contentEditableClassName={cn(
+          'f8-markdown-editor-content',
+          fullscreen ? 'min-h-[calc(100vh-11rem)]' : minHeightClassName,
+        )}
+        markdown={initialMarkdown}
+        onChange={handleChange}
+        placeholder={placeholder}
+        plugins={plugins}
+        suppressHtmlProcessing
+        trim={false}
+      />
+    </section>
   );
+
+  if (fullscreen) {
+    return createPortal(editorContent, document.body);
+  }
+  return editorContent;
 }

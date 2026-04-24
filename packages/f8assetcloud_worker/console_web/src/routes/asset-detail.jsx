@@ -282,9 +282,16 @@ function AssetDetailContent({
             />
           </aside>
           <section className="space-y-4 rounded-[2rem] border border-white/10 bg-white/5 p-6">
-            <div className="flex flex-wrap items-center justify-between gap-4">
-              <div className="min-h-6 text-sm text-slate-300">
-                {selectedVersion?.changeSummary ? selectedVersion.changeSummary : ''}
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div className="min-h-6 min-w-0 flex-1">
+                {selectedVersion ? (
+                  <LazyPanel fallback={<InlineLoader label="Loading notes..." />}>
+                    <MarkdownContent
+                      source={selectedVersion.changeSummary}
+                      placeholder="No version notes have been published yet."
+                    />
+                  </LazyPanel>
+                ) : null}
               </div>
               <div className="flex flex-wrap gap-3">
                 {selectedVersion ? (

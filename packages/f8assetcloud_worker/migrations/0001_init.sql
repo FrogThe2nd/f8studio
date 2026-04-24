@@ -65,7 +65,8 @@ CREATE INDEX idx_verification_identifier ON verification(identifier);
 CREATE INDEX idx_verification_expiresAt ON verification(expiresAt);
 
 CREATE TABLE rateLimit (
-  key TEXT PRIMARY KEY,
+  id TEXT PRIMARY KEY,
+  key TEXT NOT NULL UNIQUE,
   count INTEGER NOT NULL,
   lastRequest INTEGER NOT NULL
 );

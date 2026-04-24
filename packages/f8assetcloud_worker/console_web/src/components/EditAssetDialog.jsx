@@ -84,13 +84,19 @@ export function EditAssetDialog({ asset, assetType, onUpdated }) {
               Name
               <input className="mt-2 w-full rounded-2xl border border-white/12 bg-white/5 px-4 py-3 text-white focus:border-cyan-300/40 focus:outline-none" value={name} onChange={(event) => setName(event.target.value)} />
             </label>
-            <Suspense fallback={<EditorLoader />}>
-              <MarkdownEditor value={description} onChange={setDescription} />
-            </Suspense>
             <label className="block text-sm text-slate-300">
               Tags
               <input className="mt-2 w-full rounded-2xl border border-white/12 bg-white/5 px-4 py-3 text-white focus:border-cyan-300/40 focus:outline-none" value={tags} onChange={(event) => setTags(event.target.value)} placeholder="comma, separated, tags" />
             </label>
+            <Suspense fallback={<EditorLoader />}>
+              <MarkdownEditor
+                value={description}
+                onChange={setDescription}
+                label="Description"
+                placeholder="Describe this asset with Markdown..."
+                minHeightClassName="min-h-80"
+              />
+            </Suspense>
             {error ? <p className="text-sm text-rose-200">{error}</p> : null}
             <div className="flex justify-end gap-3">
               <Button type="button" variant="outline" className="border-white/15 bg-white/5 text-white hover:bg-white/10" onClick={() => setOpen(false)}>

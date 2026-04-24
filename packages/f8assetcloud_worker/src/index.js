@@ -1,6 +1,7 @@
 import { createApp } from './app.js';
 
 const app = createApp();
+const RATE_LIMIT_RETENTION_MS = 24 * 60 * 60 * 1000;
 
 export default {
   async fetch(request, env, ctx) {
@@ -127,7 +128,7 @@ async function cleanupExpiredSessions(env) {
     return;
   }
   const now = Date.now();
-  const [browserSessions, desktopCodes, desktopSessions] = await Promise.all([
+  const [browserSessions, desktopCodes, desktopSessions, rateLimits] = await Promise.all([
     db.prepare('DELETE FROM session WHERE expiresAt < ?')
       .bind(now)
       .run(),
@@ -137,19 +138,24 @@ async function cleanupExpiredSessions(env) {
     db.prepare(
       `DELETE FROM desktop_sessions
        WHERE refresh_token_expires_at < ?
-          OR revoked_at IS NOT NULL`,
+      OR revoked_at IS NOT NULL`,
     )
       .bind(now)
+      .run(),
+    db.prepare('DELETE FROM rateLimit WHERE lastRequest < ?')
+      .bind(now - RATE_LIMIT_RETENTION_MS)
       .run(),
   ]);
   const deletedBrowserSessions = Number(browserSessions?.meta?.changes || 0);
   const deletedDesktopCodes = Number(desktopCodes?.meta?.changes || 0);
   const deletedDesktopSessions = Number(desktopSessions?.meta?.changes || 0);
-  if (deletedBrowserSessions > 0 || deletedDesktopCodes > 0 || deletedDesktopSessions > 0) {
+  const deletedRateLimits = Number(rateLimits?.meta?.changes || 0);
+  if (deletedBrowserSessions > 0 || deletedDesktopCodes > 0 || deletedDesktopSessions > 0 || deletedRateLimits > 0) {
     console.info(
       `[cron] cleaned up ${deletedBrowserSessions} expired browser session(s), `
       + `${deletedDesktopCodes} desktop code(s), `
-      + `${deletedDesktopSessions} desktop session(s)`,
+      + `${deletedDesktopSessions} desktop session(s), `
+      + `${deletedRateLimits} rate limit row(s)`,
     );
   }
 }

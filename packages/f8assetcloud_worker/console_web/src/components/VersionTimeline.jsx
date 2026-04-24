@@ -1,4 +1,4 @@
-import { formatRelativeVersion, formatTimestamp } from '../lib/format.js';
+import { formatRelativeVersion, formatTimestamp, summarizeDescription } from '../lib/format.js';
 import { cn } from '../lib/cn.js';
 
 export function VersionTimeline({ versions, selectedVersionNumber, onSelect }) {
@@ -20,7 +20,7 @@ export function VersionTimeline({ versions, selectedVersionNumber, onSelect }) {
           >
             <p className="text-sm font-semibold text-white">{formatRelativeVersion(version?.versionNumber)}</p>
             {version?.changeSummary ? (
-              <p className="mt-3 text-sm text-slate-300">{version.changeSummary}</p>
+              <p className="mt-3 text-sm leading-6 text-slate-300">{summarizeDescription(version.changeSummary)}</p>
             ) : null}
             <p className="mt-3 text-xs text-slate-400">{formatTimestamp(version?.createdAt)}</p>
           </button>

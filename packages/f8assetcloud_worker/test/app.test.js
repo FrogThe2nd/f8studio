@@ -426,6 +426,59 @@ test('auth flows use Better Auth cookie sessions and email actions', async (t) =
   assert.equal(resetLogin.status, 200);
 });
 
+test('Better Auth database rate limit writes use the current rateLimit schema', async (t) => {
+  const env = createEnv();
+  t.after(() => {
+    resetWorkerCachesForTesting();
+    env.DB.close();
+  });
+  const app = createApp();
+
+  const response = await app.fetch(new Request('http://worker.test/api/auth/get-session', {
+    headers: {
+      'x-forwarded-for': '203.0.113.10',
+    },
+  }), env, {});
+
+  assert.equal(response.status, 200);
+  const rateLimitRow = await env.DB
+    .prepare('SELECT id, key, count, lastRequest FROM rateLimit LIMIT 1')
+    .first();
+  assert.equal(typeof rateLimitRow.id, 'string');
+  assert.ok(rateLimitRow.id.length > 0);
+  assert.match(String(rateLimitRow.key), /203\.0\.113\.10/);
+  assert.equal(rateLimitRow.count, 1);
+  assert.equal(typeof rateLimitRow.lastRequest, 'number');
+});
+
+test('loopback dev origin is trusted for same-origin auth requests', async (t) => {
+  const env = createEnv({
+    AUTH_BASE_URL: 'https://assetcloud.feel8.fun',
+    CORS_ALLOWED_ORIGINS: '',
+  });
+  t.after(() => {
+    resetWorkerCachesForTesting();
+    env.DB.close();
+  });
+  const app = createApp();
+
+  const response = await app.fetch(new Request('http://localhost:8787/api/auth/sign-in/email', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      origin: 'http://localhost:8787',
+      cookie: 'test=1',
+    },
+    body: JSON.stringify({
+      email: 'missing@example.com',
+      password: TEST_PASSWORD,
+    }),
+  }), env, {});
+
+  assert.notEqual(response.status, 403);
+  assert.equal(response.headers.get('access-control-allow-origin'), 'http://localhost:8787');
+});
+
 test('bootstrap admin sync avoids rotating credentials after a cold-cache login', async (t) => {
   const env = createEnv({ allowUserRegistration: false });
   t.after(() => {
@@ -2381,6 +2434,33 @@ test('portal client routes under root are served as html', async (t) => {
   assert.equal(publicAssetResponse.status, 200);
   assert.match(publicAssetResponse.headers.get('Content-Type') || '', /text\/html/);
   assert.match(await publicAssetResponse.text(), /Feel8 Asset Cloud/);
+});
+
+test('scheduled cleanup removes stale rate limit rows', async (t) => {
+  const env = createEnv();
+  t.after(() => env.DB.close());
+  const now = Date.now();
+  await env.DB.prepare('INSERT INTO rateLimit (id, key, count, lastRequest) VALUES (?, ?, ?, ?)')
+    .bind('old-rate-limit', 'worker:desktop_refresh:old', 3, now - (25 * 60 * 60 * 1000))
+    .run();
+  await env.DB.prepare('INSERT INTO rateLimit (id, key, count, lastRequest) VALUES (?, ?, ?, ?)')
+    .bind('fresh-rate-limit', 'worker:desktop_refresh:fresh', 1, now)
+    .run();
+
+  await worker.scheduled({}, env, {
+    waitUntil(promise) {
+      return promise;
+    },
+  });
+
+  const oldRow = await env.DB.prepare('SELECT key FROM rateLimit WHERE key = ?')
+    .bind('worker:desktop_refresh:old')
+    .first();
+  const freshRow = await env.DB.prepare('SELECT key FROM rateLimit WHERE key = ?')
+    .bind('worker:desktop_refresh:fresh')
+    .first();
+  assert.equal(oldRow, null);
+  assert.equal(freshRow.key, 'worker:desktop_refresh:fresh');
 });
 
 test('worker leaves typed list responses uncompressed by default', async (t) => {

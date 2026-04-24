@@ -1,9 +1,20 @@
-import { useEffect, useState } from 'react';
+import { Suspense, lazy, useEffect, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { FilePenLine, X } from 'lucide-react';
 
 import { updateAssetVersionNote } from '../lib/api.js';
 import { Button } from './ui/button.jsx';
+
+const MarkdownEditor = lazy(async () => {
+  const module = await import('./MarkdownEditor.jsx');
+  return {
+    default: module.MarkdownEditor,
+  };
+});
+
+function EditorLoader() {
+  return <p className="text-sm text-slate-400">Loading editor...</p>;
+}
 
 export function EditVersionNoteDialog({
   assetId,
@@ -52,7 +63,7 @@ export function EditVersionNoteDialog({
       </Dialog.Trigger>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 bg-slate-950/70 backdrop-blur-sm" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 w-[min(92vw,640px)] -translate-x-1/2 -translate-y-1/2 rounded-[1.75rem] border border-white/10 bg-slate-950 p-6 shadow-[0_30px_80px_rgba(0,0,0,0.42)]">
+        <Dialog.Content className="fixed left-1/2 top-1/2 max-h-[88vh] w-[min(92vw,860px)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-[1.75rem] border border-white/10 bg-slate-950 p-6 shadow-[0_30px_80px_rgba(0,0,0,0.42)]">
           <div className="flex items-start justify-between gap-4">
             <div>
               <Dialog.Title className="text-xl font-semibold text-white">Edit version notes</Dialog.Title>
@@ -67,15 +78,15 @@ export function EditVersionNoteDialog({
             </Dialog.Close>
           </div>
           <form className="mt-6 space-y-4" onSubmit={(event) => void handleSubmit(event)}>
-            <label className="block text-sm text-slate-300">
-              Version notes
-              <textarea
-                className="mt-2 min-h-36 w-full rounded-2xl border border-white/12 bg-white/5 px-4 py-3 text-white focus:border-cyan-300/40 focus:outline-none"
+            <Suspense fallback={<EditorLoader />}>
+              <MarkdownEditor
                 value={note}
-                onChange={(event) => setNote(event.target.value)}
+                onChange={setNote}
+                label="Version notes"
                 placeholder="What changed in this version?"
+                minHeightClassName="min-h-52"
               />
-            </label>
+            </Suspense>
             {error ? <p className="text-sm text-rose-200">{error}</p> : null}
             <div className="flex justify-end gap-3">
               <Button type="button" variant="outline" className="border-white/15 bg-white/5 text-white hover:bg-white/10" onClick={() => setOpen(false)}>

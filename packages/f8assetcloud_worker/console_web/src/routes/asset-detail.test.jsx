@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -208,5 +208,38 @@ describe('AssetDetailRoute', () => {
     expect(screen.getByRole('button', { name: 'Subscribe' })).toBeTruthy();
     expect(await screen.findByTestId('edit-asset-dialog')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Subscribers' })).toBeTruthy();
+  });
+
+  it('renders the selected version note through MarkdownContent in the versions tab', async () => {
+    mockUseSession.mockReturnValue({
+      authResolved: true,
+      currentUser: {
+        userId: 'viewer-1',
+      },
+      isAuthenticated: true,
+    });
+    mockUseAsset.mockReturnValue({
+      asset: defaultAsset,
+      assetType: 'variant',
+      error: '',
+      loadVersionContent: mockLoadVersionContent,
+      loading: false,
+      setAsset: mockSetAsset,
+      setVersions: mockSetVersions,
+      versionContentByNumber: {},
+      versions: [{
+        versionNumber: 2,
+        changeSummary: '## Release\n\nFixed **timing**.',
+      }],
+    });
+
+    renderRoute();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Versions' }));
+
+    const versionNoteMatches = await screen.findAllByText((_, element) => (
+      element?.textContent === '## Release\n\nFixed **timing**.'
+    ));
+    expect(versionNoteMatches.length).toBeGreaterThan(0);
   });
 });
