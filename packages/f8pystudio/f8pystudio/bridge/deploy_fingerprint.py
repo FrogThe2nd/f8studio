@@ -102,6 +102,32 @@ def _normalize_state_spec(spec: Any, cache: dict[int, Any]) -> dict[str, Any]:
     return payload
 
 
+def _normalize_data_port_specs(specs: Any, cache: dict[int, Any]) -> list[dict[str, Any]]:
+    cache_key = id(specs)
+    if cache_key in cache:
+        cached = cache[cache_key]
+        return cached if isinstance(cached, list) else []
+    normalized = sorted(
+        (_normalize_data_port_spec(item, cache) for item in specs),
+        key=_normalized_named_spec_sort_key,
+    )
+    cache[cache_key] = normalized
+    return normalized
+
+
+def _normalize_state_specs(specs: Any, cache: dict[int, Any]) -> list[dict[str, Any]]:
+    cache_key = id(specs)
+    if cache_key in cache:
+        cached = cache[cache_key]
+        return cached if isinstance(cached, list) else []
+    normalized = sorted(
+        (_normalize_state_spec(item, cache) for item in specs),
+        key=_normalized_named_spec_sort_key,
+    )
+    cache[cache_key] = normalized
+    return normalized
+
+
 def _normalize_runtime_service(service: F8RuntimeService, cache: dict[int, Any]) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "serviceId": str(service.serviceId),
@@ -127,20 +153,11 @@ def _normalize_runtime_node(node: F8RuntimeNode, cache: dict[int, Any]) -> dict[
     if not _is_unset(node.execOutPorts):
         payload["execOutPorts"] = sorted(str(item) for item in node.execOutPorts)
     if not _is_unset(node.dataInPorts):
-        payload["dataInPorts"] = sorted(
-            (_normalize_data_port_spec(item, cache) for item in node.dataInPorts),
-            key=_normalized_named_spec_sort_key,
-        )
+        payload["dataInPorts"] = _normalize_data_port_specs(node.dataInPorts, cache)
     if not _is_unset(node.dataOutPorts):
-        payload["dataOutPorts"] = sorted(
-            (_normalize_data_port_spec(item, cache) for item in node.dataOutPorts),
-            key=_normalized_named_spec_sort_key,
-        )
+        payload["dataOutPorts"] = _normalize_data_port_specs(node.dataOutPorts, cache)
     if not _is_unset(node.stateFields):
-        payload["stateFields"] = sorted(
-            (_normalize_state_spec(item, cache) for item in node.stateFields),
-            key=_normalized_named_spec_sort_key,
-        )
+        payload["stateFields"] = _normalize_state_specs(node.stateFields, cache)
     return payload
 
 
