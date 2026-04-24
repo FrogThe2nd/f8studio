@@ -199,17 +199,18 @@ def validate_describe_monitor_contract(payload: dict[str, Any]) -> None:
     monitor_schema_obj = monitor_port.get("valueSchema")
     if not isinstance(monitor_schema_obj, dict):
         raise MonitorContractError("`monitor` dataOutPort must contain object valueSchema")
-    try:
-        parsed_schema = dump_json(
-            validate_as(F8DataTypeSchema, monitor_schema_obj),
-            mode="json",
-            by_alias=True,
-        )
-    except Exception as exc:
-        raise MonitorContractError(f"`monitor` valueSchema is invalid: {type(exc).__name__}: {exc}") from exc
     expected_schema = monitor_snapshot_schema_dict_cached()
-    if parsed_schema != expected_schema:
-        raise MonitorContractError("`monitor` valueSchema must match F8MonitorSnapshot schema")
+    if monitor_schema_obj != expected_schema:
+        try:
+            parsed_schema = dump_json(
+                validate_as(F8DataTypeSchema, monitor_schema_obj),
+                mode="json",
+                by_alias=True,
+            )
+        except Exception as exc:
+            raise MonitorContractError(f"`monitor` valueSchema is invalid: {type(exc).__name__}: {exc}") from exc
+        if parsed_schema != expected_schema:
+            raise MonitorContractError("`monitor` valueSchema must match F8MonitorSnapshot schema")
     if telemetry_ports:
         raise MonitorContractError("legacy `telemetry` output port is forbidden; use `monitor` only")
 
