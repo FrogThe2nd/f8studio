@@ -4,6 +4,7 @@ import asyncio
 import os
 import threading
 import time
+from copy import deepcopy
 from collections import deque
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -35,6 +36,7 @@ MONITOR_PORT_NAME = "monitor"
 _FORBIDDEN_TELEMETRY_PORT_NAME = "telemetry"
 MONITOR_SNAPSHOT_SCHEMA_VERSION = "f8monitor/1"
 MONITOR_REPORT_SCHEMA_VERSION = "f8monitorReport/1"
+_MONITOR_SNAPSHOT_SCHEMA_DICT: dict[str, object] | None = None
 
 
 class MonitorContractError(ValueError):
@@ -135,7 +137,19 @@ def monitor_snapshot_data_port() -> F8DataPortSpec:
 
 
 def monitor_snapshot_schema_dict() -> dict[str, object]:
-    return dump_json(monitor_snapshot_value_schema(), mode="json", by_alias=True)
+    global _MONITOR_SNAPSHOT_SCHEMA_DICT
+    if _MONITOR_SNAPSHOT_SCHEMA_DICT is None:
+        raw = dump_json(monitor_snapshot_value_schema(), mode="json", by_alias=True)
+        _MONITOR_SNAPSHOT_SCHEMA_DICT = raw if isinstance(raw, dict) else {}
+    return deepcopy(_MONITOR_SNAPSHOT_SCHEMA_DICT)
+
+
+def _monitor_snapshot_schema_dict_cached() -> dict[str, object]:
+    global _MONITOR_SNAPSHOT_SCHEMA_DICT
+    if _MONITOR_SNAPSHOT_SCHEMA_DICT is None:
+        raw = dump_json(monitor_snapshot_value_schema(), mode="json", by_alias=True)
+        _MONITOR_SNAPSHOT_SCHEMA_DICT = raw if isinstance(raw, dict) else {}
+    return _MONITOR_SNAPSHOT_SCHEMA_DICT
 
 
 def validate_monitor_snapshot_payload(payload: dict[str, Any] | F8MonitorSnapshot) -> F8MonitorSnapshot:
@@ -193,7 +207,7 @@ def validate_describe_monitor_contract(payload: dict[str, Any]) -> None:
         )
     except Exception as exc:
         raise MonitorContractError(f"`monitor` valueSchema is invalid: {type(exc).__name__}: {exc}") from exc
-    expected_schema = monitor_snapshot_schema_dict()
+    expected_schema = _monitor_snapshot_schema_dict_cached()
     if parsed_schema != expected_schema:
         raise MonitorContractError("`monitor` valueSchema must match F8MonitorSnapshot schema")
     if telemetry_ports:
