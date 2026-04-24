@@ -313,7 +313,7 @@ def build_compiled_deploy_snapshot(compiled: CompiledRuntimeGraphs) -> dict[str,
 
 def build_compiled_deploy_fingerprint(compiled: CompiledRuntimeGraphs) -> str:
     snapshot = build_compiled_deploy_snapshot(compiled)
-    return json.dumps(snapshot, sort_keys=True, separators=(",", ":"))
+    return json.dumps(snapshot, separators=(",", ":"))
 
 
 __all__ = [
