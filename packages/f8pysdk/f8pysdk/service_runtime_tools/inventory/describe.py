@@ -278,7 +278,7 @@ def describe_entry(
 
     try:
         payload = validate_as(F8ServiceDescribe, data)
-        data = dump_json(payload, mode="json")
+        data = msgspec.to_builtins(payload)
     except Exception:
         if "service" not in data:
             message = f"describe JSON missing required key 'service' for {service_dir}: {_describe_command_text()}"
