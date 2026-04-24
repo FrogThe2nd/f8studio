@@ -19,6 +19,43 @@ def _normalize_spec_payload(payload: Any) -> Any:
     return payload
 
 
+def _normalized_named_spec_sort_key(payload: Any) -> tuple[str, str]:
+    if not isinstance(payload, dict):
+        return ("", json.dumps(payload, sort_keys=True, separators=(",", ":")))
+    name = str(payload.get("name") or "")
+    payload_kind = str(payload.get("type") or payload.get("access") or "")
+    return (name, payload_kind)
+
+
+def _normalized_service_sort_key(payload: Any) -> tuple[str, str]:
+    if not isinstance(payload, dict):
+        return ("", "")
+    return (str(payload.get("serviceId") or ""), str(payload.get("serviceClass") or ""))
+
+
+def _normalized_node_sort_key(payload: Any) -> tuple[str, str, str]:
+    if not isinstance(payload, dict):
+        return ("", "", "")
+    return (
+        str(payload.get("serviceId") or ""),
+        str(payload.get("nodeId") or ""),
+        str(payload.get("operatorClass") or ""),
+    )
+
+
+def _normalized_edge_sort_key(payload: Any) -> tuple[str, str, str, str, str, str]:
+    if not isinstance(payload, dict):
+        return ("", "", "", "", "", "")
+    return (
+        str(payload.get("kind") or ""),
+        str(payload.get("fromServiceId") or ""),
+        str(payload.get("fromOperatorId") or ""),
+        str(payload.get("fromPort") or ""),
+        str(payload.get("toServiceId") or ""),
+        str(payload.get("toPort") or ""),
+    )
+
+
 def _normalize_service_payload(payload: Any) -> dict[str, Any]:
     if not isinstance(payload, dict):
         return {}
@@ -43,7 +80,7 @@ def _normalize_node_payload(payload: Any) -> dict[str, Any]:
         if key in {"dataInPorts", "dataOutPorts", "stateFields"} and isinstance(value, list):
             normalized[key] = sorted(
                 (_normalize_spec_payload(item) for item in value),
-                key=lambda item: json.dumps(item, sort_keys=True, separators=(",", ":")),
+                key=_normalized_named_spec_sort_key,
             )
             continue
         normalized[key] = _normalize_spec_payload(value)
@@ -74,21 +111,21 @@ def build_compiled_deploy_snapshot(compiled: CompiledRuntimeGraphs) -> dict[str,
     if isinstance(raw_services, list):
         services = sorted(
             (_normalize_service_payload(item) for item in raw_services),
-            key=lambda item: json.dumps(item, sort_keys=True, separators=(",", ":")),
+            key=_normalized_service_sort_key,
         )
 
     nodes = []
     if isinstance(raw_nodes, list):
         nodes = sorted(
             (_normalize_node_payload(item) for item in raw_nodes),
-            key=lambda item: json.dumps(item, sort_keys=True, separators=(",", ":")),
+            key=_normalized_node_sort_key,
         )
 
     edges = []
     if isinstance(raw_edges, list):
         edges = sorted(
             (_normalize_edge_payload(item) for item in raw_edges),
-            key=lambda item: json.dumps(item, sort_keys=True, separators=(",", ":")),
+            key=_normalized_edge_sort_key,
         )
 
     return {

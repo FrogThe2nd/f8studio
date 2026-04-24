@@ -96,3 +96,67 @@ def test_deploy_fingerprint_changes_when_runtime_wiring_changes() -> None:
     compiled_b = _compiled(graph_id="g1", revision="r1", edge_id="edge-b", state_value="pause", edge_to_port="other")
 
     assert build_compiled_deploy_fingerprint(compiled_a) != build_compiled_deploy_fingerprint(compiled_b)
+
+
+def test_deploy_fingerprint_is_stable_for_unordered_runtime_collections() -> None:
+    hidden_output_name = command_output_state_field("run")
+    service_a = F8RuntimeService(serviceId="svcA", serviceClass="svc.alpha")
+    service_b = F8RuntimeService(serviceId="svcB", serviceClass="svc.beta")
+    state_field_a = F8StateSpec(name="alpha", valueSchema=string_schema(), access=F8StateAccess.rw)
+    state_field_b = F8StateSpec(name="beta", valueSchema=string_schema(), access=F8StateAccess.rw)
+    node_a = F8RuntimeNode(
+        nodeId="svcA",
+        serviceId="svcA",
+        serviceClass="svc.alpha",
+        stateFields=[state_field_a, state_field_b],
+    )
+    node_b = F8RuntimeNode(
+        nodeId="opB",
+        serviceId="svcB",
+        serviceClass="svc.beta",
+        operatorClass="svc.beta.op",
+        execInPorts=["z", "a"],
+        execOutPorts=["done", "next"],
+        stateFields=[state_field_b, state_field_a],
+    )
+    edge_a = F8Edge(
+        edgeId="edge-a",
+        fromServiceId="svcA",
+        fromOperatorId=None,
+        fromPort=hidden_output_name,
+        toServiceId="svcB",
+        toOperatorId="opB",
+        toPort="in",
+        kind=F8EdgeKindEnum.state,
+        strategy=F8EdgeStrategyEnum.latest,
+    )
+    edge_b = F8Edge(
+        edgeId="edge-b",
+        fromServiceId="svcB",
+        fromOperatorId="opB",
+        fromPort="done",
+        toServiceId="svcA",
+        toOperatorId=None,
+        toPort="tick",
+        kind=F8EdgeKindEnum.exec,
+        strategy=F8EdgeStrategyEnum.latest,
+    )
+    graph_a = F8RuntimeGraph(
+        graphId="g1",
+        revision="r1",
+        services=[service_a, service_b],
+        nodes=[node_a, node_b],
+        edges=[edge_a, edge_b],
+    )
+    graph_b = F8RuntimeGraph(
+        graphId="g2",
+        revision="r2",
+        services=[service_b, service_a],
+        nodes=[node_b, node_a],
+        edges=[edge_b, edge_a],
+    )
+
+    compiled_a = SimpleNamespace(global_graph=graph_a, per_service={}, warnings=())
+    compiled_b = SimpleNamespace(global_graph=graph_b, per_service={}, warnings=())
+
+    assert build_compiled_deploy_fingerprint(compiled_a) == build_compiled_deploy_fingerprint(compiled_b)
