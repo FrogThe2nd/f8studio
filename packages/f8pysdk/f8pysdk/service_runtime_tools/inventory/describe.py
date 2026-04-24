@@ -142,15 +142,23 @@ def _is_pixi_command(command: str) -> bool:
     return Path(normalized).name in ("pixi", "pixi.exe", "pixi.bat", "pixi.cmd")
 
 
-def describe_entry(service_dir: Path, entry: F8ServiceEntry) -> dict[str, Any] | None:
+def describe_entry(
+    service_dir: Path,
+    entry: F8ServiceEntry,
+    *,
+    initial_payload: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
     service_dir = Path(service_dir).resolve()
 
-    inline_payload = _read_inline_describe(entry)
-    if inline_payload is not None:
-        initial_data: dict[str, Any] = dict(inline_payload)
+    if initial_payload is not None:
+        initial_data: dict[str, Any] = dict(initial_payload)
     else:
-        static_payload = _read_static_describe_file(service_dir)
-        initial_data = static_payload if static_payload is not None else {}
+        inline_payload = _read_inline_describe(entry)
+        if inline_payload is not None:
+            initial_data = dict(inline_payload)
+        else:
+            static_payload = _read_static_describe_file(service_dir)
+            initial_data = static_payload if static_payload is not None else {}
 
     try:
         launch = entry.launch
@@ -292,12 +300,14 @@ def describe_entry(service_dir: Path, entry: F8ServiceEntry) -> dict[str, Any] |
 def describe_entry_timed(service_dir: Path, entry: F8ServiceEntry) -> tuple[dict[str, Any] | None, float, str]:
     started_at = time.perf_counter()
 
-    if _read_inline_describe(entry) is not None:
-        payload = describe_entry(service_dir, entry)
+    inline_payload = _read_inline_describe(entry)
+    if inline_payload is not None:
+        payload = describe_entry(service_dir, entry, initial_payload=inline_payload)
         return payload, (time.perf_counter() - started_at) * 1000.0, "inline"
 
-    if _read_static_describe_file(service_dir) is not None:
-        payload = describe_entry(service_dir, entry)
+    static_payload = _read_static_describe_file(service_dir)
+    if static_payload is not None:
+        payload = describe_entry(service_dir, entry, initial_payload=static_payload)
         return payload, (time.perf_counter() - started_at) * 1000.0, "file"
 
     payload = describe_entry(service_dir, entry)
