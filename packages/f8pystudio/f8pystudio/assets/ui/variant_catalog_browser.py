@@ -10,20 +10,37 @@ from qtpy import QtCore, QtWidgets
 from f8pysdk.codec import dump_json, validate_as
 
 from ...ui.support.qt_lifecycle import qt_runtime_error_is_object_deleted
-from ...ui.support.ui_icons import StudioIcon, icon_for
 from ...ui.support.ui_notifications import show_warning
 from ..variants.variant_models import F8VariantEntry, F8VariantRemoteAuthError, F8VariantSourceKind
 from ..variants.variant_sync import VariantRemoteScopeRefreshRequest, VariantRemoteScopeRefreshResult
 from ..variants.variant_events import subscribe_variants_changed
-from .asset_cloud_account_menu import build_asset_account_menu, prompt_asset_cloud_sign_in
-from .background_tasks import BackgroundCallWorker
+from .catalog_browser_state import (
+    DEFAULT_CATALOG_FILTER,
+    DEFAULT_REFRESH_ERROR_TITLE,
+    INITIAL_REFRESH_ERROR_TITLE,
+    REFRESH_LOG_LABEL_INITIAL_OPEN,
+    REFRESH_LOG_LABEL_MANUAL_REFRESH,
+    REFRESH_LOG_LABEL_SCOPE_REFRESH,
+    REMOTE_SCOPE_COMMUNITY,
+    REMOTE_SCOPE_MINE,
+    CatalogRefreshLogFields,
+    QueuedCatalogRefresh,
+    catalog_filter_options_for_tab,
+    catalog_refresh_log_fields,
+    catalog_refresh_page_request,
+    create_catalog_browser_state,
+    current_catalog_filter,
+    current_catalog_query,
+    remote_scope_for_catalog_tab,
+)
 from .catalog_hosts import _VariantCatalogDialogHost
+from .catalog_refresh_queue_mixin import CatalogRefreshQueueMixin
 
 
 if TYPE_CHECKING:
-    _VariantCatalogBrowserMixinBase = _VariantCatalogDialogHost
+    _VariantCatalogBrowserMixinBase = CatalogRefreshQueueMixin[VariantRemoteScopeRefreshRequest] | _VariantCatalogDialogHost
 else:
-    _VariantCatalogBrowserMixinBase = object
+    _VariantCatalogBrowserMixinBase = CatalogRefreshQueueMixin
 
 logger = logging.getLogger(__name__)
 
@@ -58,26 +75,28 @@ class VariantCatalogBrowserMixin(_VariantCatalogBrowserMixinBase):
 
     def _initialize_browser_state(self) -> None:
         tabs = (self._TAB_DRAFTS, self._TAB_MINE, self._TAB_COMMUNITY, self._TAB_INSTALLED)
-        self._initial_remote_refresh_done = False
-        self._initial_remote_refresh_scheduled = False
-        self._initial_cached_render_started_at = 0.0
-        self._tab_queries: dict[int, str] = {tab: "" for tab in tabs}
-        self._tab_filters: dict[int, str] = {tab: "all" for tab in tabs}
-        self._remote_next_cursor_by_scope: dict[str, str | None] = {"mine": None, "community": None}
-        self._remote_loaded_query_by_scope: dict[str, str] = {"mine": "", "community": ""}
-        self._remote_loaded_base_by_scope: dict[str, str] = {"mine": "", "community": ""}
-        self._is_loading_remote_scope = False
-        self._active_remote_refresh_request_id = 0
-        self._remote_refresh_worker: BackgroundCallWorker | None = None
-        self._active_remote_refresh_error_title = "Refresh failed"
-        self._active_remote_refresh_log_label = "unknown"
-        self._active_remote_refresh_started_at = 0.0
-        self._queued_remote_refresh_requests: list[VariantRemoteScopeRefreshRequest] | None = None
-        self._queued_remote_refresh_error_title: str = "Refresh failed"
-        self._queued_remote_refresh_log_label: str = "queued"
-        self._catalog_local_entries_snapshot: list[F8VariantEntry] = []
-        self._catalog_remote_entries_snapshot: list[F8VariantEntry] = []
-        self._last_list_render_signature: tuple[object, ...] | None = None
+        state = create_catalog_browser_state(tabs=tabs)
+        self._initial_remote_refresh_done = state.initial_remote_refresh_done
+        self._initial_remote_refresh_scheduled = state.initial_remote_refresh_scheduled
+        self._initial_cached_render_started_at = state.initial_cached_render_started_at
+        self._tab_queries = state.tab_queries
+        self._tab_filters = state.tab_filters
+        self._remote_next_cursor_by_scope = state.remote_next_cursor_by_scope
+        self._remote_loaded_query_by_scope = state.remote_loaded_query_by_scope
+        self._remote_loaded_base_by_scope: dict[str, str] = {
+            REMOTE_SCOPE_MINE: "",
+            REMOTE_SCOPE_COMMUNITY: "",
+        }
+        self._is_loading_remote_scope = state.is_loading_remote_scope
+        self._active_remote_refresh_request_id = state.active_remote_refresh_request_id
+        self._remote_refresh_worker = state.remote_refresh_worker
+        self._active_remote_refresh_error_title = state.active_remote_refresh_error_title
+        self._active_remote_refresh_log_label = state.active_remote_refresh_log_label
+        self._active_remote_refresh_started_at = state.active_remote_refresh_started_at
+        self._queued_remote_refresh: QueuedCatalogRefresh[VariantRemoteScopeRefreshRequest] | None = None
+        self._catalog_local_entries_snapshot = state.catalog_local_entries_snapshot
+        self._catalog_remote_entries_snapshot = state.catalog_remote_entries_snapshot
+        self._last_list_render_signature = state.last_list_render_signature
         self._scheduled_asset_cache_rebuild_variant_id = ""
         self._asset_cache_rebuild_timer = QtCore.QTimer(self)
         self._asset_cache_rebuild_timer.setSingleShot(True)
@@ -96,7 +115,7 @@ class VariantCatalogBrowserMixin(_VariantCatalogBrowserMixinBase):
     def _on_destroyed(self, _obj: Any) -> None:
         self._clear_asset_cache_changed_subscription()
         self._active_remote_refresh_request_id += 1
-        self._queued_remote_refresh_requests = None
+        self._queued_remote_refresh = None
         self._remote_refresh_worker = None
         self._scheduled_asset_cache_rebuild_variant_id = ""
         try:
@@ -429,8 +448,8 @@ class VariantCatalogBrowserMixin(_VariantCatalogBrowserMixinBase):
         self._initial_remote_refresh_done = True
         self._request_catalog_refresh(
             requests=self._full_catalog_refresh_requests(),
-            error_title="Initial refresh failed",
-            log_label="initial_open",
+            error_title=INITIAL_REFRESH_ERROR_TITLE,
+            log_label=REFRESH_LOG_LABEL_INITIAL_OPEN,
         )
 
     def _schedule_initial_remote_refresh_if_needed(self) -> None:
@@ -444,11 +463,6 @@ class VariantCatalogBrowserMixin(_VariantCatalogBrowserMixinBase):
         if self._initial_remote_refresh_done:
             return
         self._refresh_remote_catalog_if_needed()
-
-    def _sync_auth_controls_ui(self) -> None:
-        logged_in = self._sync_client.current_user() is not None
-        self._btn_refresh.setEnabled(not self._is_loading_remote_scope)
-        self._account_button.setIcon(icon_for(self._account_button, StudioIcon.USER if logged_in else StudioIcon.USER_OFF))
 
     def _on_list_scrolled(self, _value: int) -> None:
         self._schedule_auto_load_more_if_needed()
@@ -477,53 +491,27 @@ class VariantCatalogBrowserMixin(_VariantCatalogBrowserMixinBase):
             return True
         return int(scroll_bar.value()) >= max_value - 8
 
-    def _on_accounts_clicked(self) -> None:
-        menu = build_asset_account_menu(
-            parent=self,
-            sync_client=self._sync_client,
-            on_changed=self._on_account_state_changed,
-        )
-        menu.exec(self._account_button.mapToGlobal(QtCore.QPoint(0, self._account_button.height())))
-
-    def _account_button_text(self) -> str:
-        user = self._sync_client.current_user()
-        if user is None:
-            return "Accounts"
-        return str(user.name or user.email or "Accounts")
-
     def _current_query(self) -> str:
-        return str(self._tab_queries.get(self._scope_tabs.currentIndex(), "")).strip()
+        return current_catalog_query(
+            tab_queries=self._tab_queries,
+            current_tab=self._scope_tabs.currentIndex(),
+        )
 
     def _current_filter_value(self) -> str:
-        return str(self._tab_filters.get(self._scope_tabs.currentIndex(), "all")).strip() or "all"
+        return current_catalog_filter(
+            tab_filters=self._tab_filters,
+            current_tab=self._scope_tabs.currentIndex(),
+        )
 
     def _sync_filter_combo_ui(self) -> None:
         current_tab = self._scope_tabs.currentIndex()
-        items: list[tuple[str, str]]
-        if current_tab == self._TAB_DRAFTS:
-            items = [
-                ("All Drafts", "all"),
-                ("Linked Drafts", "linked"),
-                ("Unpublished", "unpublished"),
-            ]
-        elif current_tab == self._TAB_MINE:
-            items = [
-                ("All Mine", "all"),
-                ("Private Cloud", "private"),
-                ("Shared Public", "shared"),
-            ]
-        elif current_tab == self._TAB_COMMUNITY:
-            items = [
-                ("All Community", "all"),
-                ("Subscribed", "subscribed"),
-                ("Not Subscribed", "not_subscribed"),
-            ]
-        else:
-            items = [
-                ("All Installed", "all"),
-                ("My Variants", "mine"),
-                ("Subscribed", "subscribed"),
-            ]
+        items = catalog_filter_options_for_tab(
+            current_tab=current_tab,
+            drafts_tab=self._TAB_DRAFTS,
+            mine_tab=self._TAB_MINE,
+            community_tab=self._TAB_COMMUNITY,
+            installed_mine_label="My Variants",
+        )
         selected_value = self._current_filter_value()
         self._filter_combo.blockSignals(True)
         self._filter_combo.clear()
@@ -536,12 +524,11 @@ class VariantCatalogBrowserMixin(_VariantCatalogBrowserMixinBase):
         self._filter_combo.blockSignals(False)
 
     def _remote_scope_for_current_tab(self) -> str | None:
-        current_tab = self._scope_tabs.currentIndex()
-        if current_tab == self._TAB_COMMUNITY:
-            return "community"
-        if current_tab == self._TAB_MINE:
-            return "mine"
-        return None
+        return remote_scope_for_catalog_tab(
+            current_tab=self._scope_tabs.currentIndex(),
+            mine_tab=self._TAB_MINE,
+            community_tab=self._TAB_COMMUNITY,
+        )
 
     @staticmethod
     def _entry_matches_query(entry: F8VariantEntry, normalized_query: str) -> bool:
@@ -558,18 +545,11 @@ class VariantCatalogBrowserMixin(_VariantCatalogBrowserMixinBase):
         ).lower()
         return normalized_query in haystack
 
-    def _on_login_clicked(self) -> None:
-        if prompt_asset_cloud_sign_in(parent=self, sync_client=self._sync_client):
-            self._on_account_state_changed()
-
-    def _on_logout_clicked(self) -> None:
-        self._on_account_state_changed()
-
     def _apply_signed_out_auth_state(self) -> None:
         self._sanitize_remote_entries_for_signed_out_user()
-        self._remote_next_cursor_by_scope["mine"] = None
-        self._remote_loaded_query_by_scope["mine"] = ""
-        self._remote_loaded_base_by_scope["mine"] = ""
+        self._remote_next_cursor_by_scope[REMOTE_SCOPE_MINE] = None
+        self._remote_loaded_query_by_scope[REMOTE_SCOPE_MINE] = ""
+        self._remote_loaded_base_by_scope[REMOTE_SCOPE_MINE] = ""
 
     def _sanitize_remote_entries_for_signed_out_user(self) -> None:
         sanitized_remote_entries: list[F8VariantEntry] = []
@@ -593,41 +573,23 @@ class VariantCatalogBrowserMixin(_VariantCatalogBrowserMixinBase):
             emit_changed=False,
         )
 
-    def _on_account_state_changed(self) -> None:
-        selected_variant_id = self._selected_variant_id()
-        current_user = self._sync_client.current_user()
-        if current_user is None or not self._sync_client.current_access_token():
-            self._apply_signed_out_auth_state()
-            self._rebuild_browser_after_auth_state_changed(
-                preserve_variant_id=selected_variant_id
-            )
-            self._request_catalog_refresh(
-                requests=[
-                    VariantRemoteScopeRefreshRequest(
-                        scope="community",
-                        base_node_type=self._base_node_type,
-                        query=self._tab_queries[self._TAB_COMMUNITY],
-                    )
-                ],
-                error_title="Refresh failed",
-                log_label="signed_out_refresh",
-            )
-            return
-        self._sanitize_remote_entries_for_signed_out_user()
-        self._rebuild_browser_after_auth_state_changed(
-            preserve_variant_id=selected_variant_id
-        )
-        self._request_catalog_refresh(
-            requests=self._full_catalog_refresh_requests(),
-            error_title="Refresh failed",
-            log_label="account_change",
-        )
+    def _selected_asset_id_for_auth_refresh(self) -> str:
+        return self._selected_variant_id()
 
-    def _ensure_logged_in(self) -> bool:
-        if self._sync_client.current_user() is not None and self._sync_client.current_access_token():
-            return True
-        self._on_login_clicked()
-        return self._sync_client.current_user() is not None and bool(self._sync_client.current_access_token())
+    def _rebuild_browser_after_auth_state_changed_for_id(self, selected_asset_id: str) -> None:
+        self._rebuild_browser_after_auth_state_changed(preserve_variant_id=selected_asset_id)
+
+    def _signed_out_catalog_refresh_requests(self) -> list[VariantRemoteScopeRefreshRequest]:
+        return [
+            VariantRemoteScopeRefreshRequest(
+                scope=REMOTE_SCOPE_COMMUNITY,
+                base_node_type=self._base_node_type,
+                query=self._tab_queries[self._TAB_COMMUNITY],
+            )
+        ]
+
+    def _account_menu_anchor_point(self) -> QtCore.QPoint:
+        return QtCore.QPoint(0, self._account_button.height())
 
     def _on_search_submitted(self) -> None:
         selected_variant_id = self._selected_variant_id()
@@ -654,8 +616,8 @@ class VariantCatalogBrowserMixin(_VariantCatalogBrowserMixinBase):
     def _on_filter_changed(self) -> None:
         selected_variant_id = self._selected_variant_id()
         current_tab = self._scope_tabs.currentIndex()
-        filter_value = str(self._filter_combo.currentData() or "all").strip() or "all"
-        if self._tab_filters.get(current_tab, "all") == filter_value:
+        filter_value = str(self._filter_combo.currentData() or DEFAULT_CATALOG_FILTER).strip() or DEFAULT_CATALOG_FILTER
+        if self._tab_filters.get(current_tab, DEFAULT_CATALOG_FILTER) == filter_value:
             return
         self._tab_filters[current_tab] = filter_value
         self._rebuild_browser_after_filter_ui_state_changed(
@@ -720,28 +682,27 @@ class VariantCatalogBrowserMixin(_VariantCatalogBrowserMixinBase):
             return
         current_query = self._current_query()
         current_base = self._get_current_base_node_type()
-        if remote_scope == "mine" and not self._ensure_logged_in():
+        if remote_scope == REMOTE_SCOPE_MINE and not self._ensure_logged_in():
             return
-        if reset:
-            cursor = ""
-            append = False
-        else:
-            cursor = str(self._remote_next_cursor_by_scope.get(remote_scope) or "")
-            append = bool(cursor)
-            if not append:
-                return
+        page_request = catalog_refresh_page_request(
+            reset=reset,
+            remote_scope=remote_scope,
+            remote_next_cursor_by_scope=self._remote_next_cursor_by_scope,
+        )
+        if page_request is None:
+            return
         self._request_catalog_refresh(
             requests=[
                 VariantRemoteScopeRefreshRequest(
                     scope=remote_scope,
                     base_node_type=current_base,
                     query=current_query,
-                    cursor=cursor,
-                    append=append,
+                    cursor=page_request.cursor,
+                    append=page_request.append,
                 )
             ],
-            error_title="Refresh failed",
-            log_label="scope_refresh",
+            error_title=DEFAULT_REFRESH_ERROR_TITLE,
+            log_label=REFRESH_LOG_LABEL_SCOPE_REFRESH,
         )
 
     def _on_refresh_clicked(self) -> None:
@@ -749,8 +710,8 @@ class VariantCatalogBrowserMixin(_VariantCatalogBrowserMixinBase):
         if remote_scope is None:
             self._request_catalog_refresh(
                 requests=self._full_catalog_refresh_requests(),
-                error_title="Refresh failed",
-                log_label="manual_refresh",
+                error_title=DEFAULT_REFRESH_ERROR_TITLE,
+                log_label=REFRESH_LOG_LABEL_MANUAL_REFRESH,
             )
             return
         self._refresh_current_remote_scope(reset=True)
@@ -759,7 +720,7 @@ class VariantCatalogBrowserMixin(_VariantCatalogBrowserMixinBase):
         current_base = self._base_node_type
         requests = [
             VariantRemoteScopeRefreshRequest(
-                scope="community",
+                scope=REMOTE_SCOPE_COMMUNITY,
                 base_node_type=current_base,
                 query=self._tab_queries[self._TAB_COMMUNITY],
                 cursor="",
@@ -769,7 +730,7 @@ class VariantCatalogBrowserMixin(_VariantCatalogBrowserMixinBase):
         if self._sync_client.current_access_token() or self._sync_client.current_session() is not None:
             requests.append(
                 VariantRemoteScopeRefreshRequest(
-                    scope="mine",
+                    scope=REMOTE_SCOPE_MINE,
                     base_node_type=current_base,
                     query=self._tab_queries[self._TAB_MINE],
                     cursor="",
@@ -778,81 +739,35 @@ class VariantCatalogBrowserMixin(_VariantCatalogBrowserMixinBase):
             )
         return requests
 
-    def _request_catalog_refresh(
+    def _catalog_refresh_task(
         self,
         *,
         requests: list[VariantRemoteScopeRefreshRequest],
-        error_title: str,
-        log_label: str,
-    ) -> None:
-        if not requests:
-            return
-        if self._remote_refresh_worker is not None:
-            self._queued_remote_refresh_requests = requests
-            self._queued_remote_refresh_error_title = error_title
-            self._queued_remote_refresh_log_label = log_label
-            return
-        self._start_catalog_refresh(requests=requests, error_title=error_title, log_label=log_label)
-
-    def _start_catalog_refresh(
-        self,
-        *,
-        requests: list[VariantRemoteScopeRefreshRequest],
-        error_title: str,
-        log_label: str,
-    ) -> None:
-        self._active_remote_refresh_request_id += 1
-        request_id = self._active_remote_refresh_request_id
+    ) -> Callable[[], object]:
         background_client = self._sync_client.clone_for_background()
-        started_at = time.perf_counter()
-        self._remote_refresh_worker = BackgroundCallWorker(
-            request_id=request_id,
-            task=lambda: background_client.collect_remote_scope_refreshes(requests, retry_on_auth_failure=False),
-        )
-        self._is_loading_remote_scope = True
-        self._sync_auth_controls_ui()
+        return lambda: background_client.collect_remote_scope_refreshes(requests, retry_on_auth_failure=False)
+
+    def _log_catalog_refresh_queued(self, *, log_fields: CatalogRefreshLogFields) -> None:
         logger.info(
             "Variant manager queued background refresh request_id=%s label=%s scopes=%s base=%s",
-            request_id,
-            log_label,
-            [request.scope for request in requests],
-            self._base_node_type,
-        )
-        self._active_remote_refresh_error_title = error_title
-        self._active_remote_refresh_log_label = log_label
-        self._active_remote_refresh_started_at = started_at
-        worker = self._remote_refresh_worker
-        worker.succeeded.connect(self._handle_catalog_refresh_succeeded)  # type: ignore[attr-defined]
-        worker.failed.connect(self._handle_catalog_refresh_failed)  # type: ignore[attr-defined]
-        worker.start()
-
-    def _handle_catalog_refresh_succeeded(
-        self,
-        finished_request_id: int,
-        result: object,
-        elapsed_seconds: float,
-    ) -> None:
-        self._on_catalog_refresh_succeeded(
-            finished_request_id=int(finished_request_id),
-            result=result,
-            elapsed_seconds=float(elapsed_seconds),
-            error_title=self._active_remote_refresh_error_title,
-            log_label=self._active_remote_refresh_log_label,
-            started_at=self._active_remote_refresh_started_at,
+            log_fields.request_id,
+            log_fields.log_label,
+            log_fields.scopes,
+            log_fields.base_node_type,
         )
 
-    def _handle_catalog_refresh_failed(
+    def _catalog_refresh_log_fields(
         self,
-        finished_request_id: int,
-        exc: object,
-        elapsed_seconds: float,
-    ) -> None:
-        self._on_catalog_refresh_failed(
-            finished_request_id=int(finished_request_id),
-            exc=exc,
-            elapsed_seconds=float(elapsed_seconds),
-            error_title=self._active_remote_refresh_error_title,
-            log_label=self._active_remote_refresh_log_label,
+        *,
+        request_id: int,
+        log_label: str,
+        requests: list[VariantRemoteScopeRefreshRequest],
+    ) -> CatalogRefreshLogFields:
+        return catalog_refresh_log_fields(
+            request_id=request_id,
+            log_label=log_label,
+            requests=requests,
+            base_node_type=self._base_node_type,
         )
 
     def _on_catalog_refresh_succeeded(
@@ -892,7 +807,7 @@ class VariantCatalogBrowserMixin(_VariantCatalogBrowserMixinBase):
             elapsed_seconds,
             time.perf_counter() - started_at,
         )
-        if log_label == "initial_open" and self._initial_cached_render_started_at > 0.0:
+        if log_label == REFRESH_LOG_LABEL_INITIAL_OPEN and self._initial_cached_render_started_at > 0.0:
             logger.info(
                 "Variant manager initial open fully refreshed elapsed=%.3fs",
                 time.perf_counter() - self._initial_cached_render_started_at,
@@ -931,17 +846,6 @@ class VariantCatalogBrowserMixin(_VariantCatalogBrowserMixinBase):
         if isinstance(exc, Exception):
             show_warning(self, error_title, str(exc))
         self._start_queued_catalog_refresh_if_any()
-
-    def _start_queued_catalog_refresh_if_any(self) -> None:
-        requests = self._queued_remote_refresh_requests
-        if requests is None:
-            return
-        error_title = self._queued_remote_refresh_error_title
-        log_label = self._queued_remote_refresh_log_label
-        self._queued_remote_refresh_requests = None
-        self._queued_remote_refresh_error_title = "Refresh failed"
-        self._queued_remote_refresh_log_label = "queued"
-        self._start_catalog_refresh(requests=requests, error_title=error_title, log_label=log_label)
 
     def _auth_status_text(self) -> str:
         user = self._sync_client.current_user()

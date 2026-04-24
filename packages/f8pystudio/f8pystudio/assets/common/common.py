@@ -198,12 +198,19 @@ def _release_safe_base_url(value: str) -> str:
     normalized_value = str(value or "").strip().rstrip("/")
     if not normalized_value:
         return ""
-    if not getattr(sys, "frozen", False):
+    if not _is_frozen_runtime():
         return normalized_value
     normalized_official = OFFICIAL_ASSET_CLOUD_BASE_URL.rstrip("/")
     if normalized_value == normalized_official:
         return normalized_value
     return ""
+
+
+def _is_frozen_runtime() -> bool:
+    try:
+        return bool(sys.frozen)  # type: ignore[attr-defined]
+    except AttributeError:
+        return False
 
 
 def _parse_timestamp_for_local_display(text: str) -> datetime | None:

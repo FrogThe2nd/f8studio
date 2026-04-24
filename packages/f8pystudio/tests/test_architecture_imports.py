@@ -215,6 +215,25 @@ def test_assets_sync_clients_use_shared_remote_common_helpers() -> None:
         assert required_targets <= imports
 
 
+def test_assets_catalog_browsers_share_explicit_state_factory() -> None:
+    required_targets = {
+        "f8pystudio.assets.ui.catalog_browser_state",
+        "f8pystudio.assets.ui.catalog_refresh_queue_mixin",
+    }
+    for path in (
+        PACKAGE_ROOT / "assets" / "ui" / "component_catalog_browser.py",
+        PACKAGE_ROOT / "assets" / "ui" / "variant_catalog_browser.py",
+    ):
+        imports = _import_targets(path)
+        assert required_targets <= imports
+
+
+def test_assets_catalog_refresh_queue_mixin_uses_worker_mixin() -> None:
+    imports = _import_targets(PACKAGE_ROOT / "assets" / "ui" / "catalog_refresh_queue_mixin.py")
+    assert "f8pystudio.assets.ui.catalog_auth_state_mixin" in imports
+    assert "f8pystudio.assets.ui.catalog_remote_refresh_worker_mixin" in imports
+
+
 def test_assets_forbid_private_chain_shortcuts_and_dynamic_attribute_probing() -> None:
     forbidden_patterns = (
         "_sync_client._catalog_service",
