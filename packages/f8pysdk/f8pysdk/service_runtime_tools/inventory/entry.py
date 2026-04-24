@@ -11,6 +11,8 @@ import yaml
 from f8pysdk.codec import dump_json, validate_as
 from f8pysdk.specs import F8ServiceEntry
 
+_YAML_SAFE_LOADER = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+
 
 def _default_roots() -> list[Path]:
     env = (os.environ.get("F8_SERVICE_DISCOVERY_DIRS") or "").strip()
@@ -37,7 +39,7 @@ def _read_yaml(path: Path) -> Any:
     except Exception as exc:
         raise ValueError(f"Failed to read {path}: {exc}") from exc
     try:
-        return yaml.safe_load(raw) if raw.strip() else None
+        return yaml.load(raw, Loader=_YAML_SAFE_LOADER) if raw.strip() else None
     except Exception as exc:
         raise ValueError(f"Failed to parse YAML {path}: {exc}") from exc
 
