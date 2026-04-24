@@ -9,7 +9,7 @@ from typing import Any
 import yaml
 
 from f8pysdk.codec import dump_json, validate_as
-from f8pysdk.specs import F8ServiceEntry
+from f8pysdk.specs import F8ServiceEntry, F8ServiceLaunchSpec
 
 _YAML_SAFE_LOADER = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
 
@@ -95,30 +95,41 @@ def find_service_dirs(roots: Iterable[Path]) -> list[Path]:
 
 def _absolutize_entry_paths(entry: F8ServiceEntry, *, service_dir: Path) -> F8ServiceEntry:
     service_dir = Path(service_dir).resolve()
-    payload = dump_json(entry, mode="json")
-
-    launch = dict(payload.get("launch") or {})
-    workdir_raw = str(launch.get("workdir") or "./")
+    launch = entry.launch
+    workdir_raw = str(launch.workdir or "./")
     workdir_path = Path(workdir_raw).expanduser()
     if not workdir_path.is_absolute():
         workdir_path = (service_dir / workdir_path).resolve()
     else:
         workdir_path = workdir_path.resolve()
-    launch["workdir"] = str(workdir_path)
 
-    command_raw = str(launch.get("command") or "").strip()
+    command = launch.command
+    command_raw = str(command or "").strip()
     try:
         command_path = Path(command_raw).expanduser()
         looks_like_path = bool(command_raw) and (
             "/" in command_raw or "\\" in command_raw or command_raw.startswith(".") or bool(command_path.suffix)
         )
         if looks_like_path and not command_path.is_absolute():
-            launch["command"] = str((workdir_path / command_path).resolve())
+            command = str((workdir_path / command_path).resolve())
     except (OSError, RuntimeError, TypeError, ValueError):
         pass
 
-    payload["launch"] = launch
-    return validate_as(F8ServiceEntry, payload)
+    absolute_launch = F8ServiceLaunchSpec(
+        command=command,
+        args=launch.args,
+        env=launch.env,
+        workdir=str(workdir_path),
+    )
+    return F8ServiceEntry(
+        launch=absolute_launch,
+        schemaVersion=entry.schemaVersion,
+        serviceClass=entry.serviceClass,
+        label=entry.label,
+        version=entry.version,
+        describeArgs=entry.describeArgs,
+        timeoutMs=entry.timeoutMs,
+    )
 
 
 def load_service_entry(service_dir: Path) -> F8ServiceEntry:

@@ -44,3 +44,27 @@ def test_static_describe_entry_matches_generic_validation_for_cpp_service() -> N
     entry = load_service_entry(service_dir)
 
     assert describe_entry(service_dir, entry, initial_payload=payload) == _generic_describe_payload(payload, entry.launch)
+
+
+def test_load_service_entry_matches_expected_python_path_absolutization() -> None:
+    service_dir = Path("services/f8/engine")
+    entry = load_service_entry(service_dir)
+    launch_payload = dump_json(entry.launch, mode="json")
+
+    assert launch_payload["workdir"] == str(Path(".").resolve())
+    assert launch_payload["command"] == "pixi"
+    assert launch_payload["args"] == ["run", "-e", "default", "f8pyengine"]
+    assert launch_payload["env"] == {}
+
+
+def test_load_service_entry_matches_expected_relative_binary_resolution() -> None:
+    service_dir = Path("services/f8/cvkit/template_match")
+    entry = load_service_entry(service_dir)
+    launch_payload = dump_json(entry.launch, mode="json")
+
+    expected_workdir = service_dir.resolve()
+    expected_command = (expected_workdir / "../linux/f8cvkit_template_match_service").resolve()
+    assert launch_payload["workdir"] == str(expected_workdir)
+    assert launch_payload["command"] == str(expected_command)
+    assert launch_payload["args"] == []
+    assert launch_payload["env"] == {}
