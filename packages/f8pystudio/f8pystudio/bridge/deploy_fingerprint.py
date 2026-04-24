@@ -30,7 +30,7 @@ def _normalize_spec_payload(payload: Any) -> Any:
 
 
 def _is_unset(value: Any) -> bool:
-    return isinstance(value, msgspec.UnsetType)
+    return value is msgspec.UNSET
 
 
 def _enum_payload(value: Any) -> Any:
