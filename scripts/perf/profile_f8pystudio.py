@@ -29,6 +29,31 @@ def _reset_global_registries() -> None:
     RenderNodeRegistry._instance = None
 
 
+def _inject_pystudio_specs(catalog: Any) -> str | None:
+    from f8pystudio.studio_specs.registry import SERVICE_CLASS, create_pystudio_registry
+
+    registry = create_pystudio_registry()
+    service_spec = registry.service_spec(SERVICE_CLASS)
+    if service_spec is None:
+        return None
+    catalog.register_service(service_spec)
+    for operator_spec in registry.operator_specs(SERVICE_CLASS):
+        catalog.register_operator(operator_spec)
+    return str(service_spec.serviceClass)
+
+
+def _scenario_discovery() -> dict[str, Any]:
+    from f8pysdk.service_runtime_tools.inventory.catalog import ServiceCatalog
+    from f8pysdk.service_runtime_tools.inventory.discovery import load_discovery_into_catalog
+
+    catalog = ServiceCatalog.instance()
+    catalog.clear()
+    found = load_discovery_into_catalog(catalog=catalog, builtin_injectors=(_inject_pystudio_specs,))
+    service_count = len(catalog.services.all())
+    operator_count = len(catalog.operators.all())
+    return {"found_count": len(found), "service_count": service_count, "operator_count": operator_count}
+
+
 def _scenario_build_node_classes() -> dict[str, Any]:
     from f8pysdk.service_runtime_tools.inventory.catalog import ServiceCatalog
     from f8pysdk.service_runtime_tools.inventory.discovery import load_discovery_into_catalog
@@ -51,6 +76,7 @@ def _scenario_build_node_classes() -> dict[str, Any]:
 
 SCENARIOS: dict[str, Callable[[], dict[str, Any]]] = {
     "describe": _scenario_describe,
+    "discovery": _scenario_discovery,
     "build_node_classes": _scenario_build_node_classes,
 }
 
