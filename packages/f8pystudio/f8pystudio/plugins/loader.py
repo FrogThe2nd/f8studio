@@ -9,6 +9,7 @@ from f8pystudio.plugins.api import StudioPlugin, StudioPluginManifest
 logger = logging.getLogger(__name__)
 
 PLUGIN_ENTRYPOINT_GROUP = "f8studio.pystudio.plugins"
+_ENTRYPOINT_CACHE: dict[str, tuple[importlib.metadata.EntryPoint, ...]] = {}
 
 
 @dataclass(frozen=True)
@@ -19,6 +20,10 @@ class _LoadedManifest:
 
 
 def _iter_group_entrypoints(*, group: str) -> list[importlib.metadata.EntryPoint]:
+    cached = _ENTRYPOINT_CACHE.get(group)
+    if cached is not None:
+        return list(cached)
+
     all_eps = importlib.metadata.entry_points()
     if hasattr(all_eps, "select"):
         selected = list(all_eps.select(group=group))
@@ -26,7 +31,13 @@ def _iter_group_entrypoints(*, group: str) -> list[importlib.metadata.EntryPoint
         selected = list(all_eps.get(group, ()))
     else:
         selected = []
-    return sorted(selected, key=lambda ep: (str(ep.name), str(ep.value)))
+    ordered = tuple(sorted(selected, key=lambda ep: (str(ep.name), str(ep.value))))
+    _ENTRYPOINT_CACHE[group] = ordered
+    return list(ordered)
+
+
+def clear_entrypoint_plugin_cache() -> None:
+    _ENTRYPOINT_CACHE.clear()
 
 
 def _coerce_manifest(obj: object) -> StudioPluginManifest:
@@ -80,3 +91,6 @@ def load_entrypoint_plugins(*, group: str = PLUGIN_ENTRYPOINT_GROUP) -> list[Stu
             continue
         unique_by_id[pid] = item.manifest
     return list(unique_by_id.values())
+
+
+__all__ = ["clear_entrypoint_plugin_cache", "load_entrypoint_plugins"]
