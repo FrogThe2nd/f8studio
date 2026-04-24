@@ -76,11 +76,10 @@ def find_service_dirs(roots: Iterable[Path]) -> list[Path]:
         if not resolved_root.exists() or not resolved_root.is_dir():
             continue
         try:
-            patterns = ["service.yml", "service.win.yml", "service.linux.yml", "service.mac.yml"]
-            for pattern in patterns:
-                for svc_file in resolved_root.rglob(pattern):
-                    if svc_file.is_file():
-                        found.add(svc_file.parent.resolve())
+            service_file_names = {"service.yml", "service.win.yml", "service.linux.yml", "service.mac.yml"}
+            for svc_file in resolved_root.rglob("*"):
+                if svc_file.name in service_file_names and svc_file.is_file():
+                    found.add(svc_file.parent.resolve())
         except Exception:
             for child in sorted(resolved_root.iterdir()):
                 if not child.is_dir():
