@@ -48,7 +48,7 @@ def load_discovery_into_catalog(
         except ValueError as exc:
             logger.warning("Skipping service in %s: %s", service_dir, exc)
             continue
-        entries.append((Path(service_dir).resolve(), entry))
+        entries.append((service_dir, entry))
 
     payload_by_dir: dict[Path, dict[str, Any] | None] = {}
     timing_by_dir: dict[Path, tuple[float, str]] = {}
@@ -142,7 +142,7 @@ def load_discovery_into_catalog(
                     workdir_raw = str(launch.get("workdir") or "./")
                     workdir_path = Path(workdir_raw).expanduser()
                     if not workdir_path.is_absolute():
-                        workdir_path = (Path(service_dir).resolve() / workdir_path).resolve()
+                        workdir_path = (service_dir / workdir_path).resolve()
                     else:
                         workdir_path = workdir_path.resolve()
                     launch = dict(launch)
@@ -156,7 +156,7 @@ def load_discovery_into_catalog(
         try:
             service_spec = target_catalog.register_service(
                 payload["service"],
-                service_entry_path=Path(service_dir).resolve(),
+                service_entry_path=service_dir,
             )
         except Exception as exc:
             logger.warning("Failed to register service from %s: %s", service_dir, exc)

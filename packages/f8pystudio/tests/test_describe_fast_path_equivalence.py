@@ -6,7 +6,9 @@ from typing import Any
 from f8pysdk._specs.builtin_fields import normalize_describe_payload_dict
 from f8pysdk.codec import dump_json, validate_as
 from f8pysdk.monitoring import validate_describe_monitor_contract
+from f8pysdk.service_runtime_tools.inventory.catalog import ServiceCatalog
 from f8pysdk.service_runtime_tools.inventory.describe import describe_entry, read_static_describe_payload
+from f8pysdk.service_runtime_tools.inventory.discovery import load_discovery_into_catalog
 from f8pysdk.service_runtime_tools.inventory.entry import load_service_entry
 from f8pysdk.specs import F8ServiceDescribe
 
@@ -68,3 +70,13 @@ def test_load_service_entry_matches_expected_relative_binary_resolution() -> Non
     assert launch_payload["command"] == str(expected_command)
     assert launch_payload["args"] == []
     assert launch_payload["env"] == {}
+
+
+def test_discovery_registers_absolute_service_entry_path() -> None:
+    catalog = ServiceCatalog()
+    service_dir = Path("services/f8/engine")
+
+    found = load_discovery_into_catalog(roots=[service_dir], catalog=catalog, builtin_injectors=())
+
+    assert "f8.pyengine" in found
+    assert catalog.service_entry_path("f8.pyengine") == service_dir.resolve()
