@@ -169,12 +169,18 @@ def _normalize_runtime_edge(edge: F8Edge) -> dict[str, Any]:
         "toPort": str(edge.toPort),
         "kind": _enum_payload(edge.kind),
     }
-    _put_optional_payload(payload, "fromOperatorId", edge.fromOperatorId)
-    _put_optional_payload(payload, "toOperatorId", edge.toOperatorId)
-    _put_optional_payload(payload, "strategy", edge.strategy)
-    _put_optional_payload(payload, "queueSize", edge.queueSize)
-    _put_optional_payload(payload, "timeoutMs", edge.timeoutMs)
-    _put_optional_payload(payload, "direction", edge.direction)
+    if not _is_unset(edge.fromOperatorId):
+        payload["fromOperatorId"] = edge.fromOperatorId
+    if not _is_unset(edge.toOperatorId):
+        payload["toOperatorId"] = edge.toOperatorId
+    if not _is_unset(edge.strategy):
+        payload["strategy"] = _enum_payload(edge.strategy)
+    if not _is_unset(edge.queueSize):
+        payload["queueSize"] = edge.queueSize
+    if not _is_unset(edge.timeoutMs):
+        payload["timeoutMs"] = edge.timeoutMs
+    if not _is_unset(edge.direction):
+        payload["direction"] = _enum_payload(edge.direction)
     return payload
 
 
