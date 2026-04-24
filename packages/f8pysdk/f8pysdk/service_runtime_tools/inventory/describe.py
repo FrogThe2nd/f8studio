@@ -171,30 +171,34 @@ def describe_entry(
         return None
 
     payload_obj: Any = initial_data if initial_data else None
-    cmd = [str(launch.command), *[str(arg) for arg in (launch.args or [])], *[str(arg) for arg in describe_args]]
 
-    env = os.environ.copy()
-    launch_env = launch.env
-    if isinstance(launch_env, dict):
-        try:
-            env.update({str(k): str(v) for k, v in launch_env.items()})
-        except (AttributeError, RuntimeError, TypeError, ValueError):
-            pass
-
-    cwd = service_dir
-    try:
-        workdir_value = launch.workdir
-        workdir_raw = "./" if workdir_value is None or isinstance(workdir_value, msgspec.UnsetType) else str(workdir_value)
-        workdir_path = Path(workdir_raw).expanduser()
-        if not workdir_path.is_absolute():
-            workdir_path = (service_dir / workdir_path).resolve()
-        else:
-            workdir_path = workdir_path.resolve()
-        cwd = workdir_path
-    except Exception:
-        cwd = service_dir
+    def _describe_command_text() -> str:
+        return " ".join([str(launch.command), *[str(arg) for arg in (launch.args or [])], *[str(arg) for arg in describe_args]])
 
     if payload_obj is None:
+        cmd = [str(launch.command), *[str(arg) for arg in (launch.args or [])], *[str(arg) for arg in describe_args]]
+
+        env = os.environ.copy()
+        launch_env = launch.env
+        if isinstance(launch_env, dict):
+            try:
+                env.update({str(k): str(v) for k, v in launch_env.items()})
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                pass
+
+        cwd = service_dir
+        try:
+            workdir_value = launch.workdir
+            workdir_raw = "./" if workdir_value is None or isinstance(workdir_value, msgspec.UnsetType) else str(workdir_value)
+            workdir_path = Path(workdir_raw).expanduser()
+            if not workdir_path.is_absolute():
+                workdir_path = (service_dir / workdir_path).resolve()
+            else:
+                workdir_path = workdir_path.resolve()
+            cwd = workdir_path
+        except Exception:
+            cwd = service_dir
+
         started_at = time.perf_counter()
         try:
             proc = subprocess.run(
@@ -265,7 +269,7 @@ def describe_entry(
         data = dump_json(payload, mode="json")
     except Exception:
         if "service" not in data:
-            message = f"describe JSON missing required key 'service' for {service_dir}: {' '.join(cmd)}"
+            message = f"describe JSON missing required key 'service' for {service_dir}: {_describe_command_text()}"
             _add_discovery_error(message)
             logger.error(message)
             return None
