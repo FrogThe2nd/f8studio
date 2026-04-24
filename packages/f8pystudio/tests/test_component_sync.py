@@ -8,6 +8,7 @@ import threading
 import zlib
 
 import pytest
+from secretstorage.exceptions import ItemNotFoundException
 from qtpy import QtCore, QtWidgets
 from sqlalchemy import insert, select
 from f8pysdk.codec import copy_model
@@ -842,6 +843,43 @@ def test_component_sync_client_drops_saved_sessions_missing_keyring_refresh_toke
 
     assert client.current_session() is None
     assert client.current_user() is None
+    assert "Dropping saved component session with missing keyring refresh token" in caplog.text
+
+
+def test_component_sync_client_drops_saved_sessions_when_keyring_item_disappears(
+    tmp_path: Path,
+    caplog,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = QtCore.QSettings(str(tmp_path / "component-sync-missing-secretstorage-item.ini"), QtCore.QSettings.IniFormat)
+    settings.beginGroup("assetcloud/v1")
+    settings.setValue(
+        "saved_sessions",
+        [
+            {
+                "accountId": "acct-missing-secretstorage-item",
+                "baseUrl": "https://assetcloud.feel8.fun",
+                "user": {"userId": "u1", "name": "User One", "email": "u@example.com"},
+                "lastUsedAt": "2026-04-20T00:00:00+00:00",
+            }
+        ],
+    )
+    settings.setValue("current_account_id", "acct-missing-secretstorage-item")
+    settings.setValue("user", {"userId": "u1", "name": "User One", "email": "u@example.com"})
+    settings.endGroup()
+    settings.sync()
+
+    def _raise_missing_item(_service_name: str, _username: str) -> str:
+        raise ItemNotFoundException("Item does not exist!")
+
+    monkeypatch.setattr("f8pystudio.assets.common.asset_cloud_keyring.keyring.get_password", _raise_missing_item)
+    client = ComponentSyncClient(settings=settings, catalog_service=ComponentCatalogService(db_path=tmp_path / "assets.db"))
+
+    with caplog.at_level(logging.WARNING):
+        assert client.current_user() is None
+
+    assert client.saved_sessions() == []
+    assert client.current_session() is None
     assert "Dropping saved component session with missing keyring refresh token" in caplog.text
 
 

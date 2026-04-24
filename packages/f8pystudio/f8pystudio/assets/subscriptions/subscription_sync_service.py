@@ -178,10 +178,18 @@ class SubscriptionSyncService(QtCore.QObject):
                 self._last_completed_request_kind = request_kind
             return
 
-        variant_items, variant_skipped = self._collect_variant_items(variant_client)
+        try:
+            variant_items, variant_skipped = self._collect_variant_items(variant_client)
+        except F8VariantRemoteAuthError as exc:
+            self._complete_after_collection_auth_failure(request_kind=request_kind, exc=exc)
+            return
         if self._cancelled():
             return
-        component_items, component_skipped = self._collect_component_items(component_client)
+        try:
+            component_items, component_skipped = self._collect_component_items(component_client)
+        except F8ComponentRemoteAuthError as exc:
+            self._complete_after_collection_auth_failure(request_kind=request_kind, exc=exc)
+            return
         if self._cancelled():
             return
 
@@ -233,6 +241,21 @@ class SubscriptionSyncService(QtCore.QObject):
             self.sync_progress.emit(done, total)
 
         self.sync_finished.emit(installed, failed, skipped)
+        with self._state_lock:
+            self._last_completed_request_kind = request_kind
+
+    def _complete_after_collection_auth_failure(
+        self,
+        *,
+        request_kind: RequestKind,
+        exc: F8VariantRemoteAuthError | F8ComponentRemoteAuthError,
+    ) -> None:
+        logger.warning(
+            "Subscription sync skipped after auth failure request_kind=%s error=%s",
+            request_kind,
+            str(exc),
+        )
+        self.sync_finished.emit(0, 0, 0)
         with self._state_lock:
             self._last_completed_request_kind = request_kind
 

@@ -11,6 +11,7 @@ from f8pysdk.specs import F8VariantKind, F8VariantRecord
 from f8pystudio.assets.components.component_models import (
     F8ComponentEntry,
     F8ComponentRecord,
+    F8ComponentRemoteAuthError,
     F8ComponentRemoteListPage,
     F8ComponentRemoteUser,
     F8ComponentSourceKind,
@@ -19,6 +20,7 @@ from f8pystudio.assets.components.component_models import (
 from f8pystudio.assets.subscriptions import SubscriptionSyncService
 from f8pystudio.assets.variants.variant_models import (
     F8VariantEntry,
+    F8VariantRemoteAuthError,
     F8VariantRemoteListPage,
     F8VariantRemoteUser,
     F8VariantSourceKind,
@@ -124,6 +126,7 @@ class _FakeVariantClient:
     fail_install_ids: set[str]
     gate_install_by_id: dict[str, threading.Event]
     refresh_calls: int = 0
+    refresh_auth_error: str = ""
 
     def clone_for_background(self) -> _FakeVariantClient:
         return self
@@ -146,6 +149,8 @@ class _FakeVariantClient:
         del query
         del append
         assert scope == "subscribed"
+        if self.refresh_auth_error:
+            raise F8VariantRemoteAuthError(self.refresh_auth_error)
         index = 0 if not cursor else int(cursor)
         self.refresh_calls += 1
         entries = self.page_sequences[index] if index < len(self.page_sequences) else []
@@ -199,6 +204,7 @@ class _FakeComponentClient:
     fail_install_ids: set[str]
     gate_install_by_id: dict[str, threading.Event]
     refresh_calls: int = 0
+    refresh_auth_error: str = ""
 
     def clone_for_background(self) -> _FakeComponentClient:
         return self
@@ -217,6 +223,8 @@ class _FakeComponentClient:
         del query
         del append
         assert scope == "subscribed"
+        if self.refresh_auth_error:
+            raise F8ComponentRemoteAuthError(self.refresh_auth_error)
         index = 0 if not cursor else int(cursor)
         self.refresh_calls += 1
         entries = self.page_sequences[index] if index < len(self.page_sequences) else []
@@ -271,6 +279,8 @@ def _make_service(
     component_fail_install_ids: set[str] | None = None,
     variant_gate_install_by_id: dict[str, threading.Event] | None = None,
     component_gate_install_by_id: dict[str, threading.Event] | None = None,
+    variant_refresh_auth_error: str = "",
+    component_refresh_auth_error: str = "",
 ) -> tuple[SubscriptionSyncService, _FakeVariantClient, _FakeComponentClient]:
     variant_user = None if not logged_in else F8VariantRemoteUser(userId="user-1", name="Alice", email="alice@example.com")
     component_user = None if not logged_in else F8ComponentRemoteUser(userId="user-1", name="Alice", email="alice@example.com")
@@ -282,6 +292,7 @@ def _make_service(
         install_completed=[],
         fail_install_ids=set() if variant_fail_install_ids is None else set(variant_fail_install_ids),
         gate_install_by_id={} if variant_gate_install_by_id is None else dict(variant_gate_install_by_id),
+        refresh_auth_error=variant_refresh_auth_error,
     )
     component_client = _FakeComponentClient(
         user=component_user,
@@ -291,6 +302,7 @@ def _make_service(
         install_completed=[],
         fail_install_ids=set() if component_fail_install_ids is None else set(component_fail_install_ids),
         gate_install_by_id={} if component_gate_install_by_id is None else dict(component_gate_install_by_id),
+        refresh_auth_error=component_refresh_auth_error,
     )
     service = SubscriptionSyncService(variant_client=variant_client, component_client=component_client)
     return service, variant_client, component_client
@@ -373,6 +385,27 @@ def test_subscription_sync_service_is_noop_when_logged_out() -> None:
 
     assert _spy_count(started_spy) == 0
     assert _spy_count(finished_spy) == 0
+    assert service.is_running() is False
+
+
+def test_subscription_sync_service_finishes_without_traceback_when_component_collection_auth_fails() -> None:
+    _ensure_app()
+    service, variant_client, component_client = _make_service(
+        variant_pages=[[]],
+        component_refresh_auth_error="No saved cloud session is available.",
+    )
+    started_spy = QtTest.QSignalSpy(service.sync_started)
+    failed_spy = QtTest.QSignalSpy(service.sync_item_failed)
+    finished_spy = QtTest.QSignalSpy(service.sync_finished)
+
+    service.start_initial_sync()
+
+    _wait_until(lambda: _spy_count(finished_spy) == 1)
+    assert _spy_count(started_spy) == 0
+    assert _spy_count(failed_spy) == 0
+    assert list(finished_spy.at(0)) == [0, 0, 0]
+    assert variant_client.refresh_calls == 1
+    assert component_client.refresh_calls == 0
     assert service.is_running() is False
 
 

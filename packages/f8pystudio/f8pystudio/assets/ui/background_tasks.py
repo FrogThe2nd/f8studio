@@ -7,6 +7,10 @@ import time
 from qtpy import QtCore
 
 
+def _signal_source_deleted(exc: RuntimeError) -> bool:
+    return "Signal source has been deleted" in str(exc)
+
+
 class BackgroundCallWorker(QtCore.QObject):
     succeeded = QtCore.Signal(int, object, float)
     failed = QtCore.Signal(int, object, float)
@@ -35,9 +39,17 @@ class BackgroundCallWorker(QtCore.QObject):
         try:
             result = self._task()
         except Exception as exc:
-            self.failed.emit(self._request_id, exc, time.perf_counter() - started_at)
+            try:
+                self.failed.emit(self._request_id, exc, time.perf_counter() - started_at)
+            except RuntimeError as emit_exc:
+                if not _signal_source_deleted(emit_exc):
+                    raise
             return
-        self.succeeded.emit(self._request_id, result, time.perf_counter() - started_at)
+        try:
+            self.succeeded.emit(self._request_id, result, time.perf_counter() - started_at)
+        except RuntimeError as exc:
+            if not _signal_source_deleted(exc):
+                raise
 
 
 __all__ = ["BackgroundCallWorker"]

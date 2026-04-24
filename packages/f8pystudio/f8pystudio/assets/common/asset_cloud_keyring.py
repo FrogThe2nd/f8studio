@@ -5,6 +5,11 @@ from typing import Protocol, cast
 import keyring
 from keyring.errors import KeyringError
 
+try:
+    from secretstorage.exceptions import ItemNotFoundException as SecretStorageItemNotFoundException
+except ImportError:
+    SecretStorageItemNotFoundException = None
+
 from .common import json_object_from_value
 
 _ASSET_CLOUD_REFRESH_TOKEN_SERVICE_NAME = "feel8.f8pystudio.assetcloud.refresh-token"
@@ -29,10 +34,14 @@ class KeyringAssetCloudCredentialStore:
             return ""
         try:
             value = keyring.get_password(_ASSET_CLOUD_REFRESH_TOKEN_SERVICE_NAME, normalized_account_id)
-        except KeyringError as exc:
-            raise AssetCloudCredentialStoreError(
-                f"Failed to load asset cloud refresh token from keyring for account {normalized_account_id!r}."
-            ) from exc
+        except Exception as exc:
+            if _is_missing_keyring_item_error(exc):
+                return ""
+            if isinstance(exc, KeyringError):
+                raise AssetCloudCredentialStoreError(
+                    f"Failed to load asset cloud refresh token from keyring for account {normalized_account_id!r}."
+                ) from exc
+            raise
         return str(value or "").strip()
 
     def store_refresh_token(self, *, account_id: str, refresh_token: str) -> None:
@@ -95,3 +104,9 @@ def saved_session_account_ids_from_raw(raw_sessions: list[object]) -> list[str]:
 
 def _normalized_account_id(account_id: str) -> str:
     return str(account_id or "").strip()
+
+
+def _is_missing_keyring_item_error(exc: Exception) -> bool:
+    if SecretStorageItemNotFoundException is not None and isinstance(exc, SecretStorageItemNotFoundException):
+        return True
+    return False
