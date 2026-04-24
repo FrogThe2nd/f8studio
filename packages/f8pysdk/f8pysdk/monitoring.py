@@ -144,7 +144,7 @@ def monitor_snapshot_schema_dict() -> dict[str, object]:
     return deepcopy(_MONITOR_SNAPSHOT_SCHEMA_DICT)
 
 
-def _monitor_snapshot_schema_dict_cached() -> dict[str, object]:
+def monitor_snapshot_schema_dict_cached() -> dict[str, object]:
     global _MONITOR_SNAPSHOT_SCHEMA_DICT
     if _MONITOR_SNAPSHOT_SCHEMA_DICT is None:
         raw = dump_json(monitor_snapshot_value_schema(), mode="json", by_alias=True)
@@ -207,7 +207,7 @@ def validate_describe_monitor_contract(payload: dict[str, Any]) -> None:
         )
     except Exception as exc:
         raise MonitorContractError(f"`monitor` valueSchema is invalid: {type(exc).__name__}: {exc}") from exc
-    expected_schema = _monitor_snapshot_schema_dict_cached()
+    expected_schema = monitor_snapshot_schema_dict_cached()
     if parsed_schema != expected_schema:
         raise MonitorContractError("`monitor` valueSchema must match F8MonitorSnapshot schema")
     if telemetry_ports:
@@ -649,6 +649,7 @@ __all__ = [
     "MonitorContractError",
     "monitor_snapshot_data_port",
     "monitor_snapshot_schema_dict",
+    "monitor_snapshot_schema_dict_cached",
     "monitor_snapshot_value_schema",
     "validate_describe_monitor_contract",
     "validate_monitor_report_payload",

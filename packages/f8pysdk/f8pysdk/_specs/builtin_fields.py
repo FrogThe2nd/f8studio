@@ -6,7 +6,7 @@ from ..generated import F8DataPortSpec, F8OperatorSpec, F8ServiceSpec, F8StateAc
 from ..monitoring import (
     MONITOR_PORT_NAME,
     monitor_snapshot_data_port,
-    monitor_snapshot_schema_dict,
+    monitor_snapshot_schema_dict_cached,
 )
 from .schema import boolean_schema, string_schema
 
@@ -156,7 +156,7 @@ def _monitor_port_dict() -> dict[str, Any]:
         "description": "Unified runtime monitor snapshots (health/resource/perf/error).",
         "required": True,
         "showOnNode": False,
-        "valueSchema": monitor_snapshot_schema_dict(),
+        "valueSchema": monitor_snapshot_schema_dict_cached(),
     }
 
 
