@@ -291,7 +291,7 @@ def describe_entry(
     try:
         service_payload = data.get("service") or {}
         if isinstance(service_payload, dict) and not service_payload.get("launch"):
-            service_payload["launch"] = dump_json(entry.launch, mode="json")
+            service_payload["launch"] = msgspec.to_builtins(entry.launch)
             data["service"] = service_payload
     except (AttributeError, RuntimeError, TypeError, ValueError):
         pass
