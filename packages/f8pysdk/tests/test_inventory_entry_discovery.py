@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
-from f8pysdk.service_runtime_tools.inventory.entry import find_service_dirs
+from f8pysdk.codec import dump_json
+from f8pysdk.service_runtime_tools.inventory.entry import find_service_dirs, load_service_entry
 
 
 def test_find_service_dirs_discovers_nested_service_files(tmp_path: Path) -> None:
@@ -31,3 +33,32 @@ def test_find_service_dirs_ignores_missing_roots(tmp_path: Path) -> None:
     missing = tmp_path / "missing"
 
     assert find_service_dirs([missing]) == []
+
+
+def _write_entry(service_dir: Path, *, workdir: str = "./", command: str = "runner") -> None:
+    service_dir.mkdir(parents=True)
+    (service_dir / "service.yml").write_text(
+        "schemaVersion: f8serviceEntry/1\n"
+        "serviceClass: f8.tests.entry\n"
+        "label: Entry\n"
+        "version: 0.0.1\n"
+        "launch:\n"
+        f"  command: {command}\n"
+        "  args: []\n"
+        "  env: {}\n"
+        f"  workdir: {workdir}\n",
+        encoding="utf-8",
+    )
+
+
+def test_load_service_entry_matches_for_relative_and_absolute_service_dir(tmp_path: Path, monkeypatch: Any) -> None:
+    root = tmp_path / "services"
+    service_dir = root / "f8" / "entry"
+    _write_entry(service_dir, workdir="../entry", command="runner")
+    monkeypatch.chdir(tmp_path)
+
+    relative_payload = dump_json(load_service_entry(Path("services/f8/entry")), mode="json")
+    absolute_payload = dump_json(load_service_entry(service_dir.resolve()), mode="json")
+
+    assert relative_payload == absolute_payload
+    assert relative_payload["launch"]["workdir"] == str(service_dir.resolve())

@@ -53,7 +53,6 @@ def _platform_service_yml_names() -> list[str]:
 
 
 def _service_yml_candidates(service_dir: Path) -> list[Path]:
-    service_dir = Path(service_dir).resolve()
     platform_names = _platform_service_yml_names()
     all_platform_names = ["service.win.yml", "service.linux.yml", "service.mac.yml"]
     fallback_names: list[str] = []
@@ -93,7 +92,6 @@ def find_service_dirs(roots: Iterable[Path]) -> list[Path]:
 
 
 def _absolutize_entry_paths(entry: F8ServiceEntry, *, service_dir: Path) -> F8ServiceEntry:
-    service_dir = Path(service_dir).resolve()
     launch = entry.launch
     workdir_raw = str(launch.workdir or "./")
     workdir_path = Path(workdir_raw).expanduser()
@@ -163,7 +161,8 @@ def load_service_entry(service_dir: Path) -> F8ServiceEntry:
         return obj
 
     data: Any | None = None
-    for candidate in _service_yml_candidates(service_dir):
+    candidates = _service_yml_candidates(service_dir)
+    for candidate in candidates:
         try:
             loaded = _try_load_candidate(candidate)
         except Exception as exc:
@@ -173,7 +172,7 @@ def load_service_entry(service_dir: Path) -> F8ServiceEntry:
             break
 
     if data is None:
-        tried = ", ".join(str(path.name) for path in _service_yml_candidates(service_dir))
+        tried = ", ".join(str(path.name) for path in candidates)
         raise ValueError(f"{service_dir} is missing a service entry YAML (tried: {tried})")
 
     if "launch" not in data and "command" in data:
