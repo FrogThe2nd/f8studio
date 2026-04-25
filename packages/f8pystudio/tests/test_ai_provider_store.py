@@ -72,6 +72,7 @@ class TestProviderCodec:
         assert restored.provider_id == "test"
         assert restored.display_name == "Test"
         assert restored.protocol == "openai"
+        assert restored.api_mode == "chat_completions"
         assert restored.api_key == ""
 
     def test_round_trip_full(self) -> None:
@@ -79,6 +80,7 @@ class TestProviderCodec:
             provider_id="anthropic",
             display_name="Anthropic",
             protocol="anthropic",
+            api_mode="chat_completions",
             api_key="sk-xyz",
             endpoint="https://api.anthropic.com",
             cached_models=[ModelInfo(model_id="claude-3-7", display_name="Claude 3.7")],
@@ -88,16 +90,58 @@ class TestProviderCodec:
         )
         restored = _provider_from_dict(_provider_to_dict(cfg))
         assert restored.protocol == "anthropic"
+        assert restored.api_mode == "chat_completions"
         assert restored.api_key == "sk-xyz"
         assert len(restored.cached_models) == 1
         assert restored.cached_models[0].model_id == "claude-3-7"
         assert restored.reasoning_level == "high"
+
+    def test_round_trip_responses_api_mode(self) -> None:
+        cfg = ProviderConfig(
+            provider_id="openai",
+            display_name="OpenAI",
+            protocol="openai",
+            api_mode="responses",
+            endpoint="https://api.openai.com/v1",
+        )
+        restored = _provider_from_dict(_provider_to_dict(cfg))
+        assert restored.api_mode == "responses"
 
     def test_invalid_protocol_defaults_to_openai(self) -> None:
         d = _provider_to_dict(ProviderConfig(provider_id="x", display_name="X"))
         d["protocol"] = "unsupported_thing"
         restored = _provider_from_dict(d)
         assert restored.protocol == "openai"
+
+    def test_legacy_official_openai_migrates_to_responses(self) -> None:
+        restored = _provider_from_dict({
+            "provider_id": "openai",
+            "display_name": "OpenAI",
+            "protocol": "openai",
+            "endpoint": "https://api.openai.com/v1",
+            "chat_path": "",
+        })
+        assert restored.api_mode == "responses"
+
+    def test_legacy_openai_chat_path_stays_chat_completions(self) -> None:
+        restored = _provider_from_dict({
+            "provider_id": "openai",
+            "display_name": "OpenAI",
+            "protocol": "openai",
+            "endpoint": "https://api.openai.com/v1",
+            "chat_path": "/chat/completions",
+        })
+        assert restored.api_mode == "chat_completions"
+
+    def test_legacy_non_official_openai_endpoint_stays_chat_completions(self) -> None:
+        restored = _provider_from_dict({
+            "provider_id": "google_gemini",
+            "display_name": "Google Gemini",
+            "protocol": "openai",
+            "endpoint": "https://generativelanguage.googleapis.com/v1beta/openai",
+            "chat_path": "",
+        })
+        assert restored.api_mode == "chat_completions"
 
 
 # ---------------------------------------------------------------------------
@@ -218,3 +262,53 @@ class TestModelsUrl:
         )
         url = _models_url(cfg)
         assert url == "http://localhost:8080/v1/models"
+
+
+class TestModelPing:
+    pytest.importorskip("qtpy")
+
+    def test_responses_ping_payload(self, tmp_path: Path) -> None:
+        store_path = tmp_path / "ai_providers.json"
+        with patch.object(AiProviderStore, "_resolve_storage_path", return_value=store_path):
+            store = AiProviderStore()
+        cfg = ProviderConfig(
+            provider_id="openai",
+            display_name="OpenAI",
+            protocol="openai",
+            api_mode="responses",
+            endpoint="https://api.openai.com/v1",
+        )
+        assert store._test_chat_url(cfg) == "https://api.openai.com/v1/responses"
+        assert store._build_ping_payload(cfg, "gpt-4.1") == {
+            "model": "gpt-4.1",
+            "input": [{"role": "user", "content": "ping"}],
+            "max_output_tokens": 1,
+            "store": False,
+        }
+
+    def test_chat_completions_ping_payload_stays_unchanged(self, tmp_path: Path) -> None:
+        store_path = tmp_path / "ai_providers.json"
+        with patch.object(AiProviderStore, "_resolve_storage_path", return_value=store_path):
+            store = AiProviderStore()
+        cfg = ProviderConfig(provider_id="custom", display_name="Custom", protocol="openai")
+        assert store._test_chat_url(cfg) == "https://api.openai.com/v1/chat/completions"
+        assert store._build_ping_payload(cfg, "gpt-4o") == {
+            "model": "gpt-4o",
+            "messages": [{"role": "user", "content": "ping"}],
+            "max_tokens": 1,
+            "stream": False,
+        }
+
+    def test_chat_path_with_v1_prefix_does_not_duplicate_default_base(self, tmp_path: Path) -> None:
+        store_path = tmp_path / "ai_providers.json"
+        with patch.object(AiProviderStore, "_resolve_storage_path", return_value=store_path):
+            store = AiProviderStore()
+        cfg = ProviderConfig(
+            provider_id="openai",
+            display_name="OpenAI",
+            protocol="openai",
+            api_mode="responses",
+            endpoint="https://api.openai.com/v1",
+            chat_path="/v1/responses",
+        )
+        assert store._test_chat_url(cfg) == "https://api.openai.com/v1/responses"

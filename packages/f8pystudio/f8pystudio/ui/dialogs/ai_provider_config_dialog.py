@@ -13,7 +13,7 @@ import logging
 
 from qtpy import QtCore, QtGui, QtWidgets  # type: ignore[import-not-found]
 
-from ...ai_assist.registry import DEFAULT_PROVIDERS, ProviderConfig, ProviderProtocol
+from ...ai_assist.registry import ProviderApiMode, ProviderConfig, ProviderProtocol
 from ...ai_assist.store import AiProviderStore
 
 logger = logging.getLogger(__name__)
@@ -23,6 +23,11 @@ _PROTOCOLS: list[tuple[str, ProviderProtocol]] = [
     ("Anthropic", "anthropic"),
     ("Ollama", "ollama"),
     ("Custom", "custom"),
+]
+
+_API_MODES: list[tuple[str, ProviderApiMode]] = [
+    ("Responses API", "responses"),
+    ("Chat Completions", "chat_completions"),
 ]
 
 
@@ -90,6 +95,12 @@ class AiProviderConfigDialog(QtWidgets.QDialog):
         self._protocol_combo.currentIndexChanged.connect(self._on_protocol_changed)  # type: ignore[attr-defined]
         form.addRow("Protocol:", self._protocol_combo)
 
+        self._api_mode_combo = QtWidgets.QComboBox()
+        for label, _ in _API_MODES:
+            self._api_mode_combo.addItem(label)
+        self._api_mode_combo.currentIndexChanged.connect(self._on_api_mode_changed)  # type: ignore[attr-defined]
+        form.addRow("API Mode:", self._api_mode_combo)
+
         self._endpoint_edit = QtWidgets.QLineEdit()
         self._endpoint_edit.setPlaceholderText("Leave empty for protocol default")
         form.addRow("Endpoint URL:", self._endpoint_edit)
@@ -105,14 +116,14 @@ class AiProviderConfigDialog(QtWidgets.QDialog):
         self._chat_path_edit = QtWidgets.QComboBox()
         self._chat_path_edit.setEditable(True)
         self._chat_path_edit.addItems([
+            "/responses",
+            "/v1/responses",
             "/chat/completions",
             "/v1/chat/completions",
             "/v1/messages",
-            "/v1/completions",
-            "/v1/responses",
         ])
-        self._chat_path_edit.setPlaceholderText("Default: /chat/completions")
-        form.addRow("Chat Path:", self._chat_path_edit)
+        self._chat_path_edit.setPlaceholderText("Default: /responses or /chat/completions")
+        form.addRow("API Path:", self._chat_path_edit)
 
         # Model fetch row
         fetch_row = QtWidgets.QHBoxLayout()
@@ -175,7 +186,7 @@ class AiProviderConfigDialog(QtWidgets.QDialog):
         self._splitter.setSizes([260, 520])
 
         self._form_widgets: list[QtWidgets.QWidget] = [
-            self._name_edit, self._protocol_combo, self._endpoint_edit,
+            self._name_edit, self._protocol_combo, self._api_mode_combo, self._endpoint_edit,
             self._key_edit, self._models_path_edit, self._chat_path_edit,
             self._fetch_btn, self._test_btn, self._model_table,
             self._inline_model_combo, self._chat_model_combo, self._reasoning_combo,
@@ -219,6 +230,7 @@ class AiProviderConfigDialog(QtWidgets.QDialog):
             return
         self._load_form(cfg)
         self._set_form_enabled(True)
+        self._update_api_mode_controls(cfg.protocol, cfg.api_mode)
         self._del_btn.setEnabled(True)
 
     # ------------------------------------------------------------------
@@ -231,6 +243,11 @@ class AiProviderConfigDialog(QtWidgets.QDialog):
             (i for i, (_, p) in enumerate(_PROTOCOLS) if p == cfg.protocol), 0
         )
         self._protocol_combo.setCurrentIndex(proto_idx)
+        api_mode_idx = next(
+            (i for i, (_, mode) in enumerate(_API_MODES) if mode == cfg.api_mode), 1
+        )
+        self._api_mode_combo.setCurrentIndex(api_mode_idx)
+        self._update_api_mode_controls(cfg.protocol, cfg.api_mode)
         self._endpoint_edit.setText(cfg.endpoint)
         self._key_edit.setText(cfg.api_key)
         self._models_path_edit.setText(cfg.models_path)
@@ -310,6 +327,9 @@ class AiProviderConfigDialog(QtWidgets.QDialog):
         proto_idx = self._protocol_combo.currentIndex()
         if 0 <= proto_idx < len(_PROTOCOLS):
             cfg.protocol = _PROTOCOLS[proto_idx][1]
+        api_mode_idx = self._api_mode_combo.currentIndex()
+        if 0 <= api_mode_idx < len(_API_MODES):
+            cfg.api_mode = _API_MODES[api_mode_idx][1]
         cfg.endpoint = self._endpoint_edit.text().strip()
         cfg.api_key = self._key_edit.text().strip()
         cfg.models_path = self._models_path_edit.text().strip()
@@ -381,6 +401,9 @@ class AiProviderConfigDialog(QtWidgets.QDialog):
         cfg.api_key = self._key_edit.text().strip()
         cfg.endpoint = self._endpoint_edit.text().strip()
         cfg.models_path = self._models_path_edit.text().strip()
+        api_mode_idx = self._api_mode_combo.currentIndex()
+        if 0 <= api_mode_idx < len(_API_MODES):
+            cfg.api_mode = _API_MODES[api_mode_idx][1]
         cfg.chat_path = self._chat_path_edit.currentText().strip()
         self._store.save_provider(cfg)  # persist key/endpoint/paths first
 
@@ -452,7 +475,7 @@ class AiProviderConfigDialog(QtWidgets.QDialog):
         if not self._current_provider_id:
             return
         if 0 <= idx < len(_PROTOCOLS):
-            label, proto = _PROTOCOLS[idx]
+            _label, proto = _PROTOCOLS[idx]
             defaults = {
                 "openai": "https://api.openai.com/v1",
                 "anthropic": "https://api.anthropic.com",
@@ -461,6 +484,12 @@ class AiProviderConfigDialog(QtWidgets.QDialog):
             }
             if not self._endpoint_edit.text().strip():
                 self._endpoint_edit.setText(defaults.get(proto, ""))
+            current_mode = self._current_api_mode()
+            self._update_api_mode_controls(proto, current_mode)
+
+    def _on_api_mode_changed(self, _idx: int) -> None:
+        proto = self._current_protocol()
+        self._update_api_mode_controls(proto, self._current_api_mode())
 
     def _on_providers_changed(self) -> None:
         self._populate_list()
@@ -468,6 +497,38 @@ class AiProviderConfigDialog(QtWidgets.QDialog):
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    def _current_protocol(self) -> ProviderProtocol:
+        idx = self._protocol_combo.currentIndex()
+        if 0 <= idx < len(_PROTOCOLS):
+            return _PROTOCOLS[idx][1]
+        return "openai"
+
+    def _current_api_mode(self) -> ProviderApiMode:
+        idx = self._api_mode_combo.currentIndex()
+        if 0 <= idx < len(_API_MODES):
+            return _API_MODES[idx][1]
+        return "chat_completions"
+
+    def _update_api_mode_controls(self, protocol: ProviderProtocol, api_mode: ProviderApiMode) -> None:
+        is_openai_compatible = protocol in ("openai", "custom")
+        self._api_mode_combo.blockSignals(True)
+        try:
+            if is_openai_compatible:
+                idx = next((i for i, (_, mode) in enumerate(_API_MODES) if mode == api_mode), 1)
+            else:
+                idx = next((i for i, (_, mode) in enumerate(_API_MODES) if mode == "chat_completions"), 1)
+            self._api_mode_combo.setCurrentIndex(idx)
+        finally:
+            self._api_mode_combo.blockSignals(False)
+
+        self._api_mode_combo.setEnabled(is_openai_compatible)
+        if is_openai_compatible and api_mode == "responses":
+            self._chat_path_edit.setPlaceholderText("Default: /responses")
+        elif protocol == "anthropic":
+            self._chat_path_edit.setPlaceholderText("Default: /v1/messages")
+        else:
+            self._chat_path_edit.setPlaceholderText("Default: /chat/completions")
 
     def _set_form_enabled(self, enabled: bool) -> None:
         for w in self._form_widgets:

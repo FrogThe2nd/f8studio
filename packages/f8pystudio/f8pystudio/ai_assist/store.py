@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
+from typing import cast
 
 from qtpy import QtCore, QtNetwork  # type: ignore[import-not-found]
 
@@ -17,6 +18,7 @@ from .registry import (
     DEFAULT_PROVIDERS,
     ModelCapabilities,
     ModelInfo,
+    ProviderApiMode,
     ProviderConfig,
     ProviderProtocol,
 )
@@ -70,6 +72,7 @@ def _provider_to_dict(p: ProviderConfig) -> dict:
         "provider_id": p.provider_id,
         "display_name": p.display_name,
         "protocol": p.protocol,
+        "api_mode": p.api_mode,
         "api_key": p.api_key,
         "endpoint": p.endpoint,
         "models_path": p.models_path,
@@ -85,11 +88,19 @@ def _provider_from_dict(d: dict) -> ProviderConfig:
     protocol_raw = str(d.get("protocol", "openai"))
     if protocol_raw not in ("openai", "anthropic", "ollama", "custom"):
         protocol_raw = "openai"
-    protocol: ProviderProtocol = protocol_raw  # type: ignore[assignment]
+    protocol = cast(ProviderProtocol, protocol_raw)
+
+    api_mode_raw = str(d.get("api_mode", "")).strip()
+    if api_mode_raw in ("chat_completions", "responses"):
+        api_mode = cast(ProviderApiMode, api_mode_raw)
+    else:
+        api_mode = _migrated_api_mode(d, protocol)
+
     return ProviderConfig(
         provider_id=str(d["provider_id"]),
         display_name=str(d.get("display_name", d["provider_id"])),
         protocol=protocol,
+        api_mode=api_mode,
         api_key=str(d.get("api_key", "")),
         endpoint=str(d.get("endpoint", "")),
         models_path=str(d.get("models_path", "")),
@@ -99,6 +110,18 @@ def _provider_from_dict(d: dict) -> ProviderConfig:
         chat_model_id=str(d.get("chat_model_id", "")),
         reasoning_level=str(d.get("reasoning_level", "")),
     )
+
+
+def _migrated_api_mode(d: dict, protocol: ProviderProtocol) -> ProviderApiMode:
+    provider_id = str(d.get("provider_id", "")).strip()
+    endpoint = _normalize_endpoint(str(d.get("endpoint", "")))
+    chat_path = str(d.get("chat_path", "")).strip().lower()
+
+    if "chat/completions" in chat_path:
+        return "chat_completions"
+    if protocol == "openai" and provider_id == "openai" and endpoint in ("", "https://api.openai.com/v1"):
+        return "responses"
+    return "chat_completions"
 
 
 # ---------------------------------------------------------------------------
@@ -125,6 +148,20 @@ def _effective_endpoint(cfg: ProviderConfig) -> str:
     if ep:
         return ep
     return _DEFAULT_ENDPOINTS.get(cfg.protocol, "")
+
+
+def _normalize_endpoint(endpoint: str) -> str:
+    return str(endpoint or "").strip().rstrip("/").lower()
+
+
+def _join_api_path(base: str, path: str) -> str:
+    normalized_base = str(base or "").strip().rstrip("/")
+    normalized_path = str(path or "").strip()
+    if not normalized_path.startswith("/"):
+        normalized_path = "/" + normalized_path
+    if normalized_base.endswith("/v1") and normalized_path.startswith("/v1/"):
+        normalized_path = normalized_path[3:]
+    return f"{normalized_base}{normalized_path}"
 
 
 def _models_url(cfg: ProviderConfig) -> str:
@@ -290,13 +327,12 @@ class AiProviderStore(QtCore.QObject):
         base = _effective_endpoint(cfg)
         if cfg.chat_path:
             path = cfg.chat_path
-            if not path.startswith("/"):
-                path = "/" + path
-            return f"{base}{path}"
+            return _join_api_path(base, path)
         
         if cfg.protocol == "anthropic":
             return f"{base}/v1/messages"
-        # default openai
+        if cfg.protocol in ("openai", "custom") and cfg.api_mode == "responses":
+            return f"{base}/responses"
         return f"{base}/chat/completions"
 
     def _build_ping_payload(self, cfg: ProviderConfig, model_id: str) -> dict:
@@ -305,6 +341,13 @@ class AiProviderStore(QtCore.QObject):
                 "model": model_id,
                 "messages": [{"role": "user", "content": "ping"}],
                 "max_tokens": 1,
+            }
+        if cfg.protocol in ("openai", "custom") and cfg.api_mode == "responses":
+            return {
+                "model": model_id,
+                "input": [{"role": "user", "content": "ping"}],
+                "max_output_tokens": 1,
+                "store": False,
             }
         # openai / ollama / custom
         return {
