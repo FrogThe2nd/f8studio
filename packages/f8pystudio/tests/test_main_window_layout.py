@@ -169,7 +169,7 @@ class _LayoutHarness(QtWidgets.QMainWindow):
             checked=False,
         )
         self._project_history_action = self._create_action("Project History", handler=lambda: None)
-        self._save_component_action = self._create_action("Save Component", handler=lambda: None)
+        self._save_component_action = self._create_action("Export to Component", handler=lambda: None)
         self._import_project_json_action = self._create_action("Import Project JSON", handler=lambda: None)
         self._export_project_json_action = self._create_action("Export Project JSON", handler=lambda: None)
         self._export_published_session_action = self._create_action(
@@ -306,6 +306,31 @@ def test_view_menu_actions_are_checkable_and_reset_restores_defaults(tmp_path: P
     saved_state = window._read_layout_bytes(key=window._WINDOW_LAYOUT_STATE_KEY)
     assert saved_state is not None
     assert saved_state == window.saveState(window._WINDOW_LAYOUT_STATE_VERSION)
+
+
+def test_file_menu_exposes_export_to_component(tmp_path: Path) -> None:
+    _ensure_app()
+    window = _LayoutHarness(_new_settings(tmp_path / "studio-file-menu.ini"))
+    window._setup_menu()
+
+    file_menu_action = window.menuBar().actions()[0]
+    file_menu = file_menu_action.menu()
+    assert file_menu is not None
+
+    action_texts = [action.text() for action in file_menu.actions() if not action.isSeparator()]
+    assert action_texts == [
+        "Open Project",
+        "Quick Save",
+        "Save Project As",
+        "Clear All Nodes",
+        "Auto Save",
+        "Project History",
+        "Import Project JSON",
+        "Export Project JSON",
+        "Export to Component",
+        "Export Published Session",
+    ]
+    assert window._save_component_action in file_menu.actions()
 
 
 def test_performance_overlay_setting_is_applied_and_restored(tmp_path: Path) -> None:
