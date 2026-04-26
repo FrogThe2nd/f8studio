@@ -304,6 +304,9 @@ class GraphIdentityActionsMixin:
                 new_service_id=nid,
                 service_class=str(spec.serviceClass or ""),
             )
+            bridge = self._service_bridge
+            if bridge is not None:
+                bridge.unmanage_service(old_id)
             old_timer = self._reclaim_timers.pop(old_id, None)
             if old_timer is not None:
                 remaining_ms = -1
