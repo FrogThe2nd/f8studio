@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -65,7 +66,8 @@ def test_load_service_entry_matches_expected_relative_binary_resolution() -> Non
     launch_payload = dump_json(entry.launch, mode="json")
 
     expected_workdir = service_dir.resolve()
-    expected_command = (expected_workdir / "../linux/f8cvkit_template_match_service").resolve()
+    binary_relpath = "../win/f8cvkit_template_match_service.exe" if os.name == "nt" else "../linux/f8cvkit_template_match_service"
+    expected_command = (expected_workdir / binary_relpath).resolve()
     assert launch_payload["workdir"] == str(expected_workdir)
     assert launch_payload["command"] == str(expected_command)
     assert launch_payload["args"] == []

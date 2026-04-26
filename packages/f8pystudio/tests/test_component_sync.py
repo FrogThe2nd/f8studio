@@ -8,7 +8,6 @@ import threading
 import zlib
 
 import pytest
-from secretstorage.exceptions import ItemNotFoundException
 from qtpy import QtCore, QtWidgets
 from sqlalchemy import insert, select
 from f8pysdk.codec import copy_model
@@ -851,6 +850,8 @@ def test_component_sync_client_drops_saved_sessions_when_keyring_item_disappears
     caplog,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    secretstorage_exceptions = pytest.importorskip("secretstorage.exceptions")
+    item_not_found_exception = secretstorage_exceptions.ItemNotFoundException
     settings = QtCore.QSettings(str(tmp_path / "component-sync-missing-secretstorage-item.ini"), QtCore.QSettings.IniFormat)
     settings.beginGroup("assetcloud/v1")
     settings.setValue(
@@ -870,7 +871,7 @@ def test_component_sync_client_drops_saved_sessions_when_keyring_item_disappears
     settings.sync()
 
     def _raise_missing_item(_service_name: str, _username: str) -> str:
-        raise ItemNotFoundException("Item does not exist!")
+        raise item_not_found_exception("Item does not exist!")
 
     monkeypatch.setattr("f8pystudio.assets.common.asset_cloud_keyring.keyring.get_password", _raise_missing_item)
     client = ComponentSyncClient(settings=settings, catalog_service=ComponentCatalogService(db_path=tmp_path / "assets.db"))

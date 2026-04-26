@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from f8pystudio.assets.ui.component_catalog_browser import ComponentCatalogBrowserMixin
-from f8pystudio.assets.ui import component_catalog_browser, variant_catalog_browser
+from f8pystudio.assets.ui import catalog_auth_state_mixin
 from f8pystudio.assets.ui.variant_catalog_browser import VariantCatalogBrowserMixin
 from f8pystudio.ui.support.ui_icons import StudioIcon
 
@@ -40,13 +40,16 @@ class _FakeCatalog:
     _btn_refresh: _FakeButton
     _is_loading_remote_scope: bool = False
 
+    def _current_catalog_user(self) -> object | None:
+        return self._sync_client.current_user()
+
 
 def _fake_icon_for(_button: object, token: StudioIcon) -> StudioIcon:
     return token
 
 
 def test_component_catalog_account_icon_uses_saved_user_without_access_token(monkeypatch: Any) -> None:
-    monkeypatch.setattr(component_catalog_browser, "icon_for", _fake_icon_for)
+    monkeypatch.setattr(catalog_auth_state_mixin, "icon_for", _fake_icon_for)
     catalog = _FakeCatalog(
         _sync_client=_FakeSyncClient(user=object(), access_token=""),
         _account_button=_FakeButton(),
@@ -60,7 +63,7 @@ def test_component_catalog_account_icon_uses_saved_user_without_access_token(mon
 
 
 def test_variant_catalog_account_icon_uses_saved_user_without_access_token(monkeypatch: Any) -> None:
-    monkeypatch.setattr(variant_catalog_browser, "icon_for", _fake_icon_for)
+    monkeypatch.setattr(catalog_auth_state_mixin, "icon_for", _fake_icon_for)
     catalog = _FakeCatalog(
         _sync_client=_FakeSyncClient(user=object(), access_token=""),
         _account_button=_FakeButton(),
@@ -74,7 +77,7 @@ def test_variant_catalog_account_icon_uses_saved_user_without_access_token(monke
 
 
 def test_asset_catalog_account_icon_shows_signed_out_when_no_user(monkeypatch: Any) -> None:
-    monkeypatch.setattr(component_catalog_browser, "icon_for", _fake_icon_for)
+    monkeypatch.setattr(catalog_auth_state_mixin, "icon_for", _fake_icon_for)
     catalog = _FakeCatalog(
         _sync_client=_FakeSyncClient(user=None, access_token="token"),
         _account_button=_FakeButton(),

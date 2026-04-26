@@ -17,6 +17,7 @@ from f8pystudio.assets.variants.variant_models import (
     F8VariantDraftOriginKind,
     F8VariantEntry,
     F8VariantKind,
+    F8VariantRemoteAuth,
     F8VariantRemoteAuthError,
     F8VariantRemoteRequestError,
     F8VariantRemoteConflictError,
@@ -698,9 +699,20 @@ def test_variant_sync_client_can_cache_remote_content_without_installing(tmp_pat
             local_provider=LocalVariantProvider(db_path=db_path),
             remote_provider=RemoteCacheProvider(db_path=db_path),
         )
-        client = VariantSyncClient(settings=settings, catalog_service=service)
+        credential_store = _MemoryCredentialStore()
+        client = VariantSyncClient(settings=settings, catalog_service=service, credential_store=credential_store)
         base_url = f"http://127.0.0.1:{server.server_port}"
-        _ = client.login(base_url=base_url, email="u@example.com", password="p", remember=True)
+        client._set_auth(
+            F8VariantRemoteAuth(
+                accessToken="access-u1",
+                accessTokenExpiresAt="2026-04-21T12:00:00+00:00",
+                refreshToken="refresh-u1",
+                refreshTokenExpiresAt="2026-04-22T12:00:00+00:00",
+                user=F8VariantRemoteUser(userId="u1", name="User One", email="u@example.com"),
+            ),
+            base_url=base_url,
+            remember=True,
+        )
 
         cached = client.cache_variant_content("public-1")
         installed_entry = service.entry("public-1", include_uninstalled=False)

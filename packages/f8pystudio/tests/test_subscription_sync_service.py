@@ -323,7 +323,7 @@ def test_subscription_sync_service_only_enqueues_diffed_assets() -> None:
 
     service.start_initial_sync()
 
-    _wait_until(lambda: _spy_count(finished_spy) == 1)
+    _wait_until(lambda: _spy_count(finished_spy) == 1 and not service.is_running())
     assert _spy_count(started_spy) == 1
     assert list(started_spy.at(0)) == [0]
     assert list(finished_spy.at(0)) == [0, 0, 2]
@@ -348,7 +348,7 @@ def test_subscription_sync_service_processes_installations_serially() -> None:
 
     gate.set()
 
-    _wait_until(lambda: _spy_count(finished_spy) == 1)
+    _wait_until(lambda: _spy_count(finished_spy) == 1 and not service.is_running())
     assert variant_client.install_completed == ["variant-a"]
     assert component_client.install_completed == ["component-a"]
 
@@ -400,7 +400,7 @@ def test_subscription_sync_service_finishes_without_traceback_when_component_col
 
     service.start_initial_sync()
 
-    _wait_until(lambda: _spy_count(finished_spy) == 1)
+    _wait_until(lambda: _spy_count(finished_spy) == 1 and not service.is_running())
     assert _spy_count(started_spy) == 0
     assert _spy_count(failed_spy) == 0
     assert list(finished_spy.at(0)) == [0, 0, 0]
