@@ -326,6 +326,7 @@ class F8StudioServiceNodeItem(
         self._svc_toolbar_proxy: QtWidgets.QGraphicsProxyWidget | None = None
         self._ports_end_y: float | None = None
         self._open_code_editors: list[QtWidgets.QDialog] = []
+        self.f8_container_forced_disabled: bool = False
         self._layout_metrics_ready: bool = False
         self._embedded_widget_metrics: dict[str, _LayoutMetric] = {}
         self._state_panel_metrics: dict[str, _StatePanelLayoutMetric] = {}

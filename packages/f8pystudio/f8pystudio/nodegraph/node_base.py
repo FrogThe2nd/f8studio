@@ -81,6 +81,8 @@ class F8StudioBaseNode(BaseNode):
         for name, val in self.view.properties.items():
             if name in ["inputs", "outputs"]:
                 continue
+            if name == "disabled" and self._view_is_container_forced_disabled():
+                continue
             if name not in self.model.properties and name not in self.model.custom_properties:
                 continue
             self.model.set_property(name, val)
@@ -97,6 +99,12 @@ class F8StudioBaseNode(BaseNode):
             self.model.f8_ui_overrides = {}
         if not isinstance(self.model.f8_ui_state, dict):
             self.model.f8_ui_state = {}
+
+    def _view_is_container_forced_disabled(self) -> bool:
+        try:
+            return bool(self.view.f8_container_forced_disabled)
+        except (AttributeError, RuntimeError, TypeError):
+            return False
 
     def add_ephemeral_widget(self, widget: NodeBaseWidget) -> None:
         """

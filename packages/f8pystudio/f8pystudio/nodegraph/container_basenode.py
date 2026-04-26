@@ -234,12 +234,47 @@ class F8StudioContainerNodeItem(AbstractNodeItem):
         self._forced_child_prev_disabled[key] = prev_disabled
         if prev_disabled:
             return
+        view.f8_container_forced_disabled = True
         try:
             view.disabled = True
         except (AttributeError, RuntimeError, TypeError):
+            view.f8_container_forced_disabled = False
             self._forced_child_prev_disabled.pop(key, None)
             return
         self._forced_child_ids.add(key)
+
+    def _backend_node_for_child_view(self, view: Any) -> Any | None:
+        key = self._child_state_key(view)
+        if key is None:
+            return None
+        try:
+            viewer = self.viewer()
+        except (AttributeError, RuntimeError, TypeError):
+            return None
+        if not isinstance(viewer, F8StudioNodeViewer):
+            return None
+        graph = viewer.f8_graph
+        if graph is None:
+            return None
+        try:
+            return graph.get_node_by_id(key)
+        except (AttributeError, KeyError, RuntimeError, TypeError):
+            return None
+
+    def _set_child_model_disabled(self, view: Any, disabled: bool) -> None:
+        node = self._backend_node_for_child_view(view)
+        if node is None:
+            return
+        target = bool(disabled)
+        try:
+            node.set_property("disabled", target, push_undo=False)
+            return
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            pass
+        try:
+            node.model.set_property("disabled", target)
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            pass
 
     def _restore_forced_child_if_needed(self, view: Any) -> None:
         key = self._child_state_key(view)
@@ -253,10 +288,14 @@ class F8StudioContainerNodeItem(AbstractNodeItem):
             view.disabled = bool(prev_disabled)
         except (AttributeError, RuntimeError, TypeError):
             return
+        view.f8_container_forced_disabled = False
+        self._set_child_model_disabled(view, bool(prev_disabled))
         self._forced_child_ids.discard(key)
         self._forced_child_prev_disabled.pop(key, None)
 
     def _clear_forced_child_cache(self) -> None:
+        for child in list(self._child_views):
+            child.f8_container_forced_disabled = False
         self._forced_child_ids.clear()
         self._forced_child_prev_disabled.clear()
 

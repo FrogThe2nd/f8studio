@@ -5,9 +5,11 @@ from typing import Any
 
 from qtpy import QtCore, QtWidgets
 
+from f8pystudio.nodegraph.node_base import F8StudioBaseNode
 from f8pystudio.nodegraph.backdrop_nodeitem import F8StudioBackdropNodeItem
 from f8pystudio.nodegraph.container_basenode import F8StudioContainerNodeItem
 from f8pystudio.nodegraph.node_graph import F8StudioGraph
+from f8pystudio.nodegraph.viewer import F8StudioNodeViewer
 
 
 def _ensure_app() -> QtWidgets.QApplication:
@@ -63,6 +65,28 @@ class _FakeGraphNode:
         return list(self.model.pos)
 
 
+class _FakeModel:
+    def __init__(self) -> None:
+        self.properties: dict[str, object] = {"disabled": False, "name": ""}
+        self.custom_properties: dict[str, object] = {}
+        self.f8_sys: dict[str, object] = {}
+        self.f8_ui_overrides: dict[str, object] = {}
+        self.f8_ui_state: dict[str, object] = {}
+        self.set_calls: list[tuple[str, object]] = []
+
+    def set_property(self, name: str, value: object) -> None:
+        self.set_calls.append((name, value))
+        self.properties[name] = value
+
+
+class _FakePersistentNode:
+    def __init__(self) -> None:
+        self.set_calls: list[tuple[str, object, bool]] = []
+
+    def set_property(self, name: str, value: object, push_undo: bool = True) -> None:
+        self.set_calls.append((str(name), value, bool(push_undo)))
+
+
 def test_filter_redundant_container_child_moves_drops_child_when_container_also_moved() -> None:
     container_view = _FakeView("svc", container_item=None)
     child_view = _FakeView("op", container_item=container_view)
@@ -114,6 +138,47 @@ def test_child_views_to_translate_during_drag_skips_selected_children() -> None:
     result = F8StudioContainerNodeItem._child_views_to_translate_during_drag(container_item)
 
     assert result == [unselected_child]
+
+
+def test_update_model_does_not_persist_container_forced_child_disabled() -> None:
+    node = F8StudioBaseNode.__new__(F8StudioBaseNode)
+    model = _FakeModel()
+    node._model = model
+    node._view = SimpleNamespace(
+        properties={"disabled": True, "name": "Child"},
+        widgets={},
+        f8_container_forced_disabled=True,
+    )
+
+    F8StudioBaseNode.update_model(node)
+
+    assert ("disabled", True) not in model.set_calls
+    assert ("name", "Child") in model.set_calls
+    assert model.properties["disabled"] is False
+
+
+def test_container_restore_resets_forced_child_view_and_persistent_disabled_state() -> None:
+    _ensure_app()
+    node = _FakePersistentNode()
+    graph = SimpleNamespace(get_node_by_id=lambda node_id: node if str(node_id) == "op" else None)
+    viewer = F8StudioNodeViewer()
+    viewer.set_graph(graph)
+
+    container = F8StudioContainerNodeItem(name="Service Container")
+    container.viewer = lambda: viewer  # type: ignore[method-assign]
+    child_view = SimpleNamespace(
+        id="op",
+        disabled=True,
+        f8_container_forced_disabled=True,
+    )
+    container._forced_child_ids = {"op"}
+    container._forced_child_prev_disabled = {"op": False}
+
+    container._restore_forced_child_if_needed(child_view)
+
+    assert child_view.disabled is False
+    assert child_view.f8_container_forced_disabled is False
+    assert node.set_calls == [("disabled", False, False)]
 
 
 def test_container_title_double_click_enters_inline_rename() -> None:
