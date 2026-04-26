@@ -25,6 +25,14 @@ from f8pyengine.operators.handy_out import (  # noqa: E402
 
 
 class HandyOutTests(unittest.IsolatedAsyncioTestCase):
+    def test_spec_excludes_command_rate_state_fields(self) -> None:
+        state_names = {str(field.name or "") for field in list(HandyOutRuntimeNode.SPEC.stateFields or [])}
+        self.assertNotIn("lastHttpStatus", state_names)
+        self.assertNotIn("lastResult", state_names)
+        self.assertNotIn("sentCommands", state_names)
+        self.assertNotIn("droppedCommands", state_names)
+        self.assertNotIn("lastSentTsMs", state_names)
+
     async def _build_node(self, *, state_values: dict[str, Any]) -> tuple[Any, HandyOutRuntimeNode]:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
@@ -195,7 +203,7 @@ class HandyOutTests(unittest.IsolatedAsyncioTestCase):
 
         last_error = (await bus.get_state("handy1", "lastError")).value
         self.assertIn("3000", str(last_error))
-        self.assertEqual((await bus.get_state("handy1", "lastHttpStatus")).value, 200)
+        self.assertEqual(int(node._last_http_status), 200)
         await node.close()
 
     async def test_rate_limit_backoff_drops_following_exec(self) -> None:
@@ -233,8 +241,7 @@ class HandyOutTests(unittest.IsolatedAsyncioTestCase):
         await node.on_exec("e2")
         await asyncio.sleep(0.02)
         self.assertEqual(len(calls), 1)
-        dropped = (await bus.get_state("handy1", "droppedCommands")).value
-        self.assertGreaterEqual(int(dropped), 1)
+        self.assertGreaterEqual(int(node._dropped_commands), 1)
         await node.close()
 
     async def test_validate_state_rejects_invalid_values(self) -> None:

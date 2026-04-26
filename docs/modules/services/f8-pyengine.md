@@ -936,6 +936,7 @@ Receives UDP packets and exposes explicit raw/text/json views plus packet metada
 #### Pitfalls / Gotchas
 
 - **Exact Bytes vs Packet Envelope**: Use `raw` when downstream only needs payload bytes. Use `packet` when downstream also needs source/timestamp metadata or exec-context packet snapshots.
+- **No Packet-Rate State**: Packet counters, byte lengths, remote address, and parse diagnostics are intentionally not published as state. Read packet-rate information from `raw`, `text`, `json`, or `packet` outputs so the Studio UI state sync does not get flooded.
 - **Bind Security**: Non-loopback bind addresses stay blocked unless `allowNonLoopbackBind` is enabled explicitly.
 - **Protocol Split**: `UDP In` does not decode motion payloads on its own anymore; decoding must happen in a dedicated downstream operator.
 
@@ -960,13 +961,7 @@ Receives UDP packets and exposes explicit raw/text/json views plus packet metada
 | `maxQueue` | `rw` | `true` | `false` | `integer / default=512` | Max queued packets before dropping (1..4096). |
 | `reuseAddress` | `rw` | `true` | `false` | `boolean / default=False` | Best-effort: allow multiple listeners on the same bind tuple if the OS supports it. |
 | `listening` | `ro` | `true` | `true` | `boolean / default=False` | Readonly flag telling whether the UDP socket is active. |
-| `packetCount` | `ro` | `true` | `true` | `integer / default=0` | Readonly number of received UDP packets. |
-| `droppedPackets` | `ro` | `true` | `false` | `integer / default=0` | Readonly number of packets dropped because the queue was full. |
-| `lastRemoteAddress` | `ro` | `true` | `false` | `string / default=` | Readonly source IP of the latest packet. |
-| `lastRemotePort` | `ro` | `true` | `false` | `integer / default=0` | Readonly source port of the latest packet. |
-| `lastByteLength` | `ro` | `true` | `false` | `integer / default=0` | Readonly byte size of the latest packet. |
-| `lastParseError` | `ro` | `true` | `false` | `string / default=` | Readonly JSON parse error for the latest packet, if any. |
-| `lastError` | `ro` | `true` | `true` | `string / default=` | Readonly receiver/socket error, if any. |
+| `lastError` | `ro` | `true` | `true` | `string / default=` | Readonly receiver/socket error, updated only when the error state changes. |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 | `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
@@ -978,8 +973,8 @@ Receives UDP packets and exposes explicit raw/text/json views plus packet metada
 - `maxQueue` (Max Queue, `rw`): Max queued packets before dropping (1..4096). Schema: `integer / default=512`.
 - `reuseAddress` (Reuse Address, `rw`): Best-effort: allow multiple listeners on the same bind tuple if the OS supports it. Schema: `boolean / default=False`.
 - `listening` (Listening, `ro`): Readonly flag telling whether the UDP socket is active. Schema: `boolean / default=False`.
-- `packetCount` (Packet Count, `ro`): Readonly number of received UDP packets. Schema: `integer / default=0`.
-- `droppedPackets` (Dropped Packets, `ro`): Readonly number of packets dropped because the queue was full. Schema: `integer / default=0`.
+- `lastError` (Last Error, `ro`): Readonly receiver/socket error, updated only when the error state changes. Schema: `string / default=`.
+- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
 
 ##### Data Input Ports
 
@@ -1256,8 +1251,8 @@ Execute Python code with onStart/onState/onMsg/onExec/onStop hooks.
 
 | Name | Access | Required | On Node | Schema | Description |
 | --- | --- | --- | --- | --- | --- |
-| `code` | `rw` | `true` | `false` | `string / default=# Hooks template (uncomment what you need):<br># - onStart(ctx)<br># - onState(ctx, field, value, ts_ms=None)<br># - onMsg(ctx, inputs)<br># - onExec(ctx, exec_in, inputs)<br># - onStop(ctx)<br>#<br># Notes:<br># - If you define no hooks, the node is a no-op.<br># - ctx.locals is preserved between calls (script-local memory)<br># - ctx.exec_in is set only for exec-triggered calls<br># - ctx.states.<field> reads cached rw/ro/wo state snapshot<br>#   - example: ctx.states.foo / ctx.states.pose.x<br># - await ctx.read_state(field)  # fresh runtime read<br># - ctx.states.get(field)  # cached snapshot<br># - ctx.set_state(field, value)<br>#   - await ctx.set_state_async(field, value)<br># - onStart return values are ignored; use ctx.emit()/ctx.set_state().<br># - inputs binding mode is configured by state `inputMode`:<br>#   - input_view (default): supports dot and mapping access<br>#   - raw_dict: plain dict only<br>#   - msgspec_struct: typed struct from dataIn schema<br># - State TypeGuard helpers are available from f8_dynamic_states<br>#   - example: from f8_dynamic_states import is_state_lastError<br>#   - then: if is_state_lastError(value, field): ...<br># - Video SHM helpers:<br>#   - ctx.subscribe_video_shm(key, shm_name, decode='auto', use_event=False)<br>#   - pkt = ctx.get_video_shm(key)<br>#   - ctx.unsubscribe_video_shm(key)<br>#   - ctx.list_video_shm_subscriptions()<br>#<br># Return value protocol:<br># - onMsg: {'outputs': {...}} or any value (emits to 'out' if present)<br># - onExec: {'exec': ['exec', ...], 'outputs': {...}}<br><br>from typing import TYPE_CHECKING, Any<br>if TYPE_CHECKING:<br>    from f8_script_api import F8Inputs, F8PyEngineContext, F8States<br><br>def onStart(ctx: 'F8PyEngineContext') -> None:<br>    ctx.log('python_script started')<br><br># def onState(<br>#     ctx: 'F8PyEngineContext',<br>#     field: str,<br>#     value: Any,<br>#     ts_ms: int \| None = None,<br># ) -> None:<br>#     ctx.log(f'state {field}={value} ts_ms={ts_ms}')<br>#<br># def onMsg(ctx: 'F8PyEngineContext', inputs: 'F8Inputs') -> dict[str, Any]:<br>#     msg = inputs.msg<br>#     return {'outputs': {'out': msg}}<br>#<br># def onExec(ctx: 'F8PyEngineContext', exec_in: str, inputs: 'F8Inputs') -> dict[str, Any]:<br>#     if exec_in == 'exec2':<br>#         return {'exec': ['exec2'], 'outputs': {'out': inputs.msg}}<br>#     return {'exec': ['exec'], 'outputs': {'out': inputs.msg}}<br>#<br># def onStop(ctx: 'F8PyEngineContext') -> None:<br>#     ctx.log('python_script stopped')<br>` | Python source code optionally defining hooks: onStart/onState/onMsg/onExec/onStop. |
-| `inputMode` | `rw` | `true` | `false` | `string / enum[input_view, raw_dict, msgspec_struct] / default=input_view` | Input binding mode: input_view \| raw_dict \| msgspec_struct. |
+| `code` | `rw` | `true` | `false` | `string / default=# Hooks template (uncomment what you need):<br># - onStart(ctx)<br># - onState(ctx, field, value, ts_ms=None)<br># - onMsg(ctx, inputs)<br># - onExec(ctx, exec_in, inputs)<br># - onStop(ctx)<br>#<br># Notes:<br># - If you define no hooks, the node is a no-op.<br># - ctx.locals is preserved between calls (script-local memory)<br># - ctx.exec_in is set only for exec-triggered calls<br># - ctx.states.<field> reads cached rw/ro/wo state snapshot<br>#   - example: ctx.states.foo / ctx.states.pose.x<br># - await ctx.read_state(field)  # fresh runtime read<br># - ctx.states.get(field)  # cached snapshot<br># - ctx.set_state(field, value)<br>#   - await ctx.set_state_async(field, value)<br># - onStart return values are ignored; use ctx.emit()/ctx.set_state().<br># - inputs binding mode is configured by state `inputMode`:<br>#   - input_view (default): supports dot and mapping access<br>#   - raw_dict: plain dict only (faster for mapping-style high-frequency scripts)<br>#   - msgspec_struct: typed struct from dataIn schema (faster for dot-style high-frequency scripts)<br># - State TypeGuard helpers are available from f8_dynamic_states<br>#   - example: from f8_dynamic_states import is_state_lastError<br>#   - then: if is_state_lastError(value, field): ...<br># - Video SHM helpers:<br>#   - ctx.subscribe_video_shm(key, shm_name, decode='auto', use_event=False)<br>#   - pkt = ctx.get_video_shm(key)<br>#   - ctx.unsubscribe_video_shm(key)<br>#   - ctx.list_video_shm_subscriptions()<br>#<br># Return value protocol:<br># - onMsg: {'outputs': {...}} or any value (emits to 'out' if present)<br># - onExec: {'exec': ['exec', ...], 'outputs': {...}}<br><br>from typing import TYPE_CHECKING, Any<br>if TYPE_CHECKING:<br>    from f8_script_api import F8Inputs, F8PyEngineContext, F8States<br><br>def onStart(ctx: 'F8PyEngineContext') -> None:<br>    ctx.log('python_script started')<br><br># def onState(<br>#     ctx: 'F8PyEngineContext',<br>#     field: str,<br>#     value: Any,<br>#     ts_ms: int \| None = None,<br># ) -> None:<br>#     ctx.log(f'state {field}={value} ts_ms={ts_ms}')<br>#<br># def onMsg(ctx: 'F8PyEngineContext', inputs: 'F8Inputs') -> dict[str, Any]:<br>#     msg = inputs.msg<br>#     return {'outputs': {'out': msg}}<br>#<br># def onExec(ctx: 'F8PyEngineContext', exec_in: str, inputs: 'F8Inputs') -> dict[str, Any]:<br>#     if exec_in == 'exec2':<br>#         return {'exec': ['exec2'], 'outputs': {'out': inputs.msg}}<br>#     return {'exec': ['exec'], 'outputs': {'out': inputs.msg}}<br>#<br># def onStop(ctx: 'F8PyEngineContext') -> None:<br>#     ctx.log('python_script stopped')<br>` | Python source code optionally defining hooks: onStart/onState/onMsg/onExec/onStop. |
+| `inputMode` | `rw` | `true` | `false` | `string / enum[input_view, raw_dict, msgspec_struct] / default=input_view` | Input binding mode: input_view \| raw_dict \| msgspec_struct. For high-frequency scripts, prefer raw_dict for mapping access or msgspec_struct for dot access. |
 | `lastError` | `wo` | `true` | `false` | `string / default=` | Last script error (compile/runtime). |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 | `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
@@ -1284,8 +1279,8 @@ Execute Python code with onStart/onState/onMsg/onExec/onStop hooks.
 # - onStart return values are ignored; use ctx.emit()/ctx.set_state().
 # - inputs binding mode is configured by state `inputMode`:
 #   - input_view (default): supports dot and mapping access
-#   - raw_dict: plain dict only
-#   - msgspec_struct: typed struct from dataIn schema
+#   - raw_dict: plain dict only (faster for mapping-style high-frequency scripts)
+#   - msgspec_struct: typed struct from dataIn schema (faster for dot-style high-frequency scripts)
 # - State TypeGuard helpers are available from f8_dynamic_states
 #   - example: from f8_dynamic_states import is_state_lastError
 #   - then: if is_state_lastError(value, field): ...
@@ -1326,7 +1321,7 @@ def onStart(ctx: 'F8PyEngineContext') -> None:
 # def onStop(ctx: 'F8PyEngineContext') -> None:
 #     ctx.log('python_script stopped')
 `.
-- `inputMode` (Input Mode, `rw`): Input binding mode: input_view | raw_dict | msgspec_struct. Schema: `string / enum[input_view, raw_dict, msgspec_struct] / default=input_view`.
+- `inputMode` (Input Mode, `rw`): Input binding mode: input_view | raw_dict | msgspec_struct. For high-frequency scripts, prefer raw_dict for mapping access or msgspec_struct for dot access. Schema: `string / enum[input_view, raw_dict, msgspec_struct] / default=input_view`.
 - `lastError` (Last Error, `wo`): Last script error (compile/runtime). Schema: `string / default=`.
 - `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
 - `operatorId` (Operator Id, `ro`): Readonly: current operator/node id (operatorId). Schema: `string`.
@@ -1613,7 +1608,7 @@ _None_
 
 <a id="operator-f8-lovense-mock-server"></a>
 ### Lovense Mock Server (`f8.lovense_mock_server`)
-Event-driven input node that mocks the Lovense Local API, publishes received commands as state, and emits exec.
+Event-driven input node that mocks the Lovense Local API and emits received commands.
 
 #### When to Use
 
@@ -1624,12 +1619,13 @@ Event-driven input node that mocks the Lovense Local API, publishes received com
 #### Common Wiring Patterns
 
 - **Validation Branch**: Keep the mock server active on a side branch. Use it to confirm that your `Lovense Out` or downstream parser/post-process nodes are receiving the expected Lovense command payloads.
-- **Protocol Sniffing**: Inspect the emitted event state and execution triggers using `Print` or `Text Viz` nodes to see exactly how the "virtual device" is responding to your graph.
+- **Protocol Sniffing**: Inspect the emitted `event` data output and execution triggers using `Print` or `Text Viz` nodes to see exactly how the "virtual device" is responding to your graph.
 - **Automated Testing**: Use it in automated scenario tests to verify that a logic chain produces the correct device commands without needing human interaction.
 
 #### Pitfalls / Gotchas
 
 - **Virtual vs Physical**: The mock server validates protocol flow and message timing, but it cannot simulate the physical feel, mechanical latency, or battery/Bluetooth nuances of the actual hardware.
+- **Events Are Data, Not State**: Incoming commands can arrive at device-command rate, so the latest command is exposed through the `event` data port instead of a high-frequency state field.
 - **Bind Conflicts**: If the mock server fails to start or appears "silent," check if another service (or even the actual Lovense Connect app) is already using the local API ports on your machine.
 - **Initialization order**: The mock server should ideally be started before the nodes that attempt to connect to it.
 
@@ -1642,7 +1638,7 @@ Event-driven input node that mocks the Lovense Local API, publishes received com
 
 - Exec outputs: `event`
 - Data inputs: none
-- Data outputs: none
+- Data outputs: `event`
 
 ##### State Fields
 
@@ -1652,11 +1648,10 @@ Event-driven input node that mocks the Lovense Local API, publishes received com
 | `allowNonLoopbackBind` | `rw` | `true` | `false` | `boolean / default=False` | When true, allow bindAddress values other than loopback. |
 | `port` | `rw` | `true` | `true` | `integer / default=30010` | HTTP port for the mock Lovense server. |
 | `printEnabled` | `rw` | `true` | `false` | `boolean / default=False` | If enabled, logs raw incoming requests and outgoing responses (debug). |
-| `eventIncludePayload` | `rw` | `true` | `false` | `boolean / default=False` | Include the parsed request payload in the `event` state (debug). |
-| `eventIncludeRequest` | `rw` | `true` | `false` | `boolean / default=False` | Include request headers/body in the `event` state (debug). |
+| `eventIncludePayload` | `rw` | `true` | `false` | `boolean / default=False` | Include the parsed request payload in the `event` data output (debug). |
+| `eventIncludeRequest` | `rw` | `true` | `false` | `boolean / default=False` | Include request headers/body in the `event` data output (debug). |
 | `listening` | `ro` | `true` | `true` | `boolean / default=False` | True if the HTTP server is currently listening. |
 | `lastError` | `ro` | `true` | `true` | `string / default=` | Last server error (e.g. bind failure). |
-| `event` | `ro` | `true` | `true` | `object{eventId, isoTime, method, path, ...}` | Latest received Lovense command (dict with seq/eventId/summary/raw). |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 | `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
@@ -1666,8 +1661,8 @@ Event-driven input node that mocks the Lovense Local API, publishes received com
 - `allowNonLoopbackBind` (Allow Non-loopback Bind, `rw`): When true, allow bindAddress values other than loopback. Schema: `boolean / default=False`.
 - `port` (Port, `rw`): HTTP port for the mock Lovense server. Schema: `integer / default=30010`.
 - `printEnabled` (Print Raw IO, `rw`): If enabled, logs raw incoming requests and outgoing responses (debug). Schema: `boolean / default=False`.
-- `eventIncludePayload` (Event Include Payload, `rw`): Include the parsed request payload in the `event` state (debug). Schema: `boolean / default=False`.
-- `eventIncludeRequest` (Event Include Request, `rw`): Include request headers/body in the `event` state (debug). Schema: `boolean / default=False`.
+- `eventIncludePayload` (Event Include Payload, `rw`): Include the parsed request payload in the `event` data output (debug). Schema: `boolean / default=False`.
+- `eventIncludeRequest` (Event Include Request, `rw`): Include request headers/body in the `event` data output (debug). Schema: `boolean / default=False`.
 - `listening` (Listening, `ro`): True if the HTTP server is currently listening. Schema: `boolean / default=False`.
 - `lastError` (Last Error, `ro`): Last server error (e.g. bind failure). Schema: `string / default=`.
 
@@ -1677,7 +1672,9 @@ _None_
 
 ##### Data Output Ports
 
-_None_
+| Name | Required | On Node | Schema | Description |
+| --- | --- | --- | --- | --- |
+| `event` | `true` | `true` | `object{eventId, isoTime, method, path, ...}` | Latest received Lovense command event. |
 
 #### Related Scenarios
 
@@ -1761,7 +1758,7 @@ Detect whether a signal has stayed nearly unchanged for long enough to be consid
 
 - **Fallback Switching**: Feed the primary signal into `Silence Detector.value`, then use graph logic to switch `Switch Mixer.currentChannel` to a fallback port when `isSilent` becomes true.
 - **State-Driven Logic**: Pair it with `State Expr`, `State Trigger`, or UI bindings when other graph nodes should respond to silence as a boolean condition.
-- **Sparse Monitoring**: Show `isSilent` on the node and inspect `lastActiveTsMs` for quick debugging without adding another visualization stream.
+- **Sparse Monitoring**: `isSilent` is intentionally the only runtime state output; activity timestamps are not published as state because active signals can update at tick rate.
 
 #### Pitfalls / Gotchas
 
@@ -1788,7 +1785,6 @@ Detect whether a signal has stayed nearly unchanged for long enough to be consid
 | `silenceMs` | `rw` | `true` | `true` | `integer / default=500` | If the input changes less than deltaThreshold for this long, mark it silent. |
 | `deltaThreshold` | `rw` | `true` | `true` | `number / default=0.001` | Absolute change threshold to treat the input as active. |
 | `isSilent` | `ro` | `true` | `true` | `boolean / default=False` | Readonly sparse state output indicating whether the signal is currently silent. |
-| `lastActiveTsMs` | `ro` | `true` | `false` | `integer / default=0` | Readonly timestamp of the last detected activity transition. |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 | `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
@@ -1797,7 +1793,6 @@ Detect whether a signal has stayed nearly unchanged for long enough to be consid
 - `silenceMs` (Silence (ms), `rw`): If the input changes less than deltaThreshold for this long, mark it silent. Schema: `integer / default=500`.
 - `deltaThreshold` (Delta Threshold, `rw`): Absolute change threshold to treat the input as active. Schema: `number / default=0.001`.
 - `isSilent` (Is Silent, `ro`): Readonly sparse state output indicating whether the signal is currently silent. Schema: `boolean / default=False`.
-- `lastActiveTsMs` (Last Active (tsMs), `ro`): Readonly timestamp of the last detected activity transition. Schema: `integer / default=0`.
 - `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
 - `operatorId` (Operator Id, `ro`): Readonly: current operator/node id (operatorId). Schema: `string`.
 
@@ -1978,6 +1973,7 @@ Drive The Handy via HDSP using normalized 0..1 input values.
 
 - **Transport Role**: Treat this node strictly as a communication layer. Do not attempt to fix signal timing or motion logic here; those issues should be addressed in the `f8-tcode` or `Range Map` nodes.
 - **Latency Over network**: Commands sent to The Handy are subject to network jitter. If the motion feels "stuck" or delayed, check your local Wi-Fi stability and the `intervalMs` setting to ensure you aren't overwhelming the device's buffer.
+- **Command Telemetry Is Data, Not State**: HTTP status/result and sent-position diagnostics are emitted on data ports. They are not stored as state because successful commands can occur at motion tick rate.
 - **Key Sensitivity**: The connection key is sensitive information. Avoid sharing session files that contain your unique device key if you are collaborating with others.
 
 #### Operator Reference
@@ -2008,11 +2004,6 @@ Drive The Handy via HDSP using normalized 0..1 input values.
 | `immediateResponse` | `rw` | `true` | `false` | `boolean / default=False` | Default immediateResponse value for /hdsp/xpt. |
 | `stopOnTarget` | `rw` | `true` | `false` | `boolean / default=False` | Default stopOnTarget value for /hdsp/xpt. |
 | `lastError` | `ro` | `false` | `true` | `string / default=` | Last runtime error message. |
-| `lastHttpStatus` | `ro` | `false` | `true` | `integer / default=0` | Last HTTP status code from Handy API. |
-| `lastResult` | `ro` | `false` | `true` | `number / default=0.0` | Last Handy RPC result value. |
-| `sentCommands` | `ro` | `false` | `false` | `integer / default=0` | Total successfully sent HDSP commands. |
-| `droppedCommands` | `ro` | `false` | `false` | `integer / default=0` | Commands dropped due to backoff or minSendInterval filtering. |
-| `lastSentTsMs` | `ro` | `false` | `false` | `integer / default=0` | Timestamp of the last successful HDSP command. |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 | `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
 
@@ -3093,6 +3084,7 @@ Tick-driven debug recorder that captures data samples and sparse state changes.
 
 - **Path Management**: Make sure `path` points somewhere writable and predictable for your environment.
 - **Not a Telemetry Stack**: This node is for targeted debug capture, not long-running archival logging.
+- **No Live Counters In State**: Recorded sample/event counters are kept internally and in the recording file, not published as state, so a high-frequency recording session does not flood Studio state sync.
 - **Scope Awareness**: Record only the samples you need, or the captured session becomes harder to reason about.
 
 #### Operator Reference
@@ -3115,8 +3107,6 @@ Tick-driven debug recorder that captures data samples and sparse state changes.
 | `append` | `rw` | `true` | `true` | `boolean / default=True` | Append to an existing compatible recording file. |
 | `recording` | `ro` | `true` | `true` | `boolean / default=False` | Readonly flag indicating whether the file is open and writable. |
 | `sessionStartTsMs` | `ro` | `true` | `false` | `integer` | Readonly session start timestamp in milliseconds. |
-| `sampleCount` | `ro` | `true` | `true` | `integer / default=0` | Readonly number of recorded data_sample events. |
-| `stateEventCount` | `ro` | `true` | `true` | `integer / default=0` | Readonly number of recorded state_change events. |
 | `lastError` | `ro` | `true` | `true` | `string` | Last recording error message. |
 | `svcId` | `ro` | `true` | `false` | `string` | Readonly: current service instance id (svcId). |
 | `operatorId` | `ro` | `true` | `false` | `string` | Readonly: current operator/node id (operatorId). |
@@ -3128,9 +3118,9 @@ Tick-driven debug recorder that captures data samples and sparse state changes.
 - `append` (Append, `rw`): Append to an existing compatible recording file. Schema: `boolean / default=True`.
 - `recording` (Recording, `ro`): Readonly flag indicating whether the file is open and writable. Schema: `boolean / default=False`.
 - `sessionStartTsMs` (Session Start, `ro`): Readonly session start timestamp in milliseconds. Schema: `integer`.
-- `sampleCount` (Sample Count, `ro`): Readonly number of recorded data_sample events. Schema: `integer / default=0`.
-- `stateEventCount` (State Event Count, `ro`): Readonly number of recorded state_change events. Schema: `integer / default=0`.
 - `lastError` (Last Error, `ro`): Last recording error message. Schema: `string`.
+- `svcId` (Service Id, `ro`): Readonly: current service instance id (svcId). Schema: `string`.
+- `operatorId` (Operator Id, `ro`): Readonly: current operator/node id (operatorId). Schema: `string`.
 
 ##### Data Input Ports
 

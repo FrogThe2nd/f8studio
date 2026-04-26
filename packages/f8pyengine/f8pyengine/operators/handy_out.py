@@ -361,11 +361,6 @@ class HandyOutRuntimeNode(OperatorNode):
 
     async def _publish_runtime_states(self) -> None:
         await self._publish_state_if_changed("lastError", str(self._last_error_message))
-        await self._publish_state_if_changed("lastHttpStatus", int(self._last_http_status))
-        await self._publish_state_if_changed("lastResult", float(self._last_result))
-        await self._publish_state_if_changed("sentCommands", int(self._sent_commands))
-        await self._publish_state_if_changed("droppedCommands", int(self._dropped_commands))
-        await self._publish_state_if_changed("lastSentTsMs", int(self._last_sent_ts_ms))
 
     async def _emit_data_ports(self) -> None:
         await self.emit("sentPosition", float(self._last_sent_position))
@@ -750,51 +745,6 @@ HandyOutRuntimeNode.SPEC = F8OperatorSpec(
             valueSchema=string_schema(default=""),
             access=F8StateAccess.ro,
             showOnNode=True,
-            required=False,
-        ),
-        F8StateSpec(
-            name="lastHttpStatus",
-            label="Last HTTP Status",
-            description="Last HTTP status code from Handy API.",
-            valueSchema=integer_schema(default=0, minimum=0),
-            access=F8StateAccess.ro,
-            showOnNode=True,
-            required=False,
-        ),
-        F8StateSpec(
-            name="lastResult",
-            label="Last Result",
-            description="Last Handy RPC result value.",
-            valueSchema=number_schema(default=0.0),
-            access=F8StateAccess.ro,
-            showOnNode=True,
-            required=False,
-        ),
-        F8StateSpec(
-            name="sentCommands",
-            label="Sent Commands",
-            description="Total successfully sent HDSP commands.",
-            valueSchema=integer_schema(default=0, minimum=0),
-            access=F8StateAccess.ro,
-            showOnNode=False,
-            required=False,
-        ),
-        F8StateSpec(
-            name="droppedCommands",
-            label="Dropped Commands",
-            description="Commands dropped due to backoff or minSendInterval filtering.",
-            valueSchema=integer_schema(default=0, minimum=0),
-            access=F8StateAccess.ro,
-            showOnNode=False,
-            required=False,
-        ),
-        F8StateSpec(
-            name="lastSentTsMs",
-            label="Last Sent Timestamp (ms)",
-            description="Timestamp of the last successful HDSP command.",
-            valueSchema=integer_schema(default=0, minimum=0),
-            access=F8StateAccess.ro,
-            showOnNode=False,
             required=False,
         ),
     ],

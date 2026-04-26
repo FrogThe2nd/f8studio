@@ -13,5 +13,6 @@
 ## Pitfalls / Gotchas
 
 - **Exact Bytes vs Packet Envelope**: Use `raw` when downstream only needs payload bytes. Use `packet` when downstream also needs source/timestamp metadata or exec-context packet snapshots.
+- **No Packet-Rate State**: Packet counters, byte lengths, remote address, and parse diagnostics are intentionally not published as state. Read packet-rate information from `raw`, `text`, `json`, or `packet` outputs so the Studio UI state sync does not get flooded.
 - **Bind Security**: Non-loopback bind addresses stay blocked unless `allowNonLoopbackBind` is enabled explicitly.
 - **Protocol Split**: `UDP In` does not decode motion payloads on its own anymore; decoding must happen in a dedicated downstream operator.

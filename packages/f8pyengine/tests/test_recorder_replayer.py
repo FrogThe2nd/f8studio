@@ -549,6 +549,11 @@ class RecorderReplayerTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("positionMs", state_names)
         self.assertIn("positionMs", data_names)
 
+    def test_recorder_sample_counters_are_not_state_fields(self) -> None:
+        state_names = [str(field.name) for field in list(RecorderRuntimeNode.SPEC.stateFields or [])]
+        self.assertNotIn("sampleCount", state_names)
+        self.assertNotIn("stateEventCount", state_names)
+
 
 def test_recorder_and_replayer_paths_are_publish_redacted() -> None:
     recorder_path = next(field for field in list(RecorderRuntimeNode.SPEC.stateFields or []) if str(field.name) == "path")

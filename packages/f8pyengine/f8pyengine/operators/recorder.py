@@ -63,6 +63,7 @@ class RecorderRuntimeNode(OperatorNode):
         self._session_start_ts_ms: int | None = None
         self._sample_count = 0
         self._state_event_count = 0
+        self._published_state_cache: dict[str, Any] = {}
         self._user_state_names = tuple(
             name for name in self.state_fields if str(name).strip() and str(name) not in _CONTROL_STATE_NAMES
         )
@@ -80,16 +81,18 @@ class RecorderRuntimeNode(OperatorNode):
         if name == "path":
             self._path = str(value or "").strip()
             self._close_writer()
+            await self._safe_set_state_if_changed("recording", False)
             return
         if name == "enabled":
             self._enabled = coerce_flag(value, default=self._enabled)
             if not self._enabled:
                 self._close_writer()
-                await self._safe_set_state("recording", False)
+                await self._safe_set_state_if_changed("recording", False)
             return
         if name == "append":
             self._append = coerce_flag(value, default=self._append)
             self._close_writer()
+            await self._safe_set_state_if_changed("recording", False)
             return
         if name not in self._user_state_names:
             return
@@ -106,7 +109,7 @@ class RecorderRuntimeNode(OperatorNode):
                 value=value,
             )
             self._state_event_count += 1
-            await self._publish_counters()
+            await self._publish_recording_state()
         except Exception as exc:
             logger.exception("[%s:recorder] failed to record state change: %s", self.node_id, name)
             await self._set_last_error(str(exc))
@@ -176,30 +179,33 @@ class RecorderRuntimeNode(OperatorNode):
                 data=data,
             )
             self._sample_count += 1
-            await self._publish_counters()
+            await self._publish_recording_state()
         except Exception as exc:
             logger.exception("[%s:recorder] failed to record sample", self.node_id)
             await self._set_last_error(str(exc))
 
-    async def _publish_counters(self) -> None:
+    async def _publish_recording_state(self) -> None:
         session_start_ts_ms = self._session_start_ts_ms
         if session_start_ts_ms is None:
             session_start_ts_ms = now_ms()
-        await self._safe_set_state("recording", self._writer is not None)
-        await self._safe_set_state("sessionStartTsMs", int(session_start_ts_ms))
-        await self._safe_set_state("sampleCount", int(self._sample_count))
-        await self._safe_set_state("stateEventCount", int(self._state_event_count))
-        await self._safe_set_state("lastError", "")
+        await self._safe_set_state_if_changed("recording", self._writer is not None)
+        await self._safe_set_state_if_changed("sessionStartTsMs", int(session_start_ts_ms))
+        await self._safe_set_state_if_changed("lastError", "")
 
     async def _set_last_error(self, message: str) -> None:
         self._close_writer()
-        await self._safe_set_state("recording", False)
-        await self._safe_set_state("lastError", str(message))
+        await self._safe_set_state_if_changed("recording", False)
+        await self._safe_set_state_if_changed("lastError", str(message))
 
-    async def _safe_set_state(self, field: str, value: Any) -> None:
+    async def _safe_set_state_if_changed(self, field: str, value: Any) -> None:
+        prev = self._published_state_cache.get(field)
+        if prev == value:
+            return
+        self._published_state_cache[field] = value
         try:
             await self.set_state(field, value)
         except Exception:
+            self._published_state_cache.pop(field, None)
             logger.exception("[%s:recorder] failed to publish state: %s", self.node_id, field)
 
     def _session_start_ts_ms_or_now(self, fallback: int) -> int:
@@ -281,24 +287,6 @@ RecorderRuntimeNode.SPEC = F8OperatorSpec(
             access=F8StateAccess.ro,
             required=True,
             showOnNode=False,
-        ),
-        F8StateSpec(
-            name="sampleCount",
-            label="Sample Count",
-            description="Readonly number of recorded data_sample events.",
-            valueSchema=integer_schema(default=0, minimum=0),
-            access=F8StateAccess.ro,
-            required=True,
-            showOnNode=True,
-        ),
-        F8StateSpec(
-            name="stateEventCount",
-            label="State Event Count",
-            description="Readonly number of recorded state_change events.",
-            valueSchema=integer_schema(default=0, minimum=0),
-            access=F8StateAccess.ro,
-            required=True,
-            showOnNode=True,
         ),
         F8StateSpec(
             name="lastError",

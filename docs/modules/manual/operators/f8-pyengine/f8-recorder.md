@@ -14,4 +14,5 @@
 
 - **Path Management**: Make sure `path` points somewhere writable and predictable for your environment.
 - **Not a Telemetry Stack**: This node is for targeted debug capture, not long-running archival logging.
+- **No Live Counters In State**: Recorded sample/event counters are kept internally and in the recording file, not published as state, so a high-frequency recording session does not flood Studio state sync.
 - **Scope Awareness**: Record only the samples you need, or the captured session becomes harder to reason about.

@@ -118,6 +118,15 @@ class UdpInTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("outputMode", state_names)
         self.assertNotIn("value", port_names)
 
+    def test_spec_excludes_packet_rate_state_fields(self) -> None:
+        state_names = {str(field.name or "") for field in list(UdpInRuntimeNode.SPEC.stateFields or [])}
+        self.assertNotIn("packetCount", state_names)
+        self.assertNotIn("droppedPackets", state_names)
+        self.assertNotIn("lastRemoteAddress", state_names)
+        self.assertNotIn("lastRemotePort", state_names)
+        self.assertNotIn("lastByteLength", state_names)
+        self.assertNotIn("lastParseError", state_names)
+
     async def test_json_packet_exposes_text_json_and_packet_views(self) -> None:
         port = _free_udp_port()
         bus, node, ctx = await self._setup_runtime(port=port)
@@ -174,15 +183,12 @@ class UdpInTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsInstance(packet, dict)
             assert isinstance(packet, dict)
             self.assertEqual(bytes(packet["raw"]), raw)
+            self.assertEqual(int(packet["byteLength"]), len(raw))
             self.assertNotIn("value", packet)
-
-            byte_length = await bus.get_state("udp_in", "lastByteLength")
-            self.assertTrue(byte_length.found)
-            self.assertEqual(int(byte_length.value or 0), len(raw))
         finally:
             await self._teardown_runtime(node)
 
-    async def test_invalid_json_keeps_text_and_records_parse_error(self) -> None:
+    async def test_invalid_json_keeps_text_without_packet_rate_state(self) -> None:
         port = _free_udp_port()
         bus, node, ctx = await self._setup_runtime(port=port)
         try:
@@ -203,8 +209,7 @@ class UdpInTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("value", packet)
 
             parse_error = await bus.get_state("udp_in", "lastParseError")
-            self.assertTrue(parse_error.found)
-            self.assertIn("JSONDecodeError", str(parse_error.value or ""))
+            self.assertFalse(parse_error.found)
         finally:
             await self._teardown_runtime(node)
 

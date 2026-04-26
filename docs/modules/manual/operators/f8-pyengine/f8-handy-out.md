@@ -14,4 +14,5 @@
 
 - **Transport Role**: Treat this node strictly as a communication layer. Do not attempt to fix signal timing or motion logic here; those issues should be addressed in the `f8-tcode` or `Range Map` nodes.
 - **Latency Over network**: Commands sent to The Handy are subject to network jitter. If the motion feels "stuck" or delayed, check your local Wi-Fi stability and the `intervalMs` setting to ensure you aren't overwhelming the device's buffer.
+- **Command Telemetry Is Data, Not State**: HTTP status/result and sent-position diagnostics are emitted on data ports. They are not stored as state because successful commands can occur at motion tick rate.
 - **Key Sensitivity**: The connection key is sensitive information. Avoid sharing session files that contain your unique device key if you are collaborating with others.

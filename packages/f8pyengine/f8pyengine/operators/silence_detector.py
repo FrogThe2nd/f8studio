@@ -47,7 +47,6 @@ class SilenceDetectorRuntimeNode(OperatorNode):
         self._delta_threshold = 0.001
         self._last_value: float | None = None
         self._last_active_s: float | None = None
-        self._last_active_ts_ms = 0
         self._is_silent = False
         self._refresh_runtime_params(self._initial_state)
 
@@ -87,26 +86,17 @@ class SilenceDetectorRuntimeNode(OperatorNode):
         raw = await self.pull("value", ctx_id=None)
         value = parse_number(raw)
         now_s = time.monotonic()
-        now_ts_ms = int(time.time() * 1000.0)
-        saw_activity = False
 
         if value is not None:
             value_f = float(value)
             if self._last_value is None:
                 self._last_active_s = now_s
-                saw_activity = True
             elif abs(value_f - float(self._last_value)) > float(self._delta_threshold):
                 self._last_active_s = now_s
-                saw_activity = True
             self._last_value = value_f
 
         if self._last_active_s is None:
             self._last_active_s = now_s
-            saw_activity = True
-
-        if saw_activity:
-            self._last_active_ts_ms = int(now_ts_ms)
-            await self.set_state("lastActiveTsMs", int(self._last_active_ts_ms))
 
         next_is_silent = False
         if float(self._silence_s) > 0.0:
@@ -169,15 +159,6 @@ SilenceDetectorRuntimeNode.SPEC = F8OperatorSpec(
             access=F8StateAccess.ro,
             required=True,
             showOnNode=True,
-        ),
-        F8StateSpec(
-            name="lastActiveTsMs",
-            label="Last Active (tsMs)",
-            description="Readonly timestamp of the last detected activity transition.",
-            valueSchema=integer_schema(default=0, minimum=0),
-            access=F8StateAccess.ro,
-            required=True,
-            showOnNode=False,
         ),
     ],
 )

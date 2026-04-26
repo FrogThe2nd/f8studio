@@ -7,12 +7,14 @@ import ipaddress
 import json
 import logging
 import traceback
+from collections import deque
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import parse_qsl
 
 from f8pysdk.codec import coerce_flag
 from f8pysdk.specs import (
+    F8DataPortSpec,
     F8OperatorSchemaVersion,
     F8OperatorSpec,
     F8RuntimeNode,
@@ -35,6 +37,7 @@ from f8pysdk.time_utils import now_ms
 from ..constants import SERVICE_CLASS
 
 OPERATOR_CLASS = "f8.lovense_mock_server"
+_EVENT_CACHE_MIN = 256
 
 logger = logging.getLogger(__name__)
 
@@ -365,9 +368,9 @@ class LovenseMockServerRuntimeNode(OperatorNode, ClosableNode, EntrypointNode):
 
     - POST /command (JSON)
     - Responds to GetToys with a minimal toy list
-    - Captures all requests into a runtime-owned `event` state field
+    - Captures command requests into the `event` data output
 
-    This node is event-driven and can trigger exec downstream after event commits.
+    This node is event-driven and can trigger exec downstream after each event.
     It keeps the server running as long as the node instance stays registered in
     the ServiceHost, so rungraph redeploys that do not recreate the node won't
     drop connections.
@@ -405,6 +408,10 @@ class LovenseMockServerRuntimeNode(OperatorNode, ClosableNode, EntrypointNode):
         )
 
         self._seq = 0
+        self._latest_event: dict[str, Any] | None = None
+        self._event_by_ctx_id: dict[str, dict[str, Any]] = {}
+        self._event_ctx_order: deque[str] = deque()
+        self._event_snapshot_limit = _EVENT_CACHE_MIN
         self._last_error: str | None = None
         self._entrypoint_ctx: EntrypointContext | None = None
         self._pending_exec_id: str | int | None = None
@@ -511,6 +518,18 @@ class LovenseMockServerRuntimeNode(OperatorNode, ClosableNode, EntrypointNode):
             self._event_include_request = coerce_flag(unwrap_json_value(value), default=False)
             return
 
+    async def compute_output(self, port: str, ctx_id: str | int | None = None) -> Any:
+        if str(port or "").strip() != "event":
+            return None
+        async with self._event_lock:
+            if ctx_id is not None:
+                event = self._event_by_ctx_id.get(self._ctx_key(ctx_id))
+                if event is not None:
+                    return dict(event)
+            if self._latest_event is None:
+                return None
+            return dict(self._latest_event)
+
     async def _restart_server(self) -> None:
         await self._stop_server()
         await self._ensure_server()
@@ -577,23 +596,35 @@ class LovenseMockServerRuntimeNode(OperatorNode, ClosableNode, EntrypointNode):
     async def _safe_set_state(self, field: str, value: Any) -> None:
         try:
             await self.set_state(field, value)
-        except Exception:
-            return
+        except Exception as exc:
+            logger.exception("[%s:lovense_mock_server] failed to publish state: %s", self.node_id, field, exc_info=exc)
 
     async def _safe_write_event(self, entry: dict[str, Any]) -> dict[str, Any] | None:
         async with self._event_lock:
             self._seq += 1
             seq = int(self._seq)
-        event = dict(entry)
-        event["seq"] = seq
-        # Include a changing field to avoid state value dedupe on repeats.
-        event["eventId"] = f"{self.node_id}:{seq}"
-        try:
-            await self.set_state("event", event)
-        except Exception:
-            return None
+            event = dict(entry)
+            event["seq"] = seq
+            event["eventId"] = f"{self.node_id}:{seq}"
+            self._latest_event = dict(event)
+            self._store_event_snapshot_locked(exec_id=str(event["eventId"]), event=event)
         self._request_exec_emit(exec_id=str(event["eventId"]))
         return event
+
+    @staticmethod
+    def _ctx_key(ctx_id: str | int | None) -> str:
+        return str(ctx_id) if ctx_id is not None else ""
+
+    def _store_event_snapshot_locked(self, *, exec_id: str | int, event: dict[str, Any]) -> None:
+        ctx_key = self._ctx_key(exec_id)
+        if not ctx_key:
+            return
+        if ctx_key not in self._event_by_ctx_id:
+            self._event_ctx_order.append(ctx_key)
+        self._event_by_ctx_id[ctx_key] = dict(event)
+        while len(self._event_ctx_order) > self._event_snapshot_limit:
+            oldest_key = self._event_ctx_order.popleft()
+            self._event_by_ctx_id.pop(oldest_key, None)
 
     def _request_exec_emit(self, *, exec_id: str | int) -> None:
         if self._entrypoint_ctx is None:
@@ -774,7 +805,7 @@ class LovenseMockServerRuntimeNode(OperatorNode, ClosableNode, EntrypointNode):
 
         typ = str(summary.get("type") or "")
 
-        # keep-alive traffic should not land in state.
+        # Keep-alive traffic should not replace the latest command event.
         if typ in ("ping", "pong"):
             if typ == "ping":
                 resp_obj = {"type": "pong"}
@@ -786,7 +817,6 @@ class LovenseMockServerRuntimeNode(OperatorNode, ClosableNode, EntrypointNode):
                 await self._write_json(writer, status=200, obj=resp_obj, keep_alive=keep_alive)
             return keep_alive
 
-        published_event: dict[str, Any] | None = None
         if typ in (
             "get_toys",
             "get_toy_name",
@@ -800,7 +830,7 @@ class LovenseMockServerRuntimeNode(OperatorNode, ClosableNode, EntrypointNode):
             "preset",
             "other",
         ):
-            published_event = await self._safe_write_event(entry)
+            await self._safe_write_event(entry)
 
         resp_obj = self._build_command_response(normalized, summary=summary, ts_ms=ts_ms)
 
@@ -1392,9 +1422,16 @@ LovenseMockServerRuntimeNode.SPEC = F8OperatorSpec(
     operatorClass=OPERATOR_CLASS,
     version="0.0.2",
     label="Lovense Mock Server",
-    description="Event-driven input node that mocks the Lovense Local API, publishes received commands as state, and emits exec.",
+    description="Event-driven input node that mocks the Lovense Local API and emits received commands.",
     tags=["io", "lovense", "http", "server", "event"],
     execOutPorts=["event"],
+    dataOutPorts=[
+        F8DataPortSpec(
+            name="event",
+            description="Latest received Lovense command event.",
+            valueSchema=_event_schema(),
+        ),
+    ],
     stateFields=[
         F8StateSpec(
             name="bindAddress",
@@ -1435,7 +1472,7 @@ LovenseMockServerRuntimeNode.SPEC = F8OperatorSpec(
         F8StateSpec(
             name="eventIncludePayload",
             label="Event Include Payload",
-            description="Include the parsed request payload in the `event` state (debug).",
+            description="Include the parsed request payload in the `event` data output (debug).",
             valueSchema=boolean_schema(default=False),
             access=F8StateAccess.rw,
             required=True,
@@ -1444,7 +1481,7 @@ LovenseMockServerRuntimeNode.SPEC = F8OperatorSpec(
         F8StateSpec(
             name="eventIncludeRequest",
             label="Event Include Request",
-            description="Include request headers/body in the `event` state (debug).",
+            description="Include request headers/body in the `event` data output (debug).",
             valueSchema=boolean_schema(default=False),
             access=F8StateAccess.rw,
             required=True,
@@ -1464,15 +1501,6 @@ LovenseMockServerRuntimeNode.SPEC = F8OperatorSpec(
             label="Last Error",
             description="Last server error (e.g. bind failure).",
             valueSchema=string_schema(default=""),
-            access=F8StateAccess.ro,
-            required=True,
-            showOnNode=True,
-        ),
-        F8StateSpec(
-            name="event",
-            label="Event",
-            description="Latest received Lovense command (dict with seq/eventId/summary/raw).",
-            valueSchema=_event_schema(),
             access=F8StateAccess.ro,
             required=True,
             showOnNode=True,

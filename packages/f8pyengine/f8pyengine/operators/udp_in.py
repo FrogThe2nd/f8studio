@@ -142,6 +142,8 @@ class UdpInRuntimeNode(OperatorNode, EntrypointNode):
         )
         self._packet_count = 0
         self._last_error = ""
+        self._published_listening: bool | None = None
+        self._published_last_error: str | None = None
         self._latest_packet: _PacketRecord | None = None
         self._packet_by_ctx_id: dict[str, _PacketRecord] = {}
         self._packet_ctx_order: deque[str] = deque()
@@ -393,7 +395,6 @@ class UdpInRuntimeNode(OperatorNode, EntrypointNode):
                 async with self._packet_lock:
                     self._latest_packet = packet
                     self._store_packet_snapshot_locked(exec_id=exec_id, packet=packet)
-                await self._publish_packet_state(packet)
                 self._request_exec_emit(exec_id=exec_id)
             except asyncio.CancelledError:
                 raise
@@ -458,18 +459,15 @@ class UdpInRuntimeNode(OperatorNode, EntrypointNode):
             self._packet_by_ctx_id.pop(oldest_key, None)
 
     async def _publish_runtime_state(self) -> None:
-        await self.set_state("listening", bool(self._transport is not None))
-        await self.set_state("packetCount", int(self._packet_count))
-        await self.set_state("droppedPackets", int(self._dropped_ref[0]))
-        await self.set_state("lastError", str(self._last_error or ""))
+        listening = bool(self._transport is not None)
+        if self._published_listening != listening:
+            await self.set_state("listening", listening)
+            self._published_listening = listening
 
-    async def _publish_packet_state(self, packet: _PacketRecord) -> None:
-        await self.set_state("packetCount", int(self._packet_count))
-        await self.set_state("droppedPackets", int(self._dropped_ref[0]))
-        await self.set_state("lastRemoteAddress", packet.remote_address)
-        await self.set_state("lastRemotePort", int(packet.remote_port))
-        await self.set_state("lastByteLength", len(packet.raw))
-        await self.set_state("lastParseError", packet.json_error)
+        last_error = str(self._last_error or "")
+        if self._published_last_error != last_error:
+            await self.set_state("lastError", last_error)
+            self._published_last_error = last_error
 
     def _request_exec_emit(self, *, exec_id: str | int) -> None:
         if self._entrypoint_ctx is None:
@@ -613,63 +611,9 @@ UdpInRuntimeNode.SPEC = F8OperatorSpec(
             showOnNode=True,
         ),
         F8StateSpec(
-            name="packetCount",
-            label="Packet Count",
-            description="Readonly number of received UDP packets.",
-            valueSchema=integer_schema(default=0, minimum=0),
-            access=F8StateAccess.ro,
-            required=True,
-            showOnNode=True,
-        ),
-        F8StateSpec(
-            name="droppedPackets",
-            label="Dropped Packets",
-            description="Readonly number of packets dropped because the queue was full.",
-            valueSchema=integer_schema(default=0, minimum=0),
-            access=F8StateAccess.ro,
-            required=True,
-            showOnNode=False,
-        ),
-        F8StateSpec(
-            name="lastRemoteAddress",
-            label="Last Remote Address",
-            description="Readonly source IP of the latest packet.",
-            valueSchema=string_schema(default=""),
-            access=F8StateAccess.ro,
-            required=True,
-            showOnNode=False,
-        ),
-        F8StateSpec(
-            name="lastRemotePort",
-            label="Last Remote Port",
-            description="Readonly source port of the latest packet.",
-            valueSchema=integer_schema(default=0, minimum=0, maximum=65535),
-            access=F8StateAccess.ro,
-            required=True,
-            showOnNode=False,
-        ),
-        F8StateSpec(
-            name="lastByteLength",
-            label="Last Byte Length",
-            description="Readonly byte size of the latest packet.",
-            valueSchema=integer_schema(default=0, minimum=0),
-            access=F8StateAccess.ro,
-            required=True,
-            showOnNode=False,
-        ),
-        F8StateSpec(
-            name="lastParseError",
-            label="Last Parse Error",
-            description="Readonly JSON parse error for the latest packet, if any.",
-            valueSchema=string_schema(default=""),
-            access=F8StateAccess.ro,
-            required=True,
-            showOnNode=False,
-        ),
-        F8StateSpec(
             name="lastError",
             label="Last Error",
-            description="Readonly receiver/socket error, if any.",
+            description="Readonly receiver/socket error, updated only when the error state changes.",
             valueSchema=string_schema(default=""),
             access=F8StateAccess.ro,
             required=True,

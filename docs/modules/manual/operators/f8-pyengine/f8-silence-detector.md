@@ -8,7 +8,7 @@
 
 - **Fallback Switching**: Feed the primary signal into `Silence Detector.value`, then use graph logic to switch `Switch Mixer.currentChannel` to a fallback port when `isSilent` becomes true.
 - **State-Driven Logic**: Pair it with `State Expr`, `State Trigger`, or UI bindings when other graph nodes should respond to silence as a boolean condition.
-- **Sparse Monitoring**: Show `isSilent` on the node and inspect `lastActiveTsMs` for quick debugging without adding another visualization stream.
+- **Sparse Monitoring**: `isSilent` is intentionally the only runtime state output; activity timestamps are not published as state because active signals can update at tick rate.
 
 ## Pitfalls / Gotchas
 

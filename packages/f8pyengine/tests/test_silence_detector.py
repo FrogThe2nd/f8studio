@@ -21,6 +21,10 @@ from f8pyengine.operators.silence_detector import SilenceDetectorRuntimeNode, re
 
 
 class SilenceDetectorTests(unittest.IsolatedAsyncioTestCase):
+    def test_spec_excludes_activity_timestamp_state(self) -> None:
+        state_names = {str(field.name or "") for field in list(SilenceDetectorRuntimeNode.SPEC.stateFields or [])}
+        self.assertNotIn("lastActiveTsMs", state_names)
+
     async def test_sets_is_silent_after_input_stops_changing(self) -> None:
         harness = ServiceBusHarness()
         bus = harness.create_bus("svcA")
